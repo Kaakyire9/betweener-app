@@ -1,4 +1,6 @@
+import { AuthDebugPanel } from "@/components/auth-debug";
 import { Stepper } from "@/components/Stepper";
+import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
@@ -11,7 +13,7 @@ import {
   Image,
   KeyboardAvoidingView,
   Platform,
-  SafeAreaView,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -19,6 +21,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 const REGIONS = ["Greater Accra", "Ashanti", "Volta", "Central"];
 const TRIBES = ["Akan", "Ewe", "Ga-Adangbe", "Mole-Dagbani"];
@@ -33,6 +36,7 @@ const INTERESTS = [
 
 export default function Onboarding() {
   const router = useRouter();
+  const { updateProfile, user, signOut } = useAuth();
   const [form, setForm] = useState({
     fullName: "",
     age: "",
@@ -54,7 +58,7 @@ export default function Onboarding() {
   const pickImage = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: 'images',
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
@@ -103,33 +107,48 @@ export default function Onboarding() {
     setMessage("");
 
     try {
+      console.log("Starting profile creation...");
+      console.log("User from context:", user?.id, user?.email);
+
+      // 1. Check if user is available from auth context
+      if (!user) {
+        throw new Error("User not authenticated. Please log in again.");
+      }
+
       let imageUrl = null;
 
-      // 1. Upload image
+      // 2. Upload image
       if (image) {
-        const response = await fetch(image);
-        const blob = await response.blob();
+        console.log("Uploading image...");
         const fileExt = image.split(".").pop() || "jpg";
-        const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+        const fileName = `${user.id}/${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+
+        // Read file as array buffer for React Native
+        const response = await fetch(image);
+        const arrayBuffer = await response.arrayBuffer();
+        const fileBody = new Uint8Array(arrayBuffer);
 
         const { error: uploadError } = await supabase.storage
           .from("profiles")
-          .upload(fileName, blob);
+          .upload(fileName, fileBody, {
+            contentType: `image/${fileExt}`,
+          });
 
-        if (uploadError) throw uploadError;
+        if (uploadError) {
+          console.error("Image upload error:", uploadError);
+          throw new Error(`Image upload failed: ${uploadError.message}`);
+        }
 
         const { data } = supabase.storage.from("profiles").getPublicUrl(fileName);
         imageUrl = data.publicUrl;
+        console.log("Image uploaded successfully:", imageUrl);
       }
 
-      // 2. Get current user
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-      if (userError || !userData?.user) throw new Error("User not found");
-
-      // 3. Create/update profile
-      const { error: upsertError } = await supabase.from("profiles").upsert({
-        id: userData.user.id,
-        user_id: userData.user.id,
+      // 3. Create/update profile using auth context
+      console.log("Creating profile...");
+      const profileData = {
+        id: user.id,
+        user_id: user.id,
         full_name: form.fullName,
         age: Number(form.age),
         gender: form.gender.toUpperCase(),
@@ -140,16 +159,22 @@ export default function Onboarding() {
         avatar_url: imageUrl,
         min_age_interest: Number(form.minAgeInterest),
         max_age_interest: Number(form.maxAgeInterest),
-        updated_at: new Date().toISOString(),
-      });
+      };
 
-      if (upsertError) throw upsertError;
+      console.log("Profile data:", profileData);
 
+      const { error: updateError } = await updateProfile(profileData);
+
+      if (updateError) {
+        console.error("Profile update error:", updateError);
+        throw new Error(`Profile creation failed: ${updateError.message}`);
+      }
+
+      console.log("Profile created successfully!");
       setMessage("Profile saved! Redirecting...");
-      setTimeout(() => {
-        router.replace("/(tabs)/explore"); // Update this route as needed
-      }, 1200);
+      // No need to manually navigate - AuthGuard will handle routing
     } catch (error: any) {
+      console.error("Onboarding error:", error);
       setMessage(error.message || "An error occurred");
     } finally {
       setLoading(false);
@@ -163,6 +188,29 @@ export default function Onboarding() {
         ? prev.interests.filter((i) => i !== interest)
         : [...prev.interests, interest],
     }));
+  };
+
+  const handleSignOut = () => {
+    Alert.alert(
+      "Sign Out",
+      "Are you sure you want to sign out? You'll need to log in again to complete your profile.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Sign Out",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await signOut();
+              router.replace("/(auth)/login");
+            } catch (error) {
+              console.error("Sign out error:", error);
+              Alert.alert("Error", "Failed to sign out. Please try again.");
+            }
+          },
+        },
+      ]
+    );
   };
 
   // Step logic: 0 = Profile, 1 = Details, 2 = Photo, 3 = Finish
@@ -191,13 +239,35 @@ export default function Onboarding() {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.content}>
+            <AuthDebugPanel />
+            
+            {/* Header with Sign Out */}
+            <View style={styles.header}>
+              <View style={styles.headerContent}>
+                <Text style={styles.title}>Welcome to Betweener!</Text>
+                <Text style={styles.subtitle}>Let's create your profile</Text>
+              </View>
+              <Pressable
+                onPress={handleSignOut}
+                style={styles.signOutButton}
+                accessibilityLabel="Sign out and restart signup"
+              >
+                <MaterialCommunityIcons name="logout" size={20} color="#ef4444" />
+                <Text style={styles.signOutText}>Sign Out</Text>
+              </Pressable>
+            </View>
+            
             <Stepper
               steps={["Profile", "Details", "Photo", "Finish"]}
               currentStep={currentStep}
             />
-
-            <Text style={styles.title}>Welcome to Betweener!</Text>
-            <Text style={styles.subtitle}>Let's create your profile</Text>
+            
+            {/* Debug info - remove in production */}
+            {__DEV__ && (
+              <Text style={{ fontSize: 12, color: '#666', textAlign: 'center', marginBottom: 16 }}>
+                Debug: User ID: {user?.id || 'Not found'} | Email: {user?.email || 'Not found'}
+              </Text>
+            )}
 
             {/* Profile Image */}
             <TouchableOpacity
@@ -534,6 +604,15 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
   },
+  header: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 24,
+  },
+  headerContent: {
+    flex: 1,
+  },
   title: {
     fontSize: 28,
     fontFamily: "Archivo_700Bold",
@@ -546,7 +625,22 @@ const styles = StyleSheet.create({
     fontFamily: "Manrope_400Regular",
     textAlign: "center",
     color: "#64748b",
-    marginBottom: 24,
+  },
+  signOutButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fef2f2",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#fecaca",
+  },
+  signOutText: {
+    color: "#ef4444",
+    fontSize: 14,
+    fontFamily: "Manrope_600SemiBold",
+    marginLeft: 4,
   },
   imageContainer: {
     alignItems: "center",

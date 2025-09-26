@@ -1,19 +1,42 @@
-# Welcome to your Expo app 👋
+# Betweener - Dating App 💕
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A modern dating app for the Ghanaian community, built with React Native, Expo, and Supabase.
 
-## Get started
+## 🚀 Tech Stack
+- **React Native** with Expo SDK 54
+- **Supabase** (PostgreSQL + Auth + Storage)
+- **NativeWind** for styling
+- **Expo Router** for navigation
+- **Universal Links** for seamless email verification
 
-1. Install dependencies
+## 🛠️ Setup
 
+1. **Install dependencies**
    ```bash
    npm install
    ```
 
-2. Start the app
+2. **Environment Configuration**
+   Create a `.env` file with your Supabase credentials:
+   ```bash
+   EXPO_PUBLIC_SUPABASE_URL=your_supabase_url
+   EXPO_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+   ```
 
+3. **Database Setup**
+   Run the migrations in the `supabase/migrations/` folder to set up your database schema.
+
+4. **Universal Links Setup**
+   See `UNIVERSAL_LINKS_SETUP.md` for complete instructions on setting up email verification deep linking.
+
+5. **Start Development**
    ```bash
    npx expo start
+   ```
+
+6. **Create Development Build**
+   ```bash
+   eas build --platform ios --profile development
    ```
 
 In the output, you'll find options to open the app in a
@@ -23,17 +46,46 @@ In the output, you'll find options to open the app in a
 - [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
 - [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+## 📱 Features
 
-## Get a fresh project
+### Authentication
+- Email/password signup and login
+- Email verification with Universal Links
+- Password reset functionality
+- Profile management with image upload
+- Session persistence across app launches
 
-When you're ready, run:
+### Security
+- Row Level Security (RLS) policies
+- Secure file upload with image optimization
+- Protected routes with AuthGuard components
 
-```bash
-npm run reset-project
+### Navigation
+- File-based routing with Expo Router
+- Tab navigation for main app sections
+- Deep linking support for email verification
+
+## 🏗️ Project Structure
+
 ```
+app/
+├── (auth)/          # Authentication screens
+├── (tabs)/          # Main app tab navigation
+├── _layout.tsx      # Root layout with auth provider
+└── modal.tsx        # Modal screens
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+components/
+├── auth-guard.tsx   # Route protection
+├── ui/              # Reusable UI components
+└── ...
+
+lib/
+├── auth-context.tsx # Authentication state management
+└── supabase.ts     # Supabase client configuration
+
+supabase/
+└── migrations/     # Database migrations
+```
 
 ## Learn more
 
