@@ -1,4 +1,5 @@
 import { useAuth } from "@/lib/auth-context";
+import { supabase } from "@/lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { useState } from "react";
@@ -12,53 +13,50 @@ import {
   View,
 } from "react-native";
 
-export default function SignupScreen() {
+export default function MagicLinkScreen() {
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [loading, setLoading] = useState(false);
   const router = useRouter();
-  const { signUp, isAuthenticating } = useAuth();
 
-  const validate = () => {
+  const handleMagicLink = async () => {
     if (!email.match(/^[^@\s]+@[^@\s]+\.[^@\s]+$/)) {
       setError("Please enter a valid email address.");
-      return false;
+      return;
     }
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters.");
-      return false;
-    }
-    if (password !== confirmPassword) {
-      setError("Passwords do not match.");
-      return false;
-    }
-    setError("");
-    return true;
-  };
 
-  const handleSignup = async () => {
-    if (!validate()) return;
+    setLoading(true);
     setError("");
     setSuccess("");
 
     try {
-      const { error } = await signUp(email, password);
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email,
+        options: {
+          shouldCreateUser: false, // Only sign in existing users
+        },
+      });
 
       if (error) {
-        setError(error.message);
+        if (error.message.includes("User not found")) {
+          setError("No account found with this email. Please sign up first.");
+        } else {
+          setError(error.message);
+        }
         return;
       }
 
       await AsyncStorage.setItem("pending_verification_email", email);
-      setSuccess("Signup successful! Please check your email to verify your account.");
+      setSuccess("Magic link sent! Check your email and tap the link to sign in.");
       
       setTimeout(() => {
         router.replace("/(auth)/verify-email");
-      }, 1500);
+      }, 2000);
     } catch (err: any) {
       setError("An unexpected error occurred. Please try again.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -85,11 +83,23 @@ export default function SignupScreen() {
           fontFamily: "Archivo_700Bold",
           fontSize: 28,
           color: "#0F172A",
-          marginBottom: 24,
+          marginBottom: 8,
           textAlign: "center",
         }}
       >
-        Create Account
+        Quick Sign In
+      </Text>
+      
+      <Text
+        style={{
+          fontFamily: "Manrope_400Regular",
+          fontSize: 16,
+          color: "#64748B",
+          marginBottom: 32,
+          textAlign: "center",
+        }}
+      >
+        Enter your email to receive a magic link for instant sign-in
       </Text>
 
       <TextInput
@@ -99,42 +109,6 @@ export default function SignupScreen() {
         onChangeText={setEmail}
         autoCapitalize="none"
         keyboardType="email-address"
-        style={{
-          backgroundColor: "#fff",
-          borderRadius: 16,
-          padding: 16,
-          fontSize: 16,
-          marginBottom: 16,
-          fontFamily: "Manrope_400Regular",
-          borderWidth: 1,
-          borderColor: "#E2E8F0",
-        }}
-      />
-
-      <TextInput
-        placeholder="Password"
-        placeholderTextColor="#94A3B8"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-        style={{
-          backgroundColor: "#fff",
-          borderRadius: 16,
-          padding: 16,
-          fontSize: 16,
-          marginBottom: 16,
-          fontFamily: "Manrope_400Regular",
-          borderWidth: 1,
-          borderColor: "#E2E8F0",
-        }}
-      />
-
-      <TextInput
-        placeholder="Confirm Password"
-        placeholderTextColor="#94A3B8"
-        value={confirmPassword}
-        onChangeText={setConfirmPassword}
-        secureTextEntry
         style={{
           backgroundColor: "#fff",
           borderRadius: 16,
@@ -161,15 +135,15 @@ export default function SignupScreen() {
 
       <TouchableOpacity
         style={{
-          backgroundColor: "#FF6B6B",
+          backgroundColor: "#10b981",
           borderRadius: 16,
           paddingVertical: 16,
           alignItems: "center",
           marginBottom: 24,
-          opacity: isAuthenticating ? 0.7 : 1,
+          opacity: loading ? 0.7 : 1,
         }}
-        onPress={handleSignup}
-        disabled={isAuthenticating}
+        onPress={handleMagicLink}
+        disabled={loading}
       >
         <Text
           style={{
@@ -179,7 +153,7 @@ export default function SignupScreen() {
             letterSpacing: 1,
           }}
         >
-          {isAuthenticating ? "Signing Up..." : "Sign Up"}
+          {loading ? "Sending..." : "Send Magic Link"}
         </Text>
       </TouchableOpacity>
 
@@ -191,7 +165,30 @@ export default function SignupScreen() {
             fontSize: 15,
           }}
         >
-          Already have an account?{" "}
+          Need to create an account?{" "}
+        </Text>
+        <Pressable onPress={() => router.push("/(auth)/signup")}>
+          <Text
+            style={{
+              color: "#0FBAB5",
+              fontFamily: "Manrope_400Regular",
+              fontSize: 15,
+            }}
+          >
+            Sign Up
+          </Text>
+        </Pressable>
+      </View>
+      
+      <View style={{ flexDirection: "row", justifyContent: "center", marginTop: 16 }}>
+        <Text
+          style={{
+            color: "#64748B",
+            fontFamily: "Manrope_400Regular",
+            fontSize: 15,
+          }}
+        >
+          Prefer password login?{" "}
         </Text>
         <Pressable onPress={() => router.push("/(auth)/login")}>
           <Text
@@ -201,12 +198,12 @@ export default function SignupScreen() {
               fontSize: 15,
             }}
           >
-            Log In
+            Regular Login
           </Text>
         </Pressable>
       </View>
 
-      {isAuthenticating && <ActivityIndicator style={{ marginTop: 8 }} />}
+      {loading && <ActivityIndicator style={{ marginTop: 8 }} />}
     </View>
   );
 }

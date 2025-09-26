@@ -1,30 +1,60 @@
+import { AuthProvider } from "@/lib/auth-context";
 import { useAppFonts } from "@/constants/fonts";
-import { supabase } from "@/lib/supabase";
-import { Slot, useRouter, useSegments } from "expo-router";
+import { Slot } from "expo-router";
+import * as Linking from "expo-linking";
 import { useEffect } from "react";
 import { ActivityIndicator, View } from "react-native";
 
 export default function RootLayout() {
   const fontsLoaded = useAppFonts();
-  const router = useRouter();
-  const segments = useSegments();
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      // If not authenticated and not already on an auth route, redirect to welcome
-      if (!data.session && !segments[0]?.startsWith("(auth)")) {
-        router.replace("/(auth)/welcome");
+    // Configure Linking for deep links
+    const prefix = Linking.createURL('/');
+    console.log('App URL prefix:', prefix);
+
+    // Handle initial URL when app is opened from a link
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        console.log('Initial URL received:', url);
+        // Check if it's an auth callback URL
+        if (url.includes('auth/callback') || url.includes('#access_token')) {
+          console.log('Auth callback detected in initial URL');
+        }
       }
     });
-  }, [segments, router]);
+
+    // Handle URLs when app is already running
+    const subscription = Linking.addEventListener('url', async ({ url }) => {
+      console.log('Deep link received while app running:', url);
+      // Check if it's an auth callback URL
+      if (url.includes('auth/callback') || url.includes('#access_token')) {
+        console.log('Auth callback detected in running app');
+        // Store the URL so the callback page can access it
+        try {
+          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+          await AsyncStorage.setItem('last_deep_link_url', url);
+          console.log('Stored deep link URL for callback processing');
+        } catch (error) {
+          console.log('Failed to store deep link URL:', error);
+        }
+      }
+    });
+
+    return () => subscription?.remove();
+  }, []);
 
   if (!fontsLoaded) {
     return (
       <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator size="large" />
+        <ActivityIndicator size="large" color="#FF6B6B" />
       </View>
     );
   }
 
-  return <Slot />;
+  return (
+    <AuthProvider>
+      <Slot />
+    </AuthProvider>
+  );
 }

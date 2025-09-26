@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
@@ -13,23 +13,17 @@ import {
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const router = useRouter();
+  const { signIn, isAuthenticating } = useAuth();
 
   const handleLogin = async () => {
-    setLoading(true);
     setError("");
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    setLoading(false);
+    const { error } = await signIn(email, password);
     if (error) {
       setError(error.message);
-    } else {
-      router.replace("/(tabs)/explore"); // or your main app route
     }
+    // No need to manually navigate - AuthGuard will handle routing
   };
 
   return (
@@ -127,10 +121,10 @@ export default function LoginScreen() {
           paddingVertical: 16,
           alignItems: "center",
           marginBottom: 32,
-          opacity: loading ? 0.7 : 1,
+          opacity: isAuthenticating ? 0.7 : 1,
         }}
         onPress={handleLogin}
-        disabled={loading}
+        disabled={isAuthenticating}
       >
         <Text
           style={{
@@ -140,7 +134,7 @@ export default function LoginScreen() {
             letterSpacing: 1,
           }}
         >
-          {loading ? "Logging In..." : "Log In"}
+          {isAuthenticating ? "Logging In..." : "Log In"}
         </Text>
       </TouchableOpacity>
 

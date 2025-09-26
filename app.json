@@ -13,8 +13,21 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "bundleIdentifier": "com.aduboffour.betweener",
+      "associatedDomains": [
+        "applinks:getbetweener.com"
+      ],
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLName": "com.aduboffour.betweener",
+            "CFBundleURLSchemes": ["betweenerapp"]
+          }
+        ],
+        "LSApplicationQueriesSchemes": ["betweenerapp"],
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
       }
     },
     "android": {
@@ -28,12 +41,33 @@
           "action": "VIEW",
           "data": [
             {
-              "scheme": "betweenerapp",
-              "host": "auth",
-              "pathPrefix": "/callback"
+              "scheme": "betweenerapp"
             }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": ["BROWSABLE", "DEFAULT"],
+          "autoVerify": true
+        },
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "betweenerapp",
+              "host": "auth"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"],
+          "autoVerify": true
+        },
+        {
+          "action": "VIEW",
+          "data": [
+            {
+              "scheme": "https",
+              "host": "getbetweener.com"
+            }
+          ],
+          "category": ["BROWSABLE", "DEFAULT"],
+          "autoVerify": true
         }
       ]
     },
