@@ -1,7 +1,7 @@
-import { AuthProvider } from "@/lib/auth-context";
 import { useAppFonts } from "@/constants/fonts";
-import { Slot } from "expo-router";
+import { AuthProvider } from "@/lib/auth-context";
 import * as Linking from "expo-linking";
+import { Slot } from "expo-router";
 import { useEffect } from "react";
 import { ActivityIndicator, View } from "react-native";
 

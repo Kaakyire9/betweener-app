@@ -2,12 +2,12 @@ import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import {
-  Image,
-  Pressable,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    Image,
+    Pressable,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 
 export default function LoginScreen() {

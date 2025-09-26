@@ -1,5 +1,5 @@
-import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth-context';
+import { supabase } from '@/lib/supabase';
 import { useState } from 'react';
 import { Alert, Text, TouchableOpacity, View } from 'react-native';
 
