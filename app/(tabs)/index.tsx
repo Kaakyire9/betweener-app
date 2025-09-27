@@ -1,9 +1,9 @@
 ﻿import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router } from "expo-router";
-import { StyleSheet, Text, TouchableOpacity, View, ScrollView, Dimensions } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { useState } from "react";
+import { Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 const { width } = Dimensions.get("window");
 
