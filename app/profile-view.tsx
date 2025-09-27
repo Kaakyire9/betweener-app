@@ -1,25 +1,23 @@
-import { useAuth } from "@/lib/auth-context";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useState, useRef, useEffect } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Image,
-  Animated,
-  Dimensions,
-  Alert,
-  Linking,
-  StatusBar,
-  Share,
-} from "react-native";
-import * as Haptics from 'expo-haptics';
-import { SafeAreaView } from "react-native-safe-area-context";
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
+import { useAuth } from "@/lib/auth-context";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from "expo-router";
+import { useEffect, useRef, useState } from "react";
+import {
+    Alert,
+    Animated,
+    Dimensions,
+    Linking,
+    ScrollView,
+    Share,
+    StatusBar,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
+} from "react-native";
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 

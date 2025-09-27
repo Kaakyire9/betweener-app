@@ -1,11 +1,13 @@
 import { AuthDebugPanel } from "@/components/auth-debug";
+import { useAppFonts } from "@/constants/fonts";
+import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
-import { useState, useRef, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -23,8 +25,6 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useAppFonts } from "@/constants/fonts";
-import { Colors } from "@/constants/theme";
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -418,7 +418,7 @@ export default function Onboarding() {
             <Text style={styles.featureText}>Find Your Match</Text>
           </View>
           <View style={styles.featureItem}>
-            <MaterialCommunityIcons name="map-marker-heart" size={24} color={Colors.light.tint} />
+            <MaterialCommunityIcons name="map-marker" size={24} color={Colors.light.tint} />
             <Text style={styles.featureText}>Local Connections</Text>
           </View>
         </View>

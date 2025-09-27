@@ -1,20 +1,20 @@
+import { useAppFonts } from "@/constants/fonts";
+import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useState, useRef } from "react";
+import { useRef, useState } from "react";
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Image,
-  Dimensions,
   Animated,
+  Dimensions,
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useAppFonts } from "@/constants/fonts";
-import { Colors } from "@/constants/theme";
 
 const { width: screenWidth } = Dimensions.get('window');
 
