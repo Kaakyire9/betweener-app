@@ -4,8 +4,8 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Tabs } from 'expo-router';
-import { View, Text, StyleSheet } from 'react-native';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
