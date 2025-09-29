@@ -1,24 +1,23 @@
+import PhotoGallery from "@/components/PhotoGallery";
+import ProfileEditModal from "@/components/ProfileEditModal";
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
+import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import { useRef, useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Animated,
   Dimensions,
   Image,
-  ScrollView,
+  RefreshControl,
   StyleSheet,
   Text,
   TouchableOpacity,
-  View,
-  RefreshControl,
+  View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import ProfileEditModal from "@/components/ProfileEditModal";
-import PhotoGallery from "@/components/PhotoGallery";
-import { supabase } from "@/lib/supabase";
 
 const { width: screenWidth } = Dimensions.get('window');
 
