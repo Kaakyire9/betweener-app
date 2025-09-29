@@ -18,6 +18,27 @@ type Profile = {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  // Photo upload and profile editing fields
+  occupation?: string;
+  education?: string;
+  height?: string;
+  looking_for?: string;
+  photos?: string[];
+  // HIGH PRIORITY lifestyle fields
+  exercise_frequency?: string;
+  smoking?: string;
+  drinking?: string;
+  // HIGH PRIORITY family fields
+  has_children?: string;
+  wants_children?: string;
+  // HIGH PRIORITY personality fields
+  personality_type?: string;
+  love_language?: string;
+  // HIGH PRIORITY living situation fields
+  living_situation?: string;
+  pets?: string;
+  // HIGH PRIORITY languages field
+  languages_spoken?: string[];
 };
 
 type AuthContextType = {
@@ -157,12 +178,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!user) return { error: new Error('No user found') };
 
     try {
+      // Use upsert for profile creation/updates to handle both scenarios
       const { error } = await supabase
         .from('profiles')
         .upsert({
-          user_id: user.id,
           ...updates,
+          user_id: user.id,
           updated_at: new Date().toISOString(),
+        }, {
+          onConflict: 'user_id'
         });
 
       if (!error) {
@@ -171,6 +195,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       return { error };
     } catch (error) {
+      console.error('Profile update error:', error);
       return { error: error as Error };
     }
   };
