@@ -1,5 +1,5 @@
 import { useAuth } from '@/lib/auth-context';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function ProfileDebug() {
   const { profile, refreshProfile } = useAuth();
