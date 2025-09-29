@@ -51,7 +51,7 @@ const ONBOARDING_STEPS = [
 
 export default function Onboarding() {
   const router = useRouter();
-  const { updateProfile, user, signOut } = useAuth();
+  const { updateProfile, user, signOut, refreshProfile } = useAuth();
   const fontsLoaded = useAppFonts();
   
   const [currentStep, setCurrentStep] = useState(0);
@@ -72,6 +72,7 @@ export default function Onboarding() {
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [profileCreated, setProfileCreated] = useState(false);
 
   // Animation values
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -203,6 +204,23 @@ export default function Onboarding() {
 
       // 3. Create/update profile using auth context
       console.log("Creating profile...");
+      console.log("Form data before processing:", {
+        fullName: form.fullName,
+        age: form.age,
+        gender: form.gender,
+        bio: form.bio,
+        region: form.region,
+        tribe: form.tribe,
+        religion: form.religion
+      });
+      
+      // Safety check for gender field
+      if (!form.gender || form.gender.trim() === '') {
+        console.error("Gender field is empty during submission!");
+        Alert.alert("Error", "Please select your gender before continuing.");
+        return;
+      }
+      
       const profileData = {
         id: user.id,
         user_id: user.id,
@@ -218,7 +236,7 @@ export default function Onboarding() {
         max_age_interest: Number(form.maxAgeInterest),
       };
 
-      console.log("Profile data:", profileData);
+      console.log("Profile data to be sent to database:", profileData);
 
       const { error: updateError } = await updateProfile(profileData);
 
@@ -228,8 +246,25 @@ export default function Onboarding() {
       }
 
       console.log("Profile created successfully!");
-      setMessage("Profile saved! Redirecting...");
-      // No need to manually navigate - AuthGuard will handle routing
+      setMessage("Profile created successfully! Welcome to Betweener! 🎉");
+      setProfileCreated(true);
+      
+      // Force refresh the auth context to ensure profile state is updated
+      setTimeout(async () => {
+        console.log("Refreshing auth state...");
+        await refreshProfile();
+        
+        console.log("Checking auth state before navigation...");
+        console.log("User:", user?.id);
+        console.log("User email verified:", user?.email_confirmed_at);
+        
+        // Wait a bit longer to ensure database is fully updated
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        console.log("Navigating to main app...");
+        router.dismissAll();
+        router.replace("/(tabs)/");
+      }, 2000);
     } catch (error: any) {
       console.error("Onboarding error:", error);
       setMessage(error.message || "An error occurred");
@@ -710,13 +745,18 @@ export default function Onboarding() {
       <TouchableOpacity
         style={[
           styles.nextButton,
-          loading && styles.nextButtonDisabled,
+          (loading || profileCreated) && styles.nextButtonDisabled,
         ]}
         onPress={handleNext}
-        disabled={loading}
+        disabled={loading || profileCreated}
       >
         {loading ? (
           <ActivityIndicator color="#fff" />
+        ) : profileCreated ? (
+          <>
+            <MaterialCommunityIcons name="check-circle" size={20} color="#fff" />
+            <Text style={styles.nextButtonText}>Profile Created!</Text>
+          </>
         ) : (
           <>
             <Text style={styles.nextButtonText}>

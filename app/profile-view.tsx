@@ -1,6 +1,7 @@
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
+import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from "expo-router";
@@ -120,13 +121,82 @@ const MOCK_VIEWED_PROFILE: UserProfile = {
   ],
 };
 
+// Helper function to get emoji for interests
+const getInterestEmoji = (interest: string): string => {
+  const emojiMap: { [key: string]: string } = {
+    'Music': '🎵', 'Travel': '✈️', 'Food': '🍽️', 'Dancing': '💃', 'Movies': '🎬', 
+    'Art': '🎨', 'Reading': '📚', 'Sports': '⚽', 'Gaming': '🎮', 'Cooking': '👨‍🍳',
+    'Photography': '📸', 'Fitness': '💪', 'Nature': '🌿', 'Technology': '💻',
+    'Fashion': '👗', 'Writing': '✍️', 'Singing': '🎤', 'Comedy': '😂',
+    'Business': '💼', 'Volunteering': '🤝', 'Learning': '📖', 'Socializing': '🎉',
+    'Adventure': '🗻', 'Relaxing': '🧘'
+  };
+  return emojiMap[interest] || '💫';
+};
+
 export default function ProfileViewScreen() {
   const { profile: currentUser } = useAuth();
   const fontsLoaded = useAppFonts();
   const params = useLocalSearchParams();
   
-  // In real app, you'd get profile data from params or API
-  const profileData = MOCK_VIEWED_PROFILE;
+  const [userInterests, setUserInterests] = useState<string[]>([]);
+  const [userPhotos, setUserPhotos] = useState<string[]>([]);
+  
+  // Check if this is a preview of user's own profile
+  const isOwnProfilePreview = params.isPreview === 'true' && (params.profileId === currentUser?.id || params.profileId === 'preview');
+  
+  // Use current user's profile for preview, otherwise use mock data (or fetch from API)
+  const profileData = isOwnProfilePreview ? {
+    id: currentUser?.id || 'preview',
+    name: currentUser?.full_name || 'Your Name',
+    age: currentUser?.age || 25,
+    location: currentUser?.region || 'Your Location',
+    profilePicture: currentUser?.avatar_url || 'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=400&h=600&fit=crop&crop=face',
+    photos: userPhotos.length > 0 ? userPhotos : (currentUser?.avatar_url ? [currentUser.avatar_url] : ['https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=400&h=600&fit=crop&crop=face']),
+    occupation: currentUser?.occupation || 'Your Occupation',
+    education: currentUser?.education || 'Your Education',
+    verified: false,
+    bio: currentUser?.bio || 'Add a bio to tell others about yourself...',
+    distance: 'You',
+    lastActive: 'Now',
+    isActiveNow: true,
+    tribe: currentUser?.tribe,
+    religion: currentUser?.religion,
+    compatibility: 100, // Perfect match with yourself!
+    interests: userInterests.map((name, index) => ({
+      id: `interest-${index}`,
+      name,
+      category: 'Personal',
+      emoji: getInterestEmoji(name)
+    })),
+    prompts: [
+      {
+        id: '1',
+        title: 'Two truths and a lie',
+        type: 'two_truths_lie' as const,
+        content: [
+          'Add your two truths and a lie in profile settings',
+          'This is how others will see your prompts',
+          'You can edit these in your profile'
+        ],
+        lastUpdated: new Date(),
+      },
+      {
+        id: '2',
+        title: 'This week I want to...',
+        type: 'weekly_goal' as const,
+        content: ['Set your weekly goals in profile settings'],
+        lastUpdated: new Date(),
+      },
+      {
+        id: '3',
+        title: 'My current vibe song is...',
+        type: 'current_vibe' as const,
+        content: ['Add your current favorite song'],
+        lastUpdated: new Date(),
+      },
+    ],
+  } : MOCK_VIEWED_PROFILE;
   
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
   const [showFullBio, setShowFullBio] = useState(false);
@@ -137,6 +207,75 @@ export default function ProfileViewScreen() {
   const likeAnimation = useRef(new Animated.Value(0)).current;
   const compatibilityAnimation = useRef(new Animated.Value(0)).current;
   const photoAnimation = useRef(new Animated.Value(0)).current;
+
+  // Load user's interests if in preview mode
+  const fetchUserInterests = async () => {
+    if (!isOwnProfilePreview || !currentUser?.id) return;
+    
+    try {
+      const { data, error } = await supabase
+        .from('profile_interests')
+        .select(`
+          interests (
+            name
+          )
+        `)
+        .eq('profile_id', currentUser.id);
+
+      if (error) {
+        console.error('Error fetching interests:', error);
+        return;
+      }
+
+      const interests = data?.map((item: any) => item.interests.name) || [];
+      setUserInterests(interests);
+    } catch (error) {
+      console.error('Error fetching interests:', error);
+    }
+  };
+
+  // Load user's photos if in preview mode
+  const fetchUserPhotos = async () => {
+    if (!isOwnProfilePreview || !currentUser?.id) return;
+    
+    try {
+      // First check if photos exist in profile.photos field
+      const profilePhotos = (currentUser as any)?.photos || [];
+      if (profilePhotos.length > 0) {
+        setUserPhotos(profilePhotos);
+        return;
+      }
+
+      // If no photos in profile, check storage folder
+      const { data: files, error } = await supabase.storage
+        .from('profile-photos')
+        .list(`${currentUser.id}/`, {
+          limit: 10,
+          sortBy: { column: 'created_at', order: 'asc' }
+        });
+
+      if (error) {
+        console.error('Error fetching photos:', error);
+        return;
+      }
+
+      if (files && files.length > 0) {
+        // Get public URLs for the photos
+        const photoUrls = files
+          .filter(file => file.name !== '.emptyFolderPlaceholder')
+          .map(file => {
+            const { data } = supabase.storage
+              .from('profile-photos')
+              .getPublicUrl(`${currentUser.id}/${file.name}`);
+            return data.publicUrl;
+          });
+        
+        setUserPhotos(photoUrls);
+      }
+    } catch (error) {
+      console.error('Error fetching photos:', error);
+    }
+  };
 
   useEffect(() => {
     // Photo transition animation
@@ -154,6 +293,10 @@ export default function ProfileViewScreen() {
         useNativeDriver: true,
       }).start();
     }, 1000);
+
+    // Load user interests and photos if in preview mode
+    fetchUserInterests();
+    fetchUserPhotos();
   }, []);
 
   if (!fontsLoaded) {
@@ -196,6 +339,19 @@ export default function ProfileViewScreen() {
   const handlePass = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.back();
+  };
+
+  const handleBackNavigation = () => {
+    if (isOwnProfilePreview) {
+      // Navigate back to Profile tab in Preview Mode
+      router.push({
+        pathname: '/(tabs)/profile',
+        params: { returnToPreview: 'true' }
+      });
+    } else {
+      // Regular back navigation for other profiles
+      router.back();
+    }
   };
 
   const handleSuperLike = () => {
@@ -262,18 +418,29 @@ export default function ProfileViewScreen() {
 
   const renderHeader = () => (
     <View style={styles.header}>
-      <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+      <TouchableOpacity style={styles.backButton} onPress={handleBackNavigation}>
         <MaterialCommunityIcons name="arrow-left" size={24} color="#fff" />
       </TouchableOpacity>
       
-      <View style={styles.headerActions}>
-        <TouchableOpacity style={styles.headerActionButton} onPress={handleShare}>
-          <MaterialCommunityIcons name="share-variant" size={20} color="#fff" />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.headerActionButton} onPress={handleReport}>
-          <MaterialCommunityIcons name="flag" size={20} color="#fff" />
-        </TouchableOpacity>
-      </View>
+      {/* Only show share/report for other profiles, not for preview mode */}
+      {!isOwnProfilePreview && (
+        <View style={styles.headerActions}>
+          <TouchableOpacity style={styles.headerActionButton} onPress={handleShare}>
+            <MaterialCommunityIcons name="share-variant" size={20} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.headerActionButton} onPress={handleReport}>
+            <MaterialCommunityIcons name="flag" size={20} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      )}
+      
+      {/* Show preview indicator for own profile */}
+      {isOwnProfilePreview && (
+        <View style={styles.previewIndicator}>
+          <MaterialCommunityIcons name="eye" size={18} color="#fff" />
+          <Text style={styles.previewIndicatorText}>Preview Mode</Text>
+        </View>
+      )}
     </View>
   );
 
@@ -546,10 +713,11 @@ export default function ProfileViewScreen() {
         {renderPrompts()}
         
         {/* Bottom spacing for action buttons */}
-        <View style={{ height: 120 }} />
+        <View style={{ height: isOwnProfilePreview ? 40 : 120 }} />
       </ScrollView>
       
-      {renderActionButtons()}
+      {/* Only show action buttons for other profiles, not in preview mode */}
+      {!isOwnProfilePreview && renderActionButtons()}
     </View>
   );
 }
@@ -597,6 +765,20 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  previewIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  previewIndicatorText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_600SemiBold',
+    color: '#fff',
   },
 
   // Photo Gallery
