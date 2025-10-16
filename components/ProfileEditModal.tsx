@@ -1,3 +1,5 @@
+import { DiasporaVerification } from '@/components/DiasporaVerification';
+import { VerificationBadge } from '@/components/VerificationBadge';
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
@@ -5,21 +7,19 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Image,
-    Modal,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Image,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { VerificationBadge } from '@/components/VerificationBadge';
-import { DiasporaVerification } from '@/components/DiasporaVerification';
 
 // Predefined options for profile fields
 const HEIGHT_OPTIONS = [

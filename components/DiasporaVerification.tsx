@@ -1,18 +1,17 @@
-import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  Modal,
-  ScrollView,
-  Image,
-  Alert,
-  StyleSheet,
-} from 'react-native';
+import { useVerificationStatus } from '@/hooks/use-verification-status';
+import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { supabase } from '@/lib/supabase';
-import { useVerificationStatus } from '@/hooks/use-verification-status';
+import React, { useState } from 'react';
+import {
+    Alert,
+    Modal,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
+} from 'react-native';
 
 // Basic automated validation functions
 const validateImageQuality = async (asset: any): Promise<{ valid: boolean; message: string }> => {
