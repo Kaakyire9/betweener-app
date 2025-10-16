@@ -39,6 +39,14 @@ type Profile = {
   pets?: string;
   // HIGH PRIORITY languages field
   languages_spoken?: string[];
+  // DIASPORA fields
+  current_country?: string;
+  diaspora_status?: 'LOCAL' | 'DIASPORA' | 'VISITING';
+  willing_long_distance?: boolean;
+  verification_level?: number;
+  years_in_diaspora?: number;
+  last_ghana_visit?: string;
+  future_ghana_plans?: string;
 };
 
 type AuthContextType = {

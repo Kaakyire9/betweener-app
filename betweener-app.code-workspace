@@ -1,0 +1,20 @@
+{
+  "folders": [
+    {
+      "name": "Root",
+      "path": "."
+    },
+    {
+      "name": "Supabase Functions",
+      "path": "./supabase/functions"
+    }
+  ],
+  "settings": {
+    "deno.enable": false
+  },
+  "extensions": {
+    "recommendations": [
+      "denoland.vscode-deno"
+    ]
+  }
+}

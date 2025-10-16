@@ -102,14 +102,6 @@ export default function PhotoGallery({
             <Text style={styles.addPhotoText}>Add Photo</Text>
           </TouchableOpacity>
         )}
-        
-        {/* Empty slots for visual balance */}
-        {Array.from({ length: Math.max(0, 6 - photos.length - (canEdit ? 1 : 0)) }).map((_, index) => (
-          <View
-            key={`empty-${index}`}
-            style={[styles.emptySlot, { width: itemWidth, height: itemHeight }]}
-          />
-        ))}
       </View>
 
       {/* Full Screen Photo Modal */}
@@ -249,15 +241,17 @@ const styles = StyleSheet.create({
     borderStyle: 'dashed',
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
   addPhotoText: {
     fontSize: 12,
     color: '#9ca3af',
     marginTop: 4,
     fontWeight: '500',
-  },
-  emptySlot: {
-    // Just for spacing
   },
   modalContainer: {
     flex: 1,

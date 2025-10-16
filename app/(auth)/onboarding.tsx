@@ -66,6 +66,11 @@ export default function Onboarding() {
     interests: [] as string[],
     minAgeInterest: "18",
     maxAgeInterest: "35",
+    // Simplified diaspora fields for onboarding
+    livingLocation: "Ghana" as "Ghana" | "Abroad",
+    currentCountry: "",
+    yearsAbroad: "",
+    willingLongDistance: false,
   });
 
   const [image, setImage] = useState<string | null>(null);
@@ -119,6 +124,10 @@ export default function Onboarding() {
         if (!form.region) newErrors.region = "Region is required.";
         if (!form.tribe) newErrors.tribe = "Tribe is required.";
         if (!form.religion) newErrors.religion = "Religion is required.";
+        // Diaspora validation
+        if (form.livingLocation === "Abroad" && !form.currentCountry) {
+          newErrors.currentCountry = "Please select your current country.";
+        }
         break;
       case 4: // Preferences
         if (form.interests.length === 0) newErrors.interests = "Select at least one interest.";
@@ -234,6 +243,11 @@ export default function Onboarding() {
         avatar_url: imageUrl,
         min_age_interest: Number(form.minAgeInterest),
         max_age_interest: Number(form.maxAgeInterest),
+        // Diaspora fields based on simple choice
+        current_country: form.livingLocation === "Ghana" ? "Ghana" : form.currentCountry,
+        diaspora_status: form.livingLocation === "Ghana" ? "LOCAL" as const : "DIASPORA" as const,
+        willing_long_distance: form.willingLongDistance,
+        years_in_diaspora: form.livingLocation === "Abroad" ? Number(form.yearsAbroad) || 0 : 0,
       };
 
       console.log("Profile data to be sent to database:", profileData);
@@ -246,7 +260,14 @@ export default function Onboarding() {
       }
 
       console.log("Profile created successfully!");
-      setMessage("Profile created successfully! Welcome to Betweener! 🎉");
+      
+      // Different success messages based on location
+      if (form.livingLocation === "Abroad") {
+        setMessage("Profile created successfully! 🎉\n\n✨ As a diaspora member, consider verifying your status to build trust and increase your visibility!");
+      } else {
+        setMessage("Profile created successfully! Welcome to Betweener! 🎉");
+      }
+      
       setProfileCreated(true);
       
       // Force refresh the auth context to ensure profile state is updated
@@ -561,8 +582,106 @@ export default function Onboarding() {
   const renderLocationStep = () => (
     <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }] }]}>
       <ScrollView showsVerticalScrollIndicator={false}>
+        {/* Living Location Choice */}
         <View style={styles.inputContainer}>
-          <Text style={styles.label}>Region</Text>
+          <Text style={styles.label}>Where are you currently living?</Text>
+          <View style={styles.locationChoiceContainer}>
+            <TouchableOpacity
+              style={[
+                styles.locationChoice,
+                form.livingLocation === "Ghana" && styles.locationChoiceSelected,
+              ]}
+              onPress={() => setForm((prev) => ({ ...prev, livingLocation: "Ghana", currentCountry: "", yearsAbroad: "" }))}
+            >
+              <Text style={styles.locationEmoji}>🇬🇭</Text>
+              <Text style={[
+                styles.locationChoiceText,
+                form.livingLocation === "Ghana" && styles.locationChoiceTextSelected,
+              ]}>
+                Living in Ghana
+              </Text>
+              <Text style={styles.locationChoiceSubtext}>
+                I'm currently in Ghana
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.locationChoice,
+                form.livingLocation === "Abroad" && styles.locationChoiceSelected,
+              ]}
+              onPress={() => setForm((prev) => ({ ...prev, livingLocation: "Abroad" }))}
+            >
+              <Text style={styles.locationEmoji}>🌍</Text>
+              <Text style={[
+                styles.locationChoiceText,
+                form.livingLocation === "Abroad" && styles.locationChoiceTextSelected,
+              ]}>
+                Living Abroad
+              </Text>
+              <Text style={styles.locationChoiceSubtext}>
+                I'm a Ghanaian living outside Ghana
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Conditional Fields for Living Abroad */}
+        {form.livingLocation === "Abroad" && (
+          <>
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Current Country</Text>
+              <View style={styles.optionsGrid}>
+                {["United States", "United Kingdom", "Canada", "Germany", "Netherlands", "Australia", "Other"].map((country) => (
+                  <TouchableOpacity
+                    key={country}
+                    style={[
+                      styles.gridOption,
+                      form.currentCountry === country && styles.gridOptionSelected,
+                    ]}
+                    onPress={() => setForm((prev) => ({ ...prev, currentCountry: country }))}
+                  >
+                    <Text
+                      style={[
+                        styles.gridOptionText,
+                        form.currentCountry === country && styles.gridOptionTextSelected,
+                      ]}
+                    >
+                      {country}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.label}>Years abroad (optional)</Text>
+              <TextInput
+                style={styles.input}
+                value={form.yearsAbroad}
+                onChangeText={(text) => setForm((prev) => ({ ...prev, yearsAbroad: text }))}
+                placeholder="How many years have you been abroad?"
+                keyboardType="numeric"
+              />
+            </View>
+
+            <View style={styles.inputContainer}>
+              <TouchableOpacity
+                style={[styles.checkboxContainer]}
+                onPress={() => setForm((prev) => ({ ...prev, willingLongDistance: !prev.willingLongDistance }))}
+              >
+                <View style={[styles.checkbox, form.willingLongDistance && styles.checkboxChecked]}>
+                  {form.willingLongDistance && <Text style={styles.checkmark}>✓</Text>}
+                </View>
+                <Text style={styles.checkboxLabel}>Open to long-distance connections</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
+        {/* Ghana-specific fields (for both Ghana and Abroad users) */}
+        <View style={styles.inputContainer}>
+          <Text style={styles.label}>Region {form.livingLocation === "Abroad" ? "(Originally from)" : ""}</Text>
           <View style={styles.optionsGrid}>
             {REGIONS.map((region) => (
               <TouchableOpacity
@@ -1213,5 +1332,78 @@ const styles = StyleSheet.create({
     color: Colors.light.tint,
     textAlign: 'center',
     marginTop: 16,
+  },
+
+  // Diaspora Location Styles
+  locationChoiceContainer: {
+    gap: 16,
+  },
+  locationChoice: {
+    padding: 20,
+    borderRadius: 16,
+    backgroundColor: '#fff',
+    borderWidth: 2,
+    borderColor: '#e5e7eb',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  locationChoiceSelected: {
+    borderColor: Colors.light.tint,
+    backgroundColor: '#fef7ff',
+  },
+  locationEmoji: {
+    fontSize: 32,
+    marginBottom: 8,
+  },
+  locationChoiceText: {
+    fontSize: 18,
+    fontFamily: 'Archivo_700Bold',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  locationChoiceTextSelected: {
+    color: Colors.light.tint,
+  },
+  locationChoiceSubtext: {
+    fontSize: 14,
+    fontFamily: 'Manrope_400Regular',
+    color: '#6b7280',
+    textAlign: 'center',
+  },
+
+  // Checkbox Styles
+  checkboxContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  checkbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#d1d5db',
+    marginRight: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: Colors.light.tint,
+    borderColor: Colors.light.tint,
+  },
+  checkmark: {
+    color: '#fff',
+    fontSize: 12,
+    fontFamily: 'Archivo_700Bold',
+  },
+  checkboxLabel: {
+    fontSize: 16,
+    fontFamily: 'Manrope_400Regular',
+    color: '#374151',
+    flex: 1,
   },
 });

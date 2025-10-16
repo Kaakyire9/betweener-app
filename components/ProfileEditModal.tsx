@@ -18,6 +18,8 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { VerificationBadge } from '@/components/VerificationBadge';
+import { DiasporaVerification } from '@/components/DiasporaVerification';
 
 // Predefined options for profile fields
 const HEIGHT_OPTIONS = [
@@ -90,6 +92,22 @@ const LANGUAGES_OPTIONS = [
   "English", "Twi", "Ga", "Ewe", "Fante", "Hausa", "Dagbani", "Gonja", "Nzema", "Kasem", "Dagaare", "French", "Arabic", "Other"
 ];
 
+// DIASPORA: Country options (focusing on major Ghanaian diaspora locations)
+const COUNTRY_OPTIONS = [
+  "Ghana", "United States", "United Kingdom", "Canada", "Germany", "Netherlands", 
+  "Italy", "Australia", "South Africa", "Nigeria", "Ivory Coast", "Burkina Faso", 
+  "France", "Spain", "Belgium", "Sweden", "Norway", "Dubai", "Other"
+];
+
+const DIASPORA_STATUS_OPTIONS = [
+  "LOCAL", "DIASPORA", "VISITING"
+];
+
+const FUTURE_GHANA_PLANS_OPTIONS = [
+  "Planning to return permanently", "Visit annually", "Visit occasionally", 
+  "Uncertain about return", "Staying abroad permanently", "Other"
+];
+
 interface ProfileEditModalProps {
   visible: boolean;
   onClose: () => void;
@@ -119,6 +137,9 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const [showPetsPicker, setShowPetsPicker] = useState(false);
   const [showLanguagesPicker, setShowLanguagesPicker] = useState(false);
   
+  // DIASPORA picker visibility states (simplified)
+  const [showFutureGhanaPlansPicker, setShowFutureGhanaPlansPicker] = useState(false);
+  
   // Original custom input states
   const [customHeight, setCustomHeight] = useState('');
   const [customOccupation, setCustomOccupation] = useState('');
@@ -137,6 +158,10 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const [customPets, setCustomPets] = useState('');
   const [customLanguage, setCustomLanguage] = useState('');
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
+  const [isVerificationModalVisible, setIsVerificationModalVisible] = useState(false);
+  
+  // DIASPORA custom input states (simplified)
+  const [customFutureGhanaPlans, setCustomFutureGhanaPlans] = useState('');
   
   // Interests states
   const [availableInterests, setAvailableInterests] = useState<string[]>([]);
@@ -167,6 +192,11 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     living_situation: '',
     pets: '',
     languages_spoken: [] as string[],
+    // DIASPORA fields (read-only status, editable details only)
+    willing_long_distance: false,
+    years_in_diaspora: 0,
+    last_ghana_visit: '',
+    future_ghana_plans: '',
   });
 
   // Load current profile data when modal opens
@@ -194,6 +224,11 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         living_situation: (profile as any).living_situation || '',
         pets: (profile as any).pets || '',
         languages_spoken: (profile as any).languages_spoken || [],
+        // DIASPORA fields (preserve existing, don't override status)
+        willing_long_distance: (profile as any).willing_long_distance || false,
+        years_in_diaspora: (profile as any).years_in_diaspora || 0,
+        last_ghana_visit: (profile as any).last_ghana_visit || '',
+        future_ghana_plans: (profile as any).future_ghana_plans || '',
       });
       // Set selected languages for multi-select
       setSelectedLanguages((profile as any).languages_spoken || []);
@@ -588,6 +623,18 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       }
       if (formData.languages_spoken && formData.languages_spoken.length > 0) {
         updateData.languages_spoken = formData.languages_spoken;
+      }
+      
+      // DIASPORA fields (enabled after migration)
+      updateData.willing_long_distance = formData.willing_long_distance;
+      if (formData.years_in_diaspora > 0) {
+        updateData.years_in_diaspora = formData.years_in_diaspora;
+      }
+      if (formData.last_ghana_visit && formData.last_ghana_visit.trim()) {
+        updateData.last_ghana_visit = formData.last_ghana_visit.trim();
+      }
+      if (formData.future_ghana_plans && formData.future_ghana_plans.trim()) {
+        updateData.future_ghana_plans = formData.future_ghana_plans.trim();
       }
 
       // Update profile using auth context (this will refresh the UI automatically)
@@ -1233,6 +1280,116 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
             )}
           </View>
 
+          {/* DIASPORA Section - Detail Refinement Only */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Location Details</Text>
+            
+            {/* Show current status (read-only) with verification */}
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Current Status</Text>
+              <View style={styles.statusDisplay}>
+                <View style={styles.statusRow}>
+                  <Text style={styles.statusText}>
+                    {(profile as any)?.diaspora_status === 'LOCAL' ? '🇬🇭 Living in Ghana' :
+                     (profile as any)?.diaspora_status === 'DIASPORA' ? '🌍 Ghanaian abroad' :
+                     (profile as any)?.diaspora_status === 'VISITING' ? '✈️ Visiting Ghana' : 'Not set'}
+                  </Text>
+                  {(profile as any)?.diaspora_status === 'DIASPORA' && (
+                    <VerificationBadge 
+                      level={(profile as any)?.verification_level || 0}
+                      size="small"
+                      showLabel
+                      onPress={() => setIsVerificationModalVisible(true)}
+                      style={{ marginLeft: 12 }}
+                    />
+                  )}
+                </View>
+                <Text style={styles.statusSubtext}>
+                  Set during registration. Contact support to change.
+                </Text>
+              </View>
+            </View>
+
+            {/* Only show diaspora fields if user is abroad */}
+            {(profile as any)?.diaspora_status === 'DIASPORA' && (
+              <>
+                {/* Years in Diaspora */}
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>Years abroad</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={formData.years_in_diaspora?.toString() || ''}
+                    onChangeText={(text) => {
+                      const years = parseInt(text) || 0;
+                      setFormData(prev => ({ ...prev, years_in_diaspora: years }));
+                    }}
+                    placeholder="How many years abroad?"
+                    keyboardType="numeric"
+                  />
+                </View>
+
+                {/* Last Ghana Visit */}
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>Last visit to Ghana</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={formData.last_ghana_visit}
+                    onChangeText={(text) => setFormData(prev => ({ ...prev, last_ghana_visit: text }))}
+                    placeholder="e.g., December 2024"
+                  />
+                </View>
+
+                {/* Future Ghana Plans */}
+                <View style={styles.inputContainer}>
+                  <Text style={styles.inputLabel}>Future plans with Ghana</Text>
+                  <TouchableOpacity
+                    style={styles.selectButton}
+                    onPress={() => setShowFutureGhanaPlansPicker(true)}
+                  >
+                    <Text style={[
+                      formData.future_ghana_plans ? styles.selectButtonText : styles.selectButtonPlaceholder
+                    ]}>
+                      {formData.future_ghana_plans || 'Your future plans'}
+                    </Text>
+                    <MaterialCommunityIcons name="chevron-down" size={20} color="#9ca3af" />
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+
+            {/* Long Distance Preference - Only for diaspora users */}
+            {(profile as any)?.diaspora_status === 'DIASPORA' && (
+              <View style={styles.inputContainer}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <TouchableOpacity
+                    style={[
+                      { 
+                        width: 20, 
+                        height: 20, 
+                        borderRadius: 4, 
+                        borderWidth: 2, 
+                        borderColor: Colors.light.tint,
+                        backgroundColor: formData.willing_long_distance ? Colors.light.tint : 'transparent',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginRight: 10
+                      }
+                    ]}
+                    onPress={() => setFormData(prev => ({ ...prev, willing_long_distance: !prev.willing_long_distance }))}
+                  >
+                    {formData.willing_long_distance && (
+                      <MaterialCommunityIcons name="check" size={16} color="#fff" />
+                    )}
+                  </TouchableOpacity>
+                  <Text style={styles.inputLabel}>Open to long-distance connections</Text>
+                </View>
+                <Text style={styles.statusSubtext}>
+                  Connect with Ghanaians living in Ghana
+                </Text>
+              </View>
+            )}
+          </View>
+
           {/* Photos Section */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
@@ -1607,6 +1764,79 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
           )}
         </SafeAreaView>
       </Modal>
+
+      {/* Future Ghana Plans Picker Modal - Only for diaspora users */}
+      {(profile as any)?.diaspora_status === 'DIASPORA' && (
+        <Modal visible={showFutureGhanaPlansPicker} animationType="slide" presentationStyle="pageSheet">
+          <SafeAreaView style={styles.pickerContainer}>
+            <View style={styles.pickerHeader}>
+              <TouchableOpacity onPress={() => setShowFutureGhanaPlansPicker(false)}>
+                <Text style={styles.pickerCancel}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={styles.pickerTitle}>Future Plans with Ghana</Text>
+              <View style={{ width: 50 }} />
+            </View>
+            <FlatList
+              style={styles.pickerList}
+              data={FUTURE_GHANA_PLANS_OPTIONS}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[
+                    styles.pickerItem,
+                    formData.future_ghana_plans === item && styles.pickerItemSelected
+                  ]}
+                  onPress={() => {
+                    setFormData(prev => ({ ...prev, future_ghana_plans: item }));
+                    setShowFutureGhanaPlansPicker(false);
+                    setCustomFutureGhanaPlans('');
+                  }}
+                >
+                  <Text style={[
+                    styles.pickerItemText,
+                    formData.future_ghana_plans === item && styles.pickerItemTextSelected
+                  ]}>
+                    {item}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            />
+            <View style={{ padding: 20 }}>
+              <Text style={styles.inputLabel}>Or enter custom plans:</Text>
+              <TextInput
+                style={[styles.textInput, { marginTop: 8 }]}
+                value={customFutureGhanaPlans}
+                onChangeText={setCustomFutureGhanaPlans}
+                placeholder="Describe your future plans"
+              />
+              {customFutureGhanaPlans.trim() !== '' && (
+                <TouchableOpacity
+                  style={[styles.pickerItem, { marginTop: 10 }]}
+                  onPress={() => {
+                    setFormData(prev => ({ ...prev, future_ghana_plans: customFutureGhanaPlans.trim() }));
+                    setShowFutureGhanaPlansPicker(false);
+                    setCustomFutureGhanaPlans('');
+                  }}
+                >
+                  <Text style={styles.pickerItemText}>{customFutureGhanaPlans.trim()}</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </SafeAreaView>
+        </Modal>
+      )}
+
+      {/* Diaspora Verification Modal */}
+      <DiasporaVerification
+        visible={isVerificationModalVisible}
+        onClose={() => setIsVerificationModalVisible(false)}
+        profile={profile}
+        onVerificationUpdate={(level) => {
+          // Update profile verification level in UI
+          if (profile) {
+            (profile as any).verification_level = level;
+          }
+        }}
+      />
     </Modal>
   );
 }
@@ -1892,5 +2122,28 @@ const styles = StyleSheet.create({
   removeInterestButton: {
     marginLeft: 6,
     padding: 2,
+  },
+  statusDisplay: {
+    padding: 16,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  statusText: {
+    fontSize: 16,
+    fontFamily: 'Archivo_600SemiBold',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  statusSubtext: {
+    fontSize: 14,
+    fontFamily: 'Manrope_400Regular',
+    color: '#6b7280',
   },
 });

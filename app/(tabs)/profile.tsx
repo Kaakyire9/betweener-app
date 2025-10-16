@@ -1,7 +1,11 @@
+import { DiasporaVerification } from "@/components/DiasporaVerification";
 import PhotoGallery from "@/components/PhotoGallery";
 import ProfileEditModal from "@/components/ProfileEditModal";
+import { VerificationBadge } from "@/components/VerificationBadge";
+import { VerificationNotifications } from "@/components/VerificationNotifications";
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
+import { useVerificationStatus } from "@/hooks/use-verification-status";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -46,6 +50,13 @@ const SETTINGS_MENU_ITEMS = [
     title: 'Help & Support',
     icon: 'help-circle',
     color: Colors.light.tint
+  },
+  {
+    id: 'admin',
+    title: 'Admin Dashboard',
+    icon: 'shield-account',
+    color: '#FF9800',
+    adminOnly: true
   },
   {
     id: 'divider',
@@ -94,6 +105,7 @@ export default function ProfileScreen() {
   const { signOut, user, profile, refreshProfile } = useAuth();
   const fontsLoaded = useAppFonts();
   const params = useLocalSearchParams();
+  const { status: verificationStatus, loading: verificationLoading, refreshStatus } = useVerificationStatus(profile?.id);
   
   const [selectedPrompts, setSelectedPrompts] = useState<Record<string, number>>({
     two_truths_lie: 0,
@@ -108,6 +120,7 @@ export default function ProfileScreen() {
   const [userInterests, setUserInterests] = useState<string[]>([]);
   const [loadingInterests, setLoadingInterests] = useState(false);
   const [userPhotos, setUserPhotos] = useState<string[]>([]);
+  const [isVerificationModalVisible, setIsVerificationModalVisible] = useState(false);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -334,6 +347,8 @@ export default function ProfileScreen() {
     
     if (itemId === 'logout') {
       handleSignOut();
+    } else if (itemId === 'admin') {
+      router.push('/admin');
     } else {
       // Handle other settings navigation
       console.log(`Navigate to ${itemId}`);
@@ -361,6 +376,9 @@ export default function ProfileScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      {/* Verification Notifications */}
+      {profile?.id && <VerificationNotifications />}
+      
       {/* Animated Header */}
       <Animated.View
         style={[
@@ -448,7 +466,15 @@ export default function ProfileScreen() {
               },
             ]}
           >
-            {SETTINGS_MENU_ITEMS.map((item) => {
+            {SETTINGS_MENU_ITEMS.filter(item => {
+              // Hide admin option for regular users (you can add admin check here)
+              if (item.adminOnly) {
+                // Add your admin check logic here, for now showing to everyone
+                // return user?.email === 'admin@betweener.com' || user?.email?.includes('admin');
+                return true; // Show to everyone for testing
+              }
+              return true;
+            }).map((item) => {
               if (item.type === 'divider') {
                 return <View key={item.id} style={styles.dropdownDivider} />;
               }
@@ -535,9 +561,8 @@ export default function ProfileScreen() {
             )}
           </View>
           
-          <Text style={styles.profileName}>
-            {profile?.full_name || 'Your Name'}, {profile?.age || 25}
-          </Text>
+          <Text style={styles.profileName}> {`${profile?.full_name || 'Your Name'}, ${profile?.age || 25}`}</Text>
+
           
           <View style={styles.locationContainer}>
             <MaterialCommunityIcons name="map-marker" size={16} color={Colors.light.tint} />
@@ -557,7 +582,7 @@ export default function ProfileScreen() {
               {profile?.age && (
                 <View style={styles.detailItem}>
                   <MaterialCommunityIcons name="cake-variant" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>{profile.age} years old</Text>
+                  <Text style={styles.detailText}>{profile?.age ? `${profile.age} years old` : "Age not set"}</Text>
                 </View>
               )}
               {(profile as any)?.height && (
@@ -594,6 +619,77 @@ export default function ProfileScreen() {
                 <View style={styles.detailItem}>
                   <MaterialCommunityIcons name="heart-outline" size={16} color={Colors.light.tint} />
                   <Text style={styles.detailText}>Looking for {(profile as any).looking_for}</Text>
+                </View>
+              </View>
+            )}
+
+            {/* DIASPORA: Location Information */}
+            {(profile as any)?.current_country && (
+              <View style={styles.detailRow}>
+                <View style={styles.detailItem}>
+                  <MaterialCommunityIcons name="map-marker" size={16} color={Colors.light.tint} />
+                  <Text style={styles.detailText}>
+                    {`Currently in ${(profile as any).current_country || 'Unknown'}${(profile as any).current_country === 'Ghana' ? ' 🇬🇭' : ''}`}
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* Diaspora Status with Verification */}
+            {(profile as any)?.diaspora_status && (profile as any).diaspora_status !== 'LOCAL' && (
+              <View style={styles.detailRow}>
+                <View style={styles.detailItem}>
+                  <MaterialCommunityIcons 
+                    name={(profile as any).diaspora_status === 'DIASPORA' ? 'airplane' : 'calendar-clock'} 
+                    size={16} 
+                    color={Colors.light.tint} 
+                  />
+                  <Text style={styles.detailText}>
+                    {(profile as any).diaspora_status === 'DIASPORA' ? '🌍 Ghanaian abroad' : '✈️ Visiting Ghana'}
+                  </Text>
+                  {!verificationLoading && (
+                    <VerificationBadge 
+                      level={(profile as any)?.verification_level || 0}
+                      size="small"
+                      onPress={() => setIsVerificationModalVisible(true)}
+                      style={{ marginLeft: 8 }}
+                      rejectionStatus={verificationStatus?.hasRejection ? {
+                        isRejected: true,
+                        rejectionReason: verificationStatus.rejectionReason || undefined,
+                        canResubmit: verificationStatus.canResubmit || true,
+                      } : undefined}
+                    />
+                  )}
+                </View>
+              </View>
+            )}
+
+            {/* Years in Diaspora */}
+            {(profile as any)?.years_in_diaspora && (profile as any).years_in_diaspora > 0 && (
+              <View style={styles.detailRow}>
+                <View style={styles.detailItem}>
+                  <MaterialCommunityIcons name="calendar" size={16} color={Colors.light.tint} />
+                  <Text style={styles.detailText}>{profile?.years_in_diaspora ? `${profile.years_in_diaspora} years abroad` : "New diaspora member"}</Text>
+                </View>
+              </View>
+            )}
+
+            {/* Long Distance Preference */}
+            {(profile as any)?.willing_long_distance && (
+              <View style={styles.detailRow}>
+                <View style={styles.detailItem}>
+                  <MaterialCommunityIcons name="earth" size={16} color={Colors.light.tint} />
+                  <Text style={styles.detailText}>Open to long-distance connections</Text>
+                </View>
+              </View>
+            )}
+
+            {/* Future Ghana Plans */}
+            {(profile as any)?.future_ghana_plans && (
+              <View style={styles.detailRow}>
+                <View style={styles.detailItem}>
+                  <MaterialCommunityIcons name="compass" size={16} color={Colors.light.tint} />
+                  <Text style={styles.detailText}>{(profile as any).future_ghana_plans}</Text>
                 </View>
               </View>
             )}
@@ -683,7 +779,7 @@ export default function ProfileScreen() {
                 <View style={styles.detailItem}>
                   <MaterialCommunityIcons name="translate" size={16} color={Colors.light.tint} />
                   <Text style={styles.detailText}>
-                    Languages: {(profile as any).languages_spoken.join(', ')}
+                    {`Languages: ${(profile as any).languages_spoken?.join(', ') || 'Not specified'}`}
                   </Text>
                 </View>
               </View>
@@ -720,7 +816,7 @@ export default function ProfileScreen() {
         )}
 
         {/* Photo Gallery Section */}
-        <View style={styles.section}>
+        <View style={[styles.section, { marginBottom: 0, paddingBottom: 10 }]}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Photos</Text>
             {!isPreviewMode && (
@@ -747,7 +843,7 @@ export default function ProfileScreen() {
         </View>
 
         {/* Interactive Prompts Section */}
-        <View style={styles.section}>
+        <View style={[styles.section, { paddingTop: 5 }]}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>About Me</Text>
             {!isPreviewMode && (
@@ -861,6 +957,21 @@ export default function ProfileScreen() {
             setRefreshing(false);
             setShowEditModal(false);
           }
+        }}
+      />
+
+      {/* Diaspora Verification Modal */}
+      <DiasporaVerification
+        visible={isVerificationModalVisible}
+        onClose={() => {
+          setIsVerificationModalVisible(false);
+          refreshStatus();
+        }}
+        profile={profile}
+        onVerificationUpdate={(level) => {
+          // Refresh profile to show updated verification level
+          refreshProfile();
+          refreshStatus();
         }}
       />
     </SafeAreaView>
@@ -1384,5 +1495,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#475569',
     fontFamily: 'Manrope_500Medium',
+  },
+  closeAdminButton: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 20,
+    padding: 8,
+    zIndex: 1000,
   },
 });
