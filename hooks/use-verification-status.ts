@@ -1,150 +1,226 @@
+/**
+ * Custom hook for managing verification status
+ * 
+ * Provides real-time verification status updates, pending requests,
+ * rejection tracking, and resubmission eligibility for user verification.
+ */
+
 import { supabase } from '@/lib/supabase';
 import { useEffect, useState } from 'react';
 
-interface VerificationStatus {
-  level: number;
-  hasRejection: boolean;
+interface VerificationRequest {
+  id: string;
+  type: string;
+  status: string;
+  submittedAt: string;
+  reviewedAt?: string;
   rejectionReason?: string;
-  canResubmit: boolean;
+}
+
+interface VerificationStatus {
+  // Current status
+  isVerified: boolean;
+  verificationLevel: number;
+  
+  // Pending requests
+  hasPendingRequest: boolean;
   pendingRequest?: {
     id: string;
     type: string;
     submittedAt: string;
   };
+  
+  // Rejection status
+  hasRejection: boolean;
+  rejectionReason?: string;
   lastRejectedAt?: string;
+  
+  // Resubmission eligibility
+  canResubmit: boolean;
+  
+  // Loading state
+  loading: boolean;
 }
 
-export const useVerificationStatus = (profileId?: string) => {
+/**
+ * Hook to get and manage user verification status
+ * 
+ * @param userId - User ID to check verification status for
+ * @returns Verification status object and refresh function
+ */
+export const useVerificationStatus = (userId?: string) => {
   const [status, setStatus] = useState<VerificationStatus>({
-    level: 0,
+    isVerified: false,
+    verificationLevel: 0,
+    hasPendingRequest: false,
     hasRejection: false,
     canResubmit: true,
+    loading: true,
   });
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    if (!profileId) {
-      setLoading(false);
+  const fetchVerificationStatus = async () => {
+    if (!userId) {
+      setStatus(prev => ({ ...prev, loading: false }));
       return;
     }
 
-    loadVerificationStatus();
+    try {
+      setStatus(prev => ({ ...prev, loading: true }));
 
-    // Set up real-time subscription for verification requests
+      // Get user's verification level from profile
+      const { data: profileData, error: profileError } = await supabase
+        .from('profiles')
+        .select('verification_level')
+        .eq('user_id', userId)
+        .single();
+
+      if (profileError && profileError.code !== 'PGRST116') {
+        console.error('Error fetching profile:', profileError);
+      }
+
+      // Get verification requests
+      const { data: requestsData, error: requestsError } = await supabase
+        .from('verification_requests')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (requestsError) {
+        console.error('Error fetching verification requests:', requestsError);
+        setStatus(prev => ({ ...prev, loading: false }));
+        return;
+      }
+
+      const requests = requestsData || [];
+      const verificationLevel = profileData?.verification_level || 0;
+      
+      // Find pending request
+      const pendingRequest = requests.find(req => req.status === 'pending');
+      
+      // Find most recent rejection
+      const rejectedRequests = requests.filter(req => req.status === 'rejected');
+      const lastRejection = rejectedRequests[0]; // Most recent due to ordering
+      
+      // Determine if user can resubmit
+      // Can resubmit if: no pending request OR last request was rejected
+      const canResubmit = !pendingRequest;
+
+      setStatus({
+        isVerified: verificationLevel > 0,
+        verificationLevel,
+        hasPendingRequest: !!pendingRequest,
+        pendingRequest: pendingRequest ? {
+          id: pendingRequest.id,
+          type: pendingRequest.verification_type,
+          submittedAt: pendingRequest.created_at,
+        } : undefined,
+        hasRejection: !!lastRejection,
+        rejectionReason: lastRejection?.reviewer_notes || undefined,
+        lastRejectedAt: lastRejection?.reviewed_at || undefined,
+        canResubmit,
+        loading: false,
+      });
+
+    } catch (error) {
+      console.error('Error fetching verification status:', error);
+      setStatus(prev => ({ ...prev, loading: false }));
+    }
+  };
+
+  useEffect(() => {
+    fetchVerificationStatus();
+  }, [userId]);
+
+  // Set up real-time subscription for verification requests
+  useEffect(() => {
+    if (!userId) return;
+
     const subscription = supabase
-      .channel('verification_requests_changes')
+      .channel('verification-status')
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'verification_requests',
-          filter: `profile_id=eq.${profileId}`,
+          filter: `user_id=eq.${userId}`,
         },
-        (payload) => {
-          console.log('Verification request change detected:', payload);
-          loadVerificationStatus();
+        () => {
+          // Refresh status when verification requests change
+          fetchVerificationStatus();
         }
       )
-      .subscribe();
-
-    // Also subscribe to profile changes for verification level updates
-    const profileSubscription = supabase
-      .channel('profile_verification_changes')
       .on(
         'postgres_changes',
         {
           event: 'UPDATE',
           schema: 'public',
           table: 'profiles',
-          filter: `id=eq.${profileId}`,
+          filter: `user_id=eq.${userId}`,
         },
-        (payload) => {
-          console.log('Profile verification level change detected:', payload);
-          loadVerificationStatus();
+        () => {
+          // Refresh status when profile verification level changes
+          fetchVerificationStatus();
         }
       )
       .subscribe();
 
     return () => {
       subscription.unsubscribe();
-      profileSubscription.unsubscribe();
     };
-  }, [profileId]);
-
-  const loadVerificationStatus = async () => {
-    try {
-      // Get profile verification level
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('verification_level')
-        .eq('id', profileId)
-        .single();
-
-      if (profileError) throw profileError;
-
-      // Get verification requests to check for rejections and pending requests
-      const { data: requests, error: requestsError } = await supabase
-        .from('verification_requests')
-        .select('*')
-        .eq('profile_id', profileId)
-        .order('created_at', { ascending: false });
-
-      if (requestsError) throw requestsError;
-
-      // Find the most recent request
-      const latestRequest = requests?.[0];
-      
-      // Find pending request
-      const pendingRequest = requests?.find(r => r.status === 'pending');
-      
-      // Find latest rejection that hasn't been superseded by a newer approval
-      const latestRejection = requests?.find(r => r.status === 'rejected');
-      
-      // Check if there's an approved request after the latest rejection
-      const hasApprovalAfterRejection = latestRejection && requests?.some(r => 
-        r.status === 'approved' && 
-        new Date(r.created_at) > new Date(latestRejection.created_at)
-      );
-
-      // Only show rejection if it's the latest status and not superseded by approval
-      const shouldShowRejection = latestRejection && 
-        !hasApprovalAfterRejection && 
-        latestRequest?.status === 'rejected';
-
-      // Check if user can resubmit (no pending request exists)
-      const canResubmit = !pendingRequest;
-
-      setStatus({
-        level: profile?.verification_level || 0,
-        hasRejection: shouldShowRejection,
-        rejectionReason: shouldShowRejection ? latestRejection?.reviewer_notes : undefined,
-        canResubmit,
-        pendingRequest: pendingRequest ? {
-          id: pendingRequest.id,
-          type: pendingRequest.verification_type,
-          submittedAt: pendingRequest.submitted_at,
-        } : undefined,
-        lastRejectedAt: shouldShowRejection ? latestRejection?.reviewed_at : undefined,
-      });
-
-    } catch (error) {
-      console.error('Error loading verification status:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const refreshStatus = () => {
-    if (profileId) {
-      setLoading(true);
-      loadVerificationStatus();
-    }
-  };
+  }, [userId]);
 
   return {
     status,
-    loading,
-    refreshStatus,
+    refreshStatus: fetchVerificationStatus,
   };
+};
+
+/**
+ * Hook to get verification request history
+ * 
+ * @param userId - User ID to get history for
+ * @returns Array of verification requests and loading state
+ */
+export const useVerificationHistory = (userId?: string) => {
+  const [requests, setRequests] = useState<VerificationRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!userId) {
+      setLoading(false);
+      return;
+    }
+
+    const fetchHistory = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('verification_requests')
+          .select('*')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        const formattedRequests: VerificationRequest[] = (data || []).map(req => ({
+          id: req.id,
+          type: req.verification_type,
+          status: req.status,
+          submittedAt: req.created_at,
+          reviewedAt: req.reviewed_at,
+          rejectionReason: req.reviewer_notes,
+        }));
+
+        setRequests(formattedRequests);
+      } catch (error) {
+        console.error('Error fetching verification history:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchHistory();
+  }, [userId]);
+
+  return { requests, loading };
 };

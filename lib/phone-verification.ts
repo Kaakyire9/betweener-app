@@ -1,9 +1,22 @@
-// Twilio Phone Verification Service - Backend API Version
-// Uses Supabase Edge Functions for secure server-side Twilio integration
+/**
+ * Phone Verification Service
+ * 
+ * Secure phone number verification using Supabase Edge Functions and Twilio.
+ * All Twilio credentials are safely stored in backend environment variables.
+ * 
+ * Features:
+ * - SMS verification code sending
+ * - Code verification with confidence scoring
+ * - Ghana phone number optimization
+ * - Automatic phone number formatting
+ * - Database integration for verification tracking
+ */
 
 import { supabase } from './supabase';
 
-// Types for phone verification
+/**
+ * Result interface for phone verification operations
+ */
 export interface PhoneVerificationResult {
   success: boolean;
   verificationSid?: string;
@@ -15,6 +28,9 @@ export interface PhoneVerificationResult {
   message?: string;
 }
 
+/**
+ * Result interface for code verification checks
+ */
 export interface PhoneVerificationCheck {
   success: boolean;
   verified?: boolean;
@@ -22,18 +38,36 @@ export interface PhoneVerificationCheck {
   error?: string;
 }
 
+/**
+ * Phone Verification Service
+ * 
+ * Handles secure phone verification through Supabase Edge Functions.
+ * Uses environment variables for all sensitive configuration.
+ */
 export class PhoneVerificationService {
   
-  // Get Supabase URL and anon key
-  private static getSupabaseUrl(): string {
-    return 'https://jbyblhithbqwojhwlenv.supabase.co';
+  /**
+   * Get Supabase configuration from environment variables
+   */
+  private static getSupabaseConfig() {
+    // Get configuration from environment or use defaults for development
+    const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+    const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error('Supabase configuration not found. Please check your environment variables.');
+    }
+    
+    return { supabaseUrl, supabaseKey };
   }
 
-  private static getSupabaseAnonKey(): string {
-    return 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpieWJsaGl0aGJxd29qaHdsZW52Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MjczNTIzNzIsImV4cCI6MjA0MjkyODM3Mn0.LdeqWSeLLQIFoHrScg7mqQ_XaorEXMBYGz1_uLyJo0w';
-  }
-
-  // Clean and format phone number
+  /**
+   * Clean and format phone number to international format
+   * Optimized for Ghana phone numbers but handles international numbers
+   * 
+   * @param phoneNumber - Raw phone number input
+   * @returns Formatted international phone number
+   */
   static cleanPhoneNumber(phoneNumber: string): string {
     // Remove all non-digit characters
     const cleaned = phoneNumber.replace(/\D/g, '');
@@ -51,7 +85,13 @@ export class PhoneVerificationService {
     return cleaned;
   }
 
-  // Calculate confidence score based on phone number characteristics
+  /**
+   * Calculate confidence score based on phone number characteristics
+   * Higher scores indicate more reliable phone numbers
+   * 
+   * @param phoneNumber - Formatted phone number
+   * @returns Confidence score (0-100)
+   */
   static calculatePhoneScore(phoneNumber: string): number {
     let score = 0;
     
@@ -83,16 +123,23 @@ export class PhoneVerificationService {
     return Math.min(score, 100);
   }
   
-  // Step 1: Send SMS verification code via backend API
+  /**
+   * Send SMS verification code via Supabase Edge Function
+   * 
+   * @param phoneNumber - Phone number to verify
+   * @param userId - User ID for tracking
+   * @returns Promise with verification result
+   */
   static async sendVerificationCode(phoneNumber: string, userId: string): Promise<PhoneVerificationResult> {
     try {
       const cleanedPhone = this.cleanPhoneNumber(phoneNumber);
+      const config = this.getSupabaseConfig();
       
-      const response = await fetch(`${this.getSupabaseUrl()}/functions/v1/send-verification`, {
+      const response = await fetch(`${config.supabaseUrl}/functions/v1/send-verification`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.getSupabaseAnonKey()}`,
+          'Authorization': `Bearer ${config.supabaseKey}`,
         },
         body: JSON.stringify({
           phoneNumber: cleanedPhone,
@@ -126,16 +173,24 @@ export class PhoneVerificationService {
     }
   }
   
-  // Step 2: Verify the code entered by user via backend API
+  /**
+   * Verify the SMS code entered by user
+   * 
+   * @param phoneNumber - Phone number being verified
+   * @param code - Verification code from SMS
+   * @param userId - User ID for tracking
+   * @returns Promise with verification result
+   */
   static async verifyCode(phoneNumber: string, code: string, userId: string): Promise<PhoneVerificationResult> {
     try {
       const cleanedPhone = this.cleanPhoneNumber(phoneNumber);
+      const config = this.getSupabaseConfig();
       
-      const response = await fetch(`${this.getSupabaseUrl()}/functions/v1/verify-phone`, {
+      const response = await fetch(`${config.supabaseUrl}/functions/v1/verify-phone`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.getSupabaseAnonKey()}`,
+          'Authorization': `Bearer ${config.supabaseKey}`,
         },
         body: JSON.stringify({
           phoneNumber: cleanedPhone,
@@ -175,13 +230,14 @@ export class PhoneVerificationService {
     }
   }
   
-  // Legacy method - use new methods instead
-  static async sendVerificationCodeOld(phoneNumber: string): Promise<PhoneVerificationResult> {
-    console.warn('Use sendVerificationCode(phoneNumber, userId) instead');
-    return { success: false, error: 'Method requires user ID' };
-  }
-  
-  // Store phone verification result in database (for manual tracking if needed)
+  /**
+   * Store phone verification result in database for tracking
+   * 
+   * @param userId - User ID
+   * @param phoneNumber - Verified phone number
+   * @param verificationResult - Result from verification process
+   * @param isVerified - Whether verification was successful
+   */
   static async storePhoneVerification(
     userId: string, 
     phoneNumber: string, 
@@ -199,24 +255,67 @@ export class PhoneVerificationService {
           verified_at: isVerified ? new Date().toISOString() : null,
         });
       
-      if (error) throw error;
+      if (error) {
+        console.error('Database error storing phone verification:', error);
+        throw error;
+      }
     } catch (error) {
       console.error('Error storing phone verification:', error);
+      // Don't throw here to avoid breaking the verification flow
+    }
+  }
+
+  /**
+   * Check if a phone number is already verified for any user
+   * 
+   * @param phoneNumber - Phone number to check
+   * @returns Promise with verification status
+   */
+  static async isPhoneNumberVerified(phoneNumber: string): Promise<boolean> {
+    try {
+      const cleanedPhone = this.cleanPhoneNumber(phoneNumber);
+      
+      const { data, error } = await supabase
+        .from('phone_verifications')
+        .select('verified_at')
+        .eq('phone_number', cleanedPhone)
+        .eq('status', 'verified')
+        .limit(1);
+      
+      if (error) {
+        console.error('Error checking phone verification status:', error);
+        return false;
+      }
+      
+      return data && data.length > 0;
+    } catch (error) {
+      console.error('Error checking phone verification:', error);
+      return false;
     }
   }
 }
 
-// Usage example:
-/*
-// Send verification code
-const result = await PhoneVerificationService.sendVerificationCode('+233201234567');
-if (result.success) {
-  console.log('SMS sent!', result.verificationSid);
-}
-
-// Verify code
-const verification = await PhoneVerificationService.verifyCode(result.verificationSid, '123456');
-if (verification.verified) {
-  console.log('Phone verified!');
-}
-*/
+/**
+ * Usage Examples:
+ * 
+ * // Send verification code
+ * const result = await PhoneVerificationService.sendVerificationCode('+233201234567', 'user-123');
+ * if (result.success) {
+ *   console.log('SMS sent!', result.message);
+ * }
+ * 
+ * // Verify code
+ * const verification = await PhoneVerificationService.verifyCode('+233201234567', '123456', 'user-123');
+ * if (verification.verified) {
+ *   console.log('Phone verified successfully!');
+ *   
+ *   // Optionally store in database
+ *   await PhoneVerificationService.storePhoneVerification('user-123', '+233201234567', verification, true);
+ * }
+ * 
+ * // Check if phone is already verified
+ * const isVerified = await PhoneVerificationService.isPhoneNumberVerified('+233201234567');
+ * if (isVerified) {
+ *   console.log('Phone number is already verified');
+ * }
+ */
