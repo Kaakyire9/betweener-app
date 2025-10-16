@@ -32,7 +32,7 @@ In your Supabase dashboard, go to Settings → Edge Functions → Environment Va
 TWILIO_ACCOUNT_SID=your_twilio_account_sid_here
 TWILIO_AUTH_TOKEN=your_twilio_auth_token_here
 TWILIO_VERIFY_SERVICE_SID=your_twilio_verify_service_sid_here
-SUPABASE_URL=https://jbyblhithbqwojhwlenv.supabase.co
+SUPABASE_URL=your_supabase_url_here
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
 ```
 
