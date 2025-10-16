@@ -1,5 +1,11 @@
 # Backend API Deployment Guide
 
+## ⚠️ Security Notice
+**NEVER commit real API keys or secrets to your repository!** 
+- Always use placeholder values in documentation
+- Store real credentials in environment variables or secure vaults
+- Use `.env` files locally and add them to `.gitignore`
+
 ## Overview
 Your backend API has been created using Supabase Edge Functions. This provides a secure, serverless environment for handling phone verification with Twilio.
 
@@ -32,9 +38,14 @@ In your Supabase dashboard, go to Settings → Edge Functions → Environment Va
 TWILIO_ACCOUNT_SID=your_twilio_account_sid_here
 TWILIO_AUTH_TOKEN=your_twilio_auth_token_here
 TWILIO_VERIFY_SERVICE_SID=your_twilio_verify_service_sid_here
-SUPABASE_URL=your_supabase_url_here
+SUPABASE_URL=https://jbyblhithbqwojhwlenv.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
 ```
+
+**Important**: Replace the placeholder values above with your actual Twilio credentials from your [Twilio Console](https://console.twilio.com/):
+- **Account SID**: Found in your Twilio Console Dashboard
+- **Auth Token**: Found in your Twilio Console Dashboard  
+- **Verify Service SID**: Create a Verify Service in Twilio Console → Verify → Services
 
 **Note**: Get your Service Role Key from Supabase Dashboard → Settings → API → service_role key
 
