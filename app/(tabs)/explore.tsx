@@ -1,9 +1,12 @@
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
+import { ExploreService, type ExploreProfile, type DiscoveryFilters } from '@/lib/explore-service';
+import { StatusService, type StatusRing } from '@/lib/status-service';
+import { useLocationTracking } from '@/hooks/use-location-tracking';
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import {
     Alert,
     Animated,
@@ -12,160 +15,15 @@ import {
     StyleSheet,
     Text,
     TouchableOpacity,
-    View
+    View,
+    ScrollView,
+    RefreshControl,
+    ActivityIndicator,
 } from "react-native";
 import { GestureHandlerRootView, PanGestureHandler, PanGestureHandlerStateChangeEvent, State } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
-
-// Enhanced Ghana diaspora discovery data
-const ENHANCED_MATCHES = [
-  {
-    id: '1',
-    name: 'Akosua',
-    age: 24,
-    tagline: 'Adventure seeker & foodie 🌟',
-    bio: 'Love exploring new places and trying different cuisines. Looking for someone to share life\'s beautiful moments with.',
-    location: 'London, UK',
-    hometown: 'Kumasi, Ashanti',
-    diasporaYears: 3,
-    tribe: 'Akan',
-    religion: 'Christian',
-    education: 'Imperial College London',
-    profession: 'Marketing Manager',
-    languages: ['English', 'Twi'],
-    interests: ['Travel', 'Highlife Music', 'Jollof Rice', 'Dancing', 'Photography'],
-    culturalEvents: ['Ghana Independence Day', 'Homowo Festival'],
-    avatar_url: 'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=400&h=600&fit=crop&crop=face',
-    photos: [
-      'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=400&h=600&fit=crop&crop=face',
-      'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=400&h=600&fit=crop&crop=face'
-    ],
-    distance: '2.3 km away',
-    lastActive: '2 hours ago',
-    isActiveNow: false,
-    isVerified: true,
-    hasStatus: true,
-    statusCount: 2,
-    statusLastUpdated: '1 hour ago',
-    verificationLevel: 2,
-    compatibilityScore: 89,
-    mutualConnections: 3,
-    sharedInterests: ['Travel', 'Music', 'Food'],
-    culturalAlignment: 92,
-    relationshipGoals: 'Serious relationship',
-    nextGhanaVisit: '2025-12-20',
-  },
-  {
-    id: '2',
-    name: 'Kwame',
-    age: 27,
-    tagline: 'Tech enthusiast & gym lover 💪',
-    bio: 'Software developer by day, fitness enthusiast by evening. Looking for someone who shares my passion for growth.',
-    location: 'Toronto, Canada',
-    hometown: 'Accra, Greater Accra',
-    diasporaYears: 5,
-    tribe: 'Ga',
-    religion: 'Christian',
-    education: 'University of Toronto',
-    profession: 'Software Engineer',
-    languages: ['English', 'Ga', 'Twi'],
-    interests: ['Technology', 'Fitness', 'Azonto', 'Football', 'Startups'],
-    culturalEvents: ['Ghana Fest Toronto', 'Afrochella'],
-    avatar_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=600&fit=crop&crop=face',
-    photos: [
-      'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=600&fit=crop&crop=face',
-      'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=400&h=600&fit=crop&crop=face'
-    ],
-    distance: '15.7 km away',
-    lastActive: 'Active now',
-    isActiveNow: true,
-    isVerified: true,
-    hasStatus: true,
-    statusCount: 1,
-    statusLastUpdated: '30 minutes ago',
-    verificationLevel: 3,
-    compatibilityScore: 76,
-    mutualConnections: 1,
-    sharedInterests: ['Technology', 'Fitness'],
-    culturalAlignment: 84,
-    relationshipGoals: 'Long-term partnership',
-    nextGhanaVisit: '2025-08-15',
-  },
-  {
-    id: '3',
-    name: 'Ama',
-    age: 22,
-    tagline: 'Artist with a kind heart 🎨',
-    bio: 'I paint emotions and capture moments. Seeking someone who appreciates art and believes in genuine connections.',
-    location: 'New York, USA',
-    hometown: 'Cape Coast, Central',
-    diasporaYears: 2,
-    tribe: 'Fante',
-    religion: 'Christian',
-    education: 'NYU Tisch School of Arts',
-    profession: 'Digital Artist',
-    languages: ['English', 'Fante'],
-    interests: ['Art', 'Photography', 'Kente Weaving', 'Nature', 'Adinkra Symbols'],
-    culturalEvents: ['Ghana Day NYC', 'African Art Festival'],
-    avatar_url: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&h=600&fit=crop&crop=face',
-    photos: [
-      'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&h=600&fit=crop&crop=face',
-      'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&h=600&fit=crop&crop=face'
-    ],
-    distance: '8.2 km away',
-    lastActive: '1 hour ago',
-    isActiveNow: false,
-    isVerified: false,
-    hasStatus: false,
-    statusCount: 0,
-    statusLastUpdated: null,
-    verificationLevel: 1,
-    compatibilityScore: 94,
-    mutualConnections: 5,
-    sharedInterests: ['Art', 'Photography', 'Culture'],
-    culturalAlignment: 97,
-    relationshipGoals: 'Dating with purpose',
-    nextGhanaVisit: '2025-07-01',
-  },
-  {
-    id: '4',
-    name: 'Kofi',
-    age: 29,
-    tagline: 'Business minded & family oriented 💼',
-    bio: 'Building my empire while staying true to my roots. Looking for a queen who shares my vision and values.',
-    location: 'Berlin, Germany',
-    hometown: 'Tamale, Northern',
-    diasporaYears: 4,
-    tribe: 'Dagomba',
-    religion: 'Muslim',
-    education: 'ESMT Berlin',
-    profession: 'Investment Banker',
-    languages: ['English', 'Dagbani', 'German'],
-    interests: ['Business', 'Travel', 'Traditional Music', 'Football', 'Real Estate'],
-    culturalEvents: ['Damba Festival', 'Ghana Expo Berlin'],
-    avatar_url: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=400&h=600&fit=crop&crop=face',
-    photos: [
-      'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=400&h=600&fit=crop&crop=face',
-      'https://images.unsplash.com/photo-1560250097-0b93528c311a?w=400&h=600&fit=crop&crop=face'
-    ],
-    distance: '12.1 km away',
-    lastActive: '30 minutes ago',
-    isActiveNow: true,
-    isVerified: true,
-    hasStatus: true,
-    statusCount: 3,
-    statusLastUpdated: '15 minutes ago',
-    verificationLevel: 2,
-    compatibilityScore: 82,
-    mutualConnections: 2,
-    sharedInterests: ['Business', 'Travel'],
-    culturalAlignment: 88,
-    relationshipGoals: 'Marriage minded',
-    nextGhanaVisit: '2025-12-01',
-  },
-];
 
 const TAB_OPTIONS = [
   { id: 'recommended', label: 'For You', icon: 'heart', badge: null },
@@ -174,43 +32,127 @@ const TAB_OPTIONS = [
   { id: 'hometown', label: 'Hometown', icon: 'home-heart', badge: null },
 ];
 
-const DISCOVERY_INSIGHTS = [
-  "3 new diaspora members in your city this week",
-  "2 people from Kumasi are online now", 
-  "Ghana Independence Day event: 8 attendees nearby",
-  "5 verified members liked your profile",
-  "12 active matches from your region today",
-];
-
 export default function ExploreScreen() {
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const fontsLoaded = useAppFonts();
   
   const [currentIndex, setCurrentIndex] = useState(0);
   const [activeTab, setActiveTab] = useState('recommended');
-  const [dailyMatches, setDailyMatches] = useState(ENHANCED_MATCHES);
+  const [dailyMatches, setDailyMatches] = useState<ExploreProfile[]>([]);
+  const [statusRings, setStatusRings] = useState<StatusRing[]>([]);
+  const [insights, setInsights] = useState<string[]>([]);
   const [showInsights, setShowInsights] = useState(false);
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState<{[key: string]: number}>({});
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Location tracking (temporarily disabled)
+  // const {
+  //   currentLocation,
+  //   manualUpdate: updateLocation,
+  //   lastUpdate: locationLastUpdate
+  // } = useLocationTracking({
+  //   enableBackgroundTracking: true,
+  //   updateInterval: 30 // Update every 30 minutes
+  // });
   
   // Animation values
-  const cardAnimations = useRef(
-    ENHANCED_MATCHES.map(() => ({
-      translateX: new Animated.Value(0),
-      translateY: new Animated.Value(0),
-      rotate: new Animated.Value(0),
-      scale: new Animated.Value(1),
-      opacity: new Animated.Value(1),
-      statusBlink: new Animated.Value(1),
-    }))
-  ).current;
+  const cardAnimations = useRef<Array<{
+    translateX: Animated.Value;
+    translateY: Animated.Value;
+    rotate: Animated.Value;
+    scale: Animated.Value;
+    opacity: Animated.Value;
+    statusBlink: Animated.Value;
+  }>>([]).current;
   
   const backgroundParallax = useRef(new Animated.Value(0)).current;
   const buttonScale = useRef(new Animated.Value(1)).current;
 
+  // Initialize card animations when matches change
+  useEffect(() => {
+    if (dailyMatches.length > 0) {
+      // Ensure we have enough animations for all matches
+      while (cardAnimations.length < dailyMatches.length) {
+        cardAnimations.push({
+          translateX: new Animated.Value(0),
+          translateY: new Animated.Value(0),
+          rotate: new Animated.Value(0),
+          scale: new Animated.Value(1),
+          opacity: new Animated.Value(1),
+          statusBlink: new Animated.Value(1),
+        });
+      }
+    }
+  }, [dailyMatches.length]);
+
+  // Load initial data
+  const loadData = useCallback(async () => {
+    if (!user?.id) return;
+    
+    try {
+      console.log('🔍 Loading data for user:', user.id);
+      setError(null);
+      
+      // Load discovery matches
+      const filters: DiscoveryFilters = {
+        diasporaStatus: activeTab === 'diaspora' ? 'DIASPORA' : 
+                       activeTab === 'local' ? 'LOCAL' : 'ALL',
+        isVerified: activeTab === 'verified'
+      };
+      
+      const [matchesData, statusRingsData, insightsData] = await Promise.all([
+        ExploreService.getDiscoveryMatches(user.id, filters, 10),
+        StatusService.getStatusRings(user.id, 20),
+        ExploreService.getDiscoveryInsights(user.id)
+      ]);
+      
+      console.log('🔍 Discovery data loaded:', {
+        matchesCount: matchesData.length,
+        firstMatch: matchesData[0] ? {
+          name: matchesData[0].full_name,
+          hometown: matchesData[0].hometown,
+          interests: matchesData[0].interests,
+          photos: matchesData[0].photos?.length,
+          region: matchesData[0].region,
+          current_country: matchesData[0].current_country,
+          fullObject: matchesData[0]
+        } : null
+      });
+      
+      setDailyMatches(matchesData);
+      setStatusRings(statusRingsData);
+      setInsights(insightsData);
+      
+    } catch (error) {
+      console.error('❌ Error loading explore data:', error);
+      setError('Failed to load discovery data');
+      
+      // Set empty data arrays on error - no mock data fallback
+      setDailyMatches([]);
+      setInsights([]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [user?.id, activeTab]);
+
+  // Load data on mount and when tab changes
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Refresh data
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadData();
+  }, [loadData]);
+
   // Status blinking animation
   useEffect(() => {
-    const blinkAnimations = cardAnimations.map((anim, index) => {
-      const match = ENHANCED_MATCHES[index];
+    const blinkAnimations = cardAnimations.slice(0, dailyMatches.length).map((anim, index) => {
+      const match = dailyMatches[index];
       if (match?.hasStatus) {
         return Animated.loop(
           Animated.sequence([
@@ -235,7 +177,7 @@ export default function ExploreScreen() {
     return () => {
       blinkAnimations.forEach(animation => animation?.stop());
     };
-  }, []);
+  }, [dailyMatches, cardAnimations]);
   
   useEffect(() => {
     // Initialize card stack with scaling effect
@@ -250,6 +192,47 @@ export default function ExploreScreen() {
 
   if (!fontsLoaded) {
     return <View style={styles.container} />;
+  }
+
+  // Loading state
+  if (loading) {
+    return (
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeAreaView style={styles.container}>
+          <View style={[styles.noMoreCardsContainer, { justifyContent: 'center' }]}>
+            <ActivityIndicator size="large" color={Colors.light.tint} />
+            <Text style={[styles.noMoreCardsSubtitle, { marginTop: 16 }]}>
+              Finding your perfect matches...
+            </Text>
+          </View>
+        </SafeAreaView>
+      </GestureHandlerRootView>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeAreaView style={styles.container}>
+          <View style={styles.noMoreCardsContainer}>
+            <MaterialCommunityIcons name="alert-circle-outline" size={80} color="#ef4444" />
+            <Text style={styles.noMoreCardsTitle}>Oops! Something went wrong</Text>
+            <Text style={styles.noMoreCardsSubtitle}>{error}</Text>
+            <TouchableOpacity 
+              style={[styles.actionButtons, { marginTop: 20 }]}
+              onPress={() => {
+                setError(null);
+                setLoading(true);
+                loadData();
+              }}
+            >
+              <Text style={styles.moreText}>Try Again</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </GestureHandlerRootView>
+    );
   }
 
   const handlePanGesture = Animated.event(
@@ -267,17 +250,40 @@ export default function ExploreScreen() {
         animateCardExit(direction);
       } else {
         // Snap back
-        Animated.spring(cardAnimations[currentIndex].translateX, {
-          toValue: 0,
-          useNativeDriver: false,
-        }).start();
+        const currentCard = cardAnimations[currentIndex];
+        if (currentCard) {
+          Animated.spring(currentCard.translateX, {
+            toValue: 0,
+            useNativeDriver: false,
+          }).start();
+        }
       }
     }
   };
 
-  const animateCardExit = (direction: 'left' | 'right') => {
+  const animateCardExit = async (direction: 'left' | 'right') => {
     const currentCard = cardAnimations[currentIndex];
+    if (!currentCard) return;
+    
+    const currentMatch = dailyMatches[currentIndex];
     const exitX = direction === 'right' ? screenWidth : -screenWidth;
+    
+    // Record the swipe in backend
+    if (user?.id && currentMatch) {
+      try {
+        const action = direction === 'right' ? 'LIKE' : 'PASS';
+        await ExploreService.recordSwipe(user.id, currentMatch.id, action);
+        
+        // Show feedback for likes
+        if (direction === 'right') {
+          // Could show match animation here if it's a match
+          console.log(`Liked ${currentMatch.full_name}`);
+        }
+      } catch (error) {
+        console.error('Error recording swipe:', error);
+        // Continue with animation even if backend fails
+      }
+    }
     
     Animated.parallel([
       Animated.timing(currentCard.translateX, {
@@ -303,25 +309,31 @@ export default function ExploreScreen() {
         currentCard.translateX.setValue(0);
         currentCard.rotate.setValue(0);
         currentCard.opacity.setValue(1);
+      } else {
+        // Load more matches when running low
+        loadData();
       }
     });
 
     // Animate next cards up
     for (let i = currentIndex + 1; i < cardAnimations.length; i++) {
-      Animated.parallel([
-        Animated.spring(cardAnimations[i].scale, {
-          toValue: 1 - (i - currentIndex - 1) * 0.05,
-          useNativeDriver: false,
-        }),
-        Animated.spring(cardAnimations[i].translateY, {
-          toValue: (i - currentIndex - 1) * 10,
-          useNativeDriver: false,
-        }),
-        Animated.spring(cardAnimations[i].opacity, {
-          toValue: 1 - (i - currentIndex - 1) * 0.2,
-          useNativeDriver: false,
-        }),
-      ]).start();
+      const cardAnim = cardAnimations[i];
+      if (cardAnim) {
+        Animated.parallel([
+          Animated.spring(cardAnim.scale, {
+            toValue: 1 - (i - currentIndex - 1) * 0.05,
+            useNativeDriver: false,
+          }),
+          Animated.spring(cardAnim.translateY, {
+            toValue: (i - currentIndex - 1) * 10,
+            useNativeDriver: false,
+          }),
+          Animated.spring(cardAnim.opacity, {
+            toValue: 1 - (i - currentIndex - 1) * 0.2,
+            useNativeDriver: false,
+          }),
+        ]).start();
+      }
     }
   };
 
@@ -332,7 +344,7 @@ export default function ExploreScreen() {
     // Show cultural appreciation message
     Alert.alert(
       "Akwaaba! 🇬🇭", 
-      `You liked ${currentMatch.name}! They'll be notified.`,
+      `You liked ${currentMatch.full_name}! They'll be notified.`,
       [{ text: "Great!", style: "default" }]
     );
   };
@@ -343,7 +355,7 @@ export default function ExploreScreen() {
     
     Alert.alert(
       "Me pɛ wo paa! 💫", 
-      `You super-liked ${currentMatch.name} from ${currentMatch.hometown}! This shows serious interest.`,
+      `You super-liked ${currentMatch.full_name} from ${currentMatch.hometown}! This shows serious interest.`,
       [{ text: "Wonderful!", style: "default" }]
     );
   };
@@ -406,6 +418,18 @@ export default function ExploreScreen() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView style={styles.container}>
+        <ScrollView 
+          style={{ flex: 1 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[Colors.light.tint]}
+              tintColor={Colors.light.tint}
+            />
+          }
+          showsVerticalScrollIndicator={false}
+        >
       {/* Enhanced Header with Discovery Insights */}
       <View style={styles.header}>
         <View style={styles.topRow}>
@@ -429,7 +453,7 @@ export default function ExploreScreen() {
         {showInsights && (
           <View style={styles.insightsPanel}>
             <Text style={styles.insightsTitle}>Today's Insights</Text>
-            {DISCOVERY_INSIGHTS.map((insight, index) => (
+            {insights.map((insight, index) => (
               <View key={index} style={styles.insightItem}>
                 <MaterialCommunityIcons 
                   name="circle-small" 
@@ -450,7 +474,11 @@ export default function ExploreScreen() {
                 styles.tab,
                 activeTab === tab.id && styles.activeTab,
               ]}
-              onPress={() => setActiveTab(tab.id)}
+              onPress={() => {
+                setActiveTab(tab.id);
+                setCurrentIndex(0);
+                setLoading(true);
+              }}
             >
               <MaterialCommunityIcons
                 name={tab.icon as any}
@@ -483,12 +511,52 @@ export default function ExploreScreen() {
         </View>
       </View>
 
+      {/* Status Rings */}
+      {statusRings.length > 0 && (
+        <View style={styles.statusContainer}>
+          <ScrollView 
+            horizontal 
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.statusScrollContent}
+          >
+            {statusRings.map((ring, index) => (
+              <TouchableOpacity
+                key={ring.userId}
+                style={styles.statusRing}
+                onPress={() => handleStatusTap(ring.userId)}
+              >
+                <View style={[
+                  styles.statusImageContainer,
+                  ring.hasUnviewedStatus && styles.statusRingUnviewed,
+                  ring.isMyStatus && styles.statusRingMine
+                ]}>
+                  <Image
+                    source={{ uri: ring.userAvatar || 'https://via.placeholder.com/60' }}
+                    style={styles.statusImage}
+                  />
+                  {ring.statusCount > 1 && (
+                    <View style={styles.statusBadge}>
+                      <Text style={styles.statusBadgeText}>{ring.statusCount}</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={styles.statusUserName} numberOfLines={1}>
+                  {ring.isMyStatus ? 'Your story' : ring.userName}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
       {/* Card Stack */}
       <View style={styles.cardStack}>
         {dailyMatches.map((match, index) => {
           if (index < currentIndex) return null;
           
           const cardAnim = cardAnimations[index];
+          if (!cardAnim) return null;
+          
           const isCurrentCard = index === currentIndex;
           
           const rotateInterpolate = cardAnim.rotate.interpolate({
@@ -520,7 +588,7 @@ export default function ExploreScreen() {
               >
                 {/* Status Ring - Outside the card */}
                 {match.hasStatus && (
-                  <Animated.View style={[styles.statusRing, { 
+                  <Animated.View style={[styles.profileStatusRing, {
                     borderColor: match.statusCount > 1 ? '#10b981' : '#3b82f6',
                     opacity: cardAnim.statusBlink
                   }]} />
@@ -552,14 +620,14 @@ export default function ExploreScreen() {
                   </View>
                   
                   {/* Cultural & Verification Badges */}
-                  {match.isVerified && (
+                  {match.verification_level > 0 && (
                     <View style={styles.verificationBadge}>
                       <MaterialCommunityIcons name="check-decagram" size={12} color="#fff" />
                       <Text style={styles.verificationText}>Verified</Text>
                     </View>
                   )}
                   
-                  {match.isActiveNow && (
+                  {match.online && (
                     <View style={styles.liveBadge}>
                       <Text style={styles.liveText}>Active Now</Text>
                     </View>
@@ -571,14 +639,16 @@ export default function ExploreScreen() {
                   {/* Profile info */}
                   <View style={styles.profileInfo}>
                     <View style={styles.nameRow}>
-                      <Text style={styles.name}>{match.name}, {match.age}</Text>
+                      <Text style={styles.name}>{match.full_name}, {match.age}</Text>
                     </View>
                     
-                    <Text style={styles.tagline}>{match.tagline}</Text>
+                    <Text style={styles.tagline}>{match.bio}</Text>
                     
                     <View style={styles.locationRow}>
                       <MaterialCommunityIcons name="map-marker" size={14} color="#fff" />
-                      <Text style={styles.location}>{match.distance}</Text>
+                      <Text style={styles.location}>
+                        {match.current_country || 'Unknown location'}
+                      </Text>
                     </View>
                     
                     {/* Cultural Information */}
@@ -589,10 +659,21 @@ export default function ExploreScreen() {
                       </View>
                     )}
                     
-                    {match.location && (
+                    {match.diaspora_status && (
                       <View style={styles.culturalInfo}>
-                        <MaterialCommunityIcons name="map-marker-outline" size={14} color="#fff" />
-                        <Text style={styles.culturalText}>Lives in {match.location.split(', ')[1] || match.location}</Text>
+                        <MaterialCommunityIcons name="earth" size={14} color="#fff" />
+                        <Text style={styles.culturalText}>
+                          {match.diaspora_status === 'LOCAL' ? 'Lives locally' : 
+                           match.diaspora_status === 'DIASPORA' ? `Diaspora in ${match.current_country}` :
+                           `Lives in ${match.current_country}`}
+                        </Text>
+                      </View>
+                    )}
+                    
+                    {match.tribe && (
+                      <View style={styles.culturalInfo}>
+                        <MaterialCommunityIcons name="account-group" size={14} color="#fff" />
+                        <Text style={styles.culturalText}>{match.tribe} tribe</Text>
                       </View>
                     )}
                     
@@ -653,6 +734,7 @@ export default function ExploreScreen() {
           </TouchableOpacity>
         </Animated.View>
       </View>
+        </ScrollView>
       </SafeAreaView>
     </GestureHandlerRootView>
   );
@@ -837,7 +919,7 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  statusRing: {
+  profileStatusRing: {
     position: 'absolute',
     top: -6,
     left: -6,
@@ -887,8 +969,9 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    padding: 24,
-    paddingBottom: 32,
+    padding: 20,
+    paddingBottom: 28,
+    minHeight: 180, // Ensure minimum height for content
   },
   nameRow: {
     flexDirection: 'row',
@@ -932,7 +1015,7 @@ const styles = StyleSheet.create({
   locationRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 12,
   },
   location: {
     fontSize: 14,
@@ -945,6 +1028,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+    marginTop: 12,
   },
   interestTag: {
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
@@ -1126,7 +1210,8 @@ const styles = StyleSheet.create({
   culturalInfo: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 10,
+    // backgroundColor: 'rgba(255,255,255,0.1)', // Temporary debug background
   },
   culturalText: {
     fontSize: 14,
@@ -1134,5 +1219,67 @@ const styles = StyleSheet.create({
     color: '#fff',
     marginLeft: 4,
     opacity: 0.9,
+  },
+  statusContainer: {
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+  },
+  statusScrollContent: {
+    paddingHorizontal: 4,
+  },
+  statusRing: {
+    alignItems: 'center',
+    marginHorizontal: 8,
+    width: 70,
+  },
+  statusImageContainer: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    borderWidth: 2,
+    borderColor: '#e5e7eb',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+    position: 'relative',
+  },
+  statusRingUnviewed: {
+    borderColor: Colors.light.tint,
+    borderWidth: 3,
+  },
+  statusRingMine: {
+    borderColor: '#10b981',
+    borderWidth: 3,
+  },
+  statusImage: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+  },
+  statusBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    backgroundColor: '#ef4444',
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  statusBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Manrope_700Bold',
+    color: '#fff',
+    lineHeight: 12,
+  },
+  statusUserName: {
+    fontSize: 11,
+    fontFamily: 'Manrope_400Regular',
+    color: '#6b7280',
+    textAlign: 'center',
+    marginTop: 2,
   },
 });
