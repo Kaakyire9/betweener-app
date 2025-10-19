@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Switch, Alert } from 'react-native';
 import { useLocationTracking } from '@/hooks/use-location-tracking';
-import { LocationService } from '@/lib/location-service';
+import { useState } from 'react';
+import { Alert, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 
 export function LocationSettings() {
   const [isEnabled, setIsEnabled] = useState(false);

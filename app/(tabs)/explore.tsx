@@ -1,24 +1,23 @@
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
-import { ExploreService, type ExploreProfile, type DiscoveryFilters } from '@/lib/explore-service';
+import { ExploreService, type DiscoveryFilters, type ExploreProfile } from '@/lib/explore-service';
 import { StatusService, type StatusRing } from '@/lib/status-service';
-import { useLocationTracking } from '@/hooks/use-location-tracking';
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-    Alert,
-    Animated,
-    Dimensions,
-    Image,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
-    ScrollView,
-    RefreshControl,
-    ActivityIndicator,
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Dimensions,
+  Image,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { GestureHandlerRootView, PanGestureHandler, PanGestureHandlerStateChangeEvent, State } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";

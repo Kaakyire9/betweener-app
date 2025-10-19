@@ -1,5 +1,4 @@
 // import * as Location from 'expo-location';
-import { supabase } from './supabase';
 import { createClient } from '@supabase/supabase-js';
 
 export interface LocationData {

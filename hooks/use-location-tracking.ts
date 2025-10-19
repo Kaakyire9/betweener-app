@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
-import { LocationService, LocationData } from '@/lib/location-service';
 import { useAuth } from '@/lib/auth-context';
+import { LocationData, LocationService } from '@/lib/location-service';
+import { useEffect, useState } from 'react';
 
 interface LocationTrackingOptions {
   enableBackgroundTracking?: boolean;
