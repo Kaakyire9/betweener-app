@@ -105,7 +105,8 @@ export default function ProfileScreen() {
   const { signOut, user, profile, refreshProfile } = useAuth();
   const fontsLoaded = useAppFonts();
   const params = useLocalSearchParams();
-  const { status: verificationStatus, loading: verificationLoading, refreshStatus } = useVerificationStatus(profile?.id);
+  const { status: verificationStatus, refreshStatus } = useVerificationStatus(profile?.id);
+  const verificationLoading = verificationStatus?.loading ?? false;
   
   const [selectedPrompts, setSelectedPrompts] = useState<Record<string, number>>({
     two_truths_lie: 0,
