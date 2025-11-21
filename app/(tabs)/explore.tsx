@@ -56,7 +56,10 @@ export default function ExploreScreen() {
   const fontsLoaded = useAppFonts();
   const { profile } = useAuth();
 
-  const { matches, recordSwipe, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch } = useAIRecommendations(profile?.id);
+  // For QA/dev: deterministic mutual-match list — replace with IDs you want to test
+  const QA_MUTUAL_IDS = typeof __DEV__ !== 'undefined' && __DEV__ ? ['m-001'] : undefined;
+
+  const { matches, recordSwipe, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch } = useAIRecommendations(profile?.id, { mutualMatchTestIds: QA_MUTUAL_IDS });
 
   // celebration modal state
   const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
@@ -675,7 +678,20 @@ export default function ExploreScreen() {
           onClose={() => setCelebrationMatch(null)}
           onKeepDiscovering={() => setCelebrationMatch(null)}
           onSendMessage={(m) => {
-            console.log('Send message to', m?.id);
+            // Navigate into the chat flow and open a conversation for the matched user
+            try {
+              // use expo-router's router to open the chat conversation screen
+              // use matched id as conversation id for QA/testing
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const { router } = require('expo-router');
+              if (m?.id) {
+                router.push({ pathname: '/chat/[id]', params: { id: String(m.id), userName: m.name, userAvatar: m.avatar_url, isOnline: String(!!m.isActiveNow) } });
+              } else {
+                router.push('/(tabs)/chat');
+              }
+            } catch (e) {
+              console.log('Navigation to chat failed', e);
+            }
             setCelebrationMatch(null);
           }}
         />

@@ -90,7 +90,7 @@ function getDebugMockMatches(): Match[] {
   return list;
 }
 
-export default function useAIRecommendations(userId?: string) {
+export default function useAIRecommendations(userId?: string, opts?: { mutualMatchTestIds?: string[] }) {
   const [matches, setMatches] = useState<Match[]>(() => getDebugMockMatches());
   const [lastMutualMatch, setLastMutualMatch] = useState<Match | null>(null);
   const [swipeHistory, setSwipeHistory] = useState<Array<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }>>([]);
@@ -116,18 +116,18 @@ export default function useAIRecommendations(userId?: string) {
       return [...next, generated];
     });
 
-    // Mock mutual-match detection: when user likes, randomly simulate a mutual like
+    // Deterministic QA trigger: if opts.mutualMatchTestIds includes this id, treat as mutual match
     if (action === 'like') {
-      const chance = Math.random();
-      if (chance < 0.28) {
-        // pick the current head as the matched person (if available)
-        const matched = matches[0];
-        if (matched) {
-          setLastMutualMatch(matched);
-          // clear after a short delay to avoid sticky UI in tests
-          setTimeout(() => setLastMutualMatch(null), 10_000);
+      try {
+        const testIds = opts?.mutualMatchTestIds || [];
+        if (testIds && testIds.indexOf(id) !== -1) {
+          const matched = matches[0] || null;
+          if (matched) {
+            setLastMutualMatch(matched);
+            setTimeout(() => setLastMutualMatch(null), 10_000);
+          }
         }
-      }
+      } catch (e) {}
     }
   }, [matches]);
 
