@@ -8,9 +8,9 @@ import { useAuth } from "@/lib/auth-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 
+import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import { useEffect, useRef, useState } from "react";
 import { Animated, Easing, StyleSheet, TouchableOpacity, View, useWindowDimensions } from "react-native";
-import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
