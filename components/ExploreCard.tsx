@@ -265,6 +265,23 @@ export default function ExploreCard({ match, onPress }: { match: Match; onPress?
             {!match.isActiveNow && !recentlyActive ? null : null}
           </View>
 
+          {/* Personality tags (up to 3) */}
+          {(() => {
+            const raw = (match as any).personalityTags || (match as any).personality || [];
+            const arr = Array.isArray(raw) ? raw : (typeof raw === 'string' ? raw.split(/,\s*/).filter(Boolean) : []);
+            const pills = arr.slice(0, 3);
+            if (pills.length === 0) return null;
+            return (
+              <View style={styles.personalityRow}>
+                {pills.map((p, i) => (
+                  <View key={i} style={styles.personalityPill}>
+                    <Text style={styles.personalityText}>{p}</Text>
+                  </View>
+                ))}
+              </View>
+            );
+          })()}
+
           <Text style={styles.tagline}>{match.tagline}</Text>
 
           <View style={styles.locationRow}>
@@ -350,4 +367,14 @@ const styles = StyleSheet.create({
   verifiedBadgeInline: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#2563eb', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 },
   activeInline: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 },
   aiPillInline: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, minWidth: 100, maxWidth: '70%', alignItems: 'center' },
+  personalityRow: { flexDirection: 'row', marginBottom: 8, gap: 8 },
+  personalityPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    backgroundColor: 'rgba(255,255,255,0.02)'
+  },
+  personalityText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 });

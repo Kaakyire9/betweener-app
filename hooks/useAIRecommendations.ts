@@ -3,45 +3,95 @@ import { Match } from '@/types/match';
 
 // lightweight mock generator (expandable)
 function createMockMatches(): Match[] {
+  const now = Date.now();
+  const threeHoursMs = 3 * 60 * 60 * 1000;
   return [
     {
-      id: '1',
-      name: 'Akosua',
-      age: 24,
-      tagline: 'Adventure seeker & foodie',
-      interests: ['Travel', 'Food', 'Music'],
-      avatar_url: 'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=400&h=600&fit=crop&crop=face',
-      distance: '2.3 km away',
+      id: 'm-001',
+      name: 'Sena',
+      age: 29,
+      tagline: 'Coffee + trails = perfect weekend',
+      interests: ['Hiking', 'Coffee', 'Design'],
+      avatar_url: 'https://images.unsplash.com/photo-1545996124-8e6f5b9e2f6d?w=800&q=80&auto=format&fit=crop&crop=face',
+      distance: '1.2 km away',
       isActiveNow: false,
+      lastActive: new Date(now - 30 * 60 * 1000).toISOString(), // 30m ago
       verified: true,
-    },
+      personalityTags: ['Calm', 'Family Oriented', 'Goal Driven'],
+      aiScore: 92,
+    } as Match,
     {
-      id: '2',
-      name: 'Kwame',
-      age: 27,
-      tagline: 'Tech enthusiast & gym lover',
-      interests: ['Technology', 'Fitness', 'Reading'],
-      avatar_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=600&fit=crop&crop=face',
-      distance: '15.7 km away',
+      id: 'm-002',
+      name: 'Daniel',
+      age: 31,
+      tagline: 'Weekend coder, weekday dad',
+      interests: ['Technology', 'Cooking', 'Running'],
+      avatar_url: 'https://images.unsplash.com/photo-1544005313-1d1d3a2b7f9a?w=800&q=80&auto=format&fit=crop&crop=face',
+      distance: '6.8 km away',
       isActiveNow: true,
+      lastActive: new Date(now - 2 * 60 * 1000).toISOString(), // 2m ago
       verified: false,
-    },
+      personalityTags: ['Goal Driven', 'Adventurous'],
+      aiScore: 87,
+    } as Match,
     {
-      id: '3',
-      name: 'Ama',
-      age: 22,
-      tagline: 'Artist with a kind heart',
-      interests: ['Art', 'Photography', 'Nature'],
-      avatar_url: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&h=600&fit=crop&crop=face',
-      distance: '8.2 km away',
+      id: 'm-003',
+      name: 'Esi',
+      age: 26,
+      tagline: 'Painter, coffee snob, plant parent',
+      interests: ['Art', 'Plants', 'Travel'],
+      avatar_url: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=800&q=80&auto=format&fit=crop&crop=face',
+      distance: '3.4 km away',
       isActiveNow: false,
+      lastActive: new Date(now - 2 * 60 * 60 * 1000).toISOString(), // 2 hours ago (recent)
       verified: false,
-    },
+      personalityTags: ['Creative', 'Curious', 'Calm'],
+      aiScore: 78,
+    } as Match,
+    {
+      id: 'm-004',
+      name: 'Kofi',
+      age: 28,
+      tagline: 'Music producer & night market fan',
+      interests: ['Music', 'Food', 'Photography'],
+      avatar_url: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=800&q=80&auto=format&fit=crop&crop=face',
+      distance: '12.1 km away',
+      isActiveNow: false,
+      lastActive: new Date(now - (5 * 60 * 60 * 1000)).toISOString(), // 5 hours ago
+      verified: true,
+      personalityTags: ['Outgoing', 'Family Oriented'],
+      aiScore: 65,
+    } as Match,
+    {
+      id: 'm-005',
+      name: 'Abena',
+      age: 24,
+      tagline: 'Bookshop evenings and plant swaps',
+      interests: ['Books', 'Gardening', 'Design'],
+      avatar_url: 'https://images.unsplash.com/photo-1520813792240-56fc4a3765a7?w=800&q=80&auto=format&fit=crop&crop=face',
+      distance: '9.9 km away',
+      isActiveNow: false,
+      lastActive: new Date(now - (20 * 60 * 60 * 1000)).toISOString(), // 20 hours ago
+      verified: false,
+      personalityTags: ['Thoughtful', 'Calm'],
+      aiScore: 71,
+    } as Match,
   ];
+}
+// helper to return mock matches with optional dev-only injections
+function getDebugMockMatches(): Match[] {
+  const list = createMockMatches();
+  if (typeof __DEV__ !== 'undefined' && __DEV__) {
+    try {
+      if (list[0]) (list[0] as any).personalityTags = ['Calm', 'Family Oriented', 'Goal Driven'];
+      if (list[1]) (list[1] as any).personalityTags = ['Adventurous', 'Curious'];
+    } catch (e) {}
+  }
+  return list;
 }
 
 export default function useAIRecommendations(userId?: string) {
-  const [matches, setMatches] = useState<Match[]>(() => createMockMatches());
+  const [matches, setMatches] = useState<Match[]>(() => getDebugMockMatches());
   const [swipeHistory, setSwipeHistory] = useState<Array<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }>>([]);
 
   // simple mock: when a swipe is recorded, remove the head and append a regenerated match
