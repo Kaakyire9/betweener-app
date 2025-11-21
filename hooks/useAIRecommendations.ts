@@ -92,6 +92,7 @@ function getDebugMockMatches(): Match[] {
 
 export default function useAIRecommendations(userId?: string) {
   const [matches, setMatches] = useState<Match[]>(() => getDebugMockMatches());
+  const [lastMutualMatch, setLastMutualMatch] = useState<Match | null>(null);
   const [swipeHistory, setSwipeHistory] = useState<Array<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }>>([]);
 
   // simple mock: when a swipe is recorded, remove the head and append a regenerated match
@@ -114,6 +115,20 @@ export default function useAIRecommendations(userId?: string) {
       } as Match;
       return [...next, generated];
     });
+
+    // Mock mutual-match detection: when user likes, randomly simulate a mutual like
+    if (action === 'like') {
+      const chance = Math.random();
+      if (chance < 0.28) {
+        // pick the current head as the matched person (if available)
+        const matched = matches[0];
+        if (matched) {
+          setLastMutualMatch(matched);
+          // clear after a short delay to avoid sticky UI in tests
+          setTimeout(() => setLastMutualMatch(null), 10_000);
+        }
+      }
+    }
   }, [matches]);
 
   const undoLastSwipe = useCallback((): { match: Match; index: number } | null => {
@@ -167,5 +182,5 @@ export default function useAIRecommendations(userId?: string) {
     setSwipeHistory(() => []);
   }, [fetchMatchesFromServer]);
 
-  return { matches, recordSwipe, swipeHistory, undoLastSwipe, refreshMatches, smartCount } as const;
+  return { matches, recordSwipe, swipeHistory, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch } as const;
 }

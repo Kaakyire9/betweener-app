@@ -4,6 +4,7 @@ import ExploreStack from "@/components/ExploreStack.reanimated";
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import useAIRecommendations from "@/hooks/useAIRecommendations";
+import MatchModal from '@/components/MatchModal';
 import { useAuth } from "@/lib/auth-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -55,7 +56,17 @@ export default function ExploreScreen() {
   const fontsLoaded = useAppFonts();
   const { profile } = useAuth();
 
-  const { matches, recordSwipe, undoLastSwipe, refreshMatches, smartCount } = useAIRecommendations(profile?.id);
+  const { matches, recordSwipe, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch } = useAIRecommendations(profile?.id);
+
+  // celebration modal state
+  const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
+
+  // when the hook reports a mutual match, show the celebration modal
+  useEffect(() => {
+    if (lastMutualMatch) {
+      setCelebrationMatch(lastMutualMatch);
+    }
+  }, [lastMutualMatch]);
 
   const [activeTab, setActiveTab] = useState<
     "recommended" | "nearby" | "active"
@@ -657,6 +668,17 @@ export default function ExploreScreen() {
               </Animated.View>
             )}
         </View>
+        {/* Match celebration modal */}
+        <MatchModal
+          visible={!!celebrationMatch}
+          match={celebrationMatch}
+          onClose={() => setCelebrationMatch(null)}
+          onKeepDiscovering={() => setCelebrationMatch(null)}
+          onSendMessage={(m) => {
+            console.log('Send message to', m?.id);
+            setCelebrationMatch(null);
+          }}
+        />
       </SafeAreaView>
     </GestureHandlerRootView>
   );
