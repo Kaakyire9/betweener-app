@@ -18,14 +18,14 @@ import ExploreCard from "./ExploreCard";
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 export type ExploreStackHandle = {
-  performSwipe: (dir: "left" | "right") => void;
+  performSwipe: (dir: "left" | "right" | "superlike") => void;
 };
 
 type Props = {
   matches: Match[];
   currentIndex: number;
   setCurrentIndex: (n: number) => void;
-  recordSwipe: (id: string, action: "like" | "dislike") => void;
+  recordSwipe: (id: string, action: "like" | "dislike" | "superlike") => void;
   onProfileTap: (id: string) => void;
 };
 
@@ -62,15 +62,18 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
     const scale = useSharedValue(1);
     const cardOpacity = useSharedValue(1);
     const hasPassedThreshold = useSharedValue(false);
+    const superlikePulse = useSharedValue(0);
 
     // Imperative API
-    const completeSwipe = (dir: "left" | "right") => {
+    const completeSwipe = (dir: "left" | "right" | "superlike") => {
       const current = list[currentIndex];
       if (current && current.id !== "__debug") {
-        recordSwipe(current.id, dir === "right" ? "like" : "dislike");
+        if (dir === "superlike") recordSwipe(current.id, "superlike");
+        else recordSwipe(current.id, dir === "right" ? "like" : "dislike");
       }
       try {
         if (dir === "right") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        else if (dir === "superlike") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         else Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       } catch {}
       if (currentIndex < list.length - 1) setCurrentIndex(currentIndex + 1);
@@ -78,8 +81,23 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
     };
 
     useImperativeHandle(ref, () => ({
-      performSwipe: (dir: "left" | "right") => {
+      performSwipe: (dir: "left" | "right" | "superlike") => {
         try {
+          if (dir === "superlike") {
+            // special arc motion upwards
+            cardOpacity.value = withTiming(0, { duration: 420 });
+            // small curve: nudge left then return while moving up
+            translateX.value = withTiming(-SCREEN_WIDTH * 0.08, { duration: 220 }, () => {
+              translateX.value = withTiming(0, { duration: 320 });
+            });
+            translateY.value = withTiming(-EXIT_DISTANCE, { duration: 520 }, () => runOnJS(completeSwipe)(dir));
+            rotate.value = withTiming(-6, { duration: 420 });
+            superlikePulse.value = withTiming(1, { duration: 160 }, () => {
+              superlikePulse.value = withTiming(0, { duration: 300 });
+            });
+            return;
+          }
+
           const targetX = dir === "right" ? EXIT_DISTANCE : -EXIT_DISTANCE;
           cardOpacity.value = withTiming(0, { duration: 240 });
           translateX.value = withTiming(targetX, { duration: 300 }, () => {
@@ -87,7 +105,7 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
           });
           rotate.value = withTiming(dir === "right" ? 18 : -18, { duration: 300 });
         } catch (e) {
-          runOnJS(completeSwipe)(dir);
+          runOnJS(completeSwipe)(dir as any);
         }
       },
     }));
@@ -206,6 +224,27 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
       } as any;
     });
 
+    const superlikeGlowStyle = useAnimatedStyle(() => ({
+      position: "absolute",
+      width: SCREEN_WIDTH * 0.84,
+      height: SCREEN_WIDTH * 0.84,
+      borderRadius: (SCREEN_WIDTH * 0.84) / 2,
+      backgroundColor: "rgba(59,130,246,0.2)",
+      transform: [
+        { scale: interpolate(superlikePulse.value, [0, 1], [0.5, 1.6], Extrapolate.CLAMP) },
+        { rotate: `${interpolate(superlikePulse.value, [0, 1], [0, 8], Extrapolate.CLAMP)}deg` },
+      ],
+      opacity: interpolate(superlikePulse.value, [0, 0.5, 1], [0, 0.9, 1], Extrapolate.CLAMP),
+    } as any));
+
+    const superlikeIconStyle = useAnimatedStyle(() => ({
+      transform: [
+        { translateY: interpolate(superlikePulse.value, [0, 1], [12, -36], Extrapolate.CLAMP) },
+        { scale: interpolate(superlikePulse.value, [0, 0.5, 1], [0.6, 1.1, 1.4], Extrapolate.CLAMP) },
+      ],
+      opacity: superlikePulse.value,
+    }) as any);
+
     // ActiveCard child stabilizes hooks ordering when list changes
     function ActiveCard({ m, zIndex }: { m: Match; zIndex: number }) {
       return (
@@ -217,6 +256,10 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
               </Animated.View>
 
               <Animated.View pointerEvents="none" style={[styles.feedbackContainer, overlayContainerStyle]}>
+                <Animated.View style={superlikeGlowStyle} />
+                <Animated.View style={superlikeIconStyle}>
+                  <MaterialCommunityIcons name="star" size={88} color="#FBBF24" style={{ textShadowColor: 'rgba(59,130,246,0.36)', textShadowOffset: { width: 0, height: 6 }, textShadowRadius: 18 }} />
+                </Animated.View>
                 <Animated.View style={rightGlowStyle} />
                 <Animated.View style={rightIconStyle}>
                   <MaterialCommunityIcons name="heart" size={64} color="#10B981" />

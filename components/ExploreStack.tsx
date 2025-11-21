@@ -18,14 +18,14 @@ import ExploreCard from "./ExploreCard";
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 export type ExploreStackHandle = {
-  performSwipe: (dir: "left" | "right") => void;
+  performSwipe: (dir: "left" | "right" | "superlike") => void;
 };
 
 type Props = {
   matches: Match[];
   currentIndex: number;
   setCurrentIndex: (n: number) => void;
-  recordSwipe: (id: string, action: "like" | "dislike") => void;
+  recordSwipe: (id: string, action: "like" | "dislike" | "superlike") => void;
   onProfileTap: (id: string) => void;
 };
 
@@ -65,8 +65,18 @@ const ExploreStack = forwardRef<ExploreStackHandle, Props>(
 
     // Imperative API to parent to trigger swipes programmatically
     useImperativeHandle(ref, () => ({
-      performSwipe: (dir: "left" | "right") => {
+      performSwipe: (dir: "left" | "right" | "superlike") => {
         try {
+          if (dir === "superlike") {
+            cardOpacity.value = withTiming(0, { duration: 420 });
+            translateX.value = withTiming(-SCREEN_WIDTH * 0.08, { duration: 220 }, () => {
+              translateX.value = withTiming(0, { duration: 320 });
+            });
+            translateY.value = withTiming(-EXIT_DISTANCE, { duration: 520 }, () => runOnJS(completeSwipe)(dir));
+            rotate.value = withTiming(-6, { duration: 420 });
+            return;
+          }
+
           const targetX = dir === "right" ? EXIT_DISTANCE : -EXIT_DISTANCE;
           cardOpacity.value = withTiming(0, { duration: 240 });
           translateX.value = withTiming(targetX, { duration: 300 }, () => {
@@ -75,7 +85,7 @@ const ExploreStack = forwardRef<ExploreStackHandle, Props>(
           rotate.value = withTiming(dir === "right" ? 18 : -18, { duration: 300 });
         } catch (e) {
           // fallback if worklets not available
-          runOnJS(completeSwipe)(dir);
+          runOnJS(completeSwipe)(dir as any);
         }
       },
     }));
@@ -90,13 +100,15 @@ const ExploreStack = forwardRef<ExploreStackHandle, Props>(
     }, [currentIndex]);
 
     // JS callback executed after swipe completes (runs on JS thread)
-    const completeSwipe = (dir: "left" | "right") => {
+    const completeSwipe = (dir: "left" | "right" | "superlike") => {
       const current = list[currentIndex];
       if (current && current.id !== "__debug") {
-        recordSwipe(current.id, dir === "right" ? "like" : "dislike");
+        if (dir === "superlike") recordSwipe(current.id, "superlike");
+        else recordSwipe(current.id, dir === "right" ? "like" : "dislike");
       }
       try {
         if (dir === "right") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        else if (dir === "superlike") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
         else Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       } catch {}
       if (currentIndex < list.length - 1) {

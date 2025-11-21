@@ -9,6 +9,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 
 import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
+import LinearGradientSafe, { isLinearGradientAvailable } from "@/components/NativeWrappers/LinearGradientSafe";
 import { useEffect, useRef, useState } from "react";
 import { Animated, Easing, StyleSheet, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -62,6 +63,13 @@ export default function ExploreScreen() {
 
   const stackRef = useRef<ExploreStackHandle | null>(null);
   const buttonScale = useRef(new Animated.Value(1)).current;
+  const superlikePulse = useRef(new Animated.Value(0)).current;
+  const [superlikesLeft, setSuperlikesLeft] = useState<number>(3);
+  const particles = useRef([
+    new Animated.Value(0),
+    new Animated.Value(0),
+    new Animated.Value(0),
+  ]).current;
   // tweak this value to move the floating action card further down (positive = more downward nudge)
   const ACTION_BOTTOM_NUDGE = 40; // previously effectively 24
 
@@ -240,6 +248,40 @@ export default function ExploreScreen() {
     console.log("Open profile:", id);
   };
 
+  const onSuperlike = () => {
+    if (superlikesLeft <= 0) {
+      try { Haptics.selectionAsync(); } catch {}
+      return;
+    }
+
+    // decrement count (premium resource)
+    setSuperlikesLeft((s) => Math.max(0, s - 1));
+
+    // premium pulse + small confetti burst
+    Animated.parallel([
+      Animated.sequence([
+        Animated.timing(superlikePulse, { toValue: 1, duration: 160, useNativeDriver: true }),
+        Animated.timing(superlikePulse, { toValue: 0, duration: 420, useNativeDriver: true }),
+      ]),
+      Animated.stagger(40, particles.map((p) => Animated.sequence([
+        Animated.timing(p, { toValue: 1, duration: 260, useNativeDriver: true }),
+        Animated.timing(p, { toValue: 0, duration: 260, useNativeDriver: true }),
+      ]))),
+    ]).start();
+
+    try {
+      stackRef.current?.performSwipe("superlike");
+    } catch {
+      const cm = matchList[currentIndex];
+      if (cm) recordSwipe(cm.id, "superlike");
+      if (currentIndex < matchList.length - 1) setCurrentIndex(currentIndex + 1);
+    }
+
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    } catch {}
+  };
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView style={styles.container}>
@@ -315,6 +357,64 @@ export default function ExploreScreen() {
                     />
                   </TouchableOpacity>
 
+                  {/* Superlike button */}
+                  <Animated.View style={{ alignItems: 'center', marginHorizontal: 8 }}>
+                    <Animated.View
+                      style={{
+                          position: 'absolute',
+                          width: 76,
+                          height: 76,
+                          borderRadius: 38,
+                        backgroundColor: 'rgba(59,130,246,0.14)',
+                        opacity: superlikePulse,
+                        transform: [{ scale: superlikePulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.6] }) }],
+                      }}
+                    />
+                      <TouchableOpacity
+                        activeOpacity={0.9}
+                        onPress={() => animateButtonPress(onSuperlike)}
+                      >
+                        <LinearGradientSafe
+                          colors={["#f59e0b", "#fbbf24"]}
+                          start={[0, 0]}
+                          end={[1, 1]}
+                          style={[styles.superlikeButton, !isLinearGradientAvailable && styles.superlikeFallback]}
+                        >
+                            <View style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}>
+                              <MaterialCommunityIcons
+                                name="star"
+                                size={32}
+                                color="rgba(0,0,0,0.18)"
+                                style={{ position: 'absolute' }}
+                              />
+                              <MaterialCommunityIcons name="star" size={28} color="#fff" />
+                            </View>
+                          <View style={styles.superlikeBadge} pointerEvents="none">
+                            <Animated.Text style={styles.superlikeBadgeText}>{superlikesLeft}</Animated.Text>
+                          </View>
+                        </LinearGradientSafe>
+                      </TouchableOpacity>
+                      {/* particle/confetti render */}
+                      {particles.map((p, idx) => (
+                        <Animated.View
+                          key={`sp-${idx}`}
+                          style={{
+                            position: 'absolute',
+                            width: 8,
+                            height: 8,
+                            borderRadius: 4,
+                            backgroundColor: idx === 0 ? '#f59e0b' : idx === 1 ? '#60a5fa' : '#93c5fd',
+                            transform: [
+                              { translateY: p.interpolate({ inputRange: [0, 1], outputRange: [0, -48 - idx * 8] }) },
+                              { translateX: p.interpolate({ inputRange: [0, 1], outputRange: [0, (idx - 1) * 18] }) },
+                              { scale: p.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1.2] }) },
+                            ],
+                            opacity: p.interpolate({ inputRange: [0, 0.6, 1], outputRange: [0, 1, 0] }),
+                          }}
+                        />
+                      ))}
+                  </Animated.View>
+
                   <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
                     <TouchableOpacity
                       style={styles.likeButton}
@@ -378,6 +478,36 @@ export default function ExploreScreen() {
                       color={Colors.light.tint}
                     />
                   </TouchableOpacity>
+
+                  {/* Superlike button (fallback branch) */}
+                  <Animated.View style={{ alignItems: 'center', marginHorizontal: 8 }}>
+                    <Animated.View
+                      style={{
+                          position: 'absolute',
+                          width: 76,
+                          height: 76,
+                          borderRadius: 38,
+                        backgroundColor: 'rgba(59,130,246,0.14)',
+                        opacity: superlikePulse,
+                        transform: [{ scale: superlikePulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.6] }) }],
+                      }}
+                    />
+                    <TouchableOpacity
+                      style={[styles.superlikeButton, !isLinearGradientAvailable && styles.superlikeFallback]}
+                      onPress={() => animateButtonPress(onSuperlike)}
+                      activeOpacity={0.9}
+                    >
+                        <View style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}>
+                          <MaterialCommunityIcons
+                            name="star"
+                            size={32}
+                            color="rgba(0,0,0,0.18)"
+                            style={{ position: 'absolute' }}
+                          />
+                          <MaterialCommunityIcons name="star" size={28} color="#fff" />
+                        </View>
+                    </TouchableOpacity>
+                  </Animated.View>
 
                   <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
                     <TouchableOpacity
@@ -469,5 +599,33 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     marginLeft: 20,
+  },
+  superlikeButton: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    // background will be a gradient via LinearGradientSafe
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  superlikeFallback: {
+    backgroundColor: '#f59e0b',
+  },
+  superlikeBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#111827',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  superlikeBadgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

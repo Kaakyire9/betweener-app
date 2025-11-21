@@ -42,11 +42,11 @@ function createMockMatches(): Match[] {
 
 export default function useAIRecommendations(userId?: string) {
   const [matches, setMatches] = useState<Match[]>(() => createMockMatches());
-  const [swipeHistory, setSwipeHistory] = useState<Array<{ id: string; action: 'like' | 'dislike' }>>([]);
+  const [swipeHistory, setSwipeHistory] = useState<Array<{ id: string; action: 'like' | 'dislike' | 'superlike' }>>([]);
 
   // simple mock: when a swipe is recorded, remove the head and append a regenerated match
-  const recordSwipe = useCallback((id: string, action: 'like' | 'dislike') => {
-    setSwipeHistory((prev: Array<{ id: string; action: 'like' | 'dislike' }>) => [...prev, { id, action }]);
+  const recordSwipe = useCallback((id: string, action: 'like' | 'dislike' | 'superlike') => {
+    setSwipeHistory((prev: Array<{ id: string; action: 'like' | 'dislike' | 'superlike' }>) => [...prev, { id, action }]);
     setMatches((prev: Match[]) => {
       const next = prev.slice(1);
       // append a regenerated match to keep list length stable (mock behavior)
