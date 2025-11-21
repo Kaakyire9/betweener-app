@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState, useEffect, useRef } from 'react';
+import { Linking } from 'react-native';
 import { Match } from '@/types/match';
 
 // lightweight mock generator (expandable)
@@ -94,6 +95,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
   const [matches, setMatches] = useState<Match[]>(() => getDebugMockMatches());
   const [lastMutualMatch, setLastMutualMatch] = useState<Match | null>(null);
   const [swipeHistory, setSwipeHistory] = useState<Array<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }>>([]);
+  const mountedRef = useRef(true);
 
   // simple mock: when a swipe is recorded, remove the head and append a regenerated match
   const recordSwipe = useCallback((id: string, action: 'like' | 'dislike' | 'superlike', index = 0) => {
@@ -130,6 +132,61 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
       } catch (e) {}
     }
   }, [matches]);
+
+  // Expose a deterministic trigger for QA and debug: can be called to force the celebration modal
+  const triggerMutualMatch = useCallback((matchId: string) => {
+    try {
+      const found = matches.find((m) => String(m.id) === String(matchId));
+      if (found) {
+        setLastMutualMatch(found);
+        // automatically clear after a reasonable QA timeout
+        setTimeout(() => {
+          if (mountedRef.current) setLastMutualMatch(null);
+        }, 10_000);
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  }, [matches]);
+
+  // Deep-link support: listen for URLs containing `mutualMatch=<id>` (comma-separated allowed)
+  useEffect(() => {
+    mountedRef.current = true;
+    const parseAndTrigger = (raw: string | undefined) => {
+      if (!raw) return;
+      try {
+        // extract query param manually to avoid URL constructor issues on older RN
+        const m = raw.match(/[?&]mutualMatch=([^&]+)/);
+        if (m && m[1]) {
+          const ids = decodeURIComponent(m[1]).split(',').map((s) => s.trim()).filter(Boolean);
+          if (ids.length > 0) {
+            // try to trigger the first id that matches our current list
+            for (const id of ids) {
+              const ok = triggerMutualMatch(id);
+              if (ok) break;
+            }
+          }
+        }
+      } catch (e) {}
+    };
+
+    // handle initial URL if app was launched via deep link
+    void Linking.getInitialURL().then((url) => parseAndTrigger(url)).catch(() => {});
+
+    const sub = Linking.addEventListener?.('url', (ev: any) => {
+      try { parseAndTrigger(ev?.url); } catch {}
+    });
+
+    return () => {
+      mountedRef.current = false;
+      try {
+        if (sub && typeof sub.remove === 'function') sub.remove();
+        // older RN versions: Linking.removeEventListener
+        // @ts-ignore
+        if (Linking.removeEventListener) Linking.removeEventListener('url', parseAndTrigger);
+      } catch {}
+    };
+  }, [triggerMutualMatch]);
 
   const undoLastSwipe = useCallback((): { match: Match; index: number } | null => {
     let lastEntry: { id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match } | undefined;
@@ -182,5 +239,5 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
     setSwipeHistory(() => []);
   }, [fetchMatchesFromServer]);
 
-  return { matches, recordSwipe, swipeHistory, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch } as const;
+  return { matches, recordSwipe, swipeHistory, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch, triggerMutualMatch } as const;
 }
