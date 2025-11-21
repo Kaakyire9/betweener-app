@@ -46,8 +46,8 @@ export default function useAIRecommendations(userId?: string) {
 
   // simple mock: when a swipe is recorded, remove the head and append a regenerated match
   const recordSwipe = useCallback((id: string, action: 'like' | 'dislike') => {
-    setSwipeHistory((prev) => [...prev, { id, action }]);
-    setMatches((prev) => {
+    setSwipeHistory((prev: Array<{ id: string; action: 'like' | 'dislike' }>) => [...prev, { id, action }]);
+    setMatches((prev: Match[]) => {
       const next = prev.slice(1);
       // append a regenerated match to keep list length stable (mock behavior)
       const generated: Match = {
