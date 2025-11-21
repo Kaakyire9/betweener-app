@@ -19,13 +19,14 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 export type ExploreStackHandle = {
   performSwipe: (dir: "left" | "right" | "superlike") => void;
+  rewind: () => void;
 };
 
 type Props = {
   matches: Match[];
   currentIndex: number;
   setCurrentIndex: (n: number) => void;
-  recordSwipe: (id: string, action: "like" | "dislike" | "superlike") => void;
+  recordSwipe: (id: string, action: "like" | "dislike" | "superlike", index?: number) => void;
   onProfileTap: (id: string) => void;
 };
 
@@ -88,6 +89,16 @@ const ExploreStack = forwardRef<ExploreStackHandle, Props>(
           runOnJS(completeSwipe)(dir as any);
         }
       },
+      rewind: () => {
+        try {
+          scale.value = 0.8;
+          cardOpacity.value = 1;
+          translateX.value = 0;
+          translateY.value = 0;
+          rotate.value = 0;
+          scale.value = withTiming(1, { duration: 260 });
+        } catch (e) {}
+      },
     }));
 
     // Reset animation values when index changes
@@ -103,8 +114,8 @@ const ExploreStack = forwardRef<ExploreStackHandle, Props>(
     const completeSwipe = (dir: "left" | "right" | "superlike") => {
       const current = list[currentIndex];
       if (current && current.id !== "__debug") {
-        if (dir === "superlike") recordSwipe(current.id, "superlike");
-        else recordSwipe(current.id, dir === "right" ? "like" : "dislike");
+        if (dir === "superlike") recordSwipe(current.id, "superlike", currentIndex);
+        else recordSwipe(current.id, dir === "right" ? "like" : "dislike", currentIndex);
       }
       try {
         if (dir === "right") Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);

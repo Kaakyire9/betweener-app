@@ -12,6 +12,7 @@ import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe, { isLinearGradientAvailable } from "@/components/NativeWrappers/LinearGradientSafe";
 import { useEffect, useRef, useState } from "react";
 import { Animated, Easing, StyleSheet, TouchableOpacity, View, useWindowDimensions } from "react-native";
+import { Text } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -54,7 +55,7 @@ export default function ExploreScreen() {
   const fontsLoaded = useAppFonts();
   const { profile } = useAuth();
 
-  const { matches, recordSwipe, smartCount } = useAIRecommendations(profile?.id);
+  const { matches, recordSwipe, undoLastSwipe, refreshMatches, smartCount } = useAIRecommendations(profile?.id);
 
   const [activeTab, setActiveTab] = useState<
     "recommended" | "nearby" | "active"
@@ -193,6 +194,97 @@ export default function ExploreScreen() {
     setCurrentIndex(0);
   }, [matchList.length]);
 
+  const exhausted = currentIndex >= matchList.length;
+
+  function NoMoreProfiles() {
+    if (canUseReanimated && ReanimatedModule && AnimatedReView) {
+      const noMoreTranslate = ReanimatedModule.useSharedValue(18);
+      const noMoreOpacity = ReanimatedModule.useSharedValue(0);
+
+      useEffect(() => {
+        try {
+          noMoreTranslate.value = ReanimatedModule.withTiming(0, { duration: 420 });
+          noMoreOpacity.value = ReanimatedModule.withTiming(1, { duration: 360 });
+        } catch {}
+      }, []);
+
+      const noMoreStyle = ReanimatedModule.useAnimatedStyle(() => ({
+        opacity: noMoreOpacity.value,
+        transform: [{ translateY: noMoreTranslate.value }],
+      }));
+
+      return (
+        // @ts-ignore - conditional AnimatedReView
+        <AnimatedReView style={noMoreStyle}>
+          <View style={styles.emptyStateContainer}>
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>You’re all caught up</Text>
+              <Text style={styles.emptySubtitle}>No new profiles right now — check back later or refresh for a new set.</Text>
+              <View style={styles.emptyActions}>
+                <TouchableOpacity
+                  style={[styles.primaryButton]}
+                  onPress={() => {
+                    void refreshMatches();
+                    setCurrentIndex(0);
+                  }}
+                >
+                  <Text style={styles.primaryButtonText}>Refresh</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.ghostButton}
+                  onPress={() => {
+                    setActiveTab('nearby');
+                  }}
+                >
+                  <Text style={styles.ghostButtonText}>Browse Nearby</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </AnimatedReView>
+      );
+    }
+
+    // fallback Animated entrance
+    const noMoreTranslate = useRef(new Animated.Value(18)).current;
+    const noMoreOpacity = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+      Animated.parallel([
+        Animated.timing(noMoreTranslate, { toValue: 0, duration: 420, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.timing(noMoreOpacity, { toValue: 1, duration: 360, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      ]).start();
+    }, []);
+
+    return (
+      <Animated.View style={[{ transform: [{ translateY: noMoreTranslate }], opacity: noMoreOpacity }, styles.emptyStateContainer]}>
+        <View style={styles.emptyCard}>
+          <Text style={styles.emptyTitle}>You’re all caught up</Text>
+          <Text style={styles.emptySubtitle}>No new profiles right now — check back later or refresh for a new set.</Text>
+          <View style={styles.emptyActions}>
+            <TouchableOpacity
+              style={[styles.primaryButton]}
+              onPress={() => {
+                void refreshMatches();
+                setCurrentIndex(0);
+              }}
+            >
+              <Text style={styles.primaryButtonText}>Refresh</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.ghostButton}
+              onPress={() => {
+                setActiveTab('nearby');
+              }}
+            >
+              <Text style={styles.ghostButtonText}>Browse Nearby</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Animated.View>
+    );
+  }
+
   if (!fontsLoaded)
     return <SafeAreaView style={styles.container} />;
 
@@ -217,7 +309,7 @@ export default function ExploreScreen() {
       stackRef.current?.performSwipe("right");
     } catch {
       const cm = matchList[currentIndex];
-      if (cm) recordSwipe(cm.id, "like");
+      if (cm) recordSwipe(cm.id, "like", currentIndex);
       if (currentIndex < matchList.length - 1)
         setCurrentIndex(currentIndex + 1);
     }
@@ -233,7 +325,7 @@ export default function ExploreScreen() {
       stackRef.current?.performSwipe("left");
     } catch {
       const cm = matchList[currentIndex];
-      if (cm) recordSwipe(cm.id, "dislike");
+      if (cm) recordSwipe(cm.id, "dislike", currentIndex);
       if (currentIndex < matchList.length - 1)
         setCurrentIndex(currentIndex + 1);
     }
@@ -273,7 +365,7 @@ export default function ExploreScreen() {
       stackRef.current?.performSwipe("superlike");
     } catch {
       const cm = matchList[currentIndex];
-      if (cm) recordSwipe(cm.id, "superlike");
+      if (cm) recordSwipe(cm.id, "superlike", currentIndex);
       if (currentIndex < matchList.length - 1) setCurrentIndex(currentIndex + 1);
     }
 
@@ -301,20 +393,24 @@ export default function ExploreScreen() {
 
         {/* CARD STACK */}
         <View style={styles.stackWrapper}>
-          <ExploreStack
-            ref={stackRef}
-            matches={matchList}
-            currentIndex={currentIndex}
-            setCurrentIndex={setCurrentIndex}
-            recordSwipe={recordSwipe}
-            onProfileTap={onProfileTap}
-          />
+          {!exhausted ? (
+            <ExploreStack
+              ref={stackRef}
+              matches={matchList}
+              currentIndex={currentIndex}
+              setCurrentIndex={setCurrentIndex}
+              recordSwipe={recordSwipe}
+              onProfileTap={onProfileTap}
+            />
+          ) : (
+            <NoMoreProfiles />
+          )}
         </View>
 
         {/* ACTION BUTTONS (floating card above tabs; safe-area aware) */}
         <View style={[styles.actionButtons, { bottom: Math.max(Math.max(insets.bottom, 6) - ACTION_BOTTOM_NUDGE, 0) }]} pointerEvents="box-none">
             {/* Animated wrapper provides a subtle slide+fade entrance */}
-            {canUseReanimated && AnimatedReView ? (
+            {canUseReanimated && AnimatedReView && !exhausted ? (
               // Reanimated worklet-driven entrance
               // @ts-ignore
               <AnimatedReView style={[{ width: floatingLayout.width }, rStyle]} pointerEvents="box-none">
@@ -346,16 +442,51 @@ export default function ExploreScreen() {
                     </TouchableOpacity>
                   </Animated.View>
 
-                  <TouchableOpacity
-                    style={styles.infoButton}
-                    onPress={() => console.log("Info")}
-                  >
-                    <MaterialCommunityIcons
-                      name="information"
-                      size={24}
-                      color={Colors.light.tint}
-                    />
-                  </TouchableOpacity>
+                  <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+                    <TouchableOpacity
+                      style={styles.infoButton}
+                      onPress={() => console.log("Info")}
+                    >
+                      <MaterialCommunityIcons
+                        name="information"
+                        size={24}
+                        color={Colors.light.tint}
+                      />
+                    </TouchableOpacity>
+                  </Animated.View>
+
+                  {/* Rewind button */}
+                  <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+                    <TouchableOpacity
+                      style={[styles.infoButton, { marginHorizontal: 8 }]}
+                      onPress={() => {
+                        animateButtonPress(() => {
+                          try {
+                            const restored = undoLastSwipe();
+                            if (!restored) {
+                              try { Haptics.selectionAsync(); } catch {}
+                              return;
+                            }
+                            // move to the restored index and trigger the stack reveal
+                            setCurrentIndex(restored.index);
+                            // slight delay to ensure stack has rendered the restored card
+                            setTimeout(() => {
+                              try { stackRef.current?.rewind(); } catch {}
+                            }, 60);
+                          } catch (e) {
+                            try { Haptics.selectionAsync(); } catch {}
+                          }
+                        });
+                      }}
+                      activeOpacity={0.9}
+                    >
+                      <MaterialCommunityIcons
+                        name="rewind"
+                        size={22}
+                        color={Colors.light.tint}
+                      />
+                    </TouchableOpacity>
+                  </Animated.View>
 
                   {/* Superlike button */}
                   <Animated.View style={{ alignItems: 'center', marginHorizontal: 8 }}>
@@ -628,4 +759,28 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  emptyStateContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyCard: {
+    width: '86%',
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    padding: 20,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.06,
+    shadowRadius: 18,
+    elevation: 10,
+  },
+  emptyTitle: { fontSize: 20, fontWeight: '800', color: '#0f172a', marginBottom: 6 },
+  emptySubtitle: { fontSize: 14, color: '#6b7280', textAlign: 'center', marginBottom: 16 },
+  emptyActions: { flexDirection: 'row', width: '100%', justifyContent: 'center' },
+  primaryButton: { backgroundColor: Colors.light.tint, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 12, marginRight: 8 },
+  primaryButtonText: { color: '#fff', fontWeight: '700' },
+  ghostButton: { borderWidth: 1, borderColor: '#e5e7eb', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12 },
+  ghostButtonText: { color: '#374151', fontWeight: '600' },
 });
