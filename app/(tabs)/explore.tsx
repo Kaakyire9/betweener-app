@@ -62,20 +62,107 @@ export default function ExploreScreen() {
 
   const stackRef = useRef<ExploreStackHandle | null>(null);
   const buttonScale = useRef(new Animated.Value(1)).current;
-  // entrance animation for the floating action card
-  const entranceTranslate = useRef(new Animated.Value(12)).current;
-  const entranceOpacity = useRef(new Animated.Value(0)).current;
-  
+  // tweak this value to move the floating action card further down (positive = more downward nudge)
+  const ACTION_BOTTOM_NUDGE = 40; // previously effectively 24
+
+  // Responsive floating action card layout helper
+  const getFloatingCardLayout = (w: number) => {
+    // Small phones
+    if (w < 480) {
+      return {
+        width: Math.min(Math.max(260, w - 48), 380),
+        borderRadius: 36,
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+      };
+    }
+
+    // Large phones / small tablets
+    if (w < 768) {
+      return {
+        width: Math.min(Math.max(300, w - 64), 520),
+        borderRadius: 40,
+        paddingHorizontal: 18,
+        paddingVertical: 10,
+      };
+    }
+
+    // Medium tablets
+    if (w < 1000) {
+      return {
+        width: Math.min(720, w - 128),
+        borderRadius: 48,
+        paddingHorizontal: 22,
+        paddingVertical: 12,
+      };
+    }
+
+    // Large tablets / desktop widths
+    return {
+      width: Math.min(960, Math.round(w * 0.6)),
+      borderRadius: 56,
+      paddingHorizontal: 28,
+      paddingVertical: 14,
+    };
+  };
+
+  const floatingLayout = getFloatingCardLayout(windowWidth);
+  // Guarded entrance animation: use Reanimated worklets when available,
+  // otherwise fallback to RN Animated (already implemented above).
+  let ReanimatedModule: any = null;
+  let AnimatedRe: any = null;
+  let canUseReanimated = false;
+  try {
+    // dynamic require so bundlers don't fail in environments without the native runtime
+    // @ts-ignore
+    ReanimatedModule = require("react-native-reanimated");
+    // prefer default export if present
+    AnimatedRe = ReanimatedModule.default || ReanimatedModule;
+    canUseReanimated = !!(
+      ReanimatedModule &&
+      typeof ReanimatedModule.useSharedValue === "function" &&
+      typeof ReanimatedModule.useAnimatedStyle === "function" &&
+      typeof ReanimatedModule.withTiming === "function"
+    );
+  } catch {}
+
+  // fallback Animated values so the existing Animated.View path works
+  const fallbackEntranceTranslate = useRef(new Animated.Value(12)).current;
+  const fallbackEntranceOpacity = useRef(new Animated.Value(0)).current;
+
+  // Reanimated shared values and animated style (only created when available)
+  const rTranslate = canUseReanimated
+    ? ReanimatedModule.useSharedValue(12)
+    : null;
+  const rOpacity = canUseReanimated
+    ? ReanimatedModule.useSharedValue(0)
+    : null;
+
+  const rStyle = canUseReanimated
+    ? ReanimatedModule.useAnimatedStyle(() => ({
+        opacity: rOpacity.value,
+        transform: [{ translateY: rTranslate.value }],
+      }))
+    : null;
+
   useEffect(() => {
-    // subtle slide + fade entrance
+    if (canUseReanimated && rTranslate && rOpacity) {
+      try {
+        rTranslate.value = ReanimatedModule.withTiming(0, { duration: 420 });
+        rOpacity.value = ReanimatedModule.withTiming(1, { duration: 360 });
+      } catch {}
+      return;
+    }
+
+    // Fallback RN Animated path (existing behavior)
     Animated.parallel([
-      Animated.timing(entranceTranslate, {
+      Animated.timing(fallbackEntranceTranslate, {
         toValue: 0,
         duration: 420,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
-      Animated.timing(entranceOpacity, {
+      Animated.timing(fallbackEntranceOpacity, {
         toValue: 1,
         duration: 360,
         easing: Easing.out(Easing.cubic),
@@ -83,6 +170,9 @@ export default function ExploreScreen() {
       }),
     ]).start();
   }, []);
+
+  // animated wrapper component for Reanimated if available
+  const AnimatedReView = canUseReanimated ? (AnimatedRe && (AnimatedRe.View || AnimatedRe)) : null;
 
   // -------------------------------
   // ✅ FIX: Fallback to mock matches
@@ -180,62 +270,131 @@ export default function ExploreScreen() {
         </View>
 
         {/* ACTION BUTTONS (floating card above tabs; safe-area aware) */}
-        <View style={[styles.actionButtons, { bottom: Math.max(Math.max(insets.bottom, 6) - 24, 0) }]} pointerEvents="box-none">
-          {/* Animated wrapper provides a subtle slide+fade entrance */}
-          <Animated.View
-            style={{
-              width: Math.min(Math.max(280, windowWidth - 64), 420),
-              opacity: entranceOpacity,
-              transform: [{ translateY: entranceTranslate }],
-            }}
-            pointerEvents="box-none"
-          >
-            <BlurViewSafe
-              intensity={60}
-              tint="light"
-              style={styles.actionFloatingCard}
-              pointerEvents="box-none"
-            >
-              <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
-                <TouchableOpacity
-                  style={styles.rejectButton}
-                  onPress={() => animateButtonPress(onReject)}
-                  activeOpacity={0.9}
+        <View style={[styles.actionButtons, { bottom: Math.max(Math.max(insets.bottom, 6) - ACTION_BOTTOM_NUDGE, 0) }]} pointerEvents="box-none">
+            {/* Animated wrapper provides a subtle slide+fade entrance */}
+            {canUseReanimated && AnimatedReView ? (
+              // Reanimated worklet-driven entrance
+              // @ts-ignore
+              <AnimatedReView style={[{ width: floatingLayout.width }, rStyle]} pointerEvents="box-none">
+                <BlurViewSafe
+                  intensity={60}
+                  tint="light"
+                  style={[
+                    styles.actionFloatingCard,
+                    {
+                      width: floatingLayout.width,
+                      borderRadius: floatingLayout.borderRadius,
+                      paddingHorizontal: floatingLayout.paddingHorizontal,
+                      paddingVertical: floatingLayout.paddingVertical,
+                    },
+                  ]}
+                  pointerEvents="box-none"
                 >
-                  <MaterialCommunityIcons
-                    name="close"
-                    size={28}
-                    color="#fff"
-                  />
-                </TouchableOpacity>
-              </Animated.View>
+                  <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+                    <TouchableOpacity
+                      style={styles.rejectButton}
+                      onPress={() => animateButtonPress(onReject)}
+                      activeOpacity={0.9}
+                    >
+                      <MaterialCommunityIcons
+                        name="close"
+                        size={28}
+                        color="#fff"
+                      />
+                    </TouchableOpacity>
+                  </Animated.View>
 
-              <TouchableOpacity
-                style={styles.infoButton}
-                onPress={() => console.log("Info")}
+                  <TouchableOpacity
+                    style={styles.infoButton}
+                    onPress={() => console.log("Info")}
+                  >
+                    <MaterialCommunityIcons
+                      name="information"
+                      size={24}
+                      color={Colors.light.tint}
+                    />
+                  </TouchableOpacity>
+
+                  <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+                    <TouchableOpacity
+                      style={styles.likeButton}
+                      onPress={() => animateButtonPress(onLike)}
+                      activeOpacity={0.9}
+                    >
+                      <MaterialCommunityIcons
+                        name="heart"
+                        size={28}
+                        color="#fff"
+                      />
+                    </TouchableOpacity>
+                  </Animated.View>
+                </BlurViewSafe>
+              </AnimatedReView>
+            ) : (
+              // Fallback Animated entrance
+              <Animated.View
+                style={{
+                  width: floatingLayout.width,
+                  opacity: fallbackEntranceOpacity,
+                  transform: [{ translateY: fallbackEntranceTranslate }],
+                }}
+                pointerEvents="box-none"
               >
-                <MaterialCommunityIcons
-                  name="information"
-                  size={24}
-                  color={Colors.light.tint}
-                />
-              </TouchableOpacity>
-
-              <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
-                <TouchableOpacity
-                  style={styles.likeButton}
-                  onPress={() => animateButtonPress(onLike)}
-                  activeOpacity={0.9}
+                <BlurViewSafe
+                  intensity={60}
+                  tint="light"
+                  style={[
+                    styles.actionFloatingCard,
+                    {
+                      width: floatingLayout.width,
+                      borderRadius: floatingLayout.borderRadius,
+                      paddingHorizontal: floatingLayout.paddingHorizontal,
+                      paddingVertical: floatingLayout.paddingVertical,
+                    },
+                  ]}
+                  pointerEvents="box-none"
                 >
-                  <MaterialCommunityIcons
-                    name="heart"
-                    size={28}
-                    color="#fff"
-                  />
-                </TouchableOpacity>
+                  <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+                    <TouchableOpacity
+                      style={styles.rejectButton}
+                      onPress={() => animateButtonPress(onReject)}
+                      activeOpacity={0.9}
+                    >
+                      <MaterialCommunityIcons
+                        name="close"
+                        size={28}
+                        color="#fff"
+                      />
+                    </TouchableOpacity>
+                  </Animated.View>
+
+                  <TouchableOpacity
+                    style={styles.infoButton}
+                    onPress={() => console.log("Info")}
+                  >
+                    <MaterialCommunityIcons
+                      name="information"
+                      size={24}
+                      color={Colors.light.tint}
+                    />
+                  </TouchableOpacity>
+
+                  <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+                    <TouchableOpacity
+                      style={styles.likeButton}
+                      onPress={() => animateButtonPress(onLike)}
+                      activeOpacity={0.9}
+                    >
+                      <MaterialCommunityIcons
+                        name="heart"
+                        size={28}
+                        color="#fff"
+                      />
+                    </TouchableOpacity>
+                  </Animated.View>
+                </BlurViewSafe>
               </Animated.View>
-            </BlurViewSafe>
-          </Animated.View>
+            )}
         </View>
       </SafeAreaView>
     </GestureHandlerRootView>
