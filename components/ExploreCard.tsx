@@ -290,10 +290,38 @@ export default function ExploreCard({ match, onPress }: { match: Match; onPress?
           </View>
 
           <View style={styles.tags}>
-            {(match.interests || []).slice(0, 3).map((t, i) => (
-              <View key={i} style={styles.tag}><Text style={styles.tagText}>{t}</Text></View>
-            ))}
-            {(match.interests || []).length > 3 && <View style={styles.tag}><Text style={styles.tagText}>+{(match.interests || []).length - 3}</Text></View>}
+            {(() => {
+              const ICON_MAP: Record<string, string> = {
+                Travel: 'airplane-takeoff',      // more dynamic travel glyph
+                Music: 'music-note',             // single-note glyph
+                Business: 'briefcase',
+                Art: 'brush',                    // brush instead of palette
+                Fitness: 'run',                  // active runner glyph
+              };
+              const interests = Array.isArray(match.interests) ? match.interests : [];
+              const visible = interests.slice(0, 3);
+              const remaining = Math.max(0, interests.length - visible.length);
+
+              return (
+                <>
+                  {visible.map((t, i) => {
+                    const iconName = ICON_MAP[t];
+                    return (
+                      <View key={i} style={styles.tag} accessible accessibilityLabel={t}>
+                        {iconName ? (
+                          <MaterialCommunityIcons name={iconName as any} size={14} color="#fff" />
+                        ) : (
+                          <Text style={styles.tagText}>{t}</Text>
+                        )}
+                      </View>
+                    );
+                  })}
+                  {remaining > 0 && (
+                    <View style={styles.tag}><Text style={styles.tagText}>{`+${remaining}`}</Text></View>
+                  )}
+                </>
+              );
+            })()}
           </View>
         </BlurViewSafe>
       </TouchableOpacity>
