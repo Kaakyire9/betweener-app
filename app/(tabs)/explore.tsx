@@ -481,7 +481,7 @@ export default function ExploreScreen() {
                   {/* Rewind button */}
                   <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
                     <TouchableOpacity
-                      style={[styles.infoButton, { marginHorizontal: 8 }]}
+                      style={[styles.infoButton, { marginHorizontal: 4 }]}
                       onPress={() => {
                         animateButtonPress(() => {
                           try {
@@ -512,7 +512,7 @@ export default function ExploreScreen() {
                   </Animated.View>
 
                   {/* Superlike button */}
-                  <Animated.View style={{ alignItems: 'center', marginHorizontal: 8 }}>
+                  <Animated.View style={{ alignItems: 'center', marginHorizontal: 4 }}>
                     <Animated.View
                       style={{
                           position: 'absolute',
@@ -634,7 +634,7 @@ export default function ExploreScreen() {
                   </TouchableOpacity>
 
                   {/* Superlike button (fallback branch) */}
-                  <Animated.View style={{ alignItems: 'center', marginHorizontal: 8 }}>
+                  <Animated.View style={{ alignItems: 'center', marginHorizontal: 4 }}>
                     <Animated.View
                       style={{
                           position: 'absolute',
@@ -746,7 +746,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 18,
+    paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 40,
     backgroundColor: 'rgba(255,255,255,0.85)',
@@ -764,7 +764,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#ef4444",
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 20,
+    marginRight: 12,
   },
   infoButton: {
     width: 54,
@@ -775,7 +775,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 2,
     borderColor: "#e5e7eb",
-    marginHorizontal: 8,
+    marginHorizontal: 4,
   },
   likeButton: {
     width: 64,
@@ -784,7 +784,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#10b981",
     justifyContent: "center",
     alignItems: "center",
-    marginLeft: 20,
+    marginLeft: 12,
   },
   superlikeButton: {
     width: 64,
