@@ -27,9 +27,12 @@ function hasNativeLinearGradient(): boolean {
   }
   return false;
 }
+const _isLinearGradientAvailable = hasNativeLinearGradient();
+
+export const isLinearGradientAvailable = _isLinearGradientAvailable;
 
 export default function LinearGradientSafe(props: ViewProps & { colors?: string[]; start?: [number, number]; end?: [number, number] }) {
-  if (!hasNativeLinearGradient()) {
+  if (!_isLinearGradientAvailable) {
     return <View {...props} />;
   }
 
