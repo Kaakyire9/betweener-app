@@ -7,18 +7,19 @@ import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
-    Alert,
-    Animated,
-    Dimensions,
-    Linking,
-    ScrollView,
-    Share,
-    StatusBar,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  Alert,
+  Animated,
+  Dimensions,
+  Linking,
+  ScrollView,
+  Share,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from "react-native";
+import ProfileVideoModal from '@/components/ProfileVideoModal';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -297,7 +298,18 @@ export default function ProfileViewScreen() {
     // Load user interests and photos if in preview mode
     fetchUserInterests();
     fetchUserPhotos();
+    // open video modal if navigator passed a videoUrl param
+    try {
+      const v = (params as any)?.videoUrl;
+      if (v) {
+        setVideoModalUrl(String(v));
+        setVideoModalVisible(true);
+      }
+    } catch (e) {}
   }, []);
+
+  const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
+  const [videoModalVisible, setVideoModalVisible] = useState(false);
 
   if (!fontsLoaded) {
     return <View style={styles.container} />;
@@ -718,6 +730,11 @@ export default function ProfileViewScreen() {
       
       {/* Only show action buttons for other profiles, not in preview mode */}
       {!isOwnProfilePreview && renderActionButtons()}
+      <ProfileVideoModal
+        visible={videoModalVisible}
+        videoUrl={videoModalUrl ?? undefined}
+        onClose={() => { setVideoModalVisible(false); setVideoModalUrl(null); }}
+      />
     </View>
   );
 }

@@ -32,7 +32,7 @@ try {
   hasSafeAreaHook = typeof useSafeAreaInsetsHook === 'function';
 } catch (e) {}
 
-export default function ExploreCard({ match, onPress, isPreviewing }: { match: Match; onPress?: (id: string) => void; isPreviewing?: boolean; }) {
+export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress }: { match: Match; onPress?: (id: string) => void; isPreviewing?: boolean; onPlayPress?: (id: string) => void; }) {
   // compute recently active (within last 3 hours)
   const recentlyActive = (() => {
     if (!match.lastActive) return false;
@@ -183,9 +183,9 @@ export default function ExploreCard({ match, onPress, isPreviewing }: { match: M
         {/* Video indicator (bottom-right of avatar) */}
         {((match as any).profileVideo) ? (
           <TouchableOpacity
-            accessibilityLabel={"Open profile video"}
+            accessibilityLabel={"Play profile video"}
             accessibilityRole="button"
-            onPress={() => onPress?.(match.id)}
+            onPress={() => onPlayPress ? onPlayPress(match.id) : onPress?.(match.id)}
             style={styles.videoBadgeHit}
             activeOpacity={0.9}
           >
