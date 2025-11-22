@@ -452,5 +452,53 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
     setSwipeHistory(() => []);
   }, [fetchMatchesFromServer]);
 
-  return { matches, recordSwipe, swipeHistory, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch, triggerMutualMatch } as const;
+  // on-demand fetch for optional profile details (personality_tags, profile_video, profile_interests)
+  const fetchProfileDetails = useCallback(async (profileId?: string) => {
+    if (!profileId || !supabase) return null;
+    try {
+      // fetch optional profile fields
+      const { data: profileData, error: pErr } = await supabase
+        .from('profiles')
+        .select('id, profile_video, personality_tags, latitude, longitude, region, tribe')
+        .eq('id', profileId)
+        .limit(1)
+        .single();
+
+      // fetch interests for this profile
+      let interestsArr: string[] = [];
+      try {
+        const { data: piRows, error: piErr } = await supabase
+          .from('profile_interests')
+          .select('profile_id, interests ( name )')
+          .eq('profile_id', profileId);
+        if (!piErr && Array.isArray(piRows) && piRows.length > 0) {
+          for (const r of piRows as any[]) {
+            const arr = Array.isArray(r.interests) ? r.interests.map((i: any) => i.name).filter(Boolean) : [];
+            interestsArr = interestsArr.concat(arr);
+          }
+        }
+      } catch (e) {}
+
+      // merge into existing matches
+      let merged: any = null;
+      setMatches((prev) => {
+        const next = prev.map((m) => {
+          if (String(m.id) !== String(profileId)) return m;
+          const personality = Array.isArray(profileData?.personality_tags)
+            ? profileData!.personality_tags.map((t: any) => (typeof t === 'string' ? t : t?.name || String(t)))
+            : (m as any).personalityTags || [];
+          const interestsFinal = (interestsArr && interestsArr.length > 0) ? interestsArr : ((m as any).interests && (m as any).interests.length > 0 ? (m as any).interests : [profileData?.region, profileData?.tribe].filter(Boolean));
+          merged = { ...m, profileVideo: profileData?.profile_video || (m as any).profileVideo, personalityTags: personality, interests: interestsFinal } as Match;
+          return merged;
+        });
+        return next;
+      });
+
+      return merged;
+    } catch (e) {
+      return null;
+    }
+  }, []);
+
+  return { matches, recordSwipe, swipeHistory, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch, triggerMutualMatch, fetchProfileDetails } as const;
 }

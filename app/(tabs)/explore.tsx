@@ -60,7 +60,7 @@ export default function ExploreScreen() {
   // For QA/dev: deterministic mutual-match list — replace with IDs you want to test
   const QA_MUTUAL_IDS = typeof __DEV__ !== 'undefined' && __DEV__ ? ['m-001'] : undefined;
 
-  const { matches, recordSwipe, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch } = useAIRecommendations(profile?.id, { mutualMatchTestIds: QA_MUTUAL_IDS });
+  const { matches, recordSwipe, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch, fetchProfileDetails } = useAIRecommendations(profile?.id, { mutualMatchTestIds: QA_MUTUAL_IDS });
 
   // celebration modal state
   const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
@@ -79,6 +79,7 @@ export default function ExploreScreen() {
 
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
   const [videoModalVisible, setVideoModalVisible] = useState(false);
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
 
   const stackRef = useRef<ExploreStackHandle | null>(null);
   const buttonScale = useRef(new Animated.Value(1)).current;
@@ -352,14 +353,21 @@ export default function ExploreScreen() {
     } catch {}
   };
 
-  const onProfileTap = (id: string) => {
-    const m = matchList.find((x) => String(x.id) === String(id));
-    if (m && (m as any).profileVideo) {
-      setVideoModalUrl((m as any).profileVideo as string);
-      setVideoModalVisible(true);
-      return;
+  const onProfileTap = async (id: string) => {
+    try {
+      // fetch optional fields on demand and merge into matches
+      const updated = await fetchProfileDetails?.(id);
+      const effective = updated ?? matchList.find((x) => String(x.id) === String(id));
+      if (effective && (effective as any).profileVideo) {
+        setPreviewingId(String(id));
+        setVideoModalUrl((effective as any).profileVideo as string);
+        setVideoModalVisible(true);
+        return;
+      }
+      console.log('Open profile (no video):', id);
+    } catch (e) {
+      console.log('onProfileTap failed', e);
     }
-    console.log('Open profile:', id);
   };
 
   const onSuperlike = () => {
@@ -423,6 +431,7 @@ export default function ExploreScreen() {
               setCurrentIndex={setCurrentIndex}
               recordSwipe={recordSwipe}
               onProfileTap={onProfileTap}
+              previewingId={previewingId ?? undefined}
             />
           ) : (
             <NoMoreProfiles />
@@ -709,6 +718,7 @@ export default function ExploreScreen() {
           onClose={() => {
             setVideoModalVisible(false);
             setVideoModalUrl(null);
+            setPreviewingId(null);
           }}
         />
       </SafeAreaView>
