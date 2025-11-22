@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState, useEffect, useRef } from 'react';
 import { Linking } from 'react-native';
 import { Match } from '@/types/match';
+import { supabase } from '@/lib/supabase';
 
 // lightweight mock generator (expandable)
 function createMockMatches(): Match[] {
@@ -92,7 +93,9 @@ function getDebugMockMatches(): Match[] {
 }
 
 export default function useAIRecommendations(userId?: string, opts?: { mutualMatchTestIds?: string[] }) {
-  const [matches, setMatches] = useState<Match[]>(() => getDebugMockMatches());
+  // Start empty; prefer server-sourced profiles. Mocks are only a fallback
+  // when the server cannot be reached.
+  const [matches, setMatches] = useState<Match[]>([]);
   const [lastMutualMatch, setLastMutualMatch] = useState<Match | null>(null);
   const [swipeHistory, setSwipeHistory] = useState<Array<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }>>([]);
   const mountedRef = useRef(true);
@@ -117,20 +120,70 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
       } as Match;
       return [...next, generated];
     });
-
-    // Deterministic QA trigger: if opts.mutualMatchTestIds includes this id, treat as mutual match
-    if (action === 'like') {
+    // Persist the swipe to Supabase if configured and we have a userId
+    (async () => {
       try {
-        const testIds = opts?.mutualMatchTestIds || [];
-        if (testIds && testIds.indexOf(id) !== -1) {
-          const matched = matches[0] || null;
-          if (matched) {
-            setLastMutualMatch(matched);
-            setTimeout(() => setLastMutualMatch(null), 10_000);
+        if (!userId) return;
+        // insert swipe record
+        const { error: insertErr } = await supabase.from('swipes').insert([{ user_id: userId, target_id: id, action, created_at: new Date().toISOString() }]);
+        if (insertErr) {
+          // ignore for now, we'll fallback to mock behavior
+        }
+
+        // If this was a 'like', check whether the target already liked us -> mutual match
+        if (action === 'like') {
+          const { data: reciprocal, error: rErr } = await supabase
+            .from('swipes')
+            .select('user_id, target_id, action')
+            .eq('user_id', id)
+            .eq('target_id', userId)
+            .in('action', ['like', 'superlike'])
+            .limit(1);
+          if (!rErr && reciprocal && reciprocal.length > 0) {
+            // fetch profile for the matched user
+            const { data: profileData } = await supabase.from('profiles').select('*').eq('id', id).limit(1).single();
+            if (profileData) {
+              // Fetch interests for the matched profile (profile_interests table)
+              let matchedInterests: string[] = [];
+              try {
+                const { data: piRows, error: piErr } = await supabase
+                  .from('profile_interests')
+                  .select('profile_id, interests ( name )')
+                  .eq('profile_id', id);
+                if (!piErr && Array.isArray(piRows) && piRows.length > 0) {
+                  for (const r of piRows as any[]) {
+                    const arr = Array.isArray(r.interests) ? r.interests.map((i: any) => i.name).filter(Boolean) : [];
+                    matchedInterests = matchedInterests.concat(arr);
+                  }
+                }
+              } catch (e) {
+                // ignore interests fetch errors
+              }
+
+              const matched: Match = {
+                id: profileData.id,
+                name: profileData.full_name || profileData.user_id || String(profileData.id),
+                age: profileData.age,
+                tagline: profileData.bio || '',
+                interests: matchedInterests || [],
+                avatar_url: profileData.avatar_url || undefined,
+                distance: profileData.location || '',
+                isActiveNow: !!profileData.is_active,
+                lastActive: profileData.last_active,
+                verified: !!profileData.verified,
+                personalityTags: profileData.personality_tags || [],
+                aiScore: profileData.ai_score || 0,
+                profileVideo: profileData.profile_video || undefined,
+              } as Match;
+              setLastMutualMatch(matched);
+              setTimeout(() => setLastMutualMatch(null), 10_000);
+            }
           }
         }
-      } catch (e) {}
-    }
+      } catch (e) {
+        // ignore and keep local mock behavior
+      }
+    })();
   }, [matches]);
 
   // Expose a deterministic trigger for QA and debug: can be called to force the celebration modal
@@ -216,22 +269,133 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
 
   const fetchMatchesFromServer = useCallback(async () => {
     try {
-      const res = await fetch('/api/refresh-profiles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId }),
-      });
-      if (!res.ok) throw new Error('network');
-      const body = await res.json();
-      if (Array.isArray(body.matches)) {
-        setMatches(body.matches as Match[]);
+      console.log('[useAIRecommendations] fetchMatchesFromServer starting', { userId });
+      // If Supabase is configured and we have a user id, fetch profiles
+      if (supabase && userId) {
+        // The `profiles` table may vary across environments. Try an
+        // extended select first (includes optional fields). If it fails
+        // due to missing columns (Postgres error 42703), retry with a
+        // minimal safe column list to avoid falling back to mocks.
+        const extendedSelect =
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, profile_video, personality_tags, verified, is_active, last_active, ai_score';
+        const minimalSelect = 'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion';
+
+        let data: any[] | null = null;
+        let error: any = null;
+        let usedMinimal = false;
+
+        try {
+          const res = await supabase.from('profiles').select(extendedSelect).neq('id', userId).limit(20);
+          // @ts-ignore
+          data = res.data;
+          // @ts-ignore
+          error = res.error;
+        } catch (e) {
+          error = e;
+        }
+
+        // If we got a missing-column error, retry with minimalSelect
+        if (error && (error.code === '42703' || String(error.message).includes('does not exist'))) {
+          if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] extended select failed, retrying with minimalSelect', { error });
+          try {
+            const res2 = await supabase.from('profiles').select(minimalSelect).neq('id', userId).limit(20);
+            // @ts-ignore
+            data = res2.data;
+            // @ts-ignore
+            error = res2.error;
+            usedMinimal = true;
+          } catch (e) {
+            error = e;
+          }
+        }
+
+        // Debug: log raw result (only in dev to avoid noisy prod logs)
+        try {
+          if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            console.log('[useAIRecommendations] supabase.profiles result', {
+              error: error || null,
+              count: Array.isArray(data) ? data.length : null,
+              raw: data,
+              usedMinimal,
+            });
+          }
+        } catch (e) {}
+
+        if (!error && Array.isArray(data) && data.length > 0) {
+          // Also fetch profile interests in bulk to populate the UI tags
+          const profileIds = data.map((p: any) => p.id).filter(Boolean);
+          let interestsMap: Record<string, string[]> = {};
+          try {
+            const { data: piData, error: piErr } = await supabase
+              .from('profile_interests')
+              .select('profile_id, interests ( name )')
+              .in('profile_id', profileIds);
+            if (!piErr && Array.isArray(piData)) {
+              for (const row of piData as any[]) {
+                const pid = row.profile_id;
+                const arr = Array.isArray(row.interests) ? row.interests.map((i: any) => i.name).filter(Boolean) : [];
+                interestsMap[pid] = arr;
+              }
+            }
+            if (typeof __DEV__ !== 'undefined' && __DEV__) {
+              console.log('[useAIRecommendations] profile_interests result', { count: Object.keys(interestsMap).length, interestsMap });
+            }
+          } catch (e) {
+            // ignore profile interests errors
+          }
+
+          const mapped: Match[] = data.map((p: any) => ({
+            id: p.id,
+            name: p.full_name || p.user_id || String(p.id),
+            age: p.age,
+            tagline: p.bio || '',
+            interests: interestsMap[p.id] || [],
+            avatar_url: p.avatar_url || undefined,
+            distance: p.location || '',
+            isActiveNow: !!p.is_active,
+            lastActive: p.last_active,
+            verified: !!p.verified,
+            personalityTags: p.personality_tags || [],
+            aiScore: p.ai_score || 0,
+            profileVideo: p.profile_video || undefined,
+          } as Match));
+          setMatches(mapped);
+          if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            console.log('[useAIRecommendations] fetched matches from server', { count: mapped.length, sample: mapped.slice(0, 3) });
+          }
+          return;
+        }
+        // If we got here, a fetch was attempted but either errored or returned zero rows.
+        // Use debug mock fallback only when a query error occurred. If the query
+        // returned zero rows, leave `matches` empty so the UI shows the empty state.
+        if (error) {
+          console.log('[useAIRecommendations] profiles query error (falling back to mocks)', error);
+        } else if (Array.isArray(data) && data.length === 0) {
+          if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] profiles query returned 0 rows - leaving matches empty');
+          setMatches([]);
+          return;
+        }
+      } else {
+        // No userId available yet (not signed in / profile not loaded) —
+        // do not populate mocks proactively. Leave matches empty and let
+        // the UI show the empty state until a userId is present.
         return;
       }
     } catch (e) {
-      // fallback to mocks on any failure
+      console.log('[useAIRecommendations] fetch error', e);
+      // fall through to mocks
     }
-    setMatches(() => createMockMatches());
+    // If we reached here it means a server fetch was attempted and failed
+    // (or returned no profiles). Use debug mocks as a fallback only in
+    // that case to preserve developer QA flows.
+    console.log('[useAIRecommendations] using debug mock fallback');
+    setMatches(() => getDebugMockMatches());
   }, [userId]);
+
+    // Fetch matches on mount and when userId changes
+    useEffect(() => {
+      void fetchMatchesFromServer();
+    }, [fetchMatchesFromServer]);
 
   const refreshMatches = useCallback(() => {
     // fire-and-forget: try server, fallback to mock on error

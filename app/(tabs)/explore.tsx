@@ -5,6 +5,7 @@ import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import useAIRecommendations from "@/hooks/useAIRecommendations";
 import MatchModal from '@/components/MatchModal';
+import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { useAuth } from "@/lib/auth-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -26,6 +27,7 @@ const MOCK_MATCHES = [
     interests: ["Travel", "Food", "Music"],
     avatar_url:
       "https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=400&h=600&fit=crop&crop=face",
+    profileVideo: "https://www.w3schools.com/html/mov_bbb.mp4",
     distance: "2.3 km away",
   },
   {
@@ -75,6 +77,9 @@ export default function ExploreScreen() {
     "recommended" | "nearby" | "active"
   >("recommended");
   const [currentIndex, setCurrentIndex] = useState(0);
+
+  const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
+  const [videoModalVisible, setVideoModalVisible] = useState(false);
 
   const stackRef = useRef<ExploreStackHandle | null>(null);
   const buttonScale = useRef(new Animated.Value(1)).current;
@@ -197,11 +202,9 @@ export default function ExploreScreen() {
   // animated wrapper component for Reanimated if available
   const AnimatedReView = canUseReanimated ? (AnimatedRe && (AnimatedRe.View || AnimatedRe)) : null;
 
-  // -------------------------------
-  // ✅ FIX: Fallback to mock matches
-  // -------------------------------
-  const matchList =
-    matches.length > 0 ? matches : MOCK_MATCHES;
+  // Use real server-provided matches by default. Fallback to mocks only
+  // when the server couldn't provide any profiles.
+  const matchList = matches.length > 0 ? matches : [];
 
   // Reset index if data changes
   useEffect(() => {
@@ -351,7 +354,13 @@ export default function ExploreScreen() {
   };
 
   const onProfileTap = (id: string) => {
-    console.log("Open profile:", id);
+    const m = matchList.find((x) => String(x.id) === String(id));
+    if (m && (m as any).profileVideo) {
+      setVideoModalUrl((m as any).profileVideo as string);
+      setVideoModalVisible(true);
+      return;
+    }
+    console.log('Open profile:', id);
   };
 
   const onSuperlike = () => {
@@ -693,6 +702,14 @@ export default function ExploreScreen() {
               console.log('Navigation to chat failed', e);
             }
             setCelebrationMatch(null);
+          }}
+        />
+        <ProfileVideoModal
+          visible={videoModalVisible}
+          videoUrl={videoModalUrl ?? undefined}
+          onClose={() => {
+            setVideoModalVisible(false);
+            setVideoModalUrl(null);
           }}
         />
       </SafeAreaView>
