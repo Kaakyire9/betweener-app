@@ -212,6 +212,33 @@ export default function ExploreScreen() {
     setCurrentIndex(0);
   }, [matchList.length]);
 
+  // Prefetch optional fields for the next N cards to improve perceived speed
+  useEffect(() => {
+    const N = 2;
+    let mounted = true;
+    (async () => {
+      try {
+        for (let i = 1; i <= N; i++) {
+          const idx = currentIndex + i;
+          const m = matchList[idx];
+          if (!m) break;
+          // skip if it already has the optional fields
+          const hasVideo = !!((m as any).profileVideo);
+          const hasPersonality = Array.isArray((m as any).personalityTags) && (m as any).personalityTags.length > 0;
+          const hasInterests = Array.isArray((m as any).interests) && (m as any).interests.length > 0;
+          if (!hasVideo || !hasPersonality || !hasInterests) {
+            // call fetchProfileDetails to merge optional fields into matches
+            await fetchProfileDetails?.(m.id);
+          }
+          if (!mounted) break;
+        }
+      } catch (e) {
+        // ignore prefetch errors
+      }
+    })();
+    return () => { mounted = false; };
+  }, [currentIndex, matchList, fetchProfileDetails]);
+
   const exhausted = currentIndex >= matchList.length;
 
   function NoMoreProfiles() {
