@@ -4,7 +4,7 @@ import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
 import type { Match } from "@/types/match";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Animated, Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Animated, Image, StyleSheet, Text, TouchableOpacity, View, AccessibilityInfo } from "react-native";
 
 // guarded dynamic require for Reanimated to keep compatibility with Expo Go
 let ReanimatedModule: any = null;
@@ -75,6 +75,23 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
   const pillScale = canUseReanimated ? ReanimatedModule.useSharedValue(0.85) : null;
   const pillOpacity = canUseReanimated ? ReanimatedModule.useSharedValue(0) : null;
 
+  // preview glow pulse (Reanimated) + reduced-motion preference
+  const previewPulse = canUseReanimated ? ReanimatedModule.useSharedValue(0) : null;
+  const [reduceMotion, setReduceMotion] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    try {
+      AccessibilityInfo.isReduceMotionEnabled().then((v) => { if (mounted) setReduceMotion(!!v); }).catch(() => {});
+    } catch (e) {}
+    return () => { mounted = false; };
+  }, []);
+
+  const previewGlowAnimatedStyle = (canUseReanimated && previewPulse) ? ReanimatedModule.useAnimatedStyle(() => {
+    const s = 1 + (previewPulse.value || 0) * 0.06;
+    const o = 1 - (previewPulse.value || 0) * 0.18;
+    return { transform: [{ scale: s }], opacity: o } as any;
+  }) : undefined;
+
   // measured widths for symmetric spacing
   const [leftBadgeWidth, setLeftBadgeWidth] = useState(0);
   const [rightBadgeWidth, setRightBadgeWidth] = useState(0);
@@ -143,6 +160,19 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     }
   }, [match.verified, match.isActiveNow, match.lastActive]);
 
+  // drive the preview pulse when isPreviewing changes
+  useEffect(() => {
+    if (!canUseReanimated || !previewPulse) return;
+    try {
+      if (isPreviewing) {
+        // gentle repeating pulse
+        previewPulse.value = ReanimatedModule.withRepeat(ReanimatedModule.withTiming(1, { duration: 900 }), -1, true);
+      } else {
+        previewPulse.value = ReanimatedModule.withTiming(0, { duration: 240 });
+      }
+    } catch (e) {}
+  }, [isPreviewing, previewPulse]);
+
   // animate slot width whenever measured badge widths or safe-area insets change
   useEffect(() => {
     const target = Math.max((leftBadgeWidth || 0) + (insets.left || 0), (rightBadgeWidth || 0) + (insets.right || 0), MIN_SLOT);
@@ -177,7 +207,12 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
 
         {/* subtle full-card glow while previewing (modal playing) */}
         {isPreviewing ? (
-          <View pointerEvents="none" style={styles.previewGlow} />
+          (canUseReanimated && ReanimatedAnimated && !reduceMotion && previewGlowAnimatedStyle) ? (
+            // @ts-ignore - animated preview glow using Reanimated when available
+            <ReanimatedAnimated.View style={[styles.previewGlow, previewGlowAnimatedStyle]} pointerEvents="none" />
+          ) : (
+            <View pointerEvents="none" style={styles.previewGlow} />
+          )
         ) : null}
 
         {/* Video indicator (bottom-right of avatar) */}
