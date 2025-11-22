@@ -344,21 +344,70 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
             // ignore profile interests errors
           }
 
-          const mapped: Match[] = data.map((p: any) => ({
-            id: p.id,
-            name: p.full_name || p.user_id || String(p.id),
-            age: p.age,
-            tagline: p.bio || '',
-            interests: interestsMap[p.id] || [],
-            avatar_url: p.avatar_url || undefined,
-            distance: p.location || '',
-            isActiveNow: !!p.is_active,
-            lastActive: p.last_active,
-            verified: !!p.verified,
-            personalityTags: p.personality_tags || [],
-            aiScore: p.ai_score || 0,
-            profileVideo: p.profile_video || undefined,
-          } as Match));
+          // Try to fetch the current user's coordinates so we can compute distances
+          let userCoords: { latitude?: number; longitude?: number } | null = null;
+          try {
+            const { data: myProfile, error: myErr } = await supabase
+              .from('profiles')
+              .select('latitude, longitude')
+              .eq('id', userId)
+              .limit(1)
+              .single();
+            if (!myErr && myProfile) {
+              userCoords = { latitude: myProfile.latitude, longitude: myProfile.longitude };
+            }
+          } catch (e) {
+            userCoords = null;
+          }
+
+          const haversineKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+            const toRad = (v: number) => (v * Math.PI) / 180;
+            const R = 6371; // km
+            const dLat = toRad(lat2 - lat1);
+            const dLon = toRad(lon2 - lon1);
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+          };
+
+          const mapped: Match[] = data.map((p: any) => {
+            // build interests: prefer interestsMap, fallback to region/tribe
+            let interestsArr: string[] = Array.isArray(interestsMap[p.id]) ? interestsMap[p.id].map((i: any) => (typeof i === 'string' ? i : i?.name || String(i))) : [];
+            if ((!interestsArr || interestsArr.length === 0) && (p.region || p.tribe)) {
+              const fall = [p.region, p.tribe].filter(Boolean).slice(0, 3) as string[];
+              interestsArr = fall;
+            }
+
+            // compute distance if missing and we have coords
+            let distanceStr = p.location || '';
+            if ((!distanceStr || String(distanceStr).trim() === '') && userCoords && p.latitude != null && p.longitude != null && userCoords.latitude != null && userCoords.longitude != null) {
+              try {
+                const km = haversineKm(userCoords.latitude!, userCoords.longitude!, Number(p.latitude), Number(p.longitude));
+                if (km < 1) distanceStr = `${Math.round(km * 1000)} m away`;
+                else distanceStr = `${km.toFixed(1)} km away`;
+              } catch (e) {
+                distanceStr = '';
+              }
+            }
+
+            const ptags = Array.isArray(p.personality_tags) ? p.personality_tags.map((t: any) => (typeof t === 'string' ? t : t?.name || String(t))) : [];
+
+            return ({
+              id: p.id,
+              name: p.full_name || p.user_id || String(p.id),
+              age: p.age,
+              tagline: p.bio || '',
+              interests: interestsArr || [],
+              avatar_url: p.avatar_url || undefined,
+              distance: distanceStr || '',
+              isActiveNow: !!p.is_active,
+              lastActive: p.last_active,
+              verified: !!p.verified,
+              personalityTags: ptags || [],
+              aiScore: p.ai_score || 0,
+              profileVideo: p.profile_video || undefined,
+            } as Match);
+          });
           setMatches(mapped);
           if (typeof __DEV__ !== 'undefined' && __DEV__) {
             console.log('[useAIRecommendations] fetched matches from server', { count: mapped.length, sample: mapped.slice(0, 3) });
