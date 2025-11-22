@@ -1,11 +1,11 @@
 import ExploreHeader from "@/components/ExploreHeader";
 import type { ExploreStackHandle } from "@/components/ExploreStack.reanimated";
 import ExploreStack from "@/components/ExploreStack.reanimated";
+import MatchModal from '@/components/MatchModal';
+import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import useAIRecommendations from "@/hooks/useAIRecommendations";
-import MatchModal from '@/components/MatchModal';
-import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { useAuth } from "@/lib/auth-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -13,8 +13,7 @@ import * as Haptics from "expo-haptics";
 import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe, { isLinearGradientAvailable } from "@/components/NativeWrappers/LinearGradientSafe";
 import { useEffect, useRef, useState } from "react";
-import { Animated, Easing, StyleSheet, TouchableOpacity, View, useWindowDimensions } from "react-native";
-import { Text } from "react-native";
+import { Animated, Easing, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
