@@ -13,6 +13,7 @@ import * as Haptics from "expo-haptics";
 import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe, { isLinearGradientAvailable } from "@/components/NativeWrappers/LinearGradientSafe";
 import { useEffect, useRef, useState } from "react";
+import { router } from 'expo-router';
 import { Animated, Easing, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -357,14 +358,11 @@ export default function ExploreScreen() {
     try {
       // fetch optional fields on demand and merge into matches
       const updated = await fetchProfileDetails?.(id);
-      const effective = updated ?? matchList.find((x) => String(x.id) === String(id));
-      if (effective && (effective as any).profileVideo) {
-        setPreviewingId(String(id));
-        setVideoModalUrl((effective as any).profileVideo as string);
-        setVideoModalVisible(true);
-        return;
-      }
-      console.log('Open profile (no video):', id);
+      const videoUrl = (updated && (updated as any).profileVideo) ? String((updated as any).profileVideo) : undefined;
+      // navigate to the full profile preview screen; include videoUrl param if we have it so ProfileView can auto-play
+      const params: any = { profileId: String(id) };
+      if (videoUrl) params.videoUrl = videoUrl;
+      router.push({ pathname: '/profile-view', params });
     } catch (e) {
       console.log('onProfileTap failed', e);
     }
@@ -431,6 +429,22 @@ export default function ExploreScreen() {
               setCurrentIndex={setCurrentIndex}
               recordSwipe={recordSwipe}
               onProfileTap={onProfileTap}
+              onPlayPress={async (id: string) => {
+                try {
+                  const updated = await fetchProfileDetails?.(id);
+                  const effective = updated ?? matchList.find((x) => String(x.id) === String(id));
+                  if (effective && (effective as any).profileVideo) {
+                    setPreviewingId(String(id));
+                    setVideoModalUrl((effective as any).profileVideo as string);
+                    setVideoModalVisible(true);
+                    return;
+                  }
+                  // fallback: open profile view if no video
+                  router.push({ pathname: '/profile-view', params: { profileId: String(id) } });
+                } catch (e) {
+                  console.log('onPlayPress failed', e);
+                }
+              }}
               previewingId={previewingId ?? undefined}
             />
           ) : (
