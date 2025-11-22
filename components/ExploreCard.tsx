@@ -32,7 +32,7 @@ try {
   hasSafeAreaHook = typeof useSafeAreaInsetsHook === 'function';
 } catch (e) {}
 
-export default function ExploreCard({ match, onPress }: { match: Match; onPress?: (id: string) => void; }) {
+export default function ExploreCard({ match, onPress, isPreviewing }: { match: Match; onPress?: (id: string) => void; isPreviewing?: boolean; }) {
   // compute recently active (within last 3 hours)
   const recentlyActive = (() => {
     if (!match.lastActive) return false;
@@ -174,6 +174,11 @@ export default function ExploreCard({ match, onPress }: { match: Match; onPress?
     <View style={styles.card}>
       <TouchableOpacity style={styles.cardContent} activeOpacity={0.95} onPress={() => onPress?.(match.id)}>
         <Image source={{ uri: match.avatar_url || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&h=600&fit=crop&crop=face" }} style={styles.image} />
+
+        {/* subtle full-card glow while previewing (modal playing) */}
+        {isPreviewing ? (
+          <View pointerEvents="none" style={styles.previewGlow} />
+        ) : null}
 
         {/* Video indicator (bottom-right of avatar) */}
         {((match as any).profileVideo) ? (
@@ -459,5 +464,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.9)'
+  },
+  previewGlow: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(6,182,212,0.06)',
+    borderRadius: 24,
+    zIndex: 40,
   },
 });
