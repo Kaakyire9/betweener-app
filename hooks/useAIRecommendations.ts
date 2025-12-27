@@ -125,19 +125,26 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
       try {
         if (!userId) return;
         // insert swipe record
-        const { error: insertErr } = await supabase.from('swipes').insert([{ user_id: userId, target_id: id, action, created_at: new Date().toISOString() }]);
-        if (insertErr) {
-          // ignore for now, we'll fallback to mock behavior
-        }
+    const { error: insertErr } = await supabase
+      .from('swipes')
+      .insert([{
+        swiper_id: userId,
+        target_id: id,
+        action: action === 'superlike' ? 'SUPERLIKE' : action === 'like' ? 'LIKE' : 'DISLIKE',
+        created_at: new Date().toISOString(),
+      }]);
+    if (insertErr) {
+      // ignore for now, we'll fallback to mock behavior
+    }
 
         // If this was a 'like', check whether the target already liked us -> mutual match
         if (action === 'like') {
           const { data: reciprocal, error: rErr } = await supabase
             .from('swipes')
-            .select('user_id, target_id, action')
-            .eq('user_id', id)
+            .select('swiper_id, target_id, action')
+            .eq('swiper_id', id)
             .eq('target_id', userId)
-            .in('action', ['like', 'superlike'])
+            .in('action', ['LIKE', 'SUPERLIKE'])
             .limit(1);
           if (!rErr && reciprocal && reciprocal.length > 0) {
             // fetch profile for the matched user
