@@ -161,6 +161,15 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
                   status: 'ACTIVE',
                   updated_at: new Date().toISOString(),
                 }], { onConflict: 'user1_id,user2_id' });
+
+              // Also update any existing row regardless of user ordering
+              await supabase
+                .from('matches')
+                .update({
+                  status: 'ACTIVE',
+                  updated_at: new Date().toISOString(),
+                })
+                .or(`and(user1_id.eq.${sorted[0]},user2_id.eq.${sorted[1]}),and(user1_id.eq.${sorted[1]},user2_id.eq.${sorted[0]})`);
             } catch (e) {
               // ignore match upsert errors; celebration flow can still continue
             }
