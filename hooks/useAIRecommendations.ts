@@ -281,16 +281,16 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
         // fetch the other profile with minimal fields
         let { data: profileData, error: pErr } = await supabase
           .from('profiles')
-          .select('id, full_name, bio, age, avatar_url, region, tribe, religion, personality_tags')
+          .select('id, full_name, bio, age, avatar_url, region, tribe, religion, personality_type')
           .eq('id', otherId)
           .limit(1)
           .single();
-        // If profile_video column is missing, retry with minimal select
+        // If any column is missing, retry with minimal select
         if ((pErr && (pErr as any).code === '42703') || (!profileData && pErr)) {
           try {
             const retry = await supabase
               .from('profiles')
-              .select('id, full_name, bio, age, avatar_url, region, tribe, religion, personality_tags')
+              .select('id, full_name, bio, age, avatar_url, region, tribe, religion, personality_type')
               .eq('id', otherId)
               .limit(1)
               .single();
@@ -340,9 +340,9 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
           isActiveNow: false,
           lastActive: null as any,
           verified: false,
-          personalityTags: Array.isArray(profileData.personality_tags)
-            ? profileData.personality_tags.map((t: any) => (typeof t === 'string' ? t : t?.name || String(t)))
-            : [],
+          personalityTags: Array.isArray((profileData as any).personality_tags)
+            ? (profileData as any).personality_tags.map((t: any) => (typeof t === 'string' ? t : t?.name || String(t)))
+            : (profileData as any).personality_type ? [(profileData as any).personality_type] : [],
           profileVideo: undefined,
           tribe: profileData.tribe,
           religion: profileData.religion,
@@ -445,8 +445,8 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
         // due to missing columns (Postgres error 42703), retry with a
         // minimal safe column list to avoid falling back to mocks.
         const extendedSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_tags, verified, is_active, last_active, ai_score';
-        const minimalSelect = 'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, verified, is_active, last_active, ai_score';
+        const minimalSelect = 'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type';
 
         let data: any[] | null = null;
         let error: any = null;
