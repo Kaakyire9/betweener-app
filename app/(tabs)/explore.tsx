@@ -561,7 +561,12 @@ export default function ExploreScreen() {
                   <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
                     <TouchableOpacity
                       style={styles.infoButton}
-                      onPress={() => console.log("Info")}
+                      onPress={() => {
+                        const cm = matchList[currentIndex];
+                        if (cm) {
+                          router.push({ pathname: '/profile-view', params: { profileId: String(cm.id) } });
+                        }
+                      }}
                     >
                       <MaterialCommunityIcons
                         name="information"
@@ -717,7 +722,12 @@ export default function ExploreScreen() {
 
                   <TouchableOpacity
                     style={styles.infoButton}
-                    onPress={() => console.log("Info")}
+                    onPress={() => {
+                      const cm = matchList[currentIndex];
+                      if (cm) {
+                        router.push({ pathname: '/profile-view', params: { profileId: String(cm.id) } });
+                      }
+                    }}
                   >
                     <MaterialCommunityIcons
                       name="information"
