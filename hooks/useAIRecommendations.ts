@@ -224,6 +224,81 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
     return false;
   }, [matches]);
 
+  // Realtime listener for matches inserts so UI can react even if swipe reciprocal check is skipped by RLS
+  useEffect(() => {
+    if (!userId) return;
+    const channel = supabase
+      .channel('matches-realtime')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'matches' },
+        async (payload: any) => {
+          try {
+            const row = payload?.new;
+            if (!row) return;
+            if (row.user1_id !== userId && row.user2_id !== userId) return;
+            const otherId = row.user1_id === userId ? row.user2_id : row.user1_id;
+
+            // fetch the other profile with minimal fields
+            const { data: profileData, error: pErr } = await supabase
+              .from('profiles')
+              .select('id, full_name, bio, age, avatar_url, region, tribe, religion, profile_video, personality_tags')
+              .eq('id', otherId)
+              .limit(1)
+              .single();
+            if (pErr || !profileData) return;
+
+            // fetch interests for the matched profile (profile_interests table)
+            let matchedInterests: string[] = [];
+            try {
+              const { data: piRows, error: piErr } = await supabase
+                .from('profile_interests')
+                .select('profile_id, interests ( name )')
+                .eq('profile_id', otherId);
+              if (!piErr && Array.isArray(piRows) && piRows.length > 0) {
+                for (const r of piRows as any[]) {
+                  const arr = Array.isArray(r.interests) ? r.interests.map((i: any) => i.name).filter(Boolean) : [];
+                  matchedInterests = matchedInterests.concat(arr);
+                }
+              }
+            } catch (e) {}
+
+            const matched: Match = {
+              id: profileData.id,
+              name: profileData.full_name || profileData.id,
+              age: profileData.age,
+              tagline: profileData.bio || '',
+              interests: matchedInterests || [],
+              avatar_url: profileData.avatar_url || undefined,
+              distance: profileData.region || '',
+              isActiveNow: false,
+              lastActive: null as any,
+              verified: false,
+              personalityTags: Array.isArray(profileData.personality_tags)
+                ? profileData.personality_tags.map((t: any) => (typeof t === 'string' ? t : t?.name || String(t)))
+                : [],
+              profileVideo: profileData.profile_video || undefined,
+              tribe: profileData.tribe,
+              religion: profileData.religion,
+              region: profileData.region,
+            } as Match;
+
+            setLastMutualMatch(matched);
+            setTimeout(() => {
+              if (mountedRef.current) setLastMutualMatch(null);
+            }, 10_000);
+          } catch (e) {
+            // ignore realtime handler errors
+          }
+        }
+      );
+
+    try { channel.subscribe(); } catch {}
+    return () => {
+      try { channel.unsubscribe(); } catch {}
+    };
+  }, [userId]);
+
   // Deep-link support: listen for URLs containing `mutualMatch=<id>` (comma-separated allowed)
   useEffect(() => {
     mountedRef.current = true;
