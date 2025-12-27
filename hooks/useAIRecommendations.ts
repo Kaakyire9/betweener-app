@@ -139,22 +139,37 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
 
         // If this was a 'like', check whether the target already liked us -> mutual match
         if (action === 'like') {
-          const { data: reciprocal, error: rErr } = await supabase
-            .from('swipes')
-            .select('swiper_id, target_id, action')
-            .eq('swiper_id', id)
-            .eq('target_id', userId)
-            .in('action', ['LIKE', 'SUPERLIKE'])
-            .limit(1);
-          if (!rErr && reciprocal && reciprocal.length > 0) {
-            // fetch profile for the matched user
-            const { data: profileData } = await supabase.from('profiles').select('*').eq('id', id).limit(1).single();
-            if (profileData) {
-              // Fetch interests for the matched profile (profile_interests table)
-              let matchedInterests: string[] = [];
-              try {
-                const { data: piRows, error: piErr } = await supabase
-                  .from('profile_interests')
+        const { data: reciprocal, error: rErr } = await supabase
+          .from('swipes')
+          .select('swiper_id, target_id, action')
+          .eq('swiper_id', id)
+          .eq('target_id', userId)
+          .in('action', ['LIKE', 'SUPERLIKE'])
+          .limit(1);
+        if (!rErr && reciprocal && reciprocal.length > 0) {
+          // fetch profile for the matched user
+          const { data: profileData } = await supabase.from('profiles').select('*').eq('id', id).limit(1).single();
+          if (profileData) {
+            // Ensure a match record exists for this pair
+            try {
+              const sorted = [userId, id].sort(); // enforce deterministic ordering
+              await supabase
+                .from('matches')
+                .upsert([{
+                  user1_id: sorted[0],
+                  user2_id: sorted[1],
+                  status: 'PENDING',
+                  updated_at: new Date().toISOString(),
+                }], { onConflict: 'user1_id,user2_id' });
+            } catch (e) {
+              // ignore match upsert errors; celebration flow can still continue
+            }
+
+            // Fetch interests for the matched profile (profile_interests table)
+            let matchedInterests: string[] = [];
+            try {
+              const { data: piRows, error: piErr } = await supabase
+                .from('profile_interests')
                   .select('profile_id, interests ( name )')
                   .eq('profile_id', id);
                 if (!piErr && Array.isArray(piRows) && piRows.length > 0) {
