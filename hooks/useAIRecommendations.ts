@@ -130,7 +130,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
           .insert([{
             swiper_id: userId,
             target_id: id,
-            action: action === 'superlike' ? 'SUPERLIKE' : action === 'like' ? 'LIKE' : 'DISLIKE',
+            action: action === 'superlike' ? 'SUPERLIKE' : action === 'like' ? 'LIKE' : 'PASS',
             created_at: new Date().toISOString(),
           }]);
         if (insertErr) {
@@ -150,80 +150,11 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
             console.log('[recordSwipe] reciprocal check error', rErr);
           }
           if (!rErr && reciprocal && reciprocal.length > 0) {
-            // fetch profile for the matched user
-            const { data: profileData } = await supabase.from('profiles').select('*').eq('id', id).limit(1).single();
-            if (profileData) {
-              // Ensure a match record exists for this pair
-              try {
-                const sorted = [userId, id].sort(); // enforce deterministic ordering
-                const { error: upsertErr } = await supabase
-                  .from('matches')
-                .upsert([{
-                  user1_id: sorted[0],
-                  user2_id: sorted[1],
-                  status: 'ACCEPTED',
-                  updated_at: new Date().toISOString(),
-                }], { onConflict: 'user1_id,user2_id' });
-              if (upsertErr) {
-                console.log('[recordSwipe] match upsert error', upsertErr);
-              }
-
-              // Also update any existing row regardless of user ordering
-              const { error: updateErr } = await supabase
-                .from('matches')
-                .update({
-                  status: 'ACCEPTED',
-                  updated_at: new Date().toISOString(),
-                })
-                .or(`and(user1_id.eq.${sorted[0]},user2_id.eq.${sorted[1]}),and(user1_id.eq.${sorted[1]},user2_id.eq.${sorted[0]})`);
-                if (updateErr) {
-                  console.log('[recordSwipe] match status update error', updateErr);
-                }
-              } catch (e) {
-                console.log('[recordSwipe] match upsert/update threw', e);
-              }
-
-              // Fetch interests for the matched profile (profile_interests table)
-              let matchedInterests: string[] = [];
-              try {
-                const { data: piRows, error: piErr } = await supabase
-                  .from('profile_interests')
-                  .select('profile_id, interests ( name )')
-                  .eq('profile_id', id);
-                if (!piErr && Array.isArray(piRows) && piRows.length > 0) {
-                  for (const r of piRows as any[]) {
-                    const arr = Array.isArray(r.interests) ? r.interests.map((i: any) => i.name).filter(Boolean) : [];
-                    matchedInterests = matchedInterests.concat(arr);
-                  }
-                }
-              } catch (e) {
-                // ignore interests fetch errors
-              }
-
-              const matched: Match = {
-                id: profileData.id,
-                name: profileData.full_name || profileData.user_id || String(profileData.id),
-                age: profileData.age,
-                tagline: profileData.bio || '',
-                interests: matchedInterests || [],
-                avatar_url: profileData.avatar_url || undefined,
-                distance: profileData.location || '',
-                isActiveNow: !!profileData.is_active,
-                lastActive: profileData.last_active,
-                verified: !!profileData.verified,
-                personalityTags: profileData.personality_tags || [],
-                aiScore: profileData.ai_score || 0,
-                profileVideo: profileData.profile_video || undefined,
-              } as Match;
-              setLastMutualMatch(matched);
+            // Local celebration; match row will be created/updated by DB trigger
+            const swipeMatch = matches.find((m) => String(m.id) === String(id));
+            if (swipeMatch) {
+              setLastMutualMatch(swipeMatch);
               setTimeout(() => setLastMutualMatch(null), 10_000);
-            } else {
-              // fallback: surface the swiped match from local list
-              const swipeMatch = matches.find((m) => String(m.id) === String(id));
-              if (swipeMatch) {
-                setLastMutualMatch(swipeMatch);
-                setTimeout(() => setLastMutualMatch(null), 10_000);
-              }
             }
           }
         }
@@ -250,6 +181,9 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
   }, [matches]);
 
   // Realtime listener for matches inserts so UI can react even if swipe reciprocal check is skipped by RLS
+  const matchesRef = useRef(matches);
+  useEffect(() => { matchesRef.current = matches; }, [matches]);
+
   useEffect(() => {
     if (!userId) return;
 
@@ -258,7 +192,6 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
         const row = payload?.new;
         if (!row) return;
         if (row.user1_id !== userId && row.user2_id !== userId) return;
-        if (row.status && String(row.status).toUpperCase() !== 'ACCEPTED') return; // only surface accepted matches
         const otherId = row.user1_id === userId ? row.user2_id : row.user1_id;
 
         // try to ensure status ACCEPTED (in case trigger inserted pending)
@@ -303,7 +236,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
         if (pErr || !profileData) {
           console.log('[matches realtime] profile fetch error', pErr);
           // fallback: surface the match from local list if present
-          const swipeMatch = matches.find((m) => String(m.id) === String(otherId));
+          const swipeMatch = matchesRef.current.find((m) => String(m.id) === String(otherId));
           if (swipeMatch) {
             console.log('[matches realtime] using local match fallback', { otherId });
             setLastMutualMatch(swipeMatch);
@@ -361,8 +294,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
 
     const channel = supabase
       .channel('matches-realtime')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'matches' }, handleMatchChange)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'matches' }, handleMatchChange);
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'matches', filter: 'status=eq.ACCEPTED' }, handleMatchChange);
 
     try { channel.subscribe(); } catch {}
     return () => {
