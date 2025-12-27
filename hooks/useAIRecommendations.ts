@@ -245,88 +245,93 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
   // Realtime listener for matches inserts so UI can react even if swipe reciprocal check is skipped by RLS
   useEffect(() => {
     if (!userId) return;
+
+    const handleMatchChange = async (payload: any) => {
+      try {
+        const row = payload?.new;
+        if (!row) return;
+        if (row.user1_id !== userId && row.user2_id !== userId) return;
+        if (row.status && String(row.status).toUpperCase() !== 'ACCEPTED') return; // only surface accepted matches
+        const otherId = row.user1_id === userId ? row.user2_id : row.user1_id;
+
+        // try to ensure status ACCEPTED (in case trigger inserted pending)
+        try {
+          const sorted = [row.user1_id, row.user2_id].sort();
+          const { error: statusErr } = await supabase
+            .from('matches')
+            .update({
+              status: 'ACCEPTED',
+              updated_at: new Date().toISOString(),
+            })
+            .or(`and(user1_id.eq.${sorted[0]},user2_id.eq.${sorted[1]}),and(user1_id.eq.${sorted[1]},user2_id.eq.${sorted[0]})`);
+          if (statusErr) {
+            console.log('[matches realtime] status update error', statusErr);
+          }
+        } catch (e) {
+          console.log('[matches realtime] status update threw', e);
+        }
+
+        // fetch the other profile with minimal fields
+        const { data: profileData, error: pErr } = await supabase
+          .from('profiles')
+          .select('id, full_name, bio, age, avatar_url, region, tribe, religion, profile_video, personality_tags')
+          .eq('id', otherId)
+          .limit(1)
+          .single();
+        if (pErr || !profileData) {
+          console.log('[matches realtime] profile fetch error', pErr);
+          return;
+        }
+
+        // fetch interests for the matched profile (profile_interests table)
+        let matchedInterests: string[] = [];
+        try {
+          const { data: piRows, error: piErr } = await supabase
+            .from('profile_interests')
+            .select('profile_id, interests ( name )')
+            .eq('profile_id', otherId);
+          if (!piErr && Array.isArray(piRows) && piRows.length > 0) {
+            for (const r of piRows as any[]) {
+              const arr = Array.isArray(r.interests) ? r.interests.map((i: any) => i.name).filter(Boolean) : [];
+              matchedInterests = matchedInterests.concat(arr);
+            }
+          }
+        } catch (e) {}
+
+        const matched: Match = {
+          id: profileData.id,
+          name: profileData.full_name || profileData.id,
+          age: profileData.age,
+          tagline: profileData.bio || '',
+          interests: matchedInterests || [],
+          avatar_url: profileData.avatar_url || undefined,
+          distance: profileData.region || '',
+          isActiveNow: false,
+          lastActive: null as any,
+          verified: false,
+          personalityTags: Array.isArray(profileData.personality_tags)
+            ? profileData.personality_tags.map((t: any) => (typeof t === 'string' ? t : t?.name || String(t)))
+            : [],
+          profileVideo: profileData.profile_video || undefined,
+          tribe: profileData.tribe,
+          religion: profileData.religion,
+          region: profileData.region,
+        } as Match;
+
+        console.log('[matches realtime] received accepted match', { otherId });
+        setLastMutualMatch(matched);
+        setTimeout(() => {
+          if (mountedRef.current) setLastMutualMatch(null);
+        }, 10_000);
+      } catch (e) {
+        console.log('[matches realtime] handler threw', e);
+      }
+    };
+
     const channel = supabase
       .channel('matches-realtime')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'matches' },
-        async (payload: any) => {
-          try {
-            const row = payload?.new;
-            if (!row) return;
-            if (row.user1_id !== userId && row.user2_id !== userId) return;
-            const otherId = row.user1_id === userId ? row.user2_id : row.user1_id;
-
-            // try to flip status to ACTIVE immediately (handles rows created by backend triggers)
-            try {
-              const sorted = [row.user1_id, row.user2_id].sort();
-              const { error: statusErr } = await supabase
-                .from('matches')
-                .update({
-                  status: 'ACCEPTED',
-                  updated_at: new Date().toISOString(),
-                })
-                .or(`and(user1_id.eq.${sorted[0]},user2_id.eq.${sorted[1]}),and(user1_id.eq.${sorted[1]},user2_id.eq.${sorted[0]})`);
-              if (statusErr) {
-                console.log('[matches realtime] status update error', statusErr);
-              }
-            } catch (e) {
-              console.log('[matches realtime] status update threw', e);
-            }
-
-            // fetch the other profile with minimal fields
-            const { data: profileData, error: pErr } = await supabase
-              .from('profiles')
-              .select('id, full_name, bio, age, avatar_url, region, tribe, religion, profile_video, personality_tags')
-              .eq('id', otherId)
-              .limit(1)
-              .single();
-            if (pErr || !profileData) return;
-
-            // fetch interests for the matched profile (profile_interests table)
-            let matchedInterests: string[] = [];
-            try {
-              const { data: piRows, error: piErr } = await supabase
-                .from('profile_interests')
-                .select('profile_id, interests ( name )')
-                .eq('profile_id', otherId);
-              if (!piErr && Array.isArray(piRows) && piRows.length > 0) {
-                for (const r of piRows as any[]) {
-                  const arr = Array.isArray(r.interests) ? r.interests.map((i: any) => i.name).filter(Boolean) : [];
-                  matchedInterests = matchedInterests.concat(arr);
-                }
-              }
-            } catch (e) {}
-
-            const matched: Match = {
-              id: profileData.id,
-              name: profileData.full_name || profileData.id,
-              age: profileData.age,
-              tagline: profileData.bio || '',
-              interests: matchedInterests || [],
-              avatar_url: profileData.avatar_url || undefined,
-              distance: profileData.region || '',
-              isActiveNow: false,
-              lastActive: null as any,
-              verified: false,
-              personalityTags: Array.isArray(profileData.personality_tags)
-                ? profileData.personality_tags.map((t: any) => (typeof t === 'string' ? t : t?.name || String(t)))
-                : [],
-              profileVideo: profileData.profile_video || undefined,
-              tribe: profileData.tribe,
-              religion: profileData.religion,
-              region: profileData.region,
-            } as Match;
-
-            setLastMutualMatch(matched);
-            setTimeout(() => {
-              if (mountedRef.current) setLastMutualMatch(null);
-            }, 10_000);
-          } catch (e) {
-            // ignore realtime handler errors
-          }
-        }
-      );
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'matches' }, handleMatchChange)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'matches' }, handleMatchChange);
 
     try { channel.subscribe(); } catch {}
     return () => {
