@@ -281,12 +281,21 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
         // fetch the other profile with minimal fields
         const { data: profileData, error: pErr } = await supabase
           .from('profiles')
-          .select('id, full_name, bio, age, avatar_url, region, tribe, religion, profile_video, personality_tags')
+          .select('id, full_name, bio, age, avatar_url, region, tribe, religion, personality_tags')
           .eq('id', otherId)
           .limit(1)
           .single();
         if (pErr || !profileData) {
           console.log('[matches realtime] profile fetch error', pErr);
+          // fallback: surface the match from local list if present
+          const swipeMatch = matches.find((m) => String(m.id) === String(otherId));
+          if (swipeMatch) {
+            console.log('[matches realtime] using local match fallback', { otherId });
+            setLastMutualMatch(swipeMatch);
+            setTimeout(() => {
+              if (mountedRef.current) setLastMutualMatch(null);
+            }, 10_000);
+          }
           return;
         }
 
@@ -319,7 +328,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
           personalityTags: Array.isArray(profileData.personality_tags)
             ? profileData.personality_tags.map((t: any) => (typeof t === 'string' ? t : t?.name || String(t)))
             : [],
-          profileVideo: profileData.profile_video || undefined,
+          profileVideo: undefined,
           tribe: profileData.tribe,
           religion: profileData.religion,
           region: profileData.region,
