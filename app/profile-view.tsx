@@ -348,9 +348,17 @@ export default function ProfileViewScreen() {
     }
   };
 
+  const goBackSafe = () => {
+    if (router.canGoBack?.()) {
+      router.back();
+    } else {
+      router.replace('/(tabs)/explore');
+    }
+  };
+
   const handlePass = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    router.back();
+    goBackSafe();
   };
 
   const handleBackNavigation = () => {
@@ -362,7 +370,7 @@ export default function ProfileViewScreen() {
       });
     } else {
       // Regular back navigation for other profiles
-      router.back();
+      goBackSafe();
     }
   };
 

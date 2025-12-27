@@ -13,4 +13,10 @@ export type Match = {
   lastActive?: string;
   isActiveNow?: boolean;
   verified?: boolean;
+  personalityTags?: string[];
+  profileVideo?: string;
+  aiScore?: number;
+  region?: string;
+  current_country?: string;
+  location_precision?: string;
 };

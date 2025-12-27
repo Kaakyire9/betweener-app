@@ -13,6 +13,11 @@ type Profile = {
   tribe: string;
   religion: string;
   avatar_url: string | null;
+  location?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  location_precision?: string | null;
+  location_updated_at?: string | null;
   min_age_interest: number;
   max_age_interest: number;
   is_active: boolean;
