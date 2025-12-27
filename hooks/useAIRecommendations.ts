@@ -279,12 +279,27 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
         }
 
         // fetch the other profile with minimal fields
-        const { data: profileData, error: pErr } = await supabase
+        let { data: profileData, error: pErr } = await supabase
           .from('profiles')
           .select('id, full_name, bio, age, avatar_url, region, tribe, religion, personality_tags')
           .eq('id', otherId)
           .limit(1)
           .single();
+        // If profile_video column is missing, retry with minimal select
+        if ((pErr && (pErr as any).code === '42703') || (!profileData && pErr)) {
+          try {
+            const retry = await supabase
+              .from('profiles')
+              .select('id, full_name, bio, age, avatar_url, region, tribe, religion, personality_tags')
+              .eq('id', otherId)
+              .limit(1)
+              .single();
+            if (!retry.error && retry.data) {
+              pErr = null as any;
+              profileData = retry.data as any;
+            }
+          } catch {}
+        }
         if (pErr || !profileData) {
           console.log('[matches realtime] profile fetch error', pErr);
           // fallback: surface the match from local list if present
@@ -430,7 +445,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
         // due to missing columns (Postgres error 42703), retry with a
         // minimal safe column list to avoid falling back to mocks.
         const extendedSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, profile_video, personality_tags, verified, is_active, last_active, ai_score';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_tags, verified, is_active, last_active, ai_score';
         const minimalSelect = 'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion';
 
         let data: any[] | null = null;
@@ -619,7 +634,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
       // fetch optional profile fields
       const { data: profileData, error: pErr } = await supabase
         .from('profiles')
-        .select('id, profile_video, personality_tags, latitude, longitude, region, tribe, religion, current_country, location_precision')
+              .select('id, personality_tags, latitude, longitude, region, tribe, religion, current_country, location_precision')
         .eq('id', profileId)
         .limit(1)
         .single();
@@ -650,7 +665,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
           const interestsFinal = (interestsArr && interestsArr.length > 0) ? interestsArr : ((m as any).interests && (m as any).interests.length > 0 ? (m as any).interests : [profileData?.region, profileData?.tribe].filter(Boolean));
           merged = {
             ...m,
-            profileVideo: profileData?.profile_video || (m as any).profileVideo,
+            profileVideo: (m as any).profileVideo,
             personalityTags: personality,
             interests: interestsFinal,
             tribe: profileData?.tribe ?? (m as any).tribe,
