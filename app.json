@@ -21,10 +21,14 @@
         "CFBundleURLTypes": [
           {
             "CFBundleURLName": "com.aduboffour.betweener",
-            "CFBundleURLSchemes": ["betweenerapp"]
+            "CFBundleURLSchemes": [
+              "betweenerapp"
+            ]
           }
         ],
-        "LSApplicationQueriesSchemes": ["betweenerapp"],
+        "LSApplicationQueriesSchemes": [
+          "betweenerapp"
+        ],
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         }
@@ -44,7 +48,10 @@
               "scheme": "betweenerapp"
             }
           ],
-          "category": ["BROWSABLE", "DEFAULT"],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ],
           "autoVerify": true
         },
         {
@@ -55,7 +62,10 @@
               "host": "auth"
             }
           ],
-          "category": ["BROWSABLE", "DEFAULT"],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ],
           "autoVerify": true
         },
         {
@@ -66,7 +76,10 @@
               "host": "getbetweener.com"
             }
           ],
-          "category": ["BROWSABLE", "DEFAULT"],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ],
           "autoVerify": true
         }
       ]
@@ -89,7 +102,9 @@
         {
           "origin": "betweenerapp://"
         }
-      ]
+      ],
+      "expo-font",
+      "expo-web-browser"
     ],
     "extra": {
       "eas": {

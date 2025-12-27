@@ -6,6 +6,7 @@ import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import useAIRecommendations from "@/hooks/useAIRecommendations";
+import { requestAndSavePreciseLocation, saveManualCityLocation } from "@/hooks/useLocationPreference";
 import { useAuth } from "@/lib/auth-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
@@ -14,49 +15,15 @@ import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe, { isLinearGradientAvailable } from "@/components/NativeWrappers/LinearGradientSafe";
 import { useEffect, useRef, useState } from "react";
 import { router } from 'expo-router';
-import { Animated, Easing, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
+import { Animated, Easing, Modal, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-
-const MOCK_MATCHES = [
-  {
-    id: "1",
-    name: "Akosua",
-    age: 24,
-    tagline: "Adventure seeker & foodie",
-    interests: ["Travel", "Food", "Music"],
-    avatar_url:
-      "https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=400&h=600&fit=crop&crop=face",
-    profileVideo: "https://www.w3schools.com/html/mov_bbb.mp4",
-    distance: "2.3 km away",
-  },
-  {
-    id: "2",
-    name: "Kwame",
-    age: 27,
-    tagline: "Tech enthusiast & gym lover",
-    interests: ["Technology", "Fitness"],
-    avatar_url:
-      "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=600&fit=crop&crop=face",
-    distance: "15.7 km away",
-  },
-  {
-    id: "3",
-    name: "Ama",
-    age: 22,
-    tagline: "Artist with a kind heart",
-    interests: ["Art", "Nature"],
-    avatar_url:
-      "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&h=600&fit=crop&crop=face",
-    distance: "8.2 km away",
-  },
-];
 
 export default function ExploreScreen() {
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
   const fontsLoaded = useAppFonts();
-  const { profile } = useAuth();
+  const { profile, refreshProfile } = useAuth();
 
   // For QA/dev: deterministic mutual-match list — replace with IDs you want to test
   const QA_MUTUAL_IDS = typeof __DEV__ !== 'undefined' && __DEV__ ? ['m-001'] : undefined;
@@ -81,6 +48,10 @@ export default function ExploreScreen() {
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
   const [videoModalVisible, setVideoModalVisible] = useState(false);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
+  const [manualLocationModalVisible, setManualLocationModalVisible] = useState(false);
+  const [manualLocation, setManualLocation] = useState(profile?.location || "");
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [isSavingLocation, setIsSavingLocation] = useState(false);
 
   const stackRef = useRef<ExploreStackHandle | null>(null);
   const buttonScale = useRef(new Animated.Value(1)).current;
@@ -205,7 +176,51 @@ export default function ExploreScreen() {
 
   // Use real server-provided matches by default. Fallback to mocks only
   // when the server couldn't provide any profiles.
-  const matchList = matches.length > 0 ? matches : [];
+  const matchList = matches;
+
+  const hasPreciseCoords = profile?.latitude != null && profile?.longitude != null;
+  const hasCityOnly = !!profile?.location && profile?.location_precision === 'CITY';
+  const needsLocationPrompt = !hasPreciseCoords && !hasCityOnly;
+
+  useEffect(() => {
+    setManualLocation(profile?.location || "");
+  }, [profile?.location]);
+
+  // auto-show prompt once when location is missing
+  useEffect(() => {
+    if (needsLocationPrompt) {
+      setManualLocationModalVisible(false);
+    }
+  }, [needsLocationPrompt]);
+
+  const handleUseMyLocation = async () => {
+    if (!profile?.id) return;
+    setIsSavingLocation(true);
+    setLocationError(null);
+    const res = await requestAndSavePreciseLocation(profile.id);
+    if (!res.ok) {
+      setLocationError('error' in res ? res.error : 'Unable to save location');
+    } else {
+      await refreshProfile();
+      await refreshMatches();
+    }
+    setIsSavingLocation(false);
+  };
+
+  const handleSaveManualLocation = async () => {
+    if (!profile?.id) return;
+    setIsSavingLocation(true);
+    setLocationError(null);
+    const res = await saveManualCityLocation(profile.id, manualLocation);
+    if (!res.ok) {
+      setLocationError('error' in res ? res.error : 'Unable to save location');
+    } else {
+      setManualLocationModalVisible(false);
+      await refreshProfile();
+      await refreshMatches();
+    }
+    setIsSavingLocation(false);
+  };
 
   // Reset index if data changes
   useEffect(() => {
@@ -432,6 +447,35 @@ export default function ExploreScreen() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView style={styles.container}>
+        {/* Location prompt: prefer precise GPS; fallback to manual city */}
+        {needsLocationPrompt && (
+          <View style={[styles.locationBanner, { paddingTop: Math.max(insets.top, 12) }]}>
+            <Text style={styles.locationTitle}>See nearby matches</Text>
+            <Text style={styles.locationSubtitle}>
+              Share your location for accurate distance, or enter your city instead. You can change this anytime.
+            </Text>
+            {locationError ? <Text style={styles.locationError}>{locationError}</Text> : null}
+            <View style={styles.locationActions}>
+              <TouchableOpacity
+                style={[styles.locationButton, styles.locationPrimary]}
+                onPress={handleUseMyLocation}
+                disabled={isSavingLocation}
+              >
+                <Text style={styles.locationPrimaryText}>
+                  {isSavingLocation ? "Saving..." : "Use my location"}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.locationButton, styles.locationGhost]}
+                onPress={() => setManualLocationModalVisible(true)}
+                disabled={isSavingLocation}
+              >
+                <Text style={styles.locationGhostText}>Enter city</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {/* TOP HEADER */}
         <ExploreHeader
           tabs={[
@@ -729,6 +773,47 @@ export default function ExploreScreen() {
               </Animated.View>
             )}
         </View>
+
+        {/* Manual city entry modal */}
+        <Modal
+          visible={manualLocationModalVisible}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setManualLocationModalVisible(false)}
+        >
+          <View style={styles.modalBackdrop}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Set your city</Text>
+              <Text style={styles.modalSubtitle}>We'll use this for distance until you enable precise location.</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="e.g., Accra, Ghana"
+                value={manualLocation}
+                onChangeText={setManualLocation}
+              />
+              {locationError ? <Text style={styles.locationError}>{locationError}</Text> : null}
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={[styles.locationButton, styles.locationGhost, { flex: 1 }]}
+                  onPress={() => {
+                    setManualLocationModalVisible(false);
+                    setLocationError(null);
+                  }}
+                  disabled={isSavingLocation}
+                >
+                  <Text style={styles.locationGhostText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.locationButton, styles.locationPrimary, { flex: 1 }]}
+                  onPress={handleSaveManualLocation}
+                  disabled={isSavingLocation}
+                >
+                  <Text style={styles.locationPrimaryText}>{isSavingLocation ? 'Saving...' : 'Save'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
         {/* Match celebration modal */}
         <MatchModal
           visible={!!celebrationMatch}
@@ -888,4 +973,46 @@ const styles = StyleSheet.create({
   primaryButtonText: { color: '#fff', fontWeight: '700' },
   ghostButton: { borderWidth: 1, borderColor: '#e5e7eb', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12 },
   ghostButtonText: { color: '#374151', fontWeight: '600' },
+  locationBanner: {
+    backgroundColor: '#eef2ff',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e0e7ff',
+  },
+  locationTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 4 },
+  locationSubtitle: { fontSize: 13, color: '#4b5563', marginBottom: 10 },
+  locationActions: { flexDirection: 'row', alignItems: 'center' },
+  locationButton: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 },
+  locationPrimary: { backgroundColor: Colors.light.tint, marginRight: 8 },
+  locationPrimaryText: { color: '#fff', fontWeight: '700' },
+  locationGhost: { borderWidth: 1, borderColor: '#cbd5e1', backgroundColor: '#fff' },
+  locationGhostText: { color: '#0f172a', fontWeight: '600' },
+  locationError: { color: '#b91c1c', marginTop: 6, fontSize: 12 },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'flex-end',
+  },
+  modalCard: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 20,
+  },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 6 },
+  modalSubtitle: { fontSize: 13, color: '#4b5563', marginBottom: 14 },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: '#0f172a',
+  },
+  modalActions: { flexDirection: 'row', marginTop: 16 },
 });

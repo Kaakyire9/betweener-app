@@ -116,7 +116,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
         age: 20 + Math.floor(Math.random() * 12),
         interests: ['Music', 'Movies'],
         avatar_url: prev[0]?.avatar_url,
-        distance: `${Math.floor(Math.random() * 30)} km away`,
+        distance: '',
       } as Match;
       return [...next, generated];
     });
@@ -378,9 +378,9 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
               interestsArr = fall;
             }
 
-            // compute distance if missing and we have coords
-            let distanceStr = p.location || '';
-            if ((!distanceStr || String(distanceStr).trim() === '') && userCoords && p.latitude != null && p.longitude != null && userCoords.latitude != null && userCoords.longitude != null) {
+            // compute distance when we have coordinates; otherwise fall back to stored location label
+            let distanceStr = '';
+            if (userCoords && p.latitude != null && p.longitude != null && userCoords.latitude != null && userCoords.longitude != null) {
               try {
                 const km = haversineKm(userCoords.latitude!, userCoords.longitude!, Number(p.latitude), Number(p.longitude));
                 if (km < 1) distanceStr = `${Math.round(km * 1000)} m away`;
@@ -388,6 +388,8 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
               } catch (e) {
                 distanceStr = '';
               }
+            } else if (p.location) {
+              distanceStr = p.location;
             }
 
             const ptags = Array.isArray(p.personality_tags) ? p.personality_tags.map((t: any) => (typeof t === 'string' ? t : t?.name || String(t))) : [];
@@ -404,8 +406,13 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
               lastActive: p.last_active,
               verified: !!p.verified,
               personalityTags: ptags || [],
-              aiScore: p.ai_score || 0,
+              aiScore: typeof p.ai_score === 'number' ? p.ai_score : undefined,
               profileVideo: p.profile_video || undefined,
+              tribe: p.tribe,
+              religion: p.religion,
+              region: p.region,
+              current_country: p.current_country,
+              location_precision: p.location_precision,
             } as Match);
           });
           setMatches(mapped);
@@ -459,7 +466,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
       // fetch optional profile fields
       const { data: profileData, error: pErr } = await supabase
         .from('profiles')
-        .select('id, profile_video, personality_tags, latitude, longitude, region, tribe')
+        .select('id, profile_video, personality_tags, latitude, longitude, region, tribe, religion, current_country, location_precision')
         .eq('id', profileId)
         .limit(1)
         .single();
@@ -488,7 +495,17 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
             ? profileData!.personality_tags.map((t: any) => (typeof t === 'string' ? t : t?.name || String(t)))
             : (m as any).personalityTags || [];
           const interestsFinal = (interestsArr && interestsArr.length > 0) ? interestsArr : ((m as any).interests && (m as any).interests.length > 0 ? (m as any).interests : [profileData?.region, profileData?.tribe].filter(Boolean));
-          merged = { ...m, profileVideo: profileData?.profile_video || (m as any).profileVideo, personalityTags: personality, interests: interestsFinal } as Match;
+          merged = {
+            ...m,
+            profileVideo: profileData?.profile_video || (m as any).profileVideo,
+            personalityTags: personality,
+            interests: interestsFinal,
+            tribe: profileData?.tribe ?? (m as any).tribe,
+            religion: profileData?.religion ?? (m as any).religion,
+            region: profileData?.region ?? (m as any).region,
+            current_country: profileData?.current_country ?? (m as any).current_country,
+            location_precision: profileData?.location_precision ?? (m as any).location_precision,
+          } as Match;
           return merged;
         });
         return next;
