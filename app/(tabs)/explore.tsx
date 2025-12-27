@@ -32,11 +32,30 @@ export default function ExploreScreen() {
 
   // celebration modal state
   const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
+  const [toastVisible, setToastVisible] = useState(false);
+  const toastTranslate = useRef(new Animated.Value(-120)).current;
 
   // when the hook reports a mutual match, show the celebration modal
   useEffect(() => {
     if (lastMutualMatch) {
       setCelebrationMatch(lastMutualMatch);
+      setToastVisible(true);
+      Animated.timing(toastTranslate, {
+        toValue: 0,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+
+      // auto-hide toast after a few seconds
+      setTimeout(() => {
+        Animated.timing(toastTranslate, {
+          toValue: -140,
+          duration: 200,
+          easing: Easing.in(Easing.cubic),
+          useNativeDriver: true,
+        }).start(() => setToastVisible(false));
+      }, 4200);
     }
   }, [lastMutualMatch]);
 
@@ -489,6 +508,39 @@ export default function ExploreScreen() {
           total={matchList.length}
           smartCount={smartCount}
         />
+
+        {/* Match toast */}
+        {toastVisible && celebrationMatch ? (
+          <Animated.View style={[styles.matchToast, { transform: [{ translateY: toastTranslate }] }]}>
+            <View style={styles.matchToastContent}>
+              <MaterialCommunityIcons name="heart" size={18} color="#fff" />
+              <Text style={styles.matchToastText}>It's a match with {celebrationMatch.name}</Text>
+            </View>
+            <View style={styles.matchToastActions}>
+              <TouchableOpacity
+                onPress={() => {
+                  try {
+                    router.push({ pathname: '/chat/[id]', params: { id: String(celebrationMatch.id), userName: celebrationMatch.name, userAvatar: celebrationMatch.avatar_url, isOnline: String(!!celebrationMatch.isActiveNow) } });
+                  } catch {}
+                  setToastVisible(false);
+                }}
+                style={styles.matchToastButton}
+              >
+                <Text style={styles.matchToastButtonText}>Message</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => {
+                Animated.timing(toastTranslate, {
+                  toValue: -140,
+                  duration: 180,
+                  easing: Easing.in(Easing.cubic),
+                  useNativeDriver: true,
+                }).start(() => setToastVisible(false));
+              }}>
+                <MaterialCommunityIcons name="close" size={18} color="#fff" />
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+        ) : null}
 
         {/* CARD STACK */}
         <View style={styles.stackWrapper}>
@@ -1025,4 +1077,28 @@ const styles = StyleSheet.create({
     color: '#0f172a',
   },
   modalActions: { flexDirection: 'row', marginTop: 16 },
+  matchToast: {
+    position: 'absolute',
+    top: 10,
+    left: 16,
+    right: 16,
+    zIndex: 100,
+    backgroundColor: '#0f172a',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  matchToastContent: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
+  matchToastText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  matchToastActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  matchToastButton: { paddingHorizontal: 10, paddingVertical: 6, backgroundColor: '#10b981', borderRadius: 10 },
+  matchToastButtonText: { color: '#fff', fontWeight: '700', fontSize: 12 },
 });
