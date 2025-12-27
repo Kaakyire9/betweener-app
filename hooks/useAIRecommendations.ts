@@ -257,6 +257,23 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
             if (row.user1_id !== userId && row.user2_id !== userId) return;
             const otherId = row.user1_id === userId ? row.user2_id : row.user1_id;
 
+            // try to flip status to ACTIVE immediately (handles rows created by backend triggers)
+            try {
+              const sorted = [row.user1_id, row.user2_id].sort();
+              const { error: statusErr } = await supabase
+                .from('matches')
+                .update({
+                  status: 'ACTIVE',
+                  updated_at: new Date().toISOString(),
+                })
+                .or(`and(user1_id.eq.${sorted[0]},user2_id.eq.${sorted[1]}),and(user1_id.eq.${sorted[1]},user2_id.eq.${sorted[0]})`);
+              if (statusErr) {
+                console.log('[matches realtime] status update error', statusErr);
+              }
+            } catch (e) {
+              console.log('[matches realtime] status update threw', e);
+            }
+
             // fetch the other profile with minimal fields
             const { data: profileData, error: pErr } = await supabase
               .from('profiles')
