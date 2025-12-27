@@ -294,6 +294,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
 
     const channel = supabase
       .channel('matches-realtime')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'matches', filter: 'status=eq.ACCEPTED' }, handleMatchChange)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'matches', filter: 'status=eq.ACCEPTED' }, handleMatchChange);
 
     try { channel.subscribe(); } catch {}
