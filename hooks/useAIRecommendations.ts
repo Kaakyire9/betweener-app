@@ -182,6 +182,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
   // Realtime listener for matches inserts so UI can react even if swipe reciprocal check is skipped by RLS
   const matchesRef = useRef(matches);
   useEffect(() => { matchesRef.current = matches; }, [matches]);
+  const lastMatchToastRef = useRef<{ id: string | null; ts: number }>({ id: null, ts: 0 });
 
   useEffect(() => {
     if (!userId) return;
@@ -192,6 +193,11 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
         if (!row) return;
         if (row.user1_id !== userId && row.user2_id !== userId) return;
         const otherId = row.user1_id === userId ? row.user2_id : row.user1_id;
+        const nowTs = Date.now();
+        if (lastMatchToastRef.current.id === String(otherId) && (nowTs - lastMatchToastRef.current.ts) < 5000) {
+          // prevent rapid duplicate toasts for the same match
+          return;
+        }
 
         // try to ensure status ACCEPTED (in case trigger inserted pending)
         try {
@@ -282,6 +288,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
         } as Match;
 
         console.log('[matches realtime] received accepted match', { otherId });
+        lastMatchToastRef.current = { id: String(otherId), ts: Date.now() };
         setLastMutualMatch(matched);
         setTimeout(() => {
           if (mountedRef.current) setLastMutualMatch(null);
