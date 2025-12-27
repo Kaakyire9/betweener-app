@@ -155,9 +155,9 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
             if (profileData) {
               // Ensure a match record exists for this pair
               try {
-              const sorted = [userId, id].sort(); // enforce deterministic ordering
-              const { error: upsertErr } = await supabase
-                .from('matches')
+                const sorted = [userId, id].sort(); // enforce deterministic ordering
+                const { error: upsertErr } = await supabase
+                  .from('matches')
                 .upsert([{
                   user1_id: sorted[0],
                   user2_id: sorted[1],
@@ -176,18 +176,18 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
                   updated_at: new Date().toISOString(),
                 })
                 .or(`and(user1_id.eq.${sorted[0]},user2_id.eq.${sorted[1]}),and(user1_id.eq.${sorted[1]},user2_id.eq.${sorted[0]})`);
-              if (updateErr) {
-                console.log('[recordSwipe] match status update error', updateErr);
+                if (updateErr) {
+                  console.log('[recordSwipe] match status update error', updateErr);
+                }
+              } catch (e) {
+                console.log('[recordSwipe] match upsert/update threw', e);
               }
-            } catch (e) {
-              console.log('[recordSwipe] match upsert/update threw', e);
-            }
 
-            // Fetch interests for the matched profile (profile_interests table)
-            let matchedInterests: string[] = [];
-            try {
-              const { data: piRows, error: piErr } = await supabase
-                .from('profile_interests')
+              // Fetch interests for the matched profile (profile_interests table)
+              let matchedInterests: string[] = [];
+              try {
+                const { data: piRows, error: piErr } = await supabase
+                  .from('profile_interests')
                   .select('profile_id, interests ( name )')
                   .eq('profile_id', id);
                 if (!piErr && Array.isArray(piRows) && piRows.length > 0) {
@@ -217,6 +217,13 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
               } as Match;
               setLastMutualMatch(matched);
               setTimeout(() => setLastMutualMatch(null), 10_000);
+            } else {
+              // fallback: surface the swiped match from local list
+              const swipeMatch = matches.find((m) => String(m.id) === String(id));
+              if (swipeMatch) {
+                setLastMutualMatch(swipeMatch);
+                setTimeout(() => setLastMutualMatch(null), 10_000);
+              }
             }
           }
         }
