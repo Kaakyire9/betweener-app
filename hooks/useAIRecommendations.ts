@@ -127,14 +127,13 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
         // insert swipe record
         const { error: insertErr } = await supabase
           .from('swipes')
-          .insert([{
+          .upsert([{
             swiper_id: userId,
             target_id: id,
             action: action === 'superlike' ? 'SUPERLIKE' : action === 'like' ? 'LIKE' : 'PASS',
-            created_at: new Date().toISOString(),
-          }]);
+          }], { onConflict: 'swiper_id,target_id' });
         if (insertErr) {
-          console.log('[recordSwipe] failed to insert swipe', insertErr);
+          console.log('[recordSwipe] failed to upsert swipe', insertErr);
         }
 
         // If this was a 'like', check whether the target already liked us -> mutual match
