@@ -158,7 +158,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
                 .upsert([{
                   user1_id: sorted[0],
                   user2_id: sorted[1],
-                  status: 'PENDING',
+                  status: 'ACTIVE',
                   updated_at: new Date().toISOString(),
                 }], { onConflict: 'user1_id,user2_id' });
             } catch (e) {
