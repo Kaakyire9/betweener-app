@@ -125,35 +125,38 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
       try {
         if (!userId) return;
         // insert swipe record
-    const { error: insertErr } = await supabase
-      .from('swipes')
-      .insert([{
-        swiper_id: userId,
-        target_id: id,
-        action: action === 'superlike' ? 'SUPERLIKE' : action === 'like' ? 'LIKE' : 'DISLIKE',
-        created_at: new Date().toISOString(),
-      }]);
-    if (insertErr) {
-      // ignore for now, we'll fallback to mock behavior
-    }
+        const { error: insertErr } = await supabase
+          .from('swipes')
+          .insert([{
+            swiper_id: userId,
+            target_id: id,
+            action: action === 'superlike' ? 'SUPERLIKE' : action === 'like' ? 'LIKE' : 'DISLIKE',
+            created_at: new Date().toISOString(),
+          }]);
+        if (insertErr) {
+          console.log('[recordSwipe] failed to insert swipe', insertErr);
+        }
 
         // If this was a 'like', check whether the target already liked us -> mutual match
         if (action === 'like') {
-        const { data: reciprocal, error: rErr } = await supabase
-          .from('swipes')
-          .select('swiper_id, target_id, action')
-          .eq('swiper_id', id)
-          .eq('target_id', userId)
-          .in('action', ['LIKE', 'SUPERLIKE'])
-          .limit(1);
-        if (!rErr && reciprocal && reciprocal.length > 0) {
-          // fetch profile for the matched user
-          const { data: profileData } = await supabase.from('profiles').select('*').eq('id', id).limit(1).single();
-          if (profileData) {
-            // Ensure a match record exists for this pair
-            try {
+            const { data: reciprocal, error: rErr } = await supabase
+              .from('swipes')
+              .select('swiper_id, target_id, action')
+              .eq('swiper_id', id)
+              .eq('target_id', userId)
+              .in('action', ['LIKE', 'SUPERLIKE'])
+              .limit(1);
+          if (rErr) {
+            console.log('[recordSwipe] reciprocal check error', rErr);
+          }
+          if (!rErr && reciprocal && reciprocal.length > 0) {
+            // fetch profile for the matched user
+            const { data: profileData } = await supabase.from('profiles').select('*').eq('id', id).limit(1).single();
+            if (profileData) {
+              // Ensure a match record exists for this pair
+              try {
               const sorted = [userId, id].sort(); // enforce deterministic ordering
-              await supabase
+              const { error: upsertErr } = await supabase
                 .from('matches')
                 .upsert([{
                   user1_id: sorted[0],
@@ -161,17 +164,23 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
                   status: 'ACTIVE',
                   updated_at: new Date().toISOString(),
                 }], { onConflict: 'user1_id,user2_id' });
+              if (upsertErr) {
+                console.log('[recordSwipe] match upsert error', upsertErr);
+              }
 
               // Also update any existing row regardless of user ordering
-              await supabase
+              const { error: updateErr } = await supabase
                 .from('matches')
                 .update({
                   status: 'ACTIVE',
                   updated_at: new Date().toISOString(),
                 })
                 .or(`and(user1_id.eq.${sorted[0]},user2_id.eq.${sorted[1]}),and(user1_id.eq.${sorted[1]},user2_id.eq.${sorted[0]})`);
+              if (updateErr) {
+                console.log('[recordSwipe] match status update error', updateErr);
+              }
             } catch (e) {
-              // ignore match upsert errors; celebration flow can still continue
+              console.log('[recordSwipe] match upsert/update threw', e);
             }
 
             // Fetch interests for the matched profile (profile_interests table)
