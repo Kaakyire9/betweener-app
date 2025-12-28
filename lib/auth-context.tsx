@@ -18,6 +18,7 @@ type Profile = {
   longitude?: number | null;
   location_precision?: string | null;
   location_updated_at?: string | null;
+  superlikes_left?: number | null;
   min_age_interest: number;
   max_age_interest: number;
   is_active: boolean;

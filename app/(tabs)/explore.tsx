@@ -8,6 +8,7 @@ import { Colors } from "@/constants/theme";
 import useAIRecommendations from "@/hooks/useAIRecommendations";
 import { requestAndSavePreciseLocation, saveManualCityLocation } from "@/hooks/useLocationPreference";
 import { useAuth } from "@/lib/auth-context";
+import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 
@@ -15,7 +16,7 @@ import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe, { isLinearGradientAvailable } from "@/components/NativeWrappers/LinearGradientSafe";
 import { useEffect, useRef, useState } from "react";
 import { router } from 'expo-router';
-import { Animated, Easing, Modal, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from "react-native";
+import { Alert, Animated, Easing, Modal, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -181,6 +182,12 @@ export default function ExploreScreen() {
   const hasPreciseCoords = profile?.latitude != null && profile?.longitude != null;
   const hasCityOnly = !!profile?.location && profile?.location_precision === 'CITY';
   const needsLocationPrompt = !hasPreciseCoords && !hasCityOnly;
+
+  useEffect(() => {
+    if (typeof profile?.superlikes_left === 'number') {
+      setSuperlikesLeft(Math.max(0, profile.superlikes_left));
+    }
+  }, [profile?.superlikes_left]);
 
   useEffect(() => {
     setManualLocation(profile?.location || "");
@@ -413,11 +420,34 @@ export default function ExploreScreen() {
   const onSuperlike = () => {
     if (superlikesLeft <= 0) {
       try { Haptics.selectionAsync(); } catch {}
+      Alert.alert('Superlikes', 'You have no superlikes left. Upgrade to get more!');
       return;
     }
 
-    // decrement count (premium resource)
-    setSuperlikesLeft((s) => Math.max(0, s - 1));
+    // decrement count in DB (best effort) and locally
+    (async () => {
+      if (profile?.id) {
+        try {
+          const target = Math.max(superlikesLeft - 1, 0);
+          const { data, error } = await supabase
+            .from('profiles')
+            .update({ superlikes_left: target })
+            .eq('id', profile.id)
+            .gt('superlikes_left', 0)
+            .select('superlikes_left')
+            .single();
+          if (!error && data?.superlikes_left !== undefined) {
+            setSuperlikesLeft(Math.max(0, data.superlikes_left));
+          } else {
+            setSuperlikesLeft((s) => Math.max(0, s - 1));
+          }
+        } catch (e) {
+          setSuperlikesLeft((s) => Math.max(0, s - 1));
+        }
+      } else {
+        setSuperlikesLeft((s) => Math.max(0, s - 1));
+      }
+    })();
 
     // premium pulse + small confetti burst
     Animated.parallel([
