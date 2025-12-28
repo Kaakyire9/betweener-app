@@ -471,6 +471,13 @@ export default function ExploreScreen() {
     } catch {}
   };
 
+  const renderSuperlikeBadge = () => (
+    <View style={styles.superlikeBadgeInline}>
+      <MaterialCommunityIcons name="star" size={14} color="#fff" style={{ marginRight: 6 }} />
+      <Text style={styles.superlikeBadgeInlineText}>{superlikesLeft} left</Text>
+    </View>
+  );
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView style={styles.container}>
@@ -571,6 +578,7 @@ export default function ExploreScreen() {
                   ]}
                   pointerEvents="box-none"
                 >
+                  {renderSuperlikeBadge()}
                   <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
                     <TouchableOpacity
                       style={styles.rejectButton}
@@ -733,6 +741,7 @@ export default function ExploreScreen() {
                   ]}
                   pointerEvents="box-none"
                 >
+                  {renderSuperlikeBadge()}
                   <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
                     <TouchableOpacity
                       style={styles.rejectButton}
@@ -986,6 +995,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  superlikeBadgeInline: {
+    position: 'absolute',
+    top: -26,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#111827',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    zIndex: 12000,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  superlikeBadgeInlineText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   emptyStateContainer: {
     flex: 1,
     alignItems: 'center',
