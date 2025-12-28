@@ -14,7 +14,7 @@ import * as Haptics from "expo-haptics";
 
 import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe, { isLinearGradientAvailable } from "@/components/NativeWrappers/LinearGradientSafe";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { router } from 'expo-router';
 import { Alert, Animated, Easing, Modal, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -178,6 +178,38 @@ export default function ExploreScreen() {
   // Use real server-provided matches by default. Fallback to mocks only
   // when the server couldn't provide any profiles.
   const matchList = matches;
+  const parseDistanceKm = (d?: string | null) => {
+    if (!d) return Number.POSITIVE_INFINITY;
+    const kmMatch = String(d).match(/([\d.]+)\s*km/i);
+    if (kmMatch) return parseFloat(kmMatch[1]);
+    const mMatch = String(d).match(/([\d.]+)\s*m/i);
+    if (mMatch) return parseFloat(mMatch[1]) / 1000;
+    return Number.POSITIVE_INFINITY;
+  };
+
+  const filteredMatches = useMemo(() => {
+    if (activeTab === 'nearby') {
+      return [...matches].sort((a, b) => parseDistanceKm(a.distance) - parseDistanceKm(b.distance));
+    }
+    if (activeTab === 'active') {
+      const now = Date.now();
+      const windowMs = 15 * 60 * 1000;
+      const scored = matches
+        .map((m) => {
+          let score = 0;
+          if ((m as any).isActiveNow) score = 2;
+          else if (m.lastActive) {
+            const t = new Date(m.lastActive).getTime();
+            if (!isNaN(t) && now - t <= windowMs) score = 1;
+          }
+          return { m, score, last: m.lastActive ? new Date(m.lastActive).getTime() : 0 };
+        })
+        .filter((x) => x.score > 0)
+        .sort((a, b) => b.score - a.score || b.last - a.last);
+      return scored.map((x) => x.m);
+    }
+    return matches;
+  }, [matches, activeTab]);
 
   const hasPreciseCoords = profile?.latitude != null && profile?.longitude != null;
   const hasCityOnly = !!profile?.location && profile?.location_precision === 'CITY';
@@ -232,7 +264,7 @@ export default function ExploreScreen() {
   // Reset index if data changes
   useEffect(() => {
     setCurrentIndex(0);
-  }, [matchList.length]);
+  }, [filteredMatches.length, activeTab]);
 
   // Prefetch optional fields for the next N cards to improve perceived speed
   useEffect(() => {
@@ -529,7 +561,7 @@ export default function ExploreScreen() {
           {!exhausted ? (
             <ExploreStack
               ref={stackRef}
-              matches={matchList}
+              matches={filteredMatches}
               currentIndex={currentIndex}
               setCurrentIndex={setCurrentIndex}
               recordSwipe={recordSwipe}
