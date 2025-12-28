@@ -92,13 +92,14 @@ function getDebugMockMatches(): Match[] {
   return list;
 }
 
-export default function useAIRecommendations(userId?: string, opts?: { mutualMatchTestIds?: string[] }) {
+export default function useAIRecommendations(userId?: string, opts?: { mutualMatchTestIds?: string[]; mode?: 'forYou' | 'nearby' | 'active' }) {
   // Start empty; prefer server-sourced profiles. Mocks are only a fallback
   // when the server cannot be reached.
   const [matches, setMatches] = useState<Match[]>([]);
   const [lastMutualMatch, setLastMutualMatch] = useState<Match | null>(null);
   const [swipeHistory, setSwipeHistory] = useState<Array<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }>>([]);
   const mountedRef = useRef(true);
+  const mode = opts?.mode ?? 'forYou';
 
   // simple mock: when a swipe is recorded, remove the head and append a regenerated match
   const recordSwipe = useCallback((id: string, action: 'like' | 'dislike' | 'superlike', index = 0) => {
@@ -307,7 +308,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
     return () => {
       try { channel.unsubscribe(); } catch {}
     };
-  }, [userId]);
+  }, [userId, mode]);
 
   // Deep-link support: listen for URLs containing `mutualMatch=<id>` (comma-separated allowed)
   useEffect(() => {
@@ -379,6 +380,74 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
       console.log('[useAIRecommendations] fetchMatchesFromServer starting', { userId });
       // If Supabase is configured and we have a user id, fetch profiles
       if (supabase && userId) {
+        // Nearby mode: server-side distance sort via RPC
+        if (mode === 'nearby') {
+          try {
+            const { data, error } = await supabase.rpc('get_recs_nearby', { p_user_id: userId, p_limit: 20 });
+            if (!error && Array.isArray(data)) {
+              const mapped: Match[] = data.map((p: any) => ({
+                id: p.id,
+                name: p.full_name || p.user_id || String(p.id),
+                age: p.age,
+                tagline: p.bio || '',
+                interests: Array.isArray(p.interests) ? p.interests : [],
+                avatar_url: p.avatar_url || undefined,
+                distance: p.distance_km != null ? `${Number(p.distance_km).toFixed(1)} km away` : (p.region || ''),
+                isActiveNow: !!p.is_active,
+                lastActive: p.last_active,
+                verified: !!p.verified,
+                personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
+                aiScore: typeof p.ai_score === 'number' ? p.ai_score : undefined,
+                profileVideo: (p as any).profile_video || undefined,
+                tribe: p.tribe,
+                religion: p.religion,
+                region: p.region,
+                current_country: (p as any).current_country,
+                location_precision: (p as any).location_precision,
+              } as Match));
+              setMatches(mapped);
+              if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] nearby rpc result', { count: mapped.length });
+              return;
+            }
+          } catch (e) {
+            console.log('[useAIRecommendations] nearby rpc error', e);
+          }
+        }
+
+        // Active mode: server-side active filter via RPC
+        if (mode === 'active') {
+          try {
+            const { data, error } = await supabase.rpc('get_recs_active', { p_user_id: userId, p_window_minutes: 30 });
+            if (!error && Array.isArray(data)) {
+              const mapped: Match[] = data.map((p: any) => ({
+                id: p.id,
+                name: p.full_name || p.user_id || String(p.id),
+                age: p.age,
+                tagline: p.bio || '',
+                interests: Array.isArray(p.interests) ? p.interests : [],
+                avatar_url: p.avatar_url || undefined,
+                distance: p.region || '',
+                isActiveNow: !!p.is_active,
+                lastActive: p.last_active,
+                verified: !!p.verified,
+                personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
+                aiScore: typeof p.ai_score === 'number' ? p.ai_score : undefined,
+                profileVideo: (p as any).profile_video || undefined,
+                tribe: p.tribe,
+                religion: p.religion,
+                region: p.region,
+                current_country: (p as any).current_country,
+                location_precision: (p as any).location_precision,
+              } as Match));
+              setMatches(mapped);
+              if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] active rpc result', { count: mapped.length });
+              return;
+            }
+          } catch (e) {
+            console.log('[useAIRecommendations] active rpc error', e);
+          }
+        }
+
         // The `profiles` table may vary across environments. Try an
         // extended select first (includes optional fields). If it fails
         // due to missing columns (Postgres error 42703), retry with a

@@ -14,7 +14,7 @@ import * as Haptics from "expo-haptics";
 
 import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe, { isLinearGradientAvailable } from "@/components/NativeWrappers/LinearGradientSafe";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { router } from 'expo-router';
 import { Alert, Animated, Easing, Modal, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -29,9 +29,17 @@ export default function ExploreScreen() {
   // For QA/dev: deterministic mutual-match list — replace with IDs you want to test
   const QA_MUTUAL_IDS = typeof __DEV__ !== 'undefined' && __DEV__ ? ['m-001'] : undefined;
 
-  const { matches, recordSwipe, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch, fetchProfileDetails } = useAIRecommendations(profile?.id, { mutualMatchTestIds: QA_MUTUAL_IDS });
 
   // celebration modal state
+
+
+  const [activeTab, setActiveTab] = useState<
+    "recommended" | "nearby" | "active"
+  >("recommended");
+  const mode = activeTab === 'nearby' ? 'nearby' : activeTab === 'active' ? 'active' : 'forYou';
+  const { matches, recordSwipe, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch, fetchProfileDetails } =
+    useAIRecommendations(profile?.id, { mutualMatchTestIds: QA_MUTUAL_IDS, mode });
+
   const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
 
   // when the hook reports a mutual match, show the celebration modal
@@ -40,10 +48,6 @@ export default function ExploreScreen() {
       setCelebrationMatch(lastMutualMatch);
     }
   }, [lastMutualMatch]);
-
-  const [activeTab, setActiveTab] = useState<
-    "recommended" | "nearby" | "active"
-  >("recommended");
   const [currentIndex, setCurrentIndex] = useState(0);
 
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
@@ -178,38 +182,6 @@ export default function ExploreScreen() {
   // Use real server-provided matches by default. Fallback to mocks only
   // when the server couldn't provide any profiles.
   const matchList = matches;
-  const parseDistanceKm = (d?: string | null) => {
-    if (!d) return Number.POSITIVE_INFINITY;
-    const kmMatch = String(d).match(/([\d.]+)\s*km/i);
-    if (kmMatch) return parseFloat(kmMatch[1]);
-    const mMatch = String(d).match(/([\d.]+)\s*m/i);
-    if (mMatch) return parseFloat(mMatch[1]) / 1000;
-    return Number.POSITIVE_INFINITY;
-  };
-
-  const filteredMatches = useMemo(() => {
-    if (activeTab === 'nearby') {
-      return [...matches].sort((a, b) => parseDistanceKm(a.distance) - parseDistanceKm(b.distance));
-    }
-    if (activeTab === 'active') {
-      const now = Date.now();
-      const windowMs = 15 * 60 * 1000;
-      const scored = matches
-        .map((m) => {
-          let score = 0;
-          if ((m as any).isActiveNow) score = 2;
-          else if (m.lastActive) {
-            const t = new Date(m.lastActive).getTime();
-            if (!isNaN(t) && now - t <= windowMs) score = 1;
-          }
-          return { m, score, last: m.lastActive ? new Date(m.lastActive).getTime() : 0 };
-        })
-        .filter((x) => x.score > 0)
-        .sort((a, b) => b.score - a.score || b.last - a.last);
-      return scored.map((x) => x.m);
-    }
-    return matches;
-  }, [matches, activeTab]);
 
   const hasPreciseCoords = profile?.latitude != null && profile?.longitude != null;
   const hasCityOnly = !!profile?.location && profile?.location_precision === 'CITY';
@@ -264,7 +236,7 @@ export default function ExploreScreen() {
   // Reset index if data changes
   useEffect(() => {
     setCurrentIndex(0);
-  }, [filteredMatches.length, activeTab]);
+  }, [matchList.length, activeTab]);
 
   // Prefetch optional fields for the next N cards to improve perceived speed
   useEffect(() => {
@@ -559,9 +531,9 @@ export default function ExploreScreen() {
         {/* CARD STACK */}
         <View style={styles.stackWrapper}>
           {!exhausted ? (
-            <ExploreStack
+              <ExploreStack
               ref={stackRef}
-              matches={filteredMatches}
+              matches={matchList}
               currentIndex={currentIndex}
               setCurrentIndex={setCurrentIndex}
               recordSwipe={recordSwipe}
