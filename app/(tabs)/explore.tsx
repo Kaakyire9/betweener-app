@@ -428,16 +428,13 @@ export default function ExploreScreen() {
     (async () => {
       if (profile?.id) {
         try {
-          const target = Math.max(superlikesLeft - 1, 0);
-          const { data, error } = await supabase
-            .from('profiles')
-            .update({ superlikes_left: target })
-            .eq('id', profile.id)
-            .gt('superlikes_left', 0)
-            .select('superlikes_left')
-            .single();
-          if (!error && data?.superlikes_left !== undefined) {
-            setSuperlikesLeft(Math.max(0, data.superlikes_left));
+          const { data, error } = await supabase.rpc('decrement_superlike', { p_profile_id: profile.id });
+          if (!error && typeof data === 'number') {
+            setSuperlikesLeft(Math.max(0, data));
+          } else if (error && String(error.message || '').includes('NO_SUPERLIKES')) {
+            setSuperlikesLeft(0);
+            Alert.alert('Superlikes', 'You have no superlikes left. Upgrade to get more!');
+            return;
           } else {
             setSuperlikesLeft((s) => Math.max(0, s - 1));
           }
