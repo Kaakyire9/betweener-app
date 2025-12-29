@@ -694,7 +694,13 @@ export default function ConversationScreen() {
       <View style={styles.header}>
         <TouchableOpacity 
           style={styles.backButton}
-          onPress={() => router.back()}
+          onPress={() => {
+            if (router.canGoBack?.()) {
+              router.back();
+            } else {
+              router.replace('/(tabs)/explore');
+            }
+          }}
         >
           <MaterialCommunityIcons name="arrow-left" size={24} color="#111827" />
         </TouchableOpacity>

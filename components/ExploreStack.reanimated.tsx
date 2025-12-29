@@ -28,13 +28,15 @@ type Props = {
   setCurrentIndex: (n: number) => void;
   recordSwipe: (id: string, action: "like" | "dislike" | "superlike", index?: number) => void;
   onProfileTap: (id: string) => void;
+  onPlayPress?: (id: string) => void;
+  previewingId?: string;
 };
 
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.28;
 const EXIT_DISTANCE = SCREEN_WIDTH * 1.2;
 
 const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
-  ({ matches, currentIndex, setCurrentIndex, recordSwipe, onProfileTap }, ref) => {
+  ({ matches, currentIndex, setCurrentIndex, recordSwipe, onProfileTap, onPlayPress, previewingId }, ref) => {
     const debugMatch: Match = useMemo(
       () => ({
         id: "__debug",
@@ -264,7 +266,7 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
           <GestureDetector gesture={pan}>
             <Animated.View style={{ flex: 1 }} pointerEvents="box-none">
               <Animated.View style={[styles.card, activeStyle]}>
-                <ExploreCard match={m} onPress={() => onProfileTap(m.id)} />
+                <ExploreCard match={m} onPress={() => onProfileTap(m.id)} onPlayPress={() => onPlayPress?.(m.id)} isPreviewing={previewingId === m.id} />
               </Animated.View>
 
               <Animated.View pointerEvents="none" style={[styles.feedbackContainer, overlayContainerStyle]}>
@@ -303,7 +305,7 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
 
       return (
         <Animated.View key={m.id} style={[styles.card, st, { zIndex }]}>
-          <ExploreCard match={m} onPress={() => onProfileTap(m.id)} />
+          <ExploreCard match={m} onPress={() => onProfileTap(m.id)} onPlayPress={() => onPlayPress?.(m.id)} isPreviewing={previewingId === m.id} />
         </Animated.View>
       );
     }

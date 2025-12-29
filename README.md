@@ -65,6 +65,12 @@ In the output, you'll find options to open the app in a
 - Tab navigation for main app sections
 - Deep linking support for email verification
 
+## Superlikes
+- Quota: stored in `profiles.superlikes_left`, decremented via RPC `decrement_superlike(profile_id)` (requires update policy on profiles).
+- Daily reset: function `reset_daily_superlikes()`; Edge Function `supabase/functions/reset-superlikes` included—deploy and schedule daily.
+- Swipes use upsert; ensure the `Users can update swipes` RLS policy is applied so upserts aren’t blocked.
+- Ops notes: apply the superlikes migrations, deploy `reset-superlikes` (`supabase functions deploy reset-superlikes --no-verify-jwt`), and add a daily cron in Supabase to call the reset function.
+
 ## 🏗️ Project Structure
 
 ```

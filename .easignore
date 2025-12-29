@@ -1,0 +1,19 @@
+.git
+node_modules
+android
+ios
+.expo
+dist
+web-build
+
+# Supabase local artifacts not needed for mobile build
+supabase/.temp
+supabase/.branches
+
+# Hosting/deployment bundles not needed for app build
+hostinger-files
+public
+
+# Local scripts and env
+.env*
+*.ps1

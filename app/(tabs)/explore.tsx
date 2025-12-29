@@ -1,69 +1,46 @@
 import ExploreHeader from "@/components/ExploreHeader";
 import type { ExploreStackHandle } from "@/components/ExploreStack.reanimated";
 import ExploreStack from "@/components/ExploreStack.reanimated";
+import MatchModal from '@/components/MatchModal';
+import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import useAIRecommendations from "@/hooks/useAIRecommendations";
-import MatchModal from '@/components/MatchModal';
-import ProfileVideoModal from '@/components/ProfileVideoModal';
+import { requestAndSavePreciseLocation, saveManualCityLocation } from "@/hooks/useLocationPreference";
 import { useAuth } from "@/lib/auth-context";
+import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 
 import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe, { isLinearGradientAvailable } from "@/components/NativeWrappers/LinearGradientSafe";
-import { useEffect, useRef, useState } from "react";
-import { Animated, Easing, StyleSheet, TouchableOpacity, View, useWindowDimensions } from "react-native";
-import { Text } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { router } from 'expo-router';
+import { Alert, Animated, Easing, Modal, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-
-const MOCK_MATCHES = [
-  {
-    id: "1",
-    name: "Akosua",
-    age: 24,
-    tagline: "Adventure seeker & foodie",
-    interests: ["Travel", "Food", "Music"],
-    avatar_url:
-      "https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=400&h=600&fit=crop&crop=face",
-    profileVideo: "https://www.w3schools.com/html/mov_bbb.mp4",
-    distance: "2.3 km away",
-  },
-  {
-    id: "2",
-    name: "Kwame",
-    age: 27,
-    tagline: "Tech enthusiast & gym lover",
-    interests: ["Technology", "Fitness"],
-    avatar_url:
-      "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=600&fit=crop&crop=face",
-    distance: "15.7 km away",
-  },
-  {
-    id: "3",
-    name: "Ama",
-    age: 22,
-    tagline: "Artist with a kind heart",
-    interests: ["Art", "Nature"],
-    avatar_url:
-      "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&h=600&fit=crop&crop=face",
-    distance: "8.2 km away",
-  },
-];
 
 export default function ExploreScreen() {
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
   const fontsLoaded = useAppFonts();
-  const { profile } = useAuth();
+  const { profile, refreshProfile } = useAuth();
 
   // For QA/dev: deterministic mutual-match list — replace with IDs you want to test
   const QA_MUTUAL_IDS = typeof __DEV__ !== 'undefined' && __DEV__ ? ['m-001'] : undefined;
 
-  const { matches, recordSwipe, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch } = useAIRecommendations(profile?.id, { mutualMatchTestIds: QA_MUTUAL_IDS });
 
   // celebration modal state
+
+
+  const [activeTab, setActiveTab] = useState<
+    "recommended" | "nearby" | "active"
+  >("recommended");
+  const [activeWindowMinutes, setActiveWindowMinutes] = useState(15);
+  const mode = activeTab === 'nearby' ? 'nearby' : activeTab === 'active' ? 'active' : 'forYou';
+  const { matches, recordSwipe, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch, fetchProfileDetails } =
+    useAIRecommendations(profile?.id, { mutualMatchTestIds: QA_MUTUAL_IDS, mode, activeWindowMinutes });
+
   const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
 
   // when the hook reports a mutual match, show the celebration modal
@@ -72,14 +49,22 @@ export default function ExploreScreen() {
       setCelebrationMatch(lastMutualMatch);
     }
   }, [lastMutualMatch]);
-
-  const [activeTab, setActiveTab] = useState<
-    "recommended" | "nearby" | "active"
-  >("recommended");
   const [currentIndex, setCurrentIndex] = useState(0);
 
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
   const [videoModalVisible, setVideoModalVisible] = useState(false);
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
+  const [manualLocationModalVisible, setManualLocationModalVisible] = useState(false);
+  const [manualLocation, setManualLocation] = useState(profile?.location || "");
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [isSavingLocation, setIsSavingLocation] = useState(false);
+  const [filtersVisible, setFiltersVisible] = useState(false);
+  const [verifiedOnly, setVerifiedOnly] = useState(false);
+  const [distanceFilterKm, setDistanceFilterKm] = useState<number | null>(null);
+  const [minAge, setMinAge] = useState<number>(18);
+  const [maxAge, setMaxAge] = useState<number>(60);
+  const [religionFilter, setReligionFilter] = useState<string | null>(null);
+  const [locationQuery, setLocationQuery] = useState<string>('');
 
   const stackRef = useRef<ExploreStackHandle | null>(null);
   const buttonScale = useRef(new Animated.Value(1)).current;
@@ -203,13 +188,149 @@ export default function ExploreScreen() {
   const AnimatedReView = canUseReanimated ? (AnimatedRe && (AnimatedRe.View || AnimatedRe)) : null;
 
   // Use real server-provided matches by default. Fallback to mocks only
-  // when the server couldn't provide any profiles.
-  const matchList = matches.length > 0 ? matches : [];
+  // when the server couldn't provide any profiles. Apply client-side filters (e.g., verified).
+  const parseDistanceKm = (d?: string | null) => {
+    if (!d) return null;
+    const kmMatch = d.match(/([\d.]+)\s*km/i);
+    if (kmMatch) return Number(kmMatch[1]);
+    const mMatch = d.match(/([\d.]+)\s*m\b/i);
+    if (mMatch) return Number(mMatch[1]) / 1000;
+    return null;
+  };
+
+  const distinctReligions = useMemo(() => {
+    const set = new Set<string>();
+    matches.forEach((m) => {
+      if ((m as any).religion) set.add(String((m as any).religion));
+    });
+    set.add('Muslim'); // ensure common option is always available
+    return Array.from(set).slice(0, 8);
+  }, [matches]);
+
+  const matchList = useMemo(() => {
+    let list = matches;
+    if (verifiedOnly) list = list.filter((m) => m.verified);
+    if (distanceFilterKm != null) {
+      list = list.filter((m) => {
+        const km = parseDistanceKm((m as any).distance);
+        if (km == null) return false;
+        return km <= distanceFilterKm;
+      });
+    }
+    if (minAge || maxAge) {
+      list = list.filter((m) => {
+        const age = (m as any).age;
+        if (age == null) return true;
+        return age >= (minAge || 0) && age <= (maxAge || 200);
+      });
+    }
+    if (religionFilter) {
+      list = list.filter((m) => String((m as any).religion || '').toLowerCase() === religionFilter.toLowerCase());
+    }
+    if (locationQuery.trim()) {
+      const q = locationQuery.trim().toLowerCase();
+      list = list.filter((m) => {
+        const loc = String((m as any).location || (m as any).region || '').toLowerCase();
+        return loc.includes(q);
+      });
+    }
+    return list;
+  }, [matches, verifiedOnly, distanceFilterKm, minAge, maxAge, religionFilter, locationQuery]);
+
+  const hasPreciseCoords = profile?.latitude != null && profile?.longitude != null;
+  const hasCityOnly = !!profile?.location && profile?.location_precision === 'CITY';
+  const needsLocationPrompt = !hasPreciseCoords && !hasCityOnly;
+
+  useEffect(() => {
+    if (typeof profile?.superlikes_left === 'number') {
+      setSuperlikesLeft(Math.max(0, profile.superlikes_left));
+    }
+  }, [profile?.superlikes_left]);
+
+  useEffect(() => {
+    setManualLocation(profile?.location || "");
+  }, [profile?.location]);
+
+  // auto-show prompt once when location is missing
+  useEffect(() => {
+    if (needsLocationPrompt) {
+      setManualLocationModalVisible(false);
+    }
+  }, [needsLocationPrompt]);
+
+  const handleUseMyLocation = async () => {
+    if (!profile?.id) return;
+    setIsSavingLocation(true);
+    setLocationError(null);
+    const res = await requestAndSavePreciseLocation(profile.id);
+    if (!res.ok) {
+      setLocationError('error' in res ? res.error : 'Unable to save location');
+    } else {
+      await refreshProfile();
+      await refreshMatches();
+    }
+    setIsSavingLocation(false);
+  };
+
+  const handleSaveManualLocation = async () => {
+    if (!profile?.id) return;
+    setIsSavingLocation(true);
+    setLocationError(null);
+    const res = await saveManualCityLocation(profile.id, manualLocation);
+    if (!res.ok) {
+      setLocationError('error' in res ? res.error : 'Unable to save location');
+    } else {
+      setManualLocationModalVisible(false);
+      await refreshProfile();
+      await refreshMatches();
+    }
+    setIsSavingLocation(false);
+  };
+
+  const handleApplyFilters = () => {
+    setFiltersVisible(false);
+    void refreshMatches();
+    setCurrentIndex(0);
+  };
+
+  const setAgeValue = (val: string, type: 'min' | 'max') => {
+    const num = Number(val.replace(/[^0-9]/g, ''));
+    if (Number.isNaN(num)) return;
+    if (type === 'min') setMinAge(num);
+    else setMaxAge(num);
+  };
 
   // Reset index if data changes
   useEffect(() => {
     setCurrentIndex(0);
-  }, [matchList.length]);
+  }, [matchList.length, activeTab]);
+
+  // Prefetch optional fields for the next N cards to improve perceived speed
+  useEffect(() => {
+    const N = 2;
+    let mounted = true;
+    (async () => {
+      try {
+        for (let i = 1; i <= N; i++) {
+          const idx = currentIndex + i;
+          const m = matchList[idx];
+          if (!m) break;
+          // skip if it already has the optional fields
+          const hasVideo = !!((m as any).profileVideo);
+          const hasPersonality = Array.isArray((m as any).personalityTags) && (m as any).personalityTags.length > 0;
+          const hasInterests = Array.isArray((m as any).interests) && (m as any).interests.length > 0;
+          if (!hasVideo || !hasPersonality || !hasInterests) {
+            // call fetchProfileDetails to merge optional fields into matches
+            await fetchProfileDetails?.(m.id);
+          }
+          if (!mounted) break;
+        }
+      } catch (e) {
+        // ignore prefetch errors
+      }
+    })();
+    return () => { mounted = false; };
+  }, [currentIndex, matchList, fetchProfileDetails]);
 
   const exhausted = currentIndex >= matchList.length;
 
@@ -353,24 +474,72 @@ export default function ExploreScreen() {
     } catch {}
   };
 
-  const onProfileTap = (id: string) => {
-    const m = matchList.find((x) => String(x.id) === String(id));
-    if (m && (m as any).profileVideo) {
-      setVideoModalUrl((m as any).profileVideo as string);
-      setVideoModalVisible(true);
-      return;
+  const onProfileTap = async (id: string) => {
+    try {
+      // fetch optional fields on demand and merge into matches
+      const updated = await fetchProfileDetails?.(id);
+      const videoUrl = (updated && (updated as any).profileVideo) ? String((updated as any).profileVideo) : undefined;
+      // navigate to the full profile preview screen; include videoUrl param if we have it so ProfileView can auto-play
+      const params: any = { profileId: String(id) };
+      const m = matchList.find((x) => String(x.id) === String(id));
+      if (m) {
+        try {
+          params.fallbackProfile = encodeURIComponent(JSON.stringify({
+            id: m.id,
+            name: (m as any).name,
+            age: (m as any).age,
+            location: (m as any).region || (m as any).location || '',
+            avatar_url: (m as any).avatar_url,
+            photos: (m as any).photos,
+            occupation: (m as any).occupation,
+            education: (m as any).education,
+            bio: (m as any).tagline || (m as any).bio,
+            tribe: (m as any).tribe,
+            religion: (m as any).religion,
+            distance: (m as any).distance,
+            interests: (m as any).interests,
+            is_active: (m as any).isActiveNow,
+            compatibility: (m as any).aiScore ?? (m as any).compatibility ?? 85,
+            verified: (m as any).verified,
+            aiScore: (m as any).aiScore,
+          }));
+        } catch {}
+      }
+      if (videoUrl) params.videoUrl = videoUrl;
+      router.push({ pathname: '/profile-view', params });
+    } catch (e) {
+      console.log('onProfileTap failed', e);
     }
-    console.log('Open profile:', id);
   };
 
   const onSuperlike = () => {
     if (superlikesLeft <= 0) {
       try { Haptics.selectionAsync(); } catch {}
+      Alert.alert('Superlikes', 'You have no superlikes left. Upgrade to get more!');
       return;
     }
 
-    // decrement count (premium resource)
-    setSuperlikesLeft((s) => Math.max(0, s - 1));
+    // decrement count in DB (best effort) and locally
+    (async () => {
+      if (profile?.id) {
+        try {
+          const { data, error } = await supabase.rpc('decrement_superlike', { p_profile_id: profile.id });
+          if (!error && typeof data === 'number') {
+            setSuperlikesLeft(Math.max(0, data));
+          } else if (error && String(error.message || '').includes('NO_SUPERLIKES')) {
+            setSuperlikesLeft(0);
+            Alert.alert('Superlikes', 'You have no superlikes left. Upgrade to get more!');
+            return;
+          } else {
+            setSuperlikesLeft((s) => Math.max(0, s - 1));
+          }
+        } catch (e) {
+          setSuperlikesLeft((s) => Math.max(0, s - 1));
+        }
+      } else {
+        setSuperlikesLeft((s) => Math.max(0, s - 1));
+      }
+    })();
 
     // premium pulse + small confetti burst
     Animated.parallel([
@@ -397,9 +566,45 @@ export default function ExploreScreen() {
     } catch {}
   };
 
+  const renderSuperlikeBadge = () => (
+    <View style={styles.superlikeBadgeInline}>
+      <MaterialCommunityIcons name="star" size={14} color="#fff" style={{ marginRight: 6 }} />
+      <Text style={styles.superlikeBadgeInlineText}>{superlikesLeft} left</Text>
+    </View>
+  );
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView style={styles.container}>
+        {/* Location prompt: prefer precise GPS; fallback to manual city */}
+        {needsLocationPrompt && (
+          <View style={[styles.locationBanner, { paddingTop: Math.max(insets.top, 12) }]}>
+            <Text style={styles.locationTitle}>See nearby matches</Text>
+            <Text style={styles.locationSubtitle}>
+              Share your location for accurate distance, or enter your city instead. You can change this anytime.
+            </Text>
+            {locationError ? <Text style={styles.locationError}>{locationError}</Text> : null}
+            <View style={styles.locationActions}>
+              <TouchableOpacity
+                style={[styles.locationButton, styles.locationPrimary]}
+                onPress={handleUseMyLocation}
+                disabled={isSavingLocation}
+              >
+                <Text style={styles.locationPrimaryText}>
+                  {isSavingLocation ? "Saving..." : "Use my location"}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.locationButton, styles.locationGhost]}
+                onPress={() => setManualLocationModalVisible(true)}
+                disabled={isSavingLocation}
+              >
+                <Text style={styles.locationGhostText}>Enter city</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
         {/* TOP HEADER */}
         <ExploreHeader
           tabs={[
@@ -412,18 +617,36 @@ export default function ExploreScreen() {
           currentIndex={currentIndex}
           total={matchList.length}
           smartCount={smartCount}
+          onPressFilter={() => setFiltersVisible(true)}
         />
 
         {/* CARD STACK */}
         <View style={styles.stackWrapper}>
           {!exhausted ? (
-            <ExploreStack
+              <ExploreStack
               ref={stackRef}
               matches={matchList}
               currentIndex={currentIndex}
               setCurrentIndex={setCurrentIndex}
               recordSwipe={recordSwipe}
               onProfileTap={onProfileTap}
+              onPlayPress={async (id: string) => {
+                try {
+                  const updated = await fetchProfileDetails?.(id);
+                  const effective = updated ?? matchList.find((x) => String(x.id) === String(id));
+                  if (effective && (effective as any).profileVideo) {
+                    setPreviewingId(String(id));
+                    setVideoModalUrl((effective as any).profileVideo as string);
+                    setVideoModalVisible(true);
+                    return;
+                  }
+                  // fallback: open profile view if no video
+                  router.push({ pathname: '/profile-view', params: { profileId: String(id) } });
+                } catch (e) {
+                  console.log('onPlayPress failed', e);
+                }
+              }}
+              previewingId={previewingId ?? undefined}
             />
           ) : (
             <NoMoreProfiles />
@@ -451,6 +674,7 @@ export default function ExploreScreen() {
                   ]}
                   pointerEvents="box-none"
                 >
+                  {renderSuperlikeBadge()}
                   <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
                     <TouchableOpacity
                       style={styles.rejectButton}
@@ -468,7 +692,12 @@ export default function ExploreScreen() {
                   <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
                     <TouchableOpacity
                       style={styles.infoButton}
-                      onPress={() => console.log("Info")}
+                      onPress={() => {
+                        const cm = matchList[currentIndex];
+                        if (cm) {
+                          router.push({ pathname: '/profile-view', params: { profileId: String(cm.id) } });
+                        }
+                      }}
                     >
                       <MaterialCommunityIcons
                         name="information"
@@ -481,7 +710,7 @@ export default function ExploreScreen() {
                   {/* Rewind button */}
                   <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
                     <TouchableOpacity
-                      style={[styles.infoButton, { marginHorizontal: 8 }]}
+                      style={[styles.infoButton, { marginHorizontal: 4 }]}
                       onPress={() => {
                         animateButtonPress(() => {
                           try {
@@ -512,7 +741,7 @@ export default function ExploreScreen() {
                   </Animated.View>
 
                   {/* Superlike button */}
-                  <Animated.View style={{ alignItems: 'center', marginHorizontal: 8 }}>
+                  <Animated.View style={{ alignItems: 'center', marginHorizontal: 4 }}>
                     <Animated.View
                       style={{
                           position: 'absolute',
@@ -608,6 +837,7 @@ export default function ExploreScreen() {
                   ]}
                   pointerEvents="box-none"
                 >
+                  {renderSuperlikeBadge()}
                   <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
                     <TouchableOpacity
                       style={styles.rejectButton}
@@ -624,7 +854,12 @@ export default function ExploreScreen() {
 
                   <TouchableOpacity
                     style={styles.infoButton}
-                    onPress={() => console.log("Info")}
+                    onPress={() => {
+                      const cm = matchList[currentIndex];
+                      if (cm) {
+                        router.push({ pathname: '/profile-view', params: { profileId: String(cm.id) } });
+                      }
+                    }}
                   >
                     <MaterialCommunityIcons
                       name="information"
@@ -634,7 +869,7 @@ export default function ExploreScreen() {
                   </TouchableOpacity>
 
                   {/* Superlike button (fallback branch) */}
-                  <Animated.View style={{ alignItems: 'center', marginHorizontal: 8 }}>
+                  <Animated.View style={{ alignItems: 'center', marginHorizontal: 4 }}>
                     <Animated.View
                       style={{
                           position: 'absolute',
@@ -680,7 +915,199 @@ export default function ExploreScreen() {
               </Animated.View>
             )}
         </View>
-        {/* Match celebration modal */}
+
+        {/* Manual city entry modal */}
+          <Modal
+            visible={manualLocationModalVisible}
+            animationType="slide"
+            transparent
+            onRequestClose={() => setManualLocationModalVisible(false)}
+          >
+            <KeyboardAvoidingView
+              style={{ flex: 1 }}
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 24 : 0}
+            >
+              <View style={styles.modalBackdrop}>
+                <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setManualLocationModalVisible(false)} />
+                <View style={styles.modalCard}>
+                  <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 12 }}>
+                    <Text style={styles.modalTitle}>Set your city</Text>
+                    <Text style={styles.modalSubtitle}>We'll use this for distance until you enable precise location.</Text>
+                    <TextInput
+                      style={styles.modalInput}
+                      placeholder="e.g., Accra, Ghana"
+                      value={manualLocation}
+                      onChangeText={setManualLocation}
+                    />
+                    {locationError ? <Text style={styles.locationError}>{locationError}</Text> : null}
+                    <View style={styles.modalActions}>
+                      <TouchableOpacity
+                        style={[styles.locationButton, styles.locationGhost, { flex: 1 }]}
+                        onPress={() => {
+                          setManualLocationModalVisible(false);
+                          setLocationError(null);
+                        }}
+                        disabled={isSavingLocation}
+                      >
+                        <Text style={styles.locationGhostText}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.locationButton, styles.locationPrimary, { flex: 1 }]}
+                        onPress={handleSaveManualLocation}
+                        disabled={isSavingLocation}
+                      >
+                        <Text style={styles.locationPrimaryText}>{isSavingLocation ? 'Saving...' : 'Save'}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </ScrollView>
+                </View>
+              </View>
+            </KeyboardAvoidingView>
+          </Modal>
+
+          {/* Filters modal */}
+          <Modal
+            visible={filtersVisible}
+            animationType="slide"
+            transparent
+            onRequestClose={() => setFiltersVisible(false)}
+          >
+            <KeyboardAvoidingView
+              style={{ flex: 1 }}
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 24 : 0}
+            >
+              <View style={styles.modalBackdrop}>
+                <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setFiltersVisible(false)} />
+                <View style={styles.modalCard}>
+                  <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 12 }}>
+                    <Text style={styles.modalTitle}>Filters</Text>
+                    <Text style={styles.modalSubtitle}>Refine recommendations quickly.</Text>
+
+                    <View style={styles.filterSection}>
+                      <Text style={styles.filterLabel}>Active window</Text>
+                      <Text style={styles.filterHint}>Only applies to Active tab</Text>
+                      <View style={styles.filterChipsRow}>
+                        {[15, 30, 60].map((m) => (
+                          <TouchableOpacity
+                            key={m}
+                            style={[styles.filterChip, activeWindowMinutes === m && styles.filterChipActive]}
+                            onPress={() => setActiveWindowMinutes(m)}
+                          >
+                            <Text style={[styles.filterChipText, activeWindowMinutes === m && styles.filterChipTextActive]}>{m}m</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </View>
+
+                    <View style={styles.filterSection}>
+                      <Text style={styles.filterLabel}>Show only verified</Text>
+                      <TouchableOpacity
+                        style={[styles.filterToggle, verifiedOnly && styles.filterToggleActive]}
+                        onPress={() => setVerifiedOnly((v) => !v)}
+                        activeOpacity={0.85}
+                      >
+                        <View style={[styles.filterToggleKnob, verifiedOnly && styles.filterToggleKnobActive]} />
+                        <Text style={[styles.filterToggleText, verifiedOnly && styles.filterToggleTextActive]}>{verifiedOnly ? 'On' : 'Off'}</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.filterSection}>
+                      <Text style={styles.filterLabel}>Distance</Text>
+                      <Text style={styles.filterHint}>Nearby tab only</Text>
+                      <View style={styles.filterChipsRow}>
+                        {[5, 10, 25, 50, 100].map((km) => (
+                          <TouchableOpacity
+                            key={km}
+                            style={[styles.filterChip, distanceFilterKm === km && styles.filterChipActive]}
+                            onPress={() => setDistanceFilterKm(km)}
+                          >
+                            <Text style={[styles.filterChipText, distanceFilterKm === km && styles.filterChipTextActive]}>{km} km</Text>
+                          </TouchableOpacity>
+                        ))}
+                        <TouchableOpacity
+                          style={[styles.filterChip, distanceFilterKm == null && styles.filterChipActive]}
+                          onPress={() => setDistanceFilterKm(null)}
+                        >
+                          <Text style={[styles.filterChipText, distanceFilterKm == null && styles.filterChipTextActive]}>Any</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    <View style={styles.filterSection}>
+                      <Text style={styles.filterLabel}>Age range</Text>
+                      <View style={styles.filterInputsRow}>
+                        <View style={[styles.filterInputWrapper, { marginRight: 8 }]}>
+                          <Text style={styles.filterHint}>Min</Text>
+                          <TextInput
+                            style={styles.filterInput}
+                            keyboardType="numeric"
+                            value={String(minAge)}
+                            onChangeText={(t) => setAgeValue(t, 'min')}
+                          />
+                        </View>
+                        <View style={styles.filterInputWrapper}>
+                          <Text style={styles.filterHint}>Max</Text>
+                          <TextInput
+                            style={styles.filterInput}
+                            keyboardType="numeric"
+                            value={String(maxAge)}
+                            onChangeText={(t) => setAgeValue(t, 'max')}
+                          />
+                        </View>
+                      </View>
+                    </View>
+
+                    <View style={styles.filterSection}>
+                      <Text style={styles.filterLabel}>Religion</Text>
+                      <View style={styles.filterChipsRowWrap}>
+                        {distinctReligions.length === 0 ? <Text style={styles.filterHint}>No data yet</Text> : null}
+                        {distinctReligions.map((r) => (
+                          <TouchableOpacity
+                            key={r}
+                            style={[styles.filterChip, religionFilter === r && styles.filterChipActive]}
+                            onPress={() => setReligionFilter((curr) => (curr === r ? null : r))}
+                          >
+                            <Text style={[styles.filterChipText, religionFilter === r && styles.filterChipTextActive]}>{r}</Text>
+                          </TouchableOpacity>
+                        ))}
+                        {distinctReligions.length > 0 && (
+                          <TouchableOpacity
+                            style={[styles.filterChip, !religionFilter && styles.filterChipActive]}
+                            onPress={() => setReligionFilter(null)}
+                          >
+                            <Text style={[styles.filterChipText, !religionFilter && styles.filterChipTextActive]}>Any</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    </View>
+
+                    <View style={styles.filterSection}>
+                      <Text style={styles.filterLabel}>Location</Text>
+                      <Text style={styles.filterHint}>Type a city (e.g., Accra, Ghana)</Text>
+                      <TextInput
+                        style={[styles.filterInput, { marginTop: 8 }]}
+                        placeholder="e.g., Accra, Ghana"
+                        value={locationQuery}
+                        onChangeText={setLocationQuery}
+                      />
+                    </View>
+
+                    <View style={styles.modalActions}>
+                      <TouchableOpacity style={[styles.locationButton, styles.locationGhost, { flex: 1 }]} onPress={() => setFiltersVisible(false)}>
+                        <Text style={styles.locationGhostText}>Close</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.locationButton, styles.locationPrimary, { flex: 1 }]} onPress={handleApplyFilters}>
+                        <Text style={styles.locationPrimaryText}>Apply</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </ScrollView>
+                </View>
+              </View>
+            </KeyboardAvoidingView>
+          </Modal>
+          {/* Match celebration modal */}
         <MatchModal
           visible={!!celebrationMatch}
           match={celebrationMatch}
@@ -710,6 +1137,7 @@ export default function ExploreScreen() {
           onClose={() => {
             setVideoModalVisible(false);
             setVideoModalUrl(null);
+            setPreviewingId(null);
           }}
         />
       </SafeAreaView>
@@ -746,7 +1174,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 18,
+    paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 40,
     backgroundColor: 'rgba(255,255,255,0.85)',
@@ -764,7 +1192,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#ef4444",
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 20,
+    marginRight: 12,
   },
   infoButton: {
     width: 54,
@@ -775,7 +1203,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 2,
     borderColor: "#e5e7eb",
-    marginHorizontal: 8,
+    marginHorizontal: 4,
   },
   likeButton: {
     width: 64,
@@ -784,7 +1212,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#10b981",
     justifyContent: "center",
     alignItems: "center",
-    marginLeft: 20,
+    marginLeft: 12,
   },
   superlikeButton: {
     width: 64,
@@ -814,6 +1242,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  superlikeBadgeInline: {
+    position: 'absolute',
+    top: -26,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#111827',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    zIndex: 12000,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  superlikeBadgeInlineText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   emptyStateContainer: {
     flex: 1,
     alignItems: 'center',
@@ -838,4 +1284,64 @@ const styles = StyleSheet.create({
   primaryButtonText: { color: '#fff', fontWeight: '700' },
   ghostButton: { borderWidth: 1, borderColor: '#e5e7eb', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12 },
   ghostButtonText: { color: '#374151', fontWeight: '600' },
+  locationBanner: {
+    backgroundColor: '#eef2ff',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e0e7ff',
+  },
+  locationTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 4 },
+  locationSubtitle: { fontSize: 13, color: '#4b5563', marginBottom: 10 },
+  locationActions: { flexDirection: 'row', alignItems: 'center' },
+  locationButton: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 },
+  locationPrimary: { backgroundColor: Colors.light.tint, marginRight: 8 },
+  locationPrimaryText: { color: '#fff', fontWeight: '700' },
+  locationGhost: { borderWidth: 1, borderColor: '#cbd5e1', backgroundColor: '#fff' },
+  locationGhostText: { color: '#0f172a', fontWeight: '600' },
+  locationError: { color: '#b91c1c', marginTop: 6, fontSize: 12 },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'flex-end',
+  },
+  modalCard: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 20,
+  },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 6 },
+  modalSubtitle: { fontSize: 13, color: '#4b5563', marginBottom: 14 },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: '#0f172a',
+  },
+  modalActions: { flexDirection: 'row', marginTop: 16 },
+  filterSection: { marginTop: 12, marginBottom: 10 },
+  filterLabel: { fontSize: 14, fontWeight: '700', color: '#0f172a' },
+  filterHint: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  filterChipsRow: { flexDirection: 'row', marginTop: 8 },
+  filterChipsRowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 },
+  filterChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb', marginRight: 8, backgroundColor: '#fff' },
+  filterChipActive: { backgroundColor: Colors.light.tint, borderColor: Colors.light.tint },
+  filterChipText: { fontWeight: '700', color: '#0f172a' },
+  filterChipTextActive: { color: '#fff' },
+  filterToggle: { marginTop: 8, padding: 10, borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#fff' },
+  filterToggleActive: { borderColor: Colors.light.tint, backgroundColor: '#eef2ff' },
+  filterToggleKnob: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#e5e7eb' },
+  filterToggleKnobActive: { backgroundColor: Colors.light.tint },
+  filterToggleText: { marginLeft: 10, fontWeight: '700', color: '#0f172a' },
+  filterToggleTextActive: { color: Colors.light.tint },
+  filterInputsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
+  filterInputWrapper: { flex: 1 },
+  filterInput: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontWeight: '700', color: '#0f172a', backgroundColor: '#fff', marginTop: 4 },
 });

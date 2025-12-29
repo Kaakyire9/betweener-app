@@ -4,7 +4,7 @@ import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
 import type { Match } from "@/types/match";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Animated, Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Animated, Image, StyleSheet, Text, TouchableOpacity, View, AccessibilityInfo } from "react-native";
 
 // guarded dynamic require for Reanimated to keep compatibility with Expo Go
 let ReanimatedModule: any = null;
@@ -32,7 +32,7 @@ try {
   hasSafeAreaHook = typeof useSafeAreaInsetsHook === 'function';
 } catch (e) {}
 
-export default function ExploreCard({ match, onPress }: { match: Match; onPress?: (id: string) => void; }) {
+export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress }: { match: Match; onPress?: (id: string) => void; isPreviewing?: boolean; onPlayPress?: (id: string) => void; }) {
   // compute recently active (within last 3 hours)
   const recentlyActive = (() => {
     if (!match.lastActive) return false;
@@ -47,6 +47,24 @@ export default function ExploreCard({ match, onPress }: { match: Match; onPress?
     }
   })();
 
+  // Dev-only debug: print key match fields to help diagnose rendering
+  try {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      // avoid heavy serialization in prod; stringify small arrays for clarity
+      const interestsSample = Array.isArray((match as any).interests) ? (match as any).interests : (match as any).interests;
+      const personalitySample = Array.isArray((match as any).personalityTags) ? (match as any).personalityTags : (match as any).personalityTags;
+      // eslint-disable-next-line no-console
+      console.log('[ExploreCard] debug', {
+        id: match.id,
+        name: match.name,
+        interests: interestsSample,
+        personalityTags: personalitySample,
+        distance: (match as any).distance,
+        profileVideo: (match as any).profileVideo,
+      });
+    }
+  } catch (e) {}
+
   // animated values for badges (Reanimated when available, Animated fallback otherwise)
   const verifiedScale = canUseReanimated ? ReanimatedModule.useSharedValue(0.85) : null;
   const verifiedOpacity = canUseReanimated ? ReanimatedModule.useSharedValue(0) : null;
@@ -56,6 +74,23 @@ export default function ExploreCard({ match, onPress }: { match: Match; onPress?
   // AI pill animation values
   const pillScale = canUseReanimated ? ReanimatedModule.useSharedValue(0.85) : null;
   const pillOpacity = canUseReanimated ? ReanimatedModule.useSharedValue(0) : null;
+
+  // preview glow pulse (Reanimated) + reduced-motion preference
+  const previewPulse = canUseReanimated ? ReanimatedModule.useSharedValue(0) : null;
+  const [reduceMotion, setReduceMotion] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    try {
+      AccessibilityInfo.isReduceMotionEnabled().then((v) => { if (mounted) setReduceMotion(!!v); }).catch(() => {});
+    } catch (e) {}
+    return () => { mounted = false; };
+  }, []);
+
+  const previewGlowAnimatedStyle = (canUseReanimated && previewPulse) ? ReanimatedModule.useAnimatedStyle(() => {
+    const s = 1 + (previewPulse.value || 0) * 0.06;
+    const o = 1 - (previewPulse.value || 0) * 0.18;
+    return { transform: [{ scale: s }], opacity: o } as any;
+  }) : undefined;
 
   // measured widths for symmetric spacing
   const [leftBadgeWidth, setLeftBadgeWidth] = useState(0);
@@ -125,6 +160,19 @@ export default function ExploreCard({ match, onPress }: { match: Match; onPress?
     }
   }, [match.verified, match.isActiveNow, match.lastActive]);
 
+  // drive the preview pulse when isPreviewing changes
+  useEffect(() => {
+    if (!canUseReanimated || !previewPulse) return;
+    try {
+      if (isPreviewing) {
+        // gentle repeating pulse
+        previewPulse.value = ReanimatedModule.withRepeat(ReanimatedModule.withTiming(1, { duration: 900 }), -1, true);
+      } else {
+        previewPulse.value = ReanimatedModule.withTiming(0, { duration: 240 });
+      }
+    } catch (e) {}
+  }, [isPreviewing, previewPulse]);
+
   // animate slot width whenever measured badge widths or safe-area insets change
   useEffect(() => {
     const target = Math.max((leftBadgeWidth || 0) + (insets.left || 0), (rightBadgeWidth || 0) + (insets.right || 0), MIN_SLOT);
@@ -156,6 +204,31 @@ export default function ExploreCard({ match, onPress }: { match: Match; onPress?
     <View style={styles.card}>
       <TouchableOpacity style={styles.cardContent} activeOpacity={0.95} onPress={() => onPress?.(match.id)}>
         <Image source={{ uri: match.avatar_url || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&h=600&fit=crop&crop=face" }} style={styles.image} />
+
+        {/* subtle full-card glow while previewing (modal playing) */}
+        {isPreviewing ? (
+          (canUseReanimated && ReanimatedAnimated && !reduceMotion && previewGlowAnimatedStyle) ? (
+            // @ts-ignore - animated preview glow using Reanimated when available
+            <ReanimatedAnimated.View style={[styles.previewGlow, previewGlowAnimatedStyle]} pointerEvents="none" />
+          ) : (
+            <View pointerEvents="none" style={styles.previewGlow} />
+          )
+        ) : null}
+
+        {/* Video indicator (bottom-right of avatar) */}
+        {((match as any).profileVideo) ? (
+          <TouchableOpacity
+            accessibilityLabel={"Play profile video"}
+            accessibilityRole="button"
+            onPress={() => onPlayPress ? onPlayPress(match.id) : onPress?.(match.id)}
+            style={styles.videoBadgeHit}
+            activeOpacity={0.9}
+          >
+            <View style={styles.videoBadge} pointerEvents="none">
+              <MaterialCommunityIcons name="play" size={14} color="#fff" />
+            </View>
+          </TouchableOpacity>
+        ) : null}
 
         {/* Top-row: left = Verified, center = AI pill, right = Active */}
         <View style={styles.topRow} pointerEvents="box-none">
@@ -405,4 +478,36 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.02)'
   },
   personalityText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  // video badge
+  videoBadgeHit: {
+    position: 'absolute',
+    right: 12,
+    bottom: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 50,
+  },
+  videoBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(6,182,212,0.95)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.9)'
+  },
+  previewGlow: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(6,182,212,0.06)',
+    borderRadius: 24,
+    zIndex: 40,
+  },
 });
