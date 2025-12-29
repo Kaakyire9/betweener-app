@@ -14,9 +14,9 @@ import * as Haptics from "expo-haptics";
 
 import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe, { isLinearGradientAvailable } from "@/components/NativeWrappers/LinearGradientSafe";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { router } from 'expo-router';
-import { Alert, Animated, Easing, Modal, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from "react-native";
+import { Alert, Animated, Easing, Modal, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -36,9 +36,10 @@ export default function ExploreScreen() {
   const [activeTab, setActiveTab] = useState<
     "recommended" | "nearby" | "active"
   >("recommended");
+  const [activeWindowMinutes, setActiveWindowMinutes] = useState(15);
   const mode = activeTab === 'nearby' ? 'nearby' : activeTab === 'active' ? 'active' : 'forYou';
   const { matches, recordSwipe, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch, fetchProfileDetails } =
-    useAIRecommendations(profile?.id, { mutualMatchTestIds: QA_MUTUAL_IDS, mode });
+    useAIRecommendations(profile?.id, { mutualMatchTestIds: QA_MUTUAL_IDS, mode, activeWindowMinutes });
 
   const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
 
@@ -57,6 +58,13 @@ export default function ExploreScreen() {
   const [manualLocation, setManualLocation] = useState(profile?.location || "");
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isSavingLocation, setIsSavingLocation] = useState(false);
+  const [filtersVisible, setFiltersVisible] = useState(false);
+  const [verifiedOnly, setVerifiedOnly] = useState(false);
+  const [distanceFilterKm, setDistanceFilterKm] = useState<number | null>(null);
+  const [minAge, setMinAge] = useState<number>(18);
+  const [maxAge, setMaxAge] = useState<number>(60);
+  const [religionFilter, setReligionFilter] = useState<string | null>(null);
+  const [locationQuery, setLocationQuery] = useState<string>('');
 
   const stackRef = useRef<ExploreStackHandle | null>(null);
   const buttonScale = useRef(new Animated.Value(1)).current;
@@ -180,8 +188,54 @@ export default function ExploreScreen() {
   const AnimatedReView = canUseReanimated ? (AnimatedRe && (AnimatedRe.View || AnimatedRe)) : null;
 
   // Use real server-provided matches by default. Fallback to mocks only
-  // when the server couldn't provide any profiles.
-  const matchList = matches;
+  // when the server couldn't provide any profiles. Apply client-side filters (e.g., verified).
+  const parseDistanceKm = (d?: string | null) => {
+    if (!d) return null;
+    const kmMatch = d.match(/([\d.]+)\s*km/i);
+    if (kmMatch) return Number(kmMatch[1]);
+    const mMatch = d.match(/([\d.]+)\s*m\b/i);
+    if (mMatch) return Number(mMatch[1]) / 1000;
+    return null;
+  };
+
+  const distinctReligions = useMemo(() => {
+    const set = new Set<string>();
+    matches.forEach((m) => {
+      if ((m as any).religion) set.add(String((m as any).religion));
+    });
+    set.add('Muslim'); // ensure common option is always available
+    return Array.from(set).slice(0, 8);
+  }, [matches]);
+
+  const matchList = useMemo(() => {
+    let list = matches;
+    if (verifiedOnly) list = list.filter((m) => m.verified);
+    if (distanceFilterKm != null) {
+      list = list.filter((m) => {
+        const km = parseDistanceKm((m as any).distance);
+        if (km == null) return false;
+        return km <= distanceFilterKm;
+      });
+    }
+    if (minAge || maxAge) {
+      list = list.filter((m) => {
+        const age = (m as any).age;
+        if (age == null) return true;
+        return age >= (minAge || 0) && age <= (maxAge || 200);
+      });
+    }
+    if (religionFilter) {
+      list = list.filter((m) => String((m as any).religion || '').toLowerCase() === religionFilter.toLowerCase());
+    }
+    if (locationQuery.trim()) {
+      const q = locationQuery.trim().toLowerCase();
+      list = list.filter((m) => {
+        const loc = String((m as any).location || (m as any).region || '').toLowerCase();
+        return loc.includes(q);
+      });
+    }
+    return list;
+  }, [matches, verifiedOnly, distanceFilterKm, minAge, maxAge, religionFilter, locationQuery]);
 
   const hasPreciseCoords = profile?.latitude != null && profile?.longitude != null;
   const hasCityOnly = !!profile?.location && profile?.location_precision === 'CITY';
@@ -231,6 +285,19 @@ export default function ExploreScreen() {
       await refreshMatches();
     }
     setIsSavingLocation(false);
+  };
+
+  const handleApplyFilters = () => {
+    setFiltersVisible(false);
+    void refreshMatches();
+    setCurrentIndex(0);
+  };
+
+  const setAgeValue = (val: string, type: 'min' | 'max') => {
+    const num = Number(val.replace(/[^0-9]/g, ''));
+    if (Number.isNaN(num)) return;
+    if (type === 'min') setMinAge(num);
+    else setMaxAge(num);
   };
 
   // Reset index if data changes
@@ -414,6 +481,30 @@ export default function ExploreScreen() {
       const videoUrl = (updated && (updated as any).profileVideo) ? String((updated as any).profileVideo) : undefined;
       // navigate to the full profile preview screen; include videoUrl param if we have it so ProfileView can auto-play
       const params: any = { profileId: String(id) };
+      const m = matchList.find((x) => String(x.id) === String(id));
+      if (m) {
+        try {
+          params.fallbackProfile = encodeURIComponent(JSON.stringify({
+            id: m.id,
+            name: (m as any).name,
+            age: (m as any).age,
+            location: (m as any).region || (m as any).location || '',
+            avatar_url: (m as any).avatar_url,
+            photos: (m as any).photos,
+            occupation: (m as any).occupation,
+            education: (m as any).education,
+            bio: (m as any).tagline || (m as any).bio,
+            tribe: (m as any).tribe,
+            religion: (m as any).religion,
+            distance: (m as any).distance,
+            interests: (m as any).interests,
+            is_active: (m as any).isActiveNow,
+            compatibility: (m as any).aiScore ?? (m as any).compatibility ?? 85,
+            verified: (m as any).verified,
+            aiScore: (m as any).aiScore,
+          }));
+        } catch {}
+      }
       if (videoUrl) params.videoUrl = videoUrl;
       router.push({ pathname: '/profile-view', params });
     } catch (e) {
@@ -526,6 +617,7 @@ export default function ExploreScreen() {
           currentIndex={currentIndex}
           total={matchList.length}
           smartCount={smartCount}
+          onPressFilter={() => setFiltersVisible(true)}
         />
 
         {/* CARD STACK */}
@@ -825,46 +917,197 @@ export default function ExploreScreen() {
         </View>
 
         {/* Manual city entry modal */}
-        <Modal
-          visible={manualLocationModalVisible}
-          animationType="slide"
-          transparent
-          onRequestClose={() => setManualLocationModalVisible(false)}
-        >
-          <View style={styles.modalBackdrop}>
-            <View style={styles.modalCard}>
-              <Text style={styles.modalTitle}>Set your city</Text>
-              <Text style={styles.modalSubtitle}>We'll use this for distance until you enable precise location.</Text>
-              <TextInput
-                style={styles.modalInput}
-                placeholder="e.g., Accra, Ghana"
-                value={manualLocation}
-                onChangeText={setManualLocation}
-              />
-              {locationError ? <Text style={styles.locationError}>{locationError}</Text> : null}
-              <View style={styles.modalActions}>
-                <TouchableOpacity
-                  style={[styles.locationButton, styles.locationGhost, { flex: 1 }]}
-                  onPress={() => {
-                    setManualLocationModalVisible(false);
-                    setLocationError(null);
-                  }}
-                  disabled={isSavingLocation}
-                >
-                  <Text style={styles.locationGhostText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.locationButton, styles.locationPrimary, { flex: 1 }]}
-                  onPress={handleSaveManualLocation}
-                  disabled={isSavingLocation}
-                >
-                  <Text style={styles.locationPrimaryText}>{isSavingLocation ? 'Saving...' : 'Save'}</Text>
-                </TouchableOpacity>
+          <Modal
+            visible={manualLocationModalVisible}
+            animationType="slide"
+            transparent
+            onRequestClose={() => setManualLocationModalVisible(false)}
+          >
+            <KeyboardAvoidingView
+              style={{ flex: 1 }}
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 24 : 0}
+            >
+              <View style={styles.modalBackdrop}>
+                <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setManualLocationModalVisible(false)} />
+                <View style={styles.modalCard}>
+                  <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 12 }}>
+                    <Text style={styles.modalTitle}>Set your city</Text>
+                    <Text style={styles.modalSubtitle}>We'll use this for distance until you enable precise location.</Text>
+                    <TextInput
+                      style={styles.modalInput}
+                      placeholder="e.g., Accra, Ghana"
+                      value={manualLocation}
+                      onChangeText={setManualLocation}
+                    />
+                    {locationError ? <Text style={styles.locationError}>{locationError}</Text> : null}
+                    <View style={styles.modalActions}>
+                      <TouchableOpacity
+                        style={[styles.locationButton, styles.locationGhost, { flex: 1 }]}
+                        onPress={() => {
+                          setManualLocationModalVisible(false);
+                          setLocationError(null);
+                        }}
+                        disabled={isSavingLocation}
+                      >
+                        <Text style={styles.locationGhostText}>Cancel</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.locationButton, styles.locationPrimary, { flex: 1 }]}
+                        onPress={handleSaveManualLocation}
+                        disabled={isSavingLocation}
+                      >
+                        <Text style={styles.locationPrimaryText}>{isSavingLocation ? 'Saving...' : 'Save'}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </ScrollView>
+                </View>
               </View>
-            </View>
-          </View>
-        </Modal>
-        {/* Match celebration modal */}
+            </KeyboardAvoidingView>
+          </Modal>
+
+          {/* Filters modal */}
+          <Modal
+            visible={filtersVisible}
+            animationType="slide"
+            transparent
+            onRequestClose={() => setFiltersVisible(false)}
+          >
+            <KeyboardAvoidingView
+              style={{ flex: 1 }}
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 24 : 0}
+            >
+              <View style={styles.modalBackdrop}>
+                <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setFiltersVisible(false)} />
+                <View style={styles.modalCard}>
+                  <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 12 }}>
+                    <Text style={styles.modalTitle}>Filters</Text>
+                    <Text style={styles.modalSubtitle}>Refine recommendations quickly.</Text>
+
+                    <View style={styles.filterSection}>
+                      <Text style={styles.filterLabel}>Active window</Text>
+                      <Text style={styles.filterHint}>Only applies to Active tab</Text>
+                      <View style={styles.filterChipsRow}>
+                        {[15, 30, 60].map((m) => (
+                          <TouchableOpacity
+                            key={m}
+                            style={[styles.filterChip, activeWindowMinutes === m && styles.filterChipActive]}
+                            onPress={() => setActiveWindowMinutes(m)}
+                          >
+                            <Text style={[styles.filterChipText, activeWindowMinutes === m && styles.filterChipTextActive]}>{m}m</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </View>
+
+                    <View style={styles.filterSection}>
+                      <Text style={styles.filterLabel}>Show only verified</Text>
+                      <TouchableOpacity
+                        style={[styles.filterToggle, verifiedOnly && styles.filterToggleActive]}
+                        onPress={() => setVerifiedOnly((v) => !v)}
+                        activeOpacity={0.85}
+                      >
+                        <View style={[styles.filterToggleKnob, verifiedOnly && styles.filterToggleKnobActive]} />
+                        <Text style={[styles.filterToggleText, verifiedOnly && styles.filterToggleTextActive]}>{verifiedOnly ? 'On' : 'Off'}</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.filterSection}>
+                      <Text style={styles.filterLabel}>Distance</Text>
+                      <Text style={styles.filterHint}>Nearby tab only</Text>
+                      <View style={styles.filterChipsRow}>
+                        {[5, 10, 25, 50, 100].map((km) => (
+                          <TouchableOpacity
+                            key={km}
+                            style={[styles.filterChip, distanceFilterKm === km && styles.filterChipActive]}
+                            onPress={() => setDistanceFilterKm(km)}
+                          >
+                            <Text style={[styles.filterChipText, distanceFilterKm === km && styles.filterChipTextActive]}>{km} km</Text>
+                          </TouchableOpacity>
+                        ))}
+                        <TouchableOpacity
+                          style={[styles.filterChip, distanceFilterKm == null && styles.filterChipActive]}
+                          onPress={() => setDistanceFilterKm(null)}
+                        >
+                          <Text style={[styles.filterChipText, distanceFilterKm == null && styles.filterChipTextActive]}>Any</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+
+                    <View style={styles.filterSection}>
+                      <Text style={styles.filterLabel}>Age range</Text>
+                      <View style={styles.filterInputsRow}>
+                        <View style={[styles.filterInputWrapper, { marginRight: 8 }]}>
+                          <Text style={styles.filterHint}>Min</Text>
+                          <TextInput
+                            style={styles.filterInput}
+                            keyboardType="numeric"
+                            value={String(minAge)}
+                            onChangeText={(t) => setAgeValue(t, 'min')}
+                          />
+                        </View>
+                        <View style={styles.filterInputWrapper}>
+                          <Text style={styles.filterHint}>Max</Text>
+                          <TextInput
+                            style={styles.filterInput}
+                            keyboardType="numeric"
+                            value={String(maxAge)}
+                            onChangeText={(t) => setAgeValue(t, 'max')}
+                          />
+                        </View>
+                      </View>
+                    </View>
+
+                    <View style={styles.filterSection}>
+                      <Text style={styles.filterLabel}>Religion</Text>
+                      <View style={styles.filterChipsRowWrap}>
+                        {distinctReligions.length === 0 ? <Text style={styles.filterHint}>No data yet</Text> : null}
+                        {distinctReligions.map((r) => (
+                          <TouchableOpacity
+                            key={r}
+                            style={[styles.filterChip, religionFilter === r && styles.filterChipActive]}
+                            onPress={() => setReligionFilter((curr) => (curr === r ? null : r))}
+                          >
+                            <Text style={[styles.filterChipText, religionFilter === r && styles.filterChipTextActive]}>{r}</Text>
+                          </TouchableOpacity>
+                        ))}
+                        {distinctReligions.length > 0 && (
+                          <TouchableOpacity
+                            style={[styles.filterChip, !religionFilter && styles.filterChipActive]}
+                            onPress={() => setReligionFilter(null)}
+                          >
+                            <Text style={[styles.filterChipText, !religionFilter && styles.filterChipTextActive]}>Any</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    </View>
+
+                    <View style={styles.filterSection}>
+                      <Text style={styles.filterLabel}>Location</Text>
+                      <Text style={styles.filterHint}>Type a city (e.g., Accra, Ghana)</Text>
+                      <TextInput
+                        style={[styles.filterInput, { marginTop: 8 }]}
+                        placeholder="e.g., Accra, Ghana"
+                        value={locationQuery}
+                        onChangeText={setLocationQuery}
+                      />
+                    </View>
+
+                    <View style={styles.modalActions}>
+                      <TouchableOpacity style={[styles.locationButton, styles.locationGhost, { flex: 1 }]} onPress={() => setFiltersVisible(false)}>
+                        <Text style={styles.locationGhostText}>Close</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={[styles.locationButton, styles.locationPrimary, { flex: 1 }]} onPress={handleApplyFilters}>
+                        <Text style={styles.locationPrimaryText}>Apply</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </ScrollView>
+                </View>
+              </View>
+            </KeyboardAvoidingView>
+          </Modal>
+          {/* Match celebration modal */}
         <MatchModal
           visible={!!celebrationMatch}
           match={celebrationMatch}
@@ -1083,4 +1326,22 @@ const styles = StyleSheet.create({
     color: '#0f172a',
   },
   modalActions: { flexDirection: 'row', marginTop: 16 },
+  filterSection: { marginTop: 12, marginBottom: 10 },
+  filterLabel: { fontSize: 14, fontWeight: '700', color: '#0f172a' },
+  filterHint: { fontSize: 12, color: '#6b7280', marginTop: 2 },
+  filterChipsRow: { flexDirection: 'row', marginTop: 8 },
+  filterChipsRowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 },
+  filterChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb', marginRight: 8, backgroundColor: '#fff' },
+  filterChipActive: { backgroundColor: Colors.light.tint, borderColor: Colors.light.tint },
+  filterChipText: { fontWeight: '700', color: '#0f172a' },
+  filterChipTextActive: { color: '#fff' },
+  filterToggle: { marginTop: 8, padding: 10, borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#fff' },
+  filterToggleActive: { borderColor: Colors.light.tint, backgroundColor: '#eef2ff' },
+  filterToggleKnob: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#e5e7eb' },
+  filterToggleKnobActive: { backgroundColor: Colors.light.tint },
+  filterToggleText: { marginLeft: 10, fontWeight: '700', color: '#0f172a' },
+  filterToggleTextActive: { color: Colors.light.tint },
+  filterInputsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
+  filterInputWrapper: { flex: 1 },
+  filterInput: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontWeight: '700', color: '#0f172a', backgroundColor: '#fff', marginTop: 4 },
 });
