@@ -3,6 +3,22 @@ import { Linking } from 'react-native';
 import { Match } from '@/types/match';
 import { supabase } from '@/lib/supabase';
 
+// Tunable window for "Active" tab (minutes)
+const ACTIVE_WINDOW_MINUTES = 15;
+
+// Format distance with sensible rounding and short strings
+function formatDistance(distanceKm?: number | null, fallback?: string) {
+  if (distanceKm == null || Number.isNaN(Number(distanceKm))) {
+    return fallback || '';
+  }
+  const km = Number(distanceKm);
+  if (km < 0.05) return '<50 m away';
+  if (km < 1) return `${Math.round(km * 1000)} m away`;
+  if (km < 10) return `${km.toFixed(1)} km away`;
+  if (km < 200) return `${Math.round(km)} km away`;
+  return `${Math.round(km)} km away`;
+}
+
 // lightweight mock generator (expandable)
 function createMockMatches(): Match[] {
   const now = Date.now();
@@ -92,7 +108,7 @@ function getDebugMockMatches(): Match[] {
   return list;
 }
 
-export default function useAIRecommendations(userId?: string, opts?: { mutualMatchTestIds?: string[]; mode?: 'forYou' | 'nearby' | 'active' }) {
+export default function useAIRecommendations(userId?: string, opts?: { mutualMatchTestIds?: string[]; mode?: 'forYou' | 'nearby' | 'active'; activeWindowMinutes?: number }) {
   // Start empty; prefer server-sourced profiles. Mocks are only a fallback
   // when the server cannot be reached.
   const [matches, setMatches] = useState<Match[]>([]);
@@ -100,6 +116,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
   const [swipeHistory, setSwipeHistory] = useState<Array<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }>>([]);
   const mountedRef = useRef(true);
   const mode = opts?.mode ?? 'forYou';
+  const activeWindowMinutes = opts?.activeWindowMinutes ?? ACTIVE_WINDOW_MINUTES;
 
   // simple mock: when a swipe is recorded, remove the head and append a regenerated match
   const recordSwipe = useCallback((id: string, action: 'like' | 'dislike' | 'superlike', index = 0) => {
@@ -392,7 +409,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
                 tagline: p.bio || '',
                 interests: Array.isArray(p.interests) ? p.interests : [],
                 avatar_url: p.avatar_url || undefined,
-                distance: p.distance_km != null ? `${Number(p.distance_km).toFixed(1)} km away` : (p.region || ''),
+                distance: formatDistance(p.distance_km, p.region || p.location),
                 isActiveNow: !!p.is_active,
                 lastActive: p.last_active,
                 verified: !!p.verified,
@@ -406,18 +423,18 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
                 location_precision: (p as any).location_precision,
               } as Match));
               setMatches(mapped);
-              if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] nearby rpc result', { count: mapped.length });
-              return;
-            }
-          } catch (e) {
-            console.log('[useAIRecommendations] nearby rpc error', e);
+            if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] nearby rpc result', { count: mapped.length });
+            return;
           }
+        } catch (e) {
+          console.log('[useAIRecommendations] nearby rpc error', e);
+        }
         }
 
         // Active mode: server-side active filter via RPC
         if (mode === 'active') {
           try {
-            const { data, error } = await supabase.rpc('get_recs_active', { p_user_id: userId, p_window_minutes: 30 });
+            const { data, error } = await supabase.rpc('get_recs_active', { p_user_id: userId, p_window_minutes: activeWindowMinutes });
             if (!error && Array.isArray(data)) {
               const mapped: Match[] = data.map((p: any) => ({
                 id: p.id,
@@ -453,8 +470,9 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
         // due to missing columns (Postgres error 42703), retry with a
         // minimal safe column list to avoid falling back to mocks.
         const extendedSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, verified, is_active, last_active, ai_score';
-        const minimalSelect = 'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, verified, is_active, last_active';
+        const minimalSelect =
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type';
 
         let data: any[] | null = null;
         let error: any = null;
@@ -502,17 +520,23 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
           const profileIds = data.map((p: any) => p.id).filter(Boolean);
           let interestsMap: Record<string, string[]> = {};
           try {
-            const { data: piData, error: piErr } = await supabase
-              .from('profile_interests')
-              .select('profile_id, interests ( name )')
-              .in('profile_id', profileIds);
-            if (!piErr && Array.isArray(piData)) {
-              for (const row of piData as any[]) {
-                const pid = row.profile_id;
-                const arr = Array.isArray(row.interests) ? row.interests.map((i: any) => i.name).filter(Boolean) : [];
-                interestsMap[pid] = arr;
+          const { data: piData, error: piErr } = await supabase
+            .from('profile_interests')
+            .select('profile_id, interests!inner(name)')
+            .in('profile_id', profileIds);
+          if (!piErr && Array.isArray(piData)) {
+            for (const row of piData as any[]) {
+              const pid = row.profile_id;
+              let arr: string[] = [];
+              if (Array.isArray(row.interests)) {
+                arr = row.interests.map((i: any) => i.name).filter(Boolean);
+              } else if (row.interests && row.interests.name) {
+                arr = [row.interests.name];
               }
+              if (!interestsMap[pid]) interestsMap[pid] = [];
+              interestsMap[pid] = [...interestsMap[pid], ...arr];
             }
+          }
             if (typeof __DEV__ !== 'undefined' && __DEV__) {
               console.log('[useAIRecommendations] profile_interests result', { count: Object.keys(interestsMap).length, interestsMap });
             }
@@ -549,23 +573,18 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
           const mapped: Match[] = data.map((p: any) => {
             // build interests: prefer interestsMap, fallback to region/tribe
             let interestsArr: string[] = Array.isArray(interestsMap[p.id]) ? interestsMap[p.id].map((i: any) => (typeof i === 'string' ? i : i?.name || String(i))) : [];
-            if ((!interestsArr || interestsArr.length === 0) && (p.region || p.tribe)) {
-              const fall = [p.region, p.tribe].filter(Boolean).slice(0, 3) as string[];
-              interestsArr = fall;
-            }
 
             // compute distance when we have coordinates; otherwise fall back to stored location label
             let distanceStr = '';
             if (userCoords && p.latitude != null && p.longitude != null && userCoords.latitude != null && userCoords.longitude != null) {
               try {
                 const km = haversineKm(userCoords.latitude!, userCoords.longitude!, Number(p.latitude), Number(p.longitude));
-                if (km < 1) distanceStr = `${Math.round(km * 1000)} m away`;
-                else distanceStr = `${km.toFixed(1)} km away`;
+                distanceStr = formatDistance(km, p.region || p.location);
               } catch (e) {
-                distanceStr = '';
+                distanceStr = p.region || p.location || '';
               }
-            } else if (p.location) {
-              distanceStr = p.location;
+            } else if (p.location || p.region) {
+              distanceStr = p.location || p.region || '';
             }
 
             const ptags = Array.isArray(p.personality_tags) ? p.personality_tags.map((t: any) => (typeof t === 'string' ? t : t?.name || String(t))) : [];
@@ -622,7 +641,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
     // that case to preserve developer QA flows.
     console.log('[useAIRecommendations] using debug mock fallback');
     setMatches(() => getDebugMockMatches());
-  }, [userId]);
+  }, [userId, mode, activeWindowMinutes]);
 
     // Fetch matches on mount and when userId changes
     useEffect(() => {
@@ -652,11 +671,16 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
       try {
         const { data: piRows, error: piErr } = await supabase
           .from('profile_interests')
-          .select('profile_id, interests ( name )')
+          .select('profile_id, interests!inner(name)')
           .eq('profile_id', profileId);
         if (!piErr && Array.isArray(piRows) && piRows.length > 0) {
           for (const r of piRows as any[]) {
-            const arr = Array.isArray(r.interests) ? r.interests.map((i: any) => i.name).filter(Boolean) : [];
+            let arr: string[] = [];
+            if (Array.isArray(r.interests)) {
+              arr = r.interests.map((i: any) => i.name).filter(Boolean);
+            } else if (r.interests && r.interests.name) {
+              arr = [r.interests.name];
+            }
             interestsArr = interestsArr.concat(arr);
           }
         }

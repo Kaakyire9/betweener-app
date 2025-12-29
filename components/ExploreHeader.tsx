@@ -12,6 +12,7 @@ export default function ExploreHeader({
   currentIndex,
   total,
   smartCount,
+  onPressFilter,
 }: {
   tabs: Tab[];
   activeTab: string;
@@ -19,12 +20,21 @@ export default function ExploreHeader({
   currentIndex: number;
   total: number;
   smartCount?: number;
+  onPressFilter?: () => void;
 }) {
   return (
     <View style={styles.header}>
       <View style={styles.topRow}>
-        <Text style={styles.title}>Discover</Text>
-        <Text style={styles.subtitle}>Ghana Diaspora Connections</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>Discover</Text>
+          <Text style={styles.subtitle}>Ghana Diaspora Connections</Text>
+        </View>
+        {onPressFilter ? (
+          <TouchableOpacity style={styles.filterButton} onPress={onPressFilter} activeOpacity={0.85}>
+            <MaterialCommunityIcons name="filter-variant" size={18} color="#0f172a" />
+            <Text style={styles.filterText}>Filters</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
 
       <View style={styles.tabContainer}>
@@ -51,9 +61,11 @@ export default function ExploreHeader({
 
 const styles = StyleSheet.create({
   header: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12, backgroundColor: "#fff", borderBottomColor: "#f3f4f6", borderBottomWidth: 1 },
-  topRow: { marginBottom: 8 },
+  topRow: { marginBottom: 8, flexDirection: 'row', alignItems: 'center' },
   title: { fontSize: 28, fontWeight: "800", color: "#0f172a" },
   subtitle: { color: Colors.light.tint, marginTop: 4 },
+  filterButton: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#f8fafc' },
+  filterText: { marginLeft: 6, fontWeight: '700', color: '#0f172a' },
   tabContainer: { flexDirection: "row", backgroundColor: "#f8fafc", borderRadius: 12, padding: 6, marginTop: 8 },
   tab: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8 },
   activeTab: { backgroundColor: Colors.light.tint },

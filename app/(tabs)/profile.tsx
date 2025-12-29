@@ -315,12 +315,38 @@ export default function ProfileScreen() {
 
   const openFullPreview = () => {
     // Navigate to the full profile view screen in preview mode
+    const params: Record<string, any> = { 
+      profileId: profile?.id || 'preview',
+      isPreview: 'true',
+    };
+    try {
+      if (profile) {
+        const fallback = {
+          id: profile.id,
+          name: profile.full_name || profile.id,
+          age: profile.age,
+          location: profile.region || profile.location || '',
+          avatar_url: profile.avatar_url,
+          photos: (profile as any).photos,
+          occupation: (profile as any).occupation,
+          education: (profile as any).education,
+          bio: profile.bio,
+          tribe: (profile as any).tribe,
+          religion: (profile as any).religion,
+          distance: profile.region || '',
+          interests: (profile as any).interests,
+          is_active: true,
+          compatibility: (profile as any).aiScore ?? 100,
+          aiScore: (profile as any).aiScore ?? 100,
+          verified: !!(profile as any).verification_level,
+        };
+        params.fallbackProfile = encodeURIComponent(JSON.stringify(fallback));
+      }
+    } catch {}
+
     router.push({
       pathname: '/profile-view',
-      params: { 
-        profileId: profile?.id || 'preview',
-        isPreview: 'true'
-      }
+      params,
     });
   };
 
