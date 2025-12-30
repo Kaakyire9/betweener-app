@@ -17,3 +17,13 @@ public
 # Local scripts and env
 .env*
 *.ps1
+
+# Editor / AI tooling (causing Android tar permission issues)
+.vscode
+.cursor
+.github
+
+# OS junk
+.DS_Store
+__MACOSX
+**/._*
