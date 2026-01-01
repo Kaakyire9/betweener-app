@@ -101,6 +101,24 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if (!currentUserId) return;
+    const channel = supabase
+      .channel('moments-updates')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'moments' },
+        () => {
+          void refresh();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentUserId, refresh]);
+
   const momentsByUser = useMemo(() => {
     const map: Record<string, Moment[]> = {};
     moments.forEach((m) => {

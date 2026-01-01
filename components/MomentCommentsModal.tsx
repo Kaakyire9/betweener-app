@@ -1,7 +1,9 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   KeyboardAvoidingView,
+  Keyboard,
   Modal,
   Platform,
   Pressable,
@@ -11,6 +13,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth-context';
 
@@ -49,11 +52,13 @@ const formatTime = (iso: string) => {
 
 export default function MomentCommentsModal({ visible, momentId, onClose }: Props) {
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
   const [comments, setComments] = useState<CommentRow[]>([]);
   const [profiles, setProfiles] = useState<Record<string, ProfileMini>>({});
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const fetchComments = async () => {
     if (!momentId) return;
@@ -101,6 +106,37 @@ export default function MomentCommentsModal({ visible, momentId, onClose }: Prop
     }
   }, [visible, momentId]);
 
+  useEffect(() => {
+    if (!visible || !momentId) return;
+    const channel = supabase
+      .channel(`moment-comments-${momentId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'moment_comments', filter: `moment_id=eq.${momentId}` },
+        () => {
+          void fetchComments();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchComments, momentId, visible]);
+
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', (event) => {
+      setKeyboardHeight(event.endCoordinates?.height ?? 0);
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => {
+      setKeyboardHeight(0);
+    });
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
   const canSubmit = useMemo(() => text.trim().length > 0 && text.trim().length <= 240, [text]);
 
   const handleSubmit = async () => {
@@ -133,8 +169,15 @@ export default function MomentCommentsModal({ visible, momentId, onClose }: Prop
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} />
-      <KeyboardAvoidingView behavior={Platform.select({ ios: 'padding', android: undefined })} style={styles.sheetWrapper}>
-        <View style={styles.sheet}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.bottom : 0}
+        style={[
+          styles.sheetWrapper,
+          keyboardHeight ? { paddingBottom: Math.max(0, keyboardHeight) } : null,
+        ]}
+      >
+        <View style={[styles.sheet, { paddingBottom: Math.max(16, insets.bottom + 12) }]}>
           <View style={styles.header}>
             <Text style={styles.title}>Comments</Text>
             <Pressable onPress={onClose} style={styles.closeButton}>
@@ -150,9 +193,13 @@ export default function MomentCommentsModal({ visible, momentId, onClose }: Prop
                 const profile = profiles[comment.user_id];
                 return (
                   <View key={comment.id} style={styles.commentRow}>
-                    <View style={styles.commentAvatar}>
-                      <Text style={styles.commentAvatarText}>{(profile?.full_name || 'U').slice(0, 1).toUpperCase()}</Text>
-                    </View>
+                    {profile?.avatar_url ? (
+                      <Image source={{ uri: profile.avatar_url }} style={styles.commentAvatarImage} contentFit="cover" />
+                    ) : (
+                      <View style={styles.commentAvatar}>
+                        <Text style={styles.commentAvatarText}>{(profile?.full_name || 'U').slice(0, 1).toUpperCase()}</Text>
+                      </View>
+                    )}
                     <View style={styles.commentBody}>
                       <View style={styles.commentMeta}>
                         <Text style={styles.commentName}>{profile?.full_name || 'Member'}</Text>
@@ -189,7 +236,10 @@ export default function MomentCommentsModal({ visible, momentId, onClose }: Prop
 
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' },
-  sheetWrapper: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  sheetWrapper: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'flex-end',
+  },
   sheet: {
     backgroundColor: '#0b1220',
     borderTopLeftRadius: 22,
@@ -215,6 +265,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  commentAvatarImage: { width: 34, height: 34, borderRadius: 17 },
   commentAvatarText: { color: '#fff', fontFamily: 'Archivo_700Bold' },
   commentBody: { flex: 1 },
   commentMeta: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },

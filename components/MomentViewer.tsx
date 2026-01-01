@@ -49,6 +49,7 @@ type Props = {
   visible: boolean;
   users: MomentUser[];
   startUserId?: string | null;
+  startMomentId?: string | null;
   onClose: () => void;
 };
 
@@ -61,13 +62,18 @@ const formatTimeLeft = (expiresAt: string) => {
   return `${hours}h left`;
 };
 
-export default function MomentViewer({ visible, users, startUserId, onClose }: Props) {
+export default function MomentViewer({ visible, users, startUserId, startMomentId, onClose }: Props) {
   const { user } = useAuth();
   const progressAnim = useRef(new Animated.Value(0)).current;
   const [activeUserIndex, setActiveUserIndex] = useState(0);
   const [activeMomentIndex, setActiveMomentIndex] = useState(0);
+  const initializedRef = useRef(false);
+  const usersRef = useRef(users);
+  const activeUserIndexRef = useRef(activeUserIndex);
+  const activeMomentIndexRef = useRef(activeMomentIndex);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
   const [reactionCounts, setReactionCounts] = useState<Record<string, number>>({});
+  const [commentCount, setCommentCount] = useState(0);
   const [userReaction, setUserReaction] = useState<string | null>(null);
   const [commentsVisible, setCommentsVisible] = useState(false);
 
@@ -112,6 +118,63 @@ export default function MomentViewer({ visible, users, startUserId, onClose }: P
     setUserReaction(mine);
   }, [user?.id]);
 
+  const fetchCommentCount = useCallback(async (momentId: string) => {
+    if (!momentId) return;
+    const { count, error } = await supabase
+      .from('moment_comments')
+      .select('id', { count: 'exact', head: true })
+      .eq('moment_id', momentId)
+      .eq('is_deleted', false);
+    if (error) {
+      setCommentCount(0);
+      return;
+    }
+    setCommentCount(count ?? 0);
+  }, []);
+
+  const handleNext = useCallback(() => {
+    const usersList = usersRef.current;
+    const userIndex = activeUserIndexRef.current;
+    const momentIndex = activeMomentIndexRef.current;
+    const userEntry = usersList[userIndex];
+    if (!userEntry) {
+      onClose();
+      return;
+    }
+    if (momentIndex < userEntry.moments.length - 1) {
+      setActiveMomentIndex(momentIndex + 1);
+      return;
+    }
+    if (userIndex < usersList.length - 1) {
+      setActiveUserIndex(userIndex + 1);
+      setActiveMomentIndex(0);
+      return;
+    }
+    onClose();
+  }, [onClose]);
+
+  const handlePrev = useCallback(() => {
+    const usersList = usersRef.current;
+    const userIndex = activeUserIndexRef.current;
+    const momentIndex = activeMomentIndexRef.current;
+    const userEntry = usersList[userIndex];
+    if (!userEntry) {
+      onClose();
+      return;
+    }
+    if (momentIndex > 0) {
+      setActiveMomentIndex(momentIndex - 1);
+      return;
+    }
+    if (userIndex > 0) {
+      const prevUser = usersList[userIndex - 1];
+      setActiveUserIndex(userIndex - 1);
+      setActiveMomentIndex(prevUser ? Math.max(0, prevUser.moments.length - 1) : 0);
+      return;
+    }
+    onClose();
+  }, [onClose]);
+
   const startProgress = useCallback((duration: number) => {
     progressAnim.stopAnimation();
     progressAnim.setValue(0);
@@ -126,38 +189,12 @@ export default function MomentViewer({ visible, users, startUserId, onClose }: P
     });
   }, [commentsVisible, handleNext, progressAnim]);
 
-  const handleNext = useCallback(() => {
-    if (!currentUser) return;
-    if (activeMomentIndex < currentUser.moments.length - 1) {
-      setActiveMomentIndex((prev) => prev + 1);
-      return;
-    }
-    if (activeUserIndex < users.length - 1) {
-      setActiveUserIndex((prev) => prev + 1);
-      setActiveMomentIndex(0);
-      return;
-    }
-    onClose();
-  }, [activeMomentIndex, activeUserIndex, currentUser, onClose, users.length]);
-
-  const handlePrev = useCallback(() => {
-    if (!currentUser) return;
-    if (activeMomentIndex > 0) {
-      setActiveMomentIndex((prev) => prev - 1);
-      return;
-    }
-    if (activeUserIndex > 0) {
-      const prevUser = users[activeUserIndex - 1];
-      setActiveUserIndex((prev) => prev - 1);
-      setActiveMomentIndex(prevUser ? Math.max(0, prevUser.moments.length - 1) : 0);
-      return;
-    }
-    onClose();
-  }, [activeMomentIndex, activeUserIndex, currentUser, onClose, users]);
-
   const panResponder = useRef(
     PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
       onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 12 && Math.abs(gesture.dy) < 30,
+      onMoveShouldSetPanResponderCapture: (_, gesture) => Math.abs(gesture.dx) > 12 && Math.abs(gesture.dy) < 30,
       onPanResponderRelease: (evt, gesture) => {
         if (gesture.dx < -30) {
           handleNext();
@@ -198,19 +235,62 @@ export default function MomentViewer({ visible, users, startUserId, onClose }: P
   };
 
   useEffect(() => {
-    if (!visible) return;
+    usersRef.current = users;
+  }, [users]);
+
+  useEffect(() => {
+    activeUserIndexRef.current = activeUserIndex;
+  }, [activeUserIndex]);
+
+  useEffect(() => {
+    activeMomentIndexRef.current = activeMomentIndex;
+  }, [activeMomentIndex]);
+
+  useEffect(() => {
+    if (!visible) {
+      initializedRef.current = false;
+      return;
+    }
+    if (initializedRef.current) return;
+    if (users.length === 0) return;
+    initializedRef.current = true;
     const idx = startUserId ? users.findIndex((u) => u.userId === startUserId) : 0;
-    setActiveUserIndex(idx >= 0 ? idx : 0);
-    setActiveMomentIndex(0);
+    const safeUserIndex = idx >= 0 ? idx : 0;
+    const targetUser = users[safeUserIndex];
+    let momentIndex = 0;
+    if (startMomentId && targetUser?.moments?.length) {
+      const foundIndex = targetUser.moments.findIndex((m) => m.id === startMomentId);
+      if (foundIndex >= 0) momentIndex = foundIndex;
+    }
+    setActiveUserIndex(safeUserIndex);
+    setActiveMomentIndex(momentIndex);
     setReactionCounts({});
     setUserReaction(null);
-  }, [visible, startUserId, users]);
+  }, [visible, startMomentId, startUserId, users]);
 
   useEffect(() => {
     if (visible && users.length === 0) {
       onClose();
     }
   }, [onClose, users.length, visible]);
+
+  useEffect(() => {
+    if (!visible || users.length === 0) return;
+    const userEntry = users[activeUserIndex];
+    if (!userEntry || userEntry.moments.length === 0) {
+      const nextUserIndex = users.findIndex((u, idx) => idx >= activeUserIndex && u.moments.length > 0);
+      if (nextUserIndex >= 0) {
+        setActiveUserIndex(nextUserIndex);
+        setActiveMomentIndex(0);
+        return;
+      }
+      onClose();
+      return;
+    }
+    if (activeMomentIndex >= userEntry.moments.length) {
+      setActiveMomentIndex(Math.max(0, userEntry.moments.length - 1));
+    }
+  }, [activeMomentIndex, activeUserIndex, onClose, users, visible]);
 
   useEffect(() => {
     if (!visible) {
@@ -231,6 +311,28 @@ export default function MomentViewer({ visible, users, startUserId, onClose }: P
     if (!visible || !currentMoment) return;
     void fetchReactions(currentMoment.id);
   }, [currentMoment, fetchReactions, visible]);
+
+  useEffect(() => {
+    if (!visible || !currentMoment) return;
+    void fetchCommentCount(currentMoment.id);
+  }, [currentMoment, fetchCommentCount, visible]);
+
+  useEffect(() => {
+    if (!visible || !currentMoment) return;
+    const channel = supabase
+      .channel(`moment-comments-count-${currentMoment.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'moment_comments', filter: `moment_id=eq.${currentMoment.id}` },
+        () => {
+          void fetchCommentCount(currentMoment.id);
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentMoment, fetchCommentCount, visible]);
 
   useEffect(() => {
     if (!visible || !currentMoment || commentsVisible) return;
@@ -256,7 +358,7 @@ export default function MomentViewer({ visible, users, startUserId, onClose }: P
 
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
-      <View style={styles.container} {...panResponder.panHandlers}>
+      <View style={styles.container}>
         <View style={styles.progressRow}>
           {currentUser.moments.map((m, idx) => (
             <View key={m.id} style={styles.progressTrack}>
@@ -309,12 +411,13 @@ export default function MomentViewer({ visible, users, startUserId, onClose }: P
               <Text style={styles.captionText}>{currentMoment.caption}</Text>
             </View>
           ) : null}
+          <View style={styles.gestureLayer} pointerEvents="box-only" {...panResponder.panHandlers} />
         </View>
 
-        <LinearGradient colors={['transparent', 'rgba(0,0,0,0.6)']} style={styles.bottomGradient} />
+        <LinearGradient colors={['transparent', 'rgba(0,0,0,0.6)']} style={styles.bottomGradient} pointerEvents="none" />
 
         <View style={styles.actions}>
-          <View style={styles.reactionRow}>
+          <View style={styles.reactionColumn}>
             {REACTIONS.map((emojiValue) => {
               const isActive = userReaction === emojiValue;
               const count = reactionCounts[emojiValue] || 0;
@@ -328,7 +431,7 @@ export default function MomentViewer({ visible, users, startUserId, onClose }: P
           </View>
           <Pressable style={styles.commentButton} onPress={() => setCommentsVisible(true)}>
             <MaterialCommunityIcons name="comment-outline" size={18} color="#fff" />
-            <Text style={styles.commentText}>Comment</Text>
+            {commentCount > 0 ? <Text style={styles.commentCount}>{commentCount}</Text> : null}
           </Pressable>
         </View>
       </View>
@@ -384,30 +487,41 @@ const styles = StyleSheet.create({
   },
   captionText: { color: '#fff', fontFamily: 'Manrope_500Medium', fontSize: 14 },
   bottomGradient: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 220 },
-  actions: { position: 'absolute', left: 16, right: 16, bottom: 28, gap: 14 },
-  reactionRow: { flexDirection: 'row', gap: 12 },
-  reactionButton: {
-    flexDirection: 'row',
+  actions: {
+    position: 'absolute',
+    right: 14,
+    top: '50%',
+    transform: [{ translateY: -60 }],
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 16,
+    gap: 14,
+  },
+  reactionColumn: { gap: 12, alignItems: 'center' },
+  reactionButton: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
     backgroundColor: 'rgba(255,255,255,0.12)',
   },
   reactionActive: { backgroundColor: 'rgba(236,72,153,0.35)' },
-  reactionEmoji: { fontSize: 16 },
-  reactionCount: { color: '#fff', fontSize: 12, fontFamily: 'Manrope_600SemiBold' },
+  reactionEmoji: { fontSize: 18 },
+  reactionCount: { color: '#fff', fontSize: 11, fontFamily: 'Manrope_600SemiBold' },
   commentButton: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 18,
+    justifyContent: 'center',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     backgroundColor: 'rgba(255,255,255,0.12)',
-    alignSelf: 'flex-start',
+    alignSelf: 'center',
   },
-  commentText: { color: '#fff', fontFamily: 'Manrope_600SemiBold', fontSize: 13 },
+  commentCount: { color: '#fff', fontSize: 11, fontFamily: 'Manrope_600SemiBold', marginTop: 2 },
+  gestureLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
 });
 const { width: screenWidth } = Dimensions.get('window');
