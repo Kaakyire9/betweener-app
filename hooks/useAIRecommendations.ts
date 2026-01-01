@@ -1,7 +1,7 @@
-import { useCallback, useMemo, useState, useEffect, useRef } from 'react';
-import { Linking } from 'react-native';
-import { Match } from '@/types/match';
 import { supabase } from '@/lib/supabase';
+import { Match } from '@/types/match';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Linking } from 'react-native';
 
 // Tunable window for "Active" tab (minutes)
 const ACTIVE_WINDOW_MINUTES = 15;
