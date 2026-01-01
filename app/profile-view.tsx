@@ -276,6 +276,7 @@ export default function ProfileViewPremiumScreen() {
 
   const profileData = fetchedProfile ?? parsedFallback ?? (isOwnProfilePreview ? baseProfileData : placeholderProfile);
   const isLoading = !fetchedProfile && !parsedFallback && !isOwnProfilePreview;
+  const hasProfileVideo = !!(profileData.profileVideoPath || profileData.profileVideo);
 
   useEffect(() => {
     let mounted = true;
@@ -435,6 +436,24 @@ export default function ProfileViewPremiumScreen() {
       mounted = false;
     };
   }, [profileData.profileVideoPath, profileData.profileVideo]);
+
+  const openProfileVideo = async () => {
+    const source = profileData.profileVideoPath || profileData.profileVideo;
+    if (!source) return;
+    if (source.startsWith('http')) {
+      setVideoModalUrl(source);
+      setVideoModalVisible(true);
+      return;
+    }
+    const { data, error } = await supabase.storage.from('profile-videos').createSignedUrl(source, 3600);
+    if (error || !data?.signedUrl) {
+      Alert.alert('Video unavailable', 'We could not load this profile video yet.');
+      return;
+    }
+    setProfileVideoUrl(data.signedUrl);
+    setVideoModalUrl(data.signedUrl);
+    setVideoModalVisible(true);
+  };
 
   const handleShare = async () => {
     try {
@@ -717,14 +736,11 @@ export default function ProfileViewPremiumScreen() {
                   <View key={idx} style={[styles.photoIndicator, idx === currentPhotoIndex && styles.photoIndicatorActive]} />
                 ))}
               </View>
-              {profileVideoUrl ? (
+              {hasProfileVideo ? (
                 <View style={styles.videoBadgeContainer} pointerEvents="box-none">
                   <TouchableOpacity
                     style={styles.videoBadgeButton}
-                    onPress={() => {
-                      setVideoModalUrl(profileVideoUrl);
-                      setVideoModalVisible(true);
-                    }}
+                    onPress={openProfileVideo}
                     accessibilityLabel="Play profile video"
                   >
                     <MaterialCommunityIcons name="play" size={16} color="#fff" />

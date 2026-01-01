@@ -75,6 +75,8 @@ export default function ExploreScreen() {
   const [maxAge, setMaxAge] = useState<number>(60);
   const [religionFilter, setReligionFilter] = useState<string | null>(null);
   const [locationQuery, setLocationQuery] = useState<string>('');
+  const prefetchedDetailsRef = useRef<Set<string>>(new Set());
+  const prefetchInFlightRef = useRef<Set<string>>(new Set());
 
   const stackRef = useRef<ExploreStackHandle | null>(null);
   const buttonScale = useRef(new Animated.Value(1)).current;
@@ -333,7 +335,7 @@ export default function ExploreScreen() {
     let mounted = true;
     (async () => {
       try {
-        for (let i = 1; i <= N; i++) {
+        for (let i = 0; i <= N; i++) {
           const idx = currentIndex + i;
           const m = matchList[idx];
           if (!m) break;
@@ -341,9 +343,17 @@ export default function ExploreScreen() {
           const hasVideo = !!((m as any).profileVideo);
           const hasPersonality = Array.isArray((m as any).personalityTags) && (m as any).personalityTags.length > 0;
           const hasInterests = Array.isArray((m as any).interests) && (m as any).interests.length > 0;
+          const id = String(m.id);
+          if ((prefetchedDetailsRef.current.has(id) || prefetchInFlightRef.current.has(id))) continue;
           if (!hasVideo || !hasPersonality || !hasInterests) {
-            // call fetchProfileDetails to merge optional fields into matches
-            await fetchProfileDetails?.(m.id);
+            prefetchInFlightRef.current.add(id);
+            try {
+              // call fetchProfileDetails to merge optional fields into matches
+              await fetchProfileDetails?.(m.id);
+            } finally {
+              prefetchInFlightRef.current.delete(id);
+              prefetchedDetailsRef.current.add(id);
+            }
           }
           if (!mounted) break;
         }

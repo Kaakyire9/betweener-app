@@ -443,9 +443,9 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
                 interests: Array.isArray(p.interests) ? p.interests : [],
                 avatar_url: p.avatar_url || undefined,
                 distance: formatDistance(p.distance_km, p.region || p.location),
-                isActiveNow: !!p.is_active,
-                lastActive: p.last_active,
-                verified: !!p.verified,
+                isActiveNow: !!p.online || !!p.is_active,
+                lastActive: p.last_active ?? null,
+                verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
                 personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
                 aiScore: typeof p.ai_score === 'number' ? p.ai_score : undefined,
                 profileVideo: (p as any).profile_video || undefined,
@@ -478,9 +478,9 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
                 interests: Array.isArray(p.interests) ? p.interests : [],
                 avatar_url: p.avatar_url || undefined,
                 distance: p.region || '',
-                isActiveNow: !!p.is_active,
-                lastActive: p.last_active,
-                verified: !!p.verified,
+                isActiveNow: !!p.online || !!p.is_active,
+                lastActive: p.last_active ?? null,
+                verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
                 personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
                 aiScore: typeof p.ai_score === 'number' ? p.ai_score : undefined,
                 profileVideo: (p as any).profile_video || undefined,
@@ -505,9 +505,9 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
         // due to missing columns (Postgres error 42703), retry with a
         // minimal safe column list to avoid falling back to mocks.
         const extendedSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, verified, is_active, last_active, profile_video';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, online, is_active, verification_level, ai_score, profile_video';
         const minimalSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, online, is_active, verification_level, profile_video';
 
         let data: any[] | null = null;
         let error: any = null;
@@ -632,9 +632,9 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
               interests: interestsArr || [],
               avatar_url: p.avatar_url || undefined,
               distance: distanceStr || '',
-              isActiveNow: !!p.is_active,
-              lastActive: p.last_active,
-              verified: !!p.verified,
+              isActiveNow: !!p.online || !!p.is_active,
+              lastActive: p.last_active ?? null,
+              verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
               personalityTags: ptags || [],
               aiScore: typeof p.ai_score === 'number' ? p.ai_score : undefined,
               profileVideo: p.profile_video || undefined,
@@ -697,7 +697,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
       // fetch optional profile fields
       const { data: profileData, error: pErr } = await supabase
         .from('profiles')
-              .select('id, personality_tags, profile_video, latitude, longitude, region, tribe, religion, current_country, location_precision')
+              .select('id, profile_video, latitude, longitude, region, tribe, religion, current_country, location_precision, personality_type, online, is_active, verification_level')
         .eq('id', profileId)
         .limit(1)
         .single();
@@ -731,8 +731,8 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
       setMatches((prev) => {
         const next = prev.map((m) => {
           if (String(m.id) !== String(profileId)) return m;
-          const personality = Array.isArray(profileData?.personality_tags)
-            ? profileData!.personality_tags.map((t: any) => (typeof t === 'string' ? t : t?.name || String(t)))
+          const personality = profileData?.personality_type
+            ? [profileData.personality_type]
             : (m as any).personalityTags || [];
           const interestsFinal = (interestsArr && interestsArr.length > 0) ? interestsArr : ((m as any).interests && (m as any).interests.length > 0 ? (m as any).interests : [profileData?.region, profileData?.tribe].filter(Boolean));
           merged = {
