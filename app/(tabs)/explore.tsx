@@ -4,7 +4,6 @@ import ExploreStack from "@/components/ExploreStack.reanimated";
 import MatchModal from '@/components/MatchModal';
 import MomentCreateModal from '@/components/MomentCreateModal';
 import MomentViewer from '@/components/MomentViewer';
-import MomentsRow from '@/components/MomentsRow';
 import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
@@ -26,7 +25,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 
 export default function ExploreScreen() {
   const insets = useSafeAreaInsets();
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const fontsLoaded = useAppFonts();
   const { profile, user, refreshProfile } = useAuth();
 
@@ -253,6 +252,11 @@ export default function ExploreScreen() {
   const openMomentViewer = (userId: string) => {
     setMomentStartUserId(userId);
     setMomentViewerVisible(true);
+  };
+  const momentsPillTop = Math.max(insets.top + 140, Math.round(windowHeight * 0.43));
+
+  const handleMomentsPress = () => {
+    router.push('/moments');
   };
 
   const hasPreciseCoords = profile?.latitude != null && profile?.longitude != null;
@@ -638,16 +642,6 @@ export default function ExploreScreen() {
           onPressFilter={() => setFiltersVisible(true)}
         />
 
-        {user?.id ? (
-          <MomentsRow
-            users={momentUsers}
-            isLoading={momentsLoading}
-            onPressUser={openMomentViewer}
-            onPressCreate={() => setMomentCreateVisible(true)}
-            onPressOwn={() => router.push('/my-moments')}
-          />
-        ) : null}
-
         {/* CARD STACK */}
         <View style={styles.stackWrapper}>
           {!exhausted ? (
@@ -680,6 +674,27 @@ export default function ExploreScreen() {
             <NoMoreProfiles />
           )}
         </View>
+
+        {user?.id ? (
+          <View pointerEvents="box-none" style={[styles.momentsPillContainer, { top: momentsPillTop }]}>
+            <TouchableOpacity
+              style={styles.momentsPillTouchable}
+              activeOpacity={0.85}
+              onPress={handleMomentsPress}
+              disabled={momentsLoading}
+            >
+              <BlurViewSafe intensity={60} tint="light" style={styles.momentsPill}>
+                <MaterialCommunityIcons name="movie-open-play" size={18} color="#0f172a" />
+                <Text style={styles.momentsPillText}>{momentsLoading ? 'Moments...' : 'Moments'}</Text>
+                {momentUsersWithContent.length > 0 ? (
+                  <View style={styles.momentsPillBadge}>
+                    <Text style={styles.momentsPillBadgeText}>{momentUsersWithContent.length}</Text>
+                  </View>
+                ) : null}
+              </BlurViewSafe>
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
         {/* ACTION BUTTONS (floating card above tabs; safe-area aware) */}
         <View style={[styles.actionButtons, { bottom: Math.max(Math.max(insets.bottom, 6) - ACTION_BOTTOM_NUDGE, 0) }]} pointerEvents="box-none">
@@ -1199,6 +1214,51 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     // leave room at the bottom for action buttons
     paddingBottom: 120,
+  },
+  momentsPillContainer: {
+    position: 'absolute',
+    right: 14,
+    zIndex: 80,
+    elevation: 12,
+  },
+  momentsPillTouchable: {
+    borderRadius: 18,
+    overflow: 'hidden',
+  },
+  momentsPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.88)',
+    borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.08)',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  momentsPillText: {
+    marginLeft: 6,
+    fontSize: 12,
+    color: '#0f172a',
+    fontFamily: 'Manrope_600SemiBold',
+  },
+  momentsPillBadge: {
+    marginLeft: 8,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: Colors.light.tint,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  momentsPillBadgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
   },
   actionButtons: {
     position: 'absolute',
