@@ -31,6 +31,8 @@ type UserProfile = {
   name: string;
   age: number;
   location: string;
+  city?: string;
+  region?: string;
   profilePicture: string;
   photos: string[];
   occupation: string;
@@ -41,6 +43,19 @@ type UserProfile = {
   isActiveNow: boolean;
   tribe?: string;
   religion?: string;
+  personalityType?: string;
+  height?: string;
+  lookingFor?: string;
+  languages?: string[];
+  currentCountry?: string;
+  diasporaStatus?: string;
+  willingLongDistance?: boolean;
+  exerciseFrequency?: string;
+  smoking?: string;
+  drinking?: string;
+  hasChildren?: string;
+  wantsChildren?: string;
+  locationPrecision?: string;
   interests: Interest[];
   compatibility: number;
   aiScore?: number;
@@ -98,6 +113,8 @@ export default function ProfileViewScreen() {
     name: viewedProfileId ? 'Loading profile...' : 'Profile',
     age: 0,
     location: '',
+    city: '',
+    region: '',
     profilePicture: '',
     photos: [],
     occupation: '',
@@ -106,6 +123,19 @@ export default function ProfileViewScreen() {
     bio: '',
     distance: '',
     isActiveNow: false,
+    personalityType: '',
+    height: '',
+    lookingFor: '',
+    languages: [],
+    currentCountry: '',
+    diasporaStatus: '',
+    willingLongDistance: false,
+    exerciseFrequency: '',
+    smoking: '',
+    drinking: '',
+    hasChildren: '',
+    wantsChildren: '',
+    locationPrecision: '',
     compatibility: 80,
     aiScore: undefined,
     interests: [],
@@ -119,6 +149,8 @@ export default function ProfileViewScreen() {
         name: currentUser?.full_name || 'Your Name',
         age: currentUser?.age || 25,
         location: currentUser?.region || 'Your Location',
+        city: (currentUser as any)?.city,
+        region: currentUser?.region,
         profilePicture:
           currentUser?.avatar_url ||
           'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=400&h=600&fit=crop&crop=face',
@@ -129,6 +161,19 @@ export default function ProfileViewScreen() {
         bio: currentUser?.bio || '',
         distance: 'You',
         isActiveNow: true,
+        personalityType: (currentUser as any)?.personality_type,
+        height: (currentUser as any)?.height,
+        lookingFor: (currentUser as any)?.looking_for,
+        languages: (currentUser as any)?.languages_spoken || [],
+        currentCountry: (currentUser as any)?.current_country,
+        diasporaStatus: (currentUser as any)?.diaspora_status,
+        willingLongDistance: (currentUser as any)?.willing_long_distance,
+        exerciseFrequency: (currentUser as any)?.exercise_frequency,
+        smoking: (currentUser as any)?.smoking,
+        drinking: (currentUser as any)?.drinking,
+        hasChildren: (currentUser as any)?.has_children,
+        wantsChildren: (currentUser as any)?.wants_children,
+        locationPrecision: (currentUser as any)?.location_precision,
         compatibility: 100,
         aiScore: 100,
         interests: [],
@@ -149,6 +194,8 @@ export default function ProfileViewScreen() {
           name: parsed.name || 'Profile',
           age: parsed.age || 0,
           location: parsed.location || '',
+          city: parsed.city,
+          region: parsed.region,
           profilePicture: parsed.avatar_url || photos[0] || '',
           photos,
           occupation: parsed.occupation || '',
@@ -157,6 +204,19 @@ export default function ProfileViewScreen() {
           bio: parsed.bio || '',
           distance: parsed.distance || '',
           isActiveNow: !!parsed.is_active,
+          personalityType: parsed.personality_type,
+          height: parsed.height,
+          lookingFor: parsed.looking_for,
+          languages: parsed.languages_spoken || [],
+          currentCountry: parsed.current_country,
+          diasporaStatus: parsed.diaspora_status,
+          willingLongDistance: parsed.willing_long_distance,
+          exerciseFrequency: parsed.exercise_frequency,
+          smoking: parsed.smoking,
+          drinking: parsed.drinking,
+          hasChildren: parsed.has_children,
+          wantsChildren: parsed.wants_children,
+          locationPrecision: parsed.location_precision,
           compatibility:
             typeof parsed.compatibility === 'number'
               ? parsed.compatibility
@@ -196,9 +256,9 @@ export default function ProfileViewScreen() {
       try {
         console.log('[profile-view] fetching profile', { viewedProfileId });
         const selectFull =
-          'id, full_name, age, region, location, avatar_url, photos, occupation, education, bio, tribe, religion, is_active, online, verification_level, ai_score';
+          'id, full_name, age, region, city, location, avatar_url, photos, occupation, education, bio, tribe, religion, personality_type, height, looking_for, languages_spoken, current_country, diaspora_status, willing_long_distance, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, verification_level, ai_score';
         const selectMinimal =
-          'id, full_name, age, region, location, avatar_url, bio, tribe, religion, is_active, online, verification_level, ai_score';
+          'id, full_name, age, region, city, location, avatar_url, bio, tribe, religion, personality_type, is_active, online, verification_level, ai_score';
         let data: any = null;
         let error: any = null;
         try {
@@ -269,6 +329,8 @@ export default function ProfileViewScreen() {
           name: data.full_name || 'Profile',
           age: data.age || 0,
           location: data.location || data.region || '',
+          city: data.city || undefined,
+          region: data.region || undefined,
           profilePicture: data.avatar_url || photos[0] || '',
           photos,
           occupation: data.occupation || '',
@@ -277,6 +339,19 @@ export default function ProfileViewScreen() {
           bio: data.bio || '',
           distance: data.region || data.location || '',
           isActiveNow: !!data.is_active || !!(data as any).online,
+          personalityType: data.personality_type || undefined,
+          height: data.height || undefined,
+          lookingFor: data.looking_for || undefined,
+          languages: Array.isArray((data as any).languages_spoken) ? (data as any).languages_spoken : undefined,
+          currentCountry: data.current_country || undefined,
+          diasporaStatus: data.diaspora_status || undefined,
+          willingLongDistance: typeof data.willing_long_distance === 'boolean' ? data.willing_long_distance : undefined,
+          exerciseFrequency: data.exercise_frequency || undefined,
+          smoking: data.smoking || undefined,
+          drinking: data.drinking || undefined,
+          hasChildren: data.has_children || undefined,
+          wantsChildren: data.wants_children || undefined,
+          locationPrecision: data.location_precision || undefined,
           compatibility: typeof aiScoreVal === 'number'
             ? Math.round(aiScoreVal)
             : typeof (data as any).compatibility === 'number'
@@ -430,6 +505,20 @@ export default function ProfileViewScreen() {
       </TouchableOpacity>
       {!isOwnProfilePreview && (
         <View style={styles.headerActions}>
+          {__DEV__ && (
+            <TouchableOpacity
+              style={styles.headerActionButton}
+              onPress={() =>
+                router.push({
+                  pathname: '/profile-view-premium',
+                  params: { profileId: viewedProfileId || currentUser?.id || 'preview' },
+                })
+              }
+              accessibilityLabel="Open premium preview"
+            >
+              <MaterialCommunityIcons name="star-four-points" size={20} color="#fff" />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity style={styles.headerActionButton} onPress={handleShare}>
             <MaterialCommunityIcons name="share-variant" size={20} color="#fff" />
           </TouchableOpacity>
@@ -548,6 +637,19 @@ export default function ProfileViewScreen() {
           </View>
         </View>
 
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>At a glance</Text>
+          <View style={styles.chipsRow}>
+            {[profileData.region || profileData.city || profileData.location, profileData.tribe, profileData.religion, profileData.locationPrecision]
+              .filter(Boolean)
+              .map((val, idx) => (
+                <View key={`chip-${idx}`} style={styles.chip}>
+                  <Text style={styles.chipText}>{String(val)}</Text>
+                </View>
+              ))}
+          </View>
+        </View>
+
         <View style={styles.bioSection}>
           <Text style={styles.sectionTitle}>About {profileData.name}</Text>
           <TouchableOpacity onPress={() => setShowFullBio(!showFullBio)}>
@@ -584,6 +686,37 @@ export default function ProfileViewScreen() {
               </View>
             ) : null}
           </View>
+        </View>
+
+        <View style={styles.detailsSection}>
+          <Text style={styles.sectionTitle}>Details</Text>
+          {[
+            { label: 'Personality', value: profileData.personalityType },
+            { label: 'Occupation', value: profileData.occupation },
+            { label: 'Education', value: profileData.education },
+            { label: 'Height', value: profileData.height },
+            { label: 'Looking for', value: profileData.lookingFor },
+            { label: 'Country', value: profileData.currentCountry },
+            { label: 'Diaspora status', value: profileData.diasporaStatus },
+            { label: 'Willing long distance', value: typeof profileData.willingLongDistance === 'boolean' ? (profileData.willingLongDistance ? 'Yes' : 'No') : undefined },
+            { label: 'Exercise', value: profileData.exerciseFrequency },
+            { label: 'Smoking', value: profileData.smoking },
+            { label: 'Drinking', value: profileData.drinking },
+            { label: 'Has children', value: profileData.hasChildren },
+            { label: 'Wants children', value: profileData.wantsChildren },
+            { label: 'Languages', value: Array.isArray(profileData.languages) && profileData.languages.length > 0 ? profileData.languages.join(', ') : undefined },
+            { label: 'Location precision', value: profileData.locationPrecision },
+          ]
+            .filter((row) => row.value)
+            .map((row, idx) => (
+              <View key={`${row.label}-${idx}`} style={styles.detailRow}>
+                <Text style={styles.detailLabel}>{row.label}</Text>
+                <Text style={styles.detailValue}>{row.value}</Text>
+              </View>
+            ))}
+          {(!profileData.languages || profileData.languages.length === 0) && (!profileData.personalityType && !profileData.occupation && !profileData.education) ? (
+            <Text style={{ color: '#6b7280' }}>No extra details yet.</Text>
+          ) : null}
         </View>
 
         <View style={styles.interestsSection}>
@@ -764,6 +897,34 @@ const styles = StyleSheet.create({
   detailsContainer: { marginTop: 20, gap: 12 },
   detailItem: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   detailText: { fontSize: 15, fontFamily: 'Manrope_400Regular', color: '#6b7280' },
+  sectionCard: {
+    backgroundColor: '#0f172a',
+    padding: 16,
+    marginTop: 12,
+    marginHorizontal: 0,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#1f2937',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
+    elevation: 10,
+  },
+  chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  chip: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderColor: 'rgba(255,255,255,0.1)',
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  chipText: { color: '#e5e7eb', fontSize: 13, fontFamily: 'Manrope_600SemiBold' },
+  detailsSection: { backgroundColor: '#fff', padding: 20, paddingTop: 10 },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#e5e7eb' },
+  detailLabel: { fontSize: 14, fontFamily: 'Manrope_600SemiBold', color: '#4b5563' },
+  detailValue: { fontSize: 14, fontFamily: 'Manrope_400Regular', color: '#111827', flexShrink: 1, textAlign: 'right' },
   interestsSection: { backgroundColor: '#f8fafc', padding: 20 },
   interestsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, alignItems: 'center' },
   interestChip: {
