@@ -114,6 +114,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
   const activeTranslate = useRef(new Animated.Value(6)).current;
   const pillAnim = useRef(new Animated.Value(0)).current;
   const pillTranslate = useRef(new Animated.Value(6)).current;
+  const introPulse = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (match.verified) {
@@ -159,6 +160,30 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
       ]).start();
     }
   }, [match.verified, match.isActiveNow, match.lastActive]);
+
+  useEffect(() => {
+    if (!(match as any).profileVideo) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(introPulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(introPulse, { toValue: 0, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => {
+      loop.stop();
+      introPulse.setValue(0);
+    };
+  }, [introPulse, (match as any).profileVideo]);
+
+  const introPulseStyle = {
+    transform: [
+      {
+        scale: introPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] }),
+      },
+    ],
+    opacity: introPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 0.82] }),
+  };
 
   // drive the preview pulse when isPreviewing changes
   useEffect(() => {
@@ -224,9 +249,9 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
             style={styles.videoBadgeHit}
             activeOpacity={0.9}
           >
-            <View style={styles.videoBadge} pointerEvents="none">
+            <Animated.View style={[styles.videoBadge, introPulseStyle]} pointerEvents="none">
               <MaterialCommunityIcons name="play" size={14} color="#fff" />
-            </View>
+            </Animated.View>
           </TouchableOpacity>
         ) : null}
 
@@ -338,24 +363,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
             {!match.isActiveNow && !recentlyActive ? null : null}
           </View>
 
-          {/* Personality tags (up to 3) */}
-          {(() => {
-            const raw = (match as any).personalityTags || (match as any).personality || [];
-            const arr = Array.isArray(raw) ? raw : (typeof raw === 'string' ? raw.split(/,\s*/).filter(Boolean) : []);
-            const pills = arr.slice(0, 3);
-            if (pills.length === 0) return null;
-            return (
-              <View style={styles.personalityRow}>
-                {pills.map((p, i) => (
-                  <View key={i} style={styles.personalityPill}>
-                    <Text style={styles.personalityText}>{p}</Text>
-                  </View>
-                ))}
-              </View>
-            );
-          })()}
-
-          <Text style={styles.tagline}>{match.tagline}</Text>
+          {null}
 
           <View style={styles.locationRow}>
             <MaterialCommunityIcons name="map-marker" size={14} color="#fff" />
@@ -372,8 +380,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
                 Fitness: 'run',                  // active runner glyph
               };
               const interests = Array.isArray(match.interests) ? match.interests : [];
-              const visible = interests.slice(0, 3);
-              const remaining = Math.max(0, interests.length - visible.length);
+              const visible = interests.slice(0, 2);
 
               return (
                 <>
@@ -389,9 +396,6 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
                       </View>
                     );
                   })}
-                  {remaining > 0 && (
-                    <View style={styles.tag}><Text style={styles.tagText}>{`+${remaining}`}</Text></View>
-                  )}
                 </>
               );
             })()}
@@ -407,16 +411,16 @@ const styles = StyleSheet.create({
   cardContent: { flex: 1 },
   image: { width: "100%", height: "100%", resizeMode: "cover" },
   gradient: { position: "absolute", left: 0, right: 0, bottom: 0, height: "50%" },
-  info: { position: "absolute", left: 0, right: 0, bottom: 0, padding: 20, paddingBottom: 28 },
+  info: { position: "absolute", left: 0, right: 0, bottom: 0, padding: 18, paddingBottom: 22 },
   nameRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
   name: { color: "#fff", fontSize: 28, fontWeight: "800", flex: 1 },
   activeBadge: { flexDirection: "row", alignItems: "center", backgroundColor: "rgba(16,185,129,0.95)", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
   activeDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#fff", marginRight: 6 },
   activeText: { color: "#fff", fontSize: 11 },
   tagline: { color: "#fff", marginBottom: 12, fontSize: 15 },
-  locationRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
+  locationRow: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
   location: { color: "#fff", marginLeft: 6 },
-  tags: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  tags: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 2 },
   tag: { backgroundColor: "rgba(255,255,255,0.18)", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, marginRight: 8, marginBottom: 6 },
   tagText: { color: "#fff", fontSize: 12 },
   verifiedBadge: {
@@ -482,7 +486,7 @@ const styles = StyleSheet.create({
   videoBadgeHit: {
     position: 'absolute',
     right: 12,
-    bottom: 12,
+    bottom: 20,
     width: 36,
     height: 36,
     borderRadius: 18,
@@ -498,7 +502,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.9)'
+    borderColor: 'rgba(255,255,255,0.9)',
+    shadowColor: '#22d3ee',
+    shadowOpacity: 0.95,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 10,
   },
   previewGlow: {
     position: 'absolute',
