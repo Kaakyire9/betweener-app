@@ -3,9 +3,13 @@ import type { ExploreStackHandle } from "@/components/ExploreStack.reanimated";
 import ExploreStack from "@/components/ExploreStack.reanimated";
 import MatchModal from '@/components/MatchModal';
 import ProfileVideoModal from '@/components/ProfileVideoModal';
+import MomentCreateModal from '@/components/MomentCreateModal';
+import MomentViewer from '@/components/MomentViewer';
+import MomentsRow from '@/components/MomentsRow';
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import useAIRecommendations from "@/hooks/useAIRecommendations";
+import { useMoments } from '@/hooks/useMoments';
 import { requestAndSavePreciseLocation, saveManualCityLocation } from "@/hooks/useLocationPreference";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
@@ -24,7 +28,7 @@ export default function ExploreScreen() {
   const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
   const fontsLoaded = useAppFonts();
-  const { profile, refreshProfile } = useAuth();
+  const { profile, user, refreshProfile } = useAuth();
 
   // For QA/dev: deterministic mutual-match list — replace with IDs you want to test
   const QA_MUTUAL_IDS = typeof __DEV__ !== 'undefined' && __DEV__ ? ['m-001'] : undefined;
@@ -42,6 +46,13 @@ export default function ExploreScreen() {
     useAIRecommendations(profile?.id, { mutualMatchTestIds: QA_MUTUAL_IDS, mode, activeWindowMinutes });
 
   const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
+  const { momentUsers, loading: momentsLoading, refresh: refreshMoments } = useMoments({
+    currentUserId: user?.id,
+    currentUserProfile: profile,
+  });
+  const [momentViewerVisible, setMomentViewerVisible] = useState(false);
+  const [momentCreateVisible, setMomentCreateVisible] = useState(false);
+  const [momentStartUserId, setMomentStartUserId] = useState<string | null>(null);
 
   // when the hook reports a mutual match, show the celebration modal
   useEffect(() => {
@@ -236,6 +247,13 @@ export default function ExploreScreen() {
     }
     return list;
   }, [matches, verifiedOnly, distanceFilterKm, minAge, maxAge, religionFilter, locationQuery]);
+
+  const momentUsersWithContent = useMemo(() => momentUsers.filter((u) => u.moments.length > 0), [momentUsers]);
+
+  const openMomentViewer = (userId: string) => {
+    setMomentStartUserId(userId);
+    setMomentViewerVisible(true);
+  };
 
   const hasPreciseCoords = profile?.latitude != null && profile?.longitude != null;
   const hasCityOnly = !!profile?.location && profile?.location_precision === 'CITY';
@@ -619,6 +637,16 @@ export default function ExploreScreen() {
           smartCount={smartCount}
           onPressFilter={() => setFiltersVisible(true)}
         />
+
+        {user?.id ? (
+          <MomentsRow
+            users={momentUsers}
+            isLoading={momentsLoading}
+            onPressUser={openMomentViewer}
+            onPressCreate={() => setMomentCreateVisible(true)}
+            onPressOwn={() => router.push('/my-moments')}
+          />
+        ) : null}
 
         {/* CARD STACK */}
         <View style={styles.stackWrapper}>
@@ -1107,6 +1135,23 @@ export default function ExploreScreen() {
               </View>
             </KeyboardAvoidingView>
           </Modal>
+          <MomentViewer
+            visible={momentViewerVisible}
+            users={momentUsersWithContent}
+            startUserId={momentStartUserId}
+            onClose={() => {
+              setMomentViewerVisible(false);
+              setMomentStartUserId(null);
+            }}
+          />
+          <MomentCreateModal
+            visible={momentCreateVisible}
+            onClose={() => setMomentCreateVisible(false)}
+            onCreated={() => {
+              setMomentCreateVisible(false);
+              void refreshMoments();
+            }}
+          />
           {/* Match celebration modal */}
         <MatchModal
           visible={!!celebrationMatch}
