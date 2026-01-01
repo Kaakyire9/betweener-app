@@ -1,29 +1,35 @@
+
 import { useAppFonts } from '@/constants/fonts';
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
 import { Match } from '@/types/match';
 import MatchModal from '@/components/MatchModal';
+import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
   Dimensions,
-  Linking,
-  ScrollView,
+  FlatList,
+  Pressable,
   Share,
   StatusBar,
+  StyleProp,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
+  ViewStyle,
 } from 'react-native';
-import ProfileVideoModal from '@/components/ProfileVideoModal';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+const HERO_HEIGHT = screenHeight * 0.76;
 
 type Interest = { id: string; name: string; category: string; emoji: string };
 type UserProfile = {
@@ -35,6 +41,8 @@ type UserProfile = {
   region?: string;
   profilePicture: string;
   photos: string[];
+  profileVideo?: string;
+  profileVideoPath?: string;
   occupation: string;
   education: string;
   verified: boolean;
@@ -61,50 +69,62 @@ type UserProfile = {
   aiScore?: number;
 };
 
+const emoji = (...codes: number[]) => String.fromCodePoint(...codes);
+
 const getInterestEmoji = (interest: string): string => {
   const emojiMap: Record<string, string> = {
-    Music: '🎵',
-    Travel: '✈️',
-    Food: '🍲',
-    Dancing: '💃',
-    Movies: '🎬',
-    Art: '🎨',
-    Reading: '📚',
-    Sports: '🏅',
-    Gaming: '🎮',
-    Cooking: '👩‍🍳',
-    Photography: '📷',
-    Fitness: '💪',
-    Nature: '🌿',
-    Technology: '💡',
-    Fashion: '👗',
-    Writing: '✍️',
-    Singing: '🎤',
-    Comedy: '😂',
-    Business: '💼',
-    Volunteering: '🤝',
-    Learning: '🧠',
-    Socializing: '🥂',
-    Adventure: '🧭',
-    Relaxing: '😌',
+    Music: emoji(0x1f3b5),
+    Travel: emoji(0x2708),
+    Food: emoji(0x1f354),
+    Dancing: emoji(0x1f483),
+    Movies: emoji(0x1f3ac),
+    Art: emoji(0x1f3a8),
+    Reading: emoji(0x1f4da),
+    Sports: emoji(0x26bd),
+    Gaming: emoji(0x1f3ae),
+    Cooking: emoji(0x1f373),
+    Photography: emoji(0x1f4f7),
+    Fitness: emoji(0x1f4aa),
+    Nature: emoji(0x1f33f),
+    Technology: emoji(0x1f4bb),
+    Fashion: emoji(0x1f457),
+    Writing: emoji(0x270d),
+    Singing: emoji(0x1f3a4),
+    Comedy: emoji(0x1f602),
+    Business: emoji(0x1f4bc),
+    Volunteering: emoji(0x1f91d),
+    Learning: emoji(0x1f4d6),
+    Socializing: emoji(0x1f37b),
+    Adventure: emoji(0x1f9ed),
+    Relaxing: emoji(0x1f9d8),
   };
-  return emojiMap[interest] || '💫';
+  return emojiMap[interest] || emoji(0x2728);
 };
 
-export default function ProfileViewScreen() {
+const HEADER_MAX_HEIGHT = 110;
+const HEADER_MIN_HEIGHT = 64;
+const PARALLAX_FACTOR = 0.35;
+const SHIMMER_SPEED = 1200;
+const TAP_ZONE_RATIO = 0.45;
+
+export default function ProfileViewPremiumScreen() {
   const { profile: currentUser } = useAuth();
   const fontsLoaded = useAppFonts();
   const params = useLocalSearchParams();
   const viewedProfileId = (params as any)?.profileId as string | undefined;
 
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const likeAnimation = useRef(new Animated.Value(0)).current;
+  const fadeInContent = useRef(new Animated.Value(0)).current;
+  const shimmerAnim = useRef(new Animated.Value(0)).current;
+  const carouselRef = useRef<FlatList<string>>(null);
+
   const [fetchedProfile, setFetchedProfile] = useState<UserProfile | null>(null);
+  const [profileVideoUrl, setProfileVideoUrl] = useState<string | null>(null);
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
   const [videoModalVisible, setVideoModalVisible] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
   const [showFullBio, setShowFullBio] = useState(false);
-  const likeAnimation = useRef(new Animated.Value(0)).current;
-  const compatibilityAnimation = useRef(new Animated.Value(0)).current;
-  const photoAnimation = useRef(new Animated.Value(0)).current;
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
   const [celebrationMatch, setCelebrationMatch] = useState<Match | null>(null);
 
@@ -117,6 +137,8 @@ export default function ProfileViewScreen() {
     region: '',
     profilePicture: '',
     photos: [],
+    profileVideo: undefined,
+    profileVideoPath: undefined,
     occupation: '',
     education: '',
     verified: false,
@@ -155,6 +177,7 @@ export default function ProfileViewScreen() {
           currentUser?.avatar_url ||
           'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=400&h=600&fit=crop&crop=face',
         photos: (currentUser as any)?.photos || (currentUser?.avatar_url ? [currentUser.avatar_url] : []),
+        profileVideoPath: (currentUser as any)?.profile_video || undefined,
         occupation: (currentUser as any)?.occupation || '',
         education: (currentUser as any)?.education || '',
         verified: !!(currentUser as any)?.verification_level,
@@ -198,6 +221,15 @@ export default function ProfileViewScreen() {
           region: parsed.region,
           profilePicture: parsed.avatar_url || photos[0] || '',
           photos,
+          profileVideo: typeof parsed.profileVideo === 'string' && parsed.profileVideo.startsWith('http') ? parsed.profileVideo : undefined,
+          profileVideoPath:
+            typeof parsed.profile_video === 'string'
+              ? parsed.profile_video.startsWith('http')
+                ? undefined
+                : parsed.profile_video
+              : typeof parsed.profileVideo === 'string' && !parsed.profileVideo.startsWith('http')
+              ? parsed.profileVideo
+              : undefined,
           occupation: parsed.occupation || '',
           education: parsed.education || '',
           verified: !!parsed.verified,
@@ -236,15 +268,15 @@ export default function ProfileViewScreen() {
             : [],
         } as UserProfile;
       } catch {
-        // ignore and try next
+        // ignore
       }
     }
     return null;
   }, [params, placeholderProfile.id]);
 
   const profileData = fetchedProfile ?? parsedFallback ?? (isOwnProfilePreview ? baseProfileData : placeholderProfile);
+  const isLoading = !fetchedProfile && !parsedFallback && !isOwnProfilePreview;
 
-  // fetch from Supabase
   useEffect(() => {
     let mounted = true;
     const load = async () => {
@@ -254,9 +286,8 @@ export default function ProfileViewScreen() {
       }
       if (!viewedProfileId) return;
       try {
-        console.log('[profile-view] fetching profile', { viewedProfileId });
         const selectFull =
-          'id, full_name, age, region, city, location, avatar_url, photos, occupation, education, bio, tribe, religion, personality_type, height, looking_for, languages_spoken, current_country, diaspora_status, willing_long_distance, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, verification_level, ai_score';
+          'id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, religion, personality_type, height, looking_for, languages_spoken, current_country, diaspora_status, willing_long_distance, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, verification_level, ai_score';
         const selectMinimal =
           'id, full_name, age, region, city, location, avatar_url, bio, tribe, religion, personality_type, is_active, online, verification_level, ai_score';
         let data: any = null;
@@ -269,14 +300,10 @@ export default function ProfileViewScreen() {
           error = e;
         }
         if (error && (error.code === '42703' || String(error.message || '').includes('column'))) {
-          try {
-            const res2 = await supabase.from('profiles').select(selectMinimal).eq('id', viewedProfileId).limit(1).single();
+          const res2 = await supabase.from('profiles').select(selectMinimal).eq('id', viewedProfileId).limit(1).single();
           data = res2.data;
           error = res2.error;
-        } catch (e) {
-          error = e;
         }
-      }
         if (error || !data) throw error || new Error('Profile not found');
 
         let interestsArr: Interest[] = [];
@@ -289,7 +316,9 @@ export default function ProfileViewScreen() {
             const names = piRows.flatMap((r: any) =>
               Array.isArray(r.interests)
                 ? r.interests.map((i: any) => i.name).filter(Boolean)
-                : (r.interests && r.interests.name ? [r.interests.name] : []),
+                : r.interests?.name
+                ? [r.interests.name]
+                : [],
             );
             interestsArr = names.map((n: string, idx: number) => ({
               id: `int-${idx}`,
@@ -297,25 +326,6 @@ export default function ProfileViewScreen() {
               category: 'Interest',
               emoji: getInterestEmoji(n),
             }));
-            console.log('[profile-view] interests from profile_interests', { count: interestsArr.length });
-          } else {
-            // fallback: check if profile row has an interests array column
-            const rawInterests = (data as any).interests;
-            if (Array.isArray(rawInterests)) {
-              interestsArr = rawInterests.map((n: any, idx: number) => ({
-                id: `int-prof-${idx}`,
-                name: String(n),
-                category: 'Interest',
-                emoji: getInterestEmoji(String(n)),
-              }));
-              console.log('[profile-view] interests from profiles.interests', { count: interestsArr.length });
-            } else {
-              console.log('[profile-view] no interests found on profile', {
-                profileId: viewedProfileId,
-                piRowsLength: Array.isArray(piRows) ? piRows.length : 'n/a',
-                rawInterestsType: typeof rawInterests,
-              });
-            }
           }
         } catch (e) {
           console.log('[profile-view] interests fetch error', e);
@@ -333,6 +343,7 @@ export default function ProfileViewScreen() {
           region: data.region || undefined,
           profilePicture: data.avatar_url || photos[0] || '',
           photos,
+          profileVideoPath: data.profile_video || undefined,
           occupation: data.occupation || '',
           education: data.education || '',
           verified: !!data.verification_level,
@@ -352,31 +363,23 @@ export default function ProfileViewScreen() {
           hasChildren: data.has_children || undefined,
           wantsChildren: data.wants_children || undefined,
           locationPrecision: data.location_precision || undefined,
-          compatibility: typeof aiScoreVal === 'number'
-            ? Math.round(aiScoreVal)
-            : typeof (data as any).compatibility === 'number'
-            ? (data as any).compatibility
-            : 75,
+          compatibility:
+            typeof aiScoreVal === 'number'
+              ? Math.round(aiScoreVal)
+              : typeof (data as any).compatibility === 'number'
+              ? (data as any).compatibility
+              : 75,
           aiScore: aiScoreVal,
           tribe: data.tribe || undefined,
           religion: data.religion || undefined,
           interests: interestsArr,
         };
-        // Ensure we always have at least one photo if avatar is present
         if ((!mapped.photos || mapped.photos.length === 0) && mapped.profilePicture) {
           mapped.photos = [mapped.profilePicture];
         }
-        console.log('[profile-view] mapped profile', {
-          id: mapped.id,
-          avatarUrl: data.avatar_url,
-          rawPhotosType: Array.isArray((data as any).photos) ? 'array' : typeof (data as any).photos,
-          hasAvatar: !!mapped.profilePicture,
-          photos: mapped.photos?.length || 0,
-          interests: mapped.interests?.length || 0,
-          compatibility: mapped.compatibility,
-          aiScore: mapped.aiScore,
-        });
-        if (mounted) setFetchedProfile(mapped);
+        if (mounted) {
+          setFetchedProfile(mapped);
+        }
       } catch (e) {
         console.log('[profile-view] fetch error', e);
         if (mounted) setFetchedProfile(null);
@@ -389,18 +392,49 @@ export default function ProfileViewScreen() {
   }, [isOwnProfilePreview, viewedProfileId]);
 
   useEffect(() => {
-    Animated.timing(photoAnimation, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-    setTimeout(() => {
-      Animated.spring(compatibilityAnimation, { toValue: 1, useNativeDriver: true }).start();
-    }, 600);
-    try {
-      const v = (params as any)?.videoUrl;
-      if (v) {
-        setVideoModalUrl(String(v));
-        setVideoModalVisible(true);
+    Animated.loop(
+      Animated.timing(shimmerAnim, {
+        toValue: 1,
+        duration: SHIMMER_SPEED,
+        // Layout values (width/height) are in the skeleton, so keep this on the JS driver to avoid native warnings.
+        useNativeDriver: false,
+      }),
+    ).start();
+  }, [shimmerAnim]);
+
+  useEffect(() => {
+    if (isLoading) {
+      fadeInContent.setValue(0);
+      return;
+    }
+    Animated.timing(fadeInContent, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+  }, [fadeInContent, isLoading]);
+
+  useEffect(() => {
+    let mounted = true;
+    const resolveVideo = async () => {
+      const source = profileData.profileVideoPath || profileData.profileVideo;
+      if (!source) {
+        if (mounted) setProfileVideoUrl(null);
+        return;
       }
-    } catch {}
-  }, []);
+      if (source.startsWith('http')) {
+        if (mounted) setProfileVideoUrl(source);
+        return;
+      }
+      const { data, error } = await supabase.storage.from('profile-videos').createSignedUrl(source, 3600);
+      if (!mounted) return;
+      if (error || !data?.signedUrl) {
+        setProfileVideoUrl(null);
+        return;
+      }
+      setProfileVideoUrl(data.signedUrl);
+    };
+    void resolveVideo();
+    return () => {
+      mounted = false;
+    };
+  }, [profileData.profileVideoPath, profileData.profileVideo]);
 
   const handleShare = async () => {
     try {
@@ -463,8 +497,8 @@ export default function ProfileViewScreen() {
     await checkMutual();
     await checkMatchAccepted();
     Animated.sequence([
-      Animated.timing(likeAnimation, { toValue: 1, duration: 200, useNativeDriver: true }),
-      Animated.timing(likeAnimation, { toValue: 0, duration: 200, useNativeDriver: true }),
+      Animated.timing(likeAnimation, { toValue: 1, duration: 180, useNativeDriver: true }),
+      Animated.timing(likeAnimation, { toValue: 0, duration: 180, useNativeDriver: true }),
     ]).start();
   };
 
@@ -482,59 +516,6 @@ export default function ProfileViewScreen() {
     await checkMatchAccepted();
   };
 
-  const nextPhoto = () => {
-    if (currentPhotoIndex < profileData.photos.length - 1) {
-      photoAnimation.setValue(0);
-      setCurrentPhotoIndex((p) => p + 1);
-      Animated.timing(photoAnimation, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-    }
-  };
-
-  const prevPhoto = () => {
-    if (currentPhotoIndex > 0) {
-      photoAnimation.setValue(0);
-      setCurrentPhotoIndex((p) => p - 1);
-      Animated.timing(photoAnimation, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-    }
-  };
-
-  const header = (
-    <View style={styles.header}>
-      <TouchableOpacity style={styles.backButton} onPress={() => (router.canGoBack?.() ? router.back() : router.replace('/(tabs)/explore'))}>
-        <MaterialCommunityIcons name="arrow-left" size={24} color="#fff" />
-      </TouchableOpacity>
-      {!isOwnProfilePreview && (
-        <View style={styles.headerActions}>
-          {__DEV__ && (
-            <TouchableOpacity
-              style={styles.headerActionButton}
-              onPress={() =>
-                router.push({
-                  pathname: '/profile-view-premium',
-                  params: { profileId: viewedProfileId || currentUser?.id || 'preview' },
-                })
-              }
-              accessibilityLabel="Open premium preview"
-            >
-              <MaterialCommunityIcons name="star-four-points" size={20} color="#fff" />
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity style={styles.headerActionButton} onPress={handleShare}>
-            <MaterialCommunityIcons name="share-variant" size={20} color="#fff" />
-          </TouchableOpacity>
-        </View>
-      )}
-      {isOwnProfilePreview && (
-        <View style={styles.previewIndicator}>
-          <MaterialCommunityIcons name="eye" size={18} color="#fff" />
-          <Text style={styles.previewIndicatorText}>Preview Mode</Text>
-        </View>
-      )}
-    </View>
-  );
-
-  if (!fontsLoaded) return <View style={styles.container} />;
-
   const makeMatchObject = (): Match => ({
     id: profileData.id,
     name: profileData.name,
@@ -549,195 +530,368 @@ export default function ProfileViewScreen() {
     personalityTags: [],
   });
 
+  const headerHeight = scrollY.interpolate({
+    inputRange: [0, HEADER_MAX_HEIGHT - HEADER_MIN_HEIGHT],
+    outputRange: [HEADER_MAX_HEIGHT, HEADER_MIN_HEIGHT],
+    extrapolate: 'clamp',
+  });
+
+  const headerTitleOpacity = scrollY.interpolate({
+    inputRange: [0, 40, 120],
+    outputRange: [0, 0.25, 1],
+    extrapolate: 'clamp',
+  });
+
+  const headerTitleTranslate = scrollY.interpolate({
+    inputRange: [0, 90],
+    outputRange: [10, 0],
+    extrapolate: 'clamp',
+  });
+
+  const headerOverlayOpacity = scrollY.interpolate({
+    inputRange: [0, 140],
+    outputRange: [0.1, 0.65],
+    extrapolate: 'clamp',
+  });
+
+  const headerButtonOverlayOpacity = scrollY.interpolate({
+    inputRange: [0, 120],
+    outputRange: [0.15, 0.5],
+    extrapolate: 'clamp',
+  });
+
+  const heroTranslateY = scrollY.interpolate({
+    inputRange: [0, 200],
+    outputRange: [0, -200 * PARALLAX_FACTOR],
+    extrapolate: 'clamp',
+  });
+
+  const rippleOpacity = useRef(new Animated.Value(0)).current;
+
+  const triggerRipple = () => {
+    rippleOpacity.setValue(0.35);
+    Animated.timing(rippleOpacity, { toValue: 0, duration: 220, useNativeDriver: true }).start();
+  };
+
+  const scrollToPhoto = (index: number) => {
+    if (index < 0 || index >= profileData.photos.length) return;
+    carouselRef.current?.scrollToOffset({ offset: index * screenWidth, animated: true });
+    setCurrentPhotoIndex(index);
+  };
+
+  const onPhotoTap = (side: 'left' | 'right') => {
+    triggerRipple();
+    if (side === 'left') {
+      if (currentPhotoIndex > 0) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        scrollToPhoto(currentPhotoIndex - 1);
+      }
+    } else {
+      if (currentPhotoIndex < profileData.photos.length - 1) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        scrollToPhoto(currentPhotoIndex + 1);
+      }
+    }
+  };
+
+  const renderPhoto = ({ item }: { item: string }) => (
+    <Pressable
+      onPress={(e) => {
+        const x = e.nativeEvent.locationX;
+        if (x <= screenWidth * TAP_ZONE_RATIO) onPhotoTap('left');
+        else if (x >= screenWidth * (1 - TAP_ZONE_RATIO)) onPhotoTap('right');
+      }}
+      style={{ width: screenWidth, height: HERO_HEIGHT }}
+    >
+      <Animated.Image
+        source={{ uri: item }}
+        style={[
+          styles.mainPhoto,
+          {
+            transform: [{ translateY: heroTranslateY }, { scale: 1.02 }],
+          },
+        ]}
+      />
+      <Animated.View pointerEvents="none" style={[styles.rippleOverlay, { opacity: rippleOpacity }]} />
+      <LinearGradient colors={['rgba(0,0,0,0.7)', 'transparent']} style={styles.topGradient} />
+      <LinearGradient colors={['transparent', 'rgba(0,0,0,0.8)']} style={styles.bottomGradient} />
+      {profileData.photos.length > 1 ? (
+        <>
+          <LinearGradient
+            colors={['rgba(0,0,0,0.28)', 'transparent']}
+            start={{ x: 0, y: 0.5 }}
+            end={{ x: 1, y: 0.5 }}
+            style={styles.sideGradientLeft}
+          />
+          <LinearGradient
+            colors={['transparent', 'rgba(0,0,0,0.28)']}
+            start={{ x: 0, y: 0.5 }}
+            end={{ x: 1, y: 0.5 }}
+            style={styles.sideGradientRight}
+          />
+        </>
+      ) : null}
+    </Pressable>
+  );
+
+  const shimmerTranslateX = shimmerAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [-screenWidth, screenWidth],
+  });
+
+  const ShimmerBlock = ({ style }: { style?: StyleProp<ViewStyle> }) => (
+    <View style={[styles.skeletonBlockBase, style]}>
+      <Animated.View style={[styles.shimmer, { transform: [{ translateX: shimmerTranslateX }] }]}>
+        <LinearGradient colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.25)', 'rgba(255,255,255,0)']} style={{ flex: 1 }} />
+      </Animated.View>
+    </View>
+  );
+
+  const Skeleton = () => (
+    <View style={styles.skeletonContainer}>
+      <View style={styles.skeletonSection}>
+        <ShimmerBlock style={styles.skeletonTitle} />
+        <ShimmerBlock style={[styles.skeletonLine, { width: '78%' }]} />
+        <View style={styles.skeletonChipsRow}>
+          {[0, 1, 2].map((i) => (
+            <ShimmerBlock key={i} style={styles.skeletonChip} />
+          ))}
+        </View>
+      </View>
+      <View style={styles.skeletonSection}>
+        <ShimmerBlock style={styles.skeletonTitleSmall} />
+        <ShimmerBlock style={styles.skeletonLine} />
+        <ShimmerBlock style={[styles.skeletonLine, { width: '86%' }]} />
+      </View>
+      <View style={styles.skeletonSection}>
+        <ShimmerBlock style={styles.skeletonTitleSmall} />
+        <ShimmerBlock style={[styles.skeletonLine, { width: '92%' }]} />
+        <ShimmerBlock style={[styles.skeletonLine, { width: '64%' }]} />
+      </View>
+    </View>
+  );
+
+  if (!fontsLoaded) {
+    return <View style={{ flex: 1, backgroundColor: '#030712' }} />;
+  }
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-      {header}
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        <View style={styles.photoContainer}>
-          {profileData.photos.length > 0 ? (
-            <Animated.Image
-              source={{ uri: profileData.photos[currentPhotoIndex] || profileData.profilePicture }}
-              style={[
-                styles.mainPhoto,
-                {
-                  opacity: photoAnimation,
-                  transform: [
-                    {
-                      scale: photoAnimation.interpolate({ inputRange: [0, 1], outputRange: [0.95, 1] }),
-                    },
-                  ],
-                },
-              ]}
-            />
+
+      <Animated.ScrollView
+        scrollEventThrottle={16}
+        showsVerticalScrollIndicator={false}
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
+      >
+        <View style={styles.heroWrapper}>
+          {isLoading ? (
+            <ShimmerBlock style={styles.skeletonHeroFull} />
           ) : (
-            <View style={[styles.mainPhoto, { backgroundColor: '#111827', alignItems: 'center', justifyContent: 'center' }]}>
-              <Text style={{ color: '#fff' }}>No photo</Text>
+            <Animated.View style={{ flex: 1, opacity: fadeInContent }}>
+              {profileData.photos.length > 0 ? (
+                <>
+                  <Animated.FlatList
+                    ref={carouselRef}
+                    data={profileData.photos}
+                    keyExtractor={(uri, idx) => `${uri}-${idx}`}
+                    renderItem={renderPhoto}
+                    horizontal
+                    pagingEnabled
+                    snapToInterval={screenWidth}
+                    decelerationRate="fast"
+                    showsHorizontalScrollIndicator={false}
+                    onMomentumScrollEnd={(e) => {
+                      const idx = Math.round(e.nativeEvent.contentOffset.x / screenWidth);
+                      setCurrentPhotoIndex(idx);
+                    }}
+                  />
+                </>
+              ) : (
+                <View style={[styles.mainPhoto, { alignItems: 'center', justifyContent: 'center' }]}>
+                  <Text style={{ color: '#fff' }}>No photo</Text>
+                </View>
+              )}
+
+              <View style={styles.photoIndicatorsTop}>
+                {profileData.photos.map((_, idx) => (
+                  <View key={idx} style={[styles.photoIndicator, idx === currentPhotoIndex && styles.photoIndicatorActive]} />
+                ))}
+              </View>
+              {profileVideoUrl ? (
+                <View style={styles.videoBadgeContainer} pointerEvents="box-none">
+                  <TouchableOpacity
+                    style={styles.videoBadgeButton}
+                    onPress={() => {
+                      setVideoModalUrl(profileVideoUrl);
+                      setVideoModalVisible(true);
+                    }}
+                    accessibilityLabel="Play profile video"
+                  >
+                    <MaterialCommunityIcons name="play" size={16} color="#fff" />
+                    <Text style={styles.videoBadgeText}>Intro</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+
+              <View style={styles.profileOverlay}>
+                <View style={styles.nameRow}>
+                  <Text style={styles.profileName}>
+                    {profileData.name}, {profileData.age}
+                  </Text>
+                  {profileData.verified && <MaterialCommunityIcons name="check-decagram" size={20} color={Colors.light.tint} />}
+                  {profileData.isActiveNow && (
+                    <View style={styles.activeBadge}>
+                      <View style={styles.activeDot} />
+                      <Text style={styles.activeText}>Online</Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={styles.profileSub}>
+                  <MaterialCommunityIcons name="map-marker" size={14} color="#e5e7eb" /> {profileData.distance || profileData.location}
+                </Text>
+                <Text style={styles.profileSub}>{profileData.occupation}</Text>
+                <Animated.View
+                  style={[
+                    styles.compatibilityBadge,
+                    {
+                      transform: [
+                        {
+                          scale: likeAnimation.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] }),
+                        },
+                      ],
+                    },
+                  ]}
+                >
+                  <MaterialCommunityIcons name="heart" size={16} color="#fff" />
+                  <Text style={styles.compatibilityText}>{profileData.compatibility}% Match</Text>
+                </Animated.View>
+              </View>
+            </Animated.View>
+          )}
+        </View>
+
+        <Animated.View style={{ opacity: isLoading ? 1 : fadeInContent }}>
+          {isLoading ? (
+            <Skeleton />
+          ) : (
+            <>
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>At a glance</Text>
+                <View style={styles.chipsRow}>
+                  {[profileData.region || profileData.city || profileData.location, profileData.tribe, profileData.religion, profileData.locationPrecision]
+                    .filter(Boolean)
+                    .map((val, idx) => (
+                      <View key={`chip-${idx}`} style={styles.chip}>
+                        <Text style={styles.chipText}>{String(val)}</Text>
+                      </View>
+                    ))}
+                </View>
+              </View>
+
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>About {profileData.name}</Text>
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    if (profileData.bio && profileData.bio.length > 150) {
+                      setShowFullBio((prev) => !prev);
+                    }
+                  }}
+                >
+                  <Text style={styles.bodyText} numberOfLines={showFullBio ? undefined : 3}>
+                    {profileData.bio || 'No bio yet.'}
+                  </Text>
+                  {profileData.bio && profileData.bio.length > 150 && (
+                    <Text style={styles.showMoreText}>{showFullBio ? 'Show less' : 'Show more'}</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Details</Text>
+                {[
+                  { label: 'Personality', value: profileData.personalityType },
+                  { label: 'Occupation', value: profileData.occupation },
+                  { label: 'Education', value: profileData.education },
+                  { label: 'Height', value: profileData.height },
+                  { label: 'Looking for', value: profileData.lookingFor },
+                  { label: 'Country', value: profileData.currentCountry },
+                  { label: 'Diaspora status', value: profileData.diasporaStatus },
+                  { label: 'Willing long distance', value: typeof profileData.willingLongDistance === 'boolean' ? (profileData.willingLongDistance ? 'Yes' : 'No') : undefined },
+                  { label: 'Exercise', value: profileData.exerciseFrequency },
+                  { label: 'Smoking', value: profileData.smoking },
+                  { label: 'Drinking', value: profileData.drinking },
+                  { label: 'Has children', value: profileData.hasChildren },
+                  { label: 'Wants children', value: profileData.wantsChildren },
+                  { label: 'Languages', value: Array.isArray(profileData.languages) && profileData.languages.length > 0 ? profileData.languages.join(', ') : undefined },
+                  { label: 'Location precision', value: profileData.locationPrecision },
+                ]
+                  .filter((row) => row.value)
+                  .map((row, idx) => (
+                    <View key={`${row.label}-${idx}`} style={styles.detailRow}>
+                      <Text style={styles.detailLabel}>{row.label}</Text>
+                      <Text style={styles.detailValue}>{row.value}</Text>
+                    </View>
+                  ))}
+              </View>
+
+              <View style={styles.card}>
+                <Text style={styles.sectionTitle}>Interests</Text>
+                <View style={styles.interestsGrid}>
+                  {profileData.interests && profileData.interests.length > 0 ? (
+                    profileData.interests.map((interest) => (
+                      <View key={interest.id} style={styles.interestChip}>
+                        <Text style={styles.interestEmoji}>{interest.emoji}</Text>
+                        <Text style={styles.interestName}>{interest.name}</Text>
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={styles.bodySubtle}>No interests yet.</Text>
+                  )}
+                </View>
+              </View>
+              <View style={{ height: 140 }} />
+            </>
+          )}
+        </Animated.View>
+      </Animated.ScrollView>
+
+      <Animated.View style={[styles.header, { height: headerHeight }]}>
+        <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
+        <Animated.View style={[styles.headerTint, { opacity: headerOverlayOpacity }]} />
+        <View style={styles.headerContent}>
+          <TouchableOpacity style={styles.headerButton} onPress={() => (router.canGoBack?.() ? router.back() : router.replace('/(tabs)/explore'))}>
+            <Animated.View style={[styles.headerButtonOverlay, { opacity: headerButtonOverlayOpacity }]} />
+            <MaterialCommunityIcons name="arrow-left" size={22} color="#fff" />
+          </TouchableOpacity>
+          <Animated.Text
+            style={[
+              styles.headerTitle,
+              {
+                opacity: headerTitleOpacity,
+                transform: [{ translateY: headerTitleTranslate }],
+              },
+            ]}
+            numberOfLines={1}
+          >
+            {profileData.name || 'Profile'}
+          </Animated.Text>
+          {isOwnProfilePreview ? (
+            <View style={styles.previewIndicator}>
+              <MaterialCommunityIcons name="eye" size={16} color="#fff" />
+              <Text style={styles.previewIndicatorText}>Preview Mode</Text>
+            </View>
+          ) : (
+            <View style={styles.headerActions}>
+              <TouchableOpacity style={styles.headerButton} onPress={handleShare}>
+                <Animated.View style={[styles.headerButtonOverlay, { opacity: headerButtonOverlayOpacity }]} />
+                <MaterialCommunityIcons name="share-variant" size={18} color="#fff" />
+              </TouchableOpacity>
             </View>
           )}
-
-          <View style={styles.photoNavigation}>
-            <TouchableOpacity style={[styles.photoNavButton, styles.photoNavLeft]} onPress={prevPhoto} disabled={currentPhotoIndex === 0}>
-              <MaterialCommunityIcons name="chevron-left" size={24} color={currentPhotoIndex === 0 ? '#ffffff60' : '#fff'} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.photoNavButton, styles.photoNavRight]}
-              onPress={nextPhoto}
-              disabled={currentPhotoIndex === profileData.photos.length - 1}
-            >
-              <MaterialCommunityIcons
-                name="chevron-right"
-                size={24}
-                color={currentPhotoIndex === profileData.photos.length - 1 ? '#ffffff60' : '#fff'}
-              />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.photoIndicators}>
-            {profileData.photos.map((_, index) => (
-              <View key={index} style={[styles.photoIndicator, index === currentPhotoIndex && styles.photoIndicatorActive]} />
-            ))}
-          </View>
-
-          <View style={styles.profileOverlay}>
-            <View style={styles.profileBasicInfo}>
-              <View style={styles.nameRow}>
-                <Text style={styles.profileName}>
-                  {profileData.name}, {profileData.age}
-                </Text>
-                {profileData.verified && <MaterialCommunityIcons name="check-decagram" size={20} color={Colors.light.tint} />}
-                {profileData.isActiveNow && (
-                  <View style={styles.activeIndicator}>
-                    <View style={styles.activeDot} />
-                    <Text style={styles.activeText}>Online</Text>
-                  </View>
-                )}
-              </View>
-              <Text style={styles.profileLocation}>
-                <MaterialCommunityIcons name="map-marker" size={14} color="#fff" /> {profileData.distance || profileData.location}
-              </Text>
-              <Text style={styles.profileOccupation}>{profileData.occupation}</Text>
-            </View>
-            <Animated.View
-              style={[
-                styles.compatibilityBadge,
-                {
-                  opacity: compatibilityAnimation,
-                  transform: [
-                    {
-                      scale: compatibilityAnimation.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1] }),
-                    },
-                  ],
-                },
-              ]}
-            >
-              <MaterialCommunityIcons name="heart" size={16} color="#fff" />
-              <Text style={styles.compatibilityText}>{profileData.compatibility}% Match</Text>
-            </Animated.View>
-          </View>
         </View>
+      </Animated.View>
 
-        <View style={styles.sectionCard}>
-          <Text style={styles.sectionTitle}>At a glance</Text>
-          <View style={styles.chipsRow}>
-            {[profileData.region || profileData.city || profileData.location, profileData.tribe, profileData.religion, profileData.locationPrecision]
-              .filter(Boolean)
-              .map((val, idx) => (
-                <View key={`chip-${idx}`} style={styles.chip}>
-                  <Text style={styles.chipText}>{String(val)}</Text>
-                </View>
-              ))}
-          </View>
-        </View>
-
-        <View style={styles.bioSection}>
-          <Text style={styles.sectionTitle}>About {profileData.name}</Text>
-          <TouchableOpacity onPress={() => setShowFullBio(!showFullBio)}>
-            <Text style={styles.bioText} numberOfLines={showFullBio ? undefined : 3}>
-              {profileData.bio || 'No bio yet.'}
-            </Text>
-            {profileData.bio && profileData.bio.length > 150 && (
-              <Text style={styles.showMoreText}>{showFullBio ? 'Show less' : 'Show more'}</Text>
-            )}
-          </TouchableOpacity>
-          <View style={styles.detailsContainer}>
-            {profileData.education ? (
-              <View style={styles.detailItem}>
-                <MaterialCommunityIcons name="school" size={18} color={Colors.light.tint} />
-                <Text style={styles.detailText}>{profileData.education}</Text>
-              </View>
-            ) : null}
-            {profileData.location ? (
-              <View style={styles.detailItem}>
-                <MaterialCommunityIcons name="map-marker" size={18} color={Colors.light.tint} />
-                <Text style={styles.detailText}>{profileData.location}</Text>
-              </View>
-            ) : null}
-            {profileData.tribe ? (
-              <View style={styles.detailItem}>
-                <MaterialCommunityIcons name="account-group" size={18} color={Colors.light.tint} />
-                <Text style={styles.detailText}>{profileData.tribe}</Text>
-              </View>
-            ) : null}
-            {profileData.religion ? (
-              <View style={styles.detailItem}>
-                <MaterialCommunityIcons name="church" size={18} color={Colors.light.tint} />
-                <Text style={styles.detailText}>{profileData.religion}</Text>
-              </View>
-            ) : null}
-          </View>
-        </View>
-
-        <View style={styles.detailsSection}>
-          <Text style={styles.sectionTitle}>Details</Text>
-          {[
-            { label: 'Personality', value: profileData.personalityType },
-            { label: 'Occupation', value: profileData.occupation },
-            { label: 'Education', value: profileData.education },
-            { label: 'Height', value: profileData.height },
-            { label: 'Looking for', value: profileData.lookingFor },
-            { label: 'Country', value: profileData.currentCountry },
-            { label: 'Diaspora status', value: profileData.diasporaStatus },
-            { label: 'Willing long distance', value: typeof profileData.willingLongDistance === 'boolean' ? (profileData.willingLongDistance ? 'Yes' : 'No') : undefined },
-            { label: 'Exercise', value: profileData.exerciseFrequency },
-            { label: 'Smoking', value: profileData.smoking },
-            { label: 'Drinking', value: profileData.drinking },
-            { label: 'Has children', value: profileData.hasChildren },
-            { label: 'Wants children', value: profileData.wantsChildren },
-            { label: 'Languages', value: Array.isArray(profileData.languages) && profileData.languages.length > 0 ? profileData.languages.join(', ') : undefined },
-            { label: 'Location precision', value: profileData.locationPrecision },
-          ]
-            .filter((row) => row.value)
-            .map((row, idx) => (
-              <View key={`${row.label}-${idx}`} style={styles.detailRow}>
-                <Text style={styles.detailLabel}>{row.label}</Text>
-                <Text style={styles.detailValue}>{row.value}</Text>
-              </View>
-            ))}
-          {(!profileData.languages || profileData.languages.length === 0) && (!profileData.personalityType && !profileData.occupation && !profileData.education) ? (
-            <Text style={{ color: '#6b7280' }}>No extra details yet.</Text>
-          ) : null}
-        </View>
-
-        <View style={styles.interestsSection}>
-          <Text style={styles.sectionTitle}>Interests</Text>
-          <View style={styles.interestsGrid}>
-            {(profileData.interests && profileData.interests.length > 0 ? profileData.interests : []).map((interest) => (
-              <View key={interest.id} style={styles.interestChip}>
-                <Text style={styles.interestEmoji}>{interest.emoji}</Text>
-                <Text style={styles.interestName}>{interest.name}</Text>
-              </View>
-            ))}
-            {(!profileData.interests || profileData.interests.length === 0) && (
-              <Text style={{ color: '#6b7280' }}>No interests yet.</Text>
-            )}
-          </View>
-        </View>
-
-        <View style={{ height: 120 }} />
-      </ScrollView>
-
-      {/* Match celebration modal */}
       <MatchModal
         visible={!!celebrationMatch}
         match={celebrationMatch}
@@ -759,30 +913,26 @@ export default function ProfileViewScreen() {
 
       {!isOwnProfilePreview && (
         <View style={styles.actionButtonsContainer}>
+          <BlurView intensity={35} tint="dark" style={StyleSheet.absoluteFill} />
+          <View style={styles.actionButtonsOverlay} />
           <View style={styles.actionButtons}>
             <TouchableOpacity style={styles.passButton} onPress={handlePass}>
-              <MaterialCommunityIcons name="close" size={28} color="#ef4444" />
+              <MaterialCommunityIcons name="close" size={26} color="#ef4444" />
             </TouchableOpacity>
-
             <TouchableOpacity style={styles.superLikeButton} onPress={handleSuperLike}>
-              <MaterialCommunityIcons name="star" size={24} color="#3b82f6" />
+              <MaterialCommunityIcons name="star" size={22} color="#3b82f6" />
             </TouchableOpacity>
-
             <TouchableOpacity style={[styles.likeButton, isLiked && styles.likeButtonActive]} onPress={handleLike}>
               <Animated.View
                 style={{
                   transform: [
                     {
-                      scale: likeAnimation.interpolate({ inputRange: [0, 1], outputRange: [1, 1.3] }),
+                      scale: likeAnimation.interpolate({ inputRange: [0, 1], outputRange: [1, 1.15] }),
                     },
                   ],
                 }}
               >
-                <MaterialCommunityIcons
-                  name={isLiked ? 'heart' : 'heart-outline'}
-                  size={32}
-                  color={isLiked ? '#fff' : Colors.light.tint}
-                />
+                <MaterialCommunityIcons name={isLiked ? 'heart' : 'heart-outline'} size={30} color={isLiked ? '#fff' : Colors.light.tint} />
               </Animated.View>
             </TouchableOpacity>
           </View>
@@ -791,7 +941,7 @@ export default function ProfileViewScreen() {
 
       <ProfileVideoModal
         visible={videoModalVisible}
-        videoUrl={videoModalUrl ?? undefined}
+        videoUrl={videoModalUrl || undefined}
         onClose={() => {
           setVideoModalVisible(false);
           setVideoModalUrl(null);
@@ -800,209 +950,195 @@ export default function ProfileViewScreen() {
     </View>
   );
 }
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
-  scrollView: { flex: 1 },
-  header: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 50,
-    paddingBottom: 20,
-    zIndex: 100,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-  },
-  backButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerActions: { flexDirection: 'row', gap: 12 },
-  headerActionButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  previewIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  previewIndicatorText: { fontSize: 12, fontFamily: 'Manrope_600SemiBold', color: '#fff' },
-  photoContainer: { height: screenHeight * 0.7, position: 'relative' },
-  mainPhoto: { width: '100%', height: '100%', resizeMode: 'cover' },
-  photoNavigation: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, flexDirection: 'row' },
-  photoNavButton: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  photoNavLeft: { alignItems: 'flex-start', paddingLeft: 20 },
-  photoNavRight: { alignItems: 'flex-end', paddingRight: 20 },
-  photoIndicators: { position: 'absolute', top: 100, left: 20, right: 20, flexDirection: 'row', gap: 6 },
-  photoIndicator: { flex: 1, height: 3, backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 2 },
+  container: { flex: 1, backgroundColor: '#030712' },
+  heroWrapper: { position: 'relative', height: HERO_HEIGHT, backgroundColor: '#0b1220' },
+  mainPhoto: { width: screenWidth, height: HERO_HEIGHT, resizeMode: 'cover' },
+  topGradient: { position: 'absolute', top: 0, left: 0, right: 0, height: 140 },
+  bottomGradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 200 },
+  sideGradientLeft: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 26 },
+  sideGradientRight: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 26 },
+  photoIndicatorsTop: { position: 'absolute', top: 94, left: 18, right: 18, flexDirection: 'row', gap: 8 },
+  photoIndicator: { width: 34, height: 4, backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 3 },
   photoIndicatorActive: { backgroundColor: '#fff' },
-  profileOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(0,0,0,0.8)',
-    padding: 20,
-    paddingTop: 60,
-  },
-  profileBasicInfo: { marginBottom: 16 },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
-  profileName: { fontSize: 28, fontFamily: 'Archivo_700Bold', color: '#fff' },
-  activeIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#10b981',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  activeDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' },
-  activeText: { fontSize: 12, fontFamily: 'Manrope_600SemiBold', color: '#fff' },
-  profileLocation: { fontSize: 16, fontFamily: 'Manrope_400Regular', color: '#e5e7eb', marginBottom: 2 },
-  profileOccupation: { fontSize: 16, fontFamily: 'Manrope_500Medium', color: '#f3f4f6' },
-  compatibilityBadge: {
+  videoBadgeContainer: { position: 'absolute', top: 128, right: 18, zIndex: 15 },
+  videoBadgeButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: Colors.light.tint,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    alignSelf: 'flex-start',
-  },
-  compatibilityText: { fontSize: 14, fontFamily: 'Archivo_700Bold', color: '#fff' },
-  bioSection: { backgroundColor: '#fff', padding: 20, paddingTop: 30 },
-  sectionTitle: { fontSize: 20, fontFamily: 'Archivo_700Bold', color: '#111827', marginBottom: 16 },
-  bioText: { fontSize: 16, fontFamily: 'Manrope_400Regular', color: '#374151', lineHeight: 24 },
-  showMoreText: { fontSize: 14, fontFamily: 'Manrope_600SemiBold', color: Colors.light.tint, marginTop: 8 },
-  detailsContainer: { marginTop: 20, gap: 12 },
-  detailItem: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  detailText: { fontSize: 15, fontFamily: 'Manrope_400Regular', color: '#6b7280' },
-  sectionCard: {
-    backgroundColor: '#0f172a',
-    padding: 16,
-    marginTop: 12,
-    marginHorizontal: 0,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#1f2937',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.2,
-    shadowRadius: 18,
-    elevation: 10,
-  },
-  chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
-  chip: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    borderColor: 'rgba(255,255,255,0.1)',
-    borderWidth: 1,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
+    backgroundColor: 'rgba(15,23,42,0.65)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
   },
-  chipText: { color: '#e5e7eb', fontSize: 13, fontFamily: 'Manrope_600SemiBold' },
-  detailsSection: { backgroundColor: '#fff', padding: 20, paddingTop: 10 },
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#e5e7eb' },
-  detailLabel: { fontSize: 14, fontFamily: 'Manrope_600SemiBold', color: '#4b5563' },
-  detailValue: { fontSize: 14, fontFamily: 'Manrope_400Regular', color: '#111827', flexShrink: 1, textAlign: 'right' },
-  interestsSection: { backgroundColor: '#f8fafc', padding: 20 },
-  interestsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, alignItems: 'center' },
+  videoBadgeText: { color: '#fff', fontSize: 12, fontFamily: 'Manrope_600SemiBold' },
+  profileOverlay: { position: 'absolute', bottom: 24, left: 20, right: 20, gap: 6 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
+  profileName: { fontSize: 30, color: '#fff', fontFamily: 'Archivo_700Bold', letterSpacing: 0.5 },
+  profileSub: { color: '#e5e7eb', fontFamily: 'Manrope_500Medium', fontSize: 14 },
+  activeBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#10b981', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
+  activeDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' },
+  activeText: { fontSize: 12, color: '#fff', fontFamily: 'Manrope_700Bold' },
+  compatibilityBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: Colors.light.tint,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 16,
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    shadowColor: '#ef4444',
+    shadowOpacity: 0.25,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  compatibilityText: { fontSize: 14, color: '#fff', fontFamily: 'Archivo_700Bold' },
+  card: {
+    marginTop: 16,
+    marginHorizontal: 16,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 12 },
+  },
+  sectionTitle: { color: '#f9fafb', fontSize: 18, fontFamily: 'Archivo_700Bold', marginBottom: 10 },
+  bodyText: { color: '#d1d5db', fontSize: 15, lineHeight: 22, fontFamily: 'Manrope_500Medium' },
+  bodySubtle: { color: '#9ca3af', fontSize: 14, fontFamily: 'Manrope_500Medium' },
+  showMoreText: { color: Colors.light.tint, fontSize: 13, fontFamily: 'Manrope_600SemiBold', marginTop: 8 },
+  chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  chip: { backgroundColor: 'rgba(255,255,255,0.06)', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+  chipText: { color: '#e5e7eb', fontFamily: 'Manrope_600SemiBold', fontSize: 13 },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.08)' },
+  detailLabel: { color: '#9ca3af', fontSize: 13, fontFamily: 'Manrope_600SemiBold' },
+  detailValue: { color: '#f9fafb', fontSize: 13, fontFamily: 'Manrope_500Medium', flexShrink: 1, textAlign: 'right' },
+  interestsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 6 },
   interestChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#fff',
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
   interestEmoji: { fontSize: 16 },
-  interestName: { fontSize: 14, fontFamily: 'Manrope_600SemiBold', color: '#374151' },
+  interestName: { color: '#e5e7eb', fontFamily: 'Manrope_600SemiBold', fontSize: 14 },
   actionButtonsContainer: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#fff',
     paddingHorizontal: 20,
-    paddingVertical: 20,
-    paddingBottom: 40,
+    paddingVertical: 18,
+    backgroundColor: 'rgba(8,10,14,0.55)',
+    borderTopWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 8,
+    shadowOpacity: 0.35,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: -6 },
   },
-  actionButtons: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 20 },
+  actionButtonsOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(5,8,12,0.35)',
+  },
+  actionButtons: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 18 },
   passButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#fff',
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: '#0f172a',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#ef4444',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: '#ef4444',
   },
   superLikeButton: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#fff',
+    backgroundColor: '#0f172a',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#3b82f6',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: '#3b82f6',
   },
   likeButton: {
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.light.tint,
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: Colors.light.tint,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 6,
-    borderWidth: 3,
-    borderColor: Colors.light.tint,
+    shadowOpacity: 0.4,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
   },
-  likeButtonActive: { backgroundColor: Colors.light.tint },
+  likeButtonActive: { backgroundColor: '#be185d' },
+  header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+    overflow: 'hidden',
+  },
+  headerContent: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 18 },
+  headerButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    overflow: 'hidden',
+  },
+  headerButtonOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  headerActions: { flexDirection: 'row', gap: 10 },
+  headerTitle: { color: '#f9fafb', fontSize: 16, fontFamily: 'Archivo_700Bold', flex: 1, textAlign: 'center' },
+  headerTint: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(7,9,14,0.7)',
+  },
+  previewIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+  },
+  previewIndicatorText: { color: '#fff', fontSize: 12, fontFamily: 'Manrope_600SemiBold' },
+  rippleOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(255,255,255,0.06)' },
+  skeletonContainer: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 20 },
+  skeletonSection: { marginTop: 16, gap: 8 },
+  skeletonBlockBase: { backgroundColor: '#111827', borderRadius: 14, overflow: 'hidden' },
+  skeletonHeroFull: { width: '100%', height: '100%', borderRadius: 0 },
+  skeletonTitle: { height: 18, width: '60%' },
+  skeletonTitleSmall: { height: 16, width: '42%' },
+  skeletonLine: { height: 14, width: '100%' },
+  skeletonChipsRow: { flexDirection: 'row', gap: 10, marginTop: 10 },
+  skeletonChip: { width: 72, height: 24, borderRadius: 999 },
+  shimmer: { ...StyleSheet.absoluteFillObject },
 });
+

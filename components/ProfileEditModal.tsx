@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -114,10 +115,32 @@ interface ProfileEditModalProps {
   onSave: (updatedProfile: any) => void;
 }
 
+const InlineVideoPreview = ({ uri, shouldPlay }: { uri: string; shouldPlay: boolean }) => {
+  const player = useVideoPlayer(uri, (p) => {
+    p.loop = true;
+    p.muted = true;
+    if (shouldPlay) {
+      try { p.play(); } catch {}
+    }
+  });
+
+  useEffect(() => {
+    if (shouldPlay) {
+      try { player.play(); } catch {}
+    } else {
+      try { player.pause(); } catch {}
+    }
+  }, [player, shouldPlay]);
+
+  return <VideoView style={styles.videoPreview} player={player} contentFit="cover" nativeControls={false} />;
+};
+
 export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEditModalProps) {
   const { user, profile, updateProfile } = useAuth();
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [videoUploading, setVideoUploading] = useState(false);
+  const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
   
   // Original dropdown states
   const [showHeightPicker, setShowHeightPicker] = useState(false);
@@ -181,6 +204,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     looking_for: '',
     avatar_url: '',
     photos: [] as string[],
+    profile_video: '',
     // HIGH PRIORITY fields
     exercise_frequency: '',
     smoking: '',
@@ -213,6 +237,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         looking_for: (profile as any).looking_for || '',
         avatar_url: profile.avatar_url || '',
         photos: (profile as any).photos || [],
+        profile_video: (profile as any).profile_video || '',
         // HIGH PRIORITY fields
         exercise_frequency: (profile as any).exercise_frequency || '',
         smoking: (profile as any).smoking || '',
@@ -240,6 +265,36 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       fetchUserInterests();
     }
   }, [visible, profile]);
+
+  useEffect(() => {
+    let mounted = true;
+    const resolvePreview = async () => {
+      if (!visible) {
+        if (mounted) setVideoPreviewUrl(null);
+        return;
+      }
+      const path = formData.profile_video;
+      if (!path) {
+        if (mounted) setVideoPreviewUrl(null);
+        return;
+      }
+      if (path.startsWith('http')) {
+        if (mounted) setVideoPreviewUrl(path);
+        return;
+      }
+      const { data, error } = await supabase.storage.from('profile-videos').createSignedUrl(path, 3600);
+      if (!mounted) return;
+      if (error || !data?.signedUrl) {
+        setVideoPreviewUrl(null);
+        return;
+      }
+      setVideoPreviewUrl(data.signedUrl);
+    };
+    void resolvePreview();
+    return () => {
+      mounted = false;
+    };
+  }, [formData.profile_video, visible]);
 
   const handleInputChange = (field: string, value: string | string[]) => {
     setFormData(prev => ({
@@ -522,6 +577,136 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     }
   };
 
+  const openVideoLibrary = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Please grant camera roll permissions to upload videos.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['videos'],
+      videoMaxDuration: 30,
+      allowsEditing: true,
+      quality: 1,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      await handleVideoUpload(result.assets[0].uri);
+    }
+  };
+
+  const openVideoCamera = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Please grant camera permissions to record a video.');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['videos'],
+      videoMaxDuration: 30,
+      allowsEditing: true,
+      quality: 1,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      await handleVideoUpload(result.assets[0].uri);
+    }
+  };
+
+  const pickProfileVideo = async () => {
+    try {
+      Alert.alert(
+        'Select Video',
+        'Choose how you want to add a profile video',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Camera', onPress: () => void openVideoCamera() },
+          { text: 'Library', onPress: () => void openVideoLibrary() },
+        ]
+      );
+    } catch (error) {
+      console.error('Error picking video:', error);
+      Alert.alert('Error', 'Failed to pick video');
+    }
+  };
+
+  const handleVideoUpload = async (uri: string) => {
+    try {
+      setVideoUploading(true);
+
+      if (!user?.id) {
+        Alert.alert('Error', 'User not authenticated');
+        return;
+      }
+
+      const fileExtension = uri.split('.').pop()?.toLowerCase() || 'mp4';
+      const timestamp = Date.now();
+      const fileName = `profile-video-${timestamp}.${fileExtension}`;
+      const filePath = `${user.id}/${fileName}`;
+      const contentType = fileExtension === 'mov' ? 'video/quicktime' : 'video/mp4';
+
+      const response = await fetch(uri);
+      const blob = await response.arrayBuffer();
+      const uint8Array = new Uint8Array(blob);
+
+      const { error } = await supabase.storage
+        .from('profile-videos')
+        .upload(filePath, uint8Array, {
+          contentType,
+          upsert: false,
+        });
+
+      if (error) {
+        console.error('Video upload error details:', error);
+        throw error;
+      }
+
+      const previousPath = formData.profile_video;
+      setFormData(prev => ({
+        ...prev,
+        profile_video: filePath,
+      }));
+
+      if (previousPath && !previousPath.startsWith('http') && previousPath !== filePath) {
+        try {
+          await supabase.storage.from('profile-videos').remove([previousPath]);
+        } catch (removeError) {
+          console.log('Failed to delete previous profile video', removeError);
+        }
+      }
+
+      Alert.alert('Success', 'Profile video uploaded. Tap Save to apply.');
+    } catch (error) {
+      console.error('Error uploading video:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to upload video';
+      Alert.alert('Error', `Upload failed: ${errorMessage}`);
+    } finally {
+      setVideoUploading(false);
+    }
+  };
+
+  const removeProfileVideo = () => {
+    Alert.alert(
+      'Remove Video',
+      'Are you sure you want to remove your profile video?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            setFormData(prev => ({
+              ...prev,
+              profile_video: '',
+            }));
+          },
+        },
+      ],
+    );
+  };
+
   const removePhoto = (index: number) => {
     Alert.alert(
       'Remove Photo',
@@ -563,6 +748,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         bio: formData.bio.trim(),
         avatar_url: formData.avatar_url,
         photos: formData.photos,
+        profile_video: formData.profile_video && formData.profile_video.trim() ? formData.profile_video.trim() : null,
         // Preserve existing required fields to avoid null constraint violations
         gender: profile?.gender || 'OTHER',
         age: profile?.age || 18,
@@ -1390,6 +1576,58 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
             )}
           </View>
 
+          {/* Profile Video Section */}
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Profile Video</Text>
+              <TouchableOpacity
+                style={styles.addPhotoButton}
+                onPress={pickProfileVideo}
+                disabled={videoUploading}
+              >
+                <MaterialCommunityIcons
+                  name="video-plus"
+                  size={16}
+                  color={videoUploading ? '#9ca3af' : Colors.light.tint}
+                />
+                <Text style={[
+                  styles.addPhotoText,
+                  { color: videoUploading ? '#9ca3af' : Colors.light.tint }
+                ]}>
+                  Upload Video
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.photoHint}>
+              Add a short intro video (max 30s). This appears on your Explore card.
+            </Text>
+
+            {formData.profile_video ? (
+              <View style={styles.videoRow}>
+                <View style={styles.videoThumb}>
+                  {videoPreviewUrl ? (
+                    <InlineVideoPreview uri={videoPreviewUrl} shouldPlay={visible && !videoUploading} />
+                  ) : (
+                    <MaterialCommunityIcons name="play-circle" size={26} color="#e2e8f0" />
+                  )}
+                </View>
+                <View style={styles.videoMeta}>
+                  <Text style={styles.videoTitle}>Profile video ready</Text>
+                  <Text style={styles.videoSub}>Tap Save to apply</Text>
+                </View>
+                <TouchableOpacity style={styles.videoRemove} onPress={removeProfileVideo}>
+                  <MaterialCommunityIcons name="trash-can-outline" size={18} color="#ef4444" />
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.videoEmpty}>
+                <MaterialCommunityIcons name="video-outline" size={20} color="#9ca3af" />
+                <Text style={styles.videoEmptyText}>No profile video yet</Text>
+              </View>
+            )}
+          </View>
+
           {/* Photos Section */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
@@ -1448,11 +1686,13 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         </ScrollView>
 
         {/* Upload Progress */}
-        {uploading && (
+        {(uploading || videoUploading) && (
           <View style={styles.uploadingOverlay}>
             <View style={styles.uploadingContainer}>
               <ActivityIndicator size="large" color={Colors.light.tint} />
-              <Text style={styles.uploadingText}>Uploading photo...</Text>
+              <Text style={styles.uploadingText}>
+                {videoUploading ? 'Uploading video...' : 'Uploading photo...'}
+              </Text>
             </View>
           </View>
         )}
@@ -1983,6 +2223,49 @@ const styles = StyleSheet.create({
     height: '100%',
     resizeMode: 'cover',
   },
+  videoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: '#0f172a',
+  },
+  videoThumb: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  videoPreview: {
+    width: '100%',
+    height: '100%',
+  },
+  videoMeta: { marginLeft: 12, flex: 1 },
+  videoTitle: { color: '#fff', fontSize: 14, fontFamily: 'Manrope_600SemiBold' },
+  videoSub: { color: '#cbd5f5', fontSize: 12, marginTop: 2 },
+  videoRemove: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  videoEmpty: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f8fafc',
+  },
+  videoEmptyText: { marginLeft: 8, color: '#6b7280', fontSize: 13 },
   removePhotoButton: {
     position: 'absolute',
     top: 4,

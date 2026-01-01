@@ -19,6 +19,18 @@ function formatDistance(distanceKm?: number | null, fallback?: string) {
   return `${Math.round(km)} km away`;
 }
 
+async function signProfileVideoUrl(path?: string | null) {
+  if (!path) return undefined;
+  if (path.startsWith('http')) return path;
+  try {
+    const { data, error } = await supabase.storage.from('profile-videos').createSignedUrl(path, 3600);
+    if (error) return undefined;
+    return data?.signedUrl || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // lightweight mock generator (expandable)
 function createMockMatches(): Match[] {
   const now = Date.now();
@@ -395,6 +407,27 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
   const fetchMatchesFromServer = useCallback(async () => {
     try {
       console.log('[useAIRecommendations] fetchMatchesFromServer starting', { userId });
+      const resolveProfileVideos = async (list: Match[]) => {
+        if (!Array.isArray(list) || list.length === 0) return list;
+        const signedByPath: Record<string, string> = {};
+        await Promise.all(
+          list.map(async (m) => {
+            const raw = (m as any).profileVideo;
+            if (!raw || typeof raw !== 'string' || raw.startsWith('http')) return;
+            if (signedByPath[raw]) return;
+            const signed = await signProfileVideoUrl(raw);
+            if (signed) signedByPath[raw] = signed;
+          }),
+        );
+        if (Object.keys(signedByPath).length === 0) return list;
+        return list.map((m) => {
+          const raw = (m as any).profileVideo;
+          if (raw && signedByPath[raw]) {
+            return { ...m, profileVideo: signedByPath[raw] } as Match;
+          }
+          return m;
+        });
+      };
       // If Supabase is configured and we have a user id, fetch profiles
       if (supabase && userId) {
         // Nearby mode: server-side distance sort via RPC
@@ -422,7 +455,8 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
                 current_country: (p as any).current_country,
                 location_precision: (p as any).location_precision,
               } as Match));
-              setMatches(mapped);
+              const withSigned = await resolveProfileVideos(mapped);
+              setMatches(withSigned);
             if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] nearby rpc result', { count: mapped.length });
             return;
           }
@@ -456,7 +490,8 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
                 current_country: (p as any).current_country,
                 location_precision: (p as any).location_precision,
               } as Match));
-              setMatches(mapped);
+              const withSigned = await resolveProfileVideos(mapped);
+              setMatches(withSigned);
               if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] active rpc result', { count: mapped.length });
               return;
             }
@@ -470,7 +505,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
         // due to missing columns (Postgres error 42703), retry with a
         // minimal safe column list to avoid falling back to mocks.
         const extendedSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, verified, is_active, last_active';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, verified, is_active, last_active, profile_video';
         const minimalSelect =
           'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type';
 
@@ -610,7 +645,8 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
               location_precision: p.location_precision,
             } as Match);
           });
-          setMatches(mapped);
+          const withSigned = await resolveProfileVideos(mapped);
+          setMatches(withSigned);
           if (typeof __DEV__ !== 'undefined' && __DEV__) {
             console.log('[useAIRecommendations] fetched matches from server', { count: mapped.length, sample: mapped.slice(0, 3) });
           }
@@ -661,7 +697,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
       // fetch optional profile fields
       const { data: profileData, error: pErr } = await supabase
         .from('profiles')
-              .select('id, personality_tags, latitude, longitude, region, tribe, religion, current_country, location_precision')
+              .select('id, personality_tags, profile_video, latitude, longitude, region, tribe, religion, current_country, location_precision')
         .eq('id', profileId)
         .limit(1)
         .single();
@@ -686,6 +722,10 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
         }
       } catch (e) {}
 
+      const signedProfileVideo = profileData?.profile_video
+        ? await signProfileVideoUrl(profileData.profile_video)
+        : undefined;
+
       // merge into existing matches
       let merged: any = null;
       setMatches((prev) => {
@@ -697,7 +737,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
           const interestsFinal = (interestsArr && interestsArr.length > 0) ? interestsArr : ((m as any).interests && (m as any).interests.length > 0 ? (m as any).interests : [profileData?.region, profileData?.tribe].filter(Boolean));
           merged = {
             ...m,
-            profileVideo: (m as any).profileVideo,
+            profileVideo: signedProfileVideo || (m as any).profileVideo,
             personalityTags: personality,
             interests: interestsFinal,
             tribe: profileData?.tribe ?? (m as any).tribe,
