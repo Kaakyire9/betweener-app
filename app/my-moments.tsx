@@ -1,23 +1,25 @@
 import MomentCreateModal from '@/components/MomentCreateModal';
+import MomentViewer from '@/components/MomentViewer';
 import { Colors } from '@/constants/theme';
-import type { Moment } from '@/hooks/useMoments';
+import type { Moment, MomentUser } from '@/hooks/useMoments';
 import { useAuth } from '@/lib/auth-context';
 import { createSignedUrl } from '@/lib/moments';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { VideoView, useVideoPlayer } from 'expo-video';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function MyMomentsScreen() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [moments, setMoments] = useState<Moment[]>([]);
   const [loading, setLoading] = useState(false);
-  const [editMode, setEditMode] = useState(false);
   const [createVisible, setCreateVisible] = useState(false);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
+  const [reactionCounts, setReactionCounts] = useState<Record<string, number>>({});
+  const [viewerVisible, setViewerVisible] = useState(false);
+  const [viewerStartMomentId, setViewerStartMomentId] = useState<string | null>(null);
 
   const fetchMoments = useCallback(async () => {
     if (!user?.id) return;
@@ -25,16 +27,25 @@ export default function MyMomentsScreen() {
     try {
       const { data, error } = await supabase
         .from('moments')
-        .select('id,user_id,type,media_url,thumbnail_url,text_body,caption,created_at,expires_at,visibility,is_deleted')
+        .select('id,user_id,type,media_url,thumbnail_url,text_body,caption,created_at,expires_at,visibility,is_deleted,moment_reactions(id)')
         .eq('user_id', user.id)
         .eq('is_deleted', false)
         .gt('expires_at', new Date().toISOString())
         .order('created_at', { ascending: false });
       if (error || !data) {
         setMoments([]);
+        setReactionCounts({});
         return;
       }
-      setMoments(data as Moment[]);
+      const counts: Record<string, number> = {};
+      const cleaned = (data as any[]).map((row) => {
+        const reactions = Array.isArray(row.moment_reactions) ? row.moment_reactions.length : 0;
+        counts[row.id] = reactions;
+        const { moment_reactions: _momentReactions, ...rest } = row;
+        return rest as Moment;
+      });
+      setReactionCounts(counts);
+      setMoments(cleaned);
     } finally {
       setLoading(false);
     }
@@ -69,11 +80,49 @@ export default function MyMomentsScreen() {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          await supabase.from('moments').update({ is_deleted: true }).eq('id', moment.id);
-          if (moment.media_url && !moment.media_url.startsWith('http')) {
-            await supabase.storage.from('moments').remove([moment.media_url]);
+          if (!user?.id) {
+            Alert.alert('Session expired', 'Please sign in again and retry.');
+            return;
           }
-          void fetchMoments();
+          setMoments((prev) => prev.filter((m) => m.id !== moment.id));
+          setReactionCounts((prev) => {
+            const next = { ...prev };
+            delete next[moment.id];
+            return next;
+          });
+          setSignedUrls((prev) => {
+            const next = { ...prev };
+            delete next[moment.id];
+            return next;
+          });
+          try {
+            const { data, error } = await supabase
+              .from('moments')
+              .update({ is_deleted: true })
+              .eq('id', moment.id)
+              .select('id');
+            if (error) {
+              // fallback to hard delete if soft delete fails
+              const { error: deleteError } = await supabase.from('moments').delete().eq('id', moment.id);
+              if (deleteError) {
+                throw deleteError;
+              }
+            } else if (!data || data.length === 0) {
+              // nothing updated; attempt hard delete to ensure removal
+              const { error: deleteError } = await supabase.from('moments').delete().eq('id', moment.id);
+              if (deleteError) {
+                throw deleteError;
+              }
+            }
+            if (moment.media_url && !moment.media_url.startsWith('http')) {
+              await supabase.storage.from('moments').remove([moment.media_url]);
+            }
+          } catch (err) {
+            console.log('Delete moment failed', err);
+            const message = err instanceof Error ? err.message : 'Please try again.';
+            Alert.alert('Delete failed', message);
+            void fetchMoments();
+          }
         },
       },
     ]);
@@ -94,19 +143,60 @@ export default function MyMomentsScreen() {
     }
   };
 
+  const openMomentActions = (moment: Moment) => {
+    Alert.alert('Moment options', undefined, [
+      { text: 'Share', onPress: () => handleShare(moment) },
+      { text: 'Delete', style: 'destructive', onPress: () => handleDelete(moment) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
   const emptyState = !loading && moments.length === 0;
 
-  const PreviewVideo = ({ uri }: { uri: string }) => {
-    const player = useVideoPlayer(uri, (p) => {
-      p.loop = false;
-      p.muted = true;
-    });
+  const viewerMoments = useMemo(() => {
+    if (!viewerStartMomentId) return moments;
+    const idx = moments.findIndex((m) => m.id === viewerStartMomentId);
+    if (idx === -1) return moments;
+    return moments.slice(0, idx + 1).reverse();
+  }, [moments, viewerStartMomentId]);
 
-    useEffect(() => {
-      try { player.pause(); } catch {}
-    }, [player]);
+  const viewerUsers = useMemo<MomentUser[]>(() => {
+    if (!user?.id) return [];
+    return [
+      {
+        userId: user.id,
+        name: profile?.full_name || 'You',
+        avatarUrl: profile?.avatar_url || null,
+        moments: viewerMoments,
+        latestMoment: viewerMoments[0],
+        isOwn: true,
+      },
+    ];
+  }, [profile?.avatar_url, profile?.full_name, user?.id, viewerMoments]);
 
-    return <VideoView style={styles.media} player={player} contentFit="cover" nativeControls={false} />;
+  const openViewer = (momentId?: string) => {
+    if (!user?.id || moments.length === 0) return;
+    setViewerStartMomentId(momentId ?? null);
+    setViewerVisible(true);
+  };
+
+  const formatTimeAgo = (iso: string) => {
+    const created = new Date(iso).getTime();
+    if (Number.isNaN(created)) return '';
+    const diffMs = Date.now() - created;
+    const minutes = Math.floor(diffMs / 60000);
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d ago`;
+    const weeks = Math.floor(days / 7);
+    if (weeks < 4) return `${weeks}w ago`;
+    const months = Math.floor(days / 30);
+    if (months < 12) return `${months}mo ago`;
+    const years = Math.floor(days / 365);
+    return `${years}y ago`;
   };
 
   return (
@@ -116,9 +206,7 @@ export default function MyMomentsScreen() {
           <MaterialCommunityIcons name="arrow-left" size={22} color="#111827" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>My Moments</Text>
-        <TouchableOpacity style={styles.editButton} onPress={() => setEditMode((prev) => !prev)}>
-          <Text style={styles.editText}>{editMode ? 'Done' : 'Edit'}</Text>
-        </TouchableOpacity>
+        <View style={styles.headerSpacer} />
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
@@ -131,41 +219,50 @@ export default function MyMomentsScreen() {
         ) : (
           moments.map((moment) => {
             const mediaUrl = moment.media_url?.startsWith('http') ? moment.media_url : signedUrls[moment.id];
+            const timeLabel = formatTimeAgo(moment.created_at);
+            const reactions = reactionCounts[moment.id] ?? 0;
+            const title =
+              moment.caption?.trim() ||
+              (moment.type === 'text' ? 'Text Moment' : moment.type === 'video' ? 'Video Moment' : 'Photo Moment');
             return (
-              <View key={moment.id} style={styles.momentCard}>
-                <View style={styles.mediaContainer}>
-                  {moment.type === 'text' ? (
-                    <View style={styles.textMoment}>
-                      <Text style={styles.textMomentBody}>{moment.text_body || ''}</Text>
+              <View key={moment.id} style={styles.momentRow}>
+                <TouchableOpacity
+                  style={styles.momentPressable}
+                  activeOpacity={0.82}
+                  onPress={() => openViewer(moment.id)}
+                >
+                  <View style={styles.momentCircle}>
+                    {moment.type === 'photo' && mediaUrl ? (
+                      <Image source={{ uri: mediaUrl }} style={styles.momentCircleImage} contentFit="cover" />
+                    ) : moment.type === 'text' ? (
+                      <Text style={styles.textBadge}>Aa</Text>
+                    ) : (
+                      <View style={styles.momentCircleFallback}>
+                        <MaterialCommunityIcons
+                          name={moment.type === 'video' ? 'video' : 'image-outline'}
+                          size={20}
+                          color="#e5e7eb"
+                        />
+                      </View>
+                    )}
+                  </View>
+                  <View style={styles.momentMeta}>
+                    <Text style={styles.momentTitle}>{title}</Text>
+                    <View style={styles.momentSubRow}>
+                      <View style={styles.momentMetaItem}>
+                        <MaterialCommunityIcons name="clock-outline" size={13} color="#6b7280" />
+                        <Text style={styles.momentMetaText}>{timeLabel}</Text>
+                      </View>
+                      <View style={styles.momentMetaItem}>
+                        <MaterialCommunityIcons name="heart" size={13} color="#ef4444" />
+                        <Text style={styles.momentMetaText}>{reactions}</Text>
+                      </View>
                     </View>
-                  ) : moment.type === 'photo' ? (
-                    mediaUrl ? <Image source={{ uri: mediaUrl }} style={styles.media} /> : <View style={styles.mediaFallback} />
-                  ) : mediaUrl ? (
-                    <PreviewVideo uri={mediaUrl} />
-                  ) : (
-                    <View style={styles.mediaFallback} />
-                  )}
-                  {moment.type === 'video' && (
-                    <View style={styles.videoBadge}>
-                      <MaterialCommunityIcons name="video" size={16} color="#fff" />
-                    </View>
-                  )}
-                </View>
-                <View style={styles.cardMeta}>
-                  <Text style={styles.cardCaption}>{moment.caption || (moment.type === 'text' ? 'Text Moment' : 'Moment')}</Text>
-                  {editMode ? (
-                    <View style={styles.cardActions}>
-                      <TouchableOpacity style={styles.actionButton} onPress={() => handleShare(moment)}>
-                        <MaterialCommunityIcons name="share-variant" size={16} color="#111827" />
-                        <Text style={styles.actionText}>Share</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={[styles.actionButton, styles.actionDelete]} onPress={() => handleDelete(moment)}>
-                        <MaterialCommunityIcons name="trash-can-outline" size={16} color="#b91c1c" />
-                        <Text style={[styles.actionText, styles.actionDeleteText]}>Delete</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
-                </View>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.moreButton} onPress={() => openMomentActions(moment)}>
+                  <MaterialCommunityIcons name="dots-horizontal" size={20} color="#6b7280" />
+                </TouchableOpacity>
               </View>
             );
           })
@@ -187,6 +284,17 @@ export default function MyMomentsScreen() {
           void fetchMoments();
         }}
       />
+
+      <MomentViewer
+        visible={viewerVisible}
+        users={viewerUsers}
+        startUserId={user?.id ?? null}
+        startMomentId={viewerStartMomentId}
+        onClose={() => {
+          setViewerVisible(false);
+          setViewerStartMomentId(null);
+        }}
+      />
     </View>
   );
 }
@@ -206,8 +314,7 @@ const styles = StyleSheet.create({
   },
   backButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 18, fontFamily: 'Archivo_700Bold', color: '#111827' },
-  editButton: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, backgroundColor: '#f1f5f9' },
-  editText: { color: '#111827', fontFamily: 'Manrope_600SemiBold' },
+  headerSpacer: { width: 40 },
   content: { padding: 18, paddingBottom: 40 },
   sectionTitle: { fontSize: 16, fontFamily: 'Archivo_700Bold', color: '#111827', marginBottom: 12 },
   emptyCard: {
@@ -220,45 +327,36 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { fontSize: 16, fontFamily: 'Archivo_700Bold', color: '#111827', marginBottom: 6 },
   emptySubtitle: { color: '#6b7280', fontFamily: 'Manrope_500Medium' },
-  momentCard: {
-    borderRadius: 20,
+  momentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 16,
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#e5e7eb',
-    marginBottom: 16,
-    overflow: 'hidden',
+    marginBottom: 12,
   },
-  mediaContainer: { height: 220, backgroundColor: '#0f172a' },
-  media: { width: '100%', height: '100%' },
-  mediaFallback: { width: '100%', height: '100%', backgroundColor: '#0f172a' },
-  textMoment: { flex: 1, padding: 18, justifyContent: 'center' },
-  textMomentBody: { color: '#f9fafb', fontFamily: 'Manrope_600SemiBold', fontSize: 18, lineHeight: 26 },
-  videoBadge: {
-    position: 'absolute',
-    right: 12,
-    top: 12,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+  momentPressable: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  momentCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#0f172a',
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cardMeta: { padding: 14 },
-  cardCaption: { color: '#111827', fontFamily: 'Manrope_600SemiBold', marginBottom: 6 },
-  cardActions: { flexDirection: 'row', gap: 12, marginTop: 6 },
-  actionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: '#f1f5f9',
-  },
-  actionText: { color: '#111827', fontFamily: 'Manrope_600SemiBold', fontSize: 12 },
-  actionDelete: { backgroundColor: '#fee2e2' },
-  actionDeleteText: { color: '#b91c1c' },
+  momentCircleImage: { width: '100%', height: '100%' },
+  momentCircleFallback: { alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' },
+  textBadge: { color: '#f9fafb', fontFamily: 'Archivo_700Bold', fontSize: 16 },
+  momentMeta: { marginLeft: 12, flex: 1 },
+  momentTitle: { color: '#111827', fontFamily: 'Manrope_600SemiBold', fontSize: 14 },
+  momentSubRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 },
+  momentMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  momentMetaText: { color: '#6b7280', fontFamily: 'Manrope_500Medium', fontSize: 12 },
+  moreButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
   addButton: {
     flexDirection: 'row',
     alignItems: 'center',
