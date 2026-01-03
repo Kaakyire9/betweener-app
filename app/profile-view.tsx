@@ -261,7 +261,7 @@ export default function ProfileViewPremiumScreen() {
         id: currentUser?.id || 'preview',
         name: currentUser?.full_name || 'Your Name',
         age: currentUser?.age || 25,
-        location: currentUser?.region || 'Your Location',
+        location: (currentUser as any)?.location || (currentUser as any)?.city || currentUser?.region || 'Your Location',
         city: (currentUser as any)?.city,
         region: currentUser?.region,
         latitude: (currentUser as any)?.latitude,
@@ -386,10 +386,8 @@ export default function ProfileViewPremiumScreen() {
     [distanceUnit],
   );
   const locationLabel = useMemo(() => {
-    if (profileData.locationPrecision && profileData.locationPrecision.toUpperCase() === 'CITY') {
-      return '';
-    }
-    return profileData.city || getCityOnly(profileData.location) || profileData.region || '';
+    const raw = profileData.location || profileData.city || profileData.region || '';
+    return getCityOnly(raw) || profileData.city || '';
   }, [profileData.location, profileData.region, profileData.city, profileData.locationPrecision]);
   const distanceKm = useMemo(() => {
     if (profileData.distance === 'You') return 0;
@@ -419,11 +417,14 @@ export default function ProfileViewPremiumScreen() {
   }, [distanceKm, profileData.distance, profileData.location, resolvedDistanceUnit]);
   const distanceWithLocation = useMemo(() => {
     if (distanceLabel === 'You') return distanceLabel;
-    if (distanceLabel && isDistanceLabel(distanceLabel) && locationLabel && distanceLabel !== locationLabel) {
-      return `${distanceLabel} \u00b7 ${locationLabel}`;
+    if (distanceLabel && isDistanceLabel(distanceLabel)) {
+      if (locationLabel && distanceLabel !== locationLabel) {
+        return `${distanceLabel} \u00b7 ${locationLabel}`;
+      }
+      return distanceLabel;
     }
-    return distanceLabel || locationLabel;
-  }, [distanceLabel, locationLabel]);
+    return locationLabel || profileData.location || '';
+  }, [distanceLabel, locationLabel, profileData.location]);
   const locationWithFlag = useMemo(() => {
     const base = distanceWithLocation || profileData.location;
     if (!base) return '';

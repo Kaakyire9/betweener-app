@@ -788,8 +788,18 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       if (formData.age && formData.age.trim()) {
         updateData.age = parseInt(formData.age);
       }
-      if (formData.region && formData.region.trim()) {
-        updateData.region = formData.region.trim();
+      const regionValue = formData.region ? formData.region.trim() : '';
+      if (regionValue) {
+        updateData.region = regionValue;
+        updateData.city = regionValue;
+        updateData.location = regionValue;
+        const previousRegion = profile?.region ? profile.region.trim() : '';
+        if (regionValue !== previousRegion) {
+          updateData.location_precision = 'CITY';
+          updateData.latitude = null;
+          updateData.longitude = null;
+          updateData.location_updated_at = new Date().toISOString();
+        }
       }
       if (formData.occupation && formData.occupation.trim()) {
         updateData.occupation = formData.occupation.trim();
