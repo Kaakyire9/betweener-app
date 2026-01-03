@@ -46,6 +46,13 @@ export async function requestAndSavePreciseLocation(profileId: string): Promise<
       return { ok: false, error: error.message };
     }
 
+    const { error: geocodeError } = await supabase.functions.invoke('reverse-geocode', {
+      body: { latitude, longitude },
+    });
+    if (geocodeError) {
+      console.log('[location] reverse-geocode failed', geocodeError);
+    }
+
     return { ok: true };
   } catch (e: any) {
     return { ok: false, error: e?.message || 'Failed to save location.' };

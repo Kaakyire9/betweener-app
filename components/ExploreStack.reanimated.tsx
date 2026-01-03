@@ -37,26 +37,7 @@ const EXIT_DISTANCE = SCREEN_WIDTH * 1.2;
 
 const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
   ({ matches, currentIndex, setCurrentIndex, recordSwipe, onProfileTap, onPlayPress, previewingId }, ref) => {
-    const debugMatch: Match = useMemo(
-      () => ({
-        id: "__debug",
-        name: "Demo",
-        age: 30,
-        tagline: "Demo profile",
-        bio: "Debug profile for layout",
-        location: "",
-        tribe: "",
-        religion: "",
-        interests: [],
-        avatar_url: "",
-        distance: "",
-        lastActive: "",
-        isActiveNow: false,
-      }),
-      []
-    );
-
-    const list = matches && matches.length > 0 ? matches : [debugMatch];
+    const list = matches && matches.length > 0 ? matches : [];
 
     // Shared values
     const translateX = useSharedValue(0);
@@ -70,7 +51,7 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
     // Imperative API
     const completeSwipe = (dir: "left" | "right" | "superlike") => {
       const current = list[currentIndex];
-      if (current && current.id !== "__debug") {
+      if (current) {
         if (dir === "superlike") recordSwipe(current.id, "superlike", currentIndex);
         else recordSwipe(current.id, dir === "right" ? "like" : "dislike", currentIndex);
       }

@@ -7,6 +7,7 @@ import { Match } from '@/types/match';
 import MatchModal from '@/components/MatchModal';
 import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -15,6 +16,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
+  DeviceEventEmitter,
   Dimensions,
   FlatList,
   Pressable,
@@ -39,6 +41,8 @@ type UserProfile = {
   location: string;
   city?: string;
   region?: string;
+  latitude?: number;
+  longitude?: number;
   profilePicture: string;
   photos: string[];
   profileVideo?: string;
@@ -48,6 +52,7 @@ type UserProfile = {
   verified: boolean;
   bio: string;
   distance: string;
+  distanceKm?: number;
   isActiveNow: boolean;
   tribe?: string;
   religion?: string;
@@ -56,6 +61,7 @@ type UserProfile = {
   lookingFor?: string;
   languages?: string[];
   currentCountry?: string;
+  currentCountryCode?: string;
   diasporaStatus?: string;
   willingLongDistance?: boolean;
   exerciseFrequency?: string;
@@ -106,6 +112,86 @@ const HEADER_MIN_HEIGHT = 64;
 const PARALLAX_FACTOR = 0.35;
 const SHIMMER_SPEED = 1200;
 const TAP_ZONE_RATIO = 0.45;
+const DISTANCE_UNIT_KEY = 'distance_unit';
+const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
+const KM_PER_MILE = 1.60934;
+
+type DistanceUnit = 'auto' | 'km' | 'mi';
+
+const resolveAutoUnit = (): 'km' | 'mi' => {
+  try {
+    const locale = Intl.DateTimeFormat().resolvedOptions().locale || '';
+    return /[-_]US\b/i.test(locale) ? 'mi' : 'km';
+  } catch {
+    return 'km';
+  }
+};
+
+const toRadians = (value: number) => (value * Math.PI) / 180;
+const haversineKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+  const dLat = toRadians(lat2 - lat1);
+  const dLon = toRadians(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return 6371 * 2 * Math.asin(Math.sqrt(a));
+};
+
+const parseDistanceKmFromLabel = (label?: string | null): number | undefined => {
+  if (!label) return undefined;
+  const lower = label.toLowerCase();
+  const lessMatch = lower.match(/<\s*1\s*(km|mi|mile|miles)\b/);
+  if (lessMatch) {
+    return lessMatch[1].startsWith('mi') || lessMatch[1].startsWith('mile') ? 0.5 * KM_PER_MILE : 0.5;
+  }
+  const kmMatch = lower.match(/([\d.]+)\s*km\b/);
+  if (kmMatch) return Number(kmMatch[1]);
+  const miMatch = lower.match(/([\d.]+)\s*(mi|mile|miles)\b/);
+  if (miMatch) return Number(miMatch[1]) * KM_PER_MILE;
+  return undefined;
+};
+
+const isDistanceLabel = (label?: string | null) => {
+  if (!label) return false;
+  const lower = label.toLowerCase();
+  return lower.includes('away') || /\b(km|mi|mile|miles)\b/.test(lower) || /<\s*1/.test(lower);
+};
+
+const getCityOnly = (label?: string | null) => {
+  if (!label) return '';
+  const parts = String(label).split(',');
+  return parts[0]?.trim() || '';
+};
+
+const toFlagEmoji = (code?: string | null) => {
+  if (!code) return '';
+  const normalized = String(code).trim().toUpperCase();
+  if (normalized.length !== 2) return '';
+  const first = normalized.charCodeAt(0);
+  const second = normalized.charCodeAt(1);
+  if (first < 65 || first > 90 || second < 65 || second > 90) return '';
+  return String.fromCodePoint(0x1f1e6 + (first - 65), 0x1f1e6 + (second - 65));
+};
+const formatDistance = (distanceKm?: number | null, fallback?: string, unit: DistanceUnit = 'km') => {
+  if (distanceKm == null || Number.isNaN(Number(distanceKm))) {
+    return fallback || '';
+  }
+  const km = Number(distanceKm);
+  const resolvedUnit: 'km' | 'mi' = unit === 'mi' ? 'mi' : 'km';
+  const value = resolvedUnit === 'mi' ? km / KM_PER_MILE : km;
+  const unitSingular = resolvedUnit === 'mi' ? 'mile' : 'km';
+  const unitPlural = resolvedUnit === 'mi' ? 'miles' : 'km';
+
+  if (value < 1) return `<1 ${unitSingular} away`;
+  if (value < 10) {
+    const pretty = Number(value.toFixed(1));
+    const label = resolvedUnit === 'mi' && pretty >= 1 && pretty < 1.5 ? unitSingular : unitPlural;
+    return `${pretty.toFixed(1)} ${label} away`;
+  }
+  const rounded = Math.round(value);
+  const label = resolvedUnit === 'mi' && rounded === 1 ? unitSingular : unitPlural;
+  return `${rounded} ${label} away`;
+};
 
 export default function ProfileViewPremiumScreen() {
   const { profile: currentUser } = useAuth();
@@ -127,6 +213,7 @@ export default function ProfileViewPremiumScreen() {
   const [showFullBio, setShowFullBio] = useState(false);
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
   const [celebrationMatch, setCelebrationMatch] = useState<Match | null>(null);
+  const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
 
   const placeholderProfile: UserProfile = {
     id: viewedProfileId || 'preview',
@@ -135,6 +222,8 @@ export default function ProfileViewPremiumScreen() {
     location: '',
     city: '',
     region: '',
+    latitude: undefined,
+    longitude: undefined,
     profilePicture: '',
     photos: [],
     profileVideo: undefined,
@@ -144,12 +233,14 @@ export default function ProfileViewPremiumScreen() {
     verified: false,
     bio: '',
     distance: '',
+    distanceKm: undefined,
     isActiveNow: false,
     personalityType: '',
     height: '',
     lookingFor: '',
     languages: [],
     currentCountry: '',
+    currentCountryCode: '',
     diasporaStatus: '',
     willingLongDistance: false,
     exerciseFrequency: '',
@@ -173,6 +264,8 @@ export default function ProfileViewPremiumScreen() {
         location: currentUser?.region || 'Your Location',
         city: (currentUser as any)?.city,
         region: currentUser?.region,
+        latitude: (currentUser as any)?.latitude,
+        longitude: (currentUser as any)?.longitude,
         profilePicture:
           currentUser?.avatar_url ||
           'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=400&h=600&fit=crop&crop=face',
@@ -183,12 +276,14 @@ export default function ProfileViewPremiumScreen() {
         verified: !!(currentUser as any)?.verification_level,
         bio: currentUser?.bio || '',
         distance: 'You',
+        distanceKm: 0,
         isActiveNow: true,
         personalityType: (currentUser as any)?.personality_type,
         height: (currentUser as any)?.height,
         lookingFor: (currentUser as any)?.looking_for,
         languages: (currentUser as any)?.languages_spoken || [],
         currentCountry: (currentUser as any)?.current_country,
+        currentCountryCode: (currentUser as any)?.current_country_code,
         diasporaStatus: (currentUser as any)?.diaspora_status,
         willingLongDistance: (currentUser as any)?.willing_long_distance,
         exerciseFrequency: (currentUser as any)?.exercise_frequency,
@@ -219,6 +314,8 @@ export default function ProfileViewPremiumScreen() {
           location: parsed.location || '',
           city: parsed.city,
           region: parsed.region,
+          latitude: typeof parsed.latitude === 'number' ? parsed.latitude : undefined,
+          longitude: typeof parsed.longitude === 'number' ? parsed.longitude : undefined,
           profilePicture: parsed.avatar_url || photos[0] || '',
           photos,
           profileVideo: typeof parsed.profileVideo === 'string' && parsed.profileVideo.startsWith('http') ? parsed.profileVideo : undefined,
@@ -235,12 +332,19 @@ export default function ProfileViewPremiumScreen() {
           verified: !!parsed.verified,
           bio: parsed.bio || '',
           distance: parsed.distance || '',
+          distanceKm:
+            typeof parsed.distance_km === 'number'
+              ? parsed.distance_km
+              : typeof parsed.distanceKm === 'number'
+              ? parsed.distanceKm
+              : parseDistanceKmFromLabel(parsed.distance),
           isActiveNow: !!parsed.is_active,
           personalityType: parsed.personality_type,
           height: parsed.height,
           lookingFor: parsed.looking_for,
           languages: parsed.languages_spoken || [],
           currentCountry: parsed.current_country,
+          currentCountryCode: parsed.current_country_code,
           diasporaStatus: parsed.diaspora_status,
           willingLongDistance: parsed.willing_long_distance,
           exerciseFrequency: parsed.exercise_frequency,
@@ -277,6 +381,80 @@ export default function ProfileViewPremiumScreen() {
   const profileData = fetchedProfile ?? parsedFallback ?? (isOwnProfilePreview ? baseProfileData : placeholderProfile);
   const isLoading = !fetchedProfile && !parsedFallback && !isOwnProfilePreview;
   const hasProfileVideo = !!(profileData.profileVideoPath || profileData.profileVideo);
+  const resolvedDistanceUnit = useMemo(
+    () => (distanceUnit === 'auto' ? resolveAutoUnit() : distanceUnit),
+    [distanceUnit],
+  );
+  const locationLabel = useMemo(() => {
+    if (profileData.locationPrecision && profileData.locationPrecision.toUpperCase() === 'CITY') {
+      return '';
+    }
+    return profileData.city || getCityOnly(profileData.location) || profileData.region || '';
+  }, [profileData.location, profileData.region, profileData.city, profileData.locationPrecision]);
+  const distanceKm = useMemo(() => {
+    if (profileData.distance === 'You') return 0;
+    if (typeof profileData.distanceKm === 'number' && Number.isFinite(profileData.distanceKm)) {
+      return profileData.distanceKm;
+    }
+    const viewerLat = Number((currentUser as any)?.latitude);
+    const viewerLon = Number((currentUser as any)?.longitude);
+    const targetLat = Number(profileData.latitude);
+    const targetLon = Number(profileData.longitude);
+    if (!Number.isFinite(viewerLat) || !Number.isFinite(viewerLon) || !Number.isFinite(targetLat) || !Number.isFinite(targetLon)) {
+      return undefined;
+    }
+    return haversineKm(viewerLat, viewerLon, targetLat, targetLon);
+  }, [currentUser, profileData.distance, profileData.distanceKm, profileData.latitude, profileData.longitude]);
+  const distanceLabel = useMemo(() => {
+    if (profileData.distance === 'You') return profileData.distance;
+    if (typeof distanceKm === 'number') {
+      return formatDistance(distanceKm, profileData.distance || profileData.location, resolvedDistanceUnit);
+    }
+    if (profileData.distance) {
+      const km = parseDistanceKmFromLabel(profileData.distance);
+      if (km != null) return formatDistance(km, profileData.distance, resolvedDistanceUnit);
+      return profileData.distance;
+    }
+    return profileData.location;
+  }, [distanceKm, profileData.distance, profileData.location, resolvedDistanceUnit]);
+  const distanceWithLocation = useMemo(() => {
+    if (distanceLabel === 'You') return distanceLabel;
+    if (distanceLabel && isDistanceLabel(distanceLabel) && locationLabel && distanceLabel !== locationLabel) {
+      return `${distanceLabel} \u00b7 ${locationLabel}`;
+    }
+    return distanceLabel || locationLabel;
+  }, [distanceLabel, locationLabel]);
+  const locationWithFlag = useMemo(() => {
+    const base = distanceWithLocation || profileData.location;
+    if (!base) return '';
+    const flag = toFlagEmoji(profileData.currentCountryCode);
+    return flag ? `${base} ${flag}` : base;
+  }, [distanceWithLocation, profileData.location, profileData.currentCountryCode]);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadDistanceUnit = async () => {
+      try {
+        const stored = await AsyncStorage.getItem(DISTANCE_UNIT_KEY);
+        if (!mounted) return;
+        if (stored === 'km' || stored === 'mi' || stored === 'auto') {
+          setDistanceUnit(stored);
+        } else {
+          setDistanceUnit('auto');
+        }
+      } catch {
+        if (mounted) setDistanceUnit('auto');
+      }
+    };
+    void loadDistanceUnit();
+    const sub = DeviceEventEmitter.addListener(DISTANCE_UNIT_EVENT, (next: DistanceUnit) => {
+      setDistanceUnit(next);
+    });
+    return () => {
+      mounted = false;
+      sub.remove();
+    };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -288,9 +466,9 @@ export default function ProfileViewPremiumScreen() {
       if (!viewedProfileId) return;
       try {
         const selectFull =
-          'id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, religion, personality_type, height, looking_for, languages_spoken, current_country, diaspora_status, willing_long_distance, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, verification_level, ai_score';
+          'id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, religion, personality_type, height, looking_for, languages_spoken, current_country, current_country_code, diaspora_status, willing_long_distance, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, verification_level, ai_score';
         const selectMinimal =
-          'id, full_name, age, region, city, location, avatar_url, bio, tribe, religion, personality_type, is_active, online, verification_level, ai_score';
+          'id, full_name, age, region, city, location, avatar_url, bio, tribe, religion, personality_type, is_active, online, verification_level, ai_score, current_country_code';
         let data: any = null;
         let error: any = null;
         try {
@@ -335,6 +513,13 @@ export default function ProfileViewPremiumScreen() {
         const photos = Array.isArray((data as any).photos) ? (data as any).photos : data.avatar_url ? [data.avatar_url] : [];
         const aiScoreRaw = Number((data as any).ai_score);
         const aiScoreVal = Number.isFinite(aiScoreRaw) && aiScoreRaw > 0 ? aiScoreRaw : undefined;
+        const fallbackDistance = parsedFallback?.distance;
+        const fallbackDistanceKm =
+          typeof parsedFallback?.distanceKm === 'number'
+            ? parsedFallback.distanceKm
+            : fallbackDistance
+            ? parseDistanceKmFromLabel(fallbackDistance)
+            : undefined;
         const mapped: UserProfile = {
           id: data.id,
           name: data.full_name || 'Profile',
@@ -342,6 +527,8 @@ export default function ProfileViewPremiumScreen() {
           location: data.location || data.region || '',
           city: data.city || undefined,
           region: data.region || undefined,
+          latitude: typeof data.latitude === 'number' ? data.latitude : undefined,
+          longitude: typeof data.longitude === 'number' ? data.longitude : undefined,
           profilePicture: data.avatar_url || photos[0] || '',
           photos,
           profileVideoPath: data.profile_video || undefined,
@@ -349,13 +536,15 @@ export default function ProfileViewPremiumScreen() {
           education: data.education || '',
           verified: !!data.verification_level,
           bio: data.bio || '',
-          distance: data.region || data.location || '',
+          distance: isDistanceLabel(fallbackDistance) ? fallbackDistance || '' : data.region || data.location || '',
+          distanceKm: fallbackDistanceKm,
           isActiveNow: !!data.is_active || !!(data as any).online,
           personalityType: data.personality_type || undefined,
           height: data.height || undefined,
           lookingFor: data.looking_for || undefined,
           languages: Array.isArray((data as any).languages_spoken) ? (data as any).languages_spoken : undefined,
           currentCountry: data.current_country || undefined,
+          currentCountryCode: data.current_country_code || undefined,
           diasporaStatus: data.diaspora_status || undefined,
           willingLongDistance: typeof data.willing_long_distance === 'boolean' ? data.willing_long_distance : undefined,
           exerciseFrequency: data.exercise_frequency || undefined,
@@ -390,7 +579,7 @@ export default function ProfileViewPremiumScreen() {
     return () => {
       mounted = false;
     };
-  }, [isOwnProfilePreview, viewedProfileId]);
+  }, [isOwnProfilePreview, viewedProfileId, parsedFallback?.distance, parsedFallback?.distanceKm]);
 
   useEffect(() => {
     Animated.loop(
@@ -542,7 +731,8 @@ export default function ProfileViewPremiumScreen() {
     tagline: profileData.bio,
     interests: (profileData.interests || []).map((i) => i.name),
     avatar_url: profileData.profilePicture || profileData.photos[0],
-    distance: profileData.distance,
+    distance: distanceLabel || profileData.distance,
+    distanceKm: typeof distanceKm === 'number' ? distanceKm : undefined,
     isActiveNow: profileData.isActiveNow,
     lastActive: null as any,
     verified: profileData.verified,
@@ -762,9 +952,10 @@ export default function ProfileViewPremiumScreen() {
                     </View>
                   )}
                 </View>
-                <Text style={styles.profileSub}>
-                  <MaterialCommunityIcons name="map-marker" size={14} color="#e5e7eb" /> {profileData.distance || profileData.location}
-                </Text>
+                <View style={styles.profileSubRow}>
+                  <MaterialCommunityIcons name="map-marker" size={14} color="#e5e7eb" />
+                  <Text style={styles.profileSubText}>{locationWithFlag}</Text>
+                </View>
                 <Text style={styles.profileSub}>{profileData.occupation}</Text>
                 <Animated.View
                   style={[
@@ -993,6 +1184,8 @@ const styles = StyleSheet.create({
   profileOverlay: { position: 'absolute', bottom: 24, left: 20, right: 20, gap: 6 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
   profileName: { fontSize: 30, color: '#fff', fontFamily: 'Archivo_700Bold', letterSpacing: 0.5 },
+  profileSubRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  profileSubText: { color: '#e5e7eb', fontFamily: 'Manrope_500Medium', fontSize: 14 },
   profileSub: { color: '#e5e7eb', fontFamily: 'Manrope_500Medium', fontSize: 14 },
   activeBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#10b981', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
   activeDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' },
