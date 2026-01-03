@@ -31,6 +31,27 @@ const KM_PER_MILE = 1.60934;
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
 
+const COUNTRY_OPTIONS = [
+  { label: 'Ghana', code: 'GH' },
+  { label: 'United States', code: 'US' },
+  { label: 'United Kingdom', code: 'GB' },
+  { label: 'Canada', code: 'CA' },
+  { label: 'Germany', code: 'DE' },
+  { label: 'Netherlands', code: 'NL' },
+  { label: 'Italy', code: 'IT' },
+  { label: 'Australia', code: 'AU' },
+  { label: 'South Africa', code: 'ZA' },
+  { label: 'Nigeria', code: 'NG' },
+  { label: 'Ivory Coast', code: 'CI' },
+  { label: 'Burkina Faso', code: 'BF' },
+  { label: 'France', code: 'FR' },
+  { label: 'Spain', code: 'ES' },
+  { label: 'Belgium', code: 'BE' },
+  { label: 'Sweden', code: 'SE' },
+  { label: 'Norway', code: 'NO' },
+  { label: 'UAE', code: 'AE' },
+];
+
 const resolveAutoUnit = (): 'km' | 'mi' => {
   try {
     const locale = Intl.DateTimeFormat().resolvedOptions().locale || '';
@@ -45,6 +66,7 @@ export default function ExploreScreen() {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const fontsLoaded = useAppFonts();
   const { profile, user, refreshProfile } = useAuth();
+  const profileCountryCode = (profile as any)?.current_country_code as string | undefined;
 
   // For QA/dev: deterministic mutual-match list — replace with IDs you want to test
   const QA_MUTUAL_IDS = typeof __DEV__ !== 'undefined' && __DEV__ ? ['m-001'] : undefined;
@@ -57,6 +79,7 @@ export default function ExploreScreen() {
     "recommended" | "nearby" | "active"
   >("recommended");
   const [activeWindowMinutes, setActiveWindowMinutes] = useState(15);
+  const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const mode = activeTab === 'nearby' ? 'nearby' : activeTab === 'active' ? 'active' : 'forYou';
   const { matches, recordSwipe, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch, fetchProfileDetails } =
     useAIRecommendations(profile?.id, { mutualMatchTestIds: QA_MUTUAL_IDS, mode, activeWindowMinutes, distanceUnit });
@@ -76,6 +99,44 @@ export default function ExploreScreen() {
       setCelebrationMatch(lastMutualMatch);
     }
   }, [lastMutualMatch]);
+
+  const resolvedDistanceUnit = useMemo(
+    () => (distanceUnit === 'auto' ? resolveAutoUnit() : distanceUnit),
+    [distanceUnit]
+  );
+  const [currentIndex, setCurrentIndex] = useState(0);
+
+  const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
+  const [videoModalVisible, setVideoModalVisible] = useState(false);
+  const [previewingId, setPreviewingId] = useState<string | null>(null);
+  const [manualLocationModalVisible, setManualLocationModalVisible] = useState(false);
+  const [manualLocation, setManualLocation] = useState(profile?.location || "");
+  const [manualCountryCode, setManualCountryCode] = useState(profileCountryCode || "");
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [isSavingLocation, setIsSavingLocation] = useState(false);
+  const [filtersVisible, setFiltersVisible] = useState(false);
+  const [verifiedOnly, setVerifiedOnly] = useState(false);
+  const [distanceFilterKm, setDistanceFilterKm] = useState<number | null>(null);
+  const [minAge, setMinAge] = useState<number>(18);
+  const [maxAge, setMaxAge] = useState<number>(60);
+  const [religionFilter, setReligionFilter] = useState<string | null>(null);
+  const [locationQuery, setLocationQuery] = useState<string>('');
+  const prefetchedDetailsRef = useRef<Set<string>>(new Set());
+  const prefetchInFlightRef = useRef<Set<string>>(new Set());
+  const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastRefreshTsRef = useRef<number>(0);
+
+  const queueRefreshMatches = useCallback(() => {
+    if (refreshDebounceRef.current) {
+      clearTimeout(refreshDebounceRef.current);
+    }
+    refreshDebounceRef.current = setTimeout(() => {
+      if (Date.now() - lastRefreshTsRef.current > 900) {
+        lastRefreshTsRef.current = Date.now();
+        refreshMatches();
+      }
+    }, 150);
+  }, [refreshMatches]);
 
   useFocusEffect(
     useCallback(() => {
@@ -122,44 +183,6 @@ export default function ExploreScreen() {
       sub.remove();
     };
   }, [queueRefreshMatches]);
-
-  const resolvedDistanceUnit = useMemo(
-    () => (distanceUnit === 'auto' ? resolveAutoUnit() : distanceUnit),
-    [distanceUnit]
-  );
-  const [currentIndex, setCurrentIndex] = useState(0);
-
-  const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
-  const [videoModalVisible, setVideoModalVisible] = useState(false);
-  const [previewingId, setPreviewingId] = useState<string | null>(null);
-  const [manualLocationModalVisible, setManualLocationModalVisible] = useState(false);
-  const [manualLocation, setManualLocation] = useState(profile?.location || "");
-  const [locationError, setLocationError] = useState<string | null>(null);
-  const [isSavingLocation, setIsSavingLocation] = useState(false);
-  const [filtersVisible, setFiltersVisible] = useState(false);
-  const [verifiedOnly, setVerifiedOnly] = useState(false);
-  const [distanceFilterKm, setDistanceFilterKm] = useState<number | null>(null);
-  const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
-  const [minAge, setMinAge] = useState<number>(18);
-  const [maxAge, setMaxAge] = useState<number>(60);
-  const [religionFilter, setReligionFilter] = useState<string | null>(null);
-  const [locationQuery, setLocationQuery] = useState<string>('');
-  const prefetchedDetailsRef = useRef<Set<string>>(new Set());
-  const prefetchInFlightRef = useRef<Set<string>>(new Set());
-  const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastRefreshTsRef = useRef<number>(0);
-
-  const queueRefreshMatches = useCallback(() => {
-    if (refreshDebounceRef.current) {
-      clearTimeout(refreshDebounceRef.current);
-    }
-    refreshDebounceRef.current = setTimeout(() => {
-      if (Date.now() - lastRefreshTsRef.current > 900) {
-        lastRefreshTsRef.current = Date.now();
-        refreshMatches();
-      }
-    }, 150);
-  }, [refreshMatches]);
 
   const stackRef = useRef<ExploreStackHandle | null>(null);
   const buttonScale = useRef(new Animated.Value(1)).current;
@@ -374,6 +397,9 @@ export default function ExploreScreen() {
   useEffect(() => {
     setManualLocation(profile?.location || "");
   }, [profile?.location]);
+  useEffect(() => {
+    setManualCountryCode(profileCountryCode || "");
+  }, [profileCountryCode]);
 
   // auto-show prompt once when location is missing
   useEffect(() => {
@@ -403,7 +429,12 @@ export default function ExploreScreen() {
     if (!profile?.id) return;
     setIsSavingLocation(true);
     setLocationError(null);
-    const res = await saveManualCityLocation(profile.id, manualLocation);
+    if (!manualCountryCode) {
+      setLocationError('Please select a country.');
+      setIsSavingLocation(false);
+      return;
+    }
+    const res = await saveManualCityLocation(profile.id, manualLocation, manualCountryCode);
     if (!res.ok) {
       setLocationError('error' in res ? res.error : 'Unable to save location');
     } else {
@@ -413,6 +444,14 @@ export default function ExploreScreen() {
     }
     setIsSavingLocation(false);
   };
+
+  const openManualLocationModal = useCallback(() => {
+    setLocationError(null);
+    setFiltersVisible(false);
+    setTimeout(() => {
+      setManualLocationModalVisible(true);
+    }, 150);
+  }, []);
 
   const handleApplyFilters = () => {
     setFiltersVisible(false);
@@ -1052,21 +1091,44 @@ export default function ExploreScreen() {
           >
             <KeyboardAvoidingView
               style={{ flex: 1 }}
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-              keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 24 : 0}
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 24 : 24}
             >
               <View style={styles.modalBackdrop}>
                 <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setManualLocationModalVisible(false)} />
                 <View style={styles.modalCard}>
-                  <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 12 }}>
+                  <ScrollView
+                    keyboardShouldPersistTaps="handled"
+                    contentContainerStyle={{ paddingBottom: Math.max(12, insets.bottom + 24) }}
+                  >
                     <Text style={styles.modalTitle}>Set your city</Text>
                     <Text style={styles.modalSubtitle}>We'll use this for distance until you enable precise location.</Text>
                     <TextInput
                       style={styles.modalInput}
-                      placeholder="e.g., Accra, Ghana"
+                      placeholder="e.g., Kumasi"
                       value={manualLocation}
                       onChangeText={setManualLocation}
                     />
+                    <Text style={styles.modalLabel}>Country</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.countryChips}>
+                      {COUNTRY_OPTIONS.map((item) => {
+                        const selected = manualCountryCode === item.code;
+                        return (
+                          <TouchableOpacity
+                            key={item.code}
+                            style={[styles.countryChip, selected && styles.countryChipActive]}
+                            onPress={() => {
+                              setManualCountryCode(item.code);
+                              setLocationError(null);
+                            }}
+                          >
+                            <Text style={[styles.countryChipText, selected && styles.countryChipTextActive]}>
+                              {item.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
                     {locationError ? <Text style={styles.locationError}>{locationError}</Text> : null}
                     <View style={styles.modalActions}>
                       <TouchableOpacity
@@ -1233,7 +1295,7 @@ export default function ExploreScreen() {
                         </TouchableOpacity>
                         <TouchableOpacity
                           style={[styles.locationButton, styles.locationGhost]}
-                          onPress={() => setManualLocationModalVisible(true)}
+                          onPress={openManualLocationModal}
                           disabled={isSavingLocation}
                         >
                         <Text style={styles.locationGhostText}>{hasCityOnly ? 'Edit city' : 'Enter city'}</Text>
@@ -1546,6 +1608,20 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#0f172a',
   },
+  modalLabel: { fontSize: 13, fontWeight: '700', color: '#0f172a', marginTop: 14, marginBottom: 8 },
+  countryChips: { paddingBottom: 2 },
+  countryChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#fff',
+    marginRight: 8,
+  },
+  countryChipActive: { backgroundColor: '#eef2ff', borderColor: Colors.light.tint },
+  countryChipText: { fontSize: 13, fontWeight: '600', color: '#0f172a' },
+  countryChipTextActive: { color: Colors.light.tint },
   modalActions: { flexDirection: 'row', marginTop: 16 },
   filterSection: { marginTop: 12, marginBottom: 10 },
   filterLabel: { fontSize: 14, fontWeight: '700', color: '#0f172a' },

@@ -63,20 +63,33 @@ export async function requestAndSavePreciseLocation(profileId: string): Promise<
  * Save a coarse, manual location (city/region) and mark precision as city-level.
  * Clears stored coordinates to avoid implying exact position.
  */
-export async function saveManualCityLocation(profileId: string, locationLabel: string): Promise<Result> {
+export async function saveManualCityLocation(
+  profileId: string,
+  locationLabel: string,
+  countryCode?: string
+): Promise<Result> {
   try {
     const label = locationLabel.trim();
     if (!label) return { ok: false, error: 'Please enter a city or region.' };
 
+    const city = label.split(',')[0]?.trim() || label;
+    const normalizedCountryCode = countryCode ? countryCode.trim().toUpperCase() : '';
+    const updateData: Record<string, any> = {
+      location: city,
+      city,
+      region: city,
+      location_precision: 'CITY',
+      latitude: null,
+      longitude: null,
+      location_updated_at: new Date().toISOString(),
+    };
+    if (normalizedCountryCode) {
+      updateData.current_country_code = normalizedCountryCode;
+    }
+
     const { error } = await supabase
       .from('profiles')
-      .update({
-        location: label,
-        location_precision: 'CITY',
-        latitude: null,
-        longitude: null,
-        location_updated_at: new Date().toISOString(),
-      })
+      .update(updateData)
       .eq('id', profileId);
 
     if (error) {
