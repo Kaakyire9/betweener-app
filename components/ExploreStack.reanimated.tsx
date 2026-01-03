@@ -1,17 +1,17 @@
 import type { Match } from "@/types/match";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import React, { forwardRef, useEffect, useImperativeHandle, useMemo } from "react";
+import { forwardRef, useEffect, useImperativeHandle } from "react";
 import { Dimensions, StyleSheet, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import Animated, {
-  Extrapolate,
-  interpolate,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withTiming,
+    Extrapolate,
+    interpolate,
+    runOnJS,
+    useAnimatedStyle,
+    useSharedValue,
+    withSpring,
+    withTiming,
 } from "react-native-reanimated";
 import ExploreCard from "./ExploreCard";
 
