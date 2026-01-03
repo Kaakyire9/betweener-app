@@ -31,8 +31,7 @@ export default function ExploreHeader({
         </View>
         {onPressFilter ? (
           <TouchableOpacity style={styles.filterButton} onPress={onPressFilter} activeOpacity={0.85}>
-            <MaterialCommunityIcons name="filter-variant" size={18} color="#0f172a" />
-            <Text style={styles.filterText}>Filters</Text>
+            <MaterialCommunityIcons name="filter-variant" size={20} color="#475569" />
           </TouchableOpacity>
         ) : null}
       </View>
@@ -50,24 +49,32 @@ export default function ExploreHeader({
           </TouchableOpacity>
         ))}
       </View>
-
-      <View style={styles.counterRow}>
-        <Text style={styles.counter}>{currentIndex + 1} / {total}</Text>
-        <Text style={styles.counterSubtitle}>Daily Curated{smartCount ? ` • ${smartCount} AI` : ""}</Text>
-      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  header: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12, backgroundColor: "#fff", borderBottomColor: "#f3f4f6", borderBottomWidth: 1 },
-  topRow: { marginBottom: 8, flexDirection: 'row', alignItems: 'center' },
+  header: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8, backgroundColor: "#fff", borderBottomColor: "#f3f4f6", borderBottomWidth: 1 },
+  topRow: { marginBottom: 6, flexDirection: 'row', alignItems: 'center' },
   title: { fontSize: 28, fontWeight: "800", color: "#0f172a" },
-  subtitle: { color: Colors.light.tint, marginTop: 4 },
-  filterButton: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb', backgroundColor: '#f8fafc' },
-  filterText: { marginLeft: 6, fontWeight: '700', color: '#0f172a' },
-  tabContainer: { flexDirection: "row", backgroundColor: "#f8fafc", borderRadius: 12, padding: 6, marginTop: 8 },
-  tab: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8 },
+  subtitle: { color: Colors.light.tint, marginTop: 2 },
+  filterButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#f8fafc',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+  },
+  tabContainer: { flexDirection: "row", backgroundColor: "#f8fafc", borderRadius: 12, padding: 5, marginTop: 6 },
+  tab: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 9, paddingHorizontal: 8, borderRadius: 8 },
   activeTab: { backgroundColor: Colors.light.tint },
   tabText: { fontSize: 13, color: Colors.light.tint },
   activeTabText: { color: "#fff", fontWeight: "700" },
