@@ -28,7 +28,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
 const KM_PER_MILE = 1.60934;
-const MOMENTS_HEIGHT = 64;
+const MOMENTS_HEIGHT = 80;
 const MOMENTS_COLLAPSE_START = 24;
 const MOMENTS_COLLAPSE_END = 110;
 const MOMENTS_MAX_USERS = 20;
@@ -70,6 +70,7 @@ type CompactMomentsStripProps = {
   hasMyActiveMoment: boolean;
   showEmptyState: boolean;
   scrollY: Animated.Value;
+  showLabels?: boolean;
   onPressMyMoment: () => void;
   onPressUserMoment: (userId: string) => void;
   onPressSeeAll: () => void;
@@ -80,6 +81,7 @@ function CompactMomentsStrip({
   hasMyActiveMoment,
   showEmptyState,
   scrollY,
+  showLabels = false,
   onPressMyMoment,
   onPressUserMoment,
   onPressSeeAll,
@@ -126,9 +128,11 @@ function CompactMomentsStrip({
             <MaterialCommunityIcons name="plus" size={12} color="#fff" />
           </View>
         ) : null}
-        <Text style={styles.momentsAvatarLabel} numberOfLines={1}>
-          {label}
-        </Text>
+        {showLabels ? (
+          <Text style={styles.momentsAvatarLabel} numberOfLines={1}>
+            {label}
+          </Text>
+        ) : null}
       </TouchableOpacity>
     );
   };
@@ -138,62 +142,66 @@ function CompactMomentsStrip({
   return (
     <Animated.View style={[styles.momentsStripContainer, { height, opacity, transform: [{ translateY }] }]} pointerEvents="box-none">
       <View style={styles.momentsStripInner}>
-        <View style={styles.momentsStripHeader}>
-          <Text style={styles.momentsStripTitle}>Moments</Text>
-          <TouchableOpacity onPress={onPressSeeAll} activeOpacity={0.85}>
-            <Text style={styles.momentsStripSeeAll}>See all</Text>
-          </TouchableOpacity>
-        </View>
-
         {showEmptyState ? (
           <View style={styles.momentsEmptyRow}>
-            {myUser ? (
-              <TouchableOpacity style={styles.momentsAvatarItem} activeOpacity={0.85} onPress={onPressMyMoment}>
-                <View style={styles.momentsAvatarOuter}>
-                  {myUser.avatarUrl ? (
-                    <Image source={{ uri: myUser.avatarUrl }} style={styles.momentsAvatarImage} />
-                  ) : (
-                    <View style={styles.momentsAvatarPlaceholder}>
-                      <Text style={styles.momentsAvatarInitial}>Y</Text>
-                    </View>
-                  )}
-                </View>
-                {!hasMyActiveMoment ? (
-                  <View style={styles.momentsPlusBadge}>
-                    <MaterialCommunityIcons name="plus" size={12} color="#fff" />
+            <Text style={styles.momentsEmptyTitle}>Moments</Text>
+            <View style={styles.momentsEmptyContent}>
+              {myUser ? (
+                <TouchableOpacity style={styles.momentsAvatarItem} activeOpacity={0.85} onPress={onPressMyMoment}>
+                  <View style={styles.momentsAvatarOuter}>
+                    {myUser.avatarUrl ? (
+                      <Image source={{ uri: myUser.avatarUrl }} style={styles.momentsAvatarImage} />
+                    ) : (
+                      <View style={styles.momentsAvatarPlaceholder}>
+                        <Text style={styles.momentsAvatarInitial}>Y</Text>
+                      </View>
+                    )}
                   </View>
-                ) : null}
-                <Text style={styles.momentsAvatarLabel} numberOfLines={1}>
-                  Your Moment
-                </Text>
-              </TouchableOpacity>
-            ) : null}
-            <Text style={styles.momentsEmptyText}>
-              Post a Moment to start the vibe
-            </Text>
+                  {!hasMyActiveMoment ? (
+                    <View style={styles.momentsPlusBadge}>
+                      <MaterialCommunityIcons name="plus" size={12} color="#fff" />
+                    </View>
+                  ) : null}
+                </TouchableOpacity>
+              ) : null}
+              <View style={styles.momentsEmptyCopyWrap}>
+                <Text style={styles.momentsEmptyText}>Post a Moment to start the vibe</Text>
+              </View>
+            </View>
+            <TouchableOpacity onPress={onPressSeeAll} activeOpacity={0.85} style={styles.momentsSeeAllPill}>
+              <MaterialCommunityIcons name="send" size={14} color={Colors.light.tint} style={{ marginRight: 6 }} />
+              <Text style={styles.momentsStripSeeAll}>See all</Text>
+            </TouchableOpacity>
           </View>
         ) : (
-          <View style={styles.momentsListWrap}>
-            <FlatList
-              data={users}
-              keyExtractor={(item) => item.userId}
-              renderItem={renderItem}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              initialNumToRender={8}
-              windowSize={5}
-              maxToRenderPerBatch={8}
-              removeClippedSubviews
-              contentContainerStyle={styles.momentsListContent}
-            />
-            {users.length > 6 ? (
-              <LinearGradientSafe
-                colors={['rgba(248,250,252,0)', 'rgba(248,250,252,1)']}
-                start={[0, 0]}
-                end={[1, 0]}
-                style={styles.momentsRightFade}
+          <View style={styles.momentsInlineRow}>
+            <Text style={styles.momentsStripTitle}>Moments</Text>
+            <View style={styles.momentsInlineList}>
+              <FlatList
+                data={users}
+                keyExtractor={(item) => item.userId}
+                renderItem={renderItem}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                initialNumToRender={8}
+                windowSize={5}
+                maxToRenderPerBatch={8}
+                removeClippedSubviews
+                contentContainerStyle={styles.momentsListInlineContent}
               />
-            ) : null}
+              {users.length > 6 ? (
+                <LinearGradientSafe
+                  colors={['rgba(255,255,255,0)', 'rgba(255,255,255,1)']}
+                  start={[0, 0]}
+                  end={[1, 0]}
+                  style={styles.momentsRightFade}
+                />
+              ) : null}
+            </View>
+            <TouchableOpacity onPress={onPressSeeAll} activeOpacity={0.85} style={styles.momentsSeeAllPill}>
+              <MaterialCommunityIcons name="send" size={14} color={Colors.light.tint} style={{ marginRight: 6 }} />
+              <Text style={styles.momentsStripSeeAll}>See all</Text>
+            </TouchableOpacity>
           </View>
         )}
       </View>
@@ -1564,53 +1572,74 @@ const styles = StyleSheet.create({
   momentsStripContainer: {
     overflow: 'hidden',
     paddingHorizontal: 20,
-    paddingBottom: 6,
+    paddingBottom: 8,
   },
   momentsStripInner: {
     flex: 1,
-    borderRadius: 16,
-    backgroundColor: '#f8fafc',
+    borderRadius: 18,
+    backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: 'rgba(15,23,42,0.06)',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 6,
   },
-  momentsStripHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 },
-  momentsStripTitle: { fontSize: 12, fontWeight: '700', color: '#0f172a' },
-  momentsStripSeeAll: { fontSize: 12, fontWeight: '600', color: Colors.light.tint },
+  momentsStripHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  momentsStripTitle: { fontSize: 14, fontWeight: '800', color: '#0f172a' },
+  momentsInlineRow: { flexDirection: 'row', alignItems: 'center' },
+  momentsInlineList: { flex: 1, marginHorizontal: 12 },
+  momentsListInlineContent: { alignItems: 'center', paddingRight: 12 },
+  momentsSeeAllPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.08)',
+    backgroundColor: '#f8fafc',
+  },
+  momentsStripSeeAll: { fontSize: 12, fontWeight: '700', color: Colors.light.tint },
   momentsListWrap: { flex: 1 },
   momentsListContent: { paddingRight: 18 },
-  momentsAvatarItem: { width: 54, alignItems: 'center', marginRight: 10 },
+  momentsAvatarItem: { width: 62, alignItems: 'center', marginRight: 12 },
   momentsAvatarOuter: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 2,
-    borderColor: 'rgba(15,23,42,0.08)',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 3,
+    borderColor: 'rgba(240,210,160,0.85)',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  momentsAvatarActive: { borderColor: Colors.light.tint },
-  momentsAvatarImage: { width: 40, height: 40, borderRadius: 20 },
-  momentsAvatarPlaceholder: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' },
+  momentsAvatarActive: { borderColor: '#f3c784' },
+  momentsAvatarImage: { width: 46, height: 46, borderRadius: 23 },
+  momentsAvatarPlaceholder: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' },
   momentsAvatarInitial: { fontSize: 14, fontWeight: '700', color: '#64748b' },
-  momentsAvatarLabel: { fontSize: 10, color: '#374151', marginTop: 2, textAlign: 'center' },
+  momentsAvatarLabel: { fontSize: 11, color: '#374151', marginTop: 4, textAlign: 'center' },
   momentsPlusBadge: {
     position: 'absolute',
-    right: 4,
-    top: 26,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: Colors.light.tint,
+    right: 0,
+    top: 30,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#f59e0b',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
     borderColor: '#fff',
   },
-  momentsEmptyRow: { flexDirection: 'row', alignItems: 'center' },
-  momentsEmptyText: { marginLeft: 12, fontSize: 12, color: '#64748b', flex: 1 },
-  momentsRightFade: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 28 },
+  momentsEmptyRow: { flexDirection: 'row', alignItems: 'flex-end' },
+  momentsEmptyTitle: { fontSize: 14, fontWeight: '800', color: '#0f172a' },
+  momentsEmptyContent: { flexDirection: 'row', alignItems: 'flex-end', marginLeft: 12, flex: 1 },
+  momentsEmptyCopyWrap: { justifyContent: 'flex-end', marginBottom: 2, flex: 1 },
+  momentsEmptyText: { marginLeft: 10, fontSize: 12, color: '#94a3b8' },
+  momentsRightFade: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 34 },
   actionButtons: {
     position: 'absolute',
     left: 0,
