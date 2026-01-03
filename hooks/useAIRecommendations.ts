@@ -1,22 +1,60 @@
 import { supabase } from '@/lib/supabase';
 import { Match } from '@/types/match';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Linking } from 'react-native';
+import { DeviceEventEmitter, Linking } from 'react-native';
 
 // Tunable window for "Active" tab (minutes)
 const ACTIVE_WINDOW_MINUTES = 15;
+const DISTANCE_UNIT_KEY = 'distance_unit';
+const KM_PER_MILE = 1.60934;
+const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
+
+type DistanceUnit = 'auto' | 'km' | 'mi';
+
+const resolveAutoUnit = (): 'km' | 'mi' => {
+  try {
+    const locale = Intl.DateTimeFormat().resolvedOptions().locale || '';
+    return /[-_]US\b/i.test(locale) ? 'mi' : 'km';
+  } catch {
+    return 'km';
+  }
+};
+
+const parseDistanceKmFromLabel = (label?: string | null): number | undefined => {
+  if (!label) return undefined;
+  const lower = label.toLowerCase();
+  const lessMatch = lower.match(/<\s*1\s*(km|mi|mile|miles)\b/);
+  if (lessMatch) {
+    return lessMatch[1].startsWith('mi') || lessMatch[1].startsWith('mile') ? 0.5 * KM_PER_MILE : 0.5;
+  }
+  const kmMatch = lower.match(/([\d.]+)\s*km\b/);
+  if (kmMatch) return Number(kmMatch[1]);
+  const miMatch = lower.match(/([\d.]+)\s*(mi|mile|miles)\b/);
+  if (miMatch) return Number(miMatch[1]) * KM_PER_MILE;
+  return undefined;
+};
 
 // Format distance with sensible rounding and short strings
-function formatDistance(distanceKm?: number | null, fallback?: string) {
+function formatDistance(distanceKm?: number | null, fallback?: string, unit: DistanceUnit = 'km') {
   if (distanceKm == null || Number.isNaN(Number(distanceKm))) {
     return fallback || '';
   }
   const km = Number(distanceKm);
-  if (km < 0.05) return '<50 m away';
-  if (km < 1) return `${Math.round(km * 1000)} m away`;
-  if (km < 10) return `${km.toFixed(1)} km away`;
-  if (km < 200) return `${Math.round(km)} km away`;
-  return `${Math.round(km)} km away`;
+  const resolvedUnit: 'km' | 'mi' = unit === 'mi' ? 'mi' : 'km';
+  const value = resolvedUnit === 'mi' ? km / KM_PER_MILE : km;
+  const unitSingular = resolvedUnit === 'mi' ? 'mile' : 'km';
+  const unitPlural = resolvedUnit === 'mi' ? 'miles' : 'km';
+
+  if (value < 1) return `<1 ${unitSingular} away`;
+  if (value < 10) {
+    const pretty = Number(value.toFixed(1));
+    const label = resolvedUnit === 'mi' && pretty >= 1 && pretty < 1.5 ? unitSingular : unitPlural;
+    return `${pretty.toFixed(1)} ${label} away`;
+  }
+  const rounded = Math.round(value);
+  const label = resolvedUnit === 'mi' && rounded === 1 ? unitSingular : unitPlural;
+  return `${rounded} ${label} away`;
 }
 
 async function signProfileVideoUrl(path?: string | null) {
@@ -31,104 +69,88 @@ async function signProfileVideoUrl(path?: string | null) {
   }
 }
 
-// lightweight mock generator (expandable)
-function createMockMatches(): Match[] {
-  const now = Date.now();
-  const threeHoursMs = 3 * 60 * 60 * 1000;
-  return [
-    {
-      id: 'm-001',
-      name: 'Sena',
-      age: 29,
-      tagline: 'Coffee + trails = perfect weekend',
-      interests: ['Hiking', 'Coffee', 'Design'],
-      avatar_url: 'https://images.unsplash.com/photo-1545996124-8e6f5b9e2f6d?w=800&q=80&auto=format&fit=crop&crop=face',
-      distance: '1.2 km away',
-      isActiveNow: false,
-      lastActive: new Date(now - 30 * 60 * 1000).toISOString(), // 30m ago
-      verified: true,
-      personalityTags: ['Calm', 'Family Oriented', 'Goal Driven'],
-      aiScore: 92,
-    } as Match,
-    {
-      id: 'm-002',
-      name: 'Daniel',
-      age: 31,
-      tagline: 'Weekend coder, weekday dad',
-      interests: ['Technology', 'Cooking', 'Running'],
-      avatar_url: 'https://images.unsplash.com/photo-1544005313-1d1d3a2b7f9a?w=800&q=80&auto=format&fit=crop&crop=face',
-      distance: '6.8 km away',
-      isActiveNow: true,
-      lastActive: new Date(now - 2 * 60 * 1000).toISOString(), // 2m ago
-      verified: false,
-      personalityTags: ['Goal Driven', 'Adventurous'],
-      aiScore: 87,
-    } as Match,
-    {
-      id: 'm-003',
-      name: 'Esi',
-      age: 26,
-      tagline: 'Painter, coffee snob, plant parent',
-      interests: ['Art', 'Plants', 'Travel'],
-      avatar_url: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=800&q=80&auto=format&fit=crop&crop=face',
-      distance: '3.4 km away',
-      isActiveNow: false,
-      lastActive: new Date(now - 2 * 60 * 60 * 1000).toISOString(), // 2 hours ago (recent)
-      verified: false,
-      personalityTags: ['Creative', 'Curious', 'Calm'],
-      aiScore: 78,
-    } as Match,
-    {
-      id: 'm-004',
-      name: 'Kofi',
-      age: 28,
-      tagline: 'Music producer & night market fan',
-      interests: ['Music', 'Food', 'Photography'],
-      avatar_url: 'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=800&q=80&auto=format&fit=crop&crop=face',
-      distance: '12.1 km away',
-      isActiveNow: false,
-      lastActive: new Date(now - (5 * 60 * 60 * 1000)).toISOString(), // 5 hours ago
-      verified: true,
-      personalityTags: ['Outgoing', 'Family Oriented'],
-      aiScore: 65,
-    } as Match,
-    {
-      id: 'm-005',
-      name: 'Abena',
-      age: 24,
-      tagline: 'Bookshop evenings and plant swaps',
-      interests: ['Books', 'Gardening', 'Design'],
-      avatar_url: 'https://images.unsplash.com/photo-1520813792240-56fc4a3765a7?w=800&q=80&auto=format&fit=crop&crop=face',
-      distance: '9.9 km away',
-      isActiveNow: false,
-      lastActive: new Date(now - (20 * 60 * 60 * 1000)).toISOString(), // 20 hours ago
-      verified: false,
-      personalityTags: ['Thoughtful', 'Calm'],
-      aiScore: 71,
-    } as Match,
-  ];
-}
-// helper to return mock matches with optional dev-only injections
-function getDebugMockMatches(): Match[] {
-  const list = createMockMatches();
-  if (typeof __DEV__ !== 'undefined' && __DEV__) {
-    try {
-      if (list[0]) (list[0] as any).personalityTags = ['Calm', 'Family Oriented', 'Goal Driven'];
-      if (list[1]) (list[1] as any).personalityTags = ['Adventurous', 'Curious'];
-    } catch (e) {}
+export default function useAIRecommendations(
+  userId?: string,
+  opts?: {
+    mutualMatchTestIds?: string[];
+    mode?: 'forYou' | 'nearby' | 'active';
+    activeWindowMinutes?: number;
+    distanceUnit?: DistanceUnit;
   }
-  return list;
-}
-
-export default function useAIRecommendations(userId?: string, opts?: { mutualMatchTestIds?: string[]; mode?: 'forYou' | 'nearby' | 'active'; activeWindowMinutes?: number }) {
+) {
   // Start empty; prefer server-sourced profiles. Mocks are only a fallback
   // when the server cannot be reached.
   const [matches, setMatches] = useState<Match[]>([]);
+  const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [lastMutualMatch, setLastMutualMatch] = useState<Match | null>(null);
   const [swipeHistory, setSwipeHistory] = useState<Array<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }>>([]);
   const mountedRef = useRef(true);
   const mode = opts?.mode ?? 'forYou';
   const activeWindowMinutes = opts?.activeWindowMinutes ?? ACTIVE_WINDOW_MINUTES;
+  const effectiveDistanceUnit =
+    opts?.distanceUnit && opts.distanceUnit !== 'auto' ? opts.distanceUnit : distanceUnit;
+  const resolvedDistanceUnit = useMemo(
+    () => (effectiveDistanceUnit === 'auto' ? resolveAutoUnit() : effectiveDistanceUnit),
+    [effectiveDistanceUnit]
+  );
+
+  const getStoredDistanceUnit = useCallback(async (): Promise<DistanceUnit> => {
+    try {
+      const stored = await AsyncStorage.getItem(DISTANCE_UNIT_KEY);
+      if (stored === 'auto' || stored === 'km' || stored === 'mi') {
+        return stored;
+      }
+    } catch {}
+    return effectiveDistanceUnit;
+  }, [effectiveDistanceUnit]);
+
+  useEffect(() => {
+    setMatches((prev) =>
+      prev.map((m) => {
+        const fallback = (m as any).region || (m as any).location || m.distance;
+        let distanceKm = (m as any).distanceKm;
+        if (typeof distanceKm !== 'number' || Number.isNaN(distanceKm)) {
+          distanceKm = parseDistanceKmFromLabel(m.distance);
+        }
+        if (typeof distanceKm !== 'number' || Number.isNaN(distanceKm)) {
+          return m;
+        }
+        return {
+          ...m,
+          distance: formatDistance(distanceKm, fallback, resolvedDistanceUnit),
+          distanceKm,
+        } as Match;
+      })
+    );
+  }, [resolvedDistanceUnit]);
+
+  useEffect(() => {
+    let mounted = true;
+    const loadDistanceUnit = async () => {
+      try {
+        const stored = await AsyncStorage.getItem(DISTANCE_UNIT_KEY);
+        if (!mounted) return;
+        if (stored === 'auto' || stored === 'km' || stored === 'mi') {
+          setDistanceUnit(stored);
+        }
+      } catch {}
+    };
+    void loadDistanceUnit();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(DISTANCE_UNIT_EVENT, (next: DistanceUnit) => {
+      if (next === 'auto' || next === 'km' || next === 'mi') {
+        setDistanceUnit(next);
+      }
+    });
+    return () => {
+      sub.remove();
+    };
+  }, []);
 
   // simple mock: when a swipe is recorded, remove the head and append a regenerated match
   const recordSwipe = useCallback((id: string, action: 'like' | 'dislike' | 'superlike', index = 0) => {
@@ -137,19 +159,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
       if (!head) return prev;
       return [...prev, { id, action, index, match: head }];
     });
-    setMatches((prev: Match[]) => {
-      const next = prev.slice(1);
-      // append a regenerated match to keep list length stable (mock behavior)
-      const generated: Match = {
-        id: String(Date.now()),
-        name: `New-${Math.floor(Math.random() * 1000)}`,
-        age: 20 + Math.floor(Math.random() * 12),
-        interests: ['Music', 'Movies'],
-        avatar_url: prev[0]?.avatar_url,
-        distance: '',
-      } as Match;
-      return [...next, generated];
-    });
+    setMatches((prev: Match[]) => prev.slice(1));
     // Persist the swipe to Supabase if configured and we have a userId
     (async () => {
       try {
@@ -406,6 +416,8 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
 
   const fetchMatchesFromServer = useCallback(async () => {
     try {
+      const storedUnit = await getStoredDistanceUnit();
+      const unitForFormat: DistanceUnit = storedUnit === 'auto' ? resolveAutoUnit() : storedUnit;
       console.log('[useAIRecommendations] fetchMatchesFromServer starting', { userId });
       const resolveProfileVideos = async (list: Match[]) => {
         if (!Array.isArray(list) || list.length === 0) return list;
@@ -442,17 +454,20 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
                 tagline: p.bio || '',
                 interests: Array.isArray(p.interests) ? p.interests : [],
                 avatar_url: p.avatar_url || undefined,
-                distance: formatDistance(p.distance_km, p.region || p.location),
+                distance: formatDistance(p.distance_km, p.location || p.region, unitForFormat),
+                distanceKm: typeof p.distance_km === 'number' ? p.distance_km : undefined,
                 isActiveNow: !!p.online || !!p.is_active,
                 lastActive: p.last_active ?? null,
                 verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
                 personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
                 aiScore: typeof p.ai_score === 'number' ? p.ai_score : undefined,
                 profileVideo: (p as any).profile_video || undefined,
+                location: p.location || undefined,
                 tribe: p.tribe,
                 religion: p.religion,
                 region: p.region,
                 current_country: (p as any).current_country,
+                current_country_code: (p as any).current_country_code,
                 location_precision: (p as any).location_precision,
               } as Match));
               const withSigned = await resolveProfileVideos(mapped);
@@ -477,17 +492,20 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
                 tagline: p.bio || '',
                 interests: Array.isArray(p.interests) ? p.interests : [],
                 avatar_url: p.avatar_url || undefined,
-                distance: p.region || '',
+                distance: p.location || p.region || '',
+                distanceKm: undefined,
                 isActiveNow: !!p.online || !!p.is_active,
                 lastActive: p.last_active ?? null,
                 verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
                 personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
                 aiScore: typeof p.ai_score === 'number' ? p.ai_score : undefined,
                 profileVideo: (p as any).profile_video || undefined,
+                location: p.location || undefined,
                 tribe: p.tribe,
                 religion: p.religion,
                 region: p.region,
                 current_country: (p as any).current_country,
+                current_country_code: (p as any).current_country_code,
                 location_precision: (p as any).location_precision,
               } as Match));
               const withSigned = await resolveProfileVideos(mapped);
@@ -505,9 +523,9 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
         // due to missing columns (Postgres error 42703), retry with a
         // minimal safe column list to avoid falling back to mocks.
         const extendedSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, online, is_active, verification_level, ai_score, profile_video';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, online, is_active, verification_level, ai_score, profile_video, current_country, current_country_code, location_precision';
         const minimalSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, online, is_active, verification_level, profile_video';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, online, is_active, verification_level, profile_video, current_country, current_country_code, location_precision';
 
         let data: any[] | null = null;
         let error: any = null;
@@ -611,12 +629,14 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
 
             // compute distance when we have coordinates; otherwise fall back to stored location label
             let distanceStr = '';
+            let distanceKm: number | undefined;
             if (userCoords && p.latitude != null && p.longitude != null && userCoords.latitude != null && userCoords.longitude != null) {
               try {
                 const km = haversineKm(userCoords.latitude!, userCoords.longitude!, Number(p.latitude), Number(p.longitude));
-                distanceStr = formatDistance(km, p.region || p.location);
+                distanceStr = formatDistance(km, p.location || p.region, unitForFormat);
+                distanceKm = km;
               } catch (e) {
-                distanceStr = p.region || p.location || '';
+                distanceStr = p.location || p.region || '';
               }
             } else if (p.location || p.region) {
               distanceStr = p.location || p.region || '';
@@ -632,16 +652,19 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
               interests: interestsArr || [],
               avatar_url: p.avatar_url || undefined,
               distance: distanceStr || '',
+              distanceKm: typeof distanceKm === 'number' && !Number.isNaN(distanceKm) ? distanceKm : undefined,
               isActiveNow: !!p.online || !!p.is_active,
               lastActive: p.last_active ?? null,
               verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
               personalityTags: ptags || [],
               aiScore: typeof p.ai_score === 'number' ? p.ai_score : undefined,
               profileVideo: p.profile_video || undefined,
+              location: p.location || undefined,
               tribe: p.tribe,
               religion: p.religion,
               region: p.region,
               current_country: p.current_country,
+              current_country_code: (p as any).current_country_code,
               location_precision: p.location_precision,
             } as Match);
           });
@@ -670,14 +693,14 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
       }
     } catch (e) {
       console.log('[useAIRecommendations] fetch error', e);
-      // fall through to mocks
+      setMatches([]);
+      return;
     }
     // If we reached here it means a server fetch was attempted and failed
-    // (or returned no profiles). Use debug mocks as a fallback only in
-    // that case to preserve developer QA flows.
-    console.log('[useAIRecommendations] using debug mock fallback');
-    setMatches(() => getDebugMockMatches());
-  }, [userId, mode, activeWindowMinutes]);
+    // (or returned no profiles). Leave matches empty to avoid mock data.
+    console.log('[useAIRecommendations] leaving matches empty after fetch failure');
+    setMatches([]);
+  }, [userId, mode, activeWindowMinutes, resolvedDistanceUnit, getStoredDistanceUnit]);
 
     // Fetch matches on mount and when userId changes
     useEffect(() => {
@@ -697,7 +720,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
       // fetch optional profile fields
       const { data: profileData, error: pErr } = await supabase
         .from('profiles')
-              .select('id, profile_video, latitude, longitude, region, tribe, religion, current_country, location_precision, personality_type, online, is_active, verification_level')
+              .select('id, profile_video, latitude, longitude, region, tribe, religion, current_country, current_country_code, location_precision, personality_type, online, is_active, verification_level')
         .eq('id', profileId)
         .limit(1)
         .single();
@@ -744,6 +767,7 @@ export default function useAIRecommendations(userId?: string, opts?: { mutualMat
             religion: profileData?.religion ?? (m as any).religion,
             region: profileData?.region ?? (m as any).region,
             current_country: profileData?.current_country ?? (m as any).current_country,
+            current_country_code: profileData?.current_country_code ?? (m as any).current_country_code,
             location_precision: profileData?.location_precision ?? (m as any).location_precision,
           } as Match;
           return merged;

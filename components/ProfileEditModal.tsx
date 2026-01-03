@@ -4,12 +4,14 @@ import { Colors } from '@/constants/theme';
 import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  DeviceEventEmitter,
   FlatList,
   Image,
   Modal,
@@ -21,6 +23,17 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+const DISTANCE_UNIT_KEY = 'distance_unit';
+const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
+
+type DistanceUnit = 'auto' | 'km' | 'mi';
+
+const DISTANCE_UNIT_OPTIONS: { value: DistanceUnit; label: string; subtitle?: string }[] = [
+  { value: 'auto', label: 'Auto', subtitle: 'Recommended' },
+  { value: 'km', label: 'Kilometers' },
+  { value: 'mi', label: 'Miles' },
+];
 
 // Predefined options for profile fields
 const HEIGHT_OPTIONS = [
@@ -182,6 +195,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const [customLanguage, setCustomLanguage] = useState('');
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
   const [isVerificationModalVisible, setIsVerificationModalVisible] = useState(false);
+  const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   
   // DIASPORA custom input states (simplified)
   const [customFutureGhanaPlans, setCustomFutureGhanaPlans] = useState('');
@@ -263,6 +277,17 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     if (visible) {
       fetchAvailableInterests();
       fetchUserInterests();
+      const loadDistanceUnit = async () => {
+        try {
+          const stored = await AsyncStorage.getItem(DISTANCE_UNIT_KEY);
+          if (stored === 'auto' || stored === 'km' || stored === 'mi') {
+            setDistanceUnit(stored);
+          } else {
+            setDistanceUnit('auto');
+          }
+        } catch {}
+      };
+      void loadDistanceUnit();
     }
   }, [visible, profile]);
 
@@ -830,6 +855,13 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       if (error) {
         console.error('Profile update error:', error);
         throw error;
+      }
+
+      try {
+        await AsyncStorage.setItem(DISTANCE_UNIT_KEY, distanceUnit);
+        DeviceEventEmitter.emit(DISTANCE_UNIT_EVENT, distanceUnit);
+      } catch (storageError) {
+        console.error('Error saving distance unit:', storageError);
       }
 
       // Save interests separately through profile_interests table
@@ -1464,6 +1496,31 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                 ))}
               </View>
             )}
+          </View>
+
+          {/* Distance Unit Section */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Distance Unit</Text>
+            <View style={styles.distanceUnitGroup}>
+              {DISTANCE_UNIT_OPTIONS.map((option) => {
+                const selected = distanceUnit === option.value;
+                return (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={styles.distanceUnitRow}
+                    onPress={() => setDistanceUnit(option.value)}
+                  >
+                    <View style={[styles.distanceUnitOuter, selected && styles.distanceUnitOuterSelected]}>
+                      {selected && <View style={styles.distanceUnitInner} />}
+                    </View>
+                    <View style={styles.distanceUnitText}>
+                      <Text style={styles.distanceUnitLabel}>{option.label}</Text>
+                      {option.subtitle ? <Text style={styles.distanceUnitSubtitle}>{option.subtitle}</Text> : null}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
 
           {/* DIASPORA Section - Detail Refinement Only */}
@@ -2405,6 +2462,52 @@ const styles = StyleSheet.create({
   removeInterestButton: {
     marginLeft: 6,
     padding: 2,
+  },
+  distanceUnitGroup: {
+    gap: 12,
+  },
+  distanceUnitRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  distanceUnitOuter: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#cbd5f0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  distanceUnitOuterSelected: {
+    borderColor: Colors.light.tint,
+  },
+  distanceUnitInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.light.tint,
+  },
+  distanceUnitText: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  distanceUnitLabel: {
+    fontSize: 16,
+    fontFamily: 'Manrope_600SemiBold',
+    color: '#111827',
+  },
+  distanceUnitSubtitle: {
+    fontSize: 12,
+    fontFamily: 'Manrope_400Regular',
+    color: '#6b7280',
+    marginTop: 2,
   },
   statusDisplay: {
     padding: 16,

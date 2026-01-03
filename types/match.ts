@@ -10,6 +10,7 @@ export type Match = {
   interests: string[];
   avatar_url?: string;
   distance?: string;
+  distanceKm?: number;
   lastActive?: string;
   isActiveNow?: boolean;
   verified?: boolean;
@@ -18,5 +19,6 @@ export type Match = {
   aiScore?: number;
   region?: string;
   current_country?: string;
+  current_country_code?: string;
   location_precision?: string;
 };

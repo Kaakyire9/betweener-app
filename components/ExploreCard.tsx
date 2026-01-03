@@ -22,6 +22,27 @@ try {
 // helper to access the animated View component (supports default export shape)
 const ReanimatedAnimated: any = ReanimatedModule ? (ReanimatedModule.default || ReanimatedModule) : null;
 
+const isDistanceLabel = (label?: string) => {
+  if (!label) return false;
+  const lower = label.toLowerCase();
+  return lower.includes('away') || /\b(km|mi|mile|miles)\b/.test(lower) || /<\s*1/.test(lower);
+};
+
+const getCityOnly = (label?: string) => {
+  if (!label) return '';
+  const parts = String(label).split(',');
+  return parts[0]?.trim() || '';
+};
+
+const toFlagEmoji = (code?: string) => {
+  if (!code) return '';
+  const normalized = String(code).trim().toUpperCase();
+  if (normalized.length !== 2) return '';
+  const first = normalized.charCodeAt(0);
+  const second = normalized.charCodeAt(1);
+  if (first < 65 || first > 90 || second < 65 || second > 90) return '';
+  return String.fromCodePoint(0x1f1e6 + (first - 65), 0x1f1e6 + (second - 65));
+};
 // safe-area detection (optional, measured if available)
 let useSafeAreaInsetsHook: any = null;
 let hasSafeAreaHook = false;
@@ -33,6 +54,19 @@ try {
 } catch (e) {}
 
 export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress }: { match: Match; onPress?: (id: string) => void; isPreviewing?: boolean; onPlayPress?: (id: string) => void; }) {
+  const isManualLocation = (match as any).location_precision === 'CITY';
+  const locationLabel = isManualLocation ? '' : getCityOnly(match.location || match.region || '');
+  const distanceLabel = match.distance || '';
+  const showDistance = isDistanceLabel(distanceLabel);
+  const locationDisplayBase =
+    showDistance && locationLabel && distanceLabel !== locationLabel
+      ? `${distanceLabel} \u00b7 ${locationLabel}`
+      : distanceLabel || locationLabel;
+  const countryFlag = toFlagEmoji((match as any).current_country_code);
+  const locationDisplay = locationDisplayBase
+    ? `${locationDisplayBase}${countryFlag ? ` ${countryFlag}` : ''}`
+    : countryFlag;
+
   // compute recently active (within last 3 hours)
   const recentlyActive = (() => {
     if (!match.lastActive) return false;
@@ -365,10 +399,12 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
 
           {null}
 
-          <View style={styles.locationRow}>
-            <MaterialCommunityIcons name="map-marker" size={14} color="#fff" />
-            <Text style={styles.location}>{match.distance}</Text>
-          </View>
+          {locationDisplay ? (
+            <View style={styles.locationRow}>
+              <MaterialCommunityIcons name="map-marker" size={14} color="#fff" />
+              <Text style={styles.location}>{locationDisplay}</Text>
+            </View>
+          ) : null}
 
           <View style={styles.tags}>
             {(() => {

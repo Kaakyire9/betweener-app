@@ -13,15 +13,32 @@ import { useMoments } from '@/hooks/useMoments';
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 
 import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe, { isLinearGradientAvailable } from "@/components/NativeWrappers/LinearGradientSafe";
 import { router } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Animated, Easing, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Animated, DeviceEventEmitter, Easing, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+
+const DISTANCE_UNIT_KEY = 'distance_unit';
+const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
+const KM_PER_MILE = 1.60934;
+
+type DistanceUnit = 'auto' | 'km' | 'mi';
+
+const resolveAutoUnit = (): 'km' | 'mi' => {
+  try {
+    const locale = Intl.DateTimeFormat().resolvedOptions().locale || '';
+    return /[-_]US\b/i.test(locale) ? 'mi' : 'km';
+  } catch {
+    return 'km';
+  }
+};
 
 export default function ExploreScreen() {
   const insets = useSafeAreaInsets();
@@ -42,7 +59,7 @@ export default function ExploreScreen() {
   const [activeWindowMinutes, setActiveWindowMinutes] = useState(15);
   const mode = activeTab === 'nearby' ? 'nearby' : activeTab === 'active' ? 'active' : 'forYou';
   const { matches, recordSwipe, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch, fetchProfileDetails } =
-    useAIRecommendations(profile?.id, { mutualMatchTestIds: QA_MUTUAL_IDS, mode, activeWindowMinutes });
+    useAIRecommendations(profile?.id, { mutualMatchTestIds: QA_MUTUAL_IDS, mode, activeWindowMinutes, distanceUnit });
 
   const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
   const { momentUsers, loading: momentsLoading, refresh: refreshMoments } = useMoments({
@@ -59,6 +76,57 @@ export default function ExploreScreen() {
       setCelebrationMatch(lastMutualMatch);
     }
   }, [lastMutualMatch]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let mounted = true;
+      const loadDistanceUnit = async () => {
+        try {
+          const stored = await AsyncStorage.getItem(DISTANCE_UNIT_KEY);
+          if (!mounted) return;
+          if (stored === 'auto' || stored === 'km' || stored === 'mi') {
+            setDistanceUnit((prev) => {
+              if (prev !== stored) {
+                queueRefreshMatches();
+                return stored;
+              }
+              return prev;
+            });
+          }
+        } catch {}
+      };
+      void loadDistanceUnit();
+      return () => {
+        mounted = false;
+        if (refreshDebounceRef.current) {
+          clearTimeout(refreshDebounceRef.current);
+          refreshDebounceRef.current = null;
+        }
+      };
+    }, [queueRefreshMatches])
+  );
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(DISTANCE_UNIT_EVENT, (next: DistanceUnit) => {
+      if (next === 'auto' || next === 'km' || next === 'mi') {
+        setDistanceUnit((prev) => {
+          if (prev !== next) {
+            queueRefreshMatches();
+            return next;
+          }
+          return prev;
+        });
+      }
+    });
+    return () => {
+      sub.remove();
+    };
+  }, [queueRefreshMatches]);
+
+  const resolvedDistanceUnit = useMemo(
+    () => (distanceUnit === 'auto' ? resolveAutoUnit() : distanceUnit),
+    [distanceUnit]
+  );
   const [currentIndex, setCurrentIndex] = useState(0);
 
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
@@ -71,12 +139,27 @@ export default function ExploreScreen() {
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [distanceFilterKm, setDistanceFilterKm] = useState<number | null>(null);
+  const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [minAge, setMinAge] = useState<number>(18);
   const [maxAge, setMaxAge] = useState<number>(60);
   const [religionFilter, setReligionFilter] = useState<string | null>(null);
   const [locationQuery, setLocationQuery] = useState<string>('');
   const prefetchedDetailsRef = useRef<Set<string>>(new Set());
   const prefetchInFlightRef = useRef<Set<string>>(new Set());
+  const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastRefreshTsRef = useRef<number>(0);
+
+  const queueRefreshMatches = useCallback(() => {
+    if (refreshDebounceRef.current) {
+      clearTimeout(refreshDebounceRef.current);
+    }
+    refreshDebounceRef.current = setTimeout(() => {
+      if (Date.now() - lastRefreshTsRef.current > 900) {
+        lastRefreshTsRef.current = Date.now();
+        refreshMatches();
+      }
+    }, 150);
+  }, [refreshMatches]);
 
   const stackRef = useRef<ExploreStackHandle | null>(null);
   const buttonScale = useRef(new Animated.Value(1)).current;
@@ -203,12 +286,29 @@ export default function ExploreScreen() {
   // when the server couldn't provide any profiles. Apply client-side filters (e.g., verified).
   const parseDistanceKm = (d?: string | null) => {
     if (!d) return null;
-    const kmMatch = d.match(/([\d.]+)\s*km/i);
+    const lower = d.toLowerCase();
+    if (/<\s*1\s*(km|mi|mile|miles)\b/.test(lower)) {
+      return /<\s*1\s*(mi|mile|miles)\b/.test(lower) ? KM_PER_MILE : 1;
+    }
+    const kmMatch = lower.match(/([\d.]+)\s*km\b/);
     if (kmMatch) return Number(kmMatch[1]);
-    const mMatch = d.match(/([\d.]+)\s*m\b/i);
+    const miMatch = lower.match(/([\d.]+)\s*(mi|mile|miles)\b/);
+    if (miMatch) return Number(miMatch[1]) * KM_PER_MILE;
+    const mMatch = lower.match(/([\d.]+)\s*m\b/);
     if (mMatch) return Number(mMatch[1]) / 1000;
     return null;
   };
+
+  const distanceChipOptions = useMemo(() => {
+    const base = [5, 10, 25, 50, 100];
+    if (resolvedDistanceUnit === 'mi') {
+      return base.map((mi) => ({
+        label: `${mi} mi`,
+        km: Number((mi * KM_PER_MILE).toFixed(3)),
+      }));
+    }
+    return base.map((km) => ({ label: `${km} km`, km }));
+  }, [resolvedDistanceUnit]);
 
   const distinctReligions = useMemo(() => {
     const set = new Set<string>();
@@ -263,7 +363,7 @@ export default function ExploreScreen() {
 
   const hasPreciseCoords = profile?.latitude != null && profile?.longitude != null;
   const hasCityOnly = !!profile?.location && profile?.location_precision === 'CITY';
-  const needsLocationPrompt = !hasPreciseCoords && !hasCityOnly;
+  const needsLocationPrompt = !hasPreciseCoords;
 
   useEffect(() => {
     if (typeof profile?.superlikes_left === 'number') {
@@ -290,6 +390,9 @@ export default function ExploreScreen() {
     if (!res.ok) {
       setLocationError('error' in res ? res.error : 'Unable to save location');
     } else {
+      await refreshProfile();
+      await refreshMatches();
+      await new Promise((resolve) => setTimeout(resolve, 1200));
       await refreshProfile();
       await refreshMatches();
     }
@@ -608,35 +711,6 @@ export default function ExploreScreen() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaView style={styles.container}>
-        {/* Location prompt: prefer precise GPS; fallback to manual city */}
-        {needsLocationPrompt && (
-          <View style={[styles.locationBanner, { paddingTop: Math.max(insets.top, 12) }]}>
-            <Text style={styles.locationTitle}>See nearby matches</Text>
-            <Text style={styles.locationSubtitle}>
-              Share your location for accurate distance, or enter your city instead. You can change this anytime.
-            </Text>
-            {locationError ? <Text style={styles.locationError}>{locationError}</Text> : null}
-            <View style={styles.locationActions}>
-              <TouchableOpacity
-                style={[styles.locationButton, styles.locationPrimary]}
-                onPress={handleUseMyLocation}
-                disabled={isSavingLocation}
-              >
-                <Text style={styles.locationPrimaryText}>
-                  {isSavingLocation ? "Saving..." : "Use my location"}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.locationButton, styles.locationGhost]}
-                onPress={() => setManualLocationModalVisible(true)}
-                disabled={isSavingLocation}
-              >
-                <Text style={styles.locationGhostText}>Enter city</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
         {/* TOP HEADER */}
         <ExploreHeader
           tabs={[
@@ -1070,13 +1144,15 @@ export default function ExploreScreen() {
                       <Text style={styles.filterLabel}>Distance</Text>
                       <Text style={styles.filterHint}>Nearby tab only</Text>
                       <View style={styles.filterChipsRow}>
-                        {[5, 10, 25, 50, 100].map((km) => (
+                        {distanceChipOptions.map((option) => (
                           <TouchableOpacity
-                            key={km}
-                            style={[styles.filterChip, distanceFilterKm === km && styles.filterChipActive]}
-                            onPress={() => setDistanceFilterKm(km)}
+                            key={option.label}
+                            style={[styles.filterChip, distanceFilterKm === option.km && styles.filterChipActive]}
+                            onPress={() => setDistanceFilterKm(option.km)}
                           >
-                            <Text style={[styles.filterChipText, distanceFilterKm === km && styles.filterChipTextActive]}>{km} km</Text>
+                            <Text style={[styles.filterChipText, distanceFilterKm === option.km && styles.filterChipTextActive]}>
+                              {option.label}
+                            </Text>
                           </TouchableOpacity>
                         ))}
                         <TouchableOpacity
@@ -1135,6 +1211,36 @@ export default function ExploreScreen() {
                         )}
                       </View>
                     </View>
+
+                    <View style={styles.filterSection}>
+                      <Text style={styles.filterLabel}>Location settings</Text>
+                      <Text style={styles.filterHint}>
+                        {hasPreciseCoords
+                          ? 'Using precise location for distance.'
+                          : hasCityOnly
+                          ? 'City-only location is set.'
+                          : 'Location not set yet.'}
+                      </Text>
+                    <View style={[styles.locationActions, { marginTop: 10 }]}>
+                      <TouchableOpacity
+                        style={[styles.locationButton, styles.locationPrimary]}
+                        onPress={handleUseMyLocation}
+                        disabled={isSavingLocation}
+                        >
+                          <Text style={styles.locationPrimaryText}>
+                            {isSavingLocation ? 'Saving...' : 'Use my location'}
+                          </Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.locationButton, styles.locationGhost]}
+                          onPress={() => setManualLocationModalVisible(true)}
+                          disabled={isSavingLocation}
+                        >
+                        <Text style={styles.locationGhostText}>{hasCityOnly ? 'Edit city' : 'Enter city'}</Text>
+                      </TouchableOpacity>
+                    </View>
+                    {locationError ? <Text style={[styles.locationError, { marginTop: 8 }]}>{locationError}</Text> : null}
+                  </View>
 
                     <View style={styles.filterSection}>
                       <Text style={styles.filterLabel}>Location</Text>

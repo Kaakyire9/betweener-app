@@ -9,8 +9,9 @@ import { useVerificationStatus } from "@/hooks/use-verification-status";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
   Dimensions,
@@ -24,6 +25,15 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const { width: screenWidth } = Dimensions.get('window');
+const DISTANCE_UNIT_KEY = 'distance_unit';
+
+type DistanceUnit = 'auto' | 'km' | 'mi';
+
+const DISTANCE_UNIT_OPTIONS: { value: DistanceUnit; label: string; subtitle?: string }[] = [
+  { value: 'auto', label: 'Auto', subtitle: 'Recommended' },
+  { value: 'km', label: 'Kilometers' },
+  { value: 'mi', label: 'Miles' },
+];
 
 // Settings menu items
 const SETTINGS_MENU_ITEMS = [
@@ -122,6 +132,7 @@ export default function ProfileScreen() {
   const [loadingInterests, setLoadingInterests] = useState(false);
   const [userPhotos, setUserPhotos] = useState<string[]>([]);
   const [isVerificationModalVisible, setIsVerificationModalVisible] = useState(false);
+  const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -277,6 +288,27 @@ export default function ProfileScreen() {
       router.replace('/(tabs)/profile');
     }
   }, [params.returnToPreview]);
+
+  const loadDistanceUnit = useCallback(async () => {
+    try {
+      const stored = await AsyncStorage.getItem(DISTANCE_UNIT_KEY);
+      if (stored === 'auto' || stored === 'km' || stored === 'mi') {
+        setDistanceUnit(stored);
+      } else {
+        setDistanceUnit('auto');
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    void loadDistanceUnit();
+  }, [loadDistanceUnit]);
+
+  useEffect(() => {
+    if (!showEditModal) {
+      void loadDistanceUnit();
+    }
+  }, [showEditModal, loadDistanceUnit]);
 
   if (!fontsLoaded) {
     return <View style={styles.container} />;
@@ -946,6 +978,23 @@ export default function ProfileScreen() {
           </View>
         </View>
 
+        {/* Distance Unit Section */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Distance Unit</Text>
+          </View>
+          <View style={styles.settingRow}>
+            <Text style={styles.settingLabel}>Current</Text>
+            <Text style={styles.settingValue}>
+              {(() => {
+                const selected = DISTANCE_UNIT_OPTIONS.find((option) => option.value === distanceUnit);
+                if (!selected) return 'Auto (Recommended)';
+                return selected.subtitle ? `${selected.label} (${selected.subtitle})` : selected.label;
+              })()}
+            </Text>
+          </View>
+        </View>
+
         {/* Action Buttons - Only show in preview mode */}
         {isPreviewMode && (
           <View style={styles.previewActions}>
@@ -1389,6 +1438,29 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     textAlign: 'center',
     paddingVertical: 20,
+  },
+  
+  // Distance Unit
+  settingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  settingLabel: {
+    fontSize: 14,
+    fontFamily: 'Manrope_500Medium',
+    color: '#6b7280',
+  },
+  settingValue: {
+    fontSize: 16,
+    fontFamily: 'Manrope_600SemiBold',
+    color: '#111827',
   },
   
   // Preview Actions
