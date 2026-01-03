@@ -28,7 +28,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
 const KM_PER_MILE = 1.60934;
-const MOMENTS_HEIGHT = 80;
+const MOMENTS_HEIGHT = 68;
 const MOMENTS_COLLAPSE_START = 24;
 const MOMENTS_COLLAPSE_END = 110;
 const MOMENTS_MAX_USERS = 20;
@@ -143,35 +143,37 @@ function CompactMomentsStrip({
     <Animated.View style={[styles.momentsStripContainer, { height, opacity, transform: [{ translateY }] }]} pointerEvents="box-none">
       <View style={styles.momentsStripInner}>
         {showEmptyState ? (
-          <View style={styles.momentsEmptyRow}>
-            <Text style={styles.momentsEmptyTitle}>Moments</Text>
-            <View style={styles.momentsEmptyContent}>
-              {myUser ? (
-                <TouchableOpacity style={styles.momentsAvatarItem} activeOpacity={0.85} onPress={onPressMyMoment}>
-                  <View style={styles.momentsAvatarOuter}>
-                    {myUser.avatarUrl ? (
-                      <Image source={{ uri: myUser.avatarUrl }} style={styles.momentsAvatarImage} />
-                    ) : (
-                      <View style={styles.momentsAvatarPlaceholder}>
-                        <Text style={styles.momentsAvatarInitial}>Y</Text>
-                      </View>
-                    )}
-                  </View>
-                  {!hasMyActiveMoment ? (
-                    <View style={styles.momentsPlusBadge}>
-                      <MaterialCommunityIcons name="plus" size={12} color="#fff" />
+          <View>
+            <View style={styles.momentsInlineRow}>
+              <Text style={styles.momentsStripTitle}>Moments</Text>
+              <View style={styles.momentsInlineList}>
+                {myUser ? (
+                  <TouchableOpacity style={styles.momentsAvatarItem} activeOpacity={0.85} onPress={onPressMyMoment}>
+                    <View style={styles.momentsAvatarOuter}>
+                      {myUser.avatarUrl ? (
+                        <Image source={{ uri: myUser.avatarUrl }} style={styles.momentsAvatarImage} />
+                      ) : (
+                        <View style={styles.momentsAvatarPlaceholder}>
+                          <Text style={styles.momentsAvatarInitial}>Y</Text>
+                        </View>
+                      )}
                     </View>
-                  ) : null}
-                </TouchableOpacity>
-              ) : null}
-              <View style={styles.momentsEmptyCopyWrap}>
-                <Text style={styles.momentsEmptyText}>Post a Moment to start the vibe</Text>
+                    {!hasMyActiveMoment ? (
+                      <View style={styles.momentsPlusBadge}>
+                        <MaterialCommunityIcons name="plus" size={12} color="#fff" />
+                      </View>
+                    ) : null}
+                  </TouchableOpacity>
+                ) : null}
               </View>
+              <Text style={styles.momentsEmptyInlineCopy} numberOfLines={1}>
+                Post a Moment
+              </Text>
+              <TouchableOpacity onPress={onPressSeeAll} activeOpacity={0.85} style={styles.momentsSeeAllPill}>
+                <MaterialCommunityIcons name="send" size={14} color={Colors.light.tint} style={{ marginRight: 6 }} />
+                <Text style={styles.momentsStripSeeAll}>See all</Text>
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity onPress={onPressSeeAll} activeOpacity={0.85} style={styles.momentsSeeAllPill}>
-              <MaterialCommunityIcons name="send" size={14} color={Colors.light.tint} style={{ marginRight: 6 }} />
-              <Text style={styles.momentsStripSeeAll}>See all</Text>
-            </TouchableOpacity>
           </View>
         ) : (
           <View style={styles.momentsInlineRow}>
@@ -1581,7 +1583,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(15,23,42,0.06)',
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingVertical: 5,
     shadowColor: '#0f172a',
     shadowOpacity: 0.06,
     shadowRadius: 14,
@@ -1591,7 +1593,7 @@ const styles = StyleSheet.create({
   momentsStripHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
   momentsStripTitle: { fontSize: 14, fontWeight: '800', color: '#0f172a' },
   momentsInlineRow: { flexDirection: 'row', alignItems: 'center' },
-  momentsInlineList: { flex: 1, marginHorizontal: 12 },
+  momentsInlineList: { flex: 1, marginHorizontal: 2 },
   momentsListInlineContent: { alignItems: 'center', paddingRight: 12 },
   momentsSeeAllPill: {
     flexDirection: 'row',
@@ -1599,6 +1601,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
+    marginLeft: 6,
     borderWidth: 1,
     borderColor: 'rgba(15,23,42,0.08)',
     backgroundColor: '#f8fafc',
@@ -1634,11 +1637,13 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#fff',
   },
-  momentsEmptyRow: { flexDirection: 'row', alignItems: 'flex-end' },
-  momentsEmptyTitle: { fontSize: 14, fontWeight: '800', color: '#0f172a' },
-  momentsEmptyContent: { flexDirection: 'row', alignItems: 'flex-end', marginLeft: 12, flex: 1 },
-  momentsEmptyCopyWrap: { justifyContent: 'flex-end', marginBottom: 2, flex: 1 },
-  momentsEmptyText: { marginLeft: 10, fontSize: 12, color: '#94a3b8' },
+  momentsEmptyInlineCopy: {
+    fontSize: 12,
+    color: '#94a3b8',
+    marginLeft: 2,
+    marginRight: 18,
+    flexShrink: 1,
+  },
   momentsRightFade: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 34 },
   actionButtons: {
     position: 'absolute',
