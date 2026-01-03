@@ -9,7 +9,7 @@ import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import useAIRecommendations from "@/hooks/useAIRecommendations";
 import { requestAndSavePreciseLocation, saveManualCityLocation } from "@/hooks/useLocationPreference";
-import { useMoments } from '@/hooks/useMoments';
+import { useMoments, type MomentUser } from '@/hooks/useMoments';
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -20,7 +20,7 @@ import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe, { isLinearGradientAvailable } from "@/components/NativeWrappers/LinearGradientSafe";
 import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Animated, DeviceEventEmitter, Easing, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from "react-native";
+import { Alert, Animated, DeviceEventEmitter, Easing, FlatList, Image, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -28,6 +28,10 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
 const KM_PER_MILE = 1.60934;
+const MOMENTS_HEIGHT = 64;
+const MOMENTS_COLLAPSE_START = 24;
+const MOMENTS_COLLAPSE_END = 110;
+const MOMENTS_MAX_USERS = 20;
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
 
@@ -61,6 +65,142 @@ const resolveAutoUnit = (): 'km' | 'mi' => {
   }
 };
 
+type CompactMomentsStripProps = {
+  users: MomentUser[];
+  hasMyActiveMoment: boolean;
+  showEmptyState: boolean;
+  scrollY: Animated.Value;
+  onPressMyMoment: () => void;
+  onPressUserMoment: (userId: string) => void;
+  onPressSeeAll: () => void;
+};
+
+function CompactMomentsStrip({
+  users,
+  hasMyActiveMoment,
+  showEmptyState,
+  scrollY,
+  onPressMyMoment,
+  onPressUserMoment,
+  onPressSeeAll,
+}: CompactMomentsStripProps) {
+  const height = scrollY.interpolate({
+    inputRange: [0, MOMENTS_COLLAPSE_START, MOMENTS_COLLAPSE_END],
+    outputRange: [MOMENTS_HEIGHT, MOMENTS_HEIGHT, 0],
+    extrapolate: 'clamp',
+  });
+  const opacity = scrollY.interpolate({
+    inputRange: [0, MOMENTS_COLLAPSE_START, MOMENTS_COLLAPSE_END],
+    outputRange: [1, 1, 0],
+    extrapolate: 'clamp',
+  });
+  const translateY = scrollY.interpolate({
+    inputRange: [0, MOMENTS_COLLAPSE_START, MOMENTS_COLLAPSE_END],
+    outputRange: [0, 0, -10],
+    extrapolate: 'clamp',
+  });
+
+  const renderItem = ({ item }: { item: MomentUser }) => {
+    const label = item.isOwn ? 'Your Moment' : item.name;
+    const hasMoment = item.moments.length > 0;
+    const showPlus = item.isOwn && !hasMoment;
+    const initial = label ? label[0]?.toUpperCase() : 'M';
+
+    return (
+      <TouchableOpacity
+        style={styles.momentsAvatarItem}
+        activeOpacity={0.85}
+        onPress={() => (item.isOwn ? onPressMyMoment() : onPressUserMoment(item.userId))}
+      >
+        <View style={[styles.momentsAvatarOuter, hasMoment && styles.momentsAvatarActive]}>
+          {item.avatarUrl ? (
+            <Image source={{ uri: item.avatarUrl }} style={styles.momentsAvatarImage} />
+          ) : (
+            <View style={styles.momentsAvatarPlaceholder}>
+              <Text style={styles.momentsAvatarInitial}>{initial}</Text>
+            </View>
+          )}
+        </View>
+        {showPlus ? (
+          <View style={styles.momentsPlusBadge}>
+            <MaterialCommunityIcons name="plus" size={12} color="#fff" />
+          </View>
+        ) : null}
+        <Text style={styles.momentsAvatarLabel} numberOfLines={1}>
+          {label}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
+  const myUser = users.find((u) => u.isOwn);
+
+  return (
+    <Animated.View style={[styles.momentsStripContainer, { height, opacity, transform: [{ translateY }] }]} pointerEvents="box-none">
+      <View style={styles.momentsStripInner}>
+        <View style={styles.momentsStripHeader}>
+          <Text style={styles.momentsStripTitle}>Moments</Text>
+          <TouchableOpacity onPress={onPressSeeAll} activeOpacity={0.85}>
+            <Text style={styles.momentsStripSeeAll}>See all</Text>
+          </TouchableOpacity>
+        </View>
+
+        {showEmptyState ? (
+          <View style={styles.momentsEmptyRow}>
+            {myUser ? (
+              <TouchableOpacity style={styles.momentsAvatarItem} activeOpacity={0.85} onPress={onPressMyMoment}>
+                <View style={styles.momentsAvatarOuter}>
+                  {myUser.avatarUrl ? (
+                    <Image source={{ uri: myUser.avatarUrl }} style={styles.momentsAvatarImage} />
+                  ) : (
+                    <View style={styles.momentsAvatarPlaceholder}>
+                      <Text style={styles.momentsAvatarInitial}>Y</Text>
+                    </View>
+                  )}
+                </View>
+                {!hasMyActiveMoment ? (
+                  <View style={styles.momentsPlusBadge}>
+                    <MaterialCommunityIcons name="plus" size={12} color="#fff" />
+                  </View>
+                ) : null}
+                <Text style={styles.momentsAvatarLabel} numberOfLines={1}>
+                  Your Moment
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+            <Text style={styles.momentsEmptyText}>
+              Post a Moment to start the vibe
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.momentsListWrap}>
+            <FlatList
+              data={users}
+              keyExtractor={(item) => item.userId}
+              renderItem={renderItem}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              initialNumToRender={8}
+              windowSize={5}
+              maxToRenderPerBatch={8}
+              removeClippedSubviews
+              contentContainerStyle={styles.momentsListContent}
+            />
+            {users.length > 6 ? (
+              <LinearGradientSafe
+                colors={['rgba(248,250,252,0)', 'rgba(248,250,252,1)']}
+                start={[0, 0]}
+                end={[1, 0]}
+                style={styles.momentsRightFade}
+              />
+            ) : null}
+          </View>
+        )}
+      </View>
+    </Animated.View>
+  );
+}
+
 export default function ExploreScreen() {
   const insets = useSafeAreaInsets();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -85,7 +225,7 @@ export default function ExploreScreen() {
     useAIRecommendations(profile?.id, { mutualMatchTestIds: QA_MUTUAL_IDS, mode, activeWindowMinutes, distanceUnit });
 
   const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
-  const { momentUsers, loading: momentsLoading, refresh: refreshMoments } = useMoments({
+  const { momentUsers, refresh: refreshMoments } = useMoments({
     currentUserId: user?.id,
     currentUserProfile: profile,
   });
@@ -125,6 +265,7 @@ export default function ExploreScreen() {
   const prefetchInFlightRef = useRef<Set<string>>(new Set());
   const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRefreshTsRef = useRef<number>(0);
+  const scrollY = useRef(new Animated.Value(0)).current;
 
   const queueRefreshMatches = useCallback(() => {
     if (refreshDebounceRef.current) {
@@ -372,14 +513,39 @@ export default function ExploreScreen() {
     return list;
   }, [matches, verifiedOnly, distanceFilterKm, minAge, maxAge, religionFilter, locationQuery]);
 
+  const myMomentUser = useMemo(() => momentUsers.find((u) => u.isOwn), [momentUsers]);
+  const otherMomentUsers = useMemo(
+    () => momentUsers.filter((u) => !u.isOwn && u.moments.length > 0).slice(0, MOMENTS_MAX_USERS),
+    [momentUsers]
+  );
+  const momentStripUsers = useMemo(() => {
+    const list: MomentUser[] = [];
+    if (myMomentUser) list.push(myMomentUser);
+    return [...list, ...otherMomentUsers];
+  }, [myMomentUser, otherMomentUsers]);
+  const hasMyActiveMoment = (myMomentUser?.moments?.length ?? 0) > 0;
+  const showMomentsEmptyState = otherMomentUsers.length === 0 && !hasMyActiveMoment;
   const momentUsersWithContent = useMemo(() => momentUsers.filter((u) => u.moments.length > 0), [momentUsers]);
 
   const openMomentViewer = (userId: string) => {
     setMomentStartUserId(userId);
     setMomentViewerVisible(true);
   };
-  const momentsPillTop = Math.max(insets.top + 140, Math.round(windowHeight * 0.43));
 
+  const handlePressMyMoment = useCallback(() => {
+    if (hasMyActiveMoment && myMomentUser?.userId) {
+      openMomentViewer(myMomentUser.userId);
+      return;
+    }
+    setMomentCreateVisible(true);
+  }, [hasMyActiveMoment, myMomentUser?.userId]);
+
+  const handlePressUserMoment = useCallback(
+    (userId: string) => {
+      openMomentViewer(userId);
+    },
+    []
+  );
   const handleMomentsPress = () => {
     router.push('/moments');
   };
@@ -765,59 +931,60 @@ export default function ExploreScreen() {
           onPressFilter={() => setFiltersVisible(true)}
         />
 
-        {/* CARD STACK */}
-        <View style={styles.stackWrapper}>
-          {!exhausted ? (
-              <ExploreStack
-              ref={stackRef}
-              matches={matchList}
-              currentIndex={currentIndex}
-              setCurrentIndex={setCurrentIndex}
-              recordSwipe={recordSwipe}
-              onProfileTap={onProfileTap}
-              onPlayPress={async (id: string) => {
-                try {
-                  const updated = await fetchProfileDetails?.(id);
-                  const effective = updated ?? matchList.find((x) => String(x.id) === String(id));
-                  if (effective && (effective as any).profileVideo) {
-                    setPreviewingId(String(id));
-                    setVideoModalUrl((effective as any).profileVideo as string);
-                    setVideoModalVisible(true);
-                    return;
-                  }
-                  // fallback: open profile view if no video
-                  router.push({ pathname: '/profile-view', params: { profileId: String(id) } });
-                } catch (e) {
-                  console.log('onPlayPress failed', e);
-                }
-              }}
-              previewingId={previewingId ?? undefined}
+        <Animated.ScrollView
+          onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
+          scrollEventThrottle={16}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: Math.max(insets.bottom + 180, 180) },
+          ]}
+        >
+          {user?.id ? (
+            <CompactMomentsStrip
+              users={momentStripUsers}
+              hasMyActiveMoment={hasMyActiveMoment}
+              showEmptyState={showMomentsEmptyState}
+              scrollY={scrollY}
+              onPressMyMoment={handlePressMyMoment}
+              onPressUserMoment={handlePressUserMoment}
+              onPressSeeAll={handleMomentsPress}
             />
-          ) : (
-            <NoMoreProfiles />
-          )}
-        </View>
+          ) : null}
 
-        {user?.id ? (
-          <View pointerEvents="box-none" style={[styles.momentsPillContainer, { top: momentsPillTop }]}>
-            <TouchableOpacity
-              style={styles.momentsPillTouchable}
-              activeOpacity={0.85}
-              onPress={handleMomentsPress}
-              disabled={momentsLoading}
-            >
-              <BlurViewSafe intensity={60} tint="light" style={styles.momentsPill}>
-                <MaterialCommunityIcons name="movie-open-play" size={18} color="#0f172a" />
-                <Text style={styles.momentsPillText}>{momentsLoading ? 'Moments...' : 'Moments'}</Text>
-                {momentUsersWithContent.length > 0 ? (
-                  <View style={styles.momentsPillBadge}>
-                    <Text style={styles.momentsPillBadgeText}>{momentUsersWithContent.length}</Text>
-                  </View>
-                ) : null}
-              </BlurViewSafe>
-            </TouchableOpacity>
+          {/* CARD STACK */}
+          <View style={styles.stackWrapper}>
+            {!exhausted ? (
+                <ExploreStack
+                ref={stackRef}
+                matches={matchList}
+                currentIndex={currentIndex}
+                setCurrentIndex={setCurrentIndex}
+                recordSwipe={recordSwipe}
+                onProfileTap={onProfileTap}
+                onPlayPress={async (id: string) => {
+                  try {
+                    const updated = await fetchProfileDetails?.(id);
+                    const effective = updated ?? matchList.find((x) => String(x.id) === String(id));
+                    if (effective && (effective as any).profileVideo) {
+                      setPreviewingId(String(id));
+                      setVideoModalUrl((effective as any).profileVideo as string);
+                      setVideoModalVisible(true);
+                      return;
+                    }
+                    // fallback: open profile view if no video
+                    router.push({ pathname: '/profile-view', params: { profileId: String(id) } });
+                  } catch (e) {
+                    console.log('onPlayPress failed', e);
+                  }
+                }}
+                previewingId={previewingId ?? undefined}
+              />
+            ) : (
+              <NoMoreProfiles />
+            )}
           </View>
-        ) : null}
+        </Animated.ScrollView>
 
         {/* ACTION BUTTONS (floating card above tabs; safe-area aware) */}
         <View style={[styles.actionButtons, { bottom: Math.max(Math.max(insets.bottom, 6) - ACTION_BOTTOM_NUDGE, 0) }]} pointerEvents="box-none">
@@ -1385,6 +1552,7 @@ export default function ExploreScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#f8fafc" },
+  scrollContent: { flexGrow: 1, paddingTop: 8 },
   stackWrapper: {
     flex: 1,
     alignItems: "center",
@@ -1393,51 +1561,56 @@ const styles = StyleSheet.create({
     // leave room at the bottom for action buttons
     paddingBottom: 120,
   },
-  momentsPillContainer: {
-    position: 'absolute',
-    right: 14,
-    zIndex: 80,
-    elevation: 12,
-  },
-  momentsPillTouchable: {
-    borderRadius: 18,
+  momentsStripContainer: {
     overflow: 'hidden',
+    paddingHorizontal: 20,
+    paddingBottom: 6,
   },
-  momentsPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.88)',
+  momentsStripInner: {
+    flex: 1,
+    borderRadius: 16,
+    backgroundColor: '#f8fafc',
     borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.06)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  momentsStripHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 },
+  momentsStripTitle: { fontSize: 12, fontWeight: '700', color: '#0f172a' },
+  momentsStripSeeAll: { fontSize: 12, fontWeight: '600', color: Colors.light.tint },
+  momentsListWrap: { flex: 1 },
+  momentsListContent: { paddingRight: 18 },
+  momentsAvatarItem: { width: 54, alignItems: 'center', marginRight: 10 },
+  momentsAvatarOuter: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 2,
     borderColor: 'rgba(15,23,42,0.08)',
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  momentsPillText: {
-    marginLeft: 6,
-    fontSize: 12,
-    color: '#0f172a',
-    fontFamily: 'Manrope_600SemiBold',
-  },
-  momentsPillBadge: {
-    marginLeft: 8,
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
+  momentsAvatarActive: { borderColor: Colors.light.tint },
+  momentsAvatarImage: { width: 40, height: 40, borderRadius: 20 },
+  momentsAvatarPlaceholder: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' },
+  momentsAvatarInitial: { fontSize: 14, fontWeight: '700', color: '#64748b' },
+  momentsAvatarLabel: { fontSize: 10, color: '#374151', marginTop: 2, textAlign: 'center' },
+  momentsPlusBadge: {
+    position: 'absolute',
+    right: 4,
+    top: 26,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
     backgroundColor: Colors.light.tint,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 4,
+    borderWidth: 2,
+    borderColor: '#fff',
   },
-  momentsPillBadgeText: {
-    color: '#fff',
-    fontSize: 11,
-    fontWeight: '700',
-  },
+  momentsEmptyRow: { flexDirection: 'row', alignItems: 'center' },
+  momentsEmptyText: { marginLeft: 12, fontSize: 12, color: '#64748b', flex: 1 },
+  momentsRightFade: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 28 },
   actionButtons: {
     position: 'absolute',
     left: 0,
