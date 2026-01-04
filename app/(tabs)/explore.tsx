@@ -1018,19 +1018,23 @@ export default function ExploreScreen() {
                   pointerEvents="box-none"
                 >
                   {renderSuperlikeBadge()}
-                  <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
-                    <TouchableOpacity
-                      style={styles.rejectButton}
-                      onPress={() => animateButtonPress(onReject)}
-                      activeOpacity={0.9}
-                    >
-                      <MaterialCommunityIcons
-                        name="close"
-                        size={28}
-                        color="#fff"
-                      />
-                    </TouchableOpacity>
-                  </Animated.View>
+                    <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+                      <TouchableOpacity
+                        style={styles.rejectRing}
+                        onPress={() => animateButtonPress(onReject)}
+                        activeOpacity={0.9}
+                      >
+                        <LinearGradientSafe
+                          colors={['#fecaca', '#ef4444', '#b91c1c']}
+                          start={[0, 0]}
+                          end={[1, 1]}
+                          style={[StyleSheet.absoluteFill, { borderRadius: 32 }]}
+                        />
+                        <View style={styles.rejectButton}>
+                          <MaterialCommunityIcons name="close" size={28} color="#fff" />
+                        </View>
+                      </TouchableOpacity>
+                    </Animated.View>
 
                   <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
                     <TouchableOpacity
@@ -1141,19 +1145,23 @@ export default function ExploreScreen() {
                       ))}
                   </Animated.View>
 
-                  <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
-                    <TouchableOpacity
-                      style={styles.likeButton}
-                      onPress={() => animateButtonPress(onLike)}
-                      activeOpacity={0.9}
-                    >
-                      <MaterialCommunityIcons
-                        name="heart"
-                        size={28}
-                        color="#fff"
-                      />
-                    </TouchableOpacity>
-                  </Animated.View>
+                    <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+                      <TouchableOpacity
+                        style={styles.likeRing}
+                        onPress={() => animateButtonPress(onLike)}
+                        activeOpacity={0.9}
+                      >
+                        <LinearGradientSafe
+                          colors={['#bbf7d0', '#10b981', '#047857']}
+                          start={[0, 0]}
+                          end={[1, 1]}
+                          style={[StyleSheet.absoluteFill, { borderRadius: 32 }]}
+                        />
+                        <View style={styles.likeButton}>
+                          <MaterialCommunityIcons name="heart" size={28} color="#fff" />
+                        </View>
+                      </TouchableOpacity>
+                    </Animated.View>
                 </BlurViewSafe>
               </AnimatedReView>
             ) : (
@@ -1181,19 +1189,23 @@ export default function ExploreScreen() {
                   pointerEvents="box-none"
                 >
                   {renderSuperlikeBadge()}
-                  <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
-                    <TouchableOpacity
-                      style={styles.rejectButton}
-                      onPress={() => animateButtonPress(onReject)}
-                      activeOpacity={0.9}
-                    >
-                      <MaterialCommunityIcons
-                        name="close"
-                        size={28}
-                        color="#fff"
-                      />
-                    </TouchableOpacity>
-                  </Animated.View>
+                    <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+                      <TouchableOpacity
+                        style={styles.rejectRing}
+                        onPress={() => animateButtonPress(onReject)}
+                        activeOpacity={0.9}
+                      >
+                        <LinearGradientSafe
+                          colors={['#fecaca', '#ef4444', '#b91c1c']}
+                          start={[0, 0]}
+                          end={[1, 1]}
+                          style={[StyleSheet.absoluteFill, { borderRadius: 32 }]}
+                        />
+                        <View style={styles.rejectButton}>
+                          <MaterialCommunityIcons name="close" size={28} color="#fff" />
+                        </View>
+                      </TouchableOpacity>
+                    </Animated.View>
 
                   <TouchableOpacity
                     style={styles.infoButton}
@@ -1241,19 +1253,23 @@ export default function ExploreScreen() {
                     </TouchableOpacity>
                   </Animated.View>
 
-                  <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
-                    <TouchableOpacity
-                      style={styles.likeButton}
-                      onPress={() => animateButtonPress(onLike)}
-                      activeOpacity={0.9}
-                    >
-                      <MaterialCommunityIcons
-                        name="heart"
-                        size={28}
-                        color="#fff"
-                      />
-                    </TouchableOpacity>
-                  </Animated.View>
+                    <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+                      <TouchableOpacity
+                        style={styles.likeRing}
+                        onPress={() => animateButtonPress(onLike)}
+                        activeOpacity={0.9}
+                      >
+                        <LinearGradientSafe
+                          colors={['#bbf7d0', '#10b981', '#047857']}
+                          start={[0, 0]}
+                          end={[1, 1]}
+                          style={[StyleSheet.absoluteFill, { borderRadius: 32 }]}
+                        />
+                        <View style={styles.likeButton}>
+                          <MaterialCommunityIcons name="heart" size={28} color="#fff" />
+                        </View>
+                      </TouchableOpacity>
+                    </Animated.View>
                 </BlurViewSafe>
               </Animated.View>
             )}
@@ -1667,48 +1683,85 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 40,
-    backgroundColor: 'rgba(255,255,255,0.85)',
-    // subtle shadow
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.08,
-    shadowRadius: 18,
-    elevation: 10,
+    backgroundColor: 'rgba(255,255,255,0.78)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.7)',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.12,
+    shadowRadius: 24,
+    elevation: 12,
   },
-  rejectButton: {
+  rejectRing: {
     width: 64,
     height: 64,
     borderRadius: 32,
+    padding: 2,
+    marginRight: 12,
+  },
+  rejectButton: {
+    flex: 1,
+    borderRadius: 28,
     backgroundColor: "#ef4444",
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.4)',
+    shadowColor: '#ef4444',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.28,
+    shadowRadius: 12,
+    elevation: 8,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
   },
   infoButton: {
     width: 54,
     height: 54,
     borderRadius: 27,
-    backgroundColor: "#f8fafc",
+    backgroundColor: "rgba(255,255,255,0.95)",
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 2,
-    borderColor: "#e5e7eb",
+    borderColor: "rgba(148,163,184,0.35)",
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    elevation: 4,
     marginHorizontal: 4,
   },
-  likeButton: {
+  likeRing: {
     width: 64,
     height: 64,
     borderRadius: 32,
+    padding: 2,
+    marginLeft: 12,
+  },
+  likeButton: {
+    flex: 1,
+    borderRadius: 28,
     backgroundColor: "#10b981",
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.4)',
+    shadowColor: '#10b981',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.26,
+    shadowRadius: 12,
+    elevation: 8,
     justifyContent: "center",
     alignItems: "center",
-    marginLeft: 12,
   },
   superlikeButton: {
     width: 64,
     height: 64,
     borderRadius: 32,
     // background will be a gradient via LinearGradientSafe
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.4)',
+    shadowColor: '#f59e0b',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.26,
+    shadowRadius: 12,
+    elevation: 8,
     justifyContent: "center",
     alignItems: "center",
   },

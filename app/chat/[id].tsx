@@ -1,17 +1,19 @@
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
+import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from 'expo-haptics';
-import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
     Alert,
     Animated,
     Dimensions,
     FlatList,
     Image,
+    InteractionManager,
+    Keyboard,
     KeyboardAvoidingView,
     Platform,
     Pressable,
@@ -22,6 +24,7 @@ import {
     View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "@react-navigation/native";
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -49,118 +52,253 @@ type MessageType = {
   replyTo?: MessageType;
 };
 
-// Mock messages with advanced features
-const MOCK_MESSAGES: MessageType[] = [
-  {
-    id: '1',
-    text: 'Hey! Nice to match with you 😊',
-    senderId: '2',
-    timestamp: new Date(Date.now() - 3600000),
-    type: 'text',
-    reactions: [],
-    status: 'read',
-    readAt: new Date(Date.now() - 3550000),
-  },
-  {
-    id: '2',
-    text: 'Hi! Your profile caught my eye, especially your love for art 🎨',
-    senderId: '1',
-    timestamp: new Date(Date.now() - 3500000),
-    type: 'text',
-    reactions: [{ userId: '2', emoji: '❤️' }],
-  },
-  {
-    id: '3',
-    text: 'Thank you! I saw you\'re into fitness. That\'s awesome!',
-    senderId: '2',
-    timestamp: new Date(Date.now() - 3400000),
-    type: 'text',
-    reactions: [],
-  },
-  {
-    id: '4',
-    text: '',
-    senderId: '1',
-    timestamp: new Date(Date.now() - 3300000),
-    type: 'mood_sticker',
-    sticker: {
-      emoji: '💪',
-      color: Colors.light.tint,
-      name: 'Motivated',
-    },
-    reactions: [{ userId: '2', emoji: '😂' }],
-  },
-  {
-    id: '5',
-    text: 'Haha I love that! Want to grab coffee sometime?',
-    senderId: '2',
-    timestamp: new Date(Date.now() - 3200000),
-    type: 'text',
-    reactions: [],
-  },
-  {
-    id: '6',
-    text: 'I\'d love that! How about this weekend?',
-    senderId: '1',
-    timestamp: new Date(Date.now() - 3100000),
-    type: 'text',
-    reactions: [{ userId: '2', emoji: '🔥' }],
-    status: 'read',
-    readAt: new Date(Date.now() - 3050000),
-  },
-  {
-    id: '7',
-    text: '',
-    senderId: '2',
-    timestamp: new Date(Date.now() - 3000000),
-    type: 'voice',
-    voiceMessage: {
-      duration: 8.5,
-      waveform: [0.2, 0.6, 0.3, 0.8, 0.4, 0.9, 0.2, 0.7, 0.5, 0.3, 0.6, 0.8, 0.1, 0.4, 0.7],
-      isPlaying: false,
-    },
-    reactions: [],
-    status: 'delivered',
-  },
-  {
-    id: '8',
-    text: 'Here\'s a photo from my morning hike! 🏔️',
-    senderId: '1',
-    timestamp: new Date(Date.now() - 2900000),
-    type: 'image',
-    imageUrl: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=600&fit=crop',
-    reactions: [{ userId: '2', emoji: '😍' }],
-    status: 'sent',
-  },
-];
+type MessageRow = {
+  id: string;
+  text: string;
+  created_at: string;
+  sender_id: string;
+  receiver_id: string;
+  is_read: boolean;
+  delivered_at: string | null;
+};
 
 // Quick reactions
-const QUICK_REACTIONS = ['❤️', '😂', '👍', '🔥', '😍', '👏'];
+const QUICK_REACTIONS = ['\u2764\uFE0F', '\u{1F602}', '\u{1F60D}', '\u{1F44D}', '\u{1F525}', '\u{1F44F}'];
 
 // Mood stickers with color themes
 const MOOD_STICKERS = [
-  { emoji: '😊', name: 'Happy', category: 'mood' },
-  { emoji: '😍', name: 'Loved', category: 'mood' },
-  { emoji: '🤗', name: 'Excited', category: 'mood' },
-  { emoji: '😎', name: 'Cool', category: 'mood' },
-  { emoji: '🥰', name: 'Adorable', category: 'mood' },
-  { emoji: '💪', name: 'Motivated', category: 'energy' },
-  { emoji: '🔥', name: 'Fire', category: 'energy' },
-  { emoji: '⚡', name: 'Electric', category: 'energy' },
-  { emoji: '✨', name: 'Sparkle', category: 'energy' },
-  { emoji: '🌟', name: 'Star', category: 'energy' },
-  { emoji: '❤️', name: 'Love', category: 'heart' },
-  { emoji: '💕', name: 'Hearts', category: 'heart' },
-  { emoji: '💖', name: 'Sparkling Heart', category: 'heart' },
-  { emoji: '🌹', name: 'Rose', category: 'heart' },
-  { emoji: '🎉', name: 'Party', category: 'celebration' },
-  { emoji: '🎊', name: 'Confetti', category: 'celebration' },
-  { emoji: '🥳', name: 'Celebrate', category: 'celebration' },
-  { emoji: '🎈', name: 'Balloon', category: 'celebration' },
+  { emoji: '\u{1F60A}', name: 'Happy', category: 'mood' },
+  { emoji: '\u{1F970}', name: 'Loved', category: 'mood' },
+  { emoji: '\u{1F929}', name: 'Excited', category: 'mood' },
+  { emoji: '\u{1F60E}', name: 'Cool', category: 'mood' },
+  { emoji: '\u{1F979}', name: 'Adorable', category: 'mood' },
+  { emoji: '\u{1F4AA}', name: 'Motivated', category: 'energy' },
+  { emoji: '\u{1F525}', name: 'Fire', category: 'energy' },
+  { emoji: '\u26A1', name: 'Electric', category: 'energy' },
+  { emoji: '\u2728', name: 'Sparkle', category: 'energy' },
+  { emoji: '\u2B50', name: 'Star', category: 'energy' },
+  { emoji: '\u2764\uFE0F', name: 'Love', category: 'heart' },
+  { emoji: '\u{1F495}', name: 'Hearts', category: 'heart' },
+  { emoji: '\u{1F496}', name: 'Sparkling Heart', category: 'heart' },
+  { emoji: '\u{1F339}', name: 'Rose', category: 'heart' },
+  { emoji: '\u{1F973}', name: 'Party', category: 'celebration' },
+  { emoji: '\u{1F389}', name: 'Confetti', category: 'celebration' },
+  { emoji: '\u{1F64C}', name: 'Celebrate', category: 'celebration' },
+  { emoji: '\u{1F388}', name: 'Balloon', category: 'celebration' },
 ];
 
+type MessageRowItemProps = {
+  item: MessageType;
+  isMyMessage: boolean;
+  showAvatar: boolean;
+  isPlaying: boolean;
+  isReactionOpen: boolean;
+  timeLabel: string;
+  userAvatar: string;
+  onLongPress: (messageId: string) => void;
+  onToggleVoice: (messageId: string) => void;
+  onReply: (message: MessageType) => void;
+  onAddReaction: (messageId: string, emoji: string) => void;
+  onCloseReactions: () => void;
+};
+
+const MessageRowItem = memo(
+  ({
+    item,
+    isMyMessage,
+    showAvatar,
+    isPlaying,
+    isReactionOpen,
+    timeLabel,
+    userAvatar,
+    onLongPress,
+    onToggleVoice,
+    onReply,
+    onAddReaction,
+    onCloseReactions,
+  }: MessageRowItemProps) => {
+    return (
+      <View style={styles.messageContainer}>
+        <Pressable
+          onLongPress={() => onLongPress(item.id)}
+          onPress={() => {
+            if (item.type === 'voice') {
+              onToggleVoice(item.id);
+            }
+          }}
+          style={[
+            styles.messageBubbleContainer,
+            isMyMessage ? styles.myMessageContainer : styles.theirMessageContainer,
+          ]}
+        >
+          {showAvatar && (
+            <Image
+              source={{ uri: userAvatar }}
+              style={styles.messageAvatar}
+            />
+          )}
+
+          <View style={[
+            styles.messageBubble,
+            isMyMessage ? styles.myMessageBubble : styles.theirMessageBubble,
+            item.type === 'mood_sticker' && styles.stickerBubble,
+            item.type === 'voice' && styles.voiceBubble,
+            item.type === 'image' && styles.imageBubble,
+          ]}>
+            {item.replyTo && (
+              <View style={styles.replyIndicator}>
+                <View style={styles.replyLine} />
+                <Text style={styles.replyText} numberOfLines={1}>
+                  {item.replyTo.type === 'text' ? item.replyTo.text :
+                   item.replyTo.type === 'voice' ? 'Voice message' :
+                   item.replyTo.type === 'image' ? 'Photo' : 'Sticker'}
+                </Text>
+              </View>
+            )}
+
+            {item.type === 'text' ? (
+              <Text style={[
+                styles.messageText,
+                isMyMessage ? styles.myMessageText : styles.theirMessageText,
+              ]}>
+                {item.text}
+              </Text>
+            ) : item.type === 'voice' ? (
+              <View style={styles.voiceMessageContainer}>
+                <TouchableOpacity
+                  style={[styles.voicePlayButton, { backgroundColor: isMyMessage ? '#fff' : Colors.light.tint }]}
+                  onPress={() => onToggleVoice(item.id)}
+                >
+                  <MaterialCommunityIcons
+                    name={isPlaying ? 'pause' : 'play'}
+                    size={16}
+                    color={isMyMessage ? Colors.light.tint : '#fff'}
+                  />
+                </TouchableOpacity>
+
+                <View style={styles.voiceWaveform}>
+                  {item.voiceMessage?.waveform.map((height, idx) => (
+                    <Animated.View
+                      key={idx}
+                      style={[
+                        styles.waveformBar,
+                        {
+                          height: height * 20,
+                          backgroundColor: isPlaying ?
+                            (isMyMessage ? '#fff' : Colors.light.tint) :
+                            (isMyMessage ? '#ffffff80' : '#00000040'),
+                        },
+                      ]}
+                    />
+                  ))}
+                </View>
+
+                <Text style={[styles.voiceDuration, { color: isMyMessage ? '#fff' : '#666' }]}>
+                  {Math.floor(item.voiceMessage?.duration || 0)}s
+                </Text>
+              </View>
+            ) : item.type === 'image' ? (
+              <View style={styles.imageMessageContainer}>
+                <Image source={{ uri: item.imageUrl }} style={styles.messageImage} />
+                {item.text && (
+                  <Text style={[
+                    styles.imageCaption,
+                    isMyMessage ? styles.myMessageText : styles.theirMessageText,
+                  ]}>
+                    {item.text}
+                  </Text>
+                )}
+              </View>
+            ) : (
+              <View style={[styles.moodStickerContainer, { backgroundColor: item.sticker?.color + '20' }]}>
+                <Text style={styles.moodStickerEmoji}>{item.sticker?.emoji}</Text>
+                <Text style={[styles.moodStickerName, { color: item.sticker?.color }]}>
+                  {item.sticker?.name}
+                </Text>
+              </View>
+            )}
+
+            {item.reactions.length > 0 && (
+              <View style={styles.reactionsContainer}>
+                {item.reactions.map((reaction, idx) => (
+                  <View key={idx} style={styles.reactionBubble}>
+                    <Text style={styles.reactionEmoji}>{reaction.emoji}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        </Pressable>
+
+        <View style={[
+          styles.messageInfo,
+          isMyMessage ? styles.myMessageInfo : styles.theirMessageInfo,
+        ]}>
+          <Text style={[
+            styles.messageTime,
+            isMyMessage ? styles.myMessageTime : styles.theirMessageTime,
+          ]}>
+            {timeLabel}
+          </Text>
+
+          {isMyMessage && (
+            <View style={styles.messageStatus}>
+              {item.status === 'sending' && (
+                <MaterialCommunityIcons name="clock-outline" size={12} color="#9ca3af" />
+              )}
+              {item.status === 'sent' && (
+                <MaterialCommunityIcons name="check" size={12} color="#9ca3af" />
+              )}
+              {item.status === 'delivered' && (
+                <MaterialCommunityIcons name="check-all" size={12} color="#9ca3af" />
+              )}
+              {item.status === 'read' && (
+                <MaterialCommunityIcons name="check-all" size={12} color={Colors.light.tint} />
+              )}
+            </View>
+          )}
+        </View>
+
+        {isReactionOpen && (
+          <View style={[
+            styles.quickReactionsContainer,
+            isMyMessage ? styles.quickReactionsRight : styles.quickReactionsLeft,
+          ]}>
+            <TouchableOpacity
+              style={styles.replyButton}
+              onPress={() => {
+                onReply(item);
+                onCloseReactions();
+              }}
+            >
+              <MaterialCommunityIcons name="reply" size={16} color="#6b7280" />
+            </TouchableOpacity>
+            {QUICK_REACTIONS.map((emoji, idx) => (
+              <TouchableOpacity
+                key={idx}
+                style={styles.quickReactionButton}
+                onPress={() => onAddReaction(item.id, emoji)}
+              >
+                <Text style={styles.quickReactionEmoji}>{emoji}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </View>
+    );
+  },
+  (prev, next) =>
+    prev.item === next.item &&
+    prev.isMyMessage === next.isMyMessage &&
+    prev.showAvatar === next.showAvatar &&
+    prev.isPlaying === next.isPlaying &&
+    prev.isReactionOpen === next.isReactionOpen &&
+    prev.timeLabel === next.timeLabel &&
+    prev.userAvatar === next.userAvatar
+);
+
 export default function ConversationScreen() {
-  const { profile } = useAuth();
+  const { user } = useAuth();
   const fontsLoaded = useAppFonts();
   const params = useLocalSearchParams();
   
@@ -168,14 +306,18 @@ export default function ConversationScreen() {
   const conversationId = params.id as string;
   const userName = params.userName as string;
   const userAvatar = params.userAvatar as string;
-  const isOnline = params.isOnline === 'true';
+  const initialOnline = params.isOnline === 'true';
+  const lastSeenParam = params.lastSeen;
+  const initialLastSeen =
+    typeof lastSeenParam === 'string' ? new Date(lastSeenParam) : null;
   
-  const [messages, setMessages] = useState<MessageType[]>(MOCK_MESSAGES);
+  const [messages, setMessages] = useState<MessageType[]>([]);
+  const [peerOnline, setPeerOnline] = useState(initialOnline);
+  const [peerLastSeen, setPeerLastSeen] = useState<Date | null>(initialLastSeen);
   const [inputText, setInputText] = useState('');
-  const [isTyping, setIsTyping] = useState(true);
+  const [isTyping, setIsTyping] = useState(false);
   const [showReactions, setShowReactions] = useState<string | null>(null);
   const [showMoodStickers, setShowMoodStickers] = useState(false);
-  const [selectedMessage, setSelectedMessage] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
@@ -186,20 +328,324 @@ export default function ConversationScreen() {
   const typingAnimation = useRef(new Animated.Value(0)).current;
   const recordingAnimation = useRef(new Animated.Value(0)).current;
   const voiceButtonScale = useRef(new Animated.Value(1)).current;
+  const reconnectToastOpacity = useRef(new Animated.Value(0)).current;
+  const reconnectPendingRef = useRef(false);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const presenceChannelRef = useRef<any>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const shouldAutoScrollRef = useRef(true);
+  const hasAutoScrolledRef = useRef(false);
+  const keyboardVisibleRef = useRef(false);
+  const listMetricsRef = useRef({
+    contentHeight: 0,
+    layoutHeight: 0,
+    offsetY: 0,
+  });
+  const wasAtBottomRef = useRef(true);
 
-  const markAsRead = useCallback((messageId: string) => {
-    setMessages(prev => prev.map(msg => {
-      if (msg.id === messageId && msg.senderId !== (profile?.id || '1')) {
-        return { ...msg, status: 'read', readAt: new Date() };
-      }
-      return msg;
+  const formatLastSeen = (date: Date) => {
+    const now = Date.now();
+    const diffMs = Math.max(0, now - date.getTime());
+    const diffMinutes = Math.floor(diffMs / 60000);
+    if (diffMinutes < 1) return 'just now';
+    if (diffMinutes < 60) return `${diffMinutes}m ago`;
+    const diffHours = Math.floor(diffMinutes / 60);
+    if (diffHours < 24) return `${diffHours}h ago`;
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d ago`;
+  };
+
+  const triggerReconnectToast = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+    }
+    Animated.timing(reconnectToastOpacity, {
+      toValue: 1,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
+    reconnectTimerRef.current = setTimeout(() => {
+      Animated.timing(reconnectToastOpacity, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    }, 1800);
+  }, [reconnectToastOpacity]);
+
+  const fetchMessages = useCallback(async () => {
+    if (!user?.id || !conversationId) return;
+    const { data, error } = await supabase
+      .from('messages')
+      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at')
+      .or(
+        `and(sender_id.eq.${user.id},receiver_id.eq.${conversationId}),and(sender_id.eq.${conversationId},receiver_id.eq.${user.id})`
+      )
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.log('[chat] fetch messages error', error);
+      setMessages([]);
+      return;
+    }
+
+    const mapped = (data || []).map((row: MessageRow) => ({
+      id: row.id,
+      text: row.text,
+      senderId: row.sender_id,
+      timestamp: new Date(row.created_at),
+      type: 'text' as const,
+      reactions: [],
+      status:
+        row.sender_id === user.id
+          ? row.is_read
+            ? 'read'
+            : row.delivered_at
+            ? 'delivered'
+            : 'sent'
+          : row.is_read
+          ? 'read'
+          : 'delivered',
     }));
-  }, [profile?.id]);
+
+    setMessages(mapped);
+
+    await supabase
+      .from('messages')
+      .update({ delivered_at: new Date().toISOString() })
+      .eq('receiver_id', user.id)
+      .eq('sender_id', conversationId)
+      .is('delivered_at', null);
+
+    await supabase
+      .from('messages')
+      .update({ is_read: true })
+      .eq('receiver_id', user.id)
+      .eq('sender_id', conversationId)
+      .eq('is_read', false);
+  }, [conversationId, user?.id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void fetchMessages();
+    }, [fetchMessages])
+  );
 
   useEffect(() => {
-    // Simulate typing indicator animation
+    if (!user?.id) return;
+    const handleRealtimeStatus = (status: string) => {
+      if (status === 'SUBSCRIBED') {
+        if (reconnectPendingRef.current) {
+          reconnectPendingRef.current = false;
+          triggerReconnectToast();
+        }
+        return;
+      }
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        reconnectPendingRef.current = true;
+      }
+    };
+
+    const inboxChannel = supabase
+      .channel(`messages:inbox:${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `receiver_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const row = payload.new as MessageRow;
+          if (row.sender_id !== conversationId) return;
+          setMessages((prev) => {
+            if (prev.some((msg) => msg.id === row.id)) return prev;
+            return [
+              ...prev,
+              {
+                id: row.id,
+                text: row.text,
+                senderId: row.sender_id,
+                timestamp: new Date(row.created_at),
+                type: 'text',
+                reactions: [],
+                status: 'delivered',
+              },
+            ];
+          });
+          void supabase
+            .from('messages')
+            .update({ delivered_at: new Date().toISOString() })
+            .eq('id', row.id)
+            .eq('receiver_id', user.id)
+            .is('delivered_at', null);
+          void supabase
+            .from('messages')
+            .update({ is_read: true })
+            .eq('id', row.id)
+            .eq('receiver_id', user.id);
+        }
+      )
+      .subscribe(handleRealtimeStatus);
+
+    const sentChannel = supabase
+      .channel(`messages:sent:${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `sender_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const row = payload.new as MessageRow;
+          if (row.receiver_id !== conversationId) return;
+          setMessages((prev) => {
+            if (prev.some((msg) => msg.id === row.id)) return prev;
+            const tempIndex = prev.findIndex(
+              (msg) =>
+                msg.status === 'sending' &&
+                msg.senderId === user.id &&
+                msg.text === row.text
+            );
+            const nextMessage: MessageType = {
+              id: row.id,
+              text: row.text,
+              senderId: row.sender_id,
+              timestamp: new Date(row.created_at),
+              type: 'text',
+              reactions: [],
+              status: row.is_read
+                ? 'read'
+                : row.delivered_at
+                ? 'delivered'
+                : 'sent',
+            };
+            if (tempIndex >= 0) {
+              const next = [...prev];
+              next[tempIndex] = nextMessage;
+              return next;
+            }
+            return [...prev, nextMessage];
+          });
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'messages',
+          filter: `sender_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const row = payload.new as MessageRow;
+          if (row.receiver_id !== conversationId) return;
+          setMessages((prev) =>
+            prev.map((msg) => {
+              if (msg.id !== row.id) return msg;
+              if (row.is_read) {
+                return { ...msg, status: 'read', readAt: new Date() };
+              }
+              if (row.delivered_at) {
+                return { ...msg, status: 'delivered' };
+              }
+              return msg;
+            })
+          );
+        }
+      )
+      .subscribe(handleRealtimeStatus);
+
+    return () => {
+      supabase.removeChannel(inboxChannel);
+      supabase.removeChannel(sentChannel);
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
+    };
+  }, [conversationId, triggerReconnectToast, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || !conversationId) return;
+    const presenceRoom = [user.id, conversationId].sort().join(':');
+    const presenceChannel = supabase.channel(`presence:chat:${presenceRoom}`, {
+      config: {
+        presence: { key: user.id },
+      },
+    });
+    presenceChannelRef.current = presenceChannel;
+
+    const syncPeerPresence = () => {
+      const state = presenceChannel.presenceState();
+      const peer = (state as any)[conversationId] as Array<{ typing?: boolean }> | undefined;
+      setPeerOnline(Boolean(peer && peer.length > 0));
+      setIsTyping(Boolean(peer?.some((p) => p.typing)));
+    };
+
+    presenceChannel
+      .on('presence', { event: 'sync' }, syncPeerPresence)
+      .on('presence', { event: 'join' }, ({ key }) => {
+        if (key === conversationId) {
+          setPeerLastSeen(null);
+          syncPeerPresence();
+        }
+      })
+      .on('presence', { event: 'leave' }, ({ key }) => {
+        if (key === conversationId) {
+          setPeerOnline(false);
+          setIsTyping(false);
+          setPeerLastSeen(new Date());
+        }
+      })
+      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+        if (!payload || payload.senderId !== conversationId) return;
+        setIsTyping(Boolean(payload.typing));
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          void presenceChannel.track({ onlineAt: new Date().toISOString(), typing: false });
+        }
+      });
+
+    return () => {
+      presenceChannelRef.current = null;
+      presenceChannel.unsubscribe();
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+    };
+  }, [conversationId, user?.id]);
+
+  const markAsRead = useCallback(
+    async (messageId: string) => {
+      if (!user?.id || !conversationId) return;
+      setMessages((prev) =>
+        prev.map((msg) => {
+          if (msg.id === messageId && msg.senderId !== user.id) {
+            return { ...msg, status: 'read', readAt: new Date() };
+          }
+          return msg;
+        })
+      );
+      const { error } = await supabase
+        .from('messages')
+        .update({ is_read: true })
+        .eq('id', messageId)
+        .eq('receiver_id', user.id);
+      if (error) {
+        console.log('[chat] markAsRead error', error);
+      }
+    },
+    [conversationId, user?.id]
+  );
+
+  useEffect(() => {
+    let loop: Animated.CompositeAnimation | null = null;
     if (isTyping) {
-      Animated.loop(
+      loop = Animated.loop(
         Animated.sequence([
           Animated.timing(typingAnimation, {
             toValue: 1,
@@ -212,20 +658,16 @@ export default function ConversationScreen() {
             useNativeDriver: true,
           }),
         ])
-      ).start();
+      );
+      loop.start();
+    } else {
+      typingAnimation.setValue(0);
     }
 
-    // Stop typing after 3 seconds
-    const timer = setTimeout(() => {
-      setIsTyping(false);
-    }, 3000);
-
-    return () => clearTimeout(timer);
-  }, []);
-
-  if (!fontsLoaded) {
-    return <View style={styles.container} />;
-  }
+    return () => {
+      if (loop) loop.stop();
+    };
+  }, [isTyping, typingAnimation]);
 
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString('en-US', { 
@@ -235,51 +677,110 @@ export default function ConversationScreen() {
     });
   };
 
-  const sendMessage = () => {
-    if (inputText.trim()) {
-      const newMessage: MessageType = {
-        id: Date.now().toString(),
-        text: inputText.trim(),
-        senderId: profile?.id || '1',
-        timestamp: new Date(),
-        type: 'text',
-        reactions: [],
-        status: 'sent',
-        replyTo: replyingTo || undefined,
-      };
-      
-      setMessages(prev => [...prev, newMessage]);
-      setInputText('');
-      setReplyingTo(null);
-      
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: true });
-      }, 100);
-    }
+  const updateTyping = useCallback(
+    (text: string) => {
+      const channel = presenceChannelRef.current;
+      if (!channel || !user?.id) return;
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      if (text.trim().length === 0) {
+        void channel.send({
+          type: 'broadcast',
+          event: 'typing',
+          payload: { senderId: user.id, typing: false },
+        });
+        return;
+      }
+      void channel.send({
+        type: 'broadcast',
+        event: 'typing',
+        payload: { senderId: user.id, typing: true },
+      });
+      typingTimeoutRef.current = setTimeout(() => {
+        void channel.send({
+          type: 'broadcast',
+          event: 'typing',
+          payload: { senderId: user.id, typing: false },
+        });
+      }, 1500);
+    },
+    [user?.id]
+  );
+
+  const handleInputChange = (text: string) => {
+    setInputText(text);
+    updateTyping(text);
   };
 
-  const sendMoodSticker = (sticker: typeof MOOD_STICKERS[0]) => {
-    const newMessage: MessageType = {
-      id: Date.now().toString(),
-      text: '',
-      senderId: profile?.id || '1',
+  const sendMessage = async () => {
+    const trimmed = inputText.trim();
+    if (!trimmed || !user?.id || !conversationId) return;
+    const tempId = `temp-${Date.now()}`;
+    const optimistic: MessageType = {
+      id: tempId,
+      text: trimmed,
+      senderId: user.id,
       timestamp: new Date(),
-      type: 'mood_sticker',
-      sticker: {
-        emoji: sticker.emoji,
-        color: Colors.light.tint,
-        name: sticker.name,
-      },
+      type: 'text',
       reactions: [],
-      status: 'sent',
+      status: 'sending',
+      replyTo: replyingTo || undefined,
     };
-    
-    setMessages(prev => [...prev, newMessage]);
-    setShowMoodStickers(false);
-    
+
+    setMessages((prev) => [...prev, optimistic]);
+    setInputText('');
+    updateTyping('');
+    setReplyingTo(null);
+
+    const { data, error } = await supabase
+      .from('messages')
+      .insert({
+        text: trimmed,
+        sender_id: user.id,
+        receiver_id: conversationId,
+        is_read: false,
+      })
+      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at')
+      .single();
+
+    if (error || !data) {
+      console.log('[chat] send message error', error);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === tempId ? { ...msg, status: 'sent' } : msg
+        )
+      );
+    } else {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === tempId
+            ? {
+                id: data.id,
+                text: data.text,
+                senderId: data.sender_id,
+                timestamp: new Date(data.created_at),
+                type: 'text',
+                reactions: [],
+                status: data.is_read
+                  ? 'read'
+                  : data.delivered_at
+                  ? 'delivered'
+                  : 'sent',
+              }
+            : msg
+        )
+      );
+    }
+
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
     }, 100);
+  };
+
+  const sendMoodSticker = () => {
+    Alert.alert('Coming soon', 'Stickers are not available yet.');
+    setShowMoodStickers(false);
   };
 
   const addReaction = (messageId: string, emoji: string) => {
@@ -287,18 +788,18 @@ export default function ConversationScreen() {
     
     setMessages(prev => prev.map(msg => {
       if (msg.id === messageId) {
-        const existingReaction = msg.reactions.find(r => r.userId === profile?.id);
+        const existingReaction = msg.reactions.find(r => r.userId === user?.id);
         if (existingReaction) {
           return {
             ...msg,
             reactions: msg.reactions.map(r => 
-              r.userId === profile?.id ? { ...r, emoji } : r
+              r.userId === user?.id ? { ...r, emoji } : r
             )
           };
         } else {
           return {
             ...msg,
-            reactions: [...msg.reactions, { userId: profile?.id || '1', emoji }]
+            reactions: [...msg.reactions, { userId: user?.id || '', emoji }]
           };
         }
       }
@@ -308,68 +809,15 @@ export default function ConversationScreen() {
   };
 
   const startVoiceRecording = async () => {
-    try {
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      setIsRecording(true);
-      setRecordingDuration(0);
-      
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(recordingAnimation, {
-            toValue: 1,
-            duration: 1000,
-            useNativeDriver: true,
-          }),
-          Animated.timing(recordingAnimation, {
-            toValue: 0,
-            duration: 1000,
-            useNativeDriver: true,
-          }),
-        ])
-      ).start();
-      
-      const timer = setInterval(() => {
-        setRecordingDuration(prev => prev + 0.1);
-      }, 100);
-      
-      setTimeout(() => {
-        clearInterval(timer);
-        stopVoiceRecording();
-      }, 8500);
-      
-    } catch (error) {
-      Alert.alert('Error', 'Could not start recording');
-    }
+    Alert.alert('Coming soon', 'Voice messages are not available yet.');
   };
 
   const stopVoiceRecording = async () => {
+    if (!isRecording) return;
     setIsRecording(false);
     recordingAnimation.stopAnimation();
     recordingAnimation.setValue(0);
-    
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    
-    const voiceMessage: MessageType = {
-      id: Date.now().toString(),
-      text: '',
-      senderId: profile?.id || '1',
-      timestamp: new Date(),
-      type: 'voice',
-      voiceMessage: {
-        duration: recordingDuration,
-        waveform: Array.from({ length: 15 }, () => Math.random()),
-        isPlaying: false,
-      },
-      reactions: [],
-      status: 'sent',
-    };
-    
-    setMessages(prev => [...prev, voiceMessage]);
-    setRecordingDuration(0);
-    
-    setTimeout(() => {
-      flatListRef.current?.scrollToEnd({ animated: true });
-    }, 100);
   };
 
   const toggleVoicePlayback = (messageId: string) => {
@@ -389,37 +837,8 @@ export default function ConversationScreen() {
   };
 
   const pickImage = async () => {
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: 'images',
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        const imageMessage: MessageType = {
-          id: Date.now().toString(),
-          text: inputText.trim() || '',
-          senderId: profile?.id || '1',
-          timestamp: new Date(),
-          type: 'image',
-          imageUrl: result.assets[0].uri,
-          reactions: [],
-          status: 'sent',
-        };
-        
-        setMessages(prev => [...prev, imageMessage]);
-        setInputText('');
-        setShowImagePicker(false);
-        
-        setTimeout(() => {
-          flatListRef.current?.scrollToEnd({ animated: true });
-        }, 100);
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Could not pick image');
-    }
+    Alert.alert('Coming soon', 'Photo messages are not available yet.');
+    setShowImagePicker(false);
   };
 
   const replyToMessage = (message: MessageType) => {
@@ -432,7 +851,6 @@ export default function ConversationScreen() {
   };
 
   const handleLongPress = (messageId: string) => {
-    setSelectedMessage(messageId);
     setShowReactions(messageId);
   };
 
@@ -469,185 +887,125 @@ export default function ConversationScreen() {
     );
   };
 
-  const renderMessage = ({ item, index }: { item: MessageType, index: number }) => {
-    const isMyMessage = item.senderId === (profile?.id || '1');
-    const showAvatar = !isMyMessage && (index === 0 || messages[index - 1]?.senderId !== item.senderId);
-
-    return (
-      <View style={styles.messageContainer}>
-        <Pressable
-          onLongPress={() => handleLongPress(item.id)}
-          onPress={() => {
-            if (item.type === 'voice') {
-              toggleVoicePlayback(item.id);
-            }
-          }}
-          style={[
-            styles.messageBubbleContainer,
-            isMyMessage ? styles.myMessageContainer : styles.theirMessageContainer,
-          ]}
-        >
-          {showAvatar && (
-            <Image 
-              source={{ uri: userAvatar }} 
-              style={styles.messageAvatar} 
-            />
-          )}
-          
-          <View style={[
-            styles.messageBubble,
-            isMyMessage ? styles.myMessageBubble : styles.theirMessageBubble,
-            item.type === 'mood_sticker' && styles.stickerBubble,
-            item.type === 'voice' && styles.voiceBubble,
-            item.type === 'image' && styles.imageBubble,
-          ]}>
-            {/* Reply indicator */}
-            {item.replyTo && (
-              <View style={styles.replyIndicator}>
-                <View style={styles.replyLine} />
-                <Text style={styles.replyText} numberOfLines={1}>
-                  {item.replyTo.type === 'text' ? item.replyTo.text : 
-                   item.replyTo.type === 'voice' ? '🎵 Voice message' :
-                   item.replyTo.type === 'image' ? '📷 Photo' : '😊 Sticker'}
-                </Text>
-              </View>
-            )}
-
-            {/* Message content */}
-            {item.type === 'text' ? (
-              <Text style={[
-                styles.messageText,
-                isMyMessage ? styles.myMessageText : styles.theirMessageText,
-              ]}>
-                {item.text}
-              </Text>
-            ) : item.type === 'voice' ? (
-              <View style={styles.voiceMessageContainer}>
-                <TouchableOpacity 
-                  style={[styles.voicePlayButton, { backgroundColor: isMyMessage ? '#fff' : Colors.light.tint }]}
-                  onPress={() => toggleVoicePlayback(item.id)}
-                >
-                  <MaterialCommunityIcons 
-                    name={playingVoiceId === item.id ? 'pause' : 'play'} 
-                    size={16} 
-                    color={isMyMessage ? Colors.light.tint : '#fff'} 
-                  />
-                </TouchableOpacity>
-                
-                <View style={styles.voiceWaveform}>
-                  {item.voiceMessage?.waveform.map((height, idx) => (
-                    <Animated.View
-                      key={idx}
-                      style={[
-                        styles.waveformBar,
-                        {
-                          height: height * 20,
-                          backgroundColor: playingVoiceId === item.id ? 
-                            (isMyMessage ? '#fff' : Colors.light.tint) : 
-                            (isMyMessage ? '#ffffff80' : '#00000040'),
-                        },
-                      ]}
-                    />
-                  ))}
-                </View>
-                
-                <Text style={[styles.voiceDuration, { color: isMyMessage ? '#fff' : '#666' }]}>
-                  {Math.floor(item.voiceMessage?.duration || 0)}s
-                </Text>
-              </View>
-            ) : item.type === 'image' ? (
-              <View style={styles.imageMessageContainer}>
-                <Image source={{ uri: item.imageUrl }} style={styles.messageImage} />
-                {item.text && (
-                  <Text style={[
-                    styles.imageCaption,
-                    isMyMessage ? styles.myMessageText : styles.theirMessageText,
-                  ]}>
-                    {item.text}
-                  </Text>
-                )}
-              </View>
-            ) : (
-              <View style={[styles.moodStickerContainer, { backgroundColor: item.sticker?.color + '20' }]}>
-                <Text style={styles.moodStickerEmoji}>{item.sticker?.emoji}</Text>
-                <Text style={[styles.moodStickerName, { color: item.sticker?.color }]}>
-                  {item.sticker?.name}
-                </Text>
-              </View>
-            )}
-            
-            {/* Reactions */}
-            {item.reactions.length > 0 && (
-              <View style={styles.reactionsContainer}>
-                {item.reactions.map((reaction, idx) => (
-                  <View key={idx} style={styles.reactionBubble}>
-                    <Text style={styles.reactionEmoji}>{reaction.emoji}</Text>
-                  </View>
-                ))}
-              </View>
-            )}
-          </View>
-        </Pressable>
-        
-        <View style={[
-          styles.messageInfo,
-          isMyMessage ? styles.myMessageInfo : styles.theirMessageInfo,
-        ]}>
-          <Text style={[
-            styles.messageTime,
-            isMyMessage ? styles.myMessageTime : styles.theirMessageTime,
-          ]}>
-            {formatTime(item.timestamp)}
-          </Text>
-          
-          {/* Message status for my messages */}
-          {isMyMessage && (
-            <View style={styles.messageStatus}>
-              {item.status === 'sending' && (
-                <MaterialCommunityIcons name="clock-outline" size={12} color="#9ca3af" />
-              )}
-              {item.status === 'sent' && (
-                <MaterialCommunityIcons name="check" size={12} color="#9ca3af" />
-              )}
-              {item.status === 'delivered' && (
-                <MaterialCommunityIcons name="check-all" size={12} color="#9ca3af" />
-              )}
-              {item.status === 'read' && (
-                <MaterialCommunityIcons name="check-all" size={12} color={Colors.light.tint} />
-              )}
-            </View>
-          )}
-        </View>
-
-        {/* Enhanced Quick Reactions Popup */}
-        {showReactions === item.id && (
-          <View style={[
-            styles.quickReactionsContainer,
-            isMyMessage ? styles.quickReactionsRight : styles.quickReactionsLeft,
-          ]}>
-            <TouchableOpacity
-              style={styles.replyButton}
-              onPress={() => {
-                replyToMessage(item);
-                setShowReactions(null);
-              }}
-            >
-              <MaterialCommunityIcons name="reply" size={16} color="#6b7280" />
-            </TouchableOpacity>
-            {QUICK_REACTIONS.map((emoji, idx) => (
-              <TouchableOpacity
-                key={idx}
-                style={styles.quickReactionButton}
-                onPress={() => addReaction(item.id, emoji)}
-              >
-                <Text style={styles.quickReactionEmoji}>{emoji}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-      </View>
-    );
+  const handleScroll = (event: any) => {
+    if (!hasAutoScrolledRef.current) return;
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    listMetricsRef.current = {
+      contentHeight: contentSize.height,
+      layoutHeight: layoutMeasurement.height,
+      offsetY: contentOffset.y,
+    };
+    const distanceToBottom =
+      contentSize.height - (contentOffset.y + layoutMeasurement.height);
+    const paddingToBottom = keyboardVisibleRef.current ? 200 : 60;
+    shouldAutoScrollRef.current =
+      distanceToBottom <= paddingToBottom;
+    wasAtBottomRef.current = distanceToBottom <= paddingToBottom;
   };
+
+  const getDistanceToBottom = useCallback(() => {
+    const { contentHeight, layoutHeight, offsetY } = listMetricsRef.current;
+    return Math.max(0, contentHeight - (offsetY + layoutHeight));
+  }, []);
+
+  useEffect(() => {
+    if (messages.length === 0) return;
+    if (!hasAutoScrolledRef.current) {
+      hasAutoScrolledRef.current = true;
+      shouldAutoScrollRef.current = true;
+      InteractionManager.runAfterInteractions(() => {
+        flatListRef.current?.scrollToEnd({ animated: false });
+      });
+      return;
+    }
+    const paddingToBottom = keyboardVisibleRef.current ? 200 : 60;
+    const distanceToBottom = getDistanceToBottom();
+    if (
+      !shouldAutoScrollRef.current &&
+      distanceToBottom > paddingToBottom
+    ) {
+      return;
+    }
+    if (!shouldAutoScrollRef.current) return;
+    InteractionManager.runAfterInteractions(() => {
+      flatListRef.current?.scrollToEnd({ animated: true });
+    });
+  }, [messages.length]);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const onShow = () => {
+      keyboardVisibleRef.current = true;
+      if (getDistanceToBottom() <= 200) {
+        shouldAutoScrollRef.current = true;
+        InteractionManager.runAfterInteractions(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        });
+      }
+    };
+    const onHide = () => {
+      keyboardVisibleRef.current = false;
+      if (getDistanceToBottom() <= 60) {
+        shouldAutoScrollRef.current = true;
+        InteractionManager.runAfterInteractions(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        });
+      }
+    };
+
+    const showSub = Keyboard.addListener(showEvent, onShow);
+    const hideSub = Keyboard.addListener(hideEvent, onHide);
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const renderMessage = useCallback(
+    ({ item, index }: { item: MessageType; index: number }) => {
+      const isMyMessage = item.senderId === (user?.id || '');
+      const prevSenderId = messages[index - 1]?.senderId;
+      const showAvatar = !isMyMessage && (index === 0 || prevSenderId !== item.senderId);
+      const isPlaying = playingVoiceId === item.id;
+      const isReactionOpen = showReactions === item.id;
+      const timeLabel = formatTime(item.timestamp);
+
+      return (
+        <MessageRowItem
+          item={item}
+          isMyMessage={isMyMessage}
+          showAvatar={showAvatar}
+          isPlaying={isPlaying}
+          isReactionOpen={isReactionOpen}
+          timeLabel={timeLabel}
+          userAvatar={userAvatar}
+          onLongPress={handleLongPress}
+          onToggleVoice={toggleVoicePlayback}
+          onReply={replyToMessage}
+          onAddReaction={addReaction}
+          onCloseReactions={() => setShowReactions(null)}
+        />
+      );
+    },
+    [
+      messages,
+      playingVoiceId,
+      showReactions,
+      user?.id,
+      userAvatar,
+      handleLongPress,
+      toggleVoicePlayback,
+      replyToMessage,
+      addReaction,
+      formatTime,
+    ]
+  );
+
+  if (!fontsLoaded) {
+    return <View style={styles.container} />;
+  }
 
   const renderMoodStickersPanel = () => {
     if (!showMoodStickers) return null;
@@ -690,6 +1048,27 @@ export default function ConversationScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <View style={styles.reconnectToastHost} pointerEvents="none">
+        <Animated.View
+          style={[
+            styles.reconnectToast,
+            {
+              opacity: reconnectToastOpacity,
+              transform: [
+                {
+                  translateY: reconnectToastOpacity.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-6, 0],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
+          <MaterialCommunityIcons name="wifi" size={14} color="#fff" />
+          <Text style={styles.reconnectToastText}>Reconnected</Text>
+        </Animated.View>
+      </View>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity 
@@ -711,14 +1090,18 @@ export default function ConversationScreen() {
               source={{ uri: userAvatar }} 
               style={styles.headerAvatar} 
             />
-            {isOnline && (
+            {peerOnline && (
               <View style={styles.onlineIndicator} />
             )}
           </View>
           <View style={styles.headerInfo}>
             <Text style={styles.headerName}>{userName}</Text>
             <Text style={styles.headerStatus}>
-              {isOnline ? 'Active now' : 'Last seen recently'}
+              {peerOnline
+                ? 'Active now'
+                : peerLastSeen
+                ? `Last seen ${formatLastSeen(peerLastSeen)}`
+                : 'Last seen recently'}
             </Text>
           </View>
         </View>
@@ -740,11 +1123,36 @@ export default function ConversationScreen() {
           renderItem={renderMessage}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.messagesList}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={7}
+          updateCellsBatchingPeriod={50}
+          removeClippedSubviews={Platform.OS === 'android'}
           showsVerticalScrollIndicator={false}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+          onContentSizeChange={(_, height) => {
+            listMetricsRef.current.contentHeight = height;
+            const paddingToBottom = keyboardVisibleRef.current ? 200 : 60;
+            if (
+              shouldAutoScrollRef.current ||
+              wasAtBottomRef.current ||
+              getDistanceToBottom() <= paddingToBottom
+            ) {
+              flatListRef.current?.scrollToEnd({ animated: true });
+            }
+          }}
+          onLayout={(event) => {
+            listMetricsRef.current.layoutHeight = event.nativeEvent.layout.height;
+            wasAtBottomRef.current = true;
+            if (shouldAutoScrollRef.current) {
+              flatListRef.current?.scrollToEnd({ animated: false });
+            }
+          }}
           onScrollBeginDrag={() => setShowReactions(null)}
           onViewableItemsChanged={({ viewableItems }) => {
             viewableItems.forEach(({ item }) => {
-              if (item.senderId !== (profile?.id || '1') && item.status !== 'read') {
+              if (item.senderId !== (user?.id || '') && item.status !== 'read') {
                 markAsRead(item.id);
               }
             });
@@ -780,14 +1188,14 @@ export default function ConversationScreen() {
           <View style={styles.inputLeftActions}>
             <TouchableOpacity 
               style={styles.inputActionButton}
-              onPress={() => setShowImagePicker(!showImagePicker)}
+              onPress={() => Alert.alert('Coming soon', 'Photo messages are not available yet.')}
             >
               <MaterialCommunityIcons name="camera" size={22} color="#6b7280" />
             </TouchableOpacity>
             
             <TouchableOpacity 
               style={styles.inputActionButton}
-              onPress={() => setShowMoodStickers(!showMoodStickers)}
+              onPress={() => Alert.alert('Coming soon', 'Stickers are not available yet.')}
             >
               <MaterialCommunityIcons 
                 name="emoticon-happy" 
@@ -801,7 +1209,7 @@ export default function ConversationScreen() {
           <TextInput
             style={styles.textInput}
             value={inputText}
-            onChangeText={setInputText}
+            onChangeText={handleInputChange}
             placeholder={replyingTo ? "Reply..." : "Type a message..."}
             placeholderTextColor="#9ca3af"
             multiline
@@ -1478,5 +1886,34 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Manrope_400Regular',
     color: Colors.light.tint,
+  },
+
+  // Reconnect toast
+  reconnectToastHost: {
+    position: 'absolute',
+    top: 8,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 20,
+  },
+  reconnectToast: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#111827',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  reconnectToastText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_500Medium',
+    color: '#fff',
   },
 });
