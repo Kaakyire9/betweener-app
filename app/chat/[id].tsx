@@ -5,7 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams } from "expo-router";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     Alert,
     Animated,
@@ -87,16 +87,20 @@ const MOOD_STICKERS = [
   { emoji: '\u{1F388}', name: 'Balloon', category: 'celebration' },
 ];
 
+const PAGE_SIZE = 60;
+
 type MessageRowItemProps = {
   item: MessageType;
   isMyMessage: boolean;
   showAvatar: boolean;
   isPlaying: boolean;
   isReactionOpen: boolean;
+  isFocused: boolean;
   timeLabel: string;
   userAvatar: string;
   onLongPress: (messageId: string) => void;
   onToggleVoice: (messageId: string) => void;
+  onFocus: (messageId: string) => void;
   onReply: (message: MessageType) => void;
   onAddReaction: (messageId: string, emoji: string) => void;
   onCloseReactions: () => void;
@@ -109,19 +113,55 @@ const MessageRowItem = memo(
     showAvatar,
     isPlaying,
     isReactionOpen,
+    isFocused,
     timeLabel,
     userAvatar,
     onLongPress,
     onToggleVoice,
+    onFocus,
     onReply,
     onAddReaction,
     onCloseReactions,
   }: MessageRowItemProps) => {
+    const waveformBars = useMemo(() => {
+      if (item.type !== 'voice' || !item.voiceMessage?.waveform) return null;
+      if (!isFocused && !isPlaying) return null;
+      return item.voiceMessage.waveform.map((height, idx) => (
+        <Animated.View
+          key={idx}
+          style={[
+            styles.waveformBar,
+            {
+              height: height * 20,
+              backgroundColor: isPlaying
+                ? (isMyMessage ? '#fff' : Colors.light.tint)
+                : (isMyMessage ? '#ffffff80' : '#00000040'),
+            },
+          ]}
+        />
+      ));
+    }, [item.type, item.voiceMessage?.waveform, isPlaying, isMyMessage]);
+
+    const reactionNodes = useMemo(() => {
+      if (item.reactions.length === 0) return null;
+      if (!isFocused && !isReactionOpen) return null;
+      return (
+        <View style={styles.reactionsContainer}>
+          {item.reactions.map((reaction, idx) => (
+            <View key={idx} style={styles.reactionBubble}>
+              <Text style={styles.reactionEmoji}>{reaction.emoji}</Text>
+            </View>
+          ))}
+        </View>
+      );
+    }, [item.reactions, isFocused, isReactionOpen]);
+
     return (
       <View style={styles.messageContainer}>
         <Pressable
           onLongPress={() => onLongPress(item.id)}
           onPress={() => {
+            onFocus(item.id);
             if (item.type === 'voice') {
               onToggleVoice(item.id);
             }
@@ -177,20 +217,7 @@ const MessageRowItem = memo(
                 </TouchableOpacity>
 
                 <View style={styles.voiceWaveform}>
-                  {item.voiceMessage?.waveform.map((height, idx) => (
-                    <Animated.View
-                      key={idx}
-                      style={[
-                        styles.waveformBar,
-                        {
-                          height: height * 20,
-                          backgroundColor: isPlaying ?
-                            (isMyMessage ? '#fff' : Colors.light.tint) :
-                            (isMyMessage ? '#ffffff80' : '#00000040'),
-                        },
-                      ]}
-                    />
-                  ))}
+                  {waveformBars}
                 </View>
 
                 <Text style={[styles.voiceDuration, { color: isMyMessage ? '#fff' : '#666' }]}>
@@ -218,15 +245,7 @@ const MessageRowItem = memo(
               </View>
             )}
 
-            {item.reactions.length > 0 && (
-              <View style={styles.reactionsContainer}>
-                {item.reactions.map((reaction, idx) => (
-                  <View key={idx} style={styles.reactionBubble}>
-                    <Text style={styles.reactionEmoji}>{reaction.emoji}</Text>
-                  </View>
-                ))}
-              </View>
-            )}
+            {reactionNodes}
           </View>
         </Pressable>
 
@@ -253,7 +272,7 @@ const MessageRowItem = memo(
                 <MaterialCommunityIcons name="check-all" size={12} color="#9ca3af" />
               )}
               {item.status === 'read' && (
-                <MaterialCommunityIcons name="check-all" size={12} color={Colors.light.tint} />
+                <MaterialCommunityIcons name="check-all" size={12} color="#00e676" />
               )}
             </View>
           )}
@@ -323,7 +342,12 @@ export default function ConversationScreen() {
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [showImagePicker, setShowImagePicker] = useState(false);
   const [replyingTo, setReplyingTo] = useState<MessageType | null>(null);
+  const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const [oldestTimestamp, setOldestTimestamp] = useState<Date | null>(null);
   
+  const messagesRef = useRef<MessageType[]>([]);
   const flatListRef = useRef<FlatList>(null);
   const typingAnimation = useRef(new Animated.Value(0)).current;
   const recordingAnimation = useRef(new Animated.Value(0)).current;
@@ -342,6 +366,9 @@ export default function ConversationScreen() {
     offsetY: 0,
   });
   const wasAtBottomRef = useRef(true);
+  const lastLoadTriggerRef = useRef(0);
+  const scrollRequestRef = useRef<number | null>(null);
+  const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const formatLastSeen = (date: Date) => {
     const now = Date.now();
@@ -381,7 +408,8 @@ export default function ConversationScreen() {
       .or(
         `and(sender_id.eq.${user.id},receiver_id.eq.${conversationId}),and(sender_id.eq.${conversationId},receiver_id.eq.${user.id})`
       )
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: false })
+      .limit(PAGE_SIZE);
 
     if (error) {
       console.log('[chat] fetch messages error', error);
@@ -408,7 +436,10 @@ export default function ConversationScreen() {
           : 'delivered',
     }));
 
-    setMessages(mapped);
+    const ordered = mapped.reverse();
+    setMessages(ordered);
+    setHasMore((data || []).length === PAGE_SIZE);
+    setOldestTimestamp(ordered[0]?.timestamp ?? null);
 
     await supabase
       .from('messages')
@@ -424,6 +455,59 @@ export default function ConversationScreen() {
       .eq('sender_id', conversationId)
       .eq('is_read', false);
   }, [conversationId, user?.id]);
+
+  const loadEarlier = useCallback(async () => {
+    if (!user?.id || !conversationId || loadingEarlier || !oldestTimestamp) return;
+    setLoadingEarlier(true);
+    shouldAutoScrollRef.current = false;
+    wasAtBottomRef.current = false;
+    const { data, error } = await supabase
+      .from('messages')
+      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at')
+      .or(
+        `and(sender_id.eq.${user.id},receiver_id.eq.${conversationId}),and(sender_id.eq.${conversationId},receiver_id.eq.${user.id})`
+      )
+      .lt('created_at', oldestTimestamp.toISOString())
+      .order('created_at', { ascending: false })
+      .limit(PAGE_SIZE);
+
+    if (error) {
+      console.log('[chat] load earlier error', error);
+      setLoadingEarlier(false);
+      return;
+    }
+
+    const mapped = (data || []).map((row: MessageRow) => ({
+      id: row.id,
+      text: row.text,
+      senderId: row.sender_id,
+      timestamp: new Date(row.created_at),
+      type: 'text' as const,
+      reactions: [],
+      status:
+        row.sender_id === user.id
+          ? row.is_read
+            ? 'read'
+            : row.delivered_at
+            ? 'delivered'
+            : 'sent'
+          : row.is_read
+          ? 'read'
+          : 'delivered',
+    }));
+
+    const ordered = mapped.reverse();
+    if (ordered.length > 0) {
+      setMessages((prev) => {
+        const existing = new Set(prev.map((msg) => msg.id));
+        const merged = ordered.filter((msg) => !existing.has(msg.id));
+        return [...merged, ...prev];
+      });
+      setOldestTimestamp(ordered[0]?.timestamp ?? oldestTimestamp);
+    }
+    setHasMore((data || []).length === PAGE_SIZE);
+    setLoadingEarlier(false);
+  }, [conversationId, loadingEarlier, oldestTimestamp, user?.id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -669,13 +753,13 @@ export default function ConversationScreen() {
     };
   }, [isTyping, typingAnimation]);
 
-  const formatTime = (date: Date) => {
+  const formatTime = useCallback((date: Date) => {
     return date.toLocaleTimeString('en-US', { 
       hour: 'numeric', 
       minute: '2-digit',
       hour12: true 
     });
-  };
+  }, []);
 
   const updateTyping = useCallback(
     (text: string) => {
@@ -783,7 +867,7 @@ export default function ConversationScreen() {
     setShowMoodStickers(false);
   };
 
-  const addReaction = (messageId: string, emoji: string) => {
+  const addReaction = useCallback((messageId: string, emoji: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     
     setMessages(prev => prev.map(msg => {
@@ -806,7 +890,7 @@ export default function ConversationScreen() {
       return msg;
     }));
     setShowReactions(null);
-  };
+  }, [user?.id]);
 
   const startVoiceRecording = async () => {
     Alert.alert('Coming soon', 'Voice messages are not available yet.');
@@ -820,39 +904,39 @@ export default function ConversationScreen() {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  const toggleVoicePlayback = (messageId: string) => {
+  const toggleVoicePlayback = useCallback((messageId: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     
     if (playingVoiceId === messageId) {
       setPlayingVoiceId(null);
     } else {
       setPlayingVoiceId(messageId);
-      const message = messages.find(m => m.id === messageId);
+      const message = messagesRef.current.find(m => m.id === messageId);
       if (message?.voiceMessage) {
         setTimeout(() => {
           setPlayingVoiceId(null);
         }, message.voiceMessage.duration * 1000);
       }
     }
-  };
+  }, [playingVoiceId]);
 
   const pickImage = async () => {
     Alert.alert('Coming soon', 'Photo messages are not available yet.');
     setShowImagePicker(false);
   };
 
-  const replyToMessage = (message: MessageType) => {
+  const replyToMessage = useCallback((message: MessageType) => {
     setReplyingTo(message);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  };
+  }, []);
 
   const cancelReply = () => {
     setReplyingTo(null);
   };
 
-  const handleLongPress = (messageId: string) => {
+  const handleLongPress = useCallback((messageId: string) => {
     setShowReactions(messageId);
-  };
+  }, []);
 
   const renderTypingIndicator = () => {
     if (!isTyping) return null;
@@ -901,6 +985,14 @@ export default function ConversationScreen() {
     shouldAutoScrollRef.current =
       distanceToBottom <= paddingToBottom;
     wasAtBottomRef.current = distanceToBottom <= paddingToBottom;
+
+    if (contentOffset.y <= 24 && hasMore && !loadingEarlier) {
+      const now = Date.now();
+      if (now - lastLoadTriggerRef.current > 800) {
+        lastLoadTriggerRef.current = now;
+        loadEarlier();
+      }
+    }
   };
 
   const getDistanceToBottom = useCallback(() => {
@@ -963,13 +1055,51 @@ export default function ConversationScreen() {
     };
   }, []);
 
+  messagesRef.current = messages;
+
+  const maybeScrollToEnd = useCallback((animated: boolean) => {
+    if (!flatListRef.current) return;
+    if (scrollRequestRef.current !== null) {
+      cancelAnimationFrame(scrollRequestRef.current);
+    }
+    scrollRequestRef.current = requestAnimationFrame(() => {
+      scrollRequestRef.current = null;
+      flatListRef.current?.scrollToEnd({ animated });
+    });
+  }, []);
+
+  const clearFocus = useCallback(() => {
+    if (focusTimerRef.current) {
+      clearTimeout(focusTimerRef.current);
+      focusTimerRef.current = null;
+    }
+    setFocusedMessageId(null);
+  }, []);
+
+  const onScrollBeginDrag = useCallback(() => {
+    setShowReactions(null);
+    clearFocus();
+  }, [clearFocus]);
+
+  const onViewableItemsChanged = useCallback(
+    ({ viewableItems }: { viewableItems: Array<{ item: MessageType }> }) => {
+      viewableItems.forEach(({ item }) => {
+        if (item.senderId !== (user?.id || '') && item.status !== 'read') {
+          markAsRead(item.id);
+        }
+      });
+    },
+    [markAsRead, user?.id]
+  );
+
   const renderMessage = useCallback(
     ({ item, index }: { item: MessageType; index: number }) => {
       const isMyMessage = item.senderId === (user?.id || '');
-      const prevSenderId = messages[index - 1]?.senderId;
+      const prevSenderId = messagesRef.current[index - 1]?.senderId;
       const showAvatar = !isMyMessage && (index === 0 || prevSenderId !== item.senderId);
       const isPlaying = playingVoiceId === item.id;
       const isReactionOpen = showReactions === item.id;
+      const isFocused = focusedMessageId === item.id;
       const timeLabel = formatTime(item.timestamp);
 
       return (
@@ -979,10 +1109,21 @@ export default function ConversationScreen() {
           showAvatar={showAvatar}
           isPlaying={isPlaying}
           isReactionOpen={isReactionOpen}
+          isFocused={isFocused}
           timeLabel={timeLabel}
           userAvatar={userAvatar}
           onLongPress={handleLongPress}
           onToggleVoice={toggleVoicePlayback}
+          onFocus={(messageId) => {
+            setFocusedMessageId(messageId);
+            if (focusTimerRef.current) {
+              clearTimeout(focusTimerRef.current);
+            }
+            focusTimerRef.current = setTimeout(() => {
+              setFocusedMessageId(null);
+              focusTimerRef.current = null;
+            }, 2500);
+          }}
           onReply={replyToMessage}
           onAddReaction={addReaction}
           onCloseReactions={() => setShowReactions(null)}
@@ -990,7 +1131,7 @@ export default function ConversationScreen() {
       );
     },
     [
-      messages,
+      focusedMessageId,
       playingVoiceId,
       showReactions,
       user?.id,
@@ -1002,6 +1143,31 @@ export default function ConversationScreen() {
       formatTime,
     ]
   );
+
+  useEffect(() => {
+    return () => {
+      if (focusTimerRef.current) {
+        clearTimeout(focusTimerRef.current);
+      }
+    };
+  }, []);
+
+  const renderLoadEarlier = useCallback(() => {
+    if (!hasMore) return <View style={styles.loadEarlierSpacer} />;
+    return (
+      <View style={styles.loadEarlierContainer}>
+        <TouchableOpacity
+          style={styles.loadEarlierButton}
+          onPress={loadEarlier}
+          disabled={loadingEarlier}
+        >
+          <Text style={styles.loadEarlierText}>
+            {loadingEarlier ? 'Loading...' : 'Load earlier'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }, [hasMore, loadEarlier, loadingEarlier]);
 
   if (!fontsLoaded) {
     return <View style={styles.container} />;
@@ -1123,6 +1289,7 @@ export default function ConversationScreen() {
           renderItem={renderMessage}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.messagesList}
+          ListHeaderComponent={renderLoadEarlier}
           initialNumToRender={12}
           maxToRenderPerBatch={12}
           windowSize={7}
@@ -1139,24 +1306,18 @@ export default function ConversationScreen() {
               wasAtBottomRef.current ||
               getDistanceToBottom() <= paddingToBottom
             ) {
-              flatListRef.current?.scrollToEnd({ animated: true });
+              maybeScrollToEnd(true);
             }
           }}
           onLayout={(event) => {
             listMetricsRef.current.layoutHeight = event.nativeEvent.layout.height;
             wasAtBottomRef.current = true;
             if (shouldAutoScrollRef.current) {
-              flatListRef.current?.scrollToEnd({ animated: false });
+              maybeScrollToEnd(false);
             }
           }}
-          onScrollBeginDrag={() => setShowReactions(null)}
-          onViewableItemsChanged={({ viewableItems }) => {
-            viewableItems.forEach(({ item }) => {
-              if (item.senderId !== (user?.id || '') && item.status !== 'read') {
-                markAsRead(item.id);
-              }
-            });
-          }}
+          onScrollBeginDrag={onScrollBeginDrag}
+          onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={{
             itemVisiblePercentThreshold: 50,
           }}
@@ -1389,6 +1550,26 @@ const styles = StyleSheet.create({
   messagesList: {
     paddingHorizontal: 16,
     paddingVertical: 20,
+  },
+  loadEarlierContainer: {
+    alignItems: 'center',
+    paddingBottom: 12,
+  },
+  loadEarlierButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  loadEarlierText: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontFamily: 'Manrope_500Medium',
+  },
+  loadEarlierSpacer: {
+    height: 4,
   },
 
   // Messages
