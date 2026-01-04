@@ -1,12 +1,12 @@
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
+import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Animated,
-  Dimensions,
   FlatList,
   Image,
   StyleSheet,
@@ -16,8 +16,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-
-const { width: screenWidth } = Dimensions.get('window');
+import { useFocusEffect } from "@react-navigation/native";
 
 // Chat conversation type
 type ConversationType = {
@@ -41,138 +40,26 @@ type ConversationType = {
   matchedAt: Date;
 };
 
-// Mock conversations data
-const MOCK_CONVERSATIONS: ConversationType[] = [
-  {
-    id: '1',
-    matchedUser: {
-      id: '2',
-      name: 'Akosua',
-      avatar_url: 'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=100&h=100&fit=crop&crop=face',
-      age: 26,
-      isOnline: true,
-      lastSeen: new Date(),
-    },
-    lastMessage: {
-      text: 'Here\'s a photo from my morning hike! 🏔️',
-      timestamp: new Date(Date.now() - 900000), // 15 minutes ago
-      senderId: '1',
-      type: 'image',
-    },
-    unreadCount: 2,
-    isPinned: true,
-    matchedAt: new Date(Date.now() - 86400000 * 3), // 3 days ago
-  },
-  {
-    id: '2',
-    matchedUser: {
-      id: '3',
-      name: 'Kwame',
-      avatar_url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop&crop=face',
-      age: 28,
-      isOnline: false,
-      lastSeen: new Date(Date.now() - 3600000), // 1 hour ago
-    },
-    lastMessage: {
-      text: 'That sounds like a great plan! 😊',
-      timestamp: new Date(Date.now() - 7200000), // 2 hours ago
-      senderId: '3',
-      type: 'text',
-    },
-    unreadCount: 0,
-    isPinned: false,
-    matchedAt: new Date(Date.now() - 86400000 * 5), // 5 days ago
-  },
-  {
-    id: '3',
-    matchedUser: {
-      id: '4',
-      name: 'Ama',
-      avatar_url: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=100&h=100&fit=crop&crop=face',
-      age: 24,
-      isOnline: true,
-      lastSeen: new Date(),
-    },
-    lastMessage: {
-      text: '🎵 Voice message',
-      timestamp: new Date(Date.now() - 14400000), // 4 hours ago
-      senderId: '4',
-      type: 'voice',
-    },
-    unreadCount: 1,
-    isPinned: false,
-    matchedAt: new Date(Date.now() - 86400000 * 2), // 2 days ago
-  },
-  {
-    id: '4',
-    matchedUser: {
-      id: '5',
-      name: 'Kojo',
-      avatar_url: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop&crop=face',
-      age: 30,
-      isOnline: false,
-      lastSeen: new Date(Date.now() - 21600000), // 6 hours ago
-    },
-    lastMessage: {
-      text: 'Looking forward to meeting you!',
-      timestamp: new Date(Date.now() - 86400000), // 1 day ago
-      senderId: '1',
-      type: 'text',
-    },
-    unreadCount: 0,
-    isPinned: false,
-    matchedAt: new Date(Date.now() - 86400000 * 7), // 1 week ago
-  },
-  {
-    id: '5',
-    matchedUser: {
-      id: '6',
-      name: 'Adwoa',
-      avatar_url: 'https://images.unsplash.com/photo-1487412720507-e7ab37603c6f?w=100&h=100&fit=crop&crop=face',
-      age: 27,
-      isOnline: false,
-      lastSeen: new Date(Date.now() - 43200000), // 12 hours ago
-    },
-    lastMessage: {
-      text: '😊 Happy',
-      timestamp: new Date(Date.now() - 172800000), // 2 days ago
-      senderId: '6',
-      type: 'mood_sticker',
-    },
-    unreadCount: 0,
-    isPinned: false,
-    matchedAt: new Date(Date.now() - 86400000 * 4), // 4 days ago
-  },
-  {
-    id: '6',
-    matchedUser: {
-      id: '7',
-      name: 'Yaw',
-      avatar_url: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=face',
-      age: 25,
-      isOnline: true,
-      lastSeen: new Date(),
-    },
-    lastMessage: {
-      text: 'Just matched! Hey there 👋',
-      timestamp: new Date(Date.now() - 1800000), // 30 minutes ago
-      senderId: '7',
-      type: 'text',
-    },
-    unreadCount: 1,
-    isPinned: false,
-    matchedAt: new Date(Date.now() - 1800000), // 30 minutes ago
-  },
-];
+type MessageRow = {
+  id: string;
+  text: string;
+  created_at: string;
+  sender_id: string;
+  receiver_id: string;
+  is_read: boolean;
+};
 
 export default function ChatScreen() {
-  const { profile } = useAuth();
+  const { user } = useAuth();
   const fontsLoaded = useAppFonts();
   
-  const [conversations, setConversations] = useState<ConversationType[]>(MOCK_CONVERSATIONS);
+  const [conversations, setConversations] = useState<ConversationType[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'pinned'>('all');
+  const [presenceOnline, setPresenceOnline] = useState<Record<string, boolean>>({});
+  const [presenceLastSeen, setPresenceLastSeen] = useState<Record<string, Date>>({});
   
   const searchAnimation = useRef(new Animated.Value(0)).current;
 
@@ -191,6 +78,150 @@ export default function ChatScreen() {
       }).start();
     }
   }, [showSearch]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const channel = supabase.channel('presence:chatlist', {
+      config: {
+        presence: { key: user.id },
+      },
+    });
+
+    channel
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        const onlineMap: Record<string, boolean> = {};
+        Object.keys(state).forEach((key) => {
+          onlineMap[key] = (state as any)[key]?.length > 0;
+        });
+        setPresenceOnline(onlineMap);
+        setPresenceLastSeen((prev) => {
+          const next = { ...prev };
+          Object.keys(onlineMap).forEach((key) => {
+            if (onlineMap[key]) {
+              delete next[key];
+            }
+          });
+          return next;
+        });
+      })
+      .on('presence', { event: 'join' }, ({ key }) => {
+        if (!key) return;
+        setPresenceOnline((prev) => ({ ...prev, [key]: true }));
+        setPresenceLastSeen((prev) => {
+          if (!(key in prev)) return prev;
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+      })
+      .on('presence', { event: 'leave' }, ({ key }) => {
+        if (!key) return;
+        setPresenceOnline((prev) => ({ ...prev, [key]: false }));
+        setPresenceLastSeen((prev) => ({ ...prev, [key]: new Date() }));
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          void channel.track({ onlineAt: new Date().toISOString() });
+        }
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
+
+  const fetchConversations = useCallback(async () => {
+    if (!user?.id) return;
+    setIsLoading(true);
+    try {
+      const { data: messages, error } = await supabase
+        .from('messages')
+        .select('id,text,created_at,sender_id,receiver_id,is_read')
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .order('created_at', { ascending: false })
+        .limit(300);
+
+      if (error) {
+        console.log('[chat] messages fetch error', error);
+        setConversations([]);
+        return;
+      }
+
+      const rows = (messages || []) as MessageRow[];
+      const convoMap = new Map<string, { last: MessageRow; unread: number }>();
+
+      rows.forEach((msg) => {
+        const otherId = msg.sender_id === user.id ? msg.receiver_id : msg.sender_id;
+        if (!otherId) return;
+        if (!convoMap.has(otherId)) {
+          convoMap.set(otherId, { last: msg, unread: 0 });
+        }
+        if (msg.receiver_id === user.id && !msg.is_read) {
+          const entry = convoMap.get(otherId);
+          if (entry) entry.unread += 1;
+        }
+      });
+
+      const otherUserIds = Array.from(convoMap.keys());
+      if (otherUserIds.length === 0) {
+        setConversations([]);
+        return;
+      }
+
+      const { data: profilesData, error: profilesError } = await supabase
+        .from('profiles')
+        .select('user_id,full_name,avatar_url,age,online,updated_at')
+        .in('user_id', otherUserIds);
+
+      if (profilesError) {
+        console.log('[chat] profiles fetch error', profilesError);
+        setConversations([]);
+        return;
+      }
+
+      const profileByUser = new Map(
+        (profilesData || []).map((p: any) => [p.user_id, p])
+      );
+
+      const nextConversations: ConversationType[] = otherUserIds.map((otherUserId) => {
+        const entry = convoMap.get(otherUserId);
+        const profileRow = profileByUser.get(otherUserId);
+        const last = entry?.last;
+        const lastTimestamp = last?.created_at ? new Date(last.created_at) : new Date();
+        return {
+          id: otherUserId,
+          matchedUser: {
+            id: otherUserId,
+            name: profileRow?.full_name || 'Unknown',
+            avatar_url: profileRow?.avatar_url || '',
+            age: profileRow?.age || 0,
+            isOnline: !!profileRow?.online,
+            lastSeen: profileRow?.updated_at ? new Date(profileRow.updated_at) : new Date(),
+          },
+          lastMessage: {
+            text: last?.text || '',
+            timestamp: lastTimestamp,
+            senderId: last?.sender_id || '',
+            type: 'text',
+          },
+          unreadCount: entry?.unread || 0,
+          isPinned: false,
+          matchedAt: lastTimestamp,
+        };
+      });
+
+      setConversations(nextConversations);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [user?.id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void fetchConversations();
+    }, [fetchConversations])
+  );
 
   if (!fontsLoaded) {
     return <View style={styles.container} />;
@@ -211,14 +242,29 @@ export default function ChatScreen() {
     }
   };
 
+  const formatLastSeen = (date: Date) => {
+    const now = new Date();
+    const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
+
+    if (diffInHours < 1) {
+      const diffInMinutes = Math.floor(diffInHours * 60);
+      return diffInMinutes < 1 ? 'just now' : `${diffInMinutes}m ago`;
+    } else if (diffInHours < 24) {
+      return `${Math.floor(diffInHours)}h ago`;
+    } else {
+      const diffInDays = Math.floor(diffInHours / 24);
+      return diffInDays === 1 ? '1d ago' : `${diffInDays}d ago`;
+    }
+  };
+
   const getLastMessagePreview = (lastMessage: ConversationType['lastMessage']) => {
     switch (lastMessage.type) {
       case 'voice':
-        return '🎵 Voice message';
+        return 'Voice message';
       case 'image':
-        return '📷 Photo';
+        return 'Photo';
       case 'mood_sticker':
-        return `😊 ${lastMessage.text || 'Sticker'}`;
+        return lastMessage.text || 'Sticker';
       default:
         return lastMessage.text;
     }
@@ -246,6 +292,10 @@ export default function ChatScreen() {
     });
 
   const openConversation = (conversation: ConversationType) => {
+    const isOnline =
+      presenceOnline[conversation.id] ?? conversation.matchedUser.isOnline;
+    const lastSeen =
+      presenceLastSeen[conversation.id] ?? conversation.matchedUser.lastSeen;
     // Navigate to the detailed chat screen
     router.push({
       pathname: '/chat/[id]',
@@ -253,7 +303,8 @@ export default function ChatScreen() {
         id: conversation.id,
         userName: conversation.matchedUser.name,
         userAvatar: conversation.matchedUser.avatar_url,
-        isOnline: conversation.matchedUser.isOnline.toString(),
+        isOnline: isOnline.toString(),
+        lastSeen: lastSeen.toISOString(),
       }
     });
   };
@@ -266,16 +317,28 @@ export default function ChatScreen() {
     ));
   };
 
-  const markAsRead = (conversationId: string) => {
+  const markAsRead = async (conversationId: string) => {
     setConversations(prev => prev.map(conv => 
       conv.id === conversationId 
         ? { ...conv, unreadCount: 0 }
         : conv
     ));
+    if (!user?.id) return;
+    const { error } = await supabase
+      .from('messages')
+      .update({ is_read: true })
+      .eq('receiver_id', user.id)
+      .eq('sender_id', conversationId)
+      .eq('is_read', false);
+    if (error) {
+      console.log('[chat] markAsRead error', error);
+    }
   };
 
   const renderConversation = ({ item }: { item: ConversationType }) => {
-    const isMyLastMessage = item.lastMessage.senderId === (profile?.id || '1');
+    const isOnline = presenceOnline[item.matchedUser.id] ?? item.matchedUser.isOnline;
+    const lastSeen = presenceLastSeen[item.matchedUser.id] ?? item.matchedUser.lastSeen;
+    const isMyLastMessage = item.lastMessage.senderId === (user?.id || '');
     
     return (
       <TouchableOpacity
@@ -285,18 +348,23 @@ export default function ChatScreen() {
           item.unreadCount > 0 && styles.unreadConversation,
         ]}
         onPress={() => {
-          markAsRead(item.id);
+          void markAsRead(item.id);
           openConversation(item);
         }}
         onLongPress={() => togglePin(item.id)}
       >
         <View style={styles.conversationLeft}>
           <View style={styles.avatarContainer}>
-            <Image 
-              source={{ uri: item.matchedUser.avatar_url }} 
-              style={styles.conversationAvatar} 
-            />
-            {item.matchedUser.isOnline && (
+            {item.matchedUser.avatar_url ? (
+              <Image source={{ uri: item.matchedUser.avatar_url }} style={styles.conversationAvatar} />
+            ) : (
+              <View style={[styles.conversationAvatar, styles.avatarFallback]}>
+                <Text style={styles.avatarFallbackText}>
+                  {(item.matchedUser.name || '?')[0]?.toUpperCase()}
+                </Text>
+              </View>
+            )}
+            {isOnline && (
               <View style={styles.onlineIndicator} />
             )}
             {item.isPinned && (
@@ -318,6 +386,12 @@ export default function ChatScreen() {
                 {formatLastMessageTime(item.lastMessage.timestamp)}
               </Text>
             </View>
+
+            {!isOnline && lastSeen && item.unreadCount === 0 && !item.isPinned && (
+              <Text style={styles.lastSeenText}>
+                Last seen {formatLastSeen(lastSeen)}
+              </Text>
+            )}
             
             <View style={styles.conversationPreview}>
               <Text 
@@ -454,10 +528,9 @@ export default function ChatScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.conversationsList}
           showsVerticalScrollIndicator={false}
-          refreshing={false}
+          refreshing={isLoading}
           onRefresh={() => {
-            // Add refresh logic here
-            console.log('Refreshing conversations...');
+            void fetchConversations();
           }}
         />
       )}
@@ -599,6 +672,16 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#fff',
   },
+  avatarFallback: {
+    backgroundColor: '#e2e8f0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarFallbackText: {
+    fontSize: 18,
+    fontFamily: 'Archivo_700Bold',
+    color: '#475569',
+  },
   onlineIndicator: {
     position: 'absolute',
     bottom: 2,
@@ -644,6 +727,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Manrope_400Regular',
     color: '#9ca3af',
+  },
+  lastSeenText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_400Regular',
+    color: '#9ca3af',
+    marginTop: 2,
   },
   conversationPreview: {
     flexDirection: 'row',
