@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "betweener-app",
-    "slug": "betweener-app",
+    "name": "Betweener",
+    "slug": "betweener",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
