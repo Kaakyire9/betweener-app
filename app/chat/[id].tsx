@@ -382,6 +382,33 @@ export default function ConversationScreen() {
     return `${diffDays}d ago`;
   };
 
+  const mapRowToMessage = useCallback(
+    (row: MessageRow): MessageType => {
+      const currentUserId = user?.id ?? '';
+      const isMine = row.sender_id === currentUserId;
+      const status: MessageType['status'] = isMine
+        ? row.is_read
+          ? 'read'
+          : row.delivered_at
+          ? 'delivered'
+          : 'sent'
+        : row.is_read
+        ? 'read'
+        : 'delivered';
+
+      return {
+        id: row.id,
+        text: row.text,
+        senderId: row.sender_id,
+        timestamp: new Date(row.created_at),
+        type: 'text',
+        reactions: [],
+        status,
+      };
+    },
+    [user?.id]
+  );
+
   const triggerReconnectToast = useCallback(() => {
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
@@ -417,24 +444,9 @@ export default function ConversationScreen() {
       return;
     }
 
-    const mapped = (data || []).map((row: MessageRow) => ({
-      id: row.id,
-      text: row.text,
-      senderId: row.sender_id,
-      timestamp: new Date(row.created_at),
-      type: 'text' as const,
-      reactions: [],
-      status:
-        row.sender_id === user.id
-          ? row.is_read
-            ? 'read'
-            : row.delivered_at
-            ? 'delivered'
-            : 'sent'
-          : row.is_read
-          ? 'read'
-          : 'delivered',
-    }));
+    const mapped: MessageType[] = (data || []).map((row: MessageRow) =>
+      mapRowToMessage(row)
+    );
 
     const ordered = mapped.reverse();
     setMessages(ordered);
@@ -454,7 +466,7 @@ export default function ConversationScreen() {
       .eq('receiver_id', user.id)
       .eq('sender_id', conversationId)
       .eq('is_read', false);
-  }, [conversationId, user?.id]);
+  }, [conversationId, mapRowToMessage, user?.id]);
 
   const loadEarlier = useCallback(async () => {
     if (!user?.id || !conversationId || loadingEarlier || !oldestTimestamp) return;
@@ -477,24 +489,9 @@ export default function ConversationScreen() {
       return;
     }
 
-    const mapped = (data || []).map((row: MessageRow) => ({
-      id: row.id,
-      text: row.text,
-      senderId: row.sender_id,
-      timestamp: new Date(row.created_at),
-      type: 'text' as const,
-      reactions: [],
-      status:
-        row.sender_id === user.id
-          ? row.is_read
-            ? 'read'
-            : row.delivered_at
-            ? 'delivered'
-            : 'sent'
-          : row.is_read
-          ? 'read'
-          : 'delivered',
-    }));
+    const mapped: MessageType[] = (data || []).map((row: MessageRow) =>
+      mapRowToMessage(row)
+    );
 
     const ordered = mapped.reverse();
     if (ordered.length > 0) {
@@ -507,7 +504,7 @@ export default function ConversationScreen() {
     }
     setHasMore((data || []).length === PAGE_SIZE);
     setLoadingEarlier(false);
-  }, [conversationId, loadingEarlier, oldestTimestamp, user?.id]);
+  }, [conversationId, loadingEarlier, mapRowToMessage, oldestTimestamp, user?.id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -545,18 +542,7 @@ export default function ConversationScreen() {
           if (row.sender_id !== conversationId) return;
           setMessages((prev) => {
             if (prev.some((msg) => msg.id === row.id)) return prev;
-            return [
-              ...prev,
-              {
-                id: row.id,
-                text: row.text,
-                senderId: row.sender_id,
-                timestamp: new Date(row.created_at),
-                type: 'text',
-                reactions: [],
-                status: 'delivered',
-              },
-            ];
+            return [...prev, mapRowToMessage(row)];
           });
           void supabase
             .from('messages')
@@ -594,19 +580,7 @@ export default function ConversationScreen() {
                 msg.senderId === user.id &&
                 msg.text === row.text
             );
-            const nextMessage: MessageType = {
-              id: row.id,
-              text: row.text,
-              senderId: row.sender_id,
-              timestamp: new Date(row.created_at),
-              type: 'text',
-              reactions: [],
-              status: row.is_read
-                ? 'read'
-                : row.delivered_at
-                ? 'delivered'
-                : 'sent',
-            };
+            const nextMessage = mapRowToMessage(row);
             if (tempIndex >= 0) {
               const next = [...prev];
               next[tempIndex] = nextMessage;
@@ -650,7 +624,7 @@ export default function ConversationScreen() {
         clearTimeout(reconnectTimerRef.current);
       }
     };
-  }, [conversationId, triggerReconnectToast, user?.id]);
+  }, [conversationId, mapRowToMessage, triggerReconnectToast, user?.id]);
 
   useEffect(() => {
     if (!user?.id || !conversationId) return;
@@ -862,7 +836,7 @@ export default function ConversationScreen() {
     }, 100);
   };
 
-  const sendMoodSticker = () => {
+  const sendMoodSticker = (_sticker: (typeof MOOD_STICKERS)[number]) => {
     Alert.alert('Coming soon', 'Stickers are not available yet.');
     setShowMoodStickers(false);
   };
