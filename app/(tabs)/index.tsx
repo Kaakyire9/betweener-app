@@ -302,8 +302,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     headerTitle: {
       fontSize: 32,
-      fontWeight: "bold",
       color: theme.text,
+      fontFamily: 'PlayfairDisplay_700Bold',
     },
     card: {
       backgroundColor: theme.backgroundSubtle,
@@ -347,8 +347,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     profileName: {
       fontSize: 20,
-      fontWeight: "bold",
       color: theme.text,
+      fontFamily: 'PlayfairDisplay_600SemiBold',
     },
     lastActive: {
       fontSize: 14,
@@ -404,8 +404,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     cardTitle: {
       fontSize: 18,
-      fontWeight: "bold",
       color: theme.text,
+      fontFamily: 'PlayfairDisplay_600SemiBold',
     },
     badge: {
       backgroundColor: theme.tint,

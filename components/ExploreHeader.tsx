@@ -70,8 +70,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
   return StyleSheet.create({
     header: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8, backgroundColor: surface, borderBottomColor: outline, borderBottomWidth: 1 },
     topRow: { marginBottom: 6, flexDirection: 'row', alignItems: 'center' },
-    title: { fontSize: 28, fontWeight: "800", color: theme.text },
-    subtitle: { color: theme.tint, marginTop: 2 },
+    title: { fontSize: 28, color: theme.text, fontFamily: 'PlayfairDisplay_700Bold', letterSpacing: 0.2 },
+    subtitle: { color: theme.tint, marginTop: 2, fontFamily: 'Manrope_600SemiBold' },
     filterButton: {
       alignItems: 'center',
       justifyContent: 'center',
