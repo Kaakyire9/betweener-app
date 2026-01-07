@@ -6,6 +6,7 @@ import { VerificationNotifications } from "@/components/VerificationNotification
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useVerificationStatus } from "@/hooks/use-verification-status";
+import { useColorScheme, useColorSchemePreference } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -114,8 +115,11 @@ const PROFILE_PROMPTS = [
 export default function ProfileScreen() {
   const { signOut, user, profile, refreshProfile } = useAuth();
   const fontsLoaded = useAppFonts();
+  const colorScheme = useColorScheme();
+  const theme = Colors[colorScheme ?? 'light'];
   const params = useLocalSearchParams();
   const { status: verificationStatus, refreshStatus } = useVerificationStatus(profile?.id);
+  const { preference: themePreference, setPreference: setThemePreference } = useColorSchemePreference();
   const verificationLoading = verificationStatus?.loading ?? false;
   
   const [selectedPrompts, setSelectedPrompts] = useState<Record<string, number>>({
@@ -434,7 +438,7 @@ export default function ProfileScreen() {
   });
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
       {/* Verification Notifications */}
       {profile?.id && <VerificationNotifications />}
       
@@ -443,13 +447,15 @@ export default function ProfileScreen() {
         style={[
           styles.header,
           {
+            backgroundColor: theme.background,
+            borderBottomColor: theme.outline,
             opacity: headerOpacity,
             transform: [{ translateY: headerTranslateY }],
           },
         ]}
       >
         <View style={styles.headerLeft}>
-          <Text style={styles.headerTitle}>
+          <Text style={[styles.headerTitle, { color: theme.text }]}>
             {isPreviewMode ? 'Profile Preview' : 'My Profile'}
           </Text>
         </View>
@@ -461,9 +467,9 @@ export default function ProfileScreen() {
             <MaterialCommunityIcons 
               name={isPreviewMode ? "eye-off" : "eye"} 
               size={20} 
-              color={isPreviewMode ? "#fff" : Colors.light.tint} 
+              color={isPreviewMode ? '#fff' : theme.tint} 
             />
-            <Text style={[styles.previewButtonText, isPreviewMode && styles.previewButtonTextActive]}>
+            <Text style={[styles.previewButtonText, isPreviewMode && styles.previewButtonTextActive, { color: isPreviewMode ? '#fff' : theme.tint }]}>
               {isPreviewMode ? 'Edit' : 'Preview'}
             </Text>
           </TouchableOpacity>
@@ -477,7 +483,7 @@ export default function ProfileScreen() {
                 <MaterialCommunityIcons 
                   name={showSettingsDropdown ? "close" : "cog"} 
                   size={24} 
-                  color={showSettingsDropdown ? "#fff" : Colors.light.tint} 
+                  color={showSettingsDropdown ? '#fff' : theme.tint} 
                 />
               </TouchableOpacity>
             </>
@@ -506,6 +512,7 @@ export default function ProfileScreen() {
           <Animated.View
             style={[
               styles.settingsDropdown,
+              { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
               {
                 opacity: dropdownAnim,
                 transform: [
@@ -525,6 +532,41 @@ export default function ProfileScreen() {
               },
             ]}
           >
+            <View style={styles.themeSection}>
+              <Text style={[styles.themeLabel, { color: theme.textMuted }]}>Theme</Text>
+              <View style={styles.themePillRow}>
+                {([
+                  { id: 'light', label: 'Light' },
+                  { id: 'dark', label: 'Dark' },
+                  { id: 'system', label: 'System' },
+                ] as const).map((option) => {
+                  const active = themePreference === option.id;
+                  return (
+                    <TouchableOpacity
+                      key={option.id}
+                      style={[
+                        styles.themePill,
+                        { backgroundColor: theme.background, borderColor: theme.outline },
+                        active && { backgroundColor: theme.tint + '20', borderColor: theme.tint },
+                      ]}
+                      onPress={() => setThemePreference(option.id)}
+                    >
+                      <Text
+                        style={[
+                          styles.themePillText,
+                          { color: theme.text },
+                          active && { color: theme.tint },
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <View style={[styles.dropdownDivider, { backgroundColor: theme.outline }]} />
+            </View>
+
             {SETTINGS_MENU_ITEMS.filter(item => {
               // Hide admin option for regular users (you can add admin check here)
               if (item.adminOnly) {
@@ -543,7 +585,8 @@ export default function ProfileScreen() {
                   key={item.id}
                   style={[
                     styles.dropdownItem,
-                    item.id === 'logout' && styles.dropdownItemDanger
+                        { backgroundColor: theme.background },
+                        item.id === 'logout' && { backgroundColor: theme.tint + '15' }
                   ]}
                   onPress={() => handleSettingsItemPress(item.id)}
                 >
@@ -555,7 +598,8 @@ export default function ProfileScreen() {
                   <Text 
                     style={[
                       styles.dropdownItemText,
-                      item.id === 'logout' && styles.dropdownItemTextDanger
+                      { color: theme.text },
+                      item.id === 'logout' && { color: theme.tint }
                     ]}
                   >
                     {item.title}
@@ -569,22 +613,22 @@ export default function ProfileScreen() {
 
       {/* Preview Mode Banner */}
       {isPreviewMode && (
-        <View style={styles.previewBanner}>
-          <MaterialCommunityIcons name="eye" size={16} color={Colors.light.tint} />
+        <View style={[styles.previewBanner, { backgroundColor: theme.tint + '15', borderBottomColor: theme.outline }]}>
+          <MaterialCommunityIcons name="eye" size={16} color={theme.tint} />
           <View style={styles.previewBannerContent}>
             <Text style={styles.previewBannerText}>
               This is how others see your profile
             </Text>
             <TouchableOpacity style={styles.fullPreviewButton} onPress={openFullPreview}>
               <Text style={styles.fullPreviewButtonText}>View Full Preview</Text>
-              <MaterialCommunityIcons name="arrow-right" size={14} color={Colors.light.tint} />
+              <MaterialCommunityIcons name="arrow-right" size={14} color={theme.tint} />
             </TouchableOpacity>
           </View>
         </View>
       )}
 
       <Animated.ScrollView
-        style={styles.scrollView}
+        style={[styles.scrollView, { backgroundColor: theme.background }]}
         showsVerticalScrollIndicator={false}
         onScroll={Animated.event(
           [{ nativeEvent: { contentOffset: { y: scrollY } } }],
@@ -602,13 +646,13 @@ export default function ProfileScreen() {
         }
       >
         {/* Profile Header Section */}
-        <View style={styles.profileHeader}>
+        <View style={[styles.profileHeader, { backgroundColor: theme.backgroundSubtle }]}> 
           <View style={styles.avatarContainer}>
             <Image
               source={{
                 uri: profile?.avatar_url || 'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=400&h=600&fit=crop&crop=face'
               }}
-              style={styles.avatar}
+              style={[styles.avatar, { borderColor: theme.background }]}
             />
             {!isPreviewMode && (
               <TouchableOpacity 
@@ -620,17 +664,17 @@ export default function ProfileScreen() {
             )}
           </View>
           
-          <Text style={styles.profileName}> {`${profile?.full_name || 'Your Name'}, ${profile?.age || 25}`}</Text>
+          <Text style={[styles.profileName, { color: theme.text }]}> {`${profile?.full_name || 'Your Name'}, ${profile?.age || 25}`}</Text>
 
           
           <View style={styles.locationContainer}>
-            <MaterialCommunityIcons name="map-marker" size={16} color={Colors.light.tint} />
-            <Text style={styles.locationText}>
+            <MaterialCommunityIcons name="map-marker" size={16} color={theme.tint} />
+            <Text style={[styles.locationText, { color: theme.textMuted }]}>
               {profile?.region || 'Accra'}, Ghana
             </Text>
           </View>
           
-          <Text style={styles.bio}>
+          <Text style={[styles.bio, { color: theme.text }]}> 
             {profile?.bio || 'Your bio will appear here...'}
           </Text>
 
@@ -639,25 +683,43 @@ export default function ProfileScreen() {
             {/* Age and Height Row */}
             <View style={styles.detailRow}>
               {profile?.age && (
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="cake-variant" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>{profile?.age ? `${profile.age} years old` : "Age not set"}</Text>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="cake-variant" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>{profile?.age ? `${profile.age} years old` : "Age not set"}</Text>
                 </View>
               )}
               {(profile as any)?.height && (
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="human-male-height" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>{(profile as any).height}</Text>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="human-male-height" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>Height: {(profile as any).height}</Text>
                 </View>
               )}
             </View>
 
+            {(profile as any)?.kids && (
+              <View style={styles.detailRow}>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="baby-face-outline" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>Kids: {(profile as any).kids}</Text>
+                </View>
+              </View>
+            )}
+
+            {(profile as any)?.family_plans && (
+              <View style={styles.detailRow}>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="home-heart" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>Family Plans: {(profile as any).family_plans}</Text>
+                </View>
+              </View>
+            )}
+
             {/* Occupation */}
             {(profile as any)?.occupation && (
               <View style={styles.detailRow}>
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="briefcase" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>{(profile as any).occupation}</Text>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="briefcase" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>{(profile as any).occupation}</Text>
                 </View>
               </View>
             )}
@@ -665,9 +727,9 @@ export default function ProfileScreen() {
             {/* Education */}
             {(profile as any)?.education && (
               <View style={styles.detailRow}>
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="school" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>{(profile as any).education}</Text>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="school" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>{(profile as any).education}</Text>
                 </View>
               </View>
             )}
@@ -675,9 +737,9 @@ export default function ProfileScreen() {
             {/* Looking For */}
             {(profile as any)?.looking_for && (
               <View style={styles.detailRow}>
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="heart-outline" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>Looking for {(profile as any).looking_for}</Text>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="heart-outline" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>Looking for {(profile as any).looking_for}</Text>
                 </View>
               </View>
             )}
@@ -685,9 +747,9 @@ export default function ProfileScreen() {
             {/* DIASPORA: Location Information */}
             {(profile as any)?.current_country && (
               <View style={styles.detailRow}>
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="map-marker" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="map-marker" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>
                     {`Currently in ${(profile as any).current_country || 'Unknown'}${(profile as any).current_country === 'Ghana' ? ' 🇬🇭' : ''}`}
                   </Text>
                 </View>
@@ -697,13 +759,13 @@ export default function ProfileScreen() {
             {/* Diaspora Status with Verification */}
             {(profile as any)?.diaspora_status && (profile as any).diaspora_status !== 'LOCAL' && (
               <View style={styles.detailRow}>
-                <View style={styles.detailItem}>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons 
                     name={(profile as any).diaspora_status === 'DIASPORA' ? 'airplane' : 'calendar-clock'} 
                     size={16} 
-                    color={Colors.light.tint} 
+                    color={theme.tint} 
                   />
-                  <Text style={styles.detailText}>
+                  <Text style={[styles.detailText, { color: theme.text }]}>
                     {(profile as any).diaspora_status === 'DIASPORA' ? '🌍 Ghanaian abroad' : '✈️ Visiting Ghana'}
                   </Text>
                   {!verificationLoading && (
@@ -726,9 +788,9 @@ export default function ProfileScreen() {
             {/* Years in Diaspora */}
             {(profile as any)?.years_in_diaspora && (profile as any).years_in_diaspora > 0 && (
               <View style={styles.detailRow}>
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="calendar" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>{profile?.years_in_diaspora ? `${profile.years_in_diaspora} years abroad` : "New diaspora member"}</Text>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="calendar" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>{profile?.years_in_diaspora ? `${profile.years_in_diaspora} years abroad` : "New diaspora member"}</Text>
                 </View>
               </View>
             )}
@@ -736,9 +798,9 @@ export default function ProfileScreen() {
             {/* Long Distance Preference */}
             {(profile as any)?.willing_long_distance && (
               <View style={styles.detailRow}>
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="earth" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>Open to long-distance connections</Text>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="earth" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>Open to long-distance connections</Text>
                 </View>
               </View>
             )}
@@ -746,9 +808,9 @@ export default function ProfileScreen() {
             {/* Future Ghana Plans */}
             {(profile as any)?.future_ghana_plans && (
               <View style={styles.detailRow}>
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="compass" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>{(profile as any).future_ghana_plans}</Text>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="compass" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>{(profile as any).future_ghana_plans}</Text>
                 </View>
               </View>
             )}
@@ -756,9 +818,9 @@ export default function ProfileScreen() {
             {/* HIGH PRIORITY: Lifestyle Fields */}
             {(profile as any)?.exercise_frequency && (
               <View style={styles.detailRow}>
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="dumbbell" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>Exercises {(profile as any).exercise_frequency}</Text>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="dumbbell" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>Exercises {(profile as any).exercise_frequency}</Text>
                 </View>
               </View>
             )}
@@ -766,15 +828,15 @@ export default function ProfileScreen() {
             {/* Smoking and Drinking Row */}
             <View style={styles.detailRow}>
               {(profile as any)?.smoking && (
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="smoking-off" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>Smoking: {(profile as any).smoking}</Text>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="smoking-off" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>Smoking: {(profile as any).smoking}</Text>
                 </View>
               )}
               {(profile as any)?.drinking && (
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="glass-cocktail" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>Drinking: {(profile as any).drinking}</Text>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="glass-cocktail" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>Drinking: {(profile as any).drinking}</Text>
                 </View>
               )}
             </View>
@@ -783,15 +845,15 @@ export default function ProfileScreen() {
             {/* Children Row */}
             <View style={styles.detailRow}>
               {(profile as any)?.has_children && (
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="baby" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>Children: {(profile as any).has_children}</Text>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="baby" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>Children: {(profile as any).has_children}</Text>
                 </View>
               )}
               {(profile as any)?.wants_children && (
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="heart-plus" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>Wants: {(profile as any).wants_children}</Text>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="heart-plus" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>Wants: {(profile as any).wants_children}</Text>
                 </View>
               )}
             </View>
@@ -799,18 +861,18 @@ export default function ProfileScreen() {
             {/* HIGH PRIORITY: Personality Fields */}
             {(profile as any)?.personality_type && (
               <View style={styles.detailRow}>
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="account-circle" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>{(profile as any).personality_type}</Text>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="account-circle" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>{(profile as any).personality_type}</Text>
                 </View>
               </View>
             )}
 
             {(profile as any)?.love_language && (
               <View style={styles.detailRow}>
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="heart-multiple" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>Love Language: {(profile as any).love_language}</Text>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="heart-multiple" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>Love Language: {(profile as any).love_language}</Text>
                 </View>
               </View>
             )}
@@ -819,15 +881,15 @@ export default function ProfileScreen() {
             {/* Living and Pets Row */}
             <View style={styles.detailRow}>
               {(profile as any)?.living_situation && (
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="home" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>{(profile as any).living_situation}</Text>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="home" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>{(profile as any).living_situation}</Text>
                 </View>
               )}
               {(profile as any)?.pets && (
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="paw" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>{(profile as any).pets}</Text>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="paw" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>{(profile as any).pets}</Text>
                 </View>
               )}
             </View>
@@ -835,9 +897,9 @@ export default function ProfileScreen() {
             {/* HIGH PRIORITY: Languages */}
             {(profile as any)?.languages_spoken && (profile as any).languages_spoken.length > 0 && (
               <View style={styles.detailRow}>
-                <View style={styles.detailItem}>
-                  <MaterialCommunityIcons name="translate" size={16} color={Colors.light.tint} />
-                  <Text style={styles.detailText}>
+                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <MaterialCommunityIcons name="translate" size={16} color={theme.tint} />
+                  <Text style={[styles.detailText, { color: theme.text }]}>
                     {`Languages: ${(profile as any).languages_spoken?.join(', ') || 'Not specified'}`}
                   </Text>
                 </View>
@@ -856,20 +918,20 @@ export default function ProfileScreen() {
 
         {/* Quick Stats - Hidden in preview mode */}
         {!isPreviewMode && (
-          <View style={styles.statsContainer}>
+          <View style={[styles.statsContainer, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline, borderWidth: 1, borderRadius: 16 }]}> 
             <View style={styles.statItem}>
-              <Text style={styles.statNumber}>12</Text>
-              <Text style={styles.statLabel}>Matches</Text>
+              <Text style={[styles.statNumber, { color: theme.text }]}>12</Text>
+              <Text style={[styles.statLabel, { color: theme.textMuted }]}>Matches</Text>
             </View>
-            <View style={styles.statDivider} />
+            <View style={[styles.statDivider, { backgroundColor: theme.outline }]} />
             <View style={styles.statItem}>
-              <Text style={styles.statNumber}>3</Text>
-              <Text style={styles.statLabel}>Chats</Text>
+              <Text style={[styles.statNumber, { color: theme.text }]}>3</Text>
+              <Text style={[styles.statLabel, { color: theme.textMuted }]}>Chats</Text>
             </View>
-            <View style={styles.statDivider} />
+            <View style={[styles.statDivider, { backgroundColor: theme.outline }]} />
             <View style={styles.statItem}>
-              <Text style={styles.statNumber}>89%</Text>
-              <Text style={styles.statLabel}>Match Rate</Text>
+              <Text style={[styles.statNumber, { color: theme.text }]}>89%</Text>
+              <Text style={[styles.statLabel, { color: theme.textMuted }]}>Match Rate</Text>
             </View>
           </View>
         )}
@@ -877,7 +939,9 @@ export default function ProfileScreen() {
         {/* Photo Gallery Section */}
         <View style={[styles.section, { marginBottom: 0, paddingBottom: 10 }]}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Photos</Text>
+            <Text style={[styles.sectionTitle, { color: theme.text }]}>
+              Photos
+            </Text>
             {!isPreviewMode && (
               <TouchableOpacity 
                 style={styles.addButton}
@@ -904,44 +968,57 @@ export default function ProfileScreen() {
         {/* Interactive Prompts Section */}
         <View style={[styles.section, { paddingTop: 5 }]}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>About Me</Text>
+            <Text style={[styles.sectionTitle, { color: theme.text }]}>
+              About Me
+            </Text>
             {!isPreviewMode && (
               <TouchableOpacity 
-                style={styles.editButton}
+                style={[styles.editButton, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}
                 onPress={() => setShowEditModal(true)}
               >
-                <MaterialCommunityIcons name="pencil" size={16} color={Colors.light.tint} />
-                <Text style={styles.editButtonText}>Edit</Text>
+                <MaterialCommunityIcons name="pencil" size={16} color={theme.tint} />
+                <Text style={[styles.editButtonText, { color: theme.tint }]}>Edit</Text>
               </TouchableOpacity>
             )}
           </View>
           
           <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
             {PROFILE_PROMPTS.map((prompt) => (
-              <View key={prompt.id} style={styles.promptCard}>
-                <Text style={styles.promptTitle}>{prompt.title}</Text>
+              <View
+                key={prompt.id}
+                style={[
+                  styles.promptCard,
+                  { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+                ]}
+              >
+                <Text style={[styles.promptTitle, { color: theme.text }]}>{prompt.title}</Text>
                 <View style={styles.promptOptions}>
-                  {prompt.responses.map((response, index) => (
-                    <TouchableOpacity
-                      key={index}
-                      style={[
-                        styles.promptOption,
-                        selectedPrompts[prompt.id] === index && styles.promptOptionSelected,
-                        isPreviewMode && styles.promptOptionPreview
-                      ]}
-                      onPress={() => handlePromptSelect(prompt.id, index)}
-                      disabled={isPreviewMode}
-                    >
-                      <Text
+                  {prompt.responses.map((response, index) => {
+                    const selected = selectedPrompts[prompt.id] === index;
+                    return (
+                      <TouchableOpacity
+                        key={index}
                         style={[
-                          styles.promptOptionText,
-                          selectedPrompts[prompt.id] === index && styles.promptOptionTextSelected
+                          styles.promptOption,
+                          { backgroundColor: theme.background, borderColor: theme.outline },
+                          selected && { backgroundColor: theme.tint, borderColor: theme.tint },
+                          isPreviewMode && styles.promptOptionPreview,
                         ]}
+                        onPress={() => handlePromptSelect(prompt.id, index)}
+                        disabled={isPreviewMode}
                       >
-                        {response}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                        <Text
+                          style={[
+                            styles.promptOptionText,
+                            { color: theme.text },
+                            selected && styles.promptOptionTextSelected,
+                          ]}
+                        >
+                          {response}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
               </View>
             ))}
@@ -949,16 +1026,18 @@ export default function ProfileScreen() {
         </View>
 
         {/* Interests Section */}
-        <View style={styles.section}>
+        <View style={[styles.section, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline, borderWidth: 0 }]}> 
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Interests</Text>
+            <Text style={[styles.sectionTitle, { color: theme.text }]}>
+              Interests
+            </Text>
             {!isPreviewMode && (
               <TouchableOpacity 
-                style={styles.editButton}
+                style={[styles.editButton, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}
                 onPress={() => setShowEditModal(true)}
               >
-                <MaterialCommunityIcons name="pencil" size={16} color={Colors.light.tint} />
-                <Text style={styles.editButtonText}>Edit</Text>
+                <MaterialCommunityIcons name="pencil" size={16} color={theme.tint} />
+                <Text style={[styles.editButtonText, { color: theme.tint }]}>Edit</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -968,24 +1047,26 @@ export default function ProfileScreen() {
               <Text style={styles.noInterestsText}>Loading interests...</Text>
             ) : userInterests.length > 0 ? (
               userInterests.map((interest: string, index: number) => (
-                <View key={index} style={styles.interestTag}>
-                  <Text style={styles.interestText}>{interest}</Text>
+                <View key={index} style={[styles.interestTag, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                  <Text style={[styles.interestText, { color: theme.text }]}>{interest}</Text>
                 </View>
               ))
             ) : (
-              <Text style={styles.noInterestsText}>No interests added yet. Tap Edit to add your interests!</Text>
+              <Text style={[styles.noInterestsText, { color: theme.textMuted }]}>No interests added yet. Tap Edit to add your interests!</Text>
             )}
           </View>
         </View>
 
         {/* Distance Unit Section */}
-        <View style={styles.section}>
+        <View style={[styles.section, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline, borderWidth: 1 }]}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Distance Unit</Text>
+            <Text style={[styles.sectionTitle, { color: theme.text }]}>
+              Distance Unit
+            </Text>
           </View>
           <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>Current</Text>
-            <Text style={styles.settingValue}>
+            <Text style={[styles.settingLabel, { color: theme.textMuted }]}>Current</Text>
+            <Text style={[styles.settingValue, { color: theme.text }] }>
               {(() => {
                 const selected = DISTANCE_UNIT_OPTIONS.find((option) => option.value === distanceUnit);
                 if (!selected) return 'Auto (Recommended)';
@@ -1017,39 +1098,43 @@ export default function ProfileScreen() {
       </Animated.ScrollView>
 
       {/* Profile Edit Modal */}
-      <ProfileEditModal
-        visible={showEditModal}
-        onClose={() => setShowEditModal(false)}
-        onSave={async (updatedProfile) => {
-          // Force refresh the profile to ensure UI is updated
-          setRefreshing(true);
-          try {
-            await refreshProfile(); // This will update the profile state
-            await loadUserPhotos(); // Reload photos after profile update
-            console.log('Profile refreshed after save');
-          } catch (error) {
-            console.error('Error refreshing profile:', error);
-          } finally {
-            setRefreshing(false);
-            setShowEditModal(false);
-          }
-        }}
-      />
+      {showEditModal && (
+        <ProfileEditModal
+          visible={showEditModal}
+          onClose={() => setShowEditModal(false)}
+          onSave={async (updatedProfile) => {
+            // Force refresh the profile to ensure UI is updated
+            setRefreshing(true);
+            try {
+              await refreshProfile(); // This will update the profile state
+              await loadUserPhotos(); // Reload photos after profile update
+              console.log('Profile refreshed after save');
+            } catch (error) {
+              console.error('Error refreshing profile:', error);
+            } finally {
+              setRefreshing(false);
+              setShowEditModal(false);
+            }
+          }}
+        />
+      )}
 
       {/* Diaspora Verification Modal */}
-      <DiasporaVerification
-        visible={isVerificationModalVisible}
-        onClose={() => {
-          setIsVerificationModalVisible(false);
-          refreshStatus();
-        }}
-        profile={profile}
-        onVerificationUpdate={(level) => {
-          // Refresh profile to show updated verification level
-          refreshProfile();
-          refreshStatus();
-        }}
-      />
+      {isVerificationModalVisible && (
+        <DiasporaVerification
+          visible={isVerificationModalVisible}
+          onClose={() => {
+            setIsVerificationModalVisible(false);
+            refreshStatus();
+          }}
+          profile={profile}
+          onVerificationUpdate={(level) => {
+            // Refresh profile to show updated verification level
+            refreshProfile();
+            refreshStatus();
+          }}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -1057,7 +1142,7 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: 'transparent',
   },
   
   // Header
@@ -1067,9 +1152,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingVertical: 16,
-    backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
   },
   headerLeft: {
     flex: 1,
@@ -1090,9 +1173,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: '#f8fafc',
+    backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: Colors.light.tint,
     gap: 6,
   },
   previewButtonActive: {
@@ -1111,7 +1193,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#f8fafc',
+    backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
@@ -1126,12 +1208,10 @@ const styles = StyleSheet.create({
   previewBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.light.tint + '15',
     paddingVertical: 12,
     paddingHorizontal: 20,
     gap: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
   },
   previewBannerContent: {
     flex: 1,
@@ -1165,7 +1245,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 32,
-    backgroundColor: '#fff',
     marginBottom: 8,
   },
   avatarContainer: {
@@ -1242,7 +1321,7 @@ const styles = StyleSheet.create({
   // Stats
   statsContainer: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
+    backgroundColor: 'transparent',
     paddingVertical: 20,
     marginBottom: 8,
   },
@@ -1271,7 +1350,7 @@ const styles = StyleSheet.create({
   
   // Sections
   section: {
-    backgroundColor: '#fff',
+    backgroundColor: 'transparent',
     paddingHorizontal: 20,
     paddingVertical: 20,
     marginBottom: 8,
@@ -1295,7 +1374,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: '#f8fafc',
+    backgroundColor: 'transparent',
     borderWidth: 1,
     borderColor: '#e5e7eb',
   },
@@ -1311,9 +1390,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: '#f8fafc',
+    backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: 'transparent',
   },
   editButtonText: {
     fontSize: 14,
@@ -1372,12 +1451,12 @@ const styles = StyleSheet.create({
   
   // Prompts
   promptCard: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: 'transparent',
     borderRadius: 16,
     padding: 16,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: 'transparent',
   },
   promptTitle: {
     fontSize: 16,
@@ -1392,9 +1471,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 12,
-    backgroundColor: '#fff',
+    backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: 'transparent',
   },
   promptOptionSelected: {
     backgroundColor: Colors.light.tint,
@@ -1423,9 +1502,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: '#f8fafc',
+    backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: Colors.light.tint,
+    borderColor: 'transparent',
   },
   interestText: {
     fontSize: 14,
@@ -1448,9 +1527,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 12,
     borderRadius: 12,
-    backgroundColor: '#f8fafc',
+    backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: 'transparent',
   },
   settingLabel: {
     fontSize: 14,
@@ -1518,7 +1597,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+    backgroundColor: 'rgba(0, 0, 0, 0.25)',
     zIndex: 998,
   },
   backdropTouchable: {
@@ -1528,7 +1607,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 80,
     right: 20,
-    backgroundColor: '#fff',
+    backgroundColor: 'transparent',
     borderRadius: 16,
     paddingVertical: 8,
     minWidth: 200,
@@ -1539,7 +1618,7 @@ const styles = StyleSheet.create({
     elevation: 12,
     zIndex: 999,
     borderWidth: 1,
-    borderColor: '#f3f4f6',
+    borderColor: 'transparent',
   },
   dropdownItem: {
     flexDirection: 'row',
@@ -1548,24 +1627,48 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     gap: 12,
   },
-  dropdownItemDanger: {
-    backgroundColor: '#fef2f2',
-  },
   dropdownItemText: {
     fontSize: 16,
     fontFamily: 'Manrope_500Medium',
     color: '#374151',
     flex: 1,
   },
-  dropdownItemTextDanger: {
-    color: '#ef4444',
-    fontFamily: 'Manrope_600SemiBold',
-  },
   dropdownDivider: {
     height: 1,
     backgroundColor: '#f3f4f6',
     marginVertical: 4,
     marginHorizontal: 12,
+  },
+  themeSection: {
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 6,
+    gap: 8,
+  },
+  themeLabel: {
+    fontSize: 13,
+    fontFamily: 'Manrope_600SemiBold',
+    color: '#6b7280',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  themePillRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  themePill: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    alignItems: 'center',
+    backgroundColor: '#f9fafb',
+  },
+  themePillText: {
+    fontSize: 14,
+    fontFamily: 'Manrope_600SemiBold',
+    color: '#111827',
   },
   
   // Profile Details Styles
@@ -1583,7 +1686,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#f8fafc',
+    backgroundColor: 'transparent',
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
