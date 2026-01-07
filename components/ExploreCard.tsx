@@ -1,7 +1,9 @@
 // components/ExploreCard.tsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
+import { Colors } from "@/constants/theme";
+import { useColorScheme } from "@/hooks/use-color-scheme";
 import type { Match } from "@/types/match";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Animated, Image, StyleSheet, Text, TouchableOpacity, View, AccessibilityInfo } from "react-native";
@@ -43,6 +45,15 @@ const toFlagEmoji = (code?: string) => {
   if (first < 65 || first > 90 || second < 65 || second > 90) return '';
   return String.fromCodePoint(0x1f1e6 + (first - 65), 0x1f1e6 + (second - 65));
 };
+
+const withAlpha = (hex: string, alpha: number) => {
+  const normalized = hex.replace('#', '');
+  const bigint = parseInt(normalized.length === 3 ? normalized.split('').map((c) => c + c).join('') : normalized, 16);
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+};
 // safe-area detection (optional, measured if available)
 let useSafeAreaInsetsHook: any = null;
 let hasSafeAreaHook = false;
@@ -54,6 +65,14 @@ try {
 } catch (e) {}
 
 export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress }: { match: Match; onPress?: (id: string) => void; isPreviewing?: boolean; onPlayPress?: (id: string) => void; }) {
+  const colorScheme = useColorScheme();
+  const theme = Colors[colorScheme ?? 'light'];
+  const isDark = (colorScheme ?? 'light') === 'dark';
+  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const gradientColors = useMemo(
+    () => (isDark ? ["rgba(0,0,0,0)", "rgba(0,0,0,0.7)"] : ["rgba(0,0,0,0)", "rgba(0,0,0,0.55)"] ),
+    [isDark]
+  );
   const isManualLocation = (match as any).location_precision === 'CITY';
   const locationLabel = isManualLocation ? '' : getCityOnly(match.location || match.region || '');
   const distanceLabel = match.distance || '';
@@ -341,7 +360,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
                 return (
                   // @ts-ignore
                   <ReanimatedAnimated.View style={pillAnimatedStyle} pointerEvents="none">
-                    <LinearGradientSafe colors={["#06b6d4", "#7c3aed"]} start={[0, 0]} end={[1, 1]} style={styles.aiPillInline}>
+                    <LinearGradientSafe colors={[theme.secondary, theme.tint]} start={[0, 0]} end={[1, 1]} style={styles.aiPillInline}>
                       <Text style={styles.aiPillText}>{`${score}% Match`}</Text>
                     </LinearGradientSafe>
                   </ReanimatedAnimated.View>
@@ -350,7 +369,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
 
               return (
                 <Animated.View style={{ transform: [{ translateY: pillTranslate }], opacity: pillAnim }} pointerEvents="none">
-                  <LinearGradientSafe colors={["#06b6d4", "#7c3aed"]} start={[0, 0]} end={[1, 1]} style={styles.aiPillInline}>
+                  <LinearGradientSafe colors={[theme.secondary, theme.tint]} start={[0, 0]} end={[1, 1]} style={styles.aiPillInline}>
                     <Text style={styles.aiPillText}>{`${score}% Match`}</Text>
                   </LinearGradientSafe>
                 </Animated.View>
@@ -388,7 +407,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
           )}
         </View>
 
-        <LinearGradientSafe colors={["rgba(0,0,0,0)", "rgba(0,0,0,0.55)"]} style={styles.gradient} />
+        <LinearGradientSafe colors={gradientColors} style={styles.gradient} />
 
         <BlurViewSafe intensity={60} tint="dark" style={styles.info}>
           <View style={styles.nameRow}>
@@ -442,117 +461,126 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
   );
 }
 
-const styles = StyleSheet.create({
-  card: { position: "absolute", width: "100%", height: "100%", borderRadius: 24, overflow: "hidden", backgroundColor: "#fff" },
-  cardContent: { flex: 1 },
-  image: { width: "100%", height: "100%", resizeMode: "cover" },
-  gradient: { position: "absolute", left: 0, right: 0, bottom: 0, height: "50%" },
-  info: { position: "absolute", left: 0, right: 0, bottom: 0, padding: 18, paddingBottom: 22 },
-  nameRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
-  name: { color: "#fff", fontSize: 28, fontWeight: "800", flex: 1 },
-  activeBadge: { flexDirection: "row", alignItems: "center", backgroundColor: "rgba(16,185,129,0.95)", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
-  activeDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#fff", marginRight: 6 },
-  activeText: { color: "#fff", fontSize: 11 },
-  tagline: { color: "#fff", marginBottom: 12, fontSize: 15 },
-  locationRow: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
-  location: { color: "#fff", marginLeft: 6 },
-  tags: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 2 },
-  tag: { backgroundColor: "rgba(255,255,255,0.18)", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, marginRight: 8, marginBottom: 6 },
-  tagText: { color: "#fff", fontSize: 12 },
-  verifiedBadge: {
-    position: 'absolute',
-    top: 12,
-    left: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#2563eb',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 14,
-    zIndex: 30,
-  },
-  verifiedText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  activeTopRight: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 14,
-    zIndex: 30,
-  },
-  activeNowBg: { backgroundColor: 'rgba(16,185,129,0.95)' },
-  recentlyActiveBg: { backgroundColor: 'rgba(99,102,241,0.9)' },
-  activeDotSmall: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff', marginRight: 8 },
-  activeTopText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  aiPill: {
-    position: 'absolute',
-    top: 12,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    zIndex: 20,
-    minWidth: 100,
-    maxWidth: '70%',
-  },
-  aiPillText: { color: '#fff', fontWeight: '800', textAlign: 'center' },
-  topRow: { position: 'absolute', top: 12, left: 12, right: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', zIndex: 40 },
-  leftSlot: { alignItems: 'flex-start' },
-  centerSlot: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  rightSlot: { alignItems: 'flex-end' },
-  verifiedBadgeInline: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#2563eb', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 },
-  activeInline: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 },
-  aiPillInline: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, minWidth: 100, maxWidth: '70%', alignItems: 'center' },
-  personalityRow: { flexDirection: 'row', marginBottom: 8, gap: 8 },
-  personalityPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.14)',
-    backgroundColor: 'rgba(255,255,255,0.02)'
-  },
-  personalityText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  // video badge
-  videoBadgeHit: {
-    position: 'absolute',
-    right: 12,
-    bottom: 20,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 50,
-  },
-  videoBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(6,182,212,0.95)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.9)',
-    shadowColor: '#22d3ee',
-    shadowOpacity: 0.95,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 0 },
-    elevation: 10,
-  },
-  previewGlow: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(6,182,212,0.06)',
-    borderRadius: 24,
-    zIndex: 40,
-  },
-});
+const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
+  const surface = theme.background;
+  const tagBg = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.18)';
+  const personalityBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)';
+  const personalityBorder = isDark ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.14)';
+  const previewGlowBg = withAlpha(theme.tint, 0.1);
+  const activeNowBgColor = withAlpha(theme.secondary, isDark ? 0.9 : 0.95);
+  const recentlyActiveBgColor = withAlpha(theme.accent, isDark ? 0.85 : 0.9);
+  return StyleSheet.create({
+    card: { position: "absolute", width: "100%", height: "100%", borderRadius: 24, overflow: "hidden", backgroundColor: surface },
+    cardContent: { flex: 1 },
+    image: { width: "100%", height: "100%", resizeMode: "cover" },
+    gradient: { position: "absolute", left: 0, right: 0, bottom: 0, height: "50%" },
+    info: { position: "absolute", left: 0, right: 0, bottom: 0, padding: 18, paddingBottom: 22 },
+    nameRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
+    name: { color: "#fff", fontSize: 28, fontWeight: "800", flex: 1 },
+    activeBadge: { flexDirection: "row", alignItems: "center", backgroundColor: activeNowBgColor, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
+    activeDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#fff", marginRight: 6 },
+    activeText: { color: "#fff", fontSize: 11 },
+    tagline: { color: "#fff", marginBottom: 12, fontSize: 15 },
+    locationRow: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
+    location: { color: "#fff", marginLeft: 6 },
+    tags: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 2 },
+    tag: { backgroundColor: tagBg, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, marginRight: 8, marginBottom: 6 },
+    tagText: { color: "#fff", fontSize: 12 },
+    verifiedBadge: {
+      position: 'absolute',
+      top: 12,
+      left: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.tint,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 14,
+      zIndex: 30,
+    },
+    verifiedText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+    activeTopRight: {
+      position: 'absolute',
+      top: 12,
+      right: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 14,
+      zIndex: 30,
+    },
+    activeNowBg: { backgroundColor: activeNowBgColor },
+    recentlyActiveBg: { backgroundColor: recentlyActiveBgColor },
+    activeDotSmall: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff', marginRight: 8 },
+    activeTopText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+    aiPill: {
+      position: 'absolute',
+      top: 12,
+      left: 0,
+      right: 0,
+      alignItems: 'center',
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 16,
+      zIndex: 20,
+      minWidth: 100,
+      maxWidth: '70%',
+    },
+    aiPillText: { color: '#fff', fontWeight: '800', textAlign: 'center' },
+    topRow: { position: 'absolute', top: 12, left: 12, right: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', zIndex: 40 },
+    leftSlot: { alignItems: 'flex-start' },
+    centerSlot: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    rightSlot: { alignItems: 'flex-end' },
+    verifiedBadgeInline: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.tint, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 },
+    activeInline: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 },
+    aiPillInline: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, minWidth: 100, maxWidth: '70%', alignItems: 'center' },
+    personalityRow: { flexDirection: 'row', marginBottom: 8, gap: 8 },
+    personalityPill: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: personalityBorder,
+      backgroundColor: personalityBg,
+    },
+    personalityText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+    // video badge
+    videoBadgeHit: {
+      position: 'absolute',
+      right: 12,
+      bottom: 20,
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 50,
+    },
+    videoBadge: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: withAlpha(theme.secondary, 0.95),
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 2,
+      borderColor: withAlpha('#ffffff', 0.9),
+      shadowColor: withAlpha(theme.secondary, 0.8),
+      shadowOpacity: 0.95,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 0 },
+      elevation: 10,
+    },
+    previewGlow: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      top: 0,
+      bottom: 0,
+      backgroundColor: previewGlowBg,
+      borderRadius: 24,
+      zIndex: 40,
+    },
+  });
+};

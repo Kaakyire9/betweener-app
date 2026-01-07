@@ -28,7 +28,9 @@ import {
   TouchableOpacity,
   View,
   ViewStyle,
+  ColorValue,
 } from 'react-native';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const HERO_HEIGHT = screenHeight * 0.76;
@@ -172,6 +174,15 @@ const toFlagEmoji = (code?: string | null) => {
   if (first < 65 || first > 90 || second < 65 || second > 90) return '';
   return String.fromCodePoint(0x1f1e6 + (first - 65), 0x1f1e6 + (second - 65));
 };
+
+const withAlpha = (hex: string, alpha: number) => {
+  const normalized = hex.replace('#', '');
+  const bigint = parseInt(normalized.length === 3 ? normalized.split('').map((c) => c + c).join('') : normalized, 16);
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+};
 const formatDistance = (distanceKm?: number | null, fallback?: string, unit: DistanceUnit = 'km') => {
   if (distanceKm == null || Number.isNaN(Number(distanceKm))) {
     return fallback || '';
@@ -196,6 +207,26 @@ const formatDistance = (distanceKm?: number | null, fallback?: string, unit: Dis
 export default function ProfileViewPremiumScreen() {
   const { profile: currentUser } = useAuth();
   const fontsLoaded = useAppFonts();
+  const colorScheme = useColorScheme();
+  const theme = Colors[colorScheme ?? 'light'];
+  const isDark = (colorScheme ?? 'light') === 'dark';
+  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const topGradientColors = useMemo<readonly [ColorValue, ColorValue]>(
+    () => [withAlpha(Colors.dark.background, isDark ? 0.85 : 0.55), 'transparent'],
+    [isDark],
+  );
+  const bottomGradientColors = useMemo<readonly [ColorValue, ColorValue]>(
+    () => ['transparent', withAlpha(Colors.dark.background, isDark ? 0.9 : 0.65)],
+    [isDark],
+  );
+  const sideGradientColors = useMemo<readonly [ColorValue, ColorValue]>(
+    () => [withAlpha(Colors.dark.background, isDark ? 0.38 : 0.25), 'transparent'],
+    [isDark],
+  );
+  const shimmerColors = useMemo<readonly [ColorValue, ColorValue, ColorValue]>(
+    () => [withAlpha(theme.text, 0), withAlpha(theme.text, 0.22), withAlpha(theme.text, 0)],
+    [theme.text],
+  );
   const params = useLocalSearchParams();
   const viewedProfileId = (params as any)?.profileId as string | undefined;
 
@@ -823,18 +854,18 @@ export default function ProfileViewPremiumScreen() {
         ]}
       />
       <Animated.View pointerEvents="none" style={[styles.rippleOverlay, { opacity: rippleOpacity }]} />
-      <LinearGradient colors={['rgba(0,0,0,0.7)', 'transparent']} style={styles.topGradient} />
-      <LinearGradient colors={['transparent', 'rgba(0,0,0,0.8)']} style={styles.bottomGradient} />
+      <LinearGradient colors={topGradientColors} style={styles.topGradient} />
+      <LinearGradient colors={bottomGradientColors} style={styles.bottomGradient} />
       {profileData.photos.length > 1 ? (
         <>
           <LinearGradient
-            colors={['rgba(0,0,0,0.28)', 'transparent']}
+            colors={sideGradientColors}
             start={{ x: 0, y: 0.5 }}
             end={{ x: 1, y: 0.5 }}
             style={styles.sideGradientLeft}
           />
           <LinearGradient
-            colors={['transparent', 'rgba(0,0,0,0.28)']}
+            colors={[sideGradientColors[1], sideGradientColors[0]] as const}
             start={{ x: 0, y: 0.5 }}
             end={{ x: 1, y: 0.5 }}
             style={styles.sideGradientRight}
@@ -852,7 +883,7 @@ export default function ProfileViewPremiumScreen() {
   const ShimmerBlock = ({ style }: { style?: StyleProp<ViewStyle> }) => (
     <View style={[styles.skeletonBlockBase, style]}>
       <Animated.View style={[styles.shimmer, { transform: [{ translateX: shimmerTranslateX }] }]}>
-        <LinearGradient colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.25)', 'rgba(255,255,255,0)']} style={{ flex: 1 }} />
+        <LinearGradient colors={shimmerColors} style={{ flex: 1 }} />
       </Animated.View>
     </View>
   );
@@ -882,11 +913,11 @@ export default function ProfileViewPremiumScreen() {
   );
 
   if (!fontsLoaded) {
-    return <View style={{ flex: 1, backgroundColor: '#030712' }} />;
+    return <View style={{ flex: 1, backgroundColor: theme.background }} />;
   }
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor="transparent" translucent />
 
       <Animated.ScrollView
         scrollEventThrottle={16}
@@ -918,7 +949,7 @@ export default function ProfileViewPremiumScreen() {
                 </>
               ) : (
                 <View style={[styles.mainPhoto, { alignItems: 'center', justifyContent: 'center' }]}>
-                  <Text style={{ color: '#fff' }}>No photo</Text>
+                  <Text style={{ color: theme.text }}>No photo</Text>
                 </View>
               )}
 
@@ -934,7 +965,7 @@ export default function ProfileViewPremiumScreen() {
                     onPress={openProfileVideo}
                     accessibilityLabel="Play profile video"
                   >
-                    <MaterialCommunityIcons name="play" size={16} color="#fff" />
+                    <MaterialCommunityIcons name="play" size={16} color={Colors.light.background} />
                     <Text style={styles.videoBadgeText}>Intro</Text>
                   </TouchableOpacity>
                 </View>
@@ -945,7 +976,7 @@ export default function ProfileViewPremiumScreen() {
                   <Text style={styles.profileName}>
                     {profileData.name}, {profileData.age}
                   </Text>
-                  {profileData.verified && <MaterialCommunityIcons name="check-decagram" size={20} color={Colors.light.tint} />}
+                  {profileData.verified && <MaterialCommunityIcons name="check-decagram" size={20} color={theme.tint} />}
                   {profileData.isActiveNow && (
                     <View style={styles.activeBadge}>
                       <View style={styles.activeDot} />
@@ -954,10 +985,10 @@ export default function ProfileViewPremiumScreen() {
                   )}
                 </View>
                 <View style={styles.profileSubRow}>
-                  <MaterialCommunityIcons name="map-marker" size={14} color="#e5e7eb" />
+                  <MaterialCommunityIcons name="map-marker" size={14} color={theme.textMuted} />
                   <Text style={styles.profileSubText}>{locationWithFlag}</Text>
                 </View>
-                <Text style={styles.profileSub}>{profileData.occupation}</Text>
+                  <Text style={styles.profileSub}>{profileData.occupation}</Text>
                 <Animated.View
                   style={[
                     styles.compatibilityBadge,
@@ -970,7 +1001,7 @@ export default function ProfileViewPremiumScreen() {
                     },
                   ]}
                 >
-                  <MaterialCommunityIcons name="heart" size={16} color="#fff" />
+                  <MaterialCommunityIcons name="heart" size={16} color={Colors.light.background} />
                   <Text style={styles.compatibilityText}>{profileData.compatibility}% Match</Text>
                 </Animated.View>
               </View>
@@ -1065,12 +1096,12 @@ export default function ProfileViewPremiumScreen() {
       </Animated.ScrollView>
 
       <Animated.View style={[styles.header, { height: headerHeight }]}>
-        <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
+          <BlurView intensity={40} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
         <Animated.View style={[styles.headerTint, { opacity: headerOverlayOpacity }]} />
         <View style={styles.headerContent}>
           <TouchableOpacity style={styles.headerButton} onPress={() => (router.canGoBack?.() ? router.back() : router.replace('/(tabs)/explore'))}>
             <Animated.View style={[styles.headerButtonOverlay, { opacity: headerButtonOverlayOpacity }]} />
-            <MaterialCommunityIcons name="arrow-left" size={22} color="#fff" />
+            <MaterialCommunityIcons name="arrow-left" size={22} color={theme.text} />
           </TouchableOpacity>
           <Animated.Text
             style={[
@@ -1086,14 +1117,14 @@ export default function ProfileViewPremiumScreen() {
           </Animated.Text>
           {isOwnProfilePreview ? (
             <View style={styles.previewIndicator}>
-              <MaterialCommunityIcons name="eye" size={16} color="#fff" />
+              <MaterialCommunityIcons name="eye" size={16} color={theme.text} />
               <Text style={styles.previewIndicatorText}>Preview Mode</Text>
             </View>
           ) : (
             <View style={styles.headerActions}>
               <TouchableOpacity style={styles.headerButton} onPress={handleShare}>
                 <Animated.View style={[styles.headerButtonOverlay, { opacity: headerButtonOverlayOpacity }]} />
-                <MaterialCommunityIcons name="share-variant" size={18} color="#fff" />
+                <MaterialCommunityIcons name="share-variant" size={18} color={theme.text} />
               </TouchableOpacity>
             </View>
           )}
@@ -1121,14 +1152,14 @@ export default function ProfileViewPremiumScreen() {
 
       {!isOwnProfilePreview && (
         <View style={styles.actionButtonsContainer}>
-          <BlurView intensity={35} tint="dark" style={StyleSheet.absoluteFill} />
+          <BlurView intensity={35} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
           <View style={styles.actionButtonsOverlay} />
           <View style={styles.actionButtons}>
             <TouchableOpacity style={styles.passButton} onPress={handlePass}>
-              <MaterialCommunityIcons name="close" size={26} color="#ef4444" />
+              <MaterialCommunityIcons name="close" size={26} color={theme.tint} />
             </TouchableOpacity>
             <TouchableOpacity style={styles.superLikeButton} onPress={handleSuperLike}>
-              <MaterialCommunityIcons name="star" size={22} color="#3b82f6" />
+              <MaterialCommunityIcons name="star" size={22} color={theme.accent} />
             </TouchableOpacity>
             <TouchableOpacity style={[styles.likeButton, isLiked && styles.likeButtonActive]} onPress={handleLike}>
               <Animated.View
@@ -1140,7 +1171,7 @@ export default function ProfileViewPremiumScreen() {
                   ],
                 }}
               >
-                <MaterialCommunityIcons name={isLiked ? 'heart' : 'heart-outline'} size={30} color={isLiked ? '#fff' : Colors.light.tint} />
+                <MaterialCommunityIcons name={isLiked ? 'heart' : 'heart-outline'} size={30} color={isLiked ? Colors.light.background : theme.tint} />
               </Animated.View>
             </TouchableOpacity>
           </View>
@@ -1158,197 +1189,220 @@ export default function ProfileViewPremiumScreen() {
     </View>
   );
 }
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#030712' },
-  heroWrapper: { position: 'relative', height: HERO_HEIGHT, backgroundColor: '#0b1220' },
-  mainPhoto: { width: screenWidth, height: HERO_HEIGHT, resizeMode: 'cover' },
-  topGradient: { position: 'absolute', top: 0, left: 0, right: 0, height: 140 },
-  bottomGradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 200 },
-  sideGradientLeft: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 26 },
-  sideGradientRight: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 26 },
-  photoIndicatorsTop: { position: 'absolute', top: 94, left: 18, right: 18, flexDirection: 'row', gap: 8 },
-  photoIndicator: { width: 34, height: 4, backgroundColor: 'rgba(255,255,255,0.3)', borderRadius: 3 },
-  photoIndicatorActive: { backgroundColor: '#fff' },
-  videoBadgeContainer: { position: 'absolute', top: 128, right: 18, zIndex: 15 },
-  videoBadgeButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: 'rgba(15,23,42,0.65)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
-  },
-  videoBadgeText: { color: '#fff', fontSize: 12, fontFamily: 'Manrope_600SemiBold' },
-  profileOverlay: { position: 'absolute', bottom: 24, left: 20, right: 20, gap: 6 },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
-  profileName: { fontSize: 30, color: '#fff', fontFamily: 'Archivo_700Bold', letterSpacing: 0.5 },
-  profileSubRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  profileSubText: { color: '#e5e7eb', fontFamily: 'Manrope_500Medium', fontSize: 14 },
-  profileSub: { color: '#e5e7eb', fontFamily: 'Manrope_500Medium', fontSize: 14 },
-  activeBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#10b981', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
-  activeDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' },
-  activeText: { fontSize: 12, color: '#fff', fontFamily: 'Manrope_700Bold' },
-  compatibilityBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: Colors.light.tint,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 16,
-    alignSelf: 'flex-start',
-    marginTop: 6,
-    shadowColor: '#ef4444',
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-  },
-  compatibilityText: { fontSize: 14, color: '#fff', fontFamily: 'Archivo_700Bold' },
-  card: {
-    marginTop: 16,
-    marginHorizontal: 16,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 22,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    shadowColor: '#000',
-    shadowOpacity: 0.3,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 12 },
-  },
-  sectionTitle: { color: '#f9fafb', fontSize: 18, fontFamily: 'Archivo_700Bold', marginBottom: 10 },
-  bodyText: { color: '#d1d5db', fontSize: 15, lineHeight: 22, fontFamily: 'Manrope_500Medium' },
-  bodySubtle: { color: '#9ca3af', fontSize: 14, fontFamily: 'Manrope_500Medium' },
-  showMoreText: { color: Colors.light.tint, fontSize: 13, fontFamily: 'Manrope_600SemiBold', marginTop: 8 },
-  chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  chip: { backgroundColor: 'rgba(255,255,255,0.06)', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
-  chipText: { color: '#e5e7eb', fontFamily: 'Manrope_600SemiBold', fontSize: 13 },
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.08)' },
-  detailLabel: { color: '#9ca3af', fontSize: 13, fontFamily: 'Manrope_600SemiBold' },
-  detailValue: { color: '#f9fafb', fontSize: 13, fontFamily: 'Manrope_500Medium', flexShrink: 1, textAlign: 'right' },
-  interestsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 6 },
-  interestChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-  },
-  interestEmoji: { fontSize: 16 },
-  interestName: { color: '#e5e7eb', fontFamily: 'Manrope_600SemiBold', fontSize: 14 },
-  actionButtonsContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    paddingHorizontal: 20,
-    paddingVertical: 18,
-    backgroundColor: 'rgba(8,10,14,0.55)',
-    borderTopWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    shadowColor: '#000',
-    shadowOpacity: 0.35,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: -6 },
-  },
-  actionButtonsOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(5,8,12,0.35)',
-  },
-  actionButtons: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 18 },
-  passButton: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: '#0f172a',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#ef4444',
-  },
-  superLikeButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#0f172a',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#3b82f6',
-  },
-  likeButton: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: Colors.light.tint,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: Colors.light.tint,
-    shadowOpacity: 0.4,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
-  },
-  likeButtonActive: { backgroundColor: '#be185d' },
-  header: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 20,
-    overflow: 'hidden',
-  },
-  headerContent: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 18 },
-  headerButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
-    overflow: 'hidden',
-  },
-  headerButtonOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-  },
-  headerActions: { flexDirection: 'row', gap: 10 },
-  headerTitle: { color: '#f9fafb', fontSize: 16, fontFamily: 'Archivo_700Bold', flex: 1, textAlign: 'center' },
-  headerTint: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(7,9,14,0.7)',
-  },
-  previewIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
-  },
-  previewIndicatorText: { color: '#fff', fontSize: 12, fontFamily: 'Manrope_600SemiBold' },
-  rippleOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(255,255,255,0.06)' },
-  skeletonContainer: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 20 },
-  skeletonSection: { marginTop: 16, gap: 8 },
-  skeletonBlockBase: { backgroundColor: '#111827', borderRadius: 14, overflow: 'hidden' },
-  skeletonHeroFull: { width: '100%', height: '100%', borderRadius: 0 },
-  skeletonTitle: { height: 18, width: '60%' },
-  skeletonTitleSmall: { height: 16, width: '42%' },
-  skeletonLine: { height: 14, width: '100%' },
-  skeletonChipsRow: { flexDirection: 'row', gap: 10, marginTop: 10 },
-  skeletonChip: { width: 72, height: 24, borderRadius: 999 },
-  shimmer: { ...StyleSheet.absoluteFillObject },
-});
+const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.background },
+    heroWrapper: { position: 'relative', height: HERO_HEIGHT, backgroundColor: theme.backgroundSubtle },
+    mainPhoto: { width: screenWidth, height: HERO_HEIGHT, resizeMode: 'cover' },
+    topGradient: { position: 'absolute', top: 0, left: 0, right: 0, height: 140 },
+    bottomGradient: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 200 },
+    sideGradientLeft: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 26 },
+    sideGradientRight: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 26 },
+    photoIndicatorsTop: { position: 'absolute', top: 94, left: 18, right: 18, flexDirection: 'row', gap: 8 },
+    photoIndicator: { width: 34, height: 4, backgroundColor: withAlpha(theme.text, isDark ? 0.28 : 0.18), borderRadius: 3 },
+    photoIndicatorActive: { backgroundColor: theme.tint },
+    videoBadgeContainer: { position: 'absolute', top: 128, right: 18, zIndex: 15 },
+    videoBadgeButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
+      backgroundColor: withAlpha(Colors.dark.background, isDark ? 0.7 : 0.5),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.25 : 0.18),
+    },
+    videoBadgeText: { color: Colors.light.background, fontSize: 12, fontFamily: 'Manrope_600SemiBold' },
+    profileOverlay: { position: 'absolute', bottom: 24, left: 20, right: 20, gap: 6 },
+    nameRow: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
+    profileName: { fontSize: 30, color: Colors.light.background, fontFamily: 'Archivo_700Bold', letterSpacing: 0.5 },
+    profileSubRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    profileSubText: { color: withAlpha(Colors.light.background, 0.9), fontFamily: 'Manrope_500Medium', fontSize: 14 },
+    profileSub: { color: withAlpha(Colors.light.background, 0.9), fontFamily: 'Manrope_500Medium', fontSize: 14 },
+    activeBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: withAlpha(theme.secondary, isDark ? 0.9 : 0.8),
+      borderRadius: 999,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+    },
+    activeDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: Colors.light.background },
+    activeText: { fontSize: 12, color: Colors.light.background, fontFamily: 'Manrope_700Bold' },
+    compatibilityBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: theme.tint,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 16,
+      alignSelf: 'flex-start',
+      marginTop: 6,
+      shadowColor: theme.tint,
+      shadowOpacity: 0.25,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 6 },
+    },
+    compatibilityText: { fontSize: 14, color: Colors.light.background, fontFamily: 'Archivo_700Bold' },
+    card: {
+      marginTop: 16,
+      marginHorizontal: 16,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.04),
+      borderRadius: 22,
+      padding: 18,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
+      shadowColor: Colors.dark.background,
+      shadowOpacity: 0.3,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 12 },
+    },
+    sectionTitle: { color: theme.text, fontSize: 18, fontFamily: 'Archivo_700Bold', marginBottom: 10 },
+    bodyText: { color: theme.text, fontSize: 15, lineHeight: 22, fontFamily: 'Manrope_500Medium' },
+    bodySubtle: { color: theme.textMuted, fontSize: 14, fontFamily: 'Manrope_500Medium' },
+    showMoreText: { color: theme.tint, fontSize: 13, fontFamily: 'Manrope_600SemiBold', marginTop: 8 },
+    chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+    chip: {
+      backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.06),
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.12),
+    },
+    chipText: { color: theme.text, fontFamily: 'Manrope_600SemiBold', fontSize: 13 },
+    detailRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: 10,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: withAlpha(theme.text, isDark ? 0.16 : 0.12),
+    },
+    detailLabel: { color: theme.textMuted, fontSize: 13, fontFamily: 'Manrope_600SemiBold' },
+    detailValue: { color: theme.text, fontSize: 13, fontFamily: 'Manrope_500Medium', flexShrink: 1, textAlign: 'right' },
+    interestsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 6 },
+    interestChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.06),
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+    },
+    interestEmoji: { fontSize: 16 },
+    interestName: { color: theme.text, fontFamily: 'Manrope_600SemiBold', fontSize: 14 },
+    actionButtonsContainer: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      paddingHorizontal: 20,
+      paddingVertical: 18,
+      backgroundColor: withAlpha(Colors.dark.background, isDark ? 0.65 : 0.4),
+      borderTopWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.12),
+      shadowColor: Colors.dark.background,
+      shadowOpacity: 0.35,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: -6 },
+    },
+    actionButtonsOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: withAlpha(Colors.dark.background, isDark ? 0.4 : 0.28),
+    },
+    actionButtons: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 18 },
+    passButton: {
+      width: 54,
+      height: 54,
+      borderRadius: 27,
+      backgroundColor: theme.backgroundSubtle,
+      justifyContent: 'center',
+      alignItems: 'center',
+      borderWidth: 1.5,
+      borderColor: withAlpha(theme.tint, 0.6),
+    },
+    superLikeButton: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      backgroundColor: theme.backgroundSubtle,
+      justifyContent: 'center',
+      alignItems: 'center',
+      borderWidth: 1.5,
+      borderColor: withAlpha(theme.accent, 0.7),
+    },
+    likeButton: {
+      width: 64,
+      height: 64,
+      borderRadius: 32,
+      backgroundColor: theme.tint,
+      justifyContent: 'center',
+      alignItems: 'center',
+      shadowColor: theme.tint,
+      shadowOpacity: 0.4,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 6 },
+    },
+    likeButtonActive: { backgroundColor: withAlpha(theme.tint, 0.85) },
+    header: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      zIndex: 20,
+      overflow: 'hidden',
+    },
+    headerContent: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 18 },
+    headerButton: {
+      width: 42,
+      height: 42,
+      borderRadius: 21,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.06),
+      justifyContent: 'center',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.12),
+      overflow: 'hidden',
+    },
+    headerButtonOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.2 : 0.18),
+    },
+    headerActions: { flexDirection: 'row', gap: 10 },
+    headerTitle: { color: theme.text, fontSize: 16, fontFamily: 'Archivo_700Bold', flex: 1, textAlign: 'center' },
+    headerTint: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: withAlpha(Colors.dark.background, isDark ? 0.6 : 0.42),
+    },
+    previewIndicator: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.12 : 0.1),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.16),
+    },
+    previewIndicatorText: { color: theme.text, fontSize: 12, fontFamily: 'Manrope_600SemiBold' },
+    rippleOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.06) },
+    skeletonContainer: { paddingHorizontal: 16, paddingTop: 20, paddingBottom: 20 },
+    skeletonSection: { marginTop: 16, gap: 8 },
+    skeletonBlockBase: { backgroundColor: withAlpha(Colors.dark.background, isDark ? 0.7 : 0.08), borderRadius: 14, overflow: 'hidden' },
+    skeletonHeroFull: { width: '100%', height: '100%', borderRadius: 0 },
+    skeletonTitle: { height: 18, width: '60%' },
+    skeletonTitleSmall: { height: 16, width: '42%' },
+    skeletonLine: { height: 14, width: '100%' },
+    skeletonChipsRow: { flexDirection: 'row', gap: 10, marginTop: 10 },
+    skeletonChip: { width: 72, height: 24, borderRadius: 999 },
+    shimmer: { ...StyleSheet.absoluteFillObject },
+  });
 

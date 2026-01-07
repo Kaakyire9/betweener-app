@@ -1,13 +1,28 @@
 ﻿import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router } from "expo-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { Colors } from "@/constants/theme";
+import { useColorScheme } from "@/hooks/use-color-scheme";
 
 const { width } = Dimensions.get("window");
 
+const withAlpha = (hex: string, alpha: number) => {
+  const normalized = hex.replace('#', '');
+  const bigint = parseInt(normalized.length === 3 ? normalized.split('').map((c) => c + c).join('') : normalized, 16);
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+};
+
 export default function DashboardScreen() {
+  const colorScheme = useColorScheme();
+  const theme = Colors[colorScheme ?? 'light'];
+  const isDark = (colorScheme ?? 'light') === 'dark';
+  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   // Mock data - in a real app, this would come from your state management
   const [profileCompletion] = useState(85);
   const [newMatchesToday] = useState(3);
@@ -37,7 +52,7 @@ export default function DashboardScreen() {
             source={require("@/assets/images/circle-logo.png")}
             style={styles.profilePhoto}
           />
-          <View style={[styles.onlineRing, { borderColor: isOnline ? "#4CAF50" : "#666" }]} />
+          <View style={[styles.onlineRing, { borderColor: isOnline ? theme.secondary : theme.textMuted }]} />
         </View>
         <View style={styles.profileInfo}>
           <Text style={styles.profileName}>Alex Johnson</Text>
@@ -84,10 +99,10 @@ export default function DashboardScreen() {
             <Text style={styles.matchName}>{match.name}</Text>
             <View style={styles.matchActions}>
               <TouchableOpacity style={styles.actionBtn}>
-                <MaterialCommunityIcons name="message" size={16} color="#fff" />
+                <MaterialCommunityIcons name="message" size={16} color={Colors.light.background} />
               </TouchableOpacity>
               <TouchableOpacity style={styles.actionBtn}>
-                <MaterialCommunityIcons name="heart" size={16} color="#ff6b6b" />
+                <MaterialCommunityIcons name="heart" size={16} color={theme.tint} />
               </TouchableOpacity>
             </View>
           </View>
@@ -135,17 +150,17 @@ export default function DashboardScreen() {
       <Text style={styles.cardTitle}>Your Week in Numbers</Text>
       <View style={styles.insightsGrid}>
         <View style={styles.insightItem}>
-          <MaterialCommunityIcons name="eye" size={24} color="#4CAF50" />
+          <MaterialCommunityIcons name="eye" size={24} color={theme.secondary} />
           <Text style={styles.insightNumber}>{profileViews}</Text>
           <Text style={styles.insightLabel}>Profile Views</Text>
         </View>
         <View style={styles.insightItem}>
-          <MaterialCommunityIcons name="heart" size={24} color="#ff6b6b" />
+          <MaterialCommunityIcons name="heart" size={24} color={theme.tint} />
           <Text style={styles.insightNumber}>{likesReceived}</Text>
           <Text style={styles.insightLabel}>Likes Received</Text>
         </View>
         <View style={styles.insightItem}>
-          <MaterialCommunityIcons name="fire" size={24} color="#ff9500" />
+          <MaterialCommunityIcons name="fire" size={24} color={theme.accent} />
           <Text style={styles.insightNumber}>{conversationStreak}</Text>
           <Text style={styles.insightLabel}>Day Streak</Text>
         </View>
@@ -161,15 +176,15 @@ export default function DashboardScreen() {
       <Text style={styles.cardTitle}>Discover New Matches</Text>
       <View style={styles.discoverCategories}>
         <TouchableOpacity style={styles.discoverCategory}>
-          <MaterialCommunityIcons name="map-marker" size={20} color="#4CAF50" />
+          <MaterialCommunityIcons name="map-marker" size={20} color={theme.secondary} />
           <Text style={styles.categoryText}>Most Active Near You</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.discoverCategory}>
-          <MaterialCommunityIcons name="star" size={20} color="#ff9500" />
+          <MaterialCommunityIcons name="star" size={20} color={theme.accent} />
           <Text style={styles.categoryText}>New Users</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.discoverCategory}>
-          <MaterialCommunityIcons name="account-group" size={20} color="#2196F3" />
+          <MaterialCommunityIcons name="account-group" size={20} color={theme.tint} />
           <Text style={styles.categoryText}>Similar Interests</Text>
         </TouchableOpacity>
       </View>
@@ -178,7 +193,7 @@ export default function DashboardScreen() {
         onPress={() => router.push("/(tabs)/explore")}
       >
         <View style={styles.swipeButtonGradient}>
-          <MaterialCommunityIcons name="cards-heart" size={24} color="#fff" />
+          <MaterialCommunityIcons name="cards-heart" size={24} color={Colors.light.background} />
           <Text style={styles.swipeButtonText}>Start Swiping</Text>
         </View>
       </TouchableOpacity>
@@ -190,12 +205,12 @@ export default function DashboardScreen() {
       <Text style={styles.cardTitle}>Boosts & Features</Text>
       <View style={styles.boostInfo}>
         <View style={styles.boostItem}>
-          <MaterialCommunityIcons name="rocket" size={24} color="#ff9500" />
+          <MaterialCommunityIcons name="rocket" size={24} color={theme.accent} />
           <Text style={styles.boostText}>{boostsLeft} Free Boosts Left</Text>
         </View>
         <TouchableOpacity style={styles.superLikeBtn}>
           <View style={styles.superLikeGradient}>
-            <MaterialCommunityIcons name="star" size={20} color="#fff" />
+            <MaterialCommunityIcons name="star" size={20} color={Colors.light.background} />
             <Text style={styles.superLikeText}>Try Super Like</Text>
           </View>
         </TouchableOpacity>
@@ -207,16 +222,16 @@ export default function DashboardScreen() {
     <View style={styles.card}>
       <Text style={styles.cardTitle}>Safety & Wellness</Text>
       <View style={styles.safetyTip}>
-        <MaterialCommunityIcons name="lightbulb" size={20} color="#ff9500" />
+        <MaterialCommunityIcons name="lightbulb" size={20} color={theme.accent} />
         <Text style={styles.safetyText}>💡 Never share financial info with matches</Text>
       </View>
       <View style={styles.safetyActions}>
         <TouchableOpacity style={styles.safetyBtn}>
-          <MaterialCommunityIcons name="shield-check" size={16} color="#4CAF50" />
+          <MaterialCommunityIcons name="shield-check" size={16} color={theme.secondary} />
           <Text style={styles.safetyBtnText}>Available</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.safetyBtn}>
-          <MaterialCommunityIcons name="block-helper" size={16} color="#f44336" />
+          <MaterialCommunityIcons name="block-helper" size={16} color={theme.tint} />
           <Text style={styles.safetyBtnText}>Report</Text>
         </TouchableOpacity>
       </View>
@@ -231,7 +246,7 @@ export default function DashboardScreen() {
           <View key={index} style={[styles.badgeItem, { opacity: badge.earned ? 1 : 0.5 }]}>
             <Text style={styles.badgeIcon}>{badge.icon}</Text>
             <Text style={styles.badgeName}>{badge.name}</Text>
-            {badge.earned && <MaterialCommunityIcons name="check-circle" size={16} color="#4CAF50" />}
+            {badge.earned && <MaterialCommunityIcons name="check-circle" size={16} color={theme.secondary} />}
           </View>
         ))}
       </View>
@@ -263,407 +278,416 @@ export default function DashboardScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#667eea",
-  },
-  safeArea: {
-    flex: 1,
-  },
-  scrollContainer: {
-    flex: 1,
-  },
-  header: {
-    padding: 20,
-    paddingBottom: 10,
-  },
-  welcomeText: {
-    fontSize: 16,
-    color: "rgba(255, 255, 255, 0.8)",
-    marginBottom: 4,
-  },
-  headerTitle: {
-    fontSize: 32,
-    fontWeight: "bold",
-    color: "#fff",
-  },
-  card: {
-    backgroundColor: "rgba(255, 255, 255, 0.95)",
-    marginHorizontal: 20,
-    marginBottom: 16,
-    borderRadius: 20,
-    padding: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 5,
-  },
-  profileHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  profilePhotoContainer: {
-    position: "relative",
-  },
-  profilePhoto: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-  },
-  onlineRing: {
-    position: "absolute",
-    top: -3,
-    left: -3,
-    width: 66,
-    height: 66,
-    borderRadius: 33,
-    borderWidth: 3,
-  },
-  profileInfo: {
-    marginLeft: 16,
-    flex: 1,
-  },
-  profileName: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#333",
-  },
-  lastActive: {
-    fontSize: 14,
-    color: "#4CAF50",
-    marginBottom: 4,
-  },
-  moodContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  moodSticker: {
-    fontSize: 16,
-    marginRight: 6,
-  },
-  moodText: {
-    fontSize: 14,
-    color: "#666",
-  },
-  completionBar: {
-    marginTop: 12,
-  },
-  completionHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  completionText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#333",
-  },
-  completionSuggestion: {
-    fontSize: 12,
-    color: "#ff6b6b",
-  },
-  progressBar: {
-    height: 8,
-    backgroundColor: "#f0f0f0",
-    borderRadius: 4,
-    overflow: "hidden",
-  },
-  progressFill: {
-    height: "100%",
-    backgroundColor: "#4CAF50",
-    borderRadius: 4,
-  },
-  cardHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#333",
-  },
-  badge: {
-    backgroundColor: "#ff6b6b",
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  badgeText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "bold",
-  },
-  matchesScroll: {
-    marginHorizontal: -10,
-  },
-  matchItem: {
-    alignItems: "center",
-    marginHorizontal: 10,
-    width: 80,
-  },
-  matchPhotoContainer: {
-    position: "relative",
-    marginBottom: 8,
-  },
-  matchPhoto: {
-    fontSize: 40,
-    textAlign: "center",
-  },
-  unreadBadge: {
-    position: "absolute",
-    top: -2,
-    right: -2,
-    backgroundColor: "#ff4757",
-    borderRadius: 10,
-    minWidth: 20,
-    height: 20,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  unreadText: {
-    color: "#fff",
-    fontSize: 10,
-    fontWeight: "bold",
-  },
-  matchName: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 8,
-  },
-  matchActions: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  actionBtn: {
-    backgroundColor: "#667eea",
-    borderRadius: 16,
-    padding: 6,
-  },
-  conversationItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
-  },
-  conversationPhoto: {
-    fontSize: 24,
-    marginRight: 12,
-  },
-  conversationInfo: {
-    flex: 1,
-  },
-  conversationHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 4,
-  },
-  conversationName: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#333",
-    marginRight: 8,
-  },
-  statusIndicator: {
-    marginLeft: "auto",
-  },
-  statusIcon: {
-    fontSize: 12,
-  },
-  lastMessage: {
-    fontSize: 14,
-    color: "#666",
-  },
-  unreadDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#ff4757",
-    marginLeft: 8,
-  },
-  moodStickersBar: {
-    marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: "#f0f0f0",
-  },
-  moodStickersTitle: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
-    marginBottom: 8,
-  },
-  moodStickers: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  moodStickerBtn: {
-    backgroundColor: "#f8f9fa",
-    borderRadius: 20,
-    padding: 8,
-  },
-  moodStickerText: {
-    fontSize: 16,
-  },
-  insightsGrid: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-    marginBottom: 16,
-  },
-  insightItem: {
-    alignItems: "center",
-  },
-  insightNumber: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#333",
-    marginTop: 4,
-  },
-  insightLabel: {
-    fontSize: 12,
-    color: "#666",
-    marginTop: 2,
-  },
-  streakHighlight: {
-    backgroundColor: "#fff3cd",
-    borderRadius: 12,
-    padding: 12,
-    alignItems: "center",
-  },
-  streakText: {
-    fontSize: 14,
-    color: "#856404",
-    fontWeight: "600",
-  },
-  discoverCategories: {
-    marginBottom: 16,
-  },
-  discoverCategory: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    backgroundColor: "#f8f9fa",
-    borderRadius: 12,
-    marginBottom: 8,
-  },
-  categoryText: {
-    marginLeft: 12,
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
-  },
-  swipeButton: {
-    borderRadius: 16,
-    overflow: "hidden",
-  },
-  swipeButtonGradient: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    backgroundColor: "#ff6b6b",
-    borderRadius: 16,
-  },
-  swipeButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "bold",
-    marginLeft: 8,
-  },
-  boostInfo: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  boostItem: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  boostText: {
-    marginLeft: 8,
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
-  },
-  superLikeBtn: {
-    borderRadius: 12,
-    overflow: "hidden",
-  },
-  superLikeGradient: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    backgroundColor: "#667eea",
-    borderRadius: 12,
-  },
-  superLikeText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "bold",
-    marginLeft: 4,
-  },
-  safetyTip: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff3cd",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-  },
-  safetyText: {
-    marginLeft: 8,
-    fontSize: 14,
-    color: "#856404",
-    flex: 1,
-  },
-  safetyActions: {
-    flexDirection: "row",
-    gap: 12,
-  },
-  safetyBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#f8f9fa",
-    borderRadius: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  safetyBtnText: {
-    marginLeft: 6,
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#333",
-  },
-  badgesContainer: {
-    flexDirection: "row",
-    justifyContent: "space-around",
-  },
-  badgeItem: {
-    alignItems: "center",
-    flex: 1,
-  },
-  badgeIcon: {
-    fontSize: 24,
-    marginBottom: 4,
-  },
-  badgeName: {
-    fontSize: 10,
-    fontWeight: "600",
-    color: "#333",
-    textAlign: "center",
-    marginBottom: 4,
-  },
-  bottomPadding: {
-    height: 20,
-  },
-});
+const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.background,
+    },
+    safeArea: {
+      flex: 1,
+    },
+    scrollContainer: {
+      flex: 1,
+      backgroundColor: theme.background,
+    },
+    header: {
+      padding: 20,
+      paddingBottom: 10,
+    },
+    welcomeText: {
+      fontSize: 16,
+      color: withAlpha(theme.textMuted, 0.9),
+      marginBottom: 4,
+    },
+    headerTitle: {
+      fontSize: 32,
+      fontWeight: "bold",
+      color: theme.text,
+    },
+    card: {
+      backgroundColor: theme.backgroundSubtle,
+      marginHorizontal: 20,
+      marginBottom: 16,
+      borderRadius: 20,
+      padding: 20,
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.12,
+      shadowRadius: 12,
+      elevation: 5,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+    },
+    profileHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginBottom: 16,
+    },
+    profilePhotoContainer: {
+      position: "relative",
+    },
+    profilePhoto: {
+      width: 60,
+      height: 60,
+      borderRadius: 30,
+    },
+    onlineRing: {
+      position: "absolute",
+      top: -3,
+      left: -3,
+      width: 66,
+      height: 66,
+      borderRadius: 33,
+      borderWidth: 3,
+    },
+    profileInfo: {
+      marginLeft: 16,
+      flex: 1,
+    },
+    profileName: {
+      fontSize: 20,
+      fontWeight: "bold",
+      color: theme.text,
+    },
+    lastActive: {
+      fontSize: 14,
+      color: theme.secondary,
+      marginBottom: 4,
+    },
+    moodContainer: {
+      flexDirection: "row",
+      alignItems: "center",
+    },
+    moodSticker: {
+      fontSize: 16,
+      marginRight: 6,
+    },
+    moodText: {
+      fontSize: 14,
+      color: theme.textMuted,
+    },
+    completionBar: {
+      marginTop: 12,
+    },
+    completionHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 8,
+    },
+    completionText: {
+      fontSize: 16,
+      fontWeight: "600",
+      color: theme.text,
+    },
+    completionSuggestion: {
+      fontSize: 12,
+      color: theme.tint,
+    },
+    progressBar: {
+      height: 8,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.25 : 0.08),
+      borderRadius: 4,
+      overflow: "hidden",
+    },
+    progressFill: {
+      height: "100%",
+      backgroundColor: theme.secondary,
+      borderRadius: 4,
+    },
+    cardHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 16,
+    },
+    cardTitle: {
+      fontSize: 18,
+      fontWeight: "bold",
+      color: theme.text,
+    },
+    badge: {
+      backgroundColor: theme.tint,
+      borderRadius: 12,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+    },
+    badgeText: {
+      color: Colors.light.background,
+      fontSize: 12,
+      fontWeight: "bold",
+    },
+    matchesScroll: {
+      marginHorizontal: -10,
+    },
+    matchItem: {
+      alignItems: "center",
+      marginHorizontal: 10,
+      width: 80,
+    },
+    matchPhotoContainer: {
+      position: "relative",
+      marginBottom: 8,
+    },
+    matchPhoto: {
+      fontSize: 40,
+      textAlign: "center",
+    },
+    unreadBadge: {
+      position: "absolute",
+      top: -2,
+      right: -2,
+      backgroundColor: theme.tint,
+      borderRadius: 10,
+      minWidth: 20,
+      height: 20,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    unreadText: {
+      color: Colors.light.background,
+      fontSize: 10,
+      fontWeight: "bold",
+    },
+    matchName: {
+      fontSize: 12,
+      fontWeight: "600",
+      color: theme.text,
+      marginBottom: 8,
+    },
+    matchActions: {
+      flexDirection: "row",
+      gap: 8,
+    },
+    actionBtn: {
+      backgroundColor: theme.tint,
+      borderRadius: 16,
+      padding: 6,
+    },
+    conversationItem: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+    },
+    conversationPhoto: {
+      fontSize: 24,
+      marginRight: 12,
+    },
+    conversationInfo: {
+      flex: 1,
+    },
+    conversationHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginBottom: 4,
+    },
+    conversationName: {
+      fontSize: 16,
+      fontWeight: "600",
+      color: theme.text,
+      marginRight: 8,
+    },
+    statusIndicator: {
+      marginLeft: "auto",
+    },
+    statusIcon: {
+      fontSize: 12,
+    },
+    lastMessage: {
+      fontSize: 14,
+      color: theme.textMuted,
+    },
+    unreadDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: theme.tint,
+      marginLeft: 8,
+    },
+    moodStickersBar: {
+      marginTop: 16,
+      paddingTop: 16,
+      borderTopWidth: 1,
+      borderTopColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+    },
+    moodStickersTitle: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: theme.text,
+      marginBottom: 8,
+    },
+    moodStickers: {
+      flexDirection: "row",
+      gap: 8,
+    },
+    moodStickerBtn: {
+      backgroundColor: theme.backgroundSubtle,
+      borderRadius: 20,
+      padding: 8,
+    },
+    moodStickerText: {
+      fontSize: 16,
+      color: theme.text,
+    },
+    insightsGrid: {
+      flexDirection: "row",
+      justifyContent: "space-around",
+      marginBottom: 16,
+    },
+    insightItem: {
+      alignItems: "center",
+    },
+    insightNumber: {
+      fontSize: 24,
+      fontWeight: "bold",
+      color: theme.text,
+      marginTop: 4,
+    },
+    insightLabel: {
+      fontSize: 12,
+      color: theme.textMuted,
+      marginTop: 2,
+    },
+    streakHighlight: {
+      backgroundColor: withAlpha(theme.accent, isDark ? 0.28 : 0.18),
+      borderRadius: 12,
+      padding: 12,
+      alignItems: "center",
+    },
+    streakText: {
+      fontSize: 14,
+      color: theme.accent,
+      fontWeight: "600",
+    },
+    discoverCategories: {
+      marginBottom: 16,
+    },
+    discoverCategory: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      backgroundColor: theme.backgroundSubtle,
+      borderRadius: 12,
+      marginBottom: 8,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+    },
+    categoryText: {
+      marginLeft: 12,
+      fontSize: 14,
+      fontWeight: "600",
+      color: theme.text,
+    },
+    swipeButton: {
+      borderRadius: 16,
+      overflow: "hidden",
+    },
+    swipeButtonGradient: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      paddingVertical: 16,
+      paddingHorizontal: 24,
+      backgroundColor: theme.tint,
+      borderRadius: 16,
+    },
+    swipeButtonText: {
+      color: Colors.light.background,
+      fontSize: 16,
+      fontWeight: "bold",
+      marginLeft: 8,
+    },
+    boostInfo: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+    },
+    boostItem: {
+      flexDirection: "row",
+      alignItems: "center",
+    },
+    boostText: {
+      marginLeft: 8,
+      fontSize: 14,
+      fontWeight: "600",
+      color: theme.text,
+    },
+    superLikeBtn: {
+      borderRadius: 12,
+      overflow: "hidden",
+    },
+    superLikeGradient: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingVertical: 8,
+      paddingHorizontal: 16,
+      backgroundColor: theme.tint,
+      borderRadius: 12,
+    },
+    superLikeText: {
+      color: Colors.light.background,
+      fontSize: 12,
+      fontWeight: "bold",
+      marginLeft: 4,
+    },
+    safetyTip: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: withAlpha(theme.accent, isDark ? 0.26 : 0.18),
+      borderRadius: 12,
+      padding: 12,
+      marginBottom: 12,
+    },
+    safetyText: {
+      marginLeft: 8,
+      fontSize: 14,
+      color: theme.text,
+      flex: 1,
+    },
+    safetyActions: {
+      flexDirection: "row",
+      gap: 12,
+    },
+    safetyBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: theme.backgroundSubtle,
+      borderRadius: 12,
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+    },
+    safetyBtnText: {
+      marginLeft: 6,
+      fontSize: 12,
+      fontWeight: "600",
+      color: theme.text,
+    },
+    badgesContainer: {
+      flexDirection: "row",
+      justifyContent: "space-around",
+    },
+    badgeItem: {
+      alignItems: "center",
+      flex: 1,
+    },
+    badgeIcon: {
+      fontSize: 24,
+      marginBottom: 4,
+    },
+    badgeName: {
+      fontSize: 10,
+      fontWeight: "600",
+      color: theme.text,
+      textAlign: "center",
+      marginBottom: 4,
+    },
+    bottomPadding: {
+      height: 20,
+    },
+  });

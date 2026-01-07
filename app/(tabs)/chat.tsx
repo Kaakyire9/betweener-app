@@ -4,7 +4,7 @@ import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   FlatList,
@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
+import { useColorScheme } from "@/hooks/use-color-scheme";
 
 // Chat conversation type
 type ConversationType = {
@@ -49,9 +50,22 @@ type MessageRow = {
   is_read: boolean;
 };
 
+const withAlpha = (hex: string, alpha: number) => {
+  const normalized = hex.replace('#', '');
+  const bigint = parseInt(normalized.length === 3 ? normalized.split('').map((c) => c + c).join('') : normalized, 16);
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+};
+
 export default function ChatScreen() {
   const { user } = useAuth();
   const fontsLoaded = useAppFonts();
+  const colorScheme = useColorScheme();
+  const theme = Colors[colorScheme ?? 'light'];
+  const isDark = (colorScheme ?? 'light') === 'dark';
+  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   
   const [conversations, setConversations] = useState<ConversationType[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -369,7 +383,7 @@ export default function ChatScreen() {
             )}
             {item.isPinned && (
               <View style={styles.pinIndicator}>
-                <MaterialCommunityIcons name="pin" size={10} color="#fff" />
+                <MaterialCommunityIcons name="pin" size={10} color={Colors.light.background} />
               </View>
             )}
           </View>
@@ -421,7 +435,7 @@ export default function ChatScreen() {
 
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
-      <MaterialCommunityIcons name="chat-outline" size={64} color="#9ca3af" />
+      <MaterialCommunityIcons name="chat-outline" size={64} color={theme.textMuted} />
       <Text style={styles.emptyStateTitle}>No conversations yet</Text>
       <Text style={styles.emptyStateText}>
         Start matching with people to begin chatting!
@@ -430,7 +444,7 @@ export default function ChatScreen() {
         style={styles.exploreButton}
         onPress={() => router.push('/(tabs)/explore')}
       >
-        <MaterialCommunityIcons name="compass" size={20} color="#fff" />
+        <MaterialCommunityIcons name="compass" size={20} color={Colors.light.background} />
         <Text style={styles.exploreButtonText}>Explore Matches</Text>
       </TouchableOpacity>
     </View>
@@ -448,7 +462,7 @@ export default function ChatScreen() {
             <MaterialCommunityIcons 
               name={showSearch ? "close" : "magnify"} 
               size={24} 
-              color={Colors.light.tint} 
+              color={theme.tint} 
             />
           </TouchableOpacity>
         </View>
@@ -468,18 +482,18 @@ export default function ChatScreen() {
         ]}
       >
         <View style={styles.searchInputContainer}>
-          <MaterialCommunityIcons name="magnify" size={20} color="#9ca3af" />
+          <MaterialCommunityIcons name="magnify" size={20} color={theme.textMuted} />
           <TextInput
             style={styles.searchInput}
             placeholder="Search conversations..."
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={theme.textMuted}
             value={searchQuery}
             onChangeText={setSearchQuery}
             autoFocus={showSearch}
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <MaterialCommunityIcons name="close-circle" size={20} color="#9ca3af" />
+              <MaterialCommunityIcons name="close-circle" size={20} color={theme.textMuted} />
             </TouchableOpacity>
           )}
         </View>
@@ -540,284 +554,293 @@ export default function ChatScreen() {
         style={styles.fab}
         onPress={() => router.push('/(tabs)/explore')}
       >
-        <MaterialCommunityIcons name="plus" size={24} color="#fff" />
+        <MaterialCommunityIcons name="plus" size={24} color={Colors.light.background} />
       </TouchableOpacity>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-  },
-  
-  // Header
-  header: {
-    backgroundColor: '#fff',
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  },
-  headerTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 16,
-  },
-  headerTitle: {
-    fontSize: 28,
-    fontFamily: 'Archivo_700Bold',
-    color: '#111827',
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  headerButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#f8fafc',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
+const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.background,
+    },
 
-  // Search
-  searchContainer: {
-    overflow: 'hidden',
-    marginBottom: 16,
-  },
-  searchInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f8fafc',
-    borderRadius: 25,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    gap: 12,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 16,
-    fontFamily: 'Manrope_400Regular',
-    color: '#111827',
-  },
+    // Header
+    header: {
+      backgroundColor: theme.background,
+      paddingHorizontal: 20,
+      paddingBottom: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.06,
+      shadowRadius: 3,
+      elevation: 3,
+    },
+    headerTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 16,
+    },
+    headerTitle: {
+      fontSize: 28,
+      fontFamily: 'Archivo_700Bold',
+      color: theme.text,
+    },
+    headerActions: {
+      flexDirection: 'row',
+      gap: 12,
+    },
+    headerButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: theme.backgroundSubtle,
+      justifyContent: 'center',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.12),
+    },
 
-  // Filter Tabs
-  filterTabs: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  filterTab: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  activeFilterTab: {
-    backgroundColor: Colors.light.tint,
-    borderColor: Colors.light.tint,
-  },
-  filterTabText: {
-    fontSize: 14,
-    fontFamily: 'Manrope_500Medium',
-    color: '#6b7280',
-  },
-  activeFilterTabText: {
-    color: '#fff',
-    fontFamily: 'Manrope_600SemiBold',
-  },
-  tabBadge: {
-    fontSize: 12,
-    opacity: 0.8,
-  },
+    // Search
+    searchContainer: {
+      overflow: 'hidden',
+      marginBottom: 16,
+    },
+    searchInputContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.backgroundSubtle,
+      borderRadius: 25,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      gap: 12,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+    },
+    searchInput: {
+      flex: 1,
+      fontSize: 16,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.text,
+    },
 
-  // Conversations List
-  conversationsList: {
-    paddingVertical: 8,
-  },
-  conversationItem: {
-    backgroundColor: '#fff',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f8fafc',
-  },
-  pinnedConversation: {
-    backgroundColor: '#fef3c7',
-    borderLeftWidth: 4,
-    borderLeftColor: '#f59e0b',
-  },
-  unreadConversation: {
-    backgroundColor: '#f0f9ff',
-  },
-  conversationLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  avatarContainer: {
-    position: 'relative',
-    marginRight: 12,
-  },
-  conversationAvatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  avatarFallback: {
-    backgroundColor: '#e2e8f0',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarFallbackText: {
-    fontSize: 18,
-    fontFamily: 'Archivo_700Bold',
-    color: '#475569',
-  },
-  onlineIndicator: {
-    position: 'absolute',
-    bottom: 2,
-    right: 2,
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: '#10b981',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  pinIndicator: {
-    position: 'absolute',
-    top: -2,
-    right: -2,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#f59e0b',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  conversationContent: {
-    flex: 1,
-  },
-  conversationHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  conversationName: {
-    fontSize: 16,
-    fontFamily: 'Archivo_600SemiBold',
-    color: '#111827',
-    flex: 1,
-  },
-  unreadName: {
-    fontFamily: 'Archivo_700Bold',
-    color: '#111827',
-  },
-  conversationTime: {
-    fontSize: 12,
-    fontFamily: 'Manrope_400Regular',
-    color: '#9ca3af',
-  },
-  lastSeenText: {
-    fontSize: 12,
-    fontFamily: 'Manrope_400Regular',
-    color: '#9ca3af',
-    marginTop: 2,
-  },
-  conversationPreview: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  lastMessage: {
-    fontSize: 14,
-    fontFamily: 'Manrope_400Regular',
-    color: '#6b7280',
-    flex: 1,
-    marginRight: 8,
-  },
-  unreadMessage: {
-    fontFamily: 'Manrope_500Medium',
-    color: '#374151',
-  },
-  unreadBadge: {
-    backgroundColor: Colors.light.tint,
-    borderRadius: 12,
-    minWidth: 24,
-    height: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-  },
-  unreadCount: {
-    fontSize: 12,
-    fontFamily: 'Archivo_700Bold',
-    color: '#fff',
-  },
+    // Filter Tabs
+    filterTabs: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    filterTab: {
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      borderRadius: 20,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+    },
+    activeFilterTab: {
+      backgroundColor: theme.tint,
+      borderColor: theme.tint,
+    },
+    filterTabText: {
+      fontSize: 14,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+    },
+    activeFilterTabText: {
+      color: Colors.light.background,
+      fontFamily: 'Manrope_600SemiBold',
+    },
+    tabBadge: {
+      fontSize: 12,
+      opacity: 0.8,
+      color: theme.textMuted,
+    },
 
-  // Empty State
-  emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 40,
-  },
-  emptyStateTitle: {
-    fontSize: 20,
-    fontFamily: 'Archivo_700Bold',
-    color: '#111827',
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  emptyStateText: {
-    fontSize: 16,
-    fontFamily: 'Manrope_400Regular',
-    color: '#6b7280',
-    textAlign: 'center',
-    lineHeight: 24,
-    marginBottom: 24,
-  },
-  exploreButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.light.tint,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 25,
-    gap: 8,
-  },
-  exploreButtonText: {
-    fontSize: 16,
-    fontFamily: 'Archivo_600SemiBold',
-    color: '#fff',
-  },
+    // Conversations List
+    conversationsList: {
+      paddingVertical: 8,
+    },
+    conversationItem: {
+      backgroundColor: theme.background,
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: withAlpha(theme.text, isDark ? 0.12 : 0.06),
+    },
+    pinnedConversation: {
+      backgroundColor: withAlpha(theme.accent, isDark ? 0.16 : 0.12),
+      borderLeftWidth: 4,
+      borderLeftColor: theme.accent,
+    },
+    unreadConversation: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
+    },
+    conversationLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    avatarContainer: {
+      position: 'relative',
+      marginRight: 12,
+    },
+    conversationAvatar: {
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      borderWidth: 2,
+      borderColor: theme.background,
+    },
+    avatarFallback: {
+      backgroundColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    avatarFallbackText: {
+      fontSize: 18,
+      fontFamily: 'Archivo_700Bold',
+      color: theme.text,
+    },
+    onlineIndicator: {
+      position: 'absolute',
+      bottom: 2,
+      right: 2,
+      width: 16,
+      height: 16,
+      borderRadius: 8,
+      backgroundColor: theme.secondary,
+      borderWidth: 2,
+      borderColor: theme.background,
+    },
+    pinIndicator: {
+      position: 'absolute',
+      top: -2,
+      right: -2,
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      backgroundColor: theme.accent,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    conversationContent: {
+      flex: 1,
+    },
+    conversationHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 4,
+    },
+    conversationName: {
+      fontSize: 16,
+      fontFamily: 'Archivo_600SemiBold',
+      color: theme.text,
+      flex: 1,
+    },
+    unreadName: {
+      fontFamily: 'Archivo_700Bold',
+      color: theme.text,
+    },
+    conversationTime: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+    },
+    lastSeenText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      marginTop: 2,
+    },
+    conversationPreview: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    lastMessage: {
+      fontSize: 14,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      flex: 1,
+      marginRight: 8,
+    },
+    unreadMessage: {
+      fontFamily: 'Manrope_500Medium',
+      color: theme.text,
+    },
+    unreadBadge: {
+      backgroundColor: theme.tint,
+      borderRadius: 12,
+      minWidth: 24,
+      height: 24,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: 8,
+    },
+    unreadCount: {
+      fontSize: 12,
+      fontFamily: 'Archivo_700Bold',
+      color: Colors.light.background,
+    },
 
-  // FAB
-  fab: {
-    position: 'absolute',
-    bottom: 24,
-    right: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: Colors.light.tint,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: Colors.light.tint,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-});
+    // Empty State
+    emptyState: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: 40,
+    },
+    emptyStateTitle: {
+      fontSize: 20,
+      fontFamily: 'Archivo_700Bold',
+      color: theme.text,
+      marginTop: 16,
+      marginBottom: 8,
+    },
+    emptyStateText: {
+      fontSize: 16,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      textAlign: 'center',
+      lineHeight: 24,
+      marginBottom: 24,
+    },
+    exploreButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.tint,
+      paddingHorizontal: 24,
+      paddingVertical: 12,
+      borderRadius: 25,
+      gap: 8,
+    },
+    exploreButtonText: {
+      fontSize: 16,
+      fontFamily: 'Archivo_600SemiBold',
+      color: Colors.light.background,
+    },
+
+    // FAB
+    fab: {
+      position: 'absolute',
+      bottom: 24,
+      right: 24,
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      backgroundColor: theme.tint,
+      justifyContent: 'center',
+      alignItems: 'center',
+      shadowColor: theme.tint,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.3,
+      shadowRadius: 12,
+      elevation: 8,
+    },
+  });
 

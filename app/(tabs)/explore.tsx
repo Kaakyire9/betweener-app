@@ -7,6 +7,7 @@ import MomentViewer from '@/components/MomentViewer';
 import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
+import { useColorScheme } from "@/hooks/use-color-scheme";
 import useAIRecommendations from "@/hooks/useAIRecommendations";
 import { requestAndSavePreciseLocation, saveManualCityLocation } from "@/hooks/useLocationPreference";
 import { useMoments, type MomentUser } from '@/hooks/useMoments';
@@ -71,6 +72,10 @@ type CompactMomentsStripProps = {
   showEmptyState: boolean;
   scrollY: Animated.Value;
   showLabels?: boolean;
+  theme: typeof Colors.light;
+  isDark: boolean;
+  styles: ReturnType<typeof createStyles>;
+  gradientColors: string[];
   onPressMyMoment: () => void;
   onPressUserMoment: (userId: string) => void;
   onPressSeeAll: () => void;
@@ -82,6 +87,10 @@ function CompactMomentsStrip({
   showEmptyState,
   scrollY,
   showLabels = false,
+  theme,
+  isDark,
+  styles,
+  gradientColors,
   onPressMyMoment,
   onPressUserMoment,
   onPressSeeAll,
@@ -170,7 +179,7 @@ function CompactMomentsStrip({
                 Post a Moment
               </Text>
               <TouchableOpacity onPress={onPressSeeAll} activeOpacity={0.85} style={styles.momentsSeeAllPill}>
-                <MaterialCommunityIcons name="send" size={14} color={Colors.light.tint} style={{ marginRight: 6 }} />
+                <MaterialCommunityIcons name="send" size={14} color={theme.tint} style={{ marginRight: 6 }} />
                 <Text style={styles.momentsStripSeeAll}>See all</Text>
               </TouchableOpacity>
             </View>
@@ -193,7 +202,7 @@ function CompactMomentsStrip({
               />
               {users.length > 6 ? (
                 <LinearGradientSafe
-                  colors={['rgba(255,255,255,0)', 'rgba(255,255,255,1)']}
+                  colors={gradientColors}
                   start={[0, 0]}
                   end={[1, 0]}
                   style={styles.momentsRightFade}
@@ -201,7 +210,7 @@ function CompactMomentsStrip({
               ) : null}
             </View>
             <TouchableOpacity onPress={onPressSeeAll} activeOpacity={0.85} style={styles.momentsSeeAllPill}>
-              <MaterialCommunityIcons name="send" size={14} color={Colors.light.tint} style={{ marginRight: 6 }} />
+              <MaterialCommunityIcons name="send" size={14} color={theme.tint} style={{ marginRight: 6 }} />
               <Text style={styles.momentsStripSeeAll}>See all</Text>
             </TouchableOpacity>
           </View>
@@ -215,6 +224,14 @@ export default function ExploreScreen() {
   const insets = useSafeAreaInsets();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const fontsLoaded = useAppFonts();
+  const colorScheme = useColorScheme();
+  const theme = Colors[colorScheme ?? 'light'];
+  const isDark = (colorScheme ?? 'light') === 'dark';
+  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const momentsFade = useMemo(
+    () => (isDark ? ['rgba(11,18,32,0)', 'rgba(11,18,32,1)'] : ['rgba(255,255,255,0)', 'rgba(255,255,255,1)']),
+    [isDark]
+  );
   const { profile, user, refreshProfile } = useAuth();
   const profileCountryCode = (profile as any)?.current_country_code as string | undefined;
 
@@ -956,6 +973,10 @@ export default function ExploreScreen() {
               hasMyActiveMoment={hasMyActiveMoment}
               showEmptyState={showMomentsEmptyState}
               scrollY={scrollY}
+              theme={theme}
+              isDark={isDark}
+              styles={styles}
+              gradientColors={momentsFade}
               onPressMyMoment={handlePressMyMoment}
               onPressUserMoment={handlePressUserMoment}
               onPressSeeAll={handleMomentsPress}
@@ -1005,7 +1026,7 @@ export default function ExploreScreen() {
               <AnimatedReView style={[{ width: floatingLayout.width }, rStyle]} pointerEvents="box-none">
                 <BlurViewSafe
                   intensity={60}
-                  tint="light"
+                  tint={isDark ? 'dark' : 'light'}
                   style={[
                     styles.actionFloatingCard,
                     {
@@ -1049,7 +1070,7 @@ export default function ExploreScreen() {
                       <MaterialCommunityIcons
                         name="information"
                         size={24}
-                        color={Colors.light.tint}
+                        color={theme.tint}
                       />
                     </TouchableOpacity>
                   </Animated.View>
@@ -1082,7 +1103,7 @@ export default function ExploreScreen() {
                       <MaterialCommunityIcons
                         name="rewind"
                         size={22}
-                        color={Colors.light.tint}
+                        color={theme.tint}
                       />
                     </TouchableOpacity>
                   </Animated.View>
@@ -1176,7 +1197,7 @@ export default function ExploreScreen() {
               >
                 <BlurViewSafe
                   intensity={60}
-                  tint="light"
+                  tint={isDark ? 'dark' : 'light'}
                   style={[
                     styles.actionFloatingCard,
                     {
@@ -1219,7 +1240,7 @@ export default function ExploreScreen() {
                     <MaterialCommunityIcons
                       name="information"
                       size={24}
-                      color={Colors.light.tint}
+                      color={theme.tint}
                     />
                   </TouchableOpacity>
 
@@ -1576,329 +1597,355 @@ export default function ExploreScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#f8fafc" },
-  scrollContent: { flexGrow: 1, paddingTop: 8 },
-  stackWrapper: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 20,
-    // leave room at the bottom for action buttons
-    paddingBottom: 120,
-  },
-  momentsStripContainer: {
-    overflow: 'hidden',
-    paddingHorizontal: 20,
-    paddingBottom: 8,
-  },
-  momentsStripInner: {
-    flex: 1,
-    borderRadius: 18,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: 'rgba(15,23,42,0.06)',
-    paddingHorizontal: 14,
-    paddingVertical: 5,
-    shadowColor: '#0f172a',
-    shadowOpacity: 0.06,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 6,
-  },
-  momentsStripHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
-  momentsStripTitle: { fontSize: 14, fontWeight: '800', color: '#0f172a' },
-  momentsInlineRow: { flexDirection: 'row', alignItems: 'center' },
-  momentsInlineList: { flex: 1, marginHorizontal: 2 },
-  momentsListInlineContent: { alignItems: 'center', paddingRight: 12 },
-  momentsSeeAllPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    marginLeft: 6,
-    borderWidth: 1,
-    borderColor: 'rgba(15,23,42,0.08)',
-    backgroundColor: '#f8fafc',
-  },
-  momentsStripSeeAll: { fontSize: 12, fontWeight: '700', color: Colors.light.tint },
-  momentsListWrap: { flex: 1 },
-  momentsListContent: { paddingRight: 18 },
-  momentsAvatarItem: { width: 62, alignItems: 'center', marginRight: 12 },
-  momentsAvatarOuter: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    borderWidth: 3,
-    borderColor: 'rgba(240,210,160,0.85)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  momentsAvatarActive: { borderColor: '#f3c784' },
-  momentsAvatarImage: { width: 46, height: 46, borderRadius: 23 },
-  momentsAvatarPlaceholder: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#e2e8f0', alignItems: 'center', justifyContent: 'center' },
-  momentsAvatarInitial: { fontSize: 14, fontWeight: '700', color: '#64748b' },
-  momentsAvatarLabel: { fontSize: 11, color: '#374151', marginTop: 4, textAlign: 'center' },
-  momentsPlusBadge: {
-    position: 'absolute',
-    right: 0,
-    top: 30,
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: '#f59e0b',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  momentsEmptyInlineCopy: {
-    fontSize: 12,
-    color: '#94a3b8',
-    marginLeft: 2,
-    marginRight: 18,
-    flexShrink: 1,
-  },
-  momentsRightFade: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 34 },
-  actionButtons: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0, // sit the buttons down in the gap above the tab bar
-    flexDirection: "row",
-    justifyContent: "center",
-    paddingHorizontal: 36,
-    paddingVertical: 20,
-    backgroundColor: "transparent",
-    // Ensure action buttons sit above the card stack
-    zIndex: 10000,
-    elevation: 40,
-  },
-  actionFloatingCard: {
-    alignSelf: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 40,
-    backgroundColor: 'rgba(255,255,255,0.78)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.7)',
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.12,
-    shadowRadius: 24,
-    elevation: 12,
-  },
-  rejectRing: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    padding: 2,
-    marginRight: 12,
-  },
-  rejectButton: {
-    flex: 1,
-    borderRadius: 28,
-    backgroundColor: "#ef4444",
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.4)',
-    shadowColor: '#ef4444',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.28,
-    shadowRadius: 12,
-    elevation: 8,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  infoButton: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: "rgba(255,255,255,0.95)",
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 2,
-    borderColor: "rgba(148,163,184,0.35)",
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    elevation: 4,
-    marginHorizontal: 4,
-  },
-  likeRing: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    padding: 2,
-    marginLeft: 12,
-  },
-  likeButton: {
-    flex: 1,
-    borderRadius: 28,
-    backgroundColor: "#10b981",
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.4)',
-    shadowColor: '#10b981',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.26,
-    shadowRadius: 12,
-    elevation: 8,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  superlikeButton: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    // background will be a gradient via LinearGradientSafe
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.4)',
-    shadowColor: '#f59e0b',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.26,
-    shadowRadius: 12,
-    elevation: 8,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  superlikeFallback: {
-    backgroundColor: '#f59e0b',
-  },
-  superlikeBadge: {
-    position: 'absolute',
-    top: -6,
-    right: -6,
-    minWidth: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: '#111827',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 4,
-  },
-  superlikeBadgeText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  superlikeBadgeInline: {
-    position: 'absolute',
-    top: -26,
-    right: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#111827',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 12,
-    zIndex: 12000,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 6,
-  },
-  superlikeBadgeInlineText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  emptyStateContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyCard: {
-    width: '86%',
-    backgroundColor: '#fff',
-    borderRadius: 18,
-    padding: 20,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 18,
-    elevation: 10,
-  },
-  emptyTitle: { fontSize: 20, fontWeight: '800', color: '#0f172a', marginBottom: 6 },
-  emptySubtitle: { fontSize: 14, color: '#6b7280', textAlign: 'center', marginBottom: 16 },
-  emptyActions: { flexDirection: 'row', width: '100%', justifyContent: 'center' },
-  primaryButton: { backgroundColor: Colors.light.tint, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 12, marginRight: 8 },
-  primaryButtonText: { color: '#fff', fontWeight: '700' },
-  ghostButton: { borderWidth: 1, borderColor: '#e5e7eb', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12 },
-  ghostButtonText: { color: '#374151', fontWeight: '600' },
-  locationBanner: {
-    backgroundColor: '#eef2ff',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    marginHorizontal: 16,
-    marginBottom: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e0e7ff',
-  },
-  locationTitle: { fontSize: 16, fontWeight: '700', color: '#111827', marginBottom: 4 },
-  locationSubtitle: { fontSize: 13, color: '#4b5563', marginBottom: 10 },
-  locationActions: { flexDirection: 'row', alignItems: 'center' },
-  locationButton: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 },
-  locationPrimary: { backgroundColor: Colors.light.tint, marginRight: 8 },
-  locationPrimaryText: { color: '#fff', fontWeight: '700' },
-  locationGhost: { borderWidth: 1, borderColor: '#cbd5e1', backgroundColor: '#fff' },
-  locationGhostText: { color: '#0f172a', fontWeight: '600' },
-  locationError: { color: '#b91c1c', marginTop: 6, fontSize: 12 },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.35)',
-    justifyContent: 'flex-end',
-  },
-  modalCard: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    padding: 20,
-  },
-  modalTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a', marginBottom: 6 },
-  modalSubtitle: { fontSize: 13, color: '#4b5563', marginBottom: 14 },
-  modalInput: {
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 15,
-    color: '#0f172a',
-  },
-  modalLabel: { fontSize: 13, fontWeight: '700', color: '#0f172a', marginTop: 14, marginBottom: 8 },
-  countryChips: { paddingBottom: 2 },
-  countryChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#fff',
-    marginRight: 8,
-  },
-  countryChipActive: { backgroundColor: '#eef2ff', borderColor: Colors.light.tint },
-  countryChipText: { fontSize: 13, fontWeight: '600', color: '#0f172a' },
-  countryChipTextActive: { color: Colors.light.tint },
-  modalActions: { flexDirection: 'row', marginTop: 16 },
-  filterSection: { marginTop: 12, marginBottom: 10 },
-  filterLabel: { fontSize: 14, fontWeight: '700', color: '#0f172a' },
-  filterHint: { fontSize: 12, color: '#6b7280', marginTop: 2 },
-  filterChipsRow: { flexDirection: 'row', marginTop: 8 },
-  filterChipsRowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 },
-  filterChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb', marginRight: 8, backgroundColor: '#fff' },
-  filterChipActive: { backgroundColor: Colors.light.tint, borderColor: Colors.light.tint },
-  filterChipText: { fontWeight: '700', color: '#0f172a' },
-  filterChipTextActive: { color: '#fff' },
-  filterToggle: { marginTop: 8, padding: 10, borderRadius: 12, borderWidth: 1, borderColor: '#e5e7eb', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#fff' },
-  filterToggleActive: { borderColor: Colors.light.tint, backgroundColor: '#eef2ff' },
-  filterToggleKnob: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#e5e7eb' },
-  filterToggleKnobActive: { backgroundColor: Colors.light.tint },
-  filterToggleText: { marginLeft: 10, fontWeight: '700', color: '#0f172a' },
-  filterToggleTextActive: { color: Colors.light.tint },
-  filterInputsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
-  filterInputWrapper: { flex: 1 },
-  filterInput: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontWeight: '700', color: '#0f172a', backgroundColor: '#fff', marginTop: 4 },
-});
+function createStyles(theme: typeof Colors.light, isDark: boolean) {
+  const surface = isDark ? '#111827' : '#fff';
+  const surfaceSubtle = isDark ? theme.backgroundSubtle : '#f8fafc';
+  const cardBorder = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)';
+  const outline = isDark ? 'rgba(255,255,255,0.12)' : '#e5e7eb';
+  const shadowColor = isDark ? '#000' : '#0f172a';
+  const overlayCard = isDark ? 'rgba(15,23,42,0.92)' : 'rgba(255,255,255,0.78)';
+  const overlayBorder = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.7)';
+  const infoButtonBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.95)';
+  const infoButtonBorder = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(148,163,184,0.35)';
+  const placeholderBg = isDark ? '#1f2937' : '#e2e8f0';
+  const placeholderText = isDark ? '#cbd5e1' : '#64748b';
+  const pillBg = isDark ? 'rgba(255,255,255,0.06)' : '#f8fafc';
+  const chipBg = isDark ? 'rgba(255,255,255,0.04)' : '#fff';
+  const chipActiveBg = isDark ? 'rgba(255,107,107,0.14)' : '#eef2ff';
+  const toggleKnob = isDark ? '#1f2937' : '#e5e7eb';
+  const modalBackdrop = isDark ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.35)';
+  const badgeBg = isDark ? '#0b1220' : '#111827';
+  const ghostBg = isDark ? 'rgba(255,255,255,0.04)' : '#fff';
+
+  return StyleSheet.create({
+    container: { flex: 1, backgroundColor: surfaceSubtle },
+    scrollContent: { flexGrow: 1, paddingTop: 8 },
+    stackWrapper: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: 20,
+      // leave room at the bottom for action buttons
+      paddingBottom: 120,
+    },
+    momentsStripContainer: {
+      overflow: 'hidden',
+      paddingHorizontal: 20,
+      paddingBottom: 8,
+    },
+    momentsStripInner: {
+      flex: 1,
+      borderRadius: 18,
+      backgroundColor: surface,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      paddingHorizontal: 14,
+      paddingVertical: 5,
+      shadowColor,
+      shadowOpacity: isDark ? 0.12 : 0.06,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: isDark ? 2 : 6,
+    },
+    momentsStripHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+    momentsStripTitle: { fontSize: 14, fontWeight: '800', color: theme.text },
+    momentsInlineRow: { flexDirection: 'row', alignItems: 'center' },
+    momentsInlineList: { flex: 1, marginHorizontal: 2 },
+    momentsListInlineContent: { alignItems: 'center', paddingRight: 12 },
+    momentsSeeAllPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 16,
+      marginLeft: 6,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      backgroundColor: pillBg,
+    },
+    momentsStripSeeAll: { fontSize: 12, fontWeight: '700', color: theme.tint },
+    momentsListWrap: { flex: 1 },
+    momentsListContent: { paddingRight: 18 },
+    momentsAvatarItem: { width: 62, alignItems: 'center', marginRight: 12 },
+    momentsAvatarOuter: {
+      width: 52,
+      height: 52,
+      borderRadius: 26,
+      borderWidth: 3,
+      borderColor: 'rgba(240,210,160,0.85)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    momentsAvatarActive: { borderColor: '#f3c784' },
+    momentsAvatarImage: { width: 46, height: 46, borderRadius: 23 },
+    momentsAvatarPlaceholder: { width: 46, height: 46, borderRadius: 23, backgroundColor: placeholderBg, alignItems: 'center', justifyContent: 'center' },
+    momentsAvatarInitial: { fontSize: 14, fontWeight: '700', color: placeholderText },
+    momentsAvatarLabel: { fontSize: 11, color: theme.text, marginTop: 4, textAlign: 'center' },
+    momentsPlusBadge: {
+      position: 'absolute',
+      right: 0,
+      top: 30,
+      width: 18,
+      height: 18,
+      borderRadius: 9,
+      backgroundColor: '#f59e0b',
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 2,
+      borderColor: surface,
+    },
+    momentsEmptyInlineCopy: {
+      fontSize: 12,
+      color: theme.textMuted,
+      marginLeft: 2,
+      marginRight: 18,
+      flexShrink: 1,
+    },
+    momentsRightFade: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 34 },
+    actionButtons: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0, // sit the buttons down in the gap above the tab bar
+      flexDirection: "row",
+      justifyContent: "center",
+      paddingHorizontal: 36,
+      paddingVertical: 20,
+      backgroundColor: "transparent",
+      // Ensure action buttons sit above the card stack
+      zIndex: 10000,
+      elevation: 40,
+    },
+    actionFloatingCard: {
+      alignSelf: 'center',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderRadius: 40,
+      backgroundColor: overlayCard,
+      borderWidth: 1,
+      borderColor: overlayBorder,
+      shadowColor,
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: isDark ? 0.24 : 0.12,
+      shadowRadius: 24,
+      elevation: 12,
+    },
+    rejectRing: {
+      width: 64,
+      height: 64,
+      borderRadius: 32,
+      padding: 2,
+      marginRight: 12,
+    },
+    rejectButton: {
+      flex: 1,
+      borderRadius: 28,
+      backgroundColor: "#ef4444",
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.4)',
+      shadowColor: '#ef4444',
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.28,
+      shadowRadius: 12,
+      elevation: 8,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    infoButton: {
+      width: 54,
+      height: 54,
+      borderRadius: 27,
+      backgroundColor: infoButtonBg,
+      justifyContent: "center",
+      alignItems: "center",
+      borderWidth: 2,
+      borderColor: infoButtonBorder,
+      shadowColor,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: isDark ? 0.16 : 0.08,
+      shadowRadius: 10,
+      elevation: 4,
+      marginHorizontal: 4,
+    },
+    likeRing: {
+      width: 64,
+      height: 64,
+      borderRadius: 32,
+      padding: 2,
+      marginLeft: 12,
+    },
+    likeButton: {
+      flex: 1,
+      borderRadius: 28,
+      backgroundColor: "#10b981",
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.4)',
+      shadowColor: '#10b981',
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.26,
+      shadowRadius: 12,
+      elevation: 8,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    superlikeButton: {
+      width: 64,
+      height: 64,
+      borderRadius: 32,
+      // background will be a gradient via LinearGradientSafe
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.4)',
+      shadowColor: '#f59e0b',
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.26,
+      shadowRadius: 12,
+      elevation: 8,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    superlikeFallback: {
+      backgroundColor: '#f59e0b',
+    },
+    superlikeBadge: {
+      position: 'absolute',
+      top: -6,
+      right: -6,
+      minWidth: 20,
+      height: 20,
+      borderRadius: 10,
+      backgroundColor: badgeBg,
+      justifyContent: 'center',
+      alignItems: 'center',
+      paddingHorizontal: 4,
+    },
+    superlikeBadgeText: {
+      color: '#fff',
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    superlikeBadgeInline: {
+      position: 'absolute',
+      top: -26,
+      right: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: badgeBg,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 12,
+      zIndex: 12000,
+      shadowColor: '#000',
+      shadowOpacity: 0.08,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 6,
+    },
+    superlikeBadgeInlineText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+    emptyStateContainer: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    emptyCard: {
+      width: '86%',
+      backgroundColor: surface,
+      borderRadius: 18,
+      padding: 20,
+      alignItems: 'center',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.06,
+      shadowRadius: 18,
+      elevation: 10,
+      borderWidth: 1,
+      borderColor: cardBorder,
+    },
+    emptyTitle: { fontSize: 20, fontWeight: '800', color: theme.text, marginBottom: 6 },
+    emptySubtitle: { fontSize: 14, color: theme.textMuted, textAlign: 'center', marginBottom: 16 },
+    emptyActions: { flexDirection: 'row', width: '100%', justifyContent: 'center' },
+    primaryButton: { backgroundColor: theme.tint, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 12, marginRight: 8 },
+    primaryButtonText: { color: '#fff', fontWeight: '700' },
+    ghostButton: { borderWidth: 1, borderColor: outline, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12, backgroundColor: ghostBg },
+    ghostButtonText: { color: theme.text, fontWeight: '600' },
+    locationBanner: {
+      backgroundColor: isDark ? 'rgba(255,107,107,0.08)' : '#eef2ff',
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      marginHorizontal: 16,
+      marginBottom: 12,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,107,107,0.2)' : '#e0e7ff',
+    },
+    locationTitle: { fontSize: 16, fontWeight: '700', color: theme.text, marginBottom: 4 },
+    locationSubtitle: { fontSize: 13, color: theme.textMuted, marginBottom: 10 },
+    locationActions: { flexDirection: 'row', alignItems: 'center' },
+    locationButton: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 },
+    locationPrimary: { backgroundColor: theme.tint, marginRight: 8 },
+    locationPrimaryText: { color: '#fff', fontWeight: '700' },
+    locationGhost: { borderWidth: 1, borderColor: outline, backgroundColor: ghostBg },
+    locationGhostText: { color: theme.text, fontWeight: '600' },
+    locationError: { color: '#b91c1c', marginTop: 6, fontSize: 12 },
+    modalBackdrop: {
+      flex: 1,
+      backgroundColor: modalBackdrop,
+      justifyContent: 'flex-end',
+    },
+    modalCard: {
+      backgroundColor: surface,
+      borderTopLeftRadius: 16,
+      borderTopRightRadius: 16,
+      padding: 20,
+      borderWidth: 1,
+      borderColor: cardBorder,
+    },
+    modalTitle: { fontSize: 18, fontWeight: '700', color: theme.text, marginBottom: 6 },
+    modalSubtitle: { fontSize: 13, color: theme.textMuted, marginBottom: 14 },
+    modalInput: {
+      borderWidth: 1,
+      borderColor: outline,
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      fontSize: 15,
+      color: theme.text,
+      backgroundColor: isDark ? '#0b1220' : '#fff',
+    },
+    modalLabel: { fontSize: 13, fontWeight: '700', color: theme.text, marginTop: 14, marginBottom: 8 },
+    countryChips: { paddingBottom: 2 },
+    countryChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: outline,
+      backgroundColor: chipBg,
+      marginRight: 8,
+    },
+    countryChipActive: { backgroundColor: chipActiveBg, borderColor: theme.tint },
+    countryChipText: { fontSize: 13, fontWeight: '600', color: theme.text },
+    countryChipTextActive: { color: theme.tint },
+    modalActions: { flexDirection: 'row', marginTop: 16 },
+    filterSection: { marginTop: 12, marginBottom: 10 },
+    filterLabel: { fontSize: 14, fontWeight: '700', color: theme.text },
+    filterHint: { fontSize: 12, color: theme.textMuted, marginTop: 2 },
+    filterChipsRow: { flexDirection: 'row', marginTop: 8 },
+    filterChipsRowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 },
+    filterChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: outline, marginRight: 8, backgroundColor: chipBg },
+    filterChipActive: { backgroundColor: theme.tint, borderColor: theme.tint },
+    filterChipText: { fontWeight: '700', color: theme.text },
+    filterChipTextActive: { color: '#fff' },
+    filterToggle: { marginTop: 8, padding: 10, borderRadius: 12, borderWidth: 1, borderColor: outline, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: chipBg },
+    filterToggleActive: { borderColor: theme.tint, backgroundColor: chipActiveBg },
+    filterToggleKnob: { width: 22, height: 22, borderRadius: 11, backgroundColor: toggleKnob },
+    filterToggleKnobActive: { backgroundColor: theme.tint },
+    filterToggleText: { marginLeft: 10, fontWeight: '700', color: theme.text },
+    filterToggleTextActive: { color: theme.tint },
+    filterInputsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
+    filterInputWrapper: { flex: 1 },
+    filterInput: { borderWidth: 1, borderColor: outline, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontWeight: '700', color: theme.text, backgroundColor: isDark ? '#0b1220' : '#fff', marginTop: 4 },
+  });
+}

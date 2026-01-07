@@ -7,7 +7,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import { VideoView, useVideoPlayer } from 'expo-video';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -23,6 +23,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
@@ -122,13 +123,22 @@ const FUTURE_GHANA_PLANS_OPTIONS = [
   "Uncertain about return", "Staying abroad permanently", "Other"
 ];
 
+const withAlpha = (hex: string, alpha: number) => {
+  const normalized = hex.replace('#', '');
+  const bigint = parseInt(normalized.length === 3 ? normalized.split('').map((c) => c + c).join('') : normalized, 16);
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+};
+
 interface ProfileEditModalProps {
   visible: boolean;
   onClose: () => void;
   onSave: (updatedProfile: any) => void;
 }
 
-const InlineVideoPreview = ({ uri, shouldPlay }: { uri: string; shouldPlay: boolean }) => {
+const InlineVideoPreview = ({ uri, shouldPlay, styles }: { uri: string; shouldPlay: boolean; styles: ReturnType<typeof createStyles>; }) => {
   const player = useVideoPlayer(uri, (p) => {
     p.loop = true;
     p.muted = true;
@@ -150,6 +160,10 @@ const InlineVideoPreview = ({ uri, shouldPlay }: { uri: string; shouldPlay: bool
 
 export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEditModalProps) {
   const { user, profile, updateProfile } = useAuth();
+  const colorScheme = useColorScheme();
+  const theme = Colors[colorScheme ?? 'light'];
+  const isDark = (colorScheme ?? 'light') === 'dark';
+  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [videoUploading, setVideoUploading] = useState(false);
@@ -466,7 +480,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                 {item}
               </Text>
               {currentValue === item && (
-                <MaterialCommunityIcons name="check" size={20} color={Colors.light.tint} />
+                <MaterialCommunityIcons name="check" size={20} color={theme.tint} />
               )}
             </TouchableOpacity>
           )}
@@ -905,7 +919,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
           <Text style={styles.title}>Edit Profile</Text>
           <TouchableOpacity onPress={handleSave} disabled={loading}>
             {loading ? (
-              <ActivityIndicator size="small" color={Colors.light.tint} />
+              <ActivityIndicator size="small" color={theme.tint} />
             ) : (
               <Text style={styles.saveButton}>Save</Text>
             )}
@@ -929,9 +943,9 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                 disabled={uploading}
               >
                 {uploading ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={theme.background} />
                 ) : (
-                  <MaterialCommunityIcons name="camera" size={16} color="#fff" />
+                  <MaterialCommunityIcons name="camera" size={16} color={theme.background} />
                 )}
               </TouchableOpacity>
             </View>
@@ -991,7 +1005,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                   ]}>
                     {formData.height || 'Select'}
                   </Text>
-                  <MaterialCommunityIcons name="chevron-down" size={20} color="#9ca3af" />
+                  <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
                 </TouchableOpacity>
                 
                 {formData.height === 'Other' && (
@@ -1038,7 +1052,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                 ]}>
                   {formData.occupation || 'Select your occupation'}
                 </Text>
-                <MaterialCommunityIcons name="chevron-down" size={20} color="#9ca3af" />
+                <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
               </TouchableOpacity>
               
               {formData.occupation === 'Other' && (
@@ -1068,7 +1082,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                 ]}>
                   {formData.education || 'Select your education'}
                 </Text>
-                <MaterialCommunityIcons name="chevron-down" size={20} color="#9ca3af" />
+                <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
               </TouchableOpacity>
               
               {formData.education === 'Other' && (
@@ -1103,7 +1117,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                 ]}>
                   {formData.looking_for || 'What are you looking for?'}
                 </Text>
-                <MaterialCommunityIcons name="chevron-down" size={20} color="#9ca3af" />
+                <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
               </TouchableOpacity>
               
               {formData.looking_for === 'Other' && (
@@ -1138,7 +1152,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                 ]}>
                   {formData.exercise_frequency || 'How often do you exercise?'}
                 </Text>
-                <MaterialCommunityIcons name="chevron-down" size={20} color="#9ca3af" />
+                <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
               </TouchableOpacity>
               
               {formData.exercise_frequency === 'Other' && (
@@ -1169,7 +1183,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                   ]}>
                     {formData.smoking || 'Select'}
                   </Text>
-                  <MaterialCommunityIcons name="chevron-down" size={20} color="#9ca3af" />
+                  <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
                 </TouchableOpacity>
                 
                 {formData.smoking === 'Other' && (
@@ -1199,7 +1213,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                   ]}>
                     {formData.drinking || 'Select'}
                   </Text>
-                  <MaterialCommunityIcons name="chevron-down" size={20} color="#9ca3af" />
+                  <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
                 </TouchableOpacity>
                 
                 {formData.drinking === 'Other' && (
@@ -1236,7 +1250,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                   ]}>
                     {formData.has_children || 'Select'}
                   </Text>
-                  <MaterialCommunityIcons name="chevron-down" size={20} color="#9ca3af" />
+                  <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
                 </TouchableOpacity>
                 
                 {formData.has_children === 'Other' && (
@@ -1266,7 +1280,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                   ]}>
                     {formData.wants_children || 'Select'}
                   </Text>
-                  <MaterialCommunityIcons name="chevron-down" size={20} color="#9ca3af" />
+                  <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
                 </TouchableOpacity>
                 
                 {formData.wants_children === 'Other' && (
@@ -1303,7 +1317,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                   ]}>
                     {formData.personality_type || 'Select'}
                   </Text>
-                  <MaterialCommunityIcons name="chevron-down" size={20} color="#9ca3af" />
+                  <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
                 </TouchableOpacity>
                 
                 {formData.personality_type === 'Other' && (
@@ -1333,7 +1347,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                   ]}>
                     {formData.love_language || 'Select'}
                   </Text>
-                  <MaterialCommunityIcons name="chevron-down" size={20} color="#9ca3af" />
+                  <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
                 </TouchableOpacity>
                 
                 {formData.love_language === 'Other' && (
@@ -1370,7 +1384,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                   ]}>
                     {formData.living_situation || 'Select'}
                   </Text>
-                  <MaterialCommunityIcons name="chevron-down" size={20} color="#9ca3af" />
+                  <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
                 </TouchableOpacity>
                 
                 {formData.living_situation === 'Other' && (
@@ -1400,7 +1414,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                   ]}>
                     {formData.pets || 'Select'}
                   </Text>
-                  <MaterialCommunityIcons name="chevron-down" size={20} color="#9ca3af" />
+                  <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
                 </TouchableOpacity>
                 
                 {formData.pets === 'Other' && (
@@ -1436,7 +1450,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                     : 'Select languages'
                   }
                 </Text>
-                <MaterialCommunityIcons name="chevron-down" size={20} color="#9ca3af" />
+                  <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
               </TouchableOpacity>
               
               {selectedLanguages.includes('Other') && (
@@ -1483,7 +1497,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                       : 'Choose your interests'
                   }
                 </Text>
-                <MaterialCommunityIcons name="chevron-down" size={20} color="#9ca3af" />
+                <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
               </TouchableOpacity>
             </View>
 
@@ -1500,7 +1514,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                         setSelectedInterests(updated);
                       }}
                     >
-                      <MaterialCommunityIcons name="close" size={12} color="#666" />
+                      <MaterialCommunityIcons name="close" size={12} color={theme.textMuted} />
                     </TouchableOpacity>
                   </View>
                 ))}
@@ -1604,7 +1618,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                     ]}>
                       {formData.future_ghana_plans || 'Your future plans'}
                     </Text>
-                    <MaterialCommunityIcons name="chevron-down" size={20} color="#9ca3af" />
+                    <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
                   </TouchableOpacity>
                 </View>
               </>
@@ -1621,8 +1635,8 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                         height: 20, 
                         borderRadius: 4, 
                         borderWidth: 2, 
-                        borderColor: Colors.light.tint,
-                        backgroundColor: formData.willing_long_distance ? Colors.light.tint : 'transparent',
+                        borderColor: formData.willing_long_distance ? theme.tint : withAlpha(theme.text, isDark ? 0.3 : 0.2),
+                        backgroundColor: formData.willing_long_distance ? theme.tint : 'transparent',
                         alignItems: 'center',
                         justifyContent: 'center',
                         marginRight: 10
@@ -1631,7 +1645,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                     onPress={() => setFormData(prev => ({ ...prev, willing_long_distance: !prev.willing_long_distance }))}
                   >
                     {formData.willing_long_distance && (
-                      <MaterialCommunityIcons name="check" size={16} color="#fff" />
+                      <MaterialCommunityIcons name="check" size={16} color={theme.background} />
                     )}
                   </TouchableOpacity>
                   <Text style={styles.inputLabel}>Open to long-distance connections</Text>
@@ -1655,11 +1669,11 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                 <MaterialCommunityIcons
                   name="video-plus"
                   size={16}
-                  color={videoUploading ? '#9ca3af' : Colors.light.tint}
+                  color={videoUploading ? theme.textMuted : theme.tint}
                 />
                 <Text style={[
                   styles.addPhotoText,
-                  { color: videoUploading ? '#9ca3af' : Colors.light.tint }
+                  { color: videoUploading ? theme.textMuted : theme.tint }
                 ]}>
                   Upload Video
                 </Text>
@@ -1674,9 +1688,9 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
               <View style={styles.videoRow}>
                 <View style={styles.videoThumb}>
                   {videoPreviewUrl ? (
-                    <InlineVideoPreview uri={videoPreviewUrl} shouldPlay={visible && !videoUploading} />
+                    <InlineVideoPreview uri={videoPreviewUrl} shouldPlay={visible && !videoUploading} styles={styles} />
                   ) : (
-                    <MaterialCommunityIcons name="play-circle" size={26} color="#e2e8f0" />
+                    <MaterialCommunityIcons name="play-circle" size={26} color={withAlpha(theme.text, isDark ? 0.5 : 0.3)} />
                   )}
                 </View>
                 <View style={styles.videoMeta}>
@@ -1684,12 +1698,12 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                   <Text style={styles.videoSub}>Tap Save to apply</Text>
                 </View>
                 <TouchableOpacity style={styles.videoRemove} onPress={removeProfileVideo}>
-                  <MaterialCommunityIcons name="trash-can-outline" size={18} color="#ef4444" />
+                  <MaterialCommunityIcons name="trash-can-outline" size={18} color={theme.tint} />
                 </TouchableOpacity>
               </View>
             ) : (
               <View style={styles.videoEmpty}>
-                <MaterialCommunityIcons name="video-outline" size={20} color="#9ca3af" />
+                <MaterialCommunityIcons name="video-outline" size={20} color={theme.textMuted} />
                 <Text style={styles.videoEmptyText}>No profile video yet</Text>
               </View>
             )}
@@ -1707,11 +1721,11 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                 <MaterialCommunityIcons 
                   name="plus" 
                   size={16} 
-                  color={formData.photos.length >= 6 ? '#9ca3af' : Colors.light.tint} 
+                  color={formData.photos.length >= 6 ? theme.textMuted : theme.tint} 
                 />
                 <Text style={[
                   styles.addPhotoText,
-                  { color: formData.photos.length >= 6 ? '#9ca3af' : Colors.light.tint }
+                  { color: formData.photos.length >= 6 ? theme.textMuted : theme.tint }
                 ]}>
                   Add Photo
                 </Text>
@@ -1730,7 +1744,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                     style={styles.removePhotoButton}
                     onPress={() => removePhoto(index)}
                   >
-                    <MaterialCommunityIcons name="close" size={14} color="#fff" />
+                    <MaterialCommunityIcons name="close" size={14} color={theme.text} />
                   </TouchableOpacity>
                 </View>
               ))}
@@ -1743,7 +1757,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                   onPress={() => pickImage(false)}
                   disabled={uploading}
                 >
-                  <MaterialCommunityIcons name="camera-plus" size={24} color="#9ca3af" />
+                  <MaterialCommunityIcons name="camera-plus" size={24} color={theme.textMuted} />
                 </TouchableOpacity>
               ))}
             </View>
@@ -1756,7 +1770,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         {(uploading || videoUploading) && (
           <View style={styles.uploadingOverlay}>
             <View style={styles.uploadingContainer}>
-              <ActivityIndicator size="large" color={Colors.light.tint} />
+              <ActivityIndicator size="large" color={theme.tint} />
               <Text style={styles.uploadingText}>
                 {videoUploading ? 'Uploading video...' : 'Uploading photo...'}
               </Text>
@@ -2005,7 +2019,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                     {item}
                   </Text>
                   {isSelected && (
-                    <MaterialCommunityIcons name="check" size={20} color={Colors.light.tint} />
+                    <MaterialCommunityIcons name="check" size={20} color={theme.tint} />
                   )}
                 </TouchableOpacity>
               );
@@ -2031,7 +2045,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
           
           {loadingInterests ? (
             <View style={styles.uploadingContainer}>
-              <ActivityIndicator size="large" color={Colors.light.tint} />
+              <ActivityIndicator size="large" color={theme.tint} />
               <Text style={styles.uploadingText}>Loading interests...</Text>
             </View>
           ) : (
@@ -2062,7 +2076,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                       {item}
                     </Text>
                     {isSelected && (
-                      <MaterialCommunityIcons name="check" size={20} color={Colors.light.tint} />
+                      <MaterialCommunityIcons name="check" size={20} color={theme.tint} />
                     )}
                   </TouchableOpacity>
                 );
@@ -2148,398 +2162,404 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  cancelButton: {
-    fontSize: 16,
-    color: '#6b7280',
-  },
-  saveButton: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: Colors.light.tint,
-  },
-  content: {
-    flex: 1,
-  },
-  section: {
-    backgroundColor: '#fff',
-    paddingHorizontal: 20,
-    paddingVertical: 20,
-    marginBottom: 8,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 16,
-  },
-  avatarContainer: {
-    alignItems: 'center',
-    position: 'relative',
-  },
-  avatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    borderWidth: 3,
-    borderColor: '#e5e7eb',
-  },
-  editAvatarButton: {
-    position: 'absolute',
-    bottom: 0,
-    right: '35%',
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: Colors.light.tint,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  inputContainer: {
-    marginBottom: 16,
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 8,
-  },
-  textInput: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: '#111827',
-    backgroundColor: '#f9fafb',
-  },
-  textArea: {
-    height: 100,
-    textAlignVertical: 'top',
-  },
-  characterCount: {
-    fontSize: 12,
-    color: '#9ca3af',
-    textAlign: 'right',
-    marginTop: 4,
-  },
-  row: {
-    flexDirection: 'row',
-  },
-  addPhotoButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  addPhotoText: {
-    fontSize: 14,
-    marginLeft: 4,
-  },
-  photoHint: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginBottom: 16,
-  },
-  photosGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  photoContainer: {
-    position: 'relative',
-    width: 80,
-    height: 100,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  photo: {
-    width: '100%',
-    height: '100%',
-    resizeMode: 'cover',
-  },
-  videoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 16,
-    backgroundColor: '#0f172a',
-  },
-  videoThumb: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  videoPreview: {
-    width: '100%',
-    height: '100%',
-  },
-  videoMeta: { marginLeft: 12, flex: 1 },
-  videoTitle: { color: '#fff', fontSize: 14, fontFamily: 'Manrope_600SemiBold' },
-  videoSub: { color: '#cbd5f5', fontSize: 12, marginTop: 2 },
-  videoRemove: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  videoEmpty: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    backgroundColor: '#f8fafc',
-  },
-  videoEmptyText: { marginLeft: 8, color: '#6b7280', fontSize: 13 },
-  removePhotoButton: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  emptyPhotoSlot: {
-    width: 80,
-    height: 100,
-    borderRadius: 8,
-    backgroundColor: '#f9fafb',
-    borderWidth: 2,
-    borderColor: '#e5e7eb',
-    borderStyle: 'dashed',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  uploadingOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  uploadingContainer: {
-    backgroundColor: '#fff',
-    paddingHorizontal: 24,
-    paddingVertical: 20,
-    borderRadius: 16,
-    alignItems: 'center',
-  },
-  uploadingText: {
-    fontSize: 16,
-    color: '#374151',
-    marginTop: 12,
-  },
-  
-  // Picker Styles
-  pickerContainer: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-  },
-  pickerHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  },
-  pickerCancel: {
-    fontSize: 16,
-    color: '#6b7280',
-  },
-  pickerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  pickerList: {
-    flex: 1,
-  },
-  pickerItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  },
-  pickerItemSelected: {
-    backgroundColor: '#f0f9ff',
-  },
-  pickerItemText: {
-    fontSize: 16,
-    color: '#374151',
-  },
-  pickerItemTextSelected: {
-    color: Colors.light.tint,
-    fontWeight: '600',
-  },
-  selectButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#f9fafb',
-    minHeight: 48,
-  },
-  selectButtonText: {
-    fontSize: 16,
-    color: '#374151',
-  },
-  selectButtonPlaceholder: {
-    fontSize: 16,
-    color: '#9ca3af',
-  },
-  
-  // Interests styles
-  interestsPreview: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 12,
-  },
-  interestTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f0f9ff',
-    borderColor: Colors.light.tint,
-    borderWidth: 1,
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  interestText: {
-    fontSize: 14,
-    color: Colors.light.tint,
-    fontWeight: '500',
-  },
-  removeInterestButton: {
-    marginLeft: 6,
-    padding: 2,
-  },
-  distanceUnitGroup: {
-    gap: 12,
-  },
-  distanceUnitRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  distanceUnitOuter: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    borderWidth: 2,
-    borderColor: '#cbd5f0',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  distanceUnitOuterSelected: {
-    borderColor: Colors.light.tint,
-  },
-  distanceUnitInner: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: Colors.light.tint,
-  },
-  distanceUnitText: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  distanceUnitLabel: {
-    fontSize: 16,
-    fontFamily: 'Manrope_600SemiBold',
-    color: '#111827',
-  },
-  distanceUnitSubtitle: {
-    fontSize: 12,
-    fontFamily: 'Manrope_400Regular',
-    color: '#6b7280',
-    marginTop: 2,
-  },
-  statusDisplay: {
-    padding: 16,
-    backgroundColor: '#f8fafc',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  statusText: {
-    fontSize: 16,
-    fontFamily: 'Archivo_600SemiBold',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  statusSubtext: {
-    fontSize: 14,
-    fontFamily: 'Manrope_400Regular',
-    color: '#6b7280',
-  },
-});
+const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.background,
+    },
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      backgroundColor: theme.background,
+      borderBottomWidth: 1,
+      borderBottomColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+    },
+    title: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: theme.text,
+    },
+    cancelButton: {
+      fontSize: 16,
+      color: theme.textMuted,
+    },
+    saveButton: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: theme.tint,
+    },
+    content: {
+      flex: 1,
+    },
+    section: {
+      backgroundColor: theme.background,
+      paddingHorizontal: 20,
+      paddingVertical: 20,
+      marginBottom: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: withAlpha(theme.text, isDark ? 0.08 : 0.05),
+    },
+    sectionHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 8,
+    },
+    sectionTitle: {
+      fontSize: 20,
+      fontWeight: '700',
+      color: theme.text,
+      marginBottom: 16,
+    },
+    avatarContainer: {
+      alignItems: 'center',
+      position: 'relative',
+    },
+    avatar: {
+      width: 100,
+      height: 100,
+      borderRadius: 50,
+      borderWidth: 3,
+      borderColor: withAlpha(theme.text, isDark ? 0.25 : 0.12),
+    },
+    editAvatarButton: {
+      position: 'absolute',
+      bottom: 0,
+      right: '35%',
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: theme.tint,
+      justifyContent: 'center',
+      alignItems: 'center',
+      borderWidth: 2,
+      borderColor: theme.background,
+    },
+    inputContainer: {
+      marginBottom: 16,
+    },
+    inputLabel: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.text,
+      marginBottom: 8,
+    },
+    textInput: {
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.22 : 0.12),
+      borderRadius: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      fontSize: 16,
+      color: theme.text,
+      backgroundColor: theme.backgroundSubtle,
+    },
+    textArea: {
+      height: 100,
+      textAlignVertical: 'top',
+    },
+    characterCount: {
+      fontSize: 12,
+      color: theme.textMuted,
+      textAlign: 'right',
+      marginTop: 4,
+    },
+    row: {
+      flexDirection: 'row',
+    },
+    addPhotoButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 16,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+    },
+    addPhotoText: {
+      fontSize: 14,
+      marginLeft: 4,
+      color: theme.text,
+    },
+    photoHint: {
+      fontSize: 12,
+      color: theme.textMuted,
+      marginBottom: 16,
+    },
+    photosGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 12,
+    },
+    photoContainer: {
+      position: 'relative',
+      width: 80,
+      height: 100,
+      borderRadius: 8,
+      overflow: 'hidden',
+    },
+    photo: {
+      width: '100%',
+      height: '100%',
+      resizeMode: 'cover',
+    },
+    videoRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 12,
+      paddingHorizontal: 12,
+      borderRadius: 16,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.18 : 0.08),
+    },
+    videoThumb: {
+      width: 46,
+      height: 46,
+      borderRadius: 23,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.24 : 0.12),
+      alignItems: 'center',
+      justifyContent: 'center',
+      overflow: 'hidden',
+    },
+    videoPreview: {
+      width: '100%',
+      height: '100%',
+    },
+    videoMeta: { marginLeft: 12, flex: 1 },
+    videoTitle: { color: theme.text, fontSize: 14, fontFamily: 'Manrope_600SemiBold' },
+    videoSub: { color: theme.textMuted, fontSize: 12, marginTop: 2 },
+    videoRemove: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.24 : 0.12),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    videoEmpty: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 12,
+      paddingHorizontal: 12,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.12),
+      backgroundColor: theme.backgroundSubtle,
+    },
+    videoEmptyText: { marginLeft: 8, color: theme.textMuted, fontSize: 13 },
+    removePhotoButton: {
+      position: 'absolute',
+      top: 4,
+      right: 4,
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.7 : 0.45),
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    emptyPhotoSlot: {
+      width: 80,
+      height: 100,
+      borderRadius: 8,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 2,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      borderStyle: 'dashed',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    uploadingOverlay: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.8 : 0.5),
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    uploadingContainer: {
+      backgroundColor: theme.background,
+      paddingHorizontal: 24,
+      paddingVertical: 20,
+      borderRadius: 16,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.08),
+    },
+    uploadingText: {
+      fontSize: 16,
+      color: theme.text,
+      marginTop: 12,
+    },
+    
+    // Picker Styles
+    pickerContainer: {
+      flex: 1,
+      backgroundColor: theme.background,
+    },
+    pickerHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      backgroundColor: theme.background,
+      borderBottomWidth: 1,
+      borderBottomColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+    },
+    pickerCancel: {
+      fontSize: 16,
+      color: theme.textMuted,
+    },
+    pickerTitle: {
+      fontSize: 18,
+      fontWeight: '600',
+      color: theme.text,
+    },
+    pickerList: {
+      flex: 1,
+    },
+    pickerItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 20,
+      paddingVertical: 16,
+      backgroundColor: theme.background,
+      borderBottomWidth: 1,
+      borderBottomColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+    },
+    pickerItemSelected: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.12),
+    },
+    pickerItemText: {
+      fontSize: 16,
+      color: theme.text,
+    },
+    pickerItemTextSelected: {
+      color: theme.tint,
+      fontWeight: '600',
+    },
+    selectButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      borderRadius: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      backgroundColor: theme.backgroundSubtle,
+      minHeight: 48,
+    },
+    selectButtonText: {
+      fontSize: 16,
+      color: theme.text,
+    },
+    selectButtonPlaceholder: {
+      fontSize: 16,
+      color: theme.textMuted,
+    },
+    
+    // Interests styles
+    interestsPreview: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 12,
+    },
+    interestTag: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.2 : 0.12),
+      borderColor: theme.tint,
+      borderWidth: 1,
+      borderRadius: 20,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+    },
+    interestText: {
+      fontSize: 14,
+      color: theme.tint,
+      fontWeight: '500',
+    },
+    removeInterestButton: {
+      marginLeft: 6,
+      padding: 2,
+    },
+    distanceUnitGroup: {
+      gap: 12,
+    },
+    distanceUnitRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 12,
+      paddingHorizontal: 12,
+      borderRadius: 12,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+    },
+    distanceUnitOuter: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      borderWidth: 2,
+      borderColor: withAlpha(theme.text, isDark ? 0.26 : 0.16),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    distanceUnitOuterSelected: {
+      borderColor: theme.tint,
+    },
+    distanceUnitInner: {
+      width: 10,
+      height: 10,
+      borderRadius: 5,
+      backgroundColor: theme.tint,
+    },
+    distanceUnitText: {
+      flex: 1,
+      marginLeft: 12,
+    },
+    distanceUnitLabel: {
+      fontSize: 16,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    distanceUnitSubtitle: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      marginTop: 2,
+    },
+    statusDisplay: {
+      padding: 16,
+      backgroundColor: theme.backgroundSubtle,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+    },
+    statusRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    statusText: {
+      fontSize: 16,
+      fontFamily: 'Archivo_600SemiBold',
+      color: theme.text,
+      marginBottom: 4,
+    },
+    statusSubtext: {
+      fontSize: 14,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+    },
+  });

@@ -25,6 +25,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useColorScheme } from "@/hooks/use-color-scheme";
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -98,12 +99,24 @@ type MessageRowItemProps = {
   isFocused: boolean;
   timeLabel: string;
   userAvatar: string;
+  theme: typeof Colors.light;
+  isDark: boolean;
+  styles: ReturnType<typeof createStyles>;
   onLongPress: (messageId: string) => void;
   onToggleVoice: (messageId: string) => void;
   onFocus: (messageId: string) => void;
   onReply: (message: MessageType) => void;
   onAddReaction: (messageId: string, emoji: string) => void;
   onCloseReactions: () => void;
+};
+
+const withAlpha = (hex: string, alpha: number) => {
+  const normalized = hex.replace('#', '');
+  const bigint = parseInt(normalized.length === 3 ? normalized.split('').map((c) => c + c).join('') : normalized, 16);
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
 };
 
 const MessageRowItem = memo(
@@ -116,6 +129,9 @@ const MessageRowItem = memo(
     isFocused,
     timeLabel,
     userAvatar,
+    theme,
+    isDark,
+    styles,
     onLongPress,
     onToggleVoice,
     onFocus,
@@ -134,13 +150,13 @@ const MessageRowItem = memo(
             {
               height: height * 20,
               backgroundColor: isPlaying
-                ? (isMyMessage ? '#fff' : Colors.light.tint)
-                : (isMyMessage ? '#ffffff80' : '#00000040'),
+                ? (isMyMessage ? Colors.light.background : theme.tint)
+                : (isMyMessage ? withAlpha(Colors.light.background, 0.5) : withAlpha(theme.text, isDark ? 0.35 : 0.25)),
             },
           ]}
         />
       ));
-    }, [item.type, item.voiceMessage?.waveform, isPlaying, isMyMessage]);
+    }, [item.type, item.voiceMessage?.waveform, isPlaying, isMyMessage, isDark, theme.text, theme.tint]);
 
     const reactionNodes = useMemo(() => {
       if (item.reactions.length === 0) return null;
@@ -206,13 +222,13 @@ const MessageRowItem = memo(
             ) : item.type === 'voice' ? (
               <View style={styles.voiceMessageContainer}>
                 <TouchableOpacity
-                  style={[styles.voicePlayButton, { backgroundColor: isMyMessage ? '#fff' : Colors.light.tint }]}
+                  style={[styles.voicePlayButton, { backgroundColor: isMyMessage ? Colors.light.background : theme.tint }]}
                   onPress={() => onToggleVoice(item.id)}
                 >
                   <MaterialCommunityIcons
                     name={isPlaying ? 'pause' : 'play'}
                     size={16}
-                    color={isMyMessage ? Colors.light.tint : '#fff'}
+                    color={isMyMessage ? theme.tint : Colors.light.background}
                   />
                 </TouchableOpacity>
 
@@ -220,7 +236,7 @@ const MessageRowItem = memo(
                   {waveformBars}
                 </View>
 
-                <Text style={[styles.voiceDuration, { color: isMyMessage ? '#fff' : '#666' }]}>
+                <Text style={[styles.voiceDuration, { color: isMyMessage ? Colors.light.background : theme.textMuted }]}>
                   {Math.floor(item.voiceMessage?.duration || 0)}s
                 </Text>
               </View>
@@ -237,9 +253,9 @@ const MessageRowItem = memo(
                 )}
               </View>
             ) : (
-              <View style={[styles.moodStickerContainer, { backgroundColor: item.sticker?.color + '20' }]}>
+              <View style={[styles.moodStickerContainer, { backgroundColor: withAlpha(item.sticker?.color || theme.tint, 0.12) }]}>
                 <Text style={styles.moodStickerEmoji}>{item.sticker?.emoji}</Text>
-                <Text style={[styles.moodStickerName, { color: item.sticker?.color }]}>
+                <Text style={[styles.moodStickerName, { color: item.sticker?.color || theme.tint }]}>
                   {item.sticker?.name}
                 </Text>
               </View>
@@ -263,16 +279,16 @@ const MessageRowItem = memo(
           {isMyMessage && (
             <View style={styles.messageStatus}>
               {item.status === 'sending' && (
-                <MaterialCommunityIcons name="clock-outline" size={12} color="#9ca3af" />
+                <MaterialCommunityIcons name="clock-outline" size={12} color={theme.textMuted} />
               )}
               {item.status === 'sent' && (
-                <MaterialCommunityIcons name="check" size={12} color="#9ca3af" />
+                <MaterialCommunityIcons name="check" size={12} color={theme.textMuted} />
               )}
               {item.status === 'delivered' && (
-                <MaterialCommunityIcons name="check-all" size={12} color="#9ca3af" />
+                <MaterialCommunityIcons name="check-all" size={12} color={theme.textMuted} />
               )}
               {item.status === 'read' && (
-                <MaterialCommunityIcons name="check-all" size={12} color="#00e676" />
+                <MaterialCommunityIcons name="check-all" size={12} color={theme.secondary} />
               )}
             </View>
           )}
@@ -290,7 +306,7 @@ const MessageRowItem = memo(
                 onCloseReactions();
               }}
             >
-              <MaterialCommunityIcons name="reply" size={16} color="#6b7280" />
+              <MaterialCommunityIcons name="reply" size={16} color={theme.textMuted} />
             </TouchableOpacity>
             {QUICK_REACTIONS.map((emoji, idx) => (
               <TouchableOpacity
@@ -319,6 +335,10 @@ const MessageRowItem = memo(
 export default function ConversationScreen() {
   const { user } = useAuth();
   const fontsLoaded = useAppFonts();
+  const colorScheme = useColorScheme();
+  const theme = Colors[colorScheme ?? 'light'];
+  const isDark = (colorScheme ?? 'light') === 'dark';
+  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const params = useLocalSearchParams();
   
   // Get conversation data from params
@@ -1086,6 +1106,9 @@ export default function ConversationScreen() {
           isFocused={isFocused}
           timeLabel={timeLabel}
           userAvatar={userAvatar}
+          theme={theme}
+          isDark={isDark}
+          styles={styles}
           onLongPress={handleLongPress}
           onToggleVoice={toggleVoicePlayback}
           onFocus={(messageId) => {
@@ -1110,6 +1133,8 @@ export default function ConversationScreen() {
       showReactions,
       user?.id,
       userAvatar,
+      theme,
+      isDark,
       handleLongPress,
       toggleVoicePlayback,
       replyToMessage,
@@ -1157,7 +1182,7 @@ export default function ConversationScreen() {
         <View style={styles.moodStickerHeader}>
           <Text style={styles.moodStickerTitle}>Mood Stickers</Text>
           <TouchableOpacity onPress={() => setShowMoodStickers(false)}>
-            <MaterialCommunityIcons name="close" size={24} color="#6b7280" />
+            <MaterialCommunityIcons name="close" size={24} color={theme.textMuted} />
           </TouchableOpacity>
         </View>
         
@@ -1170,11 +1195,11 @@ export default function ConversationScreen() {
               {MOOD_STICKERS.filter(s => s.category === category).map((sticker, idx) => (
                 <TouchableOpacity
                   key={idx}
-                  style={[styles.stickerButton, { backgroundColor: Colors.light.tint + '15' }]}
+                  style={styles.stickerButton}
                   onPress={() => sendMoodSticker(sticker)}
                 >
                   <Text style={styles.stickerEmoji}>{sticker.emoji}</Text>
-                  <Text style={[styles.stickerName, { color: Colors.light.tint }]}>
+                  <Text style={styles.stickerName}>
                     {sticker.name}
                   </Text>
                 </TouchableOpacity>
@@ -1205,7 +1230,7 @@ export default function ConversationScreen() {
             },
           ]}
         >
-          <MaterialCommunityIcons name="wifi" size={14} color="#fff" />
+          <MaterialCommunityIcons name="wifi" size={14} color={Colors.light.background} />
           <Text style={styles.reconnectToastText}>Reconnected</Text>
         </Animated.View>
       </View>
@@ -1221,7 +1246,7 @@ export default function ConversationScreen() {
             }
           }}
         >
-          <MaterialCommunityIcons name="arrow-left" size={24} color="#111827" />
+          <MaterialCommunityIcons name="arrow-left" size={24} color={theme.text} />
         </TouchableOpacity>
         
         <View style={styles.headerProfile}>
@@ -1247,7 +1272,7 @@ export default function ConversationScreen() {
         </View>
         
         <TouchableOpacity style={styles.moreButton}>
-          <MaterialCommunityIcons name="dots-vertical" size={24} color="#111827" />
+          <MaterialCommunityIcons name="dots-vertical" size={24} color={theme.text} />
         </TouchableOpacity>
       </View>
 
@@ -1304,7 +1329,7 @@ export default function ConversationScreen() {
         {replyingTo && (
           <View style={styles.replyPreview}>
             <View style={styles.replyPreviewContent}>
-              <MaterialCommunityIcons name="reply" size={16} color={Colors.light.tint} />
+              <MaterialCommunityIcons name="reply" size={16} color={theme.tint} />
               <Text style={styles.replyPreviewText} numberOfLines={1}>
                 Replying to: {replyingTo.type === 'text' ? replyingTo.text : 
                             replyingTo.type === 'voice' ? 'Voice message' :
@@ -1312,7 +1337,7 @@ export default function ConversationScreen() {
               </Text>
             </View>
             <TouchableOpacity onPress={cancelReply} style={styles.cancelReplyButton}>
-              <MaterialCommunityIcons name="close" size={16} color="#6b7280" />
+              <MaterialCommunityIcons name="close" size={16} color={theme.textMuted} />
             </TouchableOpacity>
           </View>
         )}
@@ -1325,7 +1350,7 @@ export default function ConversationScreen() {
               style={styles.inputActionButton}
               onPress={() => Alert.alert('Coming soon', 'Photo messages are not available yet.')}
             >
-              <MaterialCommunityIcons name="camera" size={22} color="#6b7280" />
+              <MaterialCommunityIcons name="camera" size={22} color={theme.textMuted} />
             </TouchableOpacity>
             
             <TouchableOpacity 
@@ -1335,7 +1360,7 @@ export default function ConversationScreen() {
               <MaterialCommunityIcons 
                 name="emoticon-happy" 
                 size={22} 
-                color={showMoodStickers ? Colors.light.tint : '#6b7280'} 
+                color={showMoodStickers ? theme.tint : theme.textMuted} 
               />
             </TouchableOpacity>
           </View>
@@ -1346,7 +1371,7 @@ export default function ConversationScreen() {
             value={inputText}
             onChangeText={handleInputChange}
             placeholder={replyingTo ? "Reply..." : "Type a message..."}
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={withAlpha(theme.textMuted, 0.7)}
             multiline
             maxLength={500}
           />
@@ -1378,7 +1403,7 @@ export default function ConversationScreen() {
                     <MaterialCommunityIcons 
                       name={isRecording ? "stop" : "microphone"} 
                       size={20} 
-                      color="#fff" 
+                      color={Colors.light.background} 
                     />
                   </Animated.View>
                   
@@ -1399,7 +1424,7 @@ export default function ConversationScreen() {
                 style={styles.sendButtonActive}
                 onPress={sendMessage}
               >
-                <MaterialCommunityIcons name="send" size={20} color="#fff" />
+                <MaterialCommunityIcons name="send" size={20} color={Colors.light.background} />
               </TouchableOpacity>
             )}
           </View>
@@ -1409,7 +1434,7 @@ export default function ConversationScreen() {
         {showImagePicker && (
           <View style={styles.imagePickerActions}>
             <TouchableOpacity style={styles.imagePickerButton} onPress={pickImage}>
-              <MaterialCommunityIcons name="image" size={24} color={Colors.light.tint} />
+              <MaterialCommunityIcons name="image" size={24} color={theme.tint} />
               <Text style={styles.imagePickerText}>Gallery</Text>
             </TouchableOpacity>
             
@@ -1419,7 +1444,7 @@ export default function ConversationScreen() {
                 Alert.alert('Camera', 'Camera feature coming soon!');
               }}
             >
-              <MaterialCommunityIcons name="camera" size={24} color={Colors.light.tint} />
+              <MaterialCommunityIcons name="camera" size={24} color={theme.tint} />
               <Text style={styles.imagePickerText}>Camera</Text>
             </TouchableOpacity>
             
@@ -1427,8 +1452,8 @@ export default function ConversationScreen() {
               style={styles.imagePickerButton}
               onPress={() => setShowImagePicker(false)}
             >
-              <MaterialCommunityIcons name="close" size={24} color="#ef4444" />
-              <Text style={[styles.imagePickerText, { color: '#ef4444' }]}>Cancel</Text>
+              <MaterialCommunityIcons name="close" size={24} color={theme.tint} />
+              <Text style={[styles.imagePickerText, { color: theme.tint }]}>Cancel</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -1438,637 +1463,646 @@ export default function ConversationScreen() {
 }
 
 // [Include all the same styles from the original chat screen...]
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-  },
-  
-  // Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#f8fafc',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  headerProfile: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  avatarContainer: {
-    position: 'relative',
-    marginRight: 12,
-  },
-  headerAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-  },
-  onlineIndicator: {
-    position: 'absolute',
-    bottom: 2,
-    right: 2,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: '#10b981',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  headerInfo: {
-    flex: 1,
-  },
-  headerName: {
-    fontSize: 16,
-    fontFamily: 'Archivo_700Bold',
-    color: '#111827',
-  },
-  headerStatus: {
-    fontSize: 12,
-    fontFamily: 'Manrope_400Regular',
-    color: '#6b7280',
-    marginTop: 1,
-  },
-  moreButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#f8fafc',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginLeft: 12,
-  },
+const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.background,
+    },
 
-  // Chat Container
-  chatContainer: {
-    flex: 1,
-  },
-  messagesList: {
-    paddingHorizontal: 16,
-    paddingVertical: 20,
-  },
-  loadEarlierContainer: {
-    alignItems: 'center',
-    paddingBottom: 12,
-  },
-  loadEarlierButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 12,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  loadEarlierText: {
-    fontSize: 12,
-    color: '#6b7280',
-    fontFamily: 'Manrope_500Medium',
-  },
-  loadEarlierSpacer: {
-    height: 4,
-  },
+    // Header
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      backgroundColor: theme.background,
+      borderBottomWidth: 1,
+      borderBottomColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.08,
+      shadowRadius: 3,
+      elevation: 3,
+    },
+    backButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: theme.backgroundSubtle,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginRight: 12,
+    },
+    headerProfile: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    avatarContainer: {
+      position: 'relative',
+      marginRight: 12,
+    },
+    headerAvatar: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+    },
+    onlineIndicator: {
+      position: 'absolute',
+      bottom: 2,
+      right: 2,
+      width: 12,
+      height: 12,
+      borderRadius: 6,
+      backgroundColor: theme.secondary,
+      borderWidth: 2,
+      borderColor: theme.background,
+    },
+    headerInfo: {
+      flex: 1,
+    },
+    headerName: {
+      fontSize: 16,
+      fontFamily: 'Archivo_700Bold',
+      color: theme.text,
+    },
+    headerStatus: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      marginTop: 1,
+    },
+    moreButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: theme.backgroundSubtle,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginLeft: 12,
+    },
 
-  // Messages
-  messageContainer: {
-    marginBottom: 20,
-    position: 'relative',
-  },
-  messageBubbleContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    marginBottom: 4,
-  },
-  myMessageContainer: {
-    justifyContent: 'flex-end',
-  },
-  theirMessageContainer: {
-    justifyContent: 'flex-start',
-  },
-  messageAvatar: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    marginRight: 8,
-    marginBottom: 4,
-  },
-  messageBubble: {
-    maxWidth: screenWidth * 0.75,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderRadius: 20,
-    position: 'relative',
-  },
-  myMessageBubble: {
-    backgroundColor: Colors.light.tint,
-    borderBottomRightRadius: 6,
-    shadowColor: Colors.light.tint,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  theirMessageBubble: {
-    backgroundColor: '#fff',
-    borderBottomLeftRadius: 6,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  stickerBubble: {
-    backgroundColor: 'transparent',
-    padding: 8,
-    shadowOpacity: 0.1,
-  },
-  messageText: {
-    fontSize: 16,
-    lineHeight: 22,
-    fontFamily: 'Manrope_400Regular',
-  },
-  myMessageText: {
-    color: '#fff',
-  },
-  theirMessageText: {
-    color: '#111827',
-  },
-  messageTime: {
-    fontSize: 11,
-    fontFamily: 'Manrope_400Regular',
-    color: '#9ca3af',
-    marginTop: 2,
-  },
-  myMessageTime: {
-    textAlign: 'right',
-    marginRight: 4,
-  },
-  theirMessageTime: {
-    textAlign: 'left',
-    marginLeft: 36,
-  },
+    // Chat Container
+    chatContainer: {
+      flex: 1,
+      backgroundColor: theme.background,
+    },
+    messagesList: {
+      paddingHorizontal: 16,
+      paddingVertical: 20,
+    },
+    loadEarlierContainer: {
+      alignItems: 'center',
+      paddingBottom: 12,
+    },
+    loadEarlierButton: {
+      paddingHorizontal: 14,
+      paddingVertical: 6,
+      borderRadius: 12,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
+    },
+    loadEarlierText: {
+      fontSize: 12,
+      color: theme.textMuted,
+      fontFamily: 'Manrope_500Medium',
+    },
+    loadEarlierSpacer: {
+      height: 4,
+    },
 
-  // Mood Stickers
-  moodStickerContainer: {
-    alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: Colors.light.tint + '30',
-  },
-  moodStickerEmoji: {
-    fontSize: 32,
-    marginBottom: 4,
-  },
-  moodStickerName: {
-    fontSize: 12,
-    fontFamily: 'Archivo_700Bold',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
+    // Messages
+    messageContainer: {
+      marginBottom: 20,
+      position: 'relative',
+    },
+    messageBubbleContainer: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      marginBottom: 4,
+    },
+    myMessageContainer: {
+      justifyContent: 'flex-end',
+    },
+    theirMessageContainer: {
+      justifyContent: 'flex-start',
+    },
+    messageAvatar: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      marginRight: 8,
+      marginBottom: 4,
+    },
+    messageBubble: {
+      maxWidth: screenWidth * 0.75,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderRadius: 20,
+      position: 'relative',
+    },
+    myMessageBubble: {
+      backgroundColor: theme.tint,
+      borderBottomRightRadius: 6,
+      shadowColor: theme.tint,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.2,
+      shadowRadius: 8,
+      elevation: 4,
+    },
+    theirMessageBubble: {
+      backgroundColor: theme.backgroundSubtle,
+      borderBottomLeftRadius: 6,
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      elevation: 2,
+    },
+    stickerBubble: {
+      backgroundColor: 'transparent',
+      padding: 8,
+      shadowOpacity: 0.1,
+    },
+    messageText: {
+      fontSize: 16,
+      lineHeight: 22,
+      fontFamily: 'Manrope_400Regular',
+    },
+    myMessageText: {
+      color: Colors.light.background,
+    },
+    theirMessageText: {
+      color: theme.text,
+    },
+    messageTime: {
+      fontSize: 11,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      marginTop: 2,
+    },
+    myMessageTime: {
+      textAlign: 'right',
+      marginRight: 4,
+    },
+    theirMessageTime: {
+      textAlign: 'left',
+      marginLeft: 36,
+    },
 
-  // Reactions
-  reactionsContainer: {
-    flexDirection: 'row',
-    position: 'absolute',
-    bottom: -8,
-    right: 8,
-    gap: 4,
-  },
-  reactionBubble: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  reactionEmoji: {
-    fontSize: 12,
-  },
+    // Mood Stickers
+    moodStickerContainer: {
+      alignItems: 'center',
+      paddingVertical: 16,
+      paddingHorizontal: 20,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.24 : 0.18),
+    },
+    moodStickerEmoji: {
+      fontSize: 32,
+      marginBottom: 4,
+    },
+    moodStickerName: {
+      fontSize: 12,
+      fontFamily: 'Archivo_700Bold',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+      color: theme.text,
+    },
 
-  // Quick Reactions
-  quickReactionsContainer: {
-    position: 'absolute',
-    top: -50,
-    backgroundColor: '#fff',
-    borderRadius: 25,
-    paddingHorizontal: 8,
-    paddingVertical: 8,
-    flexDirection: 'row',
-    gap: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
-    borderWidth: 1,
-    borderColor: '#f3f4f6',
-  },
-  quickReactionsLeft: {
-    left: 36,
-  },
-  quickReactionsRight: {
-    right: 4,
-  },
-  quickReactionButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f8fafc',
-  },
-  quickReactionEmoji: {
-    fontSize: 16,
-  },
+    // Reactions
+    reactionsContainer: {
+      flexDirection: 'row',
+      position: 'absolute',
+      bottom: -8,
+      right: 8,
+      gap: 4,
+    },
+    reactionBubble: {
+      backgroundColor: theme.background,
+      borderRadius: 12,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.1,
+      shadowRadius: 2,
+      elevation: 2,
+    },
+    reactionEmoji: {
+      fontSize: 12,
+      color: theme.text,
+    },
 
-  // Typing Indicator
-  typingContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    paddingHorizontal: 16,
-    marginBottom: 16,
-  },
-  typingAvatar: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    marginRight: 8,
-    marginBottom: 4,
-  },
-  typingBubble: {
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    borderBottomLeftRadius: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  typingDots: {
-    flexDirection: 'row',
-    gap: 4,
-  },
-  typingDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#9ca3af',
-  },
+    // Quick Reactions
+    quickReactionsContainer: {
+      position: 'absolute',
+      top: -50,
+      backgroundColor: theme.background,
+      borderRadius: 25,
+      paddingHorizontal: 8,
+      paddingVertical: 8,
+      flexDirection: 'row',
+      gap: 4,
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.15,
+      shadowRadius: 12,
+      elevation: 8,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.12),
+    },
+    quickReactionsLeft: {
+      left: 36,
+    },
+    quickReactionsRight: {
+      right: 4,
+    },
+    quickReactionButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: theme.backgroundSubtle,
+    },
+    quickReactionEmoji: {
+      fontSize: 16,
+    },
 
-  // Mood Stickers Panel
-  moodStickersPanel: {
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
-    maxHeight: 300,
-    paddingBottom: 16,
-  },
-  moodStickerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  },
-  moodStickerTitle: {
-    fontSize: 16,
-    fontFamily: 'Archivo_700Bold',
-    color: '#111827',
-  },
-  stickerCategory: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-  },
-  categoryTitle: {
-    fontSize: 14,
-    fontFamily: 'Archivo_700Bold',
-    color: '#6b7280',
-    marginBottom: 12,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  stickersGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  stickerButton: {
-    alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    minWidth: 60,
-  },
-  stickerEmoji: {
-    fontSize: 20,
-    marginBottom: 2,
-  },
-  stickerName: {
-    fontSize: 10,
-    fontFamily: 'Manrope_400Regular',
-    textAlign: 'center',
-  },
+    // Typing Indicator
+    typingContainer: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      paddingHorizontal: 16,
+      marginBottom: 16,
+    },
+    typingAvatar: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      marginRight: 8,
+      marginBottom: 4,
+    },
+    typingBubble: {
+      backgroundColor: theme.background,
+      borderRadius: 20,
+      borderBottomLeftRadius: 6,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      elevation: 2,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
+    },
+    typingDots: {
+      flexDirection: 'row',
+      gap: 4,
+    },
+    typingDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: theme.textMuted,
+    },
 
-  // Input Area
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
-    gap: 12,
-  },
-  textInput: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 16,
-    fontFamily: 'Manrope_400Regular',
-    color: '#111827',
-    maxHeight: 100,
-  },
-  sendButtonActive: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: Colors.light.tint,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+    // Mood Stickers Panel
+    moodStickersPanel: {
+      backgroundColor: theme.background,
+      borderTopWidth: 1,
+      borderTopColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+      maxHeight: 300,
+      paddingBottom: 16,
+    },
+    moodStickerHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+    },
+    moodStickerTitle: {
+      fontSize: 16,
+      fontFamily: 'Archivo_700Bold',
+      color: theme.text,
+    },
+    stickerCategory: {
+      paddingHorizontal: 16,
+      paddingTop: 16,
+    },
+    categoryTitle: {
+      fontSize: 14,
+      fontFamily: 'Archivo_700Bold',
+      color: theme.textMuted,
+      marginBottom: 12,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    stickersGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    stickerButton: {
+      alignItems: 'center',
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      borderRadius: 12,
+      minWidth: 60,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.1),
+    },
+    stickerEmoji: {
+      fontSize: 20,
+      marginBottom: 2,
+    },
+    stickerName: {
+      fontSize: 10,
+      fontFamily: 'Manrope_400Regular',
+      textAlign: 'center',
+      color: theme.tint,
+    },
 
-  // Message Status & Info
-  messageInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 2,
-  },
-  myMessageInfo: {
-    justifyContent: 'flex-end',
-    marginRight: 4,
-  },
-  theirMessageInfo: {
-    justifyContent: 'flex-start',
-    marginLeft: 36,
-  },
-  messageStatus: {
-    marginLeft: 4,
-  },
+    // Input Area
+    inputContainer: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      backgroundColor: theme.background,
+      borderTopWidth: 1,
+      borderTopColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
+      gap: 12,
+    },
+    textInput: {
+      flex: 1,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+      borderRadius: 20,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      fontSize: 16,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.text,
+      maxHeight: 100,
+    },
+    sendButtonActive: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: theme.tint,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
 
-  // Voice Messages
-  voiceBubble: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  voiceMessageContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    minWidth: 160,
-  },
-  voicePlayButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  voiceWaveform: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 2,
-    height: 20,
-  },
-  waveformBar: {
-    width: 2,
-    borderRadius: 1,
-    minHeight: 4,
-  },
-  voiceDuration: {
-    fontSize: 12,
-    fontFamily: 'Manrope_400Regular',
-  },
+    // Message Status & Info
+    messageInfo: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: 2,
+    },
+    myMessageInfo: {
+      justifyContent: 'flex-end',
+      marginRight: 4,
+    },
+    theirMessageInfo: {
+      justifyContent: 'flex-start',
+      marginLeft: 36,
+    },
+    messageStatus: {
+      marginLeft: 4,
+    },
 
-  // Image Messages
-  imageBubble: {
-    padding: 4,
-    backgroundColor: 'transparent',
-  },
-  imageMessageContainer: {
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  messageImage: {
-    width: 200,
-    height: 150,
-    borderRadius: 12,
-  },
-  imageCaption: {
-    padding: 12,
-    paddingTop: 8,
-    fontSize: 14,
-    lineHeight: 20,
-  },
+    // Voice Messages
+    voiceBubble: {
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+    },
+    voiceMessageContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      minWidth: 160,
+    },
+    voicePlayButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    voiceWaveform: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 2,
+      height: 20,
+    },
+    waveformBar: {
+      width: 2,
+      borderRadius: 1,
+      minHeight: 4,
+    },
+    voiceDuration: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+    },
 
-  // Reply Features
-  replyIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.2)',
-  },
-  replyLine: {
-    width: 3,
-    height: 20,
-    backgroundColor: '#fff',
-    borderRadius: 2,
-    marginRight: 8,
-    opacity: 0.6,
-  },
-  replyText: {
-    flex: 1,
-    fontSize: 12,
-    fontFamily: 'Manrope_400Regular',
-    color: '#fff',
-    opacity: 0.8,
-    fontStyle: 'italic',
-  },
-  replyPreview: {
-    backgroundColor: '#f8fafc',
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  replyPreviewContent: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  replyPreviewText: {
-    flex: 1,
-    fontSize: 14,
-    fontFamily: 'Manrope_400Regular',
-    color: '#6b7280',
-  },
-  cancelReplyButton: {
-    padding: 4,
-  },
-  replyButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f8fafc',
-    marginRight: 8,
-  },
+    // Image Messages
+    imageBubble: {
+      padding: 4,
+      backgroundColor: 'transparent',
+    },
+    imageMessageContainer: {
+      borderRadius: 16,
+      overflow: 'hidden',
+    },
+    messageImage: {
+      width: 200,
+      height: 150,
+      borderRadius: 12,
+    },
+    imageCaption: {
+      padding: 12,
+      paddingTop: 8,
+      fontSize: 14,
+      lineHeight: 20,
+      color: theme.text,
+    },
 
-  // Enhanced Input Area
-  inputLeftActions: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  inputRightActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  inputActionButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#f8fafc',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+    // Reply Features
+    replyIndicator: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 8,
+      paddingBottom: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: withAlpha(Colors.light.background, 0.2),
+    },
+    replyLine: {
+      width: 3,
+      height: 20,
+      backgroundColor: Colors.light.background,
+      borderRadius: 2,
+      marginRight: 8,
+      opacity: 0.6,
+    },
+    replyText: {
+      flex: 1,
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: Colors.light.background,
+      opacity: 0.85,
+      fontStyle: 'italic',
+    },
+    replyPreview: {
+      backgroundColor: theme.backgroundSubtle,
+      borderTopWidth: 1,
+      borderTopColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    replyPreviewContent: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    replyPreviewText: {
+      flex: 1,
+      fontSize: 14,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+    },
+    cancelReplyButton: {
+      padding: 4,
+    },
+    replyButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: theme.backgroundSubtle,
+      marginRight: 8,
+    },
 
-  // Voice Recording
-  voiceButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: Colors.light.tint,
-    justifyContent: 'center',
-    alignItems: 'center',
-    position: 'relative',
-  },
-  voiceButtonRecording: {
-    backgroundColor: '#ef4444',
-  },
-  voiceButtonInner: {
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  recordingIndicator: {
-    position: 'absolute',
-    top: -25,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
-  recordingText: {
-    fontSize: 12,
-    fontFamily: 'Archivo_700Bold',
-    color: '#ef4444',
-    backgroundColor: '#fff',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 4,
-  },
+    // Enhanced Input Area
+    inputLeftActions: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    inputRightActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    inputActionButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: theme.backgroundSubtle,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
 
-  // Image Picker Actions
-  imagePickerActions: {
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderTopColor: '#f3f4f6',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  imagePickerButton: {
-    alignItems: 'center',
-    gap: 4,
-  },
-  imagePickerText: {
-    fontSize: 12,
-    fontFamily: 'Manrope_400Regular',
-    color: Colors.light.tint,
-  },
+    // Voice Recording
+    voiceButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: theme.tint,
+      justifyContent: 'center',
+      alignItems: 'center',
+      position: 'relative',
+    },
+    voiceButtonRecording: {
+      backgroundColor: withAlpha(theme.tint, 0.85),
+    },
+    voiceButtonInner: {
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    recordingIndicator: {
+      position: 'absolute',
+      top: -25,
+      left: 0,
+      right: 0,
+      alignItems: 'center',
+    },
+    recordingText: {
+      fontSize: 12,
+      fontFamily: 'Archivo_700Bold',
+      color: theme.tint,
+      backgroundColor: Colors.light.background,
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+      borderRadius: 10,
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.12,
+      shadowRadius: 4,
+      elevation: 4,
+    },
 
-  // Reconnect toast
-  reconnectToastHost: {
-    position: 'absolute',
-    top: 8,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    zIndex: 20,
-  },
-  reconnectToast: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#111827',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    elevation: 10,
-  },
-  reconnectToastText: {
-    fontSize: 12,
-    fontFamily: 'Manrope_500Medium',
-    color: '#fff',
-  },
-});
+    // Image Picker Actions
+    imagePickerActions: {
+      backgroundColor: theme.background,
+      borderTopWidth: 1,
+      borderTopColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      flexDirection: 'row',
+      justifyContent: 'space-around',
+    },
+    imagePickerButton: {
+      alignItems: 'center',
+      gap: 4,
+    },
+    imagePickerText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.tint,
+    },
+
+    // Reconnect toast
+    reconnectToastHost: {
+      position: 'absolute',
+      top: 8,
+      left: 0,
+      right: 0,
+      alignItems: 'center',
+      zIndex: 20,
+    },
+    reconnectToast: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: withAlpha(Colors.dark.background, isDark ? 0.92 : 0.78),
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 16,
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.2,
+      shadowRadius: 10,
+      elevation: 10,
+    },
+    reconnectToastText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_500Medium',
+      color: Colors.light.background,
+    },
+  });

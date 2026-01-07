@@ -6,6 +6,9 @@ import { useEffect, useRef, useState } from "react";
 import { Animated, Easing, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
+import { Colors } from "@/constants/theme";
+import { useColorScheme } from "@/hooks/use-color-scheme";
+
 import { useAppFonts } from "@/constants/fonts";
 import { AuthProvider } from "@/lib/auth-context";
 
@@ -14,6 +17,8 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function RootLayout() {
   const fontsLoaded = useAppFonts();
+
+  const colorScheme = useColorScheme();
 
   const [showSplash, setShowSplash] = useState(true);
 
@@ -119,7 +124,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AuthProvider>
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
           <Slot />
 
           {showSplash && (
