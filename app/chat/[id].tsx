@@ -1168,6 +1168,22 @@ export default function ConversationScreen() {
     );
   }, [hasMore, loadEarlier, loadingEarlier]);
 
+  const handleGoBack = useCallback(() => {
+    router.replace('/(tabs)/chat');
+  }, []);
+
+  const handleViewProfile = useCallback(() => {
+    if (!conversationId) return;
+    router.push({
+      pathname: '/profile-view',
+      params: { profileId: conversationId },
+    });
+  }, [conversationId]);
+
+  const handleFilterMedia = useCallback(() => {
+    Alert.alert('Filter media', 'Filtering photos and videos in this chat is coming soon.');
+  }, []);
+
   if (!fontsLoaded) {
     return <View style={styles.container} />;
   }
@@ -1238,13 +1254,7 @@ export default function ConversationScreen() {
       <View style={styles.header}>
         <TouchableOpacity 
           style={styles.backButton}
-          onPress={() => {
-            if (router.canGoBack?.()) {
-              router.back();
-            } else {
-              router.replace('/(tabs)/explore');
-            }
-          }}
+          onPress={handleGoBack}
         >
           <MaterialCommunityIcons name="arrow-left" size={24} color={theme.text} />
         </TouchableOpacity>
@@ -1270,10 +1280,18 @@ export default function ConversationScreen() {
             </Text>
           </View>
         </View>
-        
-        <TouchableOpacity style={styles.moreButton}>
-          <MaterialCommunityIcons name="dots-vertical" size={24} color={theme.text} />
-        </TouchableOpacity>
+
+        <View style={styles.headerActions}>
+          <TouchableOpacity style={styles.actionButton} onPress={handleViewProfile}>
+            <MaterialCommunityIcons name="account-outline" size={22} color={theme.text} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.actionButton} onPress={handleFilterMedia}>
+            <MaterialCommunityIcons name="filter-variant" size={22} color={theme.text} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.actionButton}>
+            <MaterialCommunityIcons name="dots-vertical" size={24} color={theme.text} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Messages */}
@@ -1524,7 +1542,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     headerName: {
       fontSize: 16,
-      fontFamily: 'Archivo_700Bold',
+      fontFamily: 'PlayfairDisplay_700Bold',
       color: theme.text,
     },
     headerStatus: {
@@ -1533,14 +1551,19 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.textMuted,
       marginTop: 1,
     },
-    moreButton: {
+    headerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginLeft: 12,
+      gap: 8,
+    },
+    actionButton: {
       width: 40,
       height: 40,
       borderRadius: 20,
       backgroundColor: theme.backgroundSubtle,
       justifyContent: 'center',
       alignItems: 'center',
-      marginLeft: 12,
     },
 
     // Chat Container

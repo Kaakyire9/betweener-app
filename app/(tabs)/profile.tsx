@@ -1159,7 +1159,7 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     fontSize: 24,
-    fontFamily: 'Archivo_700Bold',
+    fontFamily: 'PlayfairDisplay_700Bold',
     color: '#111827',
   },
   headerRight: {
@@ -1278,7 +1278,7 @@ const styles = StyleSheet.create({
   },
   profileName: {
     fontSize: 28,
-    fontFamily: 'Archivo_700Bold',
+    fontFamily: 'PlayfairDisplay_700Bold',
     color: '#111827',
     textAlign: 'center',
     marginBottom: 8,
@@ -1314,7 +1314,7 @@ const styles = StyleSheet.create({
   },
   compatibilityText: {
     fontSize: 16,
-    fontFamily: 'Archivo_700Bold',
+    fontFamily: 'PlayfairDisplay_600SemiBold',
     color: Colors.light.tint,
   },
   
@@ -1363,7 +1363,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 20,
-    fontFamily: 'Archivo_700Bold',
+    fontFamily: 'PlayfairDisplay_600SemiBold',
     color: '#111827',
   },
   

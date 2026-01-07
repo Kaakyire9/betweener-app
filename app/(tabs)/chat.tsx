@@ -588,7 +588,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     headerTitle: {
       fontSize: 28,
-      fontFamily: 'Archivo_700Bold',
+      fontFamily: 'PlayfairDisplay_700Bold',
       color: theme.text,
     },
     headerActions: {
