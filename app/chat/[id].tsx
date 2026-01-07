@@ -222,12 +222,32 @@ const MessageRowItem = memo(
             )}
 
             {item.type === 'text' ? (
-              <Text style={[
-                styles.messageText,
-                isMyMessage ? styles.myMessageText : styles.theirMessageText,
-              ]}>
-                {item.text}
-              </Text>
+              <View style={styles.textWithMeta}>
+                <Text style={[
+                  styles.messageText,
+                  isMyMessage ? styles.myMessageText : styles.theirMessageText,
+                ]}>
+                  {item.text}
+                </Text>
+                <View style={styles.inlineMetaRow} pointerEvents="none">
+                  <Text
+                    style={[
+                      styles.messageMetaText,
+                      isMyMessage ? styles.messageMetaTextMy : styles.messageMetaTextTheir,
+                    ]}
+                  >
+                    {timeLabel}
+                  </Text>
+                  {isMyMessage && (
+                    <MaterialCommunityIcons
+                      name={item.status === 'read' ? 'check-all' : item.status === 'delivered' ? 'check-all' : item.status === 'sent' ? 'check' : 'clock-outline'}
+                      size={12}
+                      color={item.status === 'read' ? theme.secondary : withAlpha(Colors.light.background, 0.8)}
+                      style={styles.inlineMetaIcon}
+                    />
+                  )}
+                </View>
+              </View>
             ) : item.type === 'voice' ? (
               <View style={styles.voiceMessageContainer}>
                 <TouchableOpacity
@@ -270,38 +290,36 @@ const MessageRowItem = memo(
               </View>
             )}
 
+            {item.type !== 'text' && (
+              <View
+                style={[
+                  styles.messageMetaRow,
+                  isMyMessage ? styles.messageMetaRight : styles.messageMetaLeft,
+                ]}
+                pointerEvents="none"
+              >
+                <Text
+                  style={[
+                    styles.messageMetaText,
+                    isMyMessage ? styles.messageMetaTextMy : styles.messageMetaTextTheir,
+                  ]}
+                >
+                  {timeLabel}
+                </Text>
+                {isMyMessage && (
+                  <MaterialCommunityIcons
+                    name={item.status === 'read' ? 'check-all' : item.status === 'delivered' ? 'check-all' : item.status === 'sent' ? 'check' : 'clock-outline'}
+                    size={12}
+                    color={item.status === 'read' ? theme.secondary : withAlpha(Colors.light.background, 0.8)}
+                    style={styles.messageMetaIcon}
+                  />
+                )}
+              </View>
+            )}
+
             {reactionNodes}
           </View>
         </Pressable>
-
-        <View style={[
-          styles.messageInfo,
-          isMyMessage ? styles.myMessageInfo : styles.theirMessageInfo,
-        ]}>
-          <Text style={[
-            styles.messageTime,
-            isMyMessage ? styles.myMessageTime : styles.theirMessageTime,
-          ]}>
-            {timeLabel}
-          </Text>
-
-          {isMyMessage && (
-            <View style={styles.messageStatus}>
-              {item.status === 'sending' && (
-                <MaterialCommunityIcons name="clock-outline" size={12} color={theme.textMuted} />
-              )}
-              {item.status === 'sent' && (
-                <MaterialCommunityIcons name="check" size={12} color={theme.textMuted} />
-              )}
-              {item.status === 'delivered' && (
-                <MaterialCommunityIcons name="check-all" size={12} color={theme.textMuted} />
-              )}
-              {item.status === 'read' && (
-                <MaterialCommunityIcons name="check-all" size={12} color={theme.secondary} />
-              )}
-            </View>
-          )}
-        </View>
 
         {isReactionOpen && (
           <View style={[
@@ -791,9 +809,9 @@ export default function ConversationScreen() {
 
   const formatTime = useCallback((date: Date) => {
     return date.toLocaleTimeString('en-US', { 
-      hour: 'numeric', 
+      hour: '2-digit', 
       minute: '2-digit',
-      hour12: true 
+      hour12: false 
     });
   }, []);
 
@@ -2042,6 +2060,19 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderRadius: 20,
       position: 'relative',
     },
+    textWithMeta: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'flex-end',
+    },
+    inlineMetaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginLeft: 6,
+    },
+    inlineMetaIcon: {
+      marginLeft: 2,
+    },
     myMessageBubble: {
       backgroundColor: theme.tint,
       borderBottomRightRadius: 6,
@@ -2075,6 +2106,31 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     theirMessageText: {
       color: theme.text,
+    },
+    messageMetaRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      marginTop: 6,
+    },
+    messageMetaRight: {
+      alignSelf: 'flex-end',
+    },
+    messageMetaLeft: {
+      alignSelf: 'flex-end',
+    },
+    messageMetaText: {
+      fontSize: 11,
+      fontFamily: 'Manrope_400Regular',
+    },
+    messageMetaTextMy: {
+      color: withAlpha(Colors.light.background, 0.8),
+    },
+    messageMetaTextTheir: {
+      color: theme.textMuted,
+    },
+    messageMetaIcon: {
+      marginLeft: 2,
     },
     messageTime: {
       fontSize: 11,
