@@ -1,21 +1,23 @@
 
+import MatchModal from '@/components/MatchModal';
+import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { useAppFonts } from '@/constants/fonts';
 import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
 import { Match } from '@/types/match';
-import MatchModal from '@/components/MatchModal';
-import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Haptics from 'expo-haptics';
 import { BlurView } from 'expo-blur';
+import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
+  ColorValue,
   DeviceEventEmitter,
   Dimensions,
   FlatList,
@@ -28,9 +30,7 @@ import {
   TouchableOpacity,
   View,
   ViewStyle,
-  ColorValue,
 } from 'react-native';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const HERO_HEIGHT = screenHeight * 0.76;

@@ -1,12 +1,12 @@
 // components/ExploreCard.tsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
 import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import type { Match } from "@/types/match";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Animated, Image, StyleSheet, Text, TouchableOpacity, View, AccessibilityInfo } from "react-native";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AccessibilityInfo, Animated, Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 // guarded dynamic require for Reanimated to keep compatibility with Expo Go
 let ReanimatedModule: any = null;

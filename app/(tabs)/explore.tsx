@@ -19,11 +19,11 @@ import * as Haptics from "expo-haptics";
 
 import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe, { isLinearGradientAvailable } from "@/components/NativeWrappers/LinearGradientSafe";
+import { useFocusEffect } from "@react-navigation/native";
 import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Animated, DeviceEventEmitter, Easing, FlatList, Image, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { useFocusEffect } from "@react-navigation/native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 const DISTANCE_UNIT_KEY = 'distance_unit';
