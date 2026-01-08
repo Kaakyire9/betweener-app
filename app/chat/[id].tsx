@@ -5,7 +5,7 @@ import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
-import { Audio } from "expo-av";
+import { Audio, Video } from "expo-av";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
 import * as Haptics from 'expo-haptics';
@@ -33,6 +33,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { PinchGestureHandler, State } from "react-native-gesture-handler";
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const ATTACHMENT_SHEET_HEIGHT = 240;
@@ -44,7 +45,7 @@ type MessageType = {
   text: string;
   senderId: string;
   timestamp: Date;
-  type: 'text' | 'voice' | 'image' | 'mood_sticker';
+  type: 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document';
   reactions: { userId: string; emoji: string; }[];
   status?: 'sending' | 'sent' | 'delivered' | 'read';
   readAt?: Date;
@@ -60,6 +61,13 @@ type MessageType = {
     audioPath?: string;
   };
   imageUrl?: string;
+  videoUrl?: string;
+  document?: {
+    name: string;
+    url: string;
+    sizeLabel?: string | null;
+    typeLabel?: string | null;
+  };
   replyTo?: MessageType;
 };
 
@@ -103,6 +111,8 @@ const MOOD_STICKERS = [
 ];
 
 const DEFAULT_VOICE_WAVEFORM = [0.2, 0.5, 0.35, 0.6, 0.28, 0.72, 0.44, 0.68, 0.3, 0.55, 0.4, 0.65];
+const VIDEO_TEXT_PREFIX = '\u{1F3A5} Video';
+const DOCUMENT_TEXT_PREFIX = '\u{1F4CE}';
 
 const PAGE_SIZE = 60;
 
@@ -116,6 +126,7 @@ type MessageRowItemProps = {
   timeLabel: string;
   userAvatar: string;
   imageSize?: { width: number; height: number };
+  videoSize?: { width: number; height: number };
   theme: typeof Colors.light;
   isDark: boolean;
   styles: ReturnType<typeof createStyles>;
@@ -126,6 +137,8 @@ type MessageRowItemProps = {
   onAddReaction: (messageId: string, emoji: string) => void;
   onCloseReactions: () => void;
   onViewImage: (url: string) => void;
+  onViewVideo: (url: string) => void;
+  onVideoSize: (url: string, width: number, height: number) => void;
 };
 
 const withAlpha = (hex: string, alpha: number) => {
@@ -135,6 +148,33 @@ const withAlpha = (hex: string, alpha: number) => {
   const g = (bigint >> 8) & 255;
   const b = bigint & 255;
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+};
+
+const formatFileSize = (bytes?: number | null) => {
+  if (bytes == null || Number.isNaN(bytes)) return null;
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  const gb = mb / 1024;
+  return `${gb.toFixed(1)} GB`;
+};
+
+const getFileTypeLabel = (mimeType?: string | null, fileName?: string | null) => {
+  const safeMime = mimeType?.toLowerCase() ?? '';
+  const ext = fileName?.split('.').pop()?.toLowerCase() ?? '';
+  if (safeMime.includes('pdf') || ext === 'pdf') return 'PDF';
+  if (safeMime.includes('msword') || ext === 'doc') return 'DOC';
+  if (safeMime.includes('wordprocessingml') || ext === 'docx') return 'DOCX';
+  if (safeMime.includes('presentation') || ext === 'ppt' || ext === 'pptx') return 'PPT';
+  if (safeMime.includes('spreadsheet') || ext === 'xls' || ext === 'xlsx') return 'XLS';
+  if (safeMime.includes('zip') || ext === 'zip') return 'ZIP';
+  if (safeMime.includes('plain') || ext === 'txt' || ext === 'text') return 'TXT';
+  if (safeMime.startsWith('image/') || ['jpg', 'jpeg', 'png', 'webp', 'heic'].includes(ext)) return 'Image';
+  if (safeMime.startsWith('video/') || ['mp4', 'mov'].includes(ext)) return 'Video';
+  if (ext) return ext.toUpperCase();
+  return 'File';
 };
 
 const MessageRowItem = memo(
@@ -148,6 +188,7 @@ const MessageRowItem = memo(
     timeLabel,
     userAvatar,
     imageSize,
+    videoSize,
     theme,
     isDark,
     styles,
@@ -158,6 +199,8 @@ const MessageRowItem = memo(
     onAddReaction,
     onCloseReactions,
     onViewImage,
+    onViewVideo,
+    onVideoSize,
   }: MessageRowItemProps) => {
     const waveformBars = useMemo(() => {
       if (item.type !== 'voice' || !item.voiceMessage?.waveform) return null;
@@ -192,6 +235,12 @@ const MessageRowItem = memo(
       );
     }, [item.reactions, isFocused, isReactionOpen]);
 
+    const documentMeta = useMemo(() => {
+      if (item.type !== 'document') return null;
+      const parts = [item.document?.sizeLabel, item.document?.typeLabel].filter(Boolean);
+      return parts.length ? parts.join(' | ') : null;
+    }, [item.type, item.document?.sizeLabel, item.document?.typeLabel]);
+
     return (
       <View style={styles.messageContainer}>
         <Pressable
@@ -203,6 +252,12 @@ const MessageRowItem = memo(
             }
             if (item.type === 'image' && item.imageUrl) {
               onViewImage(item.imageUrl);
+            }
+            if (item.type === 'video' && item.videoUrl) {
+              onViewVideo(item.videoUrl);
+            }
+            if (item.type === 'document' && item.document?.url) {
+              Linking.openURL(item.document.url);
             }
           }}
           style={[
@@ -223,6 +278,8 @@ const MessageRowItem = memo(
             item.type === 'mood_sticker' && styles.stickerBubble,
             item.type === 'voice' && styles.voiceBubble,
             item.type === 'image' && styles.imageBubble,
+            item.type === 'video' && styles.videoBubble,
+            item.type === 'document' && styles.documentBubble,
           ]}>
             {item.replyTo && (
               <View style={styles.replyIndicator}>
@@ -230,7 +287,9 @@ const MessageRowItem = memo(
                 <Text style={styles.replyText} numberOfLines={1}>
                   {item.replyTo.type === 'text' ? item.replyTo.text :
                    item.replyTo.type === 'voice' ? 'Voice message' :
-                   item.replyTo.type === 'image' ? 'Photo' : 'Sticker'}
+                   item.replyTo.type === 'image' ? 'Photo' :
+                   item.replyTo.type === 'video' ? 'Video' :
+                   item.replyTo.type === 'document' ? 'Document' : 'Sticker'}
                 </Text>
               </View>
             )}
@@ -283,32 +342,104 @@ const MessageRowItem = memo(
                   {Math.floor(item.voiceMessage?.duration || 0)}s
                 </Text>
               </View>
-            ) : item.type === 'image' ? (
-              <View style={styles.imageMessageContainer}>
-                <Image
-                  source={{ uri: item.imageUrl }}
-                  style={[
-                    styles.messageImage,
-                    imageSize ? { width: imageSize.width, height: imageSize.height } : null,
-                  ]}
-                />
-                {item.text && (
-                  <Text style={[
-                    styles.imageCaption,
-                    isMyMessage ? styles.myMessageText : styles.theirMessageText,
-                  ]}>
-                    {item.text}
+              ) : item.type === 'image' ? (
+                <View style={styles.imageMessageContainer}>
+                  <Image
+                    source={{ uri: item.imageUrl }}
+                    style={[
+                      styles.messageImage,
+                      imageSize ? { width: imageSize.width, height: imageSize.height } : null,
+                    ]}
+                  />
+                  {item.text && (
+                    <Text style={[
+                      styles.imageCaption,
+                      isMyMessage ? styles.myMessageText : styles.theirMessageText,
+                    ]}>
+                      {item.text}
+                    </Text>
+                  )}
+                </View>
+              ) : item.type === 'video' ? (
+                <View style={styles.videoMessageContainer}>
+                  {item.videoUrl && (
+                    <View style={styles.videoPreviewWrap}>
+                      <Video
+                        source={{ uri: item.videoUrl }}
+                        style={[
+                          styles.messageVideo,
+                          videoSize ? { width: videoSize.width, height: videoSize.height } : null,
+                        ]}
+                        resizeMode="cover"
+                        shouldPlay={false}
+                        isMuted
+                        useNativeControls={false}
+                        onReadyForDisplay={(event: any) => {
+                          if (videoSize || !item.videoUrl) return;
+                          const naturalSize = event?.naturalSize || (event as any)?.status?.naturalSize;
+                          if (naturalSize?.width && naturalSize?.height) {
+                            let { width, height, orientation } = naturalSize;
+                            if (orientation === 'portrait' && width > height) {
+                              [width, height] = [height, width];
+                            }
+                            if (orientation === 'landscape' && height > width) {
+                              [width, height] = [height, width];
+                            }
+                            onVideoSize(item.videoUrl, width, height);
+                          }
+                        }}
+                      />
+                      <View style={styles.videoOverlay}>
+                        <MaterialCommunityIcons name="play-circle" size={34} color={Colors.light.background} />
+                      </View>
+                    </View>
+                  )}
+                  {item.text && (
+                    <Text style={[
+                      styles.imageCaption,
+                      isMyMessage ? styles.myMessageText : styles.theirMessageText,
+                    ]}>
+                      {item.text}
+                    </Text>
+                  )}
+                </View>
+              ) : item.type === 'document' ? (
+                <View style={styles.documentMessageContainer}>
+                  <View
+                    style={[
+                      styles.documentIcon,
+                      { backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.2) : withAlpha(theme.tint, 0.15) },
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name="file-document-outline"
+                      size={18}
+                      color={isMyMessage ? Colors.light.background : theme.tint}
+                    />
+                  </View>
+                  <View style={styles.documentInfo}>
+                    <Text
+                      style={[
+                        styles.documentName,
+                        { color: isMyMessage ? Colors.light.background : theme.text },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {item.document?.name || 'Document'}
+                    </Text>
+                    <Text style={[styles.documentHint, { color: isMyMessage ? withAlpha(Colors.light.background, 0.7) : theme.textMuted }]}>
+                      {documentMeta || 'Tap to open'}
+                    </Text>
+                  </View>
+                </View>
+              ) : item.type === 'mood_sticker' ? (
+                <View style={[styles.moodStickerContainer, { backgroundColor: withAlpha(item.sticker?.color || theme.tint, 0.12) }]}>
+                  <Text style={styles.moodStickerEmoji}>{item.sticker?.emoji}</Text>
+                  <Text style={[styles.moodStickerName, { color: item.sticker?.color || theme.tint }]}>
+                    {item.sticker?.name}
                   </Text>
-                )}
-              </View>
-            ) : (
-              <View style={[styles.moodStickerContainer, { backgroundColor: withAlpha(item.sticker?.color || theme.tint, 0.12) }]}>
-                <Text style={styles.moodStickerEmoji}>{item.sticker?.emoji}</Text>
-                <Text style={[styles.moodStickerName, { color: item.sticker?.color || theme.tint }]}>
-                  {item.sticker?.name}
-                </Text>
-              </View>
-            )}
+                </View>
+              ) : null}
 
             {item.type !== 'text' && (
               <View
@@ -393,7 +524,9 @@ const MessageRowItem = memo(
     prev.timeLabel === next.timeLabel &&
     prev.userAvatar === next.userAvatar &&
     prev.imageSize?.width === next.imageSize?.width &&
-    prev.imageSize?.height === next.imageSize?.height
+    prev.imageSize?.height === next.imageSize?.height &&
+    prev.videoSize?.width === next.videoSize?.width &&
+    prev.videoSize?.height === next.videoSize?.height
 );
 
 export default function ConversationScreen() {
@@ -436,10 +569,19 @@ export default function ConversationScreen() {
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const [imageViewerUrl, setImageViewerUrl] = useState<string | null>(null);
+  const [videoViewerUrl, setVideoViewerUrl] = useState<string | null>(null);
   const [imageSizes, setImageSizes] = useState<Record<string, { width: number; height: number }>>({});
+  const [videoSizes, setVideoSizes] = useState<Record<string, { width: number; height: number }>>({});
   
   const messagesRef = useRef<MessageType[]>([]);
   const flatListRef = useRef<FlatList>(null);
+  const imageScaleBase = useRef(new Animated.Value(1)).current;
+  const imagePinchScale = useRef(new Animated.Value(1)).current;
+  const imageScaleRef = useRef(1);
+  const imageScale = useMemo(
+    () => Animated.multiply(imageScaleBase, imagePinchScale),
+    [imagePinchScale, imageScaleBase]
+  );
   const typingAnimation = useRef(new Animated.Value(0)).current;
   const recordingAnimation = useRef(new Animated.Value(0)).current;
   const recordingRef = useRef<Audio.Recording | null>(null);
@@ -509,24 +651,86 @@ export default function ConversationScreen() {
       }
 
       let imageUrl: string | undefined;
+      let videoUrl: string | undefined;
+      let documentName: string | undefined;
+      let documentUrl: string | undefined;
+      let documentSizeLabel: string | null | undefined;
+      let documentTypeLabel: string | null | undefined;
       let messageText = row.text ?? '';
+
+      let resolvedType = messageType;
       if (messageType === 'image') {
         const [firstLine, ...rest] = messageText.split('\n');
         imageUrl = firstLine || undefined;
         messageText = rest.join('\n');
+      } else if (messageType === 'video') {
+        const [firstLine, ...rest] = messageText.split('\n');
+        videoUrl = firstLine || undefined;
+        messageText = rest.join('\n');
+      } else if (messageType === 'text' && messageText.startsWith(`${VIDEO_TEXT_PREFIX}\n`)) {
+        const [label, url, ...rest] = messageText.split('\n');
+        if (url) {
+          resolvedType = 'video';
+          videoUrl = url;
+          messageText = rest.join('\n');
+        } else {
+          messageText = label;
+        }
+      } else if (messageType === 'text' && messageText.startsWith('Video\n')) {
+        const [label, url, ...rest] = messageText.split('\n');
+        if (url) {
+          resolvedType = 'video';
+          videoUrl = url;
+          messageText = rest.join('\n');
+        } else {
+          messageText = label;
+        }
+      } else if (messageType === 'text' && (messageText.startsWith(DOCUMENT_TEXT_PREFIX) || messageText.startsWith('dY\"Z'))) {
+        const [label, url, ...rest] = messageText.split('\n');
+        const prefixPattern = messageText.startsWith('dY\"Z')
+          ? /^dY"Z\s*/
+          : new RegExp(`^${DOCUMENT_TEXT_PREFIX}\\s*`);
+        const cleanedLabel = label.replace(prefixPattern, '').trim();
+        const labelParts = cleanedLabel.split(' | ').map((part) => part.trim()).filter(Boolean);
+        const [namePart, sizePart, typePart] = labelParts;
+        if (url) {
+          resolvedType = 'document';
+          documentUrl = url;
+          documentName = namePart || 'Document';
+          documentSizeLabel = sizePart ?? null;
+          documentTypeLabel = typePart ?? null;
+          if (!documentTypeLabel) {
+            documentTypeLabel = getFileTypeLabel(null, documentName ?? documentUrl ?? null);
+          }
+          messageText = rest.join('\n');
+        } else {
+          messageText = label;
+        }
       }
+
+
 
       return {
         id: row.id,
         text: messageText,
         senderId: row.sender_id,
         timestamp: new Date(row.created_at),
-        type: messageType,
+        type: resolvedType,
         reactions: [],
         status,
         imageUrl,
+        videoUrl,
+        document:
+          resolvedType === 'document' && documentUrl
+            ? {
+                name: documentName || 'Document',
+                url: documentUrl,
+                sizeLabel: documentSizeLabel ?? null,
+                typeLabel: documentTypeLabel ?? null,
+              }
+            : undefined,
         voiceMessage:
-          messageType === 'voice'
+          resolvedType === 'voice'
             ? {
                 duration: Number(row.audio_duration ?? 0),
                 waveform,
@@ -641,6 +845,47 @@ export default function ConversationScreen() {
 
     if (error || !data) {
       console.log('[chat] send image error', error);
+      setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
+    } else {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
+        )
+      );
+    }
+  }, [conversationId, mapRowToMessage, user?.id]);
+
+  const sendVideoAttachment = useCallback(async (videoUrl: string) => {
+    if (!user?.id || !conversationId) return;
+    const tempId = `temp-video-${Date.now()}`;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: tempId,
+        text: '',
+        senderId: user.id,
+        timestamp: new Date(),
+        type: 'video',
+        reactions: [],
+        status: 'sending',
+        videoUrl,
+      },
+    ]);
+
+    const { data, error } = await supabase
+      .from('messages')
+      .insert({
+        text: videoUrl,
+        sender_id: user.id,
+        receiver_id: conversationId,
+        is_read: false,
+        message_type: 'video',
+      })
+      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform')
+      .single();
+
+    if (error || !data) {
+      console.log('[chat] send video error', error);
       setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
     } else {
       setMessages((prev) =>
@@ -1470,12 +1715,12 @@ export default function ConversationScreen() {
       if (asset.type === 'image') {
         await sendImageAttachment(publicUrl);
       } else {
-        await sendAttachmentText(`🎥 Video\n${publicUrl}`);
+        await sendVideoAttachment(publicUrl);
       }
     } catch (error) {
       Alert.alert('Attachment', 'Unable to upload this file.');
     }
-  }, [closeAttachmentSheet, sendAttachmentText, sendImageAttachment, uploadChatMedia]);
+  }, [closeAttachmentSheet, sendImageAttachment, sendVideoAttachment, uploadChatMedia]);
 
   const handleLibraryPress = useCallback(async () => {
     const libraryStatus = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -1498,12 +1743,12 @@ export default function ConversationScreen() {
       if (asset.type === 'image') {
         await sendImageAttachment(publicUrl);
       } else {
-        await sendAttachmentText(`🎥 Video\n${publicUrl}`);
+        await sendVideoAttachment(publicUrl);
       }
     } catch (error) {
       Alert.alert('Attachment', 'Unable to upload this file.');
     }
-  }, [closeAttachmentSheet, sendAttachmentText, sendImageAttachment, uploadChatMedia]);
+  }, [closeAttachmentSheet, sendImageAttachment, sendVideoAttachment, uploadChatMedia]);
 
   const handleDocumentPress = useCallback(async () => {
     const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
@@ -1515,7 +1760,10 @@ export default function ConversationScreen() {
       const fileName = asset.name ?? asset.uri.split('/').pop() ?? `file-${Date.now()}`;
       const contentType = asset.mimeType ?? 'application/octet-stream';
       const publicUrl = await uploadChatMedia({ uri: asset.uri, fileName, contentType });
-      await sendAttachmentText(`📎 ${fileName}\n${publicUrl}`);
+      const sizeLabel = formatFileSize(asset.size);
+      const typeLabel = getFileTypeLabel(contentType, fileName);
+      const labelParts = [fileName, sizeLabel, typeLabel].filter(Boolean);
+      await sendAttachmentText(`${DOCUMENT_TEXT_PREFIX} ${labelParts.join(' | ')}\n${publicUrl}`);
     } catch (error) {
       Alert.alert('Attachment', 'Unable to upload this file.');
     }
@@ -1744,6 +1992,19 @@ export default function ConversationScreen() {
     });
   }, [imageSizes, messages]);
 
+  const handleVideoSize = useCallback((url: string, width: number, height: number) => {
+    if (!url || !width || !height) return;
+    const maxWidth = Math.min(screenWidth * 0.72, 340);
+    const minHeight = 180;
+    const maxHeight = 420;
+    const ratio = height / width;
+    const scaledHeight = Math.round(maxWidth * ratio);
+    const clampedHeight = Math.max(minHeight, Math.min(maxHeight, scaledHeight));
+    setVideoSizes((prev) =>
+      prev[url] ? prev : { ...prev, [url]: { width: maxWidth, height: clampedHeight } }
+    );
+  }, []);
+
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: Array<{ item: MessageType }> }) => {
       viewableItems.forEach(({ item }) => {
@@ -1765,6 +2026,7 @@ export default function ConversationScreen() {
       const isFocused = focusedMessageId === item.id;
       const timeLabel = formatTime(item.timestamp);
       const imageSize = item.type === 'image' && item.imageUrl ? imageSizes[item.imageUrl] : undefined;
+      const videoSize = item.type === 'video' && item.videoUrl ? videoSizes[item.videoUrl] : undefined;
 
       return (
         <MessageRowItem
@@ -1777,6 +2039,7 @@ export default function ConversationScreen() {
           timeLabel={timeLabel}
           userAvatar={userAvatar}
           imageSize={imageSize}
+          videoSize={videoSize}
           theme={theme}
           isDark={isDark}
           styles={styles}
@@ -1796,6 +2059,8 @@ export default function ConversationScreen() {
           onAddReaction={addReaction}
           onCloseReactions={() => setShowReactions(null)}
           onViewImage={setImageViewerUrl}
+          onViewVideo={setVideoViewerUrl}
+          onVideoSize={handleVideoSize}
         />
       );
     },
@@ -1808,17 +2073,56 @@ export default function ConversationScreen() {
       theme,
       isDark,
       imageSizes,
+      videoSizes,
       handleLongPress,
       toggleVoicePlayback,
       replyToMessage,
       addReaction,
       formatTime,
+      handleVideoSize,
     ]
   );
 
+  const resetImageScale = useCallback(() => {
+    imageScaleRef.current = 1;
+    imageScaleBase.setValue(1);
+    imagePinchScale.setValue(1);
+  }, [imagePinchScale, imageScaleBase]);
+
+  const onImagePinchEvent = useMemo(
+    () =>
+      Animated.event([{ nativeEvent: { scale: imagePinchScale } }], {
+        useNativeDriver: true,
+      }),
+    [imagePinchScale]
+  );
+
+  const onImagePinchStateChange = useCallback(
+    (event: any) => {
+      if (event.nativeEvent.oldState === State.ACTIVE) {
+        const nextScale = Math.max(1, Math.min(imageScaleRef.current * event.nativeEvent.scale, 3));
+        imageScaleRef.current = nextScale;
+        imageScaleBase.setValue(nextScale);
+        imagePinchScale.setValue(1);
+      }
+    },
+    [imagePinchScale, imageScaleBase]
+  );
+
   const closeImageViewer = useCallback(() => {
+    resetImageScale();
     setImageViewerUrl(null);
+  }, [resetImageScale]);
+
+  const closeVideoViewer = useCallback(() => {
+    setVideoViewerUrl(null);
   }, []);
+
+  useEffect(() => {
+    if (imageViewerUrl) {
+      resetImageScale();
+    }
+  }, [imageViewerUrl, resetImageScale]);
 
   useEffect(() => {
     return () => {
@@ -1998,15 +2302,51 @@ export default function ConversationScreen() {
             onPress={closeImageViewer}
           />
           {imageViewerUrl && (
-            <Image
-              source={{ uri: imageViewerUrl }}
-              style={styles.imageViewerImage}
-              resizeMode="contain"
-            />
+            <PinchGestureHandler
+              onGestureEvent={onImagePinchEvent}
+              onHandlerStateChange={onImagePinchStateChange}
+            >
+              <Animated.Image
+                source={{ uri: imageViewerUrl }}
+                style={[
+                  styles.imageViewerImage,
+                  { transform: [{ scale: imageScale }] },
+                ]}
+                resizeMode="contain"
+              />
+            </PinchGestureHandler>
           )}
           <TouchableOpacity
             style={styles.imageViewerClose}
             onPress={closeImageViewer}
+          >
+            <MaterialCommunityIcons name="close" size={20} color={Colors.light.background} />
+          </TouchableOpacity>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        visible={Boolean(videoViewerUrl)}
+        onRequestClose={closeVideoViewer}
+      >
+        <View style={styles.imageViewerBackdrop}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={closeVideoViewer}
+          />
+          {videoViewerUrl && (
+            <Video
+              source={{ uri: videoViewerUrl }}
+              style={styles.videoViewer}
+              resizeMode="contain"
+              useNativeControls
+              shouldPlay
+            />
+          )}
+          <TouchableOpacity
+            style={styles.imageViewerClose}
+            onPress={closeVideoViewer}
           >
             <MaterialCommunityIcons name="close" size={20} color={Colors.light.background} />
           </TouchableOpacity>
@@ -2863,6 +3203,62 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderRadius: 14,
       backgroundColor: theme.backgroundSubtle,
     },
+    videoBubble: {
+      padding: 4,
+      backgroundColor: 'transparent',
+    },
+    videoMessageContainer: {
+      borderRadius: 16,
+      overflow: 'hidden',
+    },
+    videoPreviewWrap: {
+      position: 'relative',
+      borderRadius: 14,
+      overflow: 'hidden',
+    },
+    messageVideo: {
+      width: Math.min(screenWidth * 0.72, 340),
+      height: Math.min(screenWidth * 0.62, 300),
+      borderRadius: 14,
+      backgroundColor: theme.backgroundSubtle,
+    },
+    videoOverlay: {
+      position: 'absolute',
+      inset: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(0,0,0,0.18)',
+    },
+    documentBubble: {
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+    },
+    documentMessageContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      minWidth: 180,
+      maxWidth: screenWidth * 0.6,
+    },
+    documentIcon: {
+      width: 36,
+      height: 36,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    documentInfo: {
+      flex: 1,
+      gap: 2,
+    },
+    documentName: {
+      fontSize: 14,
+      fontFamily: 'Manrope_600SemiBold',
+    },
+    documentHint: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+    },
     imageCaption: {
       padding: 12,
       paddingTop: 8,
@@ -2877,6 +3273,10 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       justifyContent: 'center',
     },
     imageViewerImage: {
+      width: screenWidth,
+      height: screenHeight * 0.8,
+    },
+    videoViewer: {
       width: screenWidth,
       height: screenHeight * 0.8,
     },
@@ -3133,3 +3533,4 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: Colors.light.background,
     },
   });
+
