@@ -30,6 +30,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const { width: screenWidth } = Dimensions.get('window');
+const ATTACHMENT_SHEET_HEIGHT = 240;
 
 // Message type definition
 type MessageType = {
@@ -318,6 +319,21 @@ const MessageRowItem = memo(
             )}
 
             {reactionNodes}
+
+            <View
+              pointerEvents="none"
+              style={[
+                styles.bubbleTail,
+                isMyMessage ? styles.bubbleTailRight : styles.bubbleTailLeft,
+                {
+                  backgroundColor: isMyMessage ? theme.tint : theme.backgroundSubtle,
+                  borderWidth: isMyMessage ? 0.5 : 1,
+                  borderColor: isMyMessage
+                    ? withAlpha(Colors.light.background, 0.15)
+                    : withAlpha(theme.text, isDark ? 0.14 : 0.08),
+                },
+              ]}
+            />
           </View>
         </Pressable>
 
@@ -390,6 +406,7 @@ export default function ConversationScreen() {
   const [isUploadingVoice, setIsUploadingVoice] = useState(false);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [showImagePicker, setShowImagePicker] = useState(false);
+  const [inputBarHeight, setInputBarHeight] = useState(0);
   const [replyingTo, setReplyingTo] = useState<MessageType | null>(null);
   const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -406,7 +423,9 @@ export default function ConversationScreen() {
   const recordingPulseRef = useRef<Animated.CompositeAnimation | null>(null);
   const voiceButtonScale = useRef(new Animated.Value(1)).current;
   const voiceSoundRef = useRef<Audio.Sound | null>(null);
+  const inputRef = useRef<TextInput>(null);
   const reconnectToastOpacity = useRef(new Animated.Value(0)).current;
+  const attachmentAnim = useRef(new Animated.Value(0)).current;
   const reconnectPendingRef = useRef(false);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presenceChannelRef = useRef<any>(null);
@@ -504,6 +523,37 @@ export default function ConversationScreen() {
       }).start();
     }, 1800);
   }, [reconnectToastOpacity]);
+
+  const openAttachmentSheet = useCallback(() => {
+    Keyboard.dismiss();
+    setShowImagePicker(true);
+    attachmentAnim.setValue(0);
+    requestAnimationFrame(() => {
+      Animated.timing(attachmentAnim, {
+        toValue: 1,
+        duration: 220,
+        useNativeDriver: true,
+      }).start();
+    });
+  }, [attachmentAnim]);
+
+  const closeAttachmentSheet = useCallback(() => {
+    Animated.timing(attachmentAnim, {
+      toValue: 0,
+      duration: 180,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) {
+        setShowImagePicker(false);
+      }
+    });
+  }, [attachmentAnim]);
+
+  const handleInputFocus = useCallback(() => {
+    if (showImagePicker) {
+      closeAttachmentSheet();
+    }
+  }, [closeAttachmentSheet, showImagePicker]);
 
   const fetchMessages = useCallback(async () => {
     if (!user?.id || !conversationId) return;
@@ -1667,7 +1717,7 @@ export default function ConversationScreen() {
       <KeyboardAvoidingView 
         style={styles.chatContainer}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+        keyboardVerticalOffset={0}
       >
         {showJumpToBottom && (
           <Pressable
@@ -1746,14 +1796,25 @@ export default function ConversationScreen() {
         )}
 
         {/* Enhanced Input Area */}
-        <View style={styles.inputContainer}>
+        <View style={[styles.inputContainer, showImagePicker && styles.inputContainerRaised]}>
           {/* Left Actions */}
           <View style={styles.inputLeftActions}>
             <TouchableOpacity 
               style={styles.inputActionButton}
-              onPress={() => Alert.alert('Coming soon', 'Photo messages are not available yet.')}
+              onPress={() => {
+                if (showImagePicker) {
+                  closeAttachmentSheet();
+                  requestAnimationFrame(() => inputRef.current?.focus());
+                } else {
+                  openAttachmentSheet();
+                }
+              }}
             >
-              <MaterialCommunityIcons name="camera" size={22} color={theme.textMuted} />
+              <MaterialCommunityIcons
+                name={showImagePicker ? "keyboard-outline" : "plus"}
+                size={22}
+                color={theme.textMuted}
+              />
             </TouchableOpacity>
             
             <TouchableOpacity 
@@ -1770,9 +1831,11 @@ export default function ConversationScreen() {
           
           {/* Text Input */}
           <TextInput
+            ref={inputRef}
             style={styles.textInput}
             value={inputText}
             onChangeText={handleInputChange}
+            onFocus={handleInputFocus}
             placeholder={isRecording ? "Recording voice..." : replyingTo ? "Reply..." : "Type a message..."}
             placeholderTextColor={withAlpha(theme.textMuted, 0.7)}
             multiline
@@ -1868,30 +1931,79 @@ export default function ConversationScreen() {
 
         {/* Image Picker Actions */}
         {showImagePicker && (
-          <View style={styles.imagePickerActions}>
-            <TouchableOpacity style={styles.imagePickerButton} onPress={pickImage}>
-              <MaterialCommunityIcons name="image" size={24} color={theme.tint} />
-              <Text style={styles.imagePickerText}>Gallery</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={styles.imagePickerButton} 
-              onPress={() => {
-                Alert.alert('Camera', 'Camera feature coming soon!');
-              }}
-            >
-              <MaterialCommunityIcons name="camera" size={24} color={theme.tint} />
-              <Text style={styles.imagePickerText}>Camera</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={styles.imagePickerButton}
-              onPress={() => setShowImagePicker(false)}
-            >
-              <MaterialCommunityIcons name="close" size={24} color={theme.tint} />
-              <Text style={[styles.imagePickerText, { color: theme.tint }]}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
+          <Animated.View
+            pointerEvents={showImagePicker ? "auto" : "none"}
+            style={[
+              styles.attachmentSheet,
+              {
+                opacity: attachmentAnim,
+                transform: [
+                  {
+                    translateY: attachmentAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [ATTACHMENT_SHEET_HEIGHT, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <View style={styles.imagePickerHeader}>
+              <Text style={styles.imagePickerTitle}>Share</Text>
+              <TouchableOpacity
+                style={styles.imagePickerClose}
+                onPress={closeAttachmentSheet}
+              >
+                <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.imagePickerGrid}>
+              <TouchableOpacity
+                style={styles.imagePickerOption}
+                onPress={() => Alert.alert('Camera', 'Camera (photo/video) coming soon.')}
+              >
+                <View style={styles.imagePickerIcon}>
+                  <MaterialCommunityIcons name="camera-outline" size={22} color={theme.tint} />
+                </View>
+                <Text style={styles.imagePickerLabel}>Camera</Text>
+                <Text style={styles.imagePickerSubLabel}>Photo & video</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.imagePickerOption}
+                onPress={() => Alert.alert('Photos', 'Select existing photos/videos.')}
+              >
+                <View style={styles.imagePickerIcon}>
+                  <MaterialCommunityIcons name="image-multiple-outline" size={22} color={theme.tint} />
+                </View>
+                <Text style={styles.imagePickerLabel}>Photos</Text>
+                <Text style={styles.imagePickerSubLabel}>Library</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.imagePickerOption}
+                onPress={() => Alert.alert('Documents', 'Attach files, photos, or videos.')}
+              >
+                <View style={styles.imagePickerIcon}>
+                  <MaterialCommunityIcons name="file-document-outline" size={22} color={theme.tint} />
+                </View>
+                <Text style={styles.imagePickerLabel}>Documents</Text>
+                <Text style={styles.imagePickerSubLabel}>Files & media</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.imagePickerOption}
+                onPress={() => Alert.alert('Location', 'Share your location.')}
+              >
+                <View style={styles.imagePickerIcon}>
+                  <MaterialCommunityIcons name="map-marker-outline" size={22} color={theme.tint} />
+                </View>
+                <Text style={styles.imagePickerLabel}>Location</Text>
+                <Text style={styles.imagePickerSubLabel}>Send a pin</Text>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
         )}
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -2032,13 +2144,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
 
     // Messages
     messageContainer: {
-      marginBottom: 20,
+      marginBottom: 16,
       position: 'relative',
     },
     messageBubbleContainer: {
       flexDirection: 'row',
       alignItems: 'flex-end',
-      marginBottom: 4,
+      marginBottom: 2,
     },
     myMessageContainer: {
       justifyContent: 'flex-end',
@@ -2055,8 +2167,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     messageBubble: {
       maxWidth: screenWidth * 0.75,
-      paddingHorizontal: 16,
-      paddingVertical: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
       borderRadius: 20,
       position: 'relative',
     },
@@ -2068,28 +2180,44 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     inlineMetaRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      marginLeft: 6,
+      marginLeft: 4,
     },
     inlineMetaIcon: {
       marginLeft: 2,
     },
     myMessageBubble: {
       backgroundColor: theme.tint,
-      borderBottomRightRadius: 6,
       shadowColor: theme.tint,
       shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.2,
-      shadowRadius: 8,
-      elevation: 4,
+      shadowOpacity: 0.08,
+      shadowRadius: 6,
+      elevation: 1,
+      borderWidth: 0.5,
+      borderColor: withAlpha(Colors.light.background, 0.15),
     },
     theirMessageBubble: {
       backgroundColor: theme.backgroundSubtle,
-      borderBottomLeftRadius: 6,
       shadowColor: Colors.dark.background,
       shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.1,
+      shadowOpacity: 0.04,
       shadowRadius: 4,
-      elevation: 2,
+      elevation: 0,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+    },
+    bubbleTail: {
+      position: 'absolute',
+      bottom: 6,
+      width: 12,
+      height: 12,
+      transform: [{ rotate: '45deg' }],
+      borderRadius: 2,
+    },
+    bubbleTailRight: {
+      right: -4,
+    },
+    bubbleTailLeft: {
+      left: -4,
     },
     stickerBubble: {
       backgroundColor: 'transparent',
@@ -2097,8 +2225,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       shadowOpacity: 0.1,
     },
     messageText: {
-      fontSize: 16,
-      lineHeight: 22,
+      fontSize: 14.5,
+      lineHeight: 19,
       fontFamily: 'Manrope_400Regular',
     },
     myMessageText: {
@@ -2120,7 +2248,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       alignSelf: 'flex-end',
     },
     messageMetaText: {
-      fontSize: 11,
+      fontSize: 10,
       fontFamily: 'Manrope_400Regular',
     },
     messageMetaTextMy: {
@@ -2337,6 +2465,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderTopWidth: 1,
       borderTopColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
       gap: 12,
+    },
+    inputContainerRaised: {
+      marginBottom: ATTACHMENT_SHEET_HEIGHT,
     },
     textInput: {
       flex: 1,
@@ -2570,24 +2701,81 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       letterSpacing: 0.2,
     },
 
-    // Image Picker Actions
-    imagePickerActions: {
+    // Attachment Sheet
+    attachmentSheet: {
       backgroundColor: theme.background,
+      borderTopLeftRadius: 22,
+      borderTopRightRadius: 22,
       borderTopWidth: 1,
       borderTopColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
       paddingHorizontal: 16,
-      paddingVertical: 12,
+      paddingTop: 12,
+      paddingBottom: 24,
+      gap: 12,
+      height: ATTACHMENT_SHEET_HEIGHT,
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
+      zIndex: 30,
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: -4 },
+      shadowOpacity: 0.12,
+      shadowRadius: 12,
+      elevation: 12,
+    },
+    imagePickerHeader: {
       flexDirection: 'row',
-      justifyContent: 'space-around',
-    },
-    imagePickerButton: {
       alignItems: 'center',
-      gap: 4,
+      justifyContent: 'space-between',
     },
-    imagePickerText: {
-      fontSize: 12,
+    imagePickerTitle: {
+      fontSize: 16,
+      fontFamily: 'Archivo_700Bold',
+      color: theme.text,
+    },
+    imagePickerClose: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: theme.backgroundSubtle,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    imagePickerGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    imagePickerOption: {
+      width: '48%',
+      paddingVertical: 12,
+      paddingHorizontal: 10,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+      backgroundColor: theme.backgroundSubtle,
+    },
+    imagePickerIcon: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.12),
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 6,
+    },
+    imagePickerLabel: {
+      fontSize: 13,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    imagePickerSubLabel: {
+      fontSize: 11,
       fontFamily: 'Manrope_400Regular',
-      color: theme.tint,
+      color: theme.textMuted,
+      marginTop: 2,
     },
 
     // Reconnect toast
