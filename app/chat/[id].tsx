@@ -6,8 +6,11 @@ import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { Audio } from "expo-av";
+import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from "expo-image-picker";
+import * as Location from "expo-location";
 import { router, useLocalSearchParams } from "expo-router";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -19,6 +22,8 @@ import {
   InteractionManager,
   Keyboard,
   KeyboardAvoidingView,
+  Modal,
+  Linking,
   Platform,
   Pressable,
   StyleSheet,
@@ -29,8 +34,9 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-const { width: screenWidth } = Dimensions.get('window');
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const ATTACHMENT_SHEET_HEIGHT = 240;
+const CHAT_MEDIA_BUCKET = 'chat-media';
 
 // Message type definition
 type MessageType = {
@@ -109,6 +115,7 @@ type MessageRowItemProps = {
   isFocused: boolean;
   timeLabel: string;
   userAvatar: string;
+  imageSize?: { width: number; height: number };
   theme: typeof Colors.light;
   isDark: boolean;
   styles: ReturnType<typeof createStyles>;
@@ -118,6 +125,7 @@ type MessageRowItemProps = {
   onReply: (message: MessageType) => void;
   onAddReaction: (messageId: string, emoji: string) => void;
   onCloseReactions: () => void;
+  onViewImage: (url: string) => void;
 };
 
 const withAlpha = (hex: string, alpha: number) => {
@@ -139,6 +147,7 @@ const MessageRowItem = memo(
     isFocused,
     timeLabel,
     userAvatar,
+    imageSize,
     theme,
     isDark,
     styles,
@@ -148,6 +157,7 @@ const MessageRowItem = memo(
     onReply,
     onAddReaction,
     onCloseReactions,
+    onViewImage,
   }: MessageRowItemProps) => {
     const waveformBars = useMemo(() => {
       if (item.type !== 'voice' || !item.voiceMessage?.waveform) return null;
@@ -190,6 +200,9 @@ const MessageRowItem = memo(
             onFocus(item.id);
             if (item.type === 'voice') {
               onToggleVoice(item.id);
+            }
+            if (item.type === 'image' && item.imageUrl) {
+              onViewImage(item.imageUrl);
             }
           }}
           style={[
@@ -272,7 +285,13 @@ const MessageRowItem = memo(
               </View>
             ) : item.type === 'image' ? (
               <View style={styles.imageMessageContainer}>
-                <Image source={{ uri: item.imageUrl }} style={styles.messageImage} />
+                <Image
+                  source={{ uri: item.imageUrl }}
+                  style={[
+                    styles.messageImage,
+                    imageSize ? { width: imageSize.width, height: imageSize.height } : null,
+                  ]}
+                />
                 {item.text && (
                   <Text style={[
                     styles.imageCaption,
@@ -372,7 +391,9 @@ const MessageRowItem = memo(
     prev.isPlaying === next.isPlaying &&
     prev.isReactionOpen === next.isReactionOpen &&
     prev.timeLabel === next.timeLabel &&
-    prev.userAvatar === next.userAvatar
+    prev.userAvatar === next.userAvatar &&
+    prev.imageSize?.width === next.imageSize?.width &&
+    prev.imageSize?.height === next.imageSize?.height
 );
 
 export default function ConversationScreen() {
@@ -413,6 +434,9 @@ export default function ConversationScreen() {
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [oldestTimestamp, setOldestTimestamp] = useState<Date | null>(null);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
+  const [keyboardInset, setKeyboardInset] = useState(0);
+  const [imageViewerUrl, setImageViewerUrl] = useState<string | null>(null);
+  const [imageSizes, setImageSizes] = useState<Record<string, { width: number; height: number }>>({});
   
   const messagesRef = useRef<MessageType[]>([]);
   const flatListRef = useRef<FlatList>(null);
@@ -484,14 +508,23 @@ export default function ConversationScreen() {
         }
       }
 
+      let imageUrl: string | undefined;
+      let messageText = row.text ?? '';
+      if (messageType === 'image') {
+        const [firstLine, ...rest] = messageText.split('\n');
+        imageUrl = firstLine || undefined;
+        messageText = rest.join('\n');
+      }
+
       return {
         id: row.id,
-        text: row.text ?? '',
+        text: messageText,
         senderId: row.sender_id,
         timestamp: new Date(row.created_at),
         type: messageType,
         reactions: [],
         status,
+        imageUrl,
         voiceMessage:
           messageType === 'voice'
             ? {
@@ -505,6 +538,118 @@ export default function ConversationScreen() {
     },
     [user?.id]
   );
+
+  const uploadChatMedia = useCallback(async ({
+    uri,
+    fileName,
+    contentType,
+  }: {
+    uri: string;
+    fileName: string;
+    contentType: string;
+  }) => {
+    const filePath = `${user?.id ?? 'anon'}/${Date.now()}-${fileName}`;
+    const response = await fetch(uri);
+    const arrayBuffer = await response.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    const { error: uploadError } = await supabase
+      .storage
+      .from(CHAT_MEDIA_BUCKET)
+      .upload(filePath, uint8Array, { contentType, upsert: true });
+    if (uploadError) {
+      console.log('[chat] upload media error', uploadError);
+      throw uploadError;
+    }
+    const { data } = supabase.storage
+      .from(CHAT_MEDIA_BUCKET)
+      .getPublicUrl(filePath);
+    return data.publicUrl;
+  }, [user?.id]);
+
+  const sendAttachmentText = useCallback(async (text: string) => {
+    if (!text.trim() || !user?.id || !conversationId) return;
+    const tempId = `temp-attachment-${Date.now()}`;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: tempId,
+        text,
+        senderId: user.id,
+        timestamp: new Date(),
+        type: 'text',
+        reactions: [],
+        status: 'sending',
+      },
+    ]);
+
+    const { data, error } = await supabase
+      .from('messages')
+      .insert({
+        text,
+        sender_id: user.id,
+        receiver_id: conversationId,
+        is_read: false,
+        message_type: 'text',
+      })
+      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform')
+      .single();
+
+    if (error || !data) {
+      console.log('[chat] send attachment text error', error);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === tempId ? { ...msg, status: 'sent' } : msg
+        )
+      );
+    } else {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
+        )
+      );
+    }
+  }, [conversationId, mapRowToMessage, user?.id]);
+
+  const sendImageAttachment = useCallback(async (imageUrl: string) => {
+    if (!user?.id || !conversationId) return;
+    const tempId = `temp-image-${Date.now()}`;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: tempId,
+        text: '',
+        senderId: user.id,
+        timestamp: new Date(),
+        type: 'image',
+        reactions: [],
+        status: 'sending',
+        imageUrl,
+      },
+    ]);
+
+    const { data, error } = await supabase
+      .from('messages')
+      .insert({
+        text: imageUrl,
+        sender_id: user.id,
+        receiver_id: conversationId,
+        is_read: false,
+        message_type: 'image',
+      })
+      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform')
+      .single();
+
+    if (error || !data) {
+      console.log('[chat] send image error', error);
+      setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
+    } else {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
+        )
+      );
+    }
+  }, [conversationId, mapRowToMessage, user?.id]);
 
   const triggerReconnectToast = useCallback(() => {
     if (reconnectTimerRef.current) {
@@ -1303,10 +1448,95 @@ export default function ConversationScreen() {
     }
   }, [playingVoiceId, stopVoicePlayback]);
 
-  const pickImage = async () => {
-    Alert.alert('Coming soon', 'Photo messages are not available yet.');
-    setShowImagePicker(false);
-  };
+  const handleCameraPress = useCallback(async () => {
+    const cameraStatus = await ImagePicker.requestCameraPermissionsAsync();
+    if (!cameraStatus.granted) {
+      Alert.alert('Camera access', 'Enable camera access to take photos or videos.');
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      quality: 0.85,
+      videoMaxDuration: 30,
+    });
+    if (result.canceled) return;
+    closeAttachmentSheet();
+    const asset = result.assets?.[0];
+    if (!asset?.uri) return;
+    try {
+      const fileName = asset.fileName ?? asset.uri.split('/').pop() ?? `camera-${Date.now()}`;
+      const contentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
+      const publicUrl = await uploadChatMedia({ uri: asset.uri, fileName, contentType });
+      if (asset.type === 'image') {
+        await sendImageAttachment(publicUrl);
+      } else {
+        await sendAttachmentText(`🎥 Video\n${publicUrl}`);
+      }
+    } catch (error) {
+      Alert.alert('Attachment', 'Unable to upload this file.');
+    }
+  }, [closeAttachmentSheet, sendAttachmentText, sendImageAttachment, uploadChatMedia]);
+
+  const handleLibraryPress = useCallback(async () => {
+    const libraryStatus = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!libraryStatus.granted) {
+      Alert.alert('Photos access', 'Enable photo access to share media.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      quality: 0.85,
+    });
+    if (result.canceled) return;
+    closeAttachmentSheet();
+    const asset = result.assets?.[0];
+    if (!asset?.uri) return;
+    try {
+      const fileName = asset.fileName ?? asset.uri.split('/').pop() ?? `library-${Date.now()}`;
+      const contentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
+      const publicUrl = await uploadChatMedia({ uri: asset.uri, fileName, contentType });
+      if (asset.type === 'image') {
+        await sendImageAttachment(publicUrl);
+      } else {
+        await sendAttachmentText(`🎥 Video\n${publicUrl}`);
+      }
+    } catch (error) {
+      Alert.alert('Attachment', 'Unable to upload this file.');
+    }
+  }, [closeAttachmentSheet, sendAttachmentText, sendImageAttachment, uploadChatMedia]);
+
+  const handleDocumentPress = useCallback(async () => {
+    const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+    if (result.canceled) return;
+    closeAttachmentSheet();
+    const asset = result.assets?.[0];
+    if (!asset?.uri) return;
+    try {
+      const fileName = asset.name ?? asset.uri.split('/').pop() ?? `file-${Date.now()}`;
+      const contentType = asset.mimeType ?? 'application/octet-stream';
+      const publicUrl = await uploadChatMedia({ uri: asset.uri, fileName, contentType });
+      await sendAttachmentText(`📎 ${fileName}\n${publicUrl}`);
+    } catch (error) {
+      Alert.alert('Attachment', 'Unable to upload this file.');
+    }
+  }, [closeAttachmentSheet, sendAttachmentText, uploadChatMedia]);
+
+  const handleLocationPress = useCallback(async () => {
+    const permission = await Location.requestForegroundPermissionsAsync();
+    if (permission.status !== 'granted') {
+      Alert.alert('Location', 'Enable location access to share your location.');
+      return;
+    }
+    closeAttachmentSheet();
+    const position = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+    });
+    const { latitude, longitude } = position.coords;
+    const [place] = await Location.reverseGeocodeAsync({ latitude, longitude });
+    const label = [place?.city, place?.region].filter(Boolean).join(', ');
+    const safeLabel = label || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
+    await sendAttachmentText(`📍 ${safeLabel}\nhttps://maps.google.com/?q=${latitude},${longitude}`);
+  }, [closeAttachmentSheet, sendAttachmentText]);
 
   const replyToMessage = useCallback((message: MessageType) => {
     setReplyingTo(message);
@@ -1421,8 +1651,11 @@ export default function ConversationScreen() {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
 
-    const onShow = () => {
+    const onShow = (event: any) => {
       keyboardVisibleRef.current = true;
+      const inset =
+        Platform.OS === 'ios' ? event?.endCoordinates?.height ?? 0 : 0;
+      setKeyboardInset(inset);
       if (getDistanceToBottom() <= 200) {
         shouldAutoScrollRef.current = true;
         InteractionManager.runAfterInteractions(() => {
@@ -1432,6 +1665,7 @@ export default function ConversationScreen() {
     };
     const onHide = () => {
       keyboardVisibleRef.current = false;
+      setKeyboardInset(0);
       if (getDistanceToBottom() <= 60) {
         shouldAutoScrollRef.current = true;
         InteractionManager.runAfterInteractions(() => {
@@ -1478,6 +1712,38 @@ export default function ConversationScreen() {
     clearFocus();
   }, [clearFocus]);
 
+  useEffect(() => {
+    const maxWidth = Math.min(screenWidth * 0.72, 340);
+    const minHeight = 180;
+    const maxHeight = 420;
+    const pending: string[] = [];
+    messages.forEach((msg) => {
+      if (msg.type === 'image' && msg.imageUrl && !imageSizes[msg.imageUrl]) {
+        pending.push(msg.imageUrl);
+      }
+    });
+    if (pending.length === 0) return;
+    pending.forEach((url) => {
+      Image.getSize(
+        url,
+        (width, height) => {
+          if (!width || !height) return;
+          const ratio = height / width;
+          const scaledHeight = Math.round(maxWidth * ratio);
+          const clampedHeight = Math.max(minHeight, Math.min(maxHeight, scaledHeight));
+          setImageSizes((prev) =>
+            prev[url] ? prev : { ...prev, [url]: { width: maxWidth, height: clampedHeight } }
+          );
+        },
+        () => {
+          setImageSizes((prev) =>
+            prev[url] ? prev : { ...prev, [url]: { width: maxWidth, height: 240 } }
+          );
+        }
+      );
+    });
+  }, [imageSizes, messages]);
+
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: Array<{ item: MessageType }> }) => {
       viewableItems.forEach(({ item }) => {
@@ -1498,6 +1764,7 @@ export default function ConversationScreen() {
       const isReactionOpen = showReactions === item.id;
       const isFocused = focusedMessageId === item.id;
       const timeLabel = formatTime(item.timestamp);
+      const imageSize = item.type === 'image' && item.imageUrl ? imageSizes[item.imageUrl] : undefined;
 
       return (
         <MessageRowItem
@@ -1509,6 +1776,7 @@ export default function ConversationScreen() {
           isFocused={isFocused}
           timeLabel={timeLabel}
           userAvatar={userAvatar}
+          imageSize={imageSize}
           theme={theme}
           isDark={isDark}
           styles={styles}
@@ -1527,6 +1795,7 @@ export default function ConversationScreen() {
           onReply={replyToMessage}
           onAddReaction={addReaction}
           onCloseReactions={() => setShowReactions(null)}
+          onViewImage={setImageViewerUrl}
         />
       );
     },
@@ -1538,6 +1807,7 @@ export default function ConversationScreen() {
       userAvatar,
       theme,
       isDark,
+      imageSizes,
       handleLongPress,
       toggleVoicePlayback,
       replyToMessage,
@@ -1545,6 +1815,10 @@ export default function ConversationScreen() {
       formatTime,
     ]
   );
+
+  const closeImageViewer = useCallback(() => {
+    setImageViewerUrl(null);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -1713,6 +1987,32 @@ export default function ConversationScreen() {
         </View>
       </View>
 
+      <Modal
+        transparent
+        visible={Boolean(imageViewerUrl)}
+        onRequestClose={closeImageViewer}
+      >
+        <View style={styles.imageViewerBackdrop}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={closeImageViewer}
+          />
+          {imageViewerUrl && (
+            <Image
+              source={{ uri: imageViewerUrl }}
+              style={styles.imageViewerImage}
+              resizeMode="contain"
+            />
+          )}
+          <TouchableOpacity
+            style={styles.imageViewerClose}
+            onPress={closeImageViewer}
+          >
+            <MaterialCommunityIcons name="close" size={20} color={Colors.light.background} />
+          </TouchableOpacity>
+        </View>
+      </Modal>
+
       {/* Messages */}
       <KeyboardAvoidingView 
         style={styles.chatContainer}
@@ -1723,7 +2023,11 @@ export default function ConversationScreen() {
           <Pressable
             style={[
               styles.jumpToBottomButton,
-              { bottom: replyingTo ? 140 : 96 },
+              {
+                bottom:
+                  (replyingTo ? 140 : 96) +
+                  (keyboardInset ? Math.max(0, keyboardInset - 12) : 0),
+              },
             ]}
             onPress={() => {
               shouldAutoScrollRef.current = true;
@@ -1961,7 +2265,7 @@ export default function ConversationScreen() {
             <View style={styles.imagePickerGrid}>
               <TouchableOpacity
                 style={styles.imagePickerOption}
-                onPress={() => Alert.alert('Camera', 'Camera (photo/video) coming soon.')}
+                onPress={handleCameraPress}
               >
                 <View style={styles.imagePickerIcon}>
                   <MaterialCommunityIcons name="camera-outline" size={22} color={theme.tint} />
@@ -1972,7 +2276,7 @@ export default function ConversationScreen() {
 
               <TouchableOpacity
                 style={styles.imagePickerOption}
-                onPress={() => Alert.alert('Photos', 'Select existing photos/videos.')}
+                onPress={handleLibraryPress}
               >
                 <View style={styles.imagePickerIcon}>
                   <MaterialCommunityIcons name="image-multiple-outline" size={22} color={theme.tint} />
@@ -1983,7 +2287,7 @@ export default function ConversationScreen() {
 
               <TouchableOpacity
                 style={styles.imagePickerOption}
-                onPress={() => Alert.alert('Documents', 'Attach files, photos, or videos.')}
+                onPress={handleDocumentPress}
               >
                 <View style={styles.imagePickerIcon}>
                   <MaterialCommunityIcons name="file-document-outline" size={22} color={theme.tint} />
@@ -1994,7 +2298,7 @@ export default function ConversationScreen() {
 
               <TouchableOpacity
                 style={styles.imagePickerOption}
-                onPress={() => Alert.alert('Location', 'Share your location.')}
+                onPress={handleLocationPress}
               >
                 <View style={styles.imagePickerIcon}>
                   <MaterialCommunityIcons name="map-marker-outline" size={22} color={theme.tint} />
@@ -2554,9 +2858,10 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       overflow: 'hidden',
     },
     messageImage: {
-      width: 200,
-      height: 150,
-      borderRadius: 12,
+      width: Math.min(screenWidth * 0.72, 340),
+      height: Math.min(screenWidth * 0.62, 300),
+      borderRadius: 14,
+      backgroundColor: theme.backgroundSubtle,
     },
     imageCaption: {
       padding: 12,
@@ -2564,6 +2869,27 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontSize: 14,
       lineHeight: 20,
       color: theme.text,
+    },
+    imageViewerBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.9)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    imageViewerImage: {
+      width: screenWidth,
+      height: screenHeight * 0.8,
+    },
+    imageViewerClose: {
+      position: 'absolute',
+      top: 24,
+      right: 20,
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(0,0,0,0.35)',
     },
 
     // Reply Features
