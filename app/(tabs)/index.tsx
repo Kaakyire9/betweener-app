@@ -20,8 +20,9 @@ const withAlpha = (hex: string, alpha: number) => {
 
 export default function DashboardScreen() {
   const colorScheme = useColorScheme();
-  const theme = Colors[colorScheme ?? 'light'];
-  const isDark = (colorScheme ?? 'light') === 'dark';
+  const resolvedScheme = (colorScheme ?? 'light') === 'dark' ? 'dark' : 'light';
+  const theme = Colors[resolvedScheme];
+  const isDark = resolvedScheme === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   // Mock data - in a real app, this would come from your state management
   const [profileCompletion] = useState(85);

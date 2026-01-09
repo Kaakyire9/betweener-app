@@ -1,9 +1,15 @@
-import { MaterialCommunityIcons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
-import React, { useState } from 'react';
-import { Alert, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Colors } from '@/constants/theme';
 import { useAuth } from '@/lib/auth-context';
 import { createMomentFromMedia, createTextMoment } from '@/lib/moments';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import React, { useMemo, useState } from 'react';
+import { Alert, Modal, Pressable, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
+
+const getPickerMediaTypeImages = () =>
+  ImagePicker.MediaType?.Images ?? ImagePicker.MediaTypeOptions.Images;
+const getPickerMediaTypeVideos = () =>
+  ImagePicker.MediaType?.Videos ?? ImagePicker.MediaTypeOptions.Videos;
 
 type Props = {
   visible: boolean;
@@ -12,6 +18,11 @@ type Props = {
 };
 
 export default function MomentCreateModal({ visible, onClose, onCreated }: Props) {
+  const colorScheme = useColorScheme();
+  const resolvedScheme = (colorScheme ?? 'light') === 'dark' ? 'dark' : 'light';
+  const theme = Colors[resolvedScheme];
+  const isDark = resolvedScheme === 'dark';
+  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const { user } = useAuth();
   const [mode, setMode] = useState<'menu' | 'text'>('menu');
   const [textBody, setTextBody] = useState('');
@@ -35,13 +46,8 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
       setError('Permission needed to access photos.');
       return;
     }
-    const rawImageType =
-      (ImagePicker as any).MediaType?.Images ??
-      (ImagePicker as any).MediaTypeOptions?.Images ??
-      'images';
-    const imageType = String(rawImageType).toLowerCase();
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: [imageType],
+      mediaTypes: getPickerMediaTypeImages(),
       quality: 0.9,
     });
     if (result.canceled || !result.assets?.[0]?.uri) return;
@@ -65,13 +71,8 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
       setError('Camera permission is required to record a Moment.');
       return;
     }
-    const rawVideoType =
-      (ImagePicker as any).MediaType?.Videos ??
-      (ImagePicker as any).MediaTypeOptions?.Videos ??
-      'videos';
-    const videoType = String(rawVideoType).toLowerCase();
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: [videoType],
+      mediaTypes: getPickerMediaTypeVideos(),
       videoMaxDuration: 15,
     });
     if (result.canceled || !result.assets?.[0]?.uri) return;
@@ -113,22 +114,22 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
         <View style={styles.header}>
           <Text style={styles.title}>Post a Moment</Text>
           <Pressable onPress={close} style={styles.closeButton}>
-            <MaterialCommunityIcons name="close" size={18} color="#fff" />
+            <MaterialCommunityIcons name="close" size={18} color={Colors.light.background} />
           </Pressable>
         </View>
 
         {mode === 'menu' ? (
           <>
             <Pressable style={styles.option} onPress={handleRecordVideo} disabled={saving}>
-              <MaterialCommunityIcons name="video" size={18} color="#fff" />
+              <MaterialCommunityIcons name="video" size={18} color={Colors.light.background} />
               <Text style={styles.optionText}>{saving ? 'Uploading...' : 'Record Video (15s max)'}</Text>
             </Pressable>
             <Pressable style={styles.option} onPress={handlePickPhoto} disabled={saving}>
-              <MaterialCommunityIcons name="image" size={18} color="#fff" />
+              <MaterialCommunityIcons name="image" size={18} color={Colors.light.background} />
               <Text style={styles.optionText}>Pick Photo</Text>
             </Pressable>
             <Pressable style={styles.option} onPress={() => setMode('text')} disabled={saving}>
-              <MaterialCommunityIcons name="format-quote-close" size={18} color="#fff" />
+              <MaterialCommunityIcons name="format-quote-close" size={18} color={Colors.light.background} />
               <Text style={styles.optionText}>Text Moment</Text>
             </Pressable>
           </>
@@ -139,7 +140,7 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
               onChangeText={setTextBody}
               style={styles.textArea}
               placeholder="Say something..."
-              placeholderTextColor="#9ca3af"
+              placeholderTextColor={styles.placeholderColor}
               multiline
               maxLength={240}
             />
@@ -154,7 +155,7 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
           onChangeText={setCaption}
           style={styles.captionInput}
           placeholder="Optional caption"
-          placeholderTextColor="#6b7280"
+          placeholderTextColor={styles.placeholderColor}
           maxLength={80}
         />
 
@@ -165,60 +166,84 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
   );
 }
 
-const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' },
-  sheet: {
-    position: 'absolute',
-    left: 18,
-    right: 18,
-    top: '22%',
-    backgroundColor: '#0b1220',
-    borderRadius: 22,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-  },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  title: { color: '#fff', fontFamily: 'Archivo_700Bold', fontSize: 18 },
-  closeButton: { width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' },
-  option: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(255,255,255,0.08)',
-  },
-  optionText: { color: '#e5e7eb', fontFamily: 'Manrope_600SemiBold', fontSize: 14 },
-  textArea: {
-    minHeight: 120,
-    borderRadius: 14,
-    backgroundColor: '#0f172a',
-    padding: 12,
-    color: '#fff',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    fontFamily: 'Manrope_500Medium',
-    marginBottom: 12,
-  },
-  primaryButton: {
-    backgroundColor: '#ec4899',
-    paddingVertical: 12,
-    borderRadius: 14,
-    alignItems: 'center',
-  },
-  primaryText: { color: '#fff', fontFamily: 'Manrope_700Bold' },
-  captionInput: {
-    marginTop: 12,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: '#0f172a',
-    paddingHorizontal: 12,
-    color: '#fff',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    fontFamily: 'Manrope_500Medium',
-  },
-  helperText: { color: '#6b7280', fontSize: 12, marginTop: 10, fontFamily: 'Manrope_500Medium' },
-  errorText: { color: '#f87171', fontSize: 12, marginTop: 8, fontFamily: 'Manrope_500Medium' },
-});
+const withAlpha = (hex: string, alpha: number) => {
+  const normalized = hex.replace('#', '');
+  const bigint = parseInt(
+    normalized.length === 3 ? normalized.split('').map((c) => c + c).join('') : normalized,
+    16,
+  );
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+};
+
+const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
+  const placeholderColor = withAlpha(theme.textMuted, 0.8);
+  return StyleSheet.create({
+    placeholderColor,
+    backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' },
+    sheet: {
+      position: 'absolute',
+      left: 18,
+      right: 18,
+      top: '22%',
+      backgroundColor: theme.background,
+      borderRadius: 22,
+      padding: 18,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.24 : 0.14),
+    },
+    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+    title: { color: theme.text, fontFamily: 'Archivo_700Bold', fontSize: 18 },
+    closeButton: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    option: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingVertical: 12,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: withAlpha(theme.text, isDark ? 0.16 : 0.12),
+    },
+    optionText: { color: theme.text, fontFamily: 'Manrope_600SemiBold', fontSize: 14 },
+    textArea: {
+      minHeight: 120,
+      borderRadius: 14,
+      backgroundColor: theme.backgroundSubtle,
+      padding: 12,
+      color: theme.text,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      fontFamily: 'Manrope_500Medium',
+      marginBottom: 12,
+    },
+    primaryButton: {
+      backgroundColor: theme.tint,
+      paddingVertical: 12,
+      borderRadius: 14,
+      alignItems: 'center',
+      marginTop: 4,
+    },
+    primaryText: { color: Colors.light.background, fontFamily: 'Manrope_700Bold' },
+    captionInput: {
+      marginTop: 12,
+      height: 40,
+      borderRadius: 12,
+      backgroundColor: theme.backgroundSubtle,
+      paddingHorizontal: 12,
+      color: theme.text,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      fontFamily: 'Manrope_500Medium',
+    },
+    helperText: { color: theme.textMuted, fontSize: 12, marginTop: 10, fontFamily: 'Manrope_500Medium' },
+    errorText: { color: theme.accent, fontSize: 12, marginTop: 8, fontFamily: 'Manrope_500Medium' },
+  });
+};

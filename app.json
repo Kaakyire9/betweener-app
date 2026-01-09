@@ -4,7 +4,7 @@
     "slug": "betweener",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/app-icon-foreground.png",
     "scheme": "betweenerapp",
     "platforms": [
       "ios",
@@ -36,8 +36,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/icon.png",
-        "backgroundColor": "#E6F4FE"
+        "foregroundImage": "./assets/images/app-icon-foreground.png",
+        "backgroundColor": "#0B1325"
       },
       "package": "com.aduboffour.betweener",
       "intentFilters": [
