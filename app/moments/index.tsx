@@ -2,6 +2,7 @@ import MomentCreateModal from '@/components/MomentCreateModal';
 import MomentViewer from '@/components/MomentViewer';
 import MomentsRow from '@/components/MomentsRow';
 import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { Moment } from '@/hooks/useMoments';
 import { useMoments } from '@/hooks/useMoments';
 import { useAuth } from '@/lib/auth-context';
@@ -12,7 +13,6 @@ import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const withAlpha = (hex: string, alpha: number) => {
