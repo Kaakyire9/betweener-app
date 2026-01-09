@@ -12,9 +12,27 @@ import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useColorScheme } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+const withAlpha = (hex: string, alpha: number) => {
+  const normalized = hex.replace('#', '');
+  const bigint = parseInt(
+    normalized.length === 3 ? normalized.split('').map((c) => c + c).join('') : normalized,
+    16,
+  );
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+};
+
 export default function MomentsScreen() {
+  const colorScheme = useColorScheme();
+  const resolvedScheme = (colorScheme ?? 'light') === 'dark' ? 'dark' : 'light';
+  const theme = Colors[resolvedScheme];
+  const isDark = resolvedScheme === 'dark';
+  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const { profile, user } = useAuth();
   const { momentUsers, loading, refresh } = useMoments({
     currentUserId: user?.id,
@@ -208,7 +226,7 @@ export default function MomentsScreen() {
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} accessibilityLabel="Back">
-          <MaterialCommunityIcons name="chevron-left" size={28} color="#0f172a" />
+          <MaterialCommunityIcons name="chevron-left" size={28} color={theme.text} />
         </TouchableOpacity>
         <Text style={styles.title}>Moments</Text>
         <View style={{ width: 28 }} />
@@ -217,7 +235,7 @@ export default function MomentsScreen() {
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.actionsRow}>
           <TouchableOpacity style={styles.primaryButton} onPress={() => setCreateVisible(true)}>
-            <MaterialCommunityIcons name="plus-circle" size={18} color="#fff" />
+            <MaterialCommunityIcons name="plus-circle" size={18} color={Colors.light.background} />
             <Text style={styles.primaryButtonText}>Post a Moment</Text>
           </TouchableOpacity>
         </View>
@@ -265,7 +283,7 @@ export default function MomentsScreen() {
                           <MaterialCommunityIcons
                             name={moment.type === 'video' ? 'video' : 'image-outline'}
                             size={20}
-                            color="#e5e7eb"
+                            color={Colors.light.background}
                           />
                         </View>
                       )}
@@ -274,25 +292,25 @@ export default function MomentsScreen() {
                       <Text style={styles.momentTitle}>{title}</Text>
                       <View style={styles.momentSubRow}>
                         <View style={styles.momentMetaItem}>
-                          <MaterialCommunityIcons name="clock-outline" size={13} color="#6b7280" />
+                          <MaterialCommunityIcons name="clock-outline" size={13} color={theme.textMuted} />
                           <Text style={styles.momentMetaText}>{timeLabel}</Text>
                         </View>
                         <View style={styles.momentMetaItem}>
-                          <MaterialCommunityIcons name="heart" size={13} color="#ef4444" />
+                          <MaterialCommunityIcons name="heart" size={13} color={theme.tint} />
                           <Text style={styles.momentMetaText}>{reactions}</Text>
                         </View>
                       </View>
                     </View>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.moreButton} onPress={() => openMomentActions(moment)}>
-                    <MaterialCommunityIcons name="dots-horizontal" size={20} color="#6b7280" />
+                    <MaterialCommunityIcons name="dots-horizontal" size={20} color={theme.textMuted} />
                   </TouchableOpacity>
                 </View>
               );
             })}
 
             <TouchableOpacity style={styles.addButton} onPress={() => setCreateVisible(true)}>
-              <MaterialCommunityIcons name="plus-circle" size={20} color="#fff" />
+              <MaterialCommunityIcons name="plus-circle" size={20} color={Colors.light.background} />
               <Text style={styles.addButtonText}>Add Moment</Text>
             </TouchableOpacity>
           </>
@@ -325,123 +343,157 @@ export default function MomentsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f8fafc',
-  },
-  header: {
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  title: {
-    fontSize: 18,
-    fontFamily: 'Archivo_700Bold',
-    color: '#0f172a',
-  },
-  content: {
-    paddingHorizontal: 16,
-    paddingBottom: 24,
-  },
-  actionsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  primaryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#0ea5e9',
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    marginRight: 10,
-  },
-  primaryButtonText: {
-    color: '#fff',
-    fontSize: 13,
-    fontFamily: 'Manrope_600SemiBold',
-    marginLeft: 6,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 18,
-    marginBottom: 10,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontFamily: 'Archivo_700Bold',
-    color: '#0f172a',
-  },
-  sectionHint: {
-    fontSize: 12,
-    color: '#94a3b8',
-    fontFamily: 'Manrope_600SemiBold',
-  },
-  emptyCard: {
-    padding: 18,
-    borderRadius: 18,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    marginBottom: 16,
-  },
-  emptyTitle: { fontSize: 16, fontFamily: 'Archivo_700Bold', color: '#111827', marginBottom: 6 },
-  emptySubtitle: { color: '#6b7280', fontFamily: 'Manrope_500Medium' },
-  momentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 16,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    marginBottom: 12,
-  },
-  momentPressable: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  momentCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#0f172a',
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  momentCircleImage: { width: '100%', height: '100%' },
-  momentCircleFallback: { alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' },
-  textBadge: { color: '#f9fafb', fontFamily: 'Archivo_700Bold', fontSize: 16 },
-  momentMeta: { marginLeft: 12, flex: 1 },
-  momentTitle: { color: '#111827', fontFamily: 'Manrope_600SemiBold', fontSize: 14 },
-  momentSubRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 },
-  momentMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  momentMetaText: { color: '#6b7280', fontFamily: 'Manrope_500Medium', fontSize: 12 },
-  moreButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  addButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 14,
-    borderRadius: 16,
-    backgroundColor: Colors.light.tint,
-    marginTop: 6,
-  },
-  addButtonText: { color: '#fff', fontFamily: 'Manrope_700Bold' },
-  emptyText: {
-    color: '#64748b',
-    fontSize: 14,
-    marginTop: 12,
-  },
-  footer: {
-    marginTop: 16,
-    color: '#94a3b8',
-    fontSize: 12,
-  },
-});
+const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.background,
+    },
+    header: {
+      paddingHorizontal: 16,
+      paddingBottom: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    title: {
+      fontSize: 18,
+      fontFamily: 'Archivo_700Bold',
+      color: theme.text,
+    },
+    content: {
+      paddingHorizontal: 16,
+      paddingBottom: 24,
+    },
+    actionsRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 12,
+    },
+    primaryButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.tint,
+      paddingVertical: 10,
+      paddingHorizontal: 14,
+      borderRadius: 12,
+      marginRight: 10,
+    },
+    primaryButtonText: {
+      color: Colors.light.background,
+      fontSize: 13,
+      fontFamily: 'Manrope_600SemiBold',
+      marginLeft: 6,
+    },
+    sectionHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginTop: 18,
+      marginBottom: 10,
+    },
+    sectionTitle: {
+      fontSize: 16,
+      fontFamily: 'Archivo_700Bold',
+      color: theme.text,
+    },
+    sectionHint: {
+      fontSize: 12,
+      color: theme.textMuted,
+      fontFamily: 'Manrope_600SemiBold',
+    },
+    emptyCard: {
+      padding: 18,
+      borderRadius: 18,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      marginBottom: 16,
+    },
+    emptyTitle: { fontSize: 16, fontFamily: 'Archivo_700Bold', color: theme.text, marginBottom: 6 },
+    emptySubtitle: { color: theme.textMuted, fontFamily: 'Manrope_500Medium' },
+    momentRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 12,
+      paddingHorizontal: 12,
+      borderRadius: 16,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      marginBottom: 12,
+    },
+    momentPressable: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+    momentCircle: {
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      backgroundColor: theme.text,
+      overflow: 'hidden',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    momentCircleImage: { width: '100%', height: '100%' },
+    momentCircleFallback: { alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' },
+    textBadge: { color: Colors.light.background, fontFamily: 'Archivo_700Bold', fontSize: 16 },
+    momentMeta: { marginLeft: 12, flex: 1 },
+    momentTitle: { fontSize: 15, fontFamily: 'Archivo_700Bold', color: theme.text },
+    momentSubRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 10 },
+    momentMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    momentMetaText: { color: theme.textMuted, fontSize: 12, fontFamily: 'Manrope_500Medium' },
+    moreButton: { padding: 6 },
+    addButton: {
+      marginTop: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      backgroundColor: theme.tint,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 12,
+    },
+    addButtonText: { color: Colors.light.background, marginLeft: 6, fontFamily: 'Manrope_700Bold' },
+    emptyText: {
+      color: theme.textMuted,
+      fontFamily: 'Manrope_500Medium',
+      textAlign: 'center',
+      marginTop: 20,
+    },
+    footer: {
+      textAlign: 'center',
+      color: theme.textMuted,
+      marginTop: 16,
+      fontFamily: 'Manrope_500Medium',
+    },
+    sectionTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginTop: 16,
+      marginBottom: 8,
+    },
+    sectionSubtitle: {
+      color: theme.textMuted,
+      fontFamily: 'Manrope_500Medium',
+      fontSize: 12,
+    },
+    myMomentCard: {
+      padding: 16,
+      borderRadius: 16,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      marginBottom: 12,
+    },
+    myMomentHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    myMomentTitle: { fontSize: 16, fontFamily: 'Archivo_700Bold', color: theme.text },
+    myMomentMeta: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 6 },
+    metaPill: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.26 : 0.14),
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 8,
+    },
+    metaPillText: { color: theme.tint, fontFamily: 'Manrope_600SemiBold', fontSize: 12 },
+    metaText: { color: theme.textMuted, fontFamily: 'Manrope_500Medium', fontSize: 12 },
+  });

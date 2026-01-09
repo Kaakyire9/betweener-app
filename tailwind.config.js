@@ -7,19 +7,19 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        coral: "#FF6B6B",          // Primary / Accent
-        teal: "#0FBAB5",           // Secondary
-        yellow: "#FFCB47",         // Accent CTA
-        dark: "#0B1220",           // Dark surface
-        soft: "#F8FAFC",           // Light soft surface
-        background: "#FFFFFF",
-        "background-subtle": "#F8FAFC",
-        "text-primary": "#11181C",
-        "text-muted": "#687076",
-        "text-primary-dark": "#ECEDEE",
-        "text-muted-dark": "#9BA1A6",
-        outline: "#E5E7EB",
-        "outline-dark": "#1F2937",
+        teal: "#008080",                 // Primary
+        teal-soft: "#4FA7A3",            // Secondary
+        purple: "#7D5BA6",               // Accent
+        oat: "#F3E5D8",                  // Light background
+        oat-subtle: "#F7ECE2",           // Light soft surface
+        dark: "#0F1A1A",                 // Dark surface
+        dark-subtle: "#152222",          // Dark soft surface
+        "text-primary": "#1F2A2A",
+        "text-muted": "#5F706C",
+        "text-primary-dark": "#E8F0ED",
+        "text-muted-dark": "#9CB3AE",
+        outline: "#DCCFC2",
+        "outline-dark": "#1F2C2C",
       },
       fontFamily: {
         headline: ["CabinetGrotesk_700Bold"],

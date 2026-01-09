@@ -5,15 +5,20 @@ import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
-import { Audio, Video } from "expo-av";
+import { Audio } from "expo-av";
+import { BlurView } from "expo-blur";
+import { VideoView, useVideoPlayer } from "expo-video";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
+import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
+import { WebView } from "react-native-webview";
 import { router, useLocalSearchParams } from "expo-router";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Animated,
   Dimensions,
@@ -26,6 +31,7 @@ import {
   Linking,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -37,7 +43,19 @@ import { PinchGestureHandler, State } from "react-native-gesture-handler";
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const ATTACHMENT_SHEET_HEIGHT = 240;
+const LOCATION_SHEET_HEIGHT = 360;
 const CHAT_MEDIA_BUCKET = 'chat-media';
+const LOCATION_TEXT_PREFIX = '\u{1F4CD}';
+const LOCATION_LIVE_PREFIX = 'LIVE:';
+const GOOGLE_MAPS_NATIVE_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+const GOOGLE_MAPS_WEB_API_KEY =
+  process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY || GOOGLE_MAPS_NATIVE_API_KEY;
+const GOOGLE_MAPS_MAP_ID = process.env.EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID;
+const LOCATION_PREVIEW_WIDTH = Math.min(screenWidth * 0.72, 320);
+const LOCATION_PREVIEW_HEIGHT = 180;
+const LIVE_LOCATION_PRESETS = [15, 60, 480] as const;
+const getPickerMediaTypesAll = () =>
+  ImagePicker.MediaTypeOptions.All;
 
 // Message type definition
 type MessageType = {
@@ -45,7 +63,7 @@ type MessageType = {
   text: string;
   senderId: string;
   timestamp: Date;
-  type: 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document';
+  type: 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location';
   reactions: { userId: string; emoji: string; }[];
   status?: 'sending' | 'sent' | 'delivered' | 'read';
   readAt?: Date;
@@ -67,6 +85,16 @@ type MessageType = {
     url: string;
     sizeLabel?: string | null;
     typeLabel?: string | null;
+  };
+  location?: {
+    lat: number;
+    lng: number;
+    label: string;
+    address?: string;
+    mapUrl?: string;
+    mapLink?: string;
+    live?: boolean;
+    expiresAt?: Date | null;
   };
   replyTo?: MessageType;
 };
@@ -113,8 +141,155 @@ const MOOD_STICKERS = [
 const DEFAULT_VOICE_WAVEFORM = [0.2, 0.5, 0.35, 0.6, 0.28, 0.72, 0.44, 0.68, 0.3, 0.55, 0.4, 0.65];
 const VIDEO_TEXT_PREFIX = '\u{1F3A5} Video';
 const DOCUMENT_TEXT_PREFIX = '\u{1F4CE}';
+const buildMapsLink = (lat: number, lng: number) =>
+  `https://maps.google.com/?q=${lat},${lng}`;
+
+const parseCoordsFromMapsUrl = (url?: string | null) => {
+  if (!url) return null;
+  const match = url.match(/q=([-0-9.]+),([-0-9.]+)/);
+  if (!match) return null;
+  const lat = Number(match[1]);
+  const lng = Number(match[2]);
+  if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
+  return { lat, lng };
+};
+
+const getStaticMapUrl = (lat: number, lng: number) => {
+  if (!GOOGLE_MAPS_WEB_API_KEY) return null;
+  const base = 'https://maps.googleapis.com/maps/api/staticmap';
+  const center = `${lat},${lng}`;
+  const marker = `color:0x0ea5a0|${center}`;
+  const mapId = GOOGLE_MAPS_MAP_ID ? `&map_id=${encodeURIComponent(GOOGLE_MAPS_MAP_ID)}` : '';
+  return `${base}?center=${center}&zoom=15&size=640x360&scale=2&markers=${encodeURIComponent(marker)}&key=${GOOGLE_MAPS_WEB_API_KEY}${mapId}`;
+};
+
+const parseCoordsLine = (value?: string | null) => {
+  if (!value) return null;
+  const match = value.match(/(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const lat = Number(match[1]);
+  const lng = Number(match[2]);
+  if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
+  return { lat, lng };
+};
+
+const parseLocationMessage = (rawText: string): MessageType['location'] | null => {
+  const lines = rawText.split('\n').map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) return null;
+  const first = lines[0] ?? '';
+  const isLive = first.startsWith(LOCATION_LIVE_PREFIX);
+  const isPinned = first.startsWith(LOCATION_TEXT_PREFIX);
+  if (!isLive && !isPinned) return null;
+
+  let label = '';
+  let address = '';
+  let coordsLine = '';
+  let mapLink = '';
+  let expiresAt: Date | null = null;
+
+  if (isLive) {
+    const rawExpiry = first.slice(LOCATION_LIVE_PREFIX.length).trim();
+    if (rawExpiry) {
+      const parsed = new Date(rawExpiry);
+      if (!Number.isNaN(parsed.getTime())) {
+        expiresAt = parsed;
+      }
+    }
+    coordsLine = lines[1] ?? '';
+    label = lines[2] ?? '';
+    address = lines[3] ?? '';
+    mapLink = lines.find((line) => line.includes('maps.google.com') || line.startsWith('http')) ?? '';
+  } else {
+    label = first.replace(LOCATION_TEXT_PREFIX, '').trim();
+    coordsLine = lines[1] ?? '';
+    mapLink = lines.find((line) => line.includes('maps.google.com') || line.startsWith('http')) ?? '';
+    if (lines.length > 2 && lines[2] !== mapLink) {
+      address = lines[2];
+    }
+  }
+
+  const coords = parseCoordsLine(coordsLine) ?? parseCoordsFromMapsUrl(mapLink);
+  if (!coords) return null;
+  const resolvedLabel = label || address || `${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}`;
+  const mapUrl = getStaticMapUrl(coords.lat, coords.lng);
+
+  return {
+    lat: coords.lat,
+    lng: coords.lng,
+    label: resolvedLabel,
+    address: address || undefined,
+    mapUrl: mapUrl || undefined,
+    mapLink: mapLink || buildMapsLink(coords.lat, coords.lng),
+    live: isLive,
+    expiresAt,
+  };
+};
+
+const buildLocationMessageText = ({
+  lat,
+  lng,
+  label,
+  address,
+  live,
+  expiresAt,
+}: {
+  lat: number;
+  lng: number;
+  label: string;
+  address?: string | null;
+  live?: boolean;
+  expiresAt?: Date | null;
+}) => {
+  const safeLabel = label?.trim() || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  const mapLink = buildMapsLink(lat, lng);
+  if (live && expiresAt) {
+    return [
+      `${LOCATION_LIVE_PREFIX}${expiresAt.toISOString()}`,
+      `${lat},${lng}`,
+      safeLabel,
+      address?.trim() || '',
+      mapLink,
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+  return [
+    `${LOCATION_TEXT_PREFIX} ${safeLabel}`,
+    `${lat},${lng}`,
+    address?.trim() || '',
+    mapLink,
+  ]
+    .filter(Boolean)
+    .join('\n');
+};
+
+const formatRemainingTime = (expiresAt: Date | null | undefined, now: number) => {
+  if (!expiresAt) return 'Live';
+  const diffMs = expiresAt.getTime() - now;
+  if (diffMs <= 0) return 'Live ended';
+  const totalMinutes = Math.ceil(diffMs / 60000);
+  if (totalMinutes < 60) return `Ends in ${totalMinutes} min`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (minutes === 0) return `Ends in ${hours}h`;
+  return `Ends in ${hours}h ${minutes}m`;
+};
 
 const PAGE_SIZE = 60;
+
+type PlaceSuggestion = {
+  id: string;
+  primary: string;
+  secondary?: string | null;
+};
+
+type PlaceResult = {
+  id: string;
+  name: string;
+  address?: string | null;
+  lat: number;
+  lng: number;
+};
 
 type MessageRowItemProps = {
   item: MessageType;
@@ -139,6 +314,10 @@ type MessageRowItemProps = {
   onViewImage: (url: string) => void;
   onViewVideo: (url: string) => void;
   onVideoSize: (url: string, width: number, height: number) => void;
+  onOpenDocument: (doc?: MessageType['document']) => void;
+  onOpenLocation: (message: MessageType) => void;
+  onStopLiveShare: (messageId: string) => void;
+  now?: number | null;
 };
 
 const withAlpha = (hex: string, alpha: number) => {
@@ -177,6 +356,96 @@ const getFileTypeLabel = (mimeType?: string | null, fileName?: string | null) =>
   return 'File';
 };
 
+type VideoPreviewProps = {
+  url: string;
+  size?: { width: number; height: number };
+  styles: ReturnType<typeof createStyles>;
+  onSize: (width: number, height: number) => void;
+};
+
+const VideoPreview = ({ url, size, styles, onSize }: VideoPreviewProps) => {
+  const player = useVideoPlayer(url, (p) => {
+    p.loop = false;
+    p.muted = true;
+  });
+
+  useEffect(() => {
+    try {
+      player.pause();
+    } catch {}
+  }, [player]);
+
+  useEffect(() => {
+    if (!url || size) return;
+
+    const handleSize = (width?: number, height?: number) => {
+      if (!width || !height) return;
+      onSize(width, height);
+    };
+
+    const trackSub = player.addListener('videoTrackChange', ({ videoTrack }) => {
+      handleSize(videoTrack?.size?.width, videoTrack?.size?.height);
+    });
+
+    const sourceSub = player.addListener('sourceLoad', ({ availableVideoTracks }) => {
+      const track = availableVideoTracks?.[0];
+      handleSize(track?.size?.width, track?.size?.height);
+    });
+
+    return () => {
+      trackSub.remove();
+      sourceSub.remove();
+    };
+  }, [player, size, onSize, url]);
+
+  return (
+    <View style={styles.videoPreviewWrap}>
+      <VideoView
+        player={player}
+        style={[
+          styles.messageVideo,
+          size ? { width: size.width, height: size.height } : null,
+        ]}
+        contentFit="cover"
+        nativeControls={false}
+      />
+      <View style={styles.videoOverlay}>
+        <MaterialCommunityIcons name="play-circle" size={34} color={Colors.light.background} />
+      </View>
+    </View>
+  );
+};
+
+type VideoViewerProps = {
+  url: string;
+  visible: boolean;
+  styles: ReturnType<typeof createStyles>;
+};
+
+const VideoViewer = ({ url, visible, styles }: VideoViewerProps) => {
+  const player = useVideoPlayer(url, (p) => {
+    p.loop = false;
+    p.muted = false;
+  });
+
+  useEffect(() => {
+    if (visible) {
+      try { player.play(); } catch {}
+    } else {
+      try { player.pause(); } catch {}
+    }
+  }, [player, visible]);
+
+  return (
+    <VideoView
+      player={player}
+      style={styles.videoViewer}
+      contentFit="contain"
+      nativeControls
+    />
+  );
+};
+
 const MessageRowItem = memo(
   ({
     item,
@@ -201,6 +470,10 @@ const MessageRowItem = memo(
     onViewImage,
     onViewVideo,
     onVideoSize,
+    onOpenDocument,
+    onOpenLocation,
+    onStopLiveShare,
+    now,
   }: MessageRowItemProps) => {
     const waveformBars = useMemo(() => {
       if (item.type !== 'voice' || !item.voiceMessage?.waveform) return null;
@@ -241,6 +514,26 @@ const MessageRowItem = memo(
       return parts.length ? parts.join(' | ') : null;
     }, [item.type, item.document?.sizeLabel, item.document?.typeLabel]);
 
+    const locationRemaining = useMemo(() => {
+      if (item.type !== 'location' || !item.location?.live) return null;
+      const nowValue = typeof now === 'number' ? now : Date.now();
+      return formatRemainingTime(item.location.expiresAt, nowValue);
+    }, [item.location?.expiresAt, item.location?.live, item.type, now]);
+
+    const locationIsActive = useMemo(() => {
+      if (item.type !== 'location' || !item.location?.live || !item.location?.expiresAt) return false;
+      const nowValue = typeof now === 'number' ? now : Date.now();
+      return item.location.expiresAt.getTime() > nowValue;
+    }, [item.location?.expiresAt, item.location?.live, item.type, now]);
+
+    const handleVideoSize = useCallback(
+      (width: number, height: number) => {
+        if (!item.videoUrl) return;
+        onVideoSize(item.videoUrl, width, height);
+      },
+      [item.videoUrl, onVideoSize]
+    );
+
     return (
       <View style={styles.messageContainer}>
         <Pressable
@@ -257,7 +550,10 @@ const MessageRowItem = memo(
               onViewVideo(item.videoUrl);
             }
             if (item.type === 'document' && item.document?.url) {
-              Linking.openURL(item.document.url);
+              onOpenDocument(item.document);
+            }
+            if (item.type === 'location' && item.location) {
+              onOpenLocation(item);
             }
           }}
           style={[
@@ -280,6 +576,7 @@ const MessageRowItem = memo(
             item.type === 'image' && styles.imageBubble,
             item.type === 'video' && styles.videoBubble,
             item.type === 'document' && styles.documentBubble,
+            item.type === 'location' && styles.locationBubble,
           ]}>
             {item.replyTo && (
               <View style={styles.replyIndicator}>
@@ -289,7 +586,8 @@ const MessageRowItem = memo(
                    item.replyTo.type === 'voice' ? 'Voice message' :
                    item.replyTo.type === 'image' ? 'Photo' :
                    item.replyTo.type === 'video' ? 'Video' :
-                   item.replyTo.type === 'document' ? 'Document' : 'Sticker'}
+                   item.replyTo.type === 'document' ? 'Document' :
+                   item.replyTo.type === 'location' ? 'Location' : 'Sticker'}
                 </Text>
               </View>
             )}
@@ -363,36 +661,12 @@ const MessageRowItem = memo(
               ) : item.type === 'video' ? (
                 <View style={styles.videoMessageContainer}>
                   {item.videoUrl && (
-                    <View style={styles.videoPreviewWrap}>
-                      <Video
-                        source={{ uri: item.videoUrl }}
-                        style={[
-                          styles.messageVideo,
-                          videoSize ? { width: videoSize.width, height: videoSize.height } : null,
-                        ]}
-                        resizeMode="cover"
-                        shouldPlay={false}
-                        isMuted
-                        useNativeControls={false}
-                        onReadyForDisplay={(event: any) => {
-                          if (videoSize || !item.videoUrl) return;
-                          const naturalSize = event?.naturalSize || (event as any)?.status?.naturalSize;
-                          if (naturalSize?.width && naturalSize?.height) {
-                            let { width, height, orientation } = naturalSize;
-                            if (orientation === 'portrait' && width > height) {
-                              [width, height] = [height, width];
-                            }
-                            if (orientation === 'landscape' && height > width) {
-                              [width, height] = [height, width];
-                            }
-                            onVideoSize(item.videoUrl, width, height);
-                          }
-                        }}
-                      />
-                      <View style={styles.videoOverlay}>
-                        <MaterialCommunityIcons name="play-circle" size={34} color={Colors.light.background} />
-                      </View>
-                    </View>
+                    <VideoPreview
+                      url={item.videoUrl}
+                      size={videoSize}
+                      styles={styles}
+                      onSize={handleVideoSize}
+                    />
                   )}
                   {item.text && (
                     <Text style={[
@@ -401,6 +675,118 @@ const MessageRowItem = memo(
                     ]}>
                       {item.text}
                     </Text>
+                  )}
+                </View>
+              ) : item.type === 'location' ? (
+                <View style={styles.locationMessageContainer}>
+                  {item.location?.mapUrl ? (
+                    <Image
+                      source={{ uri: item.location.mapUrl }}
+                      style={styles.locationMapImage}
+                    />
+                  ) : (
+                    <View style={styles.locationMapPlaceholder}>
+                      <MaterialCommunityIcons name="map-outline" size={28} color={theme.textMuted} />
+                      <Text style={[styles.locationPlaceholderText, { color: theme.textMuted }]}>
+                        Map preview
+                      </Text>
+                    </View>
+                  )}
+                  <View style={styles.locationInfoRow}>
+                    <View style={[styles.locationIconBadge, { backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.15) : withAlpha(theme.tint, 0.14) }]}>
+                      <MaterialCommunityIcons
+                        name={item.location?.live ? "map-marker-radius-outline" : "map-marker-outline"}
+                        size={16}
+                        color={isMyMessage ? Colors.light.background : theme.tint}
+                      />
+                    </View>
+                    <View style={styles.locationTextBlock}>
+                      <Text
+                        style={[
+                          styles.locationLabelText,
+                          { color: isMyMessage ? Colors.light.background : theme.text },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {item.location?.label || 'Shared location'}
+                      </Text>
+                      {item.location?.address ? (
+                        <Text
+                          style={[
+                            styles.locationAddressText,
+                            { color: isMyMessage ? withAlpha(Colors.light.background, 0.75) : theme.textMuted },
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {item.location.address}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </View>
+                  <View style={styles.locationRouteRow}>
+                    <MaterialCommunityIcons
+                      name="navigation-variant-outline"
+                      size={12}
+                      color={isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted}
+                    />
+                    <Text
+                      style={[
+                        styles.locationRouteText,
+                        { color: isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted },
+                      ]}
+                    >
+                      Tap for directions
+                    </Text>
+                    <MaterialCommunityIcons
+                      name="chevron-right"
+                      size={14}
+                      color={isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted}
+                    />
+                  </View>
+                  {item.location?.live && (
+                    <View style={styles.locationLiveRow}>
+                      <View style={[styles.locationLiveBadge, { backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.18) : withAlpha(theme.secondary, 0.18) }]}>
+                        <Text
+                          style={[
+                            styles.locationLiveBadgeText,
+                            { color: isMyMessage ? Colors.light.background : theme.secondary },
+                          ]}
+                        >
+                          Live
+                        </Text>
+                      </View>
+                      <Text
+                        style={[
+                          styles.locationLiveText,
+                          { color: isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted },
+                        ]}
+                      >
+                        {locationRemaining || 'Live'}
+                      </Text>
+                      {isMyMessage && locationIsActive && (
+                        <TouchableOpacity
+                          style={[
+                            styles.locationStopButton,
+                            { borderColor: isMyMessage ? withAlpha(Colors.light.background, 0.45) : withAlpha(theme.text, 0.2) },
+                          ]}
+                          onPress={(event) => {
+                            if (event?.stopPropagation) {
+                              event.stopPropagation();
+                            }
+                            onStopLiveShare(item.id);
+                          }}
+                        >
+                          <Text
+                            style={[
+                              styles.locationStopText,
+                              { color: isMyMessage ? Colors.light.background : theme.text },
+                            ]}
+                          >
+                            Stop sharing
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
                   )}
                 </View>
               ) : item.type === 'document' ? (
@@ -526,7 +912,8 @@ const MessageRowItem = memo(
     prev.imageSize?.width === next.imageSize?.width &&
     prev.imageSize?.height === next.imageSize?.height &&
     prev.videoSize?.width === next.videoSize?.width &&
-    prev.videoSize?.height === next.videoSize?.height
+    prev.videoSize?.height === next.videoSize?.height &&
+    prev.now === next.now
 );
 
 export default function ConversationScreen() {
@@ -537,6 +924,7 @@ export default function ConversationScreen() {
   const isDark = (colorScheme ?? 'light') === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const params = useLocalSearchParams();
+  const hasPlacesKey = Boolean(GOOGLE_MAPS_WEB_API_KEY);
   
   // Get conversation data from params
   const conversationId = params.id as string;
@@ -570,8 +958,24 @@ export default function ConversationScreen() {
   const [keyboardInset, setKeyboardInset] = useState(0);
   const [imageViewerUrl, setImageViewerUrl] = useState<string | null>(null);
   const [videoViewerUrl, setVideoViewerUrl] = useState<string | null>(null);
+  const [documentViewerUrl, setDocumentViewerUrl] = useState<string | null>(null);
   const [imageSizes, setImageSizes] = useState<Record<string, { width: number; height: number }>>({});
   const [videoSizes, setVideoSizes] = useState<Record<string, { width: number; height: number }>>({});
+  const [locationModalVisible, setLocationModalVisible] = useState(false);
+  const [locationViewerMessageId, setLocationViewerMessageId] = useState<string | null>(null);
+  const [locationSearchQuery, setLocationSearchQuery] = useState('');
+  const [locationSuggestions, setLocationSuggestions] = useState<PlaceSuggestion[]>([]);
+  const [nearbyPlaces, setNearbyPlaces] = useState<PlaceResult[]>([]);
+  const [placesLoading, setPlacesLoading] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [locationStatus, setLocationStatus] = useState<Location.PermissionStatus | null>(null);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [currentCoords, setCurrentCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
+  const [liveDurationMinutes, setLiveDurationMinutes] = useState(60);
+  const [nowTick, setNowTick] = useState(Date.now());
+  const showLocationLoading = locationLoading && !currentCoords && !locationError;
   
   const messagesRef = useRef<MessageType[]>([]);
   const flatListRef = useRef<FlatList>(null);
@@ -589,9 +993,11 @@ export default function ConversationScreen() {
   const recordingPulseRef = useRef<Animated.CompositeAnimation | null>(null);
   const voiceButtonScale = useRef(new Animated.Value(1)).current;
   const voiceSoundRef = useRef<Audio.Sound | null>(null);
+  const mapRef = useRef<MapView>(null);
   const inputRef = useRef<TextInput>(null);
   const reconnectToastOpacity = useRef(new Animated.Value(0)).current;
   const attachmentAnim = useRef(new Animated.Value(0)).current;
+  const locationSheetAnim = useRef(new Animated.Value(0)).current;
   const reconnectPendingRef = useRef(false);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presenceChannelRef = useRef<any>(null);
@@ -609,6 +1015,16 @@ export default function ConversationScreen() {
   const scrollRequestRef = useRef<number | null>(null);
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const jumpVisibleRef = useRef(false);
+  const suppressSuggestionRef = useRef(false);
+  const liveShareRef = useRef<{
+    messageId: string;
+    expiresAt: number;
+    label: string;
+    address?: string | null;
+    watch?: Location.LocationSubscription | null;
+  } | null>(null);
+  const liveStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const liveUpdateRef = useRef<{ lastSentAt: number }>({ lastSentAt: 0 });
 
   const formatLastSeen = (date: Date) => {
     const now = Date.now();
@@ -621,6 +1037,25 @@ export default function ConversationScreen() {
     const diffDays = Math.floor(diffHours / 24);
     return `${diffDays}d ago`;
   };
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNowTick(Date.now());
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (!locationModalVisible) {
+      locationSheetAnim.setValue(0);
+      return;
+    }
+    Animated.timing(locationSheetAnim, {
+      toValue: 1,
+      duration: 320,
+      useNativeDriver: true,
+    }).start();
+  }, [locationModalVisible, locationSheetAnim]);
 
   const mapRowToMessage = useCallback(
     (row: MessageRow): MessageType => {
@@ -657,6 +1092,7 @@ export default function ConversationScreen() {
       let documentSizeLabel: string | null | undefined;
       let documentTypeLabel: string | null | undefined;
       let messageText = row.text ?? '';
+      let location: MessageType['location'] | undefined;
 
       let resolvedType = messageType;
       if (messageType === 'image') {
@@ -707,8 +1143,18 @@ export default function ConversationScreen() {
           messageText = label;
         }
       }
-
-
+      if (
+        messageType === 'location' ||
+        messageText.startsWith(LOCATION_TEXT_PREFIX) ||
+        messageText.startsWith(LOCATION_LIVE_PREFIX)
+      ) {
+        const parsedLocation = parseLocationMessage(messageText);
+        if (parsedLocation) {
+          resolvedType = 'location';
+          location = parsedLocation;
+          messageText = '';
+        }
+      }
 
       return {
         id: row.id,
@@ -738,10 +1184,271 @@ export default function ConversationScreen() {
                 audioPath: row.audio_path ?? undefined,
               }
             : undefined,
+        location,
       };
     },
     [user?.id]
   );
+
+  const locationViewerMessage = useMemo(() => {
+    if (!locationViewerMessageId) return null;
+    return messages.find((msg) => msg.id === locationViewerMessageId) ?? null;
+  }, [locationViewerMessageId, messages]);
+
+  const fetchNearbyPlaces = useCallback(
+    async (coords: { lat: number; lng: number }) => {
+      if (!hasPlacesKey) return;
+      setPlacesLoading(true);
+      try {
+        const params = new URLSearchParams({
+          key: GOOGLE_MAPS_WEB_API_KEY ?? '',
+          location: `${coords.lat},${coords.lng}`,
+          radius: '1500',
+          type: 'point_of_interest',
+        });
+        const res = await fetch(`https://maps.googleapis.com/maps/api/place/nearbysearch/json?${params.toString()}`);
+        const json = await res.json();
+        if (!Array.isArray(json?.results)) {
+          setNearbyPlaces([]);
+          return;
+        }
+        const mapped: PlaceResult[] = json.results.slice(0, 10).map((result: any) => ({
+          id: result.place_id,
+          name: result.name,
+          address: result.vicinity || result.formatted_address || null,
+          lat: result.geometry?.location?.lat,
+          lng: result.geometry?.location?.lng,
+        })).filter((place: PlaceResult) => typeof place.lat === 'number' && typeof place.lng === 'number');
+        setNearbyPlaces(mapped);
+      } catch (error) {
+        console.log('[chat] nearby places error', error);
+      } finally {
+        setPlacesLoading(false);
+      }
+    },
+    [hasPlacesKey]
+  );
+
+  const fetchPlaceSuggestions = useCallback(
+    async (query: string, coords?: { lat: number; lng: number } | null) => {
+      if (!hasPlacesKey || !query.trim()) return;
+      setSearchLoading(true);
+      try {
+        const params = new URLSearchParams({
+          key: GOOGLE_MAPS_WEB_API_KEY ?? '',
+          input: query,
+          types: 'establishment',
+        });
+        if (coords) {
+          params.set('location', `${coords.lat},${coords.lng}`);
+          params.set('radius', '8000');
+        }
+        const res = await fetch(`https://maps.googleapis.com/maps/api/place/autocomplete/json?${params.toString()}`);
+        const json = await res.json();
+        if (!Array.isArray(json?.predictions)) {
+          setLocationSuggestions([]);
+          return;
+        }
+        const mapped: PlaceSuggestion[] = json.predictions.slice(0, 6).map((prediction: any) => ({
+          id: prediction.place_id,
+          primary: prediction.structured_formatting?.main_text || prediction.description,
+          secondary: prediction.structured_formatting?.secondary_text || null,
+        }));
+        setLocationSuggestions(mapped);
+      } catch (error) {
+        console.log('[chat] place suggestions error', error);
+      } finally {
+        setSearchLoading(false);
+      }
+    },
+    [hasPlacesKey]
+  );
+
+  const fetchPlaceDetails = useCallback(
+    async (placeId: string) => {
+      if (!hasPlacesKey || !placeId) return null;
+      try {
+        const params = new URLSearchParams({
+          key: GOOGLE_MAPS_WEB_API_KEY ?? '',
+          place_id: placeId,
+          fields: 'geometry,name,formatted_address',
+        });
+        const res = await fetch(`https://maps.googleapis.com/maps/api/place/details/json?${params.toString()}`);
+        const json = await res.json();
+        const details = json?.result;
+        if (!details?.geometry?.location) return null;
+        return {
+          id: placeId,
+          name: details.name || 'Selected place',
+          address: details.formatted_address || null,
+          lat: details.geometry.location.lat,
+          lng: details.geometry.location.lng,
+        } as PlaceResult;
+      } catch (error) {
+        console.log('[chat] place details error', error);
+        return null;
+      }
+    },
+    [hasPlacesKey]
+  );
+
+  const selectPlace = useCallback((place: PlaceResult) => {
+    suppressSuggestionRef.current = true;
+    setSelectedPlace(place);
+    setLocationSearchQuery(place.name);
+    setLocationSuggestions([]);
+    setLocationError(null);
+  }, []);
+
+  const handleSuggestionPress = useCallback(
+    async (suggestion: PlaceSuggestion) => {
+      const details = await fetchPlaceDetails(suggestion.id);
+      if (!details) return;
+      selectPlace(details);
+    },
+    [fetchPlaceDetails, selectPlace]
+  );
+
+  const handleMapPress = useCallback(
+    async (event: any) => {
+      const { latitude, longitude } = event.nativeEvent.coordinate || {};
+      if (typeof latitude !== 'number' || typeof longitude !== 'number') return;
+      let label = 'Pinned location';
+      let address: string | null = null;
+      if (locationStatus === 'granted') {
+        try {
+          const [place] = await Location.reverseGeocodeAsync({ latitude, longitude });
+          const street = [place?.streetNumber, place?.street].filter(Boolean).join(' ');
+          label = place?.name || street || place?.city || label;
+          address = [street, place?.city, place?.region].filter(Boolean).join(', ') || null;
+        } catch (error) {
+          console.log('[chat] reverse geocode error', error);
+        }
+      }
+      selectPlace({
+        id: `pin-${Date.now()}`,
+        name: label,
+        address,
+        lat: latitude,
+        lng: longitude,
+      });
+    },
+    [locationStatus, selectPlace]
+  );
+
+  useEffect(() => {
+    if (!locationModalVisible || currentCoords) return;
+    let isActive = true;
+    const init = async () => {
+      setLocationLoading(true);
+      setLocationError(null);
+      try {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (!isActive) return;
+        setLocationStatus(permission.status);
+        if (permission.status !== 'granted') {
+          setLocationError('Enable location to show nearby places.');
+          return;
+        }
+        const position = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        if (!isActive) return;
+        const coords = { lat: position.coords.latitude, lng: position.coords.longitude };
+        setCurrentCoords(coords);
+        if (!selectedPlace) {
+          let label = 'Current location';
+          let address: string | null = null;
+          try {
+            const [place] = await Location.reverseGeocodeAsync({
+              latitude: coords.lat,
+              longitude: coords.lng,
+            });
+            const street = [place?.streetNumber, place?.street].filter(Boolean).join(' ');
+            label = place?.name || street || place?.city || label;
+            address = [street, place?.city, place?.region].filter(Boolean).join(', ') || null;
+          } catch (error) {
+            console.log('[chat] reverse geocode error', error);
+          }
+          setSelectedPlace({
+            id: 'current',
+            name: label,
+            address,
+            lat: coords.lat,
+            lng: coords.lng,
+          });
+        }
+      } catch (error) {
+        console.log('[chat] location init error', error);
+        setLocationError('Unable to fetch your location.');
+      } finally {
+        setLocationLoading(false);
+      }
+    };
+    void init();
+    return () => {
+      isActive = false;
+    };
+  }, [currentCoords, locationModalVisible]);
+
+  useEffect(() => {
+    if (!locationModalVisible || !currentCoords) return;
+    void fetchNearbyPlaces(currentCoords);
+  }, [currentCoords, fetchNearbyPlaces, locationModalVisible]);
+
+  useEffect(() => {
+    if (!locationModalVisible) return;
+    const query = locationSearchQuery.trim();
+    if (suppressSuggestionRef.current) {
+      suppressSuggestionRef.current = false;
+      setLocationSuggestions([]);
+      return;
+    }
+    if (query.length < 2) {
+      setLocationSuggestions([]);
+      return;
+    }
+    const timer = setTimeout(() => {
+      void fetchPlaceSuggestions(query, currentCoords);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [currentCoords, fetchPlaceSuggestions, locationModalVisible, locationSearchQuery]);
+
+  useEffect(() => {
+    if (!selectedPlace) return;
+    const region: Region = {
+      latitude: selectedPlace.lat,
+      longitude: selectedPlace.lng,
+      latitudeDelta: 0.012,
+      longitudeDelta: 0.012,
+    };
+    mapRef.current?.animateToRegion(region, 350);
+  }, [selectedPlace]);
+
+  const mapInitialRegion = useMemo<Region>(() => {
+    if (selectedPlace) {
+      return {
+        latitude: selectedPlace.lat,
+        longitude: selectedPlace.lng,
+        latitudeDelta: 0.012,
+        longitudeDelta: 0.012,
+      };
+    }
+    if (currentCoords) {
+      return {
+        latitude: currentCoords.lat,
+        longitude: currentCoords.lng,
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02,
+      };
+    }
+    return {
+      latitude: 0,
+      longitude: 0,
+      latitudeDelta: 60,
+      longitudeDelta: 60,
+    };
+  }, [currentCoords, selectedPlace]);
 
   const uploadChatMedia = useCallback(async ({
     uri,
@@ -896,6 +1603,239 @@ export default function ConversationScreen() {
     }
   }, [conversationId, mapRowToMessage, user?.id]);
 
+  const sendLocationMessage = useCallback(async ({
+    lat,
+    lng,
+    label,
+    address,
+    live,
+    expiresAt,
+  }: {
+    lat: number;
+    lng: number;
+    label: string;
+    address?: string | null;
+    live?: boolean;
+    expiresAt?: Date | null;
+  }) => {
+    if (!user?.id || !conversationId) return null;
+    const tempId = `temp-location-${Date.now()}`;
+    const text = buildLocationMessageText({
+      lat,
+      lng,
+      label,
+      address,
+      live,
+      expiresAt,
+    });
+    const mapUrl = getStaticMapUrl(lat, lng);
+    const mapLink = buildMapsLink(lat, lng);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: tempId,
+        text,
+        senderId: user.id,
+        timestamp: new Date(),
+        type: 'location',
+        reactions: [],
+        status: 'sending',
+        location: {
+          lat,
+          lng,
+          label,
+          address: address || undefined,
+          mapUrl: mapUrl || undefined,
+          mapLink,
+          live: Boolean(live),
+          expiresAt: live ? expiresAt ?? null : null,
+        },
+      },
+    ]);
+
+    const { data, error } = await supabase
+      .from('messages')
+      .insert({
+        text,
+        sender_id: user.id,
+        receiver_id: conversationId,
+        is_read: false,
+        message_type: 'location',
+      })
+      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform')
+      .single();
+
+    if (error || !data) {
+      console.log('[chat] send location error', error);
+      setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
+      return null;
+    }
+
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
+      )
+    );
+    return data.id as string;
+  }, [conversationId, mapRowToMessage, user?.id]);
+
+  const updateLiveLocationMessage = useCallback(async ({
+    messageId,
+    coords,
+    label,
+    address,
+    expiresAt,
+  }: {
+    messageId: string;
+    coords: { lat: number; lng: number };
+    label: string;
+    address?: string | null;
+    expiresAt: Date;
+  }) => {
+    const text = buildLocationMessageText({
+      lat: coords.lat,
+      lng: coords.lng,
+      label,
+      address,
+      live: true,
+      expiresAt,
+    });
+    const mapUrl = getStaticMapUrl(coords.lat, coords.lng);
+    const mapLink = buildMapsLink(coords.lat, coords.lng);
+    setMessages((prev) =>
+      prev.map((msg) => {
+        if (msg.id !== messageId) return msg;
+        return {
+          ...msg,
+          text,
+          location: {
+            lat: coords.lat,
+            lng: coords.lng,
+            label,
+            address: address || undefined,
+            mapUrl: mapUrl || msg.location?.mapUrl,
+            mapLink,
+            live: true,
+            expiresAt,
+          },
+        };
+      })
+    );
+    const { error } = await supabase
+      .from('messages')
+      .update({ text })
+      .eq('id', messageId);
+    if (error) {
+      console.log('[chat] live location update error', error);
+    }
+  }, []);
+
+  const stopLiveSharing = useCallback(async (messageId?: string) => {
+    const liveShare = liveShareRef.current;
+    const targetId = messageId ?? liveShare?.messageId;
+    if (!targetId) return;
+    if (liveShare?.watch && liveShare.messageId === targetId) {
+      liveShare.watch.remove();
+    }
+    if (liveShare?.messageId === targetId) {
+      liveShareRef.current = null;
+    }
+    if (liveStopTimerRef.current && liveShare?.messageId === targetId) {
+      clearTimeout(liveStopTimerRef.current);
+      liveStopTimerRef.current = null;
+    }
+    const targetMessage = messagesRef.current.find((msg) => msg.id === targetId);
+    const location = targetMessage?.location;
+    if (!location) return;
+    const expiresAt = new Date();
+    await updateLiveLocationMessage({
+      messageId: targetId,
+      coords: { lat: location.lat, lng: location.lng },
+      label: location.label,
+      address: location.address,
+      expiresAt,
+    });
+  }, [updateLiveLocationMessage]);
+
+  const startLiveLocationUpdates = useCallback(async ({
+    messageId,
+    expiresAt,
+    label,
+    address,
+  }: {
+    messageId: string;
+    expiresAt: Date;
+    label: string;
+    address?: string | null;
+  }) => {
+    if (liveShareRef.current?.watch) {
+      liveShareRef.current.watch.remove();
+    }
+    liveShareRef.current = {
+      messageId,
+      expiresAt: expiresAt.getTime(),
+      label,
+      address,
+      watch: null,
+    };
+    liveUpdateRef.current.lastSentAt = 0;
+
+    if (liveStopTimerRef.current) {
+      clearTimeout(liveStopTimerRef.current);
+    }
+    liveStopTimerRef.current = setTimeout(() => {
+      void stopLiveSharing(messageId);
+    }, Math.max(0, expiresAt.getTime() - Date.now()));
+
+    if (locationStatus !== 'granted') return;
+
+    try {
+      const watch = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.Balanced,
+          timeInterval: 20000,
+          distanceInterval: 30,
+        },
+        (pos) => {
+          const now = Date.now();
+          if (now > expiresAt.getTime()) {
+            void stopLiveSharing(messageId);
+            return;
+          }
+          if (now - liveUpdateRef.current.lastSentAt < 20000) return;
+          liveUpdateRef.current.lastSentAt = now;
+          void updateLiveLocationMessage({
+            messageId,
+            coords: { lat: pos.coords.latitude, lng: pos.coords.longitude },
+            label,
+            address,
+            expiresAt,
+          });
+        }
+      );
+      liveShareRef.current = {
+        messageId,
+        expiresAt: expiresAt.getTime(),
+        label,
+        address,
+        watch,
+      };
+    } catch (error) {
+      console.log('[chat] live location watch error', error);
+    }
+  }, [locationStatus, stopLiveSharing, updateLiveLocationMessage]);
+
+  useEffect(() => {
+    return () => {
+      if (liveShareRef.current?.watch) {
+        liveShareRef.current.watch.remove();
+      }
+      if (liveStopTimerRef.current) {
+        clearTimeout(liveStopTimerRef.current);
+      }
+    };
+  }, []);
+
   const triggerReconnectToast = useCallback(() => {
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
@@ -938,6 +1878,72 @@ export default function ConversationScreen() {
       }
     });
   }, [attachmentAnim]);
+
+  const openLocationModal = useCallback(() => {
+    closeAttachmentSheet();
+    setLiveDurationMinutes(60);
+    setLocationModalVisible(true);
+  }, [closeAttachmentSheet]);
+
+  const closeLocationModal = useCallback(() => {
+    setLocationModalVisible(false);
+    setLocationSearchQuery('');
+    setLocationSuggestions([]);
+    setLocationError(null);
+    setSelectedPlace(null);
+    setCurrentCoords(null);
+    setNearbyPlaces([]);
+  }, []);
+
+  const openLocationViewer = useCallback((message: MessageType) => {
+    if (!message.location) return;
+    setLocationViewerMessageId(message.id);
+  }, []);
+
+  const closeLocationViewer = useCallback(() => {
+    setLocationViewerMessageId(null);
+  }, []);
+
+  const handleSendLocation = useCallback(async () => {
+    if (!selectedPlace) {
+      setLocationError('Choose a place to share.');
+      return;
+    }
+    const payload = {
+      lat: selectedPlace.lat,
+      lng: selectedPlace.lng,
+      label: selectedPlace.name,
+      address: selectedPlace.address,
+    };
+    closeLocationModal();
+    await sendLocationMessage(payload);
+  }, [closeLocationModal, selectedPlace, sendLocationMessage]);
+
+  const handleSendLiveLocation = useCallback(async () => {
+    if (!selectedPlace) {
+      setLocationError('Choose a place to share.');
+      return;
+    }
+    const expiresAt = new Date(Date.now() + liveDurationMinutes * 60000);
+    const payload = {
+      lat: selectedPlace.lat,
+      lng: selectedPlace.lng,
+      label: selectedPlace.name,
+      address: selectedPlace.address,
+      live: true,
+      expiresAt,
+    };
+    closeLocationModal();
+    const messageId = await sendLocationMessage(payload);
+    if (messageId) {
+      void startLiveLocationUpdates({
+        messageId,
+        expiresAt,
+        label: selectedPlace.name,
+        address: selectedPlace.address,
+      });
+    }
+  }, [closeLocationModal, liveDurationMinutes, selectedPlace, sendLocationMessage, startLiveLocationUpdates]);
 
   const handleInputFocus = useCallback(() => {
     if (showImagePicker) {
@@ -1075,6 +2081,27 @@ export default function ConversationScreen() {
             .eq('receiver_id', user.id);
         }
       )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'messages',
+          filter: `receiver_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const row = payload.new as MessageRow;
+          if (row.sender_id !== conversationId) return;
+          const nextMessage = mapRowToMessage(row);
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === row.id
+                ? { ...nextMessage, reactions: msg.reactions }
+                : msg
+            )
+          );
+        }
+      )
       .subscribe(handleRealtimeStatus);
 
     const sentChannel = supabase
@@ -1121,17 +2148,13 @@ export default function ConversationScreen() {
         (payload) => {
           const row = payload.new as MessageRow;
           if (row.receiver_id !== conversationId) return;
+          const nextMessage = mapRowToMessage(row);
           setMessages((prev) =>
-            prev.map((msg) => {
-              if (msg.id !== row.id) return msg;
-              if (row.is_read) {
-                return { ...msg, status: 'read', readAt: new Date() };
-              }
-              if (row.delivered_at) {
-                return { ...msg, status: 'delivered' };
-              }
-              return msg;
-            })
+            prev.map((msg) =>
+              msg.id === row.id
+                ? { ...nextMessage, reactions: msg.reactions }
+                : msg
+            )
           );
         }
       )
@@ -1700,7 +2723,7 @@ export default function ConversationScreen() {
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      mediaTypes: getPickerMediaTypesAll(),
       quality: 0.85,
       videoMaxDuration: 30,
     });
@@ -1729,7 +2752,7 @@ export default function ConversationScreen() {
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.All,
+      mediaTypes: getPickerMediaTypesAll(),
       quality: 0.85,
     });
     if (result.canceled) return;
@@ -1769,22 +2792,9 @@ export default function ConversationScreen() {
     }
   }, [closeAttachmentSheet, sendAttachmentText, uploadChatMedia]);
 
-  const handleLocationPress = useCallback(async () => {
-    const permission = await Location.requestForegroundPermissionsAsync();
-    if (permission.status !== 'granted') {
-      Alert.alert('Location', 'Enable location access to share your location.');
-      return;
-    }
-    closeAttachmentSheet();
-    const position = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.Balanced,
-    });
-    const { latitude, longitude } = position.coords;
-    const [place] = await Location.reverseGeocodeAsync({ latitude, longitude });
-    const label = [place?.city, place?.region].filter(Boolean).join(', ');
-    const safeLabel = label || `${latitude.toFixed(4)}, ${longitude.toFixed(4)}`;
-    await sendAttachmentText(`📍 ${safeLabel}\nhttps://maps.google.com/?q=${latitude},${longitude}`);
-  }, [closeAttachmentSheet, sendAttachmentText]);
+  const handleLocationPress = useCallback(() => {
+    openLocationModal();
+  }, [openLocationModal]);
 
   const replyToMessage = useCallback((message: MessageType) => {
     setReplyingTo(message);
@@ -2005,6 +3015,27 @@ export default function ConversationScreen() {
     );
   }, []);
 
+  const handleOpenDocument = useCallback((doc?: MessageType['document']) => {
+    if (!doc?.url) return;
+    const url = doc.url;
+    const typeLabel = doc.typeLabel?.toLowerCase() ?? '';
+    const ext = url.split('?')[0].split('.').pop()?.toLowerCase() ?? '';
+    if (typeLabel === 'image' || ['jpg', 'jpeg', 'png', 'webp', 'heic', 'gif'].includes(ext)) {
+      setImageViewerUrl(url);
+      return;
+    }
+    if (typeLabel === 'video' || ['mp4', 'mov', 'm4v', 'webm'].includes(ext)) {
+      setVideoViewerUrl(url);
+      return;
+    }
+    const isPdf = typeLabel === 'pdf' || ext === 'pdf';
+    const isText = typeLabel === 'txt' || ext === 'txt' || ext === 'text';
+    const previewUrl = isPdf || isText
+      ? url
+      : `https://docs.google.com/gview?embedded=true&url=${encodeURIComponent(url)}`;
+    setDocumentViewerUrl(previewUrl);
+  }, [setImageViewerUrl, setVideoViewerUrl]);
+
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: Array<{ item: MessageType }> }) => {
       viewableItems.forEach(({ item }) => {
@@ -2027,6 +3058,7 @@ export default function ConversationScreen() {
       const timeLabel = formatTime(item.timestamp);
       const imageSize = item.type === 'image' && item.imageUrl ? imageSizes[item.imageUrl] : undefined;
       const videoSize = item.type === 'video' && item.videoUrl ? videoSizes[item.videoUrl] : undefined;
+      const now = item.type === 'location' ? nowTick : null;
 
       return (
         <MessageRowItem
@@ -2061,6 +3093,10 @@ export default function ConversationScreen() {
           onViewImage={setImageViewerUrl}
           onViewVideo={setVideoViewerUrl}
           onVideoSize={handleVideoSize}
+          onOpenDocument={handleOpenDocument}
+          onOpenLocation={openLocationViewer}
+          onStopLiveShare={stopLiveSharing}
+          now={now}
         />
       );
     },
@@ -2080,6 +3116,10 @@ export default function ConversationScreen() {
       addReaction,
       formatTime,
       handleVideoSize,
+      handleOpenDocument,
+      openLocationViewer,
+      stopLiveSharing,
+      nowTick,
     ]
   );
 
@@ -2116,6 +3156,10 @@ export default function ConversationScreen() {
 
   const closeVideoViewer = useCallback(() => {
     setVideoViewerUrl(null);
+  }, []);
+
+  const closeDocumentViewer = useCallback(() => {
+    setDocumentViewerUrl(null);
   }, []);
 
   useEffect(() => {
@@ -2336,12 +3380,10 @@ export default function ConversationScreen() {
             onPress={closeVideoViewer}
           />
           {videoViewerUrl && (
-            <Video
-              source={{ uri: videoViewerUrl }}
-              style={styles.videoViewer}
-              resizeMode="contain"
-              useNativeControls
-              shouldPlay
+            <VideoViewer
+              url={videoViewerUrl}
+              visible={Boolean(videoViewerUrl)}
+              styles={styles}
             />
           )}
           <TouchableOpacity
@@ -2350,6 +3392,390 @@ export default function ConversationScreen() {
           >
             <MaterialCommunityIcons name="close" size={20} color={Colors.light.background} />
           </TouchableOpacity>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        visible={Boolean(documentViewerUrl)}
+        onRequestClose={closeDocumentViewer}
+      >
+        <View style={styles.imageViewerBackdrop}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={closeDocumentViewer}
+          />
+          {documentViewerUrl && (
+            <WebView
+              source={{ uri: documentViewerUrl }}
+              style={styles.documentViewer}
+              startInLoadingState
+            />
+          )}
+          <TouchableOpacity
+            style={styles.imageViewerClose}
+            onPress={closeDocumentViewer}
+          >
+            <MaterialCommunityIcons name="close" size={20} color={Colors.light.background} />
+          </TouchableOpacity>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={Boolean(locationViewerMessage?.location)}
+        onRequestClose={closeLocationViewer}
+        animationType="slide"
+      >
+        <View style={styles.locationViewerContainer}>
+          {locationViewerMessage?.location ? (
+            <>
+              <MapView
+                key={`${locationViewerMessage.location.lat}-${locationViewerMessage.location.lng}`}
+                style={StyleSheet.absoluteFill}
+                provider={Platform.OS === 'web' ? undefined : PROVIDER_GOOGLE}
+                googleMapId={GOOGLE_MAPS_MAP_ID || undefined}
+                mapPadding={{ top: 120, right: 20, bottom: 220, left: 20 }}
+                initialRegion={{
+                  latitude: locationViewerMessage.location.lat,
+                  longitude: locationViewerMessage.location.lng,
+                  latitudeDelta: 0.012,
+                  longitudeDelta: 0.012,
+                }}
+                showsPointsOfInterest
+                showsBuildings
+              >
+                <Marker
+                  coordinate={{
+                    latitude: locationViewerMessage.location.lat,
+                    longitude: locationViewerMessage.location.lng,
+                  }}
+                  title={locationViewerMessage.location.label}
+                  pinColor={theme.tint}
+                />
+              </MapView>
+              <View style={styles.locationViewerHeader}>
+                <TouchableOpacity
+                  style={styles.locationViewerClose}
+                  onPress={closeLocationViewer}
+                >
+                  <MaterialCommunityIcons name="close" size={20} color={theme.text} />
+                </TouchableOpacity>
+                <View style={styles.locationViewerText}>
+                  <Text style={styles.locationViewerTitle} numberOfLines={1}>
+                    {locationViewerMessage.location.label}
+                  </Text>
+                  {locationViewerMessage.location.address ? (
+                    <Text style={styles.locationViewerSubtitle} numberOfLines={1}>
+                      {locationViewerMessage.location.address}
+                    </Text>
+                  ) : null}
+                </View>
+              </View>
+              <View style={styles.locationViewerFooter}>
+                {locationViewerMessage.location.live && (
+                  <View style={styles.locationViewerLiveRow}>
+                    <View style={styles.locationLiveBadge}>
+                      <Text style={styles.locationLiveBadgeText}>Live</Text>
+                    </View>
+                    <Text style={styles.locationLiveText}>
+                      {formatRemainingTime(locationViewerMessage.location.expiresAt, nowTick)}
+                    </Text>
+                    {locationViewerMessage.senderId === user?.id &&
+                      locationViewerMessage.location.expiresAt &&
+                      locationViewerMessage.location.expiresAt.getTime() > nowTick && (
+                        <TouchableOpacity
+                          style={styles.locationStopButton}
+                          onPress={() => stopLiveSharing(locationViewerMessage.id)}
+                        >
+                          <Text style={styles.locationStopText}>Stop sharing</Text>
+                        </TouchableOpacity>
+                      )}
+                  </View>
+                )}
+                <TouchableOpacity
+                  style={styles.locationViewerAction}
+                  onPress={() => {
+                    const link = locationViewerMessage.location.mapLink || buildMapsLink(locationViewerMessage.location.lat, locationViewerMessage.location.lng);
+                    Linking.openURL(link);
+                  }}
+                >
+                  <MaterialCommunityIcons name="directions" size={18} color={theme.text} />
+                  <Text style={styles.locationViewerActionText}>Open in Maps</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          ) : null}
+        </View>
+      </Modal>
+
+      <Modal
+        visible={locationModalVisible}
+        onRequestClose={closeLocationModal}
+        animationType="slide"
+      >
+        <View style={styles.locationModalContainer}>
+          <MapView
+            ref={mapRef}
+            style={StyleSheet.absoluteFill}
+            provider={Platform.OS === 'web' ? undefined : PROVIDER_GOOGLE}
+            googleMapId={GOOGLE_MAPS_MAP_ID || undefined}
+            mapPadding={{ top: 160, right: 20, bottom: 320, left: 20 }}
+            initialRegion={mapInitialRegion}
+            onPress={handleMapPress}
+            showsUserLocation={locationStatus === 'granted'}
+            showsMyLocationButton={locationStatus === 'granted'}
+            showsPointsOfInterest
+            showsBuildings
+          >
+            {selectedPlace && (
+              <Marker
+                coordinate={{ latitude: selectedPlace.lat, longitude: selectedPlace.lng }}
+                title={selectedPlace.name}
+                pinColor={theme.tint}
+              />
+            )}
+          </MapView>
+
+          <Animated.View
+            style={[
+              styles.locationTopBar,
+              {
+                opacity: locationSheetAnim,
+                transform: [
+                  {
+                    translateY: locationSheetAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-12, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <BlurView
+              intensity={45}
+              tint={isDark ? 'dark' : 'light'}
+              style={styles.locationGlass}
+              pointerEvents="none"
+            />
+            <View style={styles.locationTopContent}>
+              <TouchableOpacity
+                style={styles.locationTopButton}
+                onPress={closeLocationModal}
+              >
+                <MaterialCommunityIcons name="chevron-left" size={22} color={theme.text} />
+              </TouchableOpacity>
+              <View>
+                <Text style={styles.locationTopTitle}>Share location</Text>
+                <Text style={styles.locationTopSubtitle}>Pick a place to send</Text>
+              </View>
+              <View style={styles.locationTopSpacer} />
+            </View>
+          </Animated.View>
+
+          <Animated.View
+            style={[
+              styles.locationSearchWrap,
+              {
+                opacity: locationSheetAnim,
+                transform: [
+                  {
+                    translateY: locationSheetAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-6, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <BlurView
+              intensity={45}
+              tint={isDark ? 'dark' : 'light'}
+              style={styles.locationGlass}
+              pointerEvents="none"
+            />
+            <View style={styles.locationSearchContent}>
+              <MaterialCommunityIcons name="magnify" size={18} color={theme.textMuted} />
+              <TextInput
+                style={styles.locationSearchInput}
+                placeholder="Search places"
+                placeholderTextColor={theme.textMuted}
+                value={locationSearchQuery}
+                onChangeText={setLocationSearchQuery}
+              />
+              {searchLoading ? (
+                <ActivityIndicator size="small" color={theme.textMuted} />
+              ) : locationSearchQuery.length > 0 ? (
+                <TouchableOpacity onPress={() => setLocationSearchQuery('')}>
+                  <MaterialCommunityIcons name="close-circle" size={18} color={theme.textMuted} />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </Animated.View>
+
+          {locationSuggestions.length > 0 && (
+            <View style={styles.locationSuggestionsPanel}>
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {locationSuggestions.map((suggestion) => (
+                  <TouchableOpacity
+                    key={suggestion.id}
+                    style={styles.locationSuggestionRow}
+                    onPress={() => handleSuggestionPress(suggestion)}
+                  >
+                    <MaterialCommunityIcons name="map-marker-outline" size={16} color={theme.textMuted} />
+                    <View style={styles.locationSuggestionText}>
+                      <Text style={styles.locationSuggestionTitle}>{suggestion.primary}</Text>
+                      {suggestion.secondary ? (
+                        <Text style={styles.locationSuggestionSubtitle}>{suggestion.secondary}</Text>
+                      ) : null}
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
+          <Animated.View
+            style={[
+              styles.locationBottomSheet,
+              {
+                opacity: locationSheetAnim,
+                transform: [
+                  {
+                    translateY: locationSheetAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [40, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <BlurView
+              intensity={55}
+              tint={isDark ? 'dark' : 'light'}
+              style={styles.locationGlass}
+              pointerEvents="none"
+            />
+            <View style={styles.locationSheetContent}>
+              <View style={styles.locationSheetHandle} />
+              <View style={styles.locationSelectedRow}>
+              <Text style={styles.locationSectionTitle}>Selected</Text>
+              <Text style={styles.locationSelectedValue} numberOfLines={1}>
+                {selectedPlace?.name || 'Tap the map or search'}
+              </Text>
+              {selectedPlace?.address ? (
+                <Text style={styles.locationSelectedSubtitle} numberOfLines={1}>
+                  {selectedPlace.address}
+                </Text>
+              ) : null}
+              </View>
+
+              <View style={styles.locationNearbyRow}>
+                <View style={styles.locationNearbyHeader}>
+                  <Text style={styles.locationSectionTitle}>Nearby</Text>
+                  {placesLoading ? (
+                    <ActivityIndicator size="small" color={theme.textMuted} />
+                  ) : null}
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                  {nearbyPlaces.map((place) => (
+                    <TouchableOpacity
+                      key={place.id}
+                      style={styles.locationNearbyCard}
+                      onPress={() => selectPlace(place)}
+                    >
+                      <View style={styles.locationNearbyIcon}>
+                        <MaterialCommunityIcons name="map-marker-outline" size={16} color={theme.tint} />
+                      </View>
+                      <View style={styles.locationNearbyMeta}>
+                        <Text style={styles.locationNearbyName} numberOfLines={1}>
+                          {place.name}
+                        </Text>
+                        {place.address ? (
+                          <Text style={styles.locationNearbyAddress} numberOfLines={1}>
+                            {place.address}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                  {!hasPlacesKey && (
+                    <View style={styles.locationNearbyCard}>
+                      <View style={styles.locationNearbyIcon}>
+                        <MaterialCommunityIcons name="alert-circle-outline" size={16} color={theme.textMuted} />
+                      </View>
+                      <View style={styles.locationNearbyMeta}>
+                        <Text style={styles.locationNearbyName}>Add Google Maps key</Text>
+                        <Text style={styles.locationNearbyAddress}>Places search disabled</Text>
+                      </View>
+                    </View>
+                  )}
+                </ScrollView>
+              </View>
+
+              <View style={styles.locationLiveSection}>
+                <Text style={styles.locationSectionTitle}>Live location</Text>
+                <View style={styles.locationPresetRow}>
+                  {LIVE_LOCATION_PRESETS.map((preset) => (
+                    <TouchableOpacity
+                      key={preset}
+                      style={[
+                        styles.locationPresetChip,
+                        liveDurationMinutes === preset && styles.locationPresetChipActive,
+                      ]}
+                      onPress={() => setLiveDurationMinutes(preset)}
+                    >
+                      <Text
+                        style={[
+                          styles.locationPresetText,
+                          liveDurationMinutes === preset && styles.locationPresetTextActive,
+                        ]}
+                      >
+                        {preset === 60
+                          ? '1 hour'
+                          : preset === 480
+                          ? '8 hours'
+                          : `${preset} min`}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <Text style={styles.locationLiveHint}>
+                  Remaining time is always visible and you can stop sharing anytime.
+                </Text>
+              </View>
+
+              {locationError ? (
+                <Text style={styles.locationErrorText}>{locationError}</Text>
+              ) : null}
+
+              <View style={styles.locationActionRow}>
+                <TouchableOpacity
+                  style={styles.locationGhostButton}
+                  onPress={handleSendLocation}
+                >
+                  <MaterialCommunityIcons name="map-marker-outline" size={18} color={theme.text} />
+                  <Text style={styles.locationGhostText}>Send pin</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.locationPrimaryButton}
+                  onPress={handleSendLiveLocation}
+                >
+                  <MaterialCommunityIcons name="map-marker-radius-outline" size={18} color={Colors.light.background} />
+                  <Text style={styles.locationPrimaryText}>Share live</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Animated.View>
+
+          {showLocationLoading && (
+            <View style={styles.locationLoadingOverlay}>
+              <ActivityIndicator size="large" color={theme.tint} />
+              <Text style={styles.locationLoadingText}>Finding your location...</Text>
+            </View>
+          )}
         </View>
       </Modal>
 
@@ -3259,6 +4685,104 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontSize: 12,
       fontFamily: 'Manrope_400Regular',
     },
+    // Location Messages
+    locationBubble: {
+      padding: 10,
+      width: LOCATION_PREVIEW_WIDTH + 20,
+    },
+    locationMessageContainer: {
+      gap: 10,
+    },
+    locationMapImage: {
+      width: LOCATION_PREVIEW_WIDTH,
+      height: LOCATION_PREVIEW_HEIGHT,
+      borderRadius: 12,
+      backgroundColor: theme.backgroundSubtle,
+    },
+    locationMapPlaceholder: {
+      width: LOCATION_PREVIEW_WIDTH,
+      height: LOCATION_PREVIEW_HEIGHT,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      backgroundColor: theme.backgroundSubtle,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+    },
+    locationPlaceholderText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+    },
+    locationInfoRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    locationIconBadge: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    locationTextBlock: {
+      flex: 1,
+    },
+    locationLabelText: {
+      fontSize: 14,
+      fontFamily: 'Manrope_600SemiBold',
+    },
+    locationAddressText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      marginTop: 2,
+    },
+    locationRouteRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginLeft: 36,
+    },
+    locationRouteText: {
+      fontSize: 11,
+      fontFamily: 'Manrope_500Medium',
+    },
+    locationLiveRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      flexWrap: 'wrap',
+    },
+    locationLiveBadge: {
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 999,
+      alignSelf: 'flex-start',
+      backgroundColor: withAlpha(theme.secondary, 0.18),
+    },
+    locationLiveBadgeText: {
+      fontSize: 11,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.secondary,
+    },
+    locationLiveText: {
+      fontSize: 11,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+    },
+    locationStopButton: {
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+    },
+    locationStopText: {
+      fontSize: 11,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
     imageCaption: {
       padding: 12,
       paddingTop: 8,
@@ -3280,6 +4804,11 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       width: screenWidth,
       height: screenHeight * 0.8,
     },
+    documentViewer: {
+      width: screenWidth,
+      height: screenHeight * 0.8,
+      backgroundColor: Colors.light.background,
+    },
     imageViewerClose: {
       position: 'absolute',
       top: 24,
@@ -3290,6 +4819,396 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: 'rgba(0,0,0,0.35)',
+    },
+    locationViewerContainer: {
+      flex: 1,
+      backgroundColor: theme.background,
+    },
+    locationViewerHeader: {
+      position: 'absolute',
+      top: Platform.OS === 'ios' ? 56 : 28,
+      left: 16,
+      right: 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      backgroundColor: withAlpha(theme.background, 0.92),
+      padding: 12,
+      borderRadius: 16,
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.12,
+      shadowRadius: 12,
+      elevation: 6,
+    },
+    locationViewerClose: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.backgroundSubtle,
+    },
+    locationViewerText: {
+      flex: 1,
+      gap: 2,
+    },
+    locationViewerTitle: {
+      fontSize: 16,
+      fontFamily: 'PlayfairDisplay_700Bold',
+      color: theme.text,
+    },
+    locationViewerSubtitle: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+    },
+    locationViewerFooter: {
+      position: 'absolute',
+      left: 16,
+      right: 16,
+      bottom: Platform.OS === 'ios' ? 32 : 20,
+      backgroundColor: withAlpha(theme.background, 0.82),
+      padding: 12,
+      borderRadius: 16,
+      gap: 10,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.14,
+      shadowRadius: 14,
+      elevation: 6,
+    },
+    locationViewerLiveRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      flexWrap: 'wrap',
+    },
+    locationViewerAction: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      paddingVertical: 10,
+      borderRadius: 12,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+    },
+    locationViewerActionText: {
+      fontSize: 13,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    locationModalContainer: {
+      flex: 1,
+      backgroundColor: theme.background,
+    },
+    locationTopBar: {
+      position: 'absolute',
+      top: Platform.OS === 'ios' ? 56 : 24,
+      left: 16,
+      right: 16,
+      borderRadius: 18,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.12),
+      zIndex: 20,
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: 0.15,
+      shadowRadius: 18,
+      elevation: 8,
+    },
+    locationTopContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      padding: 12,
+    },
+    locationTopButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.background, 0.6),
+    },
+    locationTopTitle: {
+      fontSize: 16,
+      fontFamily: 'PlayfairDisplay_700Bold',
+      color: theme.text,
+    },
+    locationTopSubtitle: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      marginTop: 2,
+    },
+    locationTopSpacer: {
+      width: 36,
+    },
+    locationSearchWrap: {
+      position: 'absolute',
+      top: Platform.OS === 'ios' ? 124 : 92,
+      left: 16,
+      right: 16,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.12),
+      overflow: 'hidden',
+      zIndex: 19,
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: 0.14,
+      shadowRadius: 18,
+      elevation: 7,
+    },
+    locationSearchContent: {
+      height: 46,
+      paddingHorizontal: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    locationSearchInput: {
+      flex: 1,
+      fontSize: 14,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.text,
+    },
+    locationGlass: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    locationSuggestionsPanel: {
+      position: 'absolute',
+      top: Platform.OS === 'ios' ? 176 : 144,
+      left: 16,
+      right: 16,
+      maxHeight: 220,
+      backgroundColor: withAlpha(theme.background, 0.98),
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      paddingVertical: 6,
+      zIndex: 18,
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.12,
+      shadowRadius: 12,
+      elevation: 6,
+    },
+    locationSuggestionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+    },
+    locationSuggestionText: {
+      flex: 1,
+      gap: 2,
+    },
+    locationSuggestionTitle: {
+      fontSize: 13,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    locationSuggestionSubtitle: {
+      fontSize: 11,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+    },
+    locationBottomSheet: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      bottom: 0,
+      paddingHorizontal: 16,
+      paddingTop: 10,
+      paddingBottom: 24,
+      backgroundColor: 'transparent',
+      borderTopLeftRadius: 24,
+      borderTopRightRadius: 24,
+      borderTopWidth: 1,
+      borderTopColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      overflow: 'hidden',
+      zIndex: 17,
+      gap: 12,
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: -10 },
+      shadowOpacity: 0.12,
+      shadowRadius: 12,
+      elevation: 10,
+    },
+    locationSheetContent: {
+      gap: 12,
+    },
+    locationSheetHandle: {
+      alignSelf: 'center',
+      width: 46,
+      height: 5,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      marginBottom: 4,
+    },
+    locationSelectedRow: {
+      gap: 4,
+    },
+    locationSectionTitle: {
+      fontSize: 11,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.textMuted,
+      letterSpacing: 0.6,
+      textTransform: 'uppercase',
+    },
+    locationSelectedValue: {
+      fontSize: 15,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    locationSelectedSubtitle: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+    },
+    locationNearbyRow: {
+      gap: 8,
+    },
+    locationNearbyHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    locationNearbyCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.1),
+      backgroundColor: withAlpha(theme.background, 0.7),
+      marginRight: 10,
+      minWidth: 160,
+      maxWidth: 220,
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.08,
+      shadowRadius: 10,
+      elevation: 4,
+    },
+    locationNearbyIcon: {
+      width: 30,
+      height: 30,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.12),
+    },
+    locationNearbyMeta: {
+      flex: 1,
+      gap: 2,
+    },
+    locationNearbyName: {
+      fontSize: 12,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    locationNearbyAddress: {
+      fontSize: 10,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      marginTop: 2,
+    },
+    locationLiveSection: {
+      gap: 8,
+    },
+    locationPresetRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    locationPresetChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      backgroundColor: withAlpha(theme.background, 0.6),
+    },
+    locationPresetChipActive: {
+      backgroundColor: theme.tint,
+      borderColor: theme.tint,
+    },
+    locationPresetText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    locationPresetTextActive: {
+      color: Colors.light.background,
+    },
+    locationLiveHint: {
+      fontSize: 11,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+    },
+    locationErrorText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: '#b91c1c',
+    },
+    locationActionRow: {
+      flexDirection: 'row',
+      gap: 10,
+    },
+    locationGhostButton: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 10,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      backgroundColor: theme.backgroundSubtle,
+    },
+    locationGhostText: {
+      fontSize: 13,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    locationPrimaryButton: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 10,
+      borderRadius: 14,
+      backgroundColor: theme.tint,
+    },
+    locationPrimaryText: {
+      fontSize: 13,
+      fontFamily: 'Manrope_600SemiBold',
+      color: Colors.light.background,
+    },
+    locationLoadingOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: withAlpha(theme.background, 0.92),
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+    },
+    locationLoadingText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
     },
 
     // Reply Features
