@@ -11,7 +11,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, ScrollView, Share, StyleSheet, Text, TouchableOpacity, useColorScheme, View } from 'react-native';
+import { Alert, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const withAlpha = (hex: string, alpha: number) => {
@@ -239,16 +240,23 @@ export default function MomentsScreen() {
           </TouchableOpacity>
         </View>
 
-        {momentUsers.length > 0 ? (
+        {momentUsersWithContent.length > 0 ? (
           <MomentsRow
-            users={momentUsers}
+            users={momentUsersWithContent}
             isLoading={loading}
             onPressUser={openViewer}
             onPressCreate={() => setCreateVisible(true)}
             onPressOwn={handleOwnPress}
           />
         ) : (
-          <Text style={styles.emptyText}>No moments yet. Post your first moment.</Text>
+          <View style={styles.emptyState}>
+            <Image
+              source={require('../../assets/images/no-moments-illus.png')}
+              style={styles.emptyIllustration}
+              contentFit="contain"
+            />
+            <Text style={styles.emptyText}>No moments yet. Post your first moment.</Text>
+          </View>
         )}
 
         {emptyMyMoments ? null : (
@@ -411,6 +419,16 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     emptyTitle: { fontSize: 16, fontFamily: 'Archivo_700Bold', color: theme.text, marginBottom: 6 },
     emptySubtitle: { color: theme.textMuted, fontFamily: 'Manrope_500Medium' },
+    emptyState: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 16,
+      gap: 10,
+    },
+    emptyIllustration: {
+      width: 280,
+      height: 200,
+    },
     momentRow: {
       flexDirection: 'row',
       alignItems: 'center',

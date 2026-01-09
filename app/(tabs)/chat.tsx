@@ -435,7 +435,11 @@ export default function ChatScreen() {
 
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
-      <MaterialCommunityIcons name="chat-outline" size={64} color={theme.textMuted} />
+      <Image
+        source={require('../../assets/images/no-chat-illus.png')}
+        style={styles.emptyIllustration}
+        resizeMode="contain"
+      />
       <Text style={styles.emptyStateTitle}>No conversations yet</Text>
       <Text style={styles.emptyStateText}>
         Start matching with people to begin chatting!
@@ -809,6 +813,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       textAlign: 'center',
       lineHeight: 24,
       marginBottom: 24,
+    },
+    emptyIllustration: {
+      width: 260,
+      height: 200,
+      maxWidth: '72%',
+      maxHeight: 260,
+      alignSelf: 'center',
     },
     exploreButton: {
       flexDirection: 'row',
