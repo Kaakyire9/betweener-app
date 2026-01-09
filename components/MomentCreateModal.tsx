@@ -3,7 +3,7 @@ import { useAuth } from '@/lib/auth-context';
 import { createMomentFromMedia, createTextMoment } from '@/lib/moments';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Alert, Modal, Pressable, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
 
 const getPickerMediaTypeImages = () =>
