@@ -54,6 +54,30 @@ const GOOGLE_MAPS_MAP_ID = process.env.EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID;
 const LOCATION_PREVIEW_WIDTH = Math.min(screenWidth * 0.72, 320);
 const LOCATION_PREVIEW_HEIGHT = 180;
 const LIVE_LOCATION_PRESETS = [15, 60, 480] as const;
+const MAP_STYLE_LIGHT = [
+  { elementType: 'geometry', stylers: [{ color: '#F3E5D8' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#5F706C' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#F7ECE2' }] },
+  { featureType: 'administrative', elementType: 'geometry.stroke', stylers: [{ color: '#DCCFC2' }] },
+  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#4FA7A3' }] },
+  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#E2EDE7' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#E8D9CB' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#DCCFC2' }] },
+  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#E6D8CB' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#DDE4E1' }] },
+];
+const MAP_STYLE_DARK = [
+  { elementType: 'geometry', stylers: [{ color: '#0F1A1A' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#9CB3AE' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#152222' }] },
+  { featureType: 'administrative', elementType: 'geometry.stroke', stylers: [{ color: '#1F2C2C' }] },
+  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#5BC1BB' }] },
+  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#142525' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1A2B2B' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#1F2C2C' }] },
+  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#142020' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0B1414' }] },
+];
 const getPickerMediaTypesAll = () =>
   ImagePicker.MediaTypeOptions.All;
 
@@ -3435,6 +3459,7 @@ export default function ConversationScreen() {
                 provider={Platform.OS === 'web' ? undefined : PROVIDER_GOOGLE}
                 googleMapId={GOOGLE_MAPS_MAP_ID || undefined}
                 mapPadding={{ top: 120, right: 20, bottom: 220, left: 20 }}
+                customMapStyle={GOOGLE_MAPS_MAP_ID ? undefined : isDark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT}
                 initialRegion={{
                   latitude: locationViewerMessage.location.lat,
                   longitude: locationViewerMessage.location.lng,
@@ -3520,6 +3545,7 @@ export default function ConversationScreen() {
             provider={Platform.OS === 'web' ? undefined : PROVIDER_GOOGLE}
             googleMapId={GOOGLE_MAPS_MAP_ID || undefined}
             mapPadding={{ top: 160, right: 20, bottom: 320, left: 20 }}
+            customMapStyle={GOOGLE_MAPS_MAP_ID ? undefined : isDark ? MAP_STYLE_DARK : MAP_STYLE_LIGHT}
             initialRegion={mapInitialRegion}
             onPress={handleMapPress}
             showsUserLocation={locationStatus === 'granted'}
@@ -4981,6 +5007,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     locationGlass: {
       ...StyleSheet.absoluteFillObject,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.5 : 0.65),
     },
     locationSuggestionsPanel: {
       position: 'absolute',
@@ -5045,6 +5072,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     locationSheetContent: {
       gap: 12,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.2 : 0.5),
     },
     locationSheetHandle: {
       alignSelf: 'center',
