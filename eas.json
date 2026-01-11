@@ -15,19 +15,12 @@
       },
       "env": {
         "EXPO_PUBLIC_SUPABASE_URL": "$EXPO_PUBLIC_SUPABASE_URL",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "$EXPO_PUBLIC_SUPABASE_ANON_KEY",
-        "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "$EXPO_PUBLIC_GOOGLE_MAPS_API_KEY",
-        "EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY": "$EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY",
-        "EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID": "$EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID"
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "$EXPO_PUBLIC_SUPABASE_ANON_KEY"
       }
     },
     "preview": {
       "distribution": "internal",
-      "env": {
-        "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "$EXPO_PUBLIC_GOOGLE_MAPS_API_KEY",
-        "EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY": "$EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY",
-        "EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID": "$EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID"
-      },
+      "env": {},
       "ios": {
         "image": "latest",
         "cache": {
@@ -37,11 +30,7 @@
     },
     "production": {
       "autoIncrement": true,
-      "env": {
-        "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY": "$EXPO_PUBLIC_GOOGLE_MAPS_API_KEY",
-        "EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY": "$EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY",
-        "EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID": "$EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID"
-      },
+      "env": {},
       "ios": {
         "image": "latest"
       }

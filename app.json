@@ -1,6 +1,7 @@
 {
   "expo": {
     "name": "Betweener",
+    "owner": "kaakyire9",
     "slug": "betweener",
     "version": "1.0.0",
     "orientation": "portrait",
