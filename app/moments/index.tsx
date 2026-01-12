@@ -10,8 +10,8 @@ import { createSignedUrl } from '@/lib/moments';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { router } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -34,6 +34,9 @@ export default function MomentsScreen() {
   const isDark = resolvedScheme === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const { profile, user } = useAuth();
+  const params = useLocalSearchParams();
+  const startUserIdParam = typeof params.startUserId === 'string' ? params.startUserId : null;
+  const startMomentIdParam = typeof params.startMomentId === 'string' ? params.startMomentId : null;
   const { momentUsers, loading, refresh } = useMoments({
     currentUserId: user?.id,
     currentUserProfile: profile,
@@ -55,6 +58,7 @@ export default function MomentsScreen() {
     () => momentUsers.some((u) => u.isOwn && u.moments.length > 0),
     [momentUsers],
   );
+  const consumedStartRef = useRef<string | null>(null);
 
   const openViewer = (userId: string) => {
     setStartUserId(userId);
@@ -74,6 +78,17 @@ export default function MomentsScreen() {
     }
     openOwnMoment();
   };
+
+  useEffect(() => {
+    if (!startUserIdParam || momentUsersWithContent.length === 0) return;
+    if (consumedStartRef.current === startUserIdParam) return;
+    const targetUser = momentUsersWithContent.find((entry) => entry.userId === startUserIdParam);
+    if (!targetUser) return;
+    consumedStartRef.current = startUserIdParam;
+    setStartUserId(startUserIdParam);
+    setStartMomentId(startMomentIdParam ?? null);
+    setViewerVisible(true);
+  }, [momentUsersWithContent, startMomentIdParam, startUserIdParam]);
 
   const fetchMyMoments = useCallback(async () => {
     if (!user?.id) return;
