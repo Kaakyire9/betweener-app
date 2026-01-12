@@ -15,21 +15,21 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
-  Animated,
-  ColorValue,
-  DeviceEventEmitter,
-  Dimensions,
-  FlatList,
-  Pressable,
-  Share,
-  StatusBar,
-  StyleProp,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-  ViewStyle,
+    Alert,
+    Animated,
+    ColorValue,
+    DeviceEventEmitter,
+    Dimensions,
+    FlatList,
+    Pressable,
+    Share,
+    StatusBar,
+    StyleProp,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
+    ViewStyle,
 } from 'react-native';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');

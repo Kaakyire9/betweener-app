@@ -1,6 +1,6 @@
-import { supabase } from '@/lib/supabase';
-import { parseDistanceKmFromLabel, isDistanceLabel } from '@/lib/profile/distance';
+import { isDistanceLabel, parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
+import { supabase } from '@/lib/supabase';
 import type { Interest, UserProfile } from '@/types/user-profile';
 
 export type FetchViewedProfileOptions = {

@@ -1,33 +1,33 @@
+import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
 import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
+import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
-import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { supabase } from '@/lib/supabase';
 import type { UserProfile } from '@/types/user-profile';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import type { ViewToken } from '@shopify/flash-list';
+import { FlashList } from '@shopify/flash-list';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { FlashList } from '@shopify/flash-list';
-import type { ViewToken } from '@shopify/flash-list';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Dimensions, FlatList, Image, Modal, PanResponder, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
-  Easing,
-  interpolate,
-  interpolateColor,
-  type SharedValue,
-  runOnJS,
-  runOnUI,
-  useAnimatedStyle,
-  useDerivedValue,
-  useSharedValue,
-  withTiming,
+    Easing,
+    interpolate,
+    interpolateColor,
+    runOnJS,
+    runOnUI,
+    useAnimatedStyle,
+    useDerivedValue,
+    useSharedValue,
+    withTiming,
+    type SharedValue,
 } from 'react-native-reanimated';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
