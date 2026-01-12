@@ -4,6 +4,7 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -11,6 +12,7 @@ import {
   Animated,
   FlatList,
   Image,
+  Pressable,
   StyleSheet,
   Text,
   TextInput,
@@ -30,6 +32,7 @@ type ConversationType = {
     isOnline: boolean;
     lastSeen: Date;
   };
+  blockStatus?: 'blocked_by_me' | 'blocked_me' | null;
   lastMessage: {
     text: string;
     timestamp: Date;
@@ -48,7 +51,10 @@ type MessageRow = {
   sender_id: string;
   receiver_id: string;
   is_read: boolean;
+  deleted_for_all?: boolean | null;
 };
+
+const BLOCKED_AVATAR_SOURCE = require('../../assets/images/circle-logo.png');
 
 const withAlpha = (hex: string, alpha: number) => {
   const normalized = hex.replace('#', '');
@@ -151,7 +157,7 @@ export default function ChatScreen() {
     try {
       const { data: messages, error } = await supabase
         .from('messages')
-        .select('id,text,created_at,sender_id,receiver_id,is_read')
+        .select('id,text,created_at,sender_id,receiver_id,is_read,deleted_for_all')
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .order('created_at', { ascending: false })
         .limit(300);
@@ -194,6 +200,24 @@ export default function ChatScreen() {
         return;
       }
 
+      const { data: blocksData, error: blocksError } = await supabase
+        .from('blocks')
+        .select('blocker_id,blocked_id')
+        .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
+
+      if (blocksError) {
+        console.log('[chat] blocks fetch error', blocksError);
+      }
+
+      const blockStatusByUser = new Map<string, ConversationType['blockStatus']>();
+      (blocksData || []).forEach((row: { blocker_id: string; blocked_id: string }) => {
+        if (row.blocker_id === user.id) {
+          blockStatusByUser.set(row.blocked_id, 'blocked_by_me');
+        } else if (row.blocked_id === user.id) {
+          blockStatusByUser.set(row.blocker_id, 'blocked_me');
+        }
+      });
+
       const profileByUser = new Map(
         (profilesData || []).map((p: any) => [p.user_id, p])
       );
@@ -203,6 +227,8 @@ export default function ChatScreen() {
         const profileRow = profileByUser.get(otherUserId);
         const last = entry?.last;
         const lastTimestamp = last?.created_at ? new Date(last.created_at) : new Date();
+        const lastText = last?.deleted_for_all ? 'Message deleted' : last?.text || '';
+        const blockStatus = blockStatusByUser.get(otherUserId) ?? null;
         return {
           id: otherUserId,
           matchedUser: {
@@ -213,8 +239,9 @@ export default function ChatScreen() {
             isOnline: !!profileRow?.online,
             lastSeen: profileRow?.updated_at ? new Date(profileRow.updated_at) : new Date(),
           },
+          blockStatus,
           lastMessage: {
-            text: last?.text || '',
+            text: lastText,
             timestamp: lastTimestamp,
             senderId: last?.sender_id || '',
             type: 'text',
@@ -350,16 +377,46 @@ export default function ChatScreen() {
   };
 
   const renderConversation = ({ item }: { item: ConversationType }) => {
-    const isOnline = presenceOnline[item.matchedUser.id] ?? item.matchedUser.isOnline;
-    const lastSeen = presenceLastSeen[item.matchedUser.id] ?? item.matchedUser.lastSeen;
+    const isBlocked = Boolean(item.blockStatus);
+    const isUnread = item.unreadCount > 0;
+    const isOnline = isBlocked
+      ? false
+      : presenceOnline[item.matchedUser.id] ?? item.matchedUser.isOnline;
+    const lastSeen = isBlocked
+      ? null
+      : presenceLastSeen[item.matchedUser.id] ?? item.matchedUser.lastSeen;
     const isMyLastMessage = item.lastMessage.senderId === (user?.id || '');
+    const avatarNode = isBlocked ? (
+      <Image source={BLOCKED_AVATAR_SOURCE} style={styles.conversationAvatar} />
+    ) : item.matchedUser.avatar_url ? (
+      <Image source={{ uri: item.matchedUser.avatar_url }} style={styles.conversationAvatar} />
+    ) : (
+      <View style={[styles.conversationAvatar, styles.avatarFallback]}>
+        <Text style={styles.avatarFallbackText}>
+          {(item.matchedUser.name || '?')[0]?.toUpperCase()}
+        </Text>
+      </View>
+    );
+    const avatarContent = !isBlocked && isUnread ? (
+      <LinearGradient
+        colors={[theme.tint, theme.accent]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.avatarRingUnread}
+      >
+        <View style={styles.avatarRingInner}>{avatarNode}</View>
+      </LinearGradient>
+    ) : (
+      <View style={styles.avatarRing}>{avatarNode}</View>
+    );
     
     return (
-      <TouchableOpacity
-        style={[
+      <Pressable
+        style={({ pressed }) => [
           styles.conversationItem,
           item.isPinned && styles.pinnedConversation,
-          item.unreadCount > 0 && styles.unreadConversation,
+          isUnread && styles.unreadConversation,
+          pressed && styles.conversationItemPressed,
         ]}
         onPress={() => {
           void markAsRead(item.id);
@@ -369,18 +426,10 @@ export default function ChatScreen() {
       >
         <View style={styles.conversationLeft}>
           <View style={styles.avatarContainer}>
-            {item.matchedUser.avatar_url ? (
-              <Image source={{ uri: item.matchedUser.avatar_url }} style={styles.conversationAvatar} />
-            ) : (
-              <View style={[styles.conversationAvatar, styles.avatarFallback]}>
-                <Text style={styles.avatarFallbackText}>
-                  {(item.matchedUser.name || '?')[0]?.toUpperCase()}
-                </Text>
-              </View>
-            )}
-            {isOnline && (
-              <View style={styles.onlineIndicator} />
-            )}
+              {avatarContent}
+              {!isBlocked && isOnline && (
+                <View style={styles.onlineIndicator} />
+              )}
             {item.isPinned && (
               <View style={styles.pinIndicator}>
                 <MaterialCommunityIcons name="pin" size={10} color={Colors.light.background} />
@@ -392,16 +441,13 @@ export default function ChatScreen() {
             <View style={styles.conversationHeader}>
               <Text style={[
                 styles.conversationName,
-                item.unreadCount > 0 && styles.unreadName
+                isUnread && styles.unreadName
               ]}>
                 {item.matchedUser.name}
               </Text>
-              <Text style={styles.conversationTime}>
-                {formatLastMessageTime(item.lastMessage.timestamp)}
-              </Text>
             </View>
 
-            {!isOnline && lastSeen && item.unreadCount === 0 && !item.isPinned && (
+            {!isBlocked && !isOnline && lastSeen && item.unreadCount === 0 && !item.isPinned && (
               <Text style={styles.lastSeenText}>
                 Last seen {formatLastSeen(lastSeen)}
               </Text>
@@ -411,7 +457,7 @@ export default function ChatScreen() {
               <Text 
                 style={[
                   styles.lastMessage,
-                  item.unreadCount > 0 && styles.unreadMessage
+                  isUnread && styles.unreadMessage
                 ]} 
                 numberOfLines={1}
               >
@@ -429,7 +475,7 @@ export default function ChatScreen() {
             </View>
           </View>
         </View>
-      </TouchableOpacity>
+      </Pressable>
     );
   };
 
@@ -667,22 +713,35 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
 
     // Conversations List
     conversationsList: {
-      paddingVertical: 8,
+      paddingVertical: 10,
     },
     conversationItem: {
-      backgroundColor: theme.background,
-      paddingHorizontal: 20,
-      paddingVertical: 16,
-      borderBottomWidth: 1,
-      borderBottomColor: withAlpha(theme.text, isDark ? 0.12 : 0.06),
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.7 : 0.9),
+      marginHorizontal: 16,
+      marginVertical: 6,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.08),
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: isDark ? 0.2 : 0.08,
+      shadowRadius: 12,
+      elevation: 4,
+    },
+    conversationItemPressed: {
+      transform: [{ scale: 0.98 }],
+      shadowOpacity: 0.05,
     },
     pinnedConversation: {
-      backgroundColor: withAlpha(theme.accent, isDark ? 0.16 : 0.12),
-      borderLeftWidth: 4,
-      borderLeftColor: theme.accent,
+      backgroundColor: withAlpha(theme.accent, isDark ? 0.16 : 0.1),
+      borderColor: withAlpha(theme.accent, isDark ? 0.5 : 0.35),
+      shadowColor: theme.accent,
     },
     unreadConversation: {
-      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.08),
+      borderColor: withAlpha(theme.tint, isDark ? 0.45 : 0.3),
     },
     conversationLeft: {
       flexDirection: 'row',
@@ -692,12 +751,27 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       position: 'relative',
       marginRight: 12,
     },
-    conversationAvatar: {
-      width: 56,
-      height: 56,
+    avatarRing: {
+      padding: 2,
+      borderRadius: 32,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.6 : 0.8),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+    },
+    avatarRingUnread: {
+      padding: 2,
+      borderRadius: 32,
+    },
+    avatarRingInner: {
       borderRadius: 28,
-      borderWidth: 2,
-      borderColor: theme.background,
+      backgroundColor: theme.background,
+      padding: 2,
+      overflow: 'hidden',
+    },
+    conversationAvatar: {
+      width: 52,
+      height: 52,
+      borderRadius: 26,
     },
     avatarFallback: {
       backgroundColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
@@ -736,8 +810,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     conversationHeader: {
       flexDirection: 'row',
-      justifyContent: 'space-between',
+      justifyContent: 'flex-start',
       alignItems: 'center',
+      gap: 8,
       marginBottom: 4,
     },
     conversationName: {
