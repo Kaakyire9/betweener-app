@@ -15,18 +15,20 @@ import MomentViewer from "@/components/MomentViewer";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system";
 import * as Haptics from 'expo-haptics';
+import * as Clipboard from "expo-clipboard";
 import * as ImagePicker from "expo-image-picker";
 import * as Location from "expo-location";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { WebView } from "react-native-webview";
 import { router, useLocalSearchParams } from "expo-router";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Animated,
   Dimensions,
+  Easing,
   FlatList,
   Image,
   InteractionManager,
@@ -140,6 +142,7 @@ type MessageType = {
     live?: boolean;
     expiresAt?: Date | null;
   };
+  replyToId?: string | null;
   replyTo?: MessageType;
 };
 
@@ -158,38 +161,94 @@ type MessageRow = {
   deleted_for_all?: boolean | null;
   deleted_at?: string | null;
   deleted_by?: string | null;
+  reply_to_message_id?: string | null;
+};
+
+type ReactionRow = {
+  id: string;
+  message_id: string;
+  user_id: string;
+  emoji: string;
+  created_at?: string | null;
 };
 
 // Quick reactions
 const QUICK_REACTIONS = ['\u2764\uFE0F', '\u{1F602}', '\u{1F60D}', '\u{1F44D}', '\u{1F525}', '\u{1F44F}'];
 
+const STICKER_COLORS = {
+  mood: '#f59e0b',
+  energy: '#f97316',
+  heart: '#f43f5e',
+  celebration: '#38bdf8',
+};
+
 // Mood stickers with color themes
 const MOOD_STICKERS = [
-  { emoji: '\u{1F60A}', name: 'Happy', category: 'mood' },
-  { emoji: '\u{1F970}', name: 'Loved', category: 'mood' },
-  { emoji: '\u{1F929}', name: 'Excited', category: 'mood' },
-  { emoji: '\u{1F60E}', name: 'Cool', category: 'mood' },
-  { emoji: '\u{1F979}', name: 'Adorable', category: 'mood' },
-  { emoji: '\u{1F4AA}', name: 'Motivated', category: 'energy' },
-  { emoji: '\u{1F525}', name: 'Fire', category: 'energy' },
-  { emoji: '\u26A1', name: 'Electric', category: 'energy' },
-  { emoji: '\u2728', name: 'Sparkle', category: 'energy' },
-  { emoji: '\u2B50', name: 'Star', category: 'energy' },
-  { emoji: '\u2764\uFE0F', name: 'Love', category: 'heart' },
-  { emoji: '\u{1F495}', name: 'Hearts', category: 'heart' },
-  { emoji: '\u{1F496}', name: 'Sparkling Heart', category: 'heart' },
-  { emoji: '\u{1F339}', name: 'Rose', category: 'heart' },
-  { emoji: '\u{1F973}', name: 'Party', category: 'celebration' },
-  { emoji: '\u{1F389}', name: 'Confetti', category: 'celebration' },
-  { emoji: '\u{1F64C}', name: 'Celebrate', category: 'celebration' },
-  { emoji: '\u{1F388}', name: 'Balloon', category: 'celebration' },
+  { emoji: '\u{1F60A}', name: 'Happy', category: 'mood', color: STICKER_COLORS.mood },
+  { emoji: '\u{1F970}', name: 'Loved', category: 'mood', color: STICKER_COLORS.mood },
+  { emoji: '\u{1F929}', name: 'Excited', category: 'mood', color: STICKER_COLORS.mood },
+  { emoji: '\u{1F60E}', name: 'Cool', category: 'mood', color: STICKER_COLORS.mood },
+  { emoji: '\u{1F979}', name: 'Adorable', category: 'mood', color: STICKER_COLORS.mood },
+  { emoji: '\u{1F4AA}', name: 'Motivated', category: 'energy', color: STICKER_COLORS.energy },
+  { emoji: '\u{1F525}', name: 'Fire', category: 'energy', color: STICKER_COLORS.energy },
+  { emoji: '\u26A1', name: 'Electric', category: 'energy', color: STICKER_COLORS.energy },
+  { emoji: '\u2728', name: 'Sparkle', category: 'energy', color: STICKER_COLORS.energy },
+  { emoji: '\u2B50', name: 'Star', category: 'energy', color: STICKER_COLORS.energy },
+  { emoji: '\u2764\uFE0F', name: 'Love', category: 'heart', color: STICKER_COLORS.heart },
+  { emoji: '\u{1F495}', name: 'Hearts', category: 'heart', color: STICKER_COLORS.heart },
+  { emoji: '\u{1F496}', name: 'Sparkling Heart', category: 'heart', color: STICKER_COLORS.heart },
+  { emoji: '\u{1F339}', name: 'Rose', category: 'heart', color: STICKER_COLORS.heart },
+  { emoji: '\u{1F973}', name: 'Party', category: 'celebration', color: STICKER_COLORS.celebration },
+  { emoji: '\u{1F389}', name: 'Confetti', category: 'celebration', color: STICKER_COLORS.celebration },
+  { emoji: '\u{1F64C}', name: 'Celebrate', category: 'celebration', color: STICKER_COLORS.celebration },
+  { emoji: '\u{1F388}', name: 'Balloon', category: 'celebration', color: STICKER_COLORS.celebration },
 ];
 
 const DEFAULT_VOICE_WAVEFORM = [0.2, 0.5, 0.35, 0.6, 0.28, 0.72, 0.44, 0.68, 0.3, 0.55, 0.4, 0.65];
 const VIDEO_TEXT_PREFIX = '\u{1F3A5} Video';
 const DOCUMENT_TEXT_PREFIX = '\u{1F4CE}';
+const STICKER_TEXT_PREFIX = 'sticker::';
 const buildMapsLink = (lat: number, lng: number) =>
   `https://maps.google.com/?q=${lat},${lng}`;
+
+const buildStickerPayload = (sticker: (typeof MOOD_STICKERS)[number]) =>
+  `${STICKER_TEXT_PREFIX}${JSON.stringify({
+    emoji: sticker.emoji,
+    name: sticker.name,
+    color: sticker.color,
+    category: sticker.category,
+  })}`;
+
+const parseStickerPayload = (text: string) => {
+  if (!text) return null;
+  if (!text.startsWith(STICKER_TEXT_PREFIX)) return null;
+  try {
+    const raw = text.slice(STICKER_TEXT_PREFIX.length);
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.emoji !== 'string') return null;
+    return {
+      emoji: parsed.emoji,
+      name: typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name : 'Sticker',
+      color: typeof parsed.color === 'string' ? parsed.color : STICKER_COLORS.mood,
+    };
+  } catch (error) {
+    console.log('[chat] sticker parse error', error);
+    return null;
+  }
+};
+
+const parseStickerFallback = (text: string) => {
+  const trimmed = text?.trim();
+  if (!trimmed) return null;
+  const [emoji, ...rest] = trimmed.split(' ');
+  if (!emoji) return null;
+  const name = rest.join(' ').trim() || 'Sticker';
+  return {
+    emoji,
+    name,
+    color: STICKER_COLORS.mood,
+  };
+};
 
 const parseCoordsFromMapsUrl = (url?: string | null) => {
   if (!url) return null;
@@ -345,8 +404,11 @@ type MessageRowItemProps = {
   isPlaying: boolean;
   isReactionOpen: boolean;
   isFocused: boolean;
+  focusToken: number;
   timeLabel: string;
   userAvatar: string;
+  currentUserId: string;
+  peerName: string;
   imageSize?: { width: number; height: number };
   videoSize?: { width: number; height: number };
   theme: typeof Colors.light;
@@ -356,15 +418,22 @@ type MessageRowItemProps = {
   onToggleVoice: (messageId: string) => void;
   onFocus: (messageId: string) => void;
   onReply: (message: MessageType) => void;
+  onReplyJump: (messageId: string) => void;
   onAddReaction: (messageId: string, emoji: string) => void;
   onCloseReactions: () => void;
+  onCopyMessage: (message: MessageType) => void;
+  onTogglePin: (message: MessageType, isPinned: boolean) => void;
+  onDeleteMessage: (message: MessageType) => void;
+  isActionPinned: boolean;
+  onOpenReactionSheet: (message: MessageType) => void;
   onViewImage: (url: string) => void;
   onViewVideo: (url: string) => void;
   onVideoSize: (url: string, width: number, height: number) => void;
   onOpenDocument: (doc?: MessageType['document']) => void;
   onOpenLocation: (message: MessageType) => void;
   onStopLiveShare: (messageId: string) => void;
-  onOpenMessageActions: (message: MessageType) => void;
+  highlightQuery?: string;
+  onHighlightPress?: (messageId: string) => void;
   now?: number | null;
 };
 
@@ -502,8 +571,11 @@ const MessageRowItem = memo(
     isPlaying,
     isReactionOpen,
     isFocused,
+    focusToken,
     timeLabel,
     userAvatar,
+    currentUserId,
+    peerName,
     imageSize,
     videoSize,
     theme,
@@ -513,17 +585,74 @@ const MessageRowItem = memo(
     onToggleVoice,
     onFocus,
     onReply,
+    onReplyJump,
     onAddReaction,
     onCloseReactions,
+    onCopyMessage,
+    onTogglePin,
+    onDeleteMessage,
+    isActionPinned,
+    onOpenReactionSheet,
     onViewImage,
     onViewVideo,
     onVideoSize,
     onOpenDocument,
     onOpenLocation,
     onStopLiveShare,
-    onOpenMessageActions,
+    highlightQuery,
+    onHighlightPress,
     now,
   }: MessageRowItemProps) => {
+    const focusPulse = useRef(new Animated.Value(0)).current;
+    const accent = isMyMessage ? Colors.light.background : theme.tint;
+    const focusPulseStyle = useMemo(() => ({
+      opacity: focusPulse,
+      transform: [
+        {
+          scale: focusPulse.interpolate({
+            inputRange: [0, 1],
+            outputRange: [1, 1.02],
+          }),
+        },
+      ],
+      borderColor: withAlpha(accent, isMyMessage ? 0.65 : 0.5),
+      shadowColor: accent,
+      shadowOpacity: isDark ? 0.2 : 0.14,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 6,
+    }) as const, [accent, focusPulse, isDark, isMyMessage]);
+    const focusTintStyle = useMemo(() => ({
+      backgroundColor: withAlpha(accent, isMyMessage ? 0.12 : isDark ? 0.16 : 0.1),
+    }) as const, [accent, isDark, isMyMessage]);
+    const rowSpotlightStyle = useMemo(() => ({
+      opacity: focusPulse,
+    }) as const, [focusPulse]);
+    const rowTintStyle = useMemo(() => ({
+      backgroundColor: withAlpha(accent, isMyMessage ? 0.06 : isDark ? 0.08 : 0.04),
+    }) as const, [accent, isDark, isMyMessage]);
+    const rowVignetteColor = useMemo(
+      () => withAlpha(theme.text, isDark ? 0.22 : 0.1),
+      [isDark, theme.text]
+    );
+
+    useEffect(() => {
+      if (!isFocused) return;
+      focusPulse.stopAnimation();
+      focusPulse.setValue(0);
+      Animated.sequence([
+        Animated.timing(focusPulse, {
+          toValue: 1,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+        Animated.timing(focusPulse, {
+          toValue: 0,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }, [focusPulse, focusToken, isFocused]);
     const waveformBars = useMemo(() => {
       if (item.type !== 'voice' || !item.voiceMessage?.waveform) return null;
       if (!isFocused && !isPlaying) return null;
@@ -546,17 +675,32 @@ const MessageRowItem = memo(
     const reactionNodes = useMemo(() => {
       if (item.deletedForAll) return null;
       if (item.reactions.length === 0) return null;
-      if (!isFocused && !isReactionOpen) return null;
+      const counts = new Map<string, number>();
+      item.reactions.forEach((reaction) => {
+        counts.set(reaction.emoji, (counts.get(reaction.emoji) ?? 0) + 1);
+      });
+      const summary = Array.from(counts.entries())
+        .map(([emoji, count]) => ({ emoji, count }))
+        .sort((a, b) => b.count - a.count);
       return (
-        <View style={styles.reactionsContainer}>
-          {item.reactions.map((reaction, idx) => (
-            <View key={idx} style={styles.reactionBubble}>
-              <Text style={styles.reactionEmoji}>{reaction.emoji}</Text>
+        <Pressable
+          style={[
+            styles.reactionSummary,
+            isMyMessage ? styles.reactionSummaryRight : styles.reactionSummaryLeft,
+          ]}
+          onPress={() => onOpenReactionSheet(item)}
+        >
+          {summary.map(({ emoji, count }) => (
+            <View key={`${emoji}-${count}`} style={styles.reactionSummaryItem}>
+              <Text style={styles.reactionSummaryEmoji}>{emoji}</Text>
+              {count > 1 ? (
+                <Text style={styles.reactionSummaryCount}>{count}</Text>
+              ) : null}
             </View>
           ))}
-        </View>
+        </Pressable>
       );
-    }, [item.deletedForAll, item.reactions, isFocused, isReactionOpen]);
+    }, [item.deletedForAll, item.reactions, isMyMessage, onOpenReactionSheet, styles]);
 
     const documentMeta = useMemo(() => {
       if (item.type !== 'document') return null;
@@ -576,6 +720,75 @@ const MessageRowItem = memo(
       return item.location.expiresAt.getTime() > nowValue;
     }, [item.location?.expiresAt, item.location?.live, item.type, now]);
 
+    const replyMeta = useMemo(() => {
+      if (!item.replyTo) {
+        if (!item.replyToId) return null;
+        return {
+          icon: 'reply' as const,
+          label: 'Reply',
+          preview: 'Original message unavailable',
+          time: '',
+          canJump: false,
+        };
+      }
+      const replyTime = item.replyTo.timestamp.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+      if (item.replyTo.deletedForAll) {
+        return {
+          icon: 'message-bulleted-off' as const,
+          label: item.replyTo.senderId === currentUserId ? 'You' : peerName || 'User',
+          preview: 'Message deleted',
+          time: replyTime,
+          canJump: true,
+        };
+      }
+      const iconMap: Record<MessageType['type'], ComponentProps<typeof MaterialCommunityIcons>['name']> = {
+        text: 'chat-outline',
+        voice: 'microphone-outline',
+        image: 'image-outline',
+        video: 'video-outline',
+        document: 'file-document-outline',
+        location: 'map-marker-outline',
+        mood_sticker: 'emoticon-happy-outline',
+      };
+      let preview = '';
+      switch (item.replyTo.type) {
+        case 'text':
+          preview = item.replyTo.text || 'Message';
+          break;
+        case 'voice':
+          preview = 'Voice message';
+          break;
+        case 'image':
+          preview = 'Photo';
+          break;
+        case 'video':
+          preview = 'Video';
+          break;
+        case 'document':
+          preview = item.replyTo.document?.name || 'Document';
+          break;
+        case 'location':
+          preview = item.replyTo.location?.label ? `Location: ${item.replyTo.location.label}` : 'Location';
+          break;
+        case 'mood_sticker':
+          preview = item.replyTo.sticker?.name ? `Sticker: ${item.replyTo.sticker.name}` : 'Sticker';
+          break;
+        default:
+          preview = 'Message';
+      }
+      return {
+        icon: iconMap[item.replyTo.type],
+        label: item.replyTo.senderId === currentUserId ? 'You' : peerName || 'User',
+        preview,
+        time: replyTime,
+        canJump: true,
+      };
+    }, [currentUserId, item.replyTo, item.replyToId, peerName]);
+
     const handleVideoSize = useCallback(
       (width: number, height: number) => {
         if (!item.videoUrl) return;
@@ -584,10 +797,77 @@ const MessageRowItem = memo(
       [item.videoUrl, onVideoSize]
     );
 
+    const messageTextNode = useMemo(() => {
+      const text = item.text || '';
+      if (!text) return null;
+      const baseStyle = [
+        styles.messageText,
+        isMyMessage ? styles.myMessageText : styles.theirMessageText,
+        item.deletedForAll && styles.deletedMessageText,
+      ];
+      const query = highlightQuery?.trim();
+      if (!query || item.deletedForAll) {
+        return <Text style={baseStyle}>{text}</Text>;
+      }
+      const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(escaped, 'ig');
+      const parts = text.split(regex);
+      const matches = text.match(regex);
+      if (!matches) {
+        return <Text style={baseStyle}>{text}</Text>;
+      }
+      const nodes: ReactNode[] = [];
+      parts.forEach((part, index) => {
+        if (part) nodes.push(part);
+        const match = matches[index];
+        if (match) {
+          nodes.push(
+            <Text
+              key={`${match}-${index}`}
+              style={[
+                styles.messageTextHighlight,
+                isMyMessage ? styles.messageTextHighlightMy : styles.messageTextHighlightTheir,
+              ]}
+              onPress={() => onHighlightPress?.(item.id)}
+            >
+              {match}
+            </Text>
+          );
+        }
+      });
+      return <Text style={baseStyle}>{nodes}</Text>;
+    }, [highlightQuery, isMyMessage, item.deletedForAll, item.text, styles]);
+
     return (
       <View style={styles.messageContainer}>
+        {isFocused ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.messageRowSpotlight, rowSpotlightStyle]}
+          >
+            <BlurView
+              intensity={16}
+              tint={isDark ? 'dark' : 'light'}
+              style={styles.messageRowSpotlightBlur}
+            />
+            <View style={[styles.messageRowSpotlightTint, rowTintStyle]} />
+            <LinearGradient
+              colors={[rowVignetteColor, 'transparent', rowVignetteColor]}
+              start={[0, 0]}
+              end={[0, 1]}
+              style={styles.messageRowVignetteVertical}
+            />
+            <LinearGradient
+              colors={[rowVignetteColor, 'transparent', rowVignetteColor]}
+              start={[0, 0]}
+              end={[1, 0]}
+              style={styles.messageRowVignetteHorizontal}
+            />
+          </Animated.View>
+        ) : null}
         <Pressable
           onLongPress={() => onLongPress(item.id)}
+          delayLongPress={600}
           onPress={() => {
             onFocus(item.id);
             if (item.type === 'voice') {
@@ -611,11 +891,11 @@ const MessageRowItem = memo(
             isMyMessage ? styles.myMessageContainer : styles.theirMessageContainer,
           ]}
         >
-          {showAvatar && (
-            <Image
-              source={{ uri: userAvatar }}
-              style={styles.messageAvatar}
-            />
+        {showAvatar && (
+          <Image
+            source={{ uri: userAvatar }}
+            style={styles.messageAvatar}
+          />
           )}
 
           <View style={[
@@ -629,29 +909,86 @@ const MessageRowItem = memo(
             item.type === 'document' && styles.documentBubble,
             item.type === 'location' && styles.locationBubble,
           ]}>
-            {item.replyTo && (
-              <View style={styles.replyIndicator}>
-                <View style={styles.replyLine} />
-                <Text style={styles.replyText} numberOfLines={1}>
-                  {item.replyTo.type === 'text' ? item.replyTo.text :
-                   item.replyTo.type === 'voice' ? 'Voice message' :
-                   item.replyTo.type === 'image' ? 'Photo' :
-                   item.replyTo.type === 'video' ? 'Video' :
-                   item.replyTo.type === 'document' ? 'Document' :
-                   item.replyTo.type === 'location' ? 'Location' : 'Sticker'}
-                </Text>
-              </View>
+            {isFocused ? (
+              <Animated.View
+                pointerEvents="none"
+                style={[styles.messageFocusSpotlight, focusPulseStyle]}
+              >
+                <BlurView
+                  intensity={18}
+                  tint={isDark ? 'dark' : 'light'}
+                  style={styles.messageFocusSpotlightBlur}
+                />
+                <View style={[styles.messageFocusSpotlightTint, focusTintStyle]} />
+              </Animated.View>
+            ) : null}
+            {replyMeta && (
+              <Pressable
+                style={[
+                  styles.replyChip,
+                  isMyMessage ? styles.replyChipMy : styles.replyChipTheir,
+                ]}
+                onPress={() => {
+                  if (!replyMeta.canJump || !item.replyTo?.id) return;
+                  onReplyJump(item.replyTo.id);
+                }}
+              >
+                <View
+                  style={[
+                    styles.replyChipLine,
+                    isMyMessage ? styles.replyChipLineMy : styles.replyChipLineTheir,
+                  ]}
+                />
+                <View style={styles.replyChipContent}>
+                  <View style={styles.replyChipHeader}>
+                    <View
+                      style={[
+                        styles.replyChipIconWrap,
+                        isMyMessage ? styles.replyChipIconWrapMy : styles.replyChipIconWrapTheir,
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name={replyMeta.icon}
+                        size={12}
+                        color={isMyMessage ? Colors.light.background : theme.text}
+                      />
+                    </View>
+                    <Text
+                      style={[
+                        styles.replyChipLabel,
+                        isMyMessage && styles.replyChipLabelMy,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {replyMeta.label}
+                    </Text>
+                    {replyMeta.time ? (
+                      <Text
+                        style={[
+                          styles.replyChipTime,
+                          isMyMessage && styles.replyChipTimeMy,
+                        ]}
+                      >
+                        {replyMeta.time}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <Text
+                    style={[
+                      styles.replyChipPreview,
+                      isMyMessage && styles.replyChipPreviewMy,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {replyMeta.preview}
+                  </Text>
+                </View>
+              </Pressable>
             )}
 
             {item.type === 'text' ? (
               <View style={styles.textWithMeta}>
-                <Text style={[
-                  styles.messageText,
-                  isMyMessage ? styles.myMessageText : styles.theirMessageText,
-                  item.deletedForAll && styles.deletedMessageText,
-                ]}>
-                  {item.text}
-                </Text>
+                {messageTextNode}
                 <View style={styles.inlineMetaRow} pointerEvents="none">
                   <Text
                     style={[
@@ -938,15 +1275,6 @@ const MessageRowItem = memo(
           ]}>
             {!item.deletedForAll && (
               <>
-                <TouchableOpacity
-                  style={styles.replyButton}
-                  onPress={() => {
-                    onReply(item);
-                    onCloseReactions();
-                  }}
-                >
-                  <MaterialCommunityIcons name="reply" size={16} color={theme.textMuted} />
-                </TouchableOpacity>
                 {QUICK_REACTIONS.map((emoji, idx) => (
                   <TouchableOpacity
                     key={idx}
@@ -958,11 +1286,63 @@ const MessageRowItem = memo(
                 ))}
               </>
             )}
+          </View>
+        )}
+
+        {isReactionOpen && !item.deletedForAll && (
+          <View
+            style={[
+              styles.messageActionRow,
+              isMyMessage ? styles.messageActionRowRight : styles.messageActionRowLeft,
+            ]}
+          >
             <TouchableOpacity
-              style={styles.quickActionButton}
-              onPress={() => onOpenMessageActions(item)}
+              style={styles.messageActionPill}
+              onPress={() => {
+                onReply(item);
+                onCloseReactions();
+              }}
             >
-              <MaterialCommunityIcons name="trash-can-outline" size={16} color={theme.textMuted} />
+              <MaterialCommunityIcons name="reply" size={14} color={theme.text} />
+              <Text style={styles.messageActionLabel}>Reply</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.messageActionPill}
+              onPress={() => {
+                onCopyMessage(item);
+                onCloseReactions();
+              }}
+            >
+              <MaterialCommunityIcons name="content-copy" size={14} color={theme.text} />
+              <Text style={styles.messageActionLabel}>Copy</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.messageActionPill}
+              onPress={() => {
+                onTogglePin(item, isActionPinned);
+                onCloseReactions();
+              }}
+            >
+              <MaterialCommunityIcons
+                name={isActionPinned ? "pin-off-outline" : "pin-outline"}
+                size={14}
+                color={theme.text}
+              />
+              <Text style={styles.messageActionLabel}>
+                {isActionPinned ? 'Unpin' : 'Pin'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.messageActionPill, styles.messageActionPillDanger]}
+              onPress={() => {
+                onDeleteMessage(item);
+                onCloseReactions();
+              }}
+            >
+              <MaterialCommunityIcons name="trash-can-outline" size={14} color={theme.danger} />
+              <Text style={[styles.messageActionLabel, styles.messageActionLabelDanger]}>
+                Delete
+              </Text>
             </TouchableOpacity>
           </View>
         )}
@@ -975,8 +1355,15 @@ const MessageRowItem = memo(
     prev.showAvatar === next.showAvatar &&
     prev.isPlaying === next.isPlaying &&
     prev.isReactionOpen === next.isReactionOpen &&
+    prev.isActionPinned === next.isActionPinned &&
+    prev.onOpenReactionSheet === next.onOpenReactionSheet &&
     prev.timeLabel === next.timeLabel &&
     prev.userAvatar === next.userAvatar &&
+    prev.currentUserId === next.currentUserId &&
+    prev.peerName === next.peerName &&
+    prev.onReplyJump === next.onReplyJump &&
+    prev.highlightQuery === next.highlightQuery &&
+    prev.onHighlightPress === next.onHighlightPress &&
     prev.imageSize?.width === next.imageSize?.width &&
     prev.imageSize?.height === next.imageSize?.height &&
     prev.videoSize?.width === next.videoSize?.width &&
@@ -1049,6 +1436,7 @@ export default function ConversationScreen() {
   const [inputBarHeight, setInputBarHeight] = useState(0);
   const [replyingTo, setReplyingTo] = useState<MessageType | null>(null);
   const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null);
+  const [focusTick, setFocusTick] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [oldestTimestamp, setOldestTimestamp] = useState<Date | null>(null);
@@ -1077,10 +1465,24 @@ export default function ConversationScreen() {
   const [momentViewerUserId, setMomentViewerUserId] = useState<string | null>(null);
   const [showHeaderHint, setShowHeaderHint] = useState(false);
   const [headerMenuVisible, setHeaderMenuVisible] = useState(false);
+  const [chatSearchVisible, setChatSearchVisible] = useState(false);
+  const [chatSearchQuery, setChatSearchQuery] = useState('');
+  const [mediaHubVisible, setMediaHubVisible] = useState(false);
+  const [mediaTab, setMediaTab] = useState<'media' | 'links' | 'docs'>('media');
+  const [clearChatLoading, setClearChatLoading] = useState(false);
   const [isChatMuted, setIsChatMuted] = useState(false);
   const [isChatPinned, setIsChatPinned] = useState(false);
   const [chatPrefsLoaded, setChatPrefsLoaded] = useState(false);
   const [hiddenMessageIds, setHiddenMessageIds] = useState<string[]>([]);
+  const [pinnedMessageIds, setPinnedMessageIds] = useState<string[]>([]);
+  const [pinnedMessageMap, setPinnedMessageMap] = useState<Record<string, MessageType>>({});
+  const [pinnedSheetVisible, setPinnedSheetVisible] = useState(false);
+  const [pinnedBannerExpanded, setPinnedBannerExpanded] = useState(false);
+  const [reactionSheetVisible, setReactionSheetVisible] = useState(false);
+  const [reactionSheetMessageId, setReactionSheetMessageId] = useState<string | null>(null);
+  const [reactionSheetEmoji, setReactionSheetEmoji] = useState<string | null>(null);
+  const [reactionProfiles, setReactionProfiles] = useState<Record<string, { name: string; avatar?: string | null }>>({});
+  const [reactionProfilesLoading, setReactionProfilesLoading] = useState(false);
   const showLocationLoading = locationLoading && !currentCoords && !locationError;
   
   const messagesRef = useRef<MessageType[]>([]);
@@ -1107,8 +1509,10 @@ export default function ConversationScreen() {
   const headerHintOpacity = useRef(new Animated.Value(0)).current;
   const headerHintDismissedRef = useRef(false);
   const hiddenMessageIdsRef = useRef<Set<string>>(new Set());
+  const pinnedMessageIdsRef = useRef<Set<string>>(new Set());
   const attachmentAnim = useRef(new Animated.Value(0)).current;
   const locationSheetAnim = useRef(new Animated.Value(0)).current;
+  const pinnedBannerAnim = useRef(new Animated.Value(0)).current;
   const reconnectPendingRef = useRef(false);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presenceChannelRef = useRef<any>(null);
@@ -1126,6 +1530,7 @@ export default function ConversationScreen() {
   const lastLoadTriggerRef = useRef(0);
   const scrollRequestRef = useRef<number | null>(null);
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const jumpSettleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const jumpVisibleRef = useRef(false);
   const suppressSuggestionRef = useRef(false);
   const liveShareRef = useRef<{
@@ -1139,6 +1544,11 @@ export default function ConversationScreen() {
   const updateHiddenMessageIds = useCallback((ids: string[]) => {
     hiddenMessageIdsRef.current = new Set(ids);
     setHiddenMessageIds(ids);
+  }, []);
+
+  const updatePinnedMessageIds = useCallback((ids: string[]) => {
+    pinnedMessageIdsRef.current = new Set(ids);
+    setPinnedMessageIds(ids);
   }, []);
 
   const isBlockedByMe = blockStatus === BLOCKED_BY_ME;
@@ -1178,6 +1588,7 @@ export default function ConversationScreen() {
       useNativeDriver: true,
     }).start();
   }, [locationModalVisible, locationSheetAnim]);
+
 
   useEffect(() => {
     let isMounted = true;
@@ -1219,6 +1630,103 @@ export default function ConversationScreen() {
     const ids = (data || []).map((row: { message_id: string }) => row.message_id);
     updateHiddenMessageIds(ids);
   }, [conversationId, updateHiddenMessageIds, user?.id]);
+
+  const fetchPinnedMessages = useCallback(async () => {
+    if (!user?.id || !conversationId) return;
+    const { data, error } = await supabase
+      .from('message_pins')
+      .select('message_id')
+      .eq('user_id', user.id)
+      .eq('peer_id', conversationId);
+    if (error) {
+      console.log('[chat] fetch pinned messages error', error);
+      return;
+    }
+    const ids = (data || []).map((row: { message_id: string }) => row.message_id);
+    updatePinnedMessageIds(ids);
+    if (ids.length === 0) {
+      setPinnedMessageMap({});
+      return;
+    }
+    const { data: messageRows, error: messageError } = await supabase
+      .from('messages')
+      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
+      .in('id', ids);
+    if (messageError) {
+      console.log('[chat] fetch pinned message rows error', messageError);
+      return;
+    }
+    const mapped = linkReplies(
+      (messageRows || []).map((row: MessageRow) => mapRowToMessage(row))
+    );
+    setPinnedMessageMap((prev) => {
+      const next: Record<string, MessageType> = { ...prev };
+      const idSet = new Set(ids);
+      Object.keys(next).forEach((id) => {
+        if (!idSet.has(id)) delete next[id];
+      });
+      mapped.forEach((msg) => {
+        next[msg.id] = msg;
+      });
+      return next;
+    });
+  }, [conversationId, linkReplies, mapRowToMessage, updatePinnedMessageIds, user?.id]);
+
+  const syncMessageReactions = useCallback(async (messageIds: string[]) => {
+    if (!user?.id || messageIds.length === 0) return;
+    const uniqueIds = Array.from(new Set(messageIds)).filter(Boolean);
+    if (uniqueIds.length === 0) return;
+    const { data, error } = await supabase
+      .from('message_reactions')
+      .select('message_id,user_id,emoji,created_at')
+      .in('message_id', uniqueIds);
+    if (error) {
+      console.log('[chat] fetch reactions error', error);
+      return;
+    }
+    const grouped = new Map<string, MessageType['reactions']>();
+    (data || []).forEach((row: ReactionRow) => {
+      if (!row.message_id || !row.user_id || !row.emoji) return;
+      const existing = grouped.get(row.message_id) ?? [];
+      const index = existing.findIndex((reaction) => reaction.userId === row.user_id);
+      const nextReaction = { userId: row.user_id, emoji: row.emoji };
+      if (index >= 0) {
+        existing[index] = nextReaction;
+        grouped.set(row.message_id, [...existing]);
+      } else {
+        grouped.set(row.message_id, [...existing, nextReaction]);
+      }
+    });
+    const idSet = new Set(uniqueIds);
+    setMessages((prev) =>
+      prev.map((msg) =>
+        idSet.has(msg.id) ? { ...msg, reactions: grouped.get(msg.id) ?? [] } : msg
+      )
+    );
+  }, [user?.id]);
+
+  const applyReactionUpdate = useCallback((row: ReactionRow, mode: 'upsert' | 'delete') => {
+    if (!row?.message_id || !row.user_id) return;
+    setMessages((prev) =>
+      prev.map((msg) => {
+        if (msg.id !== row.message_id) return msg;
+        const reactions = msg.reactions ?? [];
+        if (mode === 'delete') {
+          return {
+            ...msg,
+            reactions: reactions.filter((reaction) => reaction.userId !== row.user_id),
+          };
+        }
+        const index = reactions.findIndex((reaction) => reaction.userId === row.user_id);
+        if (index >= 0) {
+          const next = [...reactions];
+          next[index] = { userId: row.user_id, emoji: row.emoji };
+          return { ...msg, reactions: next };
+        }
+        return { ...msg, reactions: [...reactions, { userId: row.user_id, emoji: row.emoji }] };
+      })
+    );
+  }, []);
 
   const fetchBlockStatus = useCallback(async () => {
     if (!user?.id || !conversationId) return;
@@ -1488,6 +1996,8 @@ export default function ConversationScreen() {
       let documentTypeLabel: string | null | undefined;
       let messageText = row.text ?? '';
       let location: MessageType['location'] | undefined;
+      let sticker: MessageType['sticker'] | undefined;
+      const replyToId = row.reply_to_message_id ?? null;
 
       let resolvedType = messageType;
       if (deletedForAll) {
@@ -1555,6 +2065,14 @@ export default function ConversationScreen() {
             messageText = '';
           }
         }
+        if (messageType === 'mood_sticker' || messageText.startsWith(STICKER_TEXT_PREFIX)) {
+          const parsedSticker = parseStickerPayload(messageText) ?? parseStickerFallback(messageText);
+          if (parsedSticker) {
+            resolvedType = 'mood_sticker';
+            sticker = parsedSticker;
+            messageText = '';
+          }
+        }
       }
 
       if (deletedForAll) {
@@ -1565,6 +2083,7 @@ export default function ConversationScreen() {
         documentSizeLabel = undefined;
         documentTypeLabel = undefined;
         location = undefined;
+        sticker = undefined;
       }
 
       return {
@@ -1599,10 +2118,24 @@ export default function ConversationScreen() {
               }
             : undefined,
         location,
+        replyToId,
+        sticker,
       };
     },
     [user?.id]
   );
+
+  const linkReplies = useCallback((items: MessageType[]) => {
+    if (items.length === 0) return items;
+    const map = new Map(items.map((msg) => [msg.id, msg]));
+    return items.map((msg) => {
+      if (!msg.replyToId) return msg;
+      const target = map.get(msg.replyToId);
+      if (!target) return msg;
+      if (msg.replyTo && msg.replyTo.id === target.id) return msg;
+      return { ...msg, replyTo: target };
+    });
+  }, []);
 
   const locationViewerMessage = useMemo(() => {
     if (!locationViewerMessageId) return null;
@@ -1613,6 +2146,34 @@ export default function ConversationScreen() {
     if (!actionMessageId) return null;
     return messages.find((msg) => msg.id === actionMessageId) ?? null;
   }, [actionMessageId, messages]);
+
+  const isActionPinned = useMemo(() => {
+    if (!actionMessage) return false;
+    return pinnedMessageIds.includes(actionMessage.id);
+  }, [actionMessage, pinnedMessageIds]);
+
+  const reactionSheetMessage = useMemo(() => {
+    if (!reactionSheetMessageId) return null;
+    return messages.find((msg) => msg.id === reactionSheetMessageId) ?? null;
+  }, [messages, reactionSheetMessageId]);
+
+  const reactionSummary = useMemo(() => {
+    if (!reactionSheetMessage) return [];
+    const counts = new Map<string, number>();
+    reactionSheetMessage.reactions.forEach((reaction) => {
+      counts.set(reaction.emoji, (counts.get(reaction.emoji) ?? 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .map(([emoji, count]) => ({ emoji, count }))
+      .sort((a, b) => b.count - a.count);
+  }, [reactionSheetMessage]);
+
+  const reactionSheetList = useMemo(() => {
+    if (!reactionSheetMessage) return [];
+    const list = reactionSheetMessage.reactions;
+    if (!reactionSheetEmoji) return list;
+    return list.filter((reaction) => reaction.emoji === reactionSheetEmoji);
+  }, [reactionSheetEmoji, reactionSheetMessage]);
 
   const fetchNearbyPlaces = useCallback(
     async (coords: { lat: number; lng: number }) => {
@@ -1913,8 +2474,11 @@ export default function ConversationScreen() {
         type: 'text',
         reactions: [],
         status: 'sending',
+        replyToId: replyingTo?.id ?? null,
+        replyTo: replyingTo || undefined,
       },
     ]);
+    setReplyingTo(null);
 
     const { data, error } = await supabase
       .from('messages')
@@ -1924,8 +2488,9 @@ export default function ConversationScreen() {
         receiver_id: conversationId,
         is_read: false,
         message_type: 'text',
+        reply_to_message_id: replyingTo?.id ?? null,
       })
-      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by')
+      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
       .single();
 
     if (error || !data) {
@@ -1937,12 +2502,14 @@ export default function ConversationScreen() {
       );
     } else {
       setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
+        linkReplies(
+          prev.map((msg) =>
+            msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
+          )
         )
       );
     }
-  }, [conversationId, mapRowToMessage, user?.id]);
+  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
 
   const sendImageAttachment = useCallback(async (imageUrl: string) => {
     if (isChatBlocked) {
@@ -1962,8 +2529,11 @@ export default function ConversationScreen() {
         reactions: [],
         status: 'sending',
         imageUrl,
+        replyToId: replyingTo?.id ?? null,
+        replyTo: replyingTo || undefined,
       },
     ]);
+    setReplyingTo(null);
 
     const { data, error } = await supabase
       .from('messages')
@@ -1973,8 +2543,9 @@ export default function ConversationScreen() {
         receiver_id: conversationId,
         is_read: false,
         message_type: 'image',
+        reply_to_message_id: replyingTo?.id ?? null,
       })
-      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by')
+      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
       .single();
 
     if (error || !data) {
@@ -1982,12 +2553,14 @@ export default function ConversationScreen() {
       setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
     } else {
       setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
+        linkReplies(
+          prev.map((msg) =>
+            msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
+          )
         )
       );
     }
-  }, [conversationId, mapRowToMessage, user?.id]);
+  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
 
   const sendVideoAttachment = useCallback(async (videoUrl: string) => {
     if (isChatBlocked) {
@@ -2007,8 +2580,11 @@ export default function ConversationScreen() {
         reactions: [],
         status: 'sending',
         videoUrl,
+        replyToId: replyingTo?.id ?? null,
+        replyTo: replyingTo || undefined,
       },
     ]);
+    setReplyingTo(null);
 
     const { data, error } = await supabase
       .from('messages')
@@ -2018,8 +2594,9 @@ export default function ConversationScreen() {
         receiver_id: conversationId,
         is_read: false,
         message_type: 'video',
+        reply_to_message_id: replyingTo?.id ?? null,
       })
-      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by')
+      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
       .single();
 
     if (error || !data) {
@@ -2027,12 +2604,14 @@ export default function ConversationScreen() {
       setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
     } else {
       setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
+        linkReplies(
+          prev.map((msg) =>
+            msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
+          )
         )
       );
     }
-  }, [conversationId, isBlockedByMe, isChatBlocked, mapRowToMessage, user?.id]);
+  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
 
   const sendLocationMessage = useCallback(async ({
     lat,
@@ -2085,8 +2664,11 @@ export default function ConversationScreen() {
           live: Boolean(live),
           expiresAt: live ? expiresAt ?? null : null,
         },
+        replyToId: replyingTo?.id ?? null,
+        replyTo: replyingTo || undefined,
       },
     ]);
+    setReplyingTo(null);
 
     const { data, error } = await supabase
       .from('messages')
@@ -2096,8 +2678,9 @@ export default function ConversationScreen() {
         receiver_id: conversationId,
         is_read: false,
         message_type: 'location',
+        reply_to_message_id: replyingTo?.id ?? null,
       })
-      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by')
+      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
       .single();
 
     if (error || !data) {
@@ -2107,12 +2690,14 @@ export default function ConversationScreen() {
     }
 
     setMessages((prev) =>
-      prev.map((msg) =>
-        msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
+      linkReplies(
+        prev.map((msg) =>
+          msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
+        )
       )
     );
     return data.id as string;
-  }, [conversationId, isBlockedByMe, isChatBlocked, mapRowToMessage, user?.id]);
+  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
 
   const updateLiveLocationMessage = useCallback(async ({
     messageId,
@@ -2394,7 +2979,7 @@ export default function ConversationScreen() {
     if (!user?.id || !conversationId) return;
     const { data, error } = await supabase
       .from('messages')
-      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by')
+      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
       .or(
         `and(sender_id.eq.${user.id},receiver_id.eq.${conversationId}),and(sender_id.eq.${conversationId},receiver_id.eq.${user.id})`
       )
@@ -2413,7 +2998,9 @@ export default function ConversationScreen() {
     ).filter((msg) => !hiddenSet.has(msg.id));
 
     const ordered = mapped.reverse();
-    setMessages(ordered);
+    const linked = linkReplies(ordered);
+    setMessages(linked);
+    void syncMessageReactions(linked.map((msg) => msg.id));
     setHasMore((data || []).length === PAGE_SIZE);
     setOldestTimestamp(ordered[0]?.timestamp ?? null);
 
@@ -2430,7 +3017,7 @@ export default function ConversationScreen() {
       .eq('receiver_id', user.id)
       .eq('sender_id', conversationId)
       .eq('is_read', false);
-  }, [conversationId, isBlockedByMe, isChatBlocked, mapRowToMessage, user?.id]);
+  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, syncMessageReactions, user?.id]);
 
   const loadEarlier = useCallback(async () => {
     if (!user?.id || !conversationId || loadingEarlier || !oldestTimestamp) return;
@@ -2439,7 +3026,7 @@ export default function ConversationScreen() {
     wasAtBottomRef.current = false;
     const { data, error } = await supabase
       .from('messages')
-      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by')
+      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
       .or(
         `and(sender_id.eq.${user.id},receiver_id.eq.${conversationId}),and(sender_id.eq.${conversationId},receiver_id.eq.${user.id})`
       )
@@ -2463,22 +3050,24 @@ export default function ConversationScreen() {
       setMessages((prev) => {
         const existing = new Set(prev.map((msg) => msg.id));
         const merged = ordered.filter((msg) => !existing.has(msg.id));
-        return [...merged, ...prev];
+        return linkReplies([...merged, ...prev]);
       });
+      void syncMessageReactions(ordered.map((msg) => msg.id));
       setOldestTimestamp(ordered[0]?.timestamp ?? oldestTimestamp);
     }
     setHasMore((data || []).length === PAGE_SIZE);
     setLoadingEarlier(false);
-  }, [conversationId, loadingEarlier, mapRowToMessage, oldestTimestamp, user?.id]);
+  }, [conversationId, linkReplies, loadingEarlier, mapRowToMessage, oldestTimestamp, syncMessageReactions, user?.id]);
 
   useFocusEffect(
     useCallback(() => {
       void (async () => {
         await fetchHiddenMessages();
         await fetchBlockStatus();
+        await fetchPinnedMessages();
         await fetchMessages();
       })();
-    }, [fetchBlockStatus, fetchHiddenMessages, fetchMessages])
+    }, [fetchBlockStatus, fetchHiddenMessages, fetchMessages, fetchPinnedMessages])
   );
 
   useEffect(() => {
@@ -2512,8 +3101,11 @@ export default function ConversationScreen() {
           setMessages((prev) => {
             if (hiddenMessageIdsRef.current.has(row.id)) return prev;
             if (prev.some((msg) => msg.id === row.id)) return prev;
-            return [...prev, mapRowToMessage(row)];
+            return linkReplies([...prev, mapRowToMessage(row)]);
           });
+          if (!hiddenMessageIdsRef.current.has(row.id)) {
+            void syncMessageReactions([row.id]);
+          }
           void supabase
             .from('messages')
             .update({ delivered_at: new Date().toISOString() })
@@ -2541,10 +3133,12 @@ export default function ConversationScreen() {
           if (hiddenMessageIdsRef.current.has(row.id)) return;
           const nextMessage = mapRowToMessage(row);
           setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === row.id
-                ? { ...nextMessage, reactions: msg.reactions }
-                : msg
+            linkReplies(
+              prev.map((msg) =>
+                msg.id === row.id
+                  ? { ...nextMessage, reactions: msg.reactions }
+                  : msg
+              )
             )
           );
         }
@@ -2579,10 +3173,13 @@ export default function ConversationScreen() {
             if (tempIndex >= 0) {
               const next = [...prev];
               next[tempIndex] = nextMessage;
-              return next;
+              return linkReplies(next);
             }
-            return [...prev, nextMessage];
+            return linkReplies([...prev, nextMessage]);
           });
+          if (!hiddenMessageIdsRef.current.has(row.id)) {
+            void syncMessageReactions([row.id]);
+          }
         }
       )
       .on(
@@ -2599,10 +3196,12 @@ export default function ConversationScreen() {
           if (hiddenMessageIdsRef.current.has(row.id)) return;
           const nextMessage = mapRowToMessage(row);
           setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === row.id
-                ? { ...nextMessage, reactions: msg.reactions }
-                : msg
+            linkReplies(
+              prev.map((msg) =>
+                msg.id === row.id
+                  ? { ...nextMessage, reactions: msg.reactions }
+                  : msg
+              )
             )
           );
         }
@@ -2616,7 +3215,57 @@ export default function ConversationScreen() {
         clearTimeout(reconnectTimerRef.current);
       }
     };
-  }, [conversationId, mapRowToMessage, triggerReconnectToast, user?.id]);
+  }, [conversationId, linkReplies, mapRowToMessage, syncMessageReactions, triggerReconnectToast, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || !conversationId) return;
+    const channel = supabase
+      .channel(`message_reactions:${conversationId}:${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'message_reactions',
+        },
+        (payload) => {
+          const row = payload.new as ReactionRow;
+          if (!messagesRef.current.some((msg) => msg.id === row.message_id)) return;
+          applyReactionUpdate(row, 'upsert');
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'message_reactions',
+        },
+        (payload) => {
+          const row = payload.new as ReactionRow;
+          if (!messagesRef.current.some((msg) => msg.id === row.message_id)) return;
+          applyReactionUpdate(row, 'upsert');
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'message_reactions',
+        },
+        (payload) => {
+          const row = payload.old as ReactionRow;
+          if (!messagesRef.current.some((msg) => msg.id === row.message_id)) return;
+          applyReactionUpdate(row, 'delete');
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [applyReactionUpdate, conversationId, user?.id]);
 
   useEffect(() => {
     if (!user?.id || !conversationId) return;
@@ -2743,6 +3392,262 @@ export default function ConversationScreen() {
     });
   }, []);
 
+  const isSameDay = useCallback((a?: Date | null, b?: Date | null) => {
+    if (!a || !b) return false;
+    return (
+      a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate()
+    );
+  }, []);
+
+  const formatDayLabel = useCallback((date: Date) => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const diffDays = Math.floor((startOfToday.getTime() - startOfDate.getTime()) / 86400000);
+    if (diffDays === 0) return 'Today';
+    if (diffDays === 1) return 'Yesterday';
+    const weekdaysLong = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    if (diffDays > 1 && diffDays < 7) {
+      return weekdaysLong[date.getDay()];
+    }
+    const weekdaysShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const monthsShort = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const weekday = weekdaysShort[date.getDay()];
+    const day = date.getDate();
+    const month = monthsShort[date.getMonth()];
+    return `${weekday} ${day} ${month}`;
+  }, []);
+
+  const focusMessage = useCallback((messageId: string) => {
+    setFocusedMessageId(messageId);
+    setFocusTick((prev) => prev + 1);
+    if (focusTimerRef.current) {
+      clearTimeout(focusTimerRef.current);
+    }
+    focusTimerRef.current = setTimeout(() => {
+      setFocusedMessageId(null);
+      focusTimerRef.current = null;
+    }, 2500);
+  }, []);
+
+  const jumpToMessage = useCallback(
+    (messageId: string) => {
+      const index = messagesRef.current.findIndex((msg) => msg.id === messageId);
+      if (index < 0) return;
+      if (jumpSettleRef.current) {
+        clearTimeout(jumpSettleRef.current);
+        jumpSettleRef.current = null;
+      }
+      flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.42 });
+      jumpSettleRef.current = setTimeout(() => {
+        flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+      }, 320);
+      focusMessage(messageId);
+    },
+    [focusMessage]
+  );
+
+  const pinnedMessages = useMemo(() => {
+    if (pinnedMessageIds.length === 0) return [];
+    const idSet = new Set(pinnedMessageIds);
+    const messageMap = new Map<string, MessageType>();
+    Object.values(pinnedMessageMap).forEach((msg) => {
+      if (idSet.has(msg.id)) messageMap.set(msg.id, msg);
+    });
+    messages.forEach((msg) => {
+      if (idSet.has(msg.id)) messageMap.set(msg.id, msg);
+    });
+    return pinnedMessageIds
+      .map((id) => messageMap.get(id))
+      .filter((msg): msg is MessageType => Boolean(msg))
+      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+  }, [messages, pinnedMessageIds, pinnedMessageMap]);
+
+  const primaryPinnedMessage = pinnedMessages[0] ?? null;
+  const pinnedMessageCount = pinnedMessages.length;
+  const pinnedMessageTotal = pinnedMessageIds.length;
+  const getPinnedPreview = useCallback((message?: MessageType | null) => {
+    if (!message) return 'Pinned message';
+    if (message.deletedForAll) return 'Message deleted';
+    switch (message.type) {
+      case 'text':
+        return message.text?.trim() || 'Pinned message';
+      case 'image':
+        return 'Photo';
+      case 'video':
+        return 'Video';
+      case 'voice':
+        return 'Voice message';
+      case 'document':
+        return message.document?.name || 'Document';
+      case 'location':
+        return message.location?.label
+          ? `Location: ${message.location.label}`
+          : 'Location';
+      case 'mood_sticker':
+        return message.sticker?.name ? `Sticker: ${message.sticker.name}` : 'Sticker';
+      default:
+        return 'Pinned message';
+    }
+  }, []);
+
+  const getPinnedIcon = useCallback((message?: MessageType | null) => {
+    if (!message) return 'pin-outline';
+    switch (message.type) {
+      case 'image':
+        return 'image-outline';
+      case 'video':
+        return 'video-outline';
+      case 'voice':
+        return 'microphone-outline';
+      case 'document':
+        return 'file-document-outline';
+      case 'location':
+        return 'map-marker-outline';
+      case 'mood_sticker':
+        return 'emoticon-happy-outline';
+      case 'text':
+      default:
+        return 'chat-outline';
+    }
+  }, []);
+
+  const pinnedPreviewText = useMemo(
+    () => getPinnedPreview(primaryPinnedMessage),
+    [getPinnedPreview, primaryPinnedMessage]
+  );
+
+  useEffect(() => {
+    if (pinnedMessageCount === 0 && pinnedBannerExpanded) {
+      setPinnedBannerExpanded(false);
+    }
+  }, [pinnedBannerExpanded, pinnedMessageCount]);
+
+  useEffect(() => {
+    Animated.timing(pinnedBannerAnim, {
+      toValue: pinnedBannerExpanded ? 1 : 0,
+      duration: pinnedBannerExpanded ? 260 : 200,
+      easing: pinnedBannerExpanded ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [pinnedBannerAnim, pinnedBannerExpanded]);
+
+  const pinnedActionsHeight = useMemo(
+    () =>
+      pinnedBannerAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, 52],
+      }),
+    [pinnedBannerAnim]
+  );
+  const pinnedActionsOpacity = useMemo(
+    () =>
+      pinnedBannerAnim.interpolate({
+        inputRange: [0, 0.35, 1],
+        outputRange: [0, 0, 1],
+      }),
+    [pinnedBannerAnim]
+  );
+  const pinnedChevronRotation = useMemo(
+    () =>
+      pinnedBannerAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['0deg', '180deg'],
+      }),
+    [pinnedBannerAnim]
+  );
+
+  const openPinnedSheet = useCallback(() => {
+    if (pinnedMessageCount === 0) return;
+    setPinnedSheetVisible(true);
+  }, [pinnedMessageCount]);
+
+  const closePinnedSheet = useCallback(() => {
+    setPinnedSheetVisible(false);
+  }, []);
+
+
+  const openReactionSheet = useCallback((message: MessageType) => {
+    setReactionSheetMessageId(message.id);
+    setReactionSheetEmoji(null);
+    setReactionSheetVisible(true);
+  }, []);
+
+  const closeReactionSheet = useCallback(() => {
+    setReactionSheetVisible(false);
+    setReactionSheetMessageId(null);
+    setReactionSheetEmoji(null);
+  }, []);
+
+  const searchResults = useMemo(() => {
+    const query = chatSearchQuery.trim().toLowerCase();
+    if (!query) return [];
+    return messages.filter((msg) => {
+      if (msg.deletedForAll) return false;
+      if (msg.type !== 'text') return false;
+      return (msg.text || '').toLowerCase().includes(query);
+    });
+  }, [chatSearchQuery, messages]);
+
+  const matchMessageIds = useMemo(() => searchResults.map((result) => result.id), [searchResults]);
+
+  const mediaItems = useMemo(() => {
+    return messages
+      .filter((msg) => !msg.deletedForAll && (msg.type === 'image' || msg.type === 'video'))
+      .map((msg) => ({
+        id: msg.id,
+        type: msg.type as 'image' | 'video',
+        url: msg.type === 'image' ? msg.imageUrl : msg.videoUrl,
+        timestamp: msg.timestamp,
+      }))
+      .filter((item) => Boolean(item.url));
+  }, [messages]);
+
+  const linkItems = useMemo(() => {
+    const urlRegex = /(https?:\/\/[^\s]+)/gi;
+    const items: Array<{ id: string; url: string; timestamp: Date; snippet: string }> = [];
+    messages.forEach((msg) => {
+      if (msg.deletedForAll || msg.type !== 'text' || !msg.text) return;
+      const matches = msg.text.match(urlRegex);
+      if (!matches) return;
+      matches.forEach((url) => {
+        items.push({
+          id: msg.id,
+          url,
+          timestamp: msg.timestamp,
+          snippet: msg.text,
+        });
+      });
+    });
+    return items;
+  }, [messages]);
+
+  const docItems = useMemo(() => {
+    return messages
+      .filter((msg) => !msg.deletedForAll && msg.type === 'document' && msg.document?.url)
+      .map((msg) => ({
+        id: msg.id,
+        name: msg.document?.name || 'Document',
+        url: msg.document?.url || '',
+        typeLabel: msg.document?.typeLabel || null,
+        sizeLabel: msg.document?.sizeLabel || null,
+        timestamp: msg.timestamp,
+      }))
+      .filter((item) => Boolean(item.url));
+  }, [messages]);
+
+  const jumpToNextMatch = useCallback(
+    (messageId: string) => {
+      if (matchMessageIds.length === 0) return;
+      const index = matchMessageIds.indexOf(messageId);
+      const nextId = matchMessageIds[(index + 1) % matchMessageIds.length] || matchMessageIds[0];
+      jumpToMessage(nextId);
+    },
+    [jumpToMessage, matchMessageIds]
+  );
+
   const updateTyping = useCallback(
     (text: string) => {
       if (isChatBlocked) return;
@@ -2802,6 +3707,7 @@ export default function ConversationScreen() {
       type: 'text',
       reactions: [],
       status: 'sending',
+      replyToId: replyingTo?.id ?? null,
       replyTo: replyingTo || undefined,
     };
 
@@ -2818,8 +3724,9 @@ export default function ConversationScreen() {
         receiver_id: conversationId,
         is_read: false,
         message_type: 'text',
+        reply_to_message_id: replyingTo?.id ?? null,
       })
-      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by')
+      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
       .single();
 
     if (error || !data) {
@@ -2831,22 +3738,16 @@ export default function ConversationScreen() {
       );
     } else {
       setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === tempId
-            ? {
-                id: data.id,
-                text: data.text,
-                senderId: data.sender_id,
-                timestamp: new Date(data.created_at),
-                type: 'text',
-                reactions: [],
-                status: data.is_read
-                  ? 'read'
-                  : data.delivered_at
-                  ? 'delivered'
-                  : 'sent',
-              }
-            : msg
+        linkReplies(
+          prev.map((msg) => {
+            if (msg.id !== tempId) return msg;
+            const mapped = mapRowToMessage(data as MessageRow);
+            return {
+              ...mapped,
+              replyToId: msg.replyToId ?? mapped.replyToId ?? null,
+              replyTo: msg.replyTo ?? mapped.replyTo,
+            };
+          })
         )
       );
     }
@@ -2856,34 +3757,137 @@ export default function ConversationScreen() {
     }, 100);
   };
 
-  const sendMoodSticker = (_sticker: (typeof MOOD_STICKERS)[number]) => {
-    Alert.alert('Coming soon', 'Stickers are not available yet.');
+  const sendMoodSticker = useCallback(async (sticker: (typeof MOOD_STICKERS)[number]) => {
+    if (isChatBlocked) {
+      Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
+      return;
+    }
+    if (!user?.id || !conversationId) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    const tempId = `temp-sticker-${Date.now()}`;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: tempId,
+        text: sticker.name,
+        senderId: user.id,
+        timestamp: new Date(),
+        type: 'mood_sticker',
+        reactions: [],
+        status: 'sending',
+        sticker: {
+          emoji: sticker.emoji,
+          name: sticker.name,
+          color: sticker.color,
+        },
+        replyToId: replyingTo?.id ?? null,
+        replyTo: replyingTo || undefined,
+      },
+    ]);
     setShowMoodStickers(false);
-  };
+    setReplyingTo(null);
 
-  const addReaction = useCallback((messageId: string, emoji: string) => {
+    const payload = buildStickerPayload(sticker);
+    const { data, error } = await supabase
+      .from('messages')
+      .insert({
+        text: payload,
+        sender_id: user.id,
+        receiver_id: conversationId,
+        is_read: false,
+        message_type: 'mood_sticker',
+        reply_to_message_id: replyingTo?.id ?? null,
+      })
+      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
+      .single();
+
+    if (error || !data) {
+      console.log('[chat] send sticker error', error);
+      setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
+      Alert.alert('Sticker failed', 'Unable to send this sticker right now.');
+      return;
+    }
+
+    setMessages((prev) =>
+      linkReplies(
+        prev.map((msg) =>
+          msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
+        )
+      )
+    );
+  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
+
+  const addReaction = useCallback(async (messageId: string, emoji: string) => {
+    if (!user?.id) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    
-    setMessages(prev => prev.map(msg => {
-      if (msg.id === messageId) {
-        const existingReaction = msg.reactions.find(r => r.userId === user?.id);
+    const previousReactions =
+      messagesRef.current.find((msg) => msg.id === messageId)?.reactions ?? [];
+    const existingReaction = previousReactions.find((reaction) => reaction.userId === user.id);
+    const shouldRemove = existingReaction?.emoji === emoji;
+
+    setMessages((prev) =>
+      prev.map((msg) => {
+        if (msg.id !== messageId) return msg;
+        if (shouldRemove) {
+          return {
+            ...msg,
+            reactions: msg.reactions.filter((reaction) => reaction.userId !== user.id),
+          };
+        }
         if (existingReaction) {
           return {
             ...msg,
-            reactions: msg.reactions.map(r => 
-              r.userId === user?.id ? { ...r, emoji } : r
-            )
-          };
-        } else {
-          return {
-            ...msg,
-            reactions: [...msg.reactions, { userId: user?.id || '', emoji }]
+            reactions: msg.reactions.map((reaction) =>
+              reaction.userId === user.id ? { ...reaction, emoji } : reaction
+            ),
           };
         }
-      }
-      return msg;
-    }));
+        return {
+          ...msg,
+          reactions: [...msg.reactions, { userId: user.id, emoji }],
+        };
+      })
+    );
     setShowReactions(null);
+
+    if (shouldRemove) {
+      const { error } = await supabase
+        .from('message_reactions')
+        .delete()
+        .eq('message_id', messageId)
+        .eq('user_id', user.id);
+      if (error) {
+        console.log('[chat] remove reaction error', error);
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === messageId ? { ...msg, reactions: previousReactions } : msg
+          )
+        );
+        Alert.alert('Reaction', 'Unable to remove your reaction right now.');
+      }
+      return;
+    }
+
+    const { error } = await supabase
+      .from('message_reactions')
+      .upsert(
+        {
+          message_id: messageId,
+          user_id: user.id,
+          emoji,
+        },
+        { onConflict: 'message_id,user_id' }
+      );
+
+    if (error) {
+      console.log('[chat] add reaction error', error);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId ? { ...msg, reactions: previousReactions } : msg
+        )
+      );
+      Alert.alert('Reaction', 'Unable to react right now.');
+    }
   }, [user?.id]);
 
   const stopRecordingTimer = useCallback(() => {
@@ -3061,8 +4065,11 @@ export default function ConversationScreen() {
           waveform,
           isPlaying: false,
         },
+        replyToId: replyingTo?.id ?? null,
+        replyTo: replyingTo || undefined,
       },
     ]);
+    setReplyingTo(null);
 
     try {
       const extension = uri.split('.').pop()?.toLowerCase() || 'm4a';
@@ -3100,17 +4107,18 @@ export default function ConversationScreen() {
 
       const { data, error } = await supabase
         .from('messages')
-        .insert({
-          text: '',
-          sender_id: user.id,
-          receiver_id: conversationId,
-          is_read: false,
-          message_type: 'voice',
-          audio_path: uploadData?.path ?? filePath,
-          audio_duration: durationSeconds,
-          audio_waveform: waveform,
-        })
-        .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by')
+      .insert({
+        text: '',
+        sender_id: user.id,
+        receiver_id: conversationId,
+        is_read: false,
+        message_type: 'voice',
+        audio_path: uploadData?.path ?? filePath,
+        audio_duration: durationSeconds,
+        audio_waveform: waveform,
+        reply_to_message_id: replyingTo?.id ?? null,
+      })
+        .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
         .single();
 
       if (error || !data) {
@@ -3119,8 +4127,10 @@ export default function ConversationScreen() {
         setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
       } else {
         setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
+          linkReplies(
+            prev.map((msg) =>
+              msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
+            )
           )
         );
       }
@@ -3131,7 +4141,7 @@ export default function ConversationScreen() {
     } finally {
       setIsUploadingVoice(false);
     }
-  }, [conversationId, isUploadingVoice, mapRowToMessage, recordingDuration, resetRecordingState, user?.id]);
+  }, [conversationId, isUploadingVoice, linkReplies, mapRowToMessage, recordingDuration, replyingTo, resetRecordingState, user?.id]);
 
   const stopVoicePlayback = useCallback(async () => {
     if (!voiceSoundRef.current) {
@@ -3296,6 +4306,10 @@ export default function ConversationScreen() {
     Haptics.selectionAsync().catch(() => {});
   }, []);
 
+  const triggerActionHaptic = useCallback((style: Haptics.ImpactFeedbackStyle) => {
+    Haptics.impactAsync(style).catch(() => {});
+  }, []);
+
   const closeMessageActions = useCallback(() => {
     setMessageActionsVisible(false);
     setActionMessageId(null);
@@ -3304,12 +4318,9 @@ export default function ConversationScreen() {
   const handleLongPress = useCallback((messageId: string) => {
     const target = messagesRef.current.find((msg) => msg.id === messageId);
     if (!target) return;
-    if (target.deletedForAll) {
-      openMessageActions(target);
-      return;
-    }
-    setShowReactions(messageId);
-  }, [openMessageActions]);
+    setShowReactions((prev) => (prev === messageId ? null : messageId));
+    Haptics.selectionAsync().catch(() => {});
+  }, []);
 
   const renderTypingIndicator = () => {
     if (!isTyping || isChatBlocked) return null;
@@ -3464,6 +4475,10 @@ export default function ConversationScreen() {
       clearTimeout(focusTimerRef.current);
       focusTimerRef.current = null;
     }
+    if (jumpSettleRef.current) {
+      clearTimeout(jumpSettleRef.current);
+      jumpSettleRef.current = null;
+    }
     setFocusedMessageId(null);
   }, []);
 
@@ -3552,63 +4567,76 @@ export default function ConversationScreen() {
   const renderMessage = useCallback(
     ({ item, index }: { item: MessageType; index: number }) => {
       const isMyMessage = item.senderId === (user?.id || '');
-      const prevSenderId = messagesRef.current[index - 1]?.senderId;
+      const prevMessage = messagesRef.current[index - 1];
+      const prevSenderId = prevMessage?.senderId;
       const showAvatar = !isMyMessage && !isChatBlocked && (index === 0 || prevSenderId !== item.senderId);
       const isPlaying = playingVoiceId === item.id;
       const isReactionOpen = showReactions === item.id;
       const isFocused = focusedMessageId === item.id;
+      const isActionPinned = pinnedMessageIds.includes(item.id);
       const timeLabel = formatTime(item.timestamp);
+      const showDateSeparator = !prevMessage || !isSameDay(prevMessage.timestamp, item.timestamp);
       const imageSize = item.type === 'image' && item.imageUrl ? imageSizes[item.imageUrl] : undefined;
       const videoSize = item.type === 'video' && item.videoUrl ? videoSizes[item.videoUrl] : undefined;
       const now = item.type === 'location' ? nowTick : null;
 
       return (
-        <MessageRowItem
-          item={item}
-          isMyMessage={isMyMessage}
-          showAvatar={showAvatar}
-          isPlaying={isPlaying}
-          isReactionOpen={isReactionOpen}
-          isFocused={isFocused}
-          timeLabel={timeLabel}
-          userAvatar={userAvatar}
-          imageSize={imageSize}
-          videoSize={videoSize}
-          theme={theme}
-          isDark={isDark}
-          styles={styles}
-          onLongPress={handleLongPress}
-          onToggleVoice={toggleVoicePlayback}
-          onFocus={(messageId) => {
-            setFocusedMessageId(messageId);
-            if (focusTimerRef.current) {
-              clearTimeout(focusTimerRef.current);
-            }
-            focusTimerRef.current = setTimeout(() => {
-              setFocusedMessageId(null);
-              focusTimerRef.current = null;
-            }, 2500);
-          }}
-          onReply={replyToMessage}
-          onAddReaction={addReaction}
-          onCloseReactions={() => setShowReactions(null)}
-          onViewImage={setImageViewerUrl}
-          onViewVideo={setVideoViewerUrl}
-          onVideoSize={handleVideoSize}
-          onOpenDocument={handleOpenDocument}
-          onOpenLocation={openLocationViewer}
-          onStopLiveShare={stopLiveSharing}
-          onOpenMessageActions={openMessageActions}
-          now={now}
-        />
+        <View>
+          {showDateSeparator && (
+            <View style={styles.daySeparator}>
+              <Text style={styles.daySeparatorText}>{formatDayLabel(item.timestamp)}</Text>
+            </View>
+          )}
+          <MessageRowItem
+            item={item}
+            isMyMessage={isMyMessage}
+            showAvatar={showAvatar}
+            isPlaying={isPlaying}
+            isReactionOpen={isReactionOpen}
+            isFocused={isFocused}
+            focusToken={isFocused ? focusTick : 0}
+            timeLabel={timeLabel}
+            userAvatar={userAvatar}
+            currentUserId={user?.id || ''}
+            peerName={userName}
+            imageSize={imageSize}
+            videoSize={videoSize}
+            theme={theme}
+            isDark={isDark}
+            styles={styles}
+            onLongPress={handleLongPress}
+            onToggleVoice={toggleVoicePlayback}
+            onFocus={focusMessage}
+            onReply={replyToMessage}
+            onReplyJump={jumpToMessage}
+            onAddReaction={addReaction}
+            onCloseReactions={() => setShowReactions(null)}
+            onCopyMessage={handleCopyMessage}
+            onTogglePin={handleToggleMessagePin}
+            onDeleteMessage={handleDeleteAction}
+            isActionPinned={isActionPinned}
+            onOpenReactionSheet={openReactionSheet}
+            onViewImage={setImageViewerUrl}
+            onViewVideo={setVideoViewerUrl}
+            onVideoSize={handleVideoSize}
+            onOpenDocument={handleOpenDocument}
+            onOpenLocation={openLocationViewer}
+            onStopLiveShare={stopLiveSharing}
+            highlightQuery={chatSearchQuery}
+            onHighlightPress={chatSearchQuery.trim() ? jumpToNextMatch : undefined}
+            now={now}
+          />
+        </View>
       );
     },
     [
       focusedMessageId,
+      focusTick,
       playingVoiceId,
       showReactions,
       user?.id,
       userAvatar,
+      userName,
       theme,
       isDark,
       imageSizes,
@@ -3618,13 +4646,24 @@ export default function ConversationScreen() {
       toggleVoicePlayback,
       replyToMessage,
       addReaction,
+      isSameDay,
+      formatDayLabel,
       formatTime,
+      chatSearchQuery,
+      chatSearchVisible,
       handleVideoSize,
       handleOpenDocument,
       openLocationViewer,
       stopLiveSharing,
-      openMessageActions,
+      handleCopyMessage,
+      handleToggleMessagePin,
+      handleDeleteAction,
+      openReactionSheet,
+      jumpToMessage,
+      jumpToNextMatch,
       nowTick,
+      focusMessage,
+      pinnedMessageIds,
     ]
   );
 
@@ -3846,6 +4885,156 @@ export default function ConversationScreen() {
     );
   }, [closeMessageActions, deleteMessageForEveryone]);
 
+  const pinMessage = useCallback(async (message: MessageType) => {
+    if (!user?.id || !conversationId) return;
+    if (message.id.startsWith('temp-')) return;
+    const nextSet = new Set(pinnedMessageIdsRef.current);
+    nextSet.add(message.id);
+    updatePinnedMessageIds(Array.from(nextSet));
+    const { error } = await supabase.from('message_pins').insert({
+      message_id: message.id,
+      user_id: user.id,
+      peer_id: conversationId,
+    });
+    if (error) {
+      console.log('[chat] pin message error', error);
+      Alert.alert('Pin message', 'Unable to pin this message right now.');
+      await fetchPinnedMessages();
+    }
+  }, [conversationId, fetchPinnedMessages, updatePinnedMessageIds, user?.id]);
+
+  const unpinMessage = useCallback(async (message: MessageType) => {
+    if (!user?.id || !conversationId) return;
+    if (message.id.startsWith('temp-')) return;
+    const nextSet = new Set(pinnedMessageIdsRef.current);
+    nextSet.delete(message.id);
+    updatePinnedMessageIds(Array.from(nextSet));
+    const { error } = await supabase
+      .from('message_pins')
+      .delete()
+      .eq('message_id', message.id)
+      .eq('user_id', user.id);
+    if (error) {
+      console.log('[chat] unpin message error', error);
+      Alert.alert('Unpin message', 'Unable to unpin this message right now.');
+      await fetchPinnedMessages();
+    }
+  }, [conversationId, fetchPinnedMessages, updatePinnedMessageIds, user?.id]);
+
+  const handleToggleMessagePin = useCallback(
+    (message: MessageType, isPinned: boolean) => {
+      if (isPinned) {
+        void unpinMessage(message);
+      } else {
+        void pinMessage(message);
+      }
+    },
+    [pinMessage, unpinMessage]
+  );
+
+  const togglePinnedBanner = useCallback(() => {
+    if (pinnedMessageCount === 0) return;
+    setPinnedBannerExpanded((prev) => !prev);
+  }, [pinnedMessageCount]);
+
+  const handlePinnedJump = useCallback(() => {
+    if (!primaryPinnedMessage) return;
+    jumpToMessage(primaryPinnedMessage.id);
+    setPinnedBannerExpanded(false);
+  }, [jumpToMessage, primaryPinnedMessage]);
+
+  const handlePinnedUnpin = useCallback(() => {
+    if (!primaryPinnedMessage) return;
+    void unpinMessage(primaryPinnedMessage);
+    setPinnedBannerExpanded(false);
+  }, [primaryPinnedMessage, unpinMessage]);
+
+  const handlePinnedSeeAll = useCallback(() => {
+    openPinnedSheet();
+    setPinnedBannerExpanded(false);
+  }, [openPinnedSheet]);
+
+  useEffect(() => {
+    if (!reactionSheetVisible || !reactionSheetMessage) return;
+    const userIds = Array.from(
+      new Set(reactionSheetMessage.reactions.map((reaction) => reaction.userId))
+    ).filter(Boolean);
+    if (userIds.length === 0) return;
+    const missing = userIds.filter((id) => !reactionProfiles[id]);
+    if (missing.length === 0) return;
+    let isMounted = true;
+    setReactionProfilesLoading(true);
+    supabase
+      .from('profiles')
+      .select('user_id,full_name,avatar_url')
+      .in('user_id', missing)
+      .then(({ data, error }) => {
+        if (!isMounted) return;
+        if (error) {
+          console.log('[chat] reaction profiles error', error);
+          setReactionProfilesLoading(false);
+          return;
+        }
+        setReactionProfiles((prev) => {
+          const next = { ...prev };
+          (data || []).forEach((row: any) => {
+            next[row.user_id] = {
+              name: row.full_name || 'Unknown',
+              avatar: row.avatar_url || null,
+            };
+          });
+          return next;
+        });
+        setReactionProfilesLoading(false);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [reactionProfiles, reactionSheetMessage, reactionSheetVisible]);
+
+  const handleCopyMessage = useCallback(async (message: MessageType) => {
+    let textToCopy = '';
+    if (message.type === 'text') {
+      textToCopy = message.text || '';
+    } else if (message.type === 'image') {
+      textToCopy = message.imageUrl || '';
+    } else if (message.type === 'video') {
+      textToCopy = message.videoUrl || '';
+    } else if (message.type === 'document') {
+      textToCopy = message.document?.url || '';
+    } else if (message.type === 'location') {
+      textToCopy = message.location?.mapLink || `${message.location?.lat},${message.location?.lng}`;
+    }
+    if (!textToCopy) {
+      Alert.alert('Copy', 'Nothing to copy from this message.');
+      return;
+    }
+    try {
+      await Clipboard.setStringAsync(textToCopy);
+      Haptics.selectionAsync().catch(() => {});
+      Alert.alert('Copied', 'Message copied to clipboard.');
+    } catch (error) {
+      console.log('[chat] copy message error', error);
+      Alert.alert('Copy', 'Unable to copy this message right now.');
+    }
+  }, []);
+
+  const handleDeleteAction = useCallback((message: MessageType) => {
+    if (message.senderId === user?.id && !message.deletedForAll) {
+      Alert.alert(
+        'Delete message?',
+        'Choose how you want to delete this message.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Delete for me', style: 'destructive', onPress: () => hideMessageForMe(message) },
+          { text: 'Delete for everyone', style: 'destructive', onPress: () => deleteMessageForEveryone(message) },
+        ]
+      );
+      return;
+    }
+    void hideMessageForMe(message);
+  }, [closeMessageActions, deleteMessageForEveryone, hideMessageForMe, user?.id]);
+
   const openReportModal = useCallback(() => {
     setReportModalVisible(true);
   }, []);
@@ -3940,12 +5129,22 @@ export default function ConversationScreen() {
     setHeaderMenuVisible(false);
   }, []);
 
+  const closeChatSearch = useCallback(() => {
+    setChatSearchVisible(false);
+  }, []);
+
+  const closeMediaHub = useCallback(() => {
+    setMediaHubVisible(false);
+  }, []);
+
   const handleFilterMedia = useCallback(() => {
-    Alert.alert('Filter media', 'Filtering photos and videos in this chat is coming soon.');
+    setMediaTab('media');
+    setMediaHubVisible(true);
   }, []);
 
   const handleSearchInChat = useCallback(() => {
-    Alert.alert('Search in chat', 'Search in chat is coming soon.');
+    setChatSearchQuery('');
+    setChatSearchVisible(true);
   }, []);
 
   const handleToggleMute = useCallback(() => {
@@ -3956,9 +5155,106 @@ export default function ConversationScreen() {
     setIsChatPinned((prev) => !prev);
   }, []);
 
+  const clearChatForMe = useCallback(async () => {
+    if (!user?.id || !conversationId) return;
+    setClearChatLoading(true);
+    const currentIds = messagesRef.current
+      .map((msg) => msg.id)
+      .filter((id) => !id.startsWith('temp-'));
+    const hiddenSet = hiddenMessageIdsRef.current;
+    const idsToHide = currentIds.filter((id) => !hiddenSet.has(id));
+    if (idsToHide.length === 0) {
+      setMessages([]);
+      setHasMore(false);
+      setOldestTimestamp(null);
+      setClearChatLoading(false);
+      return;
+    }
+    const nextSet = new Set(hiddenSet);
+    idsToHide.forEach((id) => nextSet.add(id));
+    updateHiddenMessageIds(Array.from(nextSet));
+    setMessages([]);
+    setHasMore(false);
+    setOldestTimestamp(null);
+
+    try {
+      const batchSize = 200;
+      for (let i = 0; i < idsToHide.length; i += batchSize) {
+        const slice = idsToHide.slice(i, i + batchSize);
+        const rows = slice.map((id) => ({
+          message_id: id,
+          user_id: user.id,
+          peer_id: conversationId,
+        }));
+        const { error } = await supabase.from('message_hides').insert(rows);
+        if (error) throw error;
+      }
+    } catch (error) {
+      console.log('[chat] clear chat error', error);
+      Alert.alert('Clear chat', 'Unable to clear this chat right now.');
+      await fetchHiddenMessages();
+      await fetchMessages();
+    } finally {
+      setClearChatLoading(false);
+    }
+  }, [conversationId, fetchHiddenMessages, fetchMessages, updateHiddenMessageIds, user?.id]);
+
   const handleClearChat = useCallback(() => {
-    Alert.alert('Clear chat', 'Clearing chat history is coming soon.');
-  }, []);
+    Alert.alert(
+      'Clear chat?',
+      'This removes the chat history for you only.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: () => void clearChatForMe(),
+        },
+      ]
+    );
+  }, [clearChatForMe]);
+
+  const handleOpenMediaItem = useCallback(
+    (item: { type: 'image' | 'video'; url?: string | null }) => {
+      if (!item.url) return;
+      closeMediaHub();
+      if (item.type === 'image') {
+        setImageViewerUrl(item.url);
+      } else {
+        setVideoViewerUrl(item.url);
+      }
+    },
+    [closeMediaHub]
+  );
+
+  const renderHighlightedText = (text: string, query: string) => {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      return <Text style={styles.searchResultText} numberOfLines={2}>{text}</Text>;
+    }
+    const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escaped, 'ig');
+    const parts = text.split(regex);
+    const matches = text.match(regex);
+    if (!matches) {
+      return <Text style={styles.searchResultText} numberOfLines={2}>{text}</Text>;
+    }
+    const nodes = parts.flatMap((part, index) => {
+      const match = matches[index];
+      if (match === undefined) return [part];
+      return [
+        part,
+        <Text key={`${match}-${index}`} style={styles.searchHighlight}>
+          {match}
+        </Text>,
+      ];
+    });
+    return (
+      <Text style={styles.searchResultText} numberOfLines={2}>
+        {nodes}
+      </Text>
+    );
+  };
 
   const handleBlockUser = useCallback(() => {
     if (!conversationId) return;
@@ -4001,27 +5297,32 @@ export default function ConversationScreen() {
           </TouchableOpacity>
         </View>
         
-        {categories.map(category => (
-          <View key={category} style={styles.stickerCategory}>
-            <Text style={styles.categoryTitle}>
-              {category.charAt(0).toUpperCase() + category.slice(1)}
-            </Text>
-            <View style={styles.stickersGrid}>
-              {MOOD_STICKERS.filter(s => s.category === category).map((sticker, idx) => (
-                <TouchableOpacity
-                  key={idx}
-                  style={styles.stickerButton}
-                  onPress={() => sendMoodSticker(sticker)}
-                >
-                  <Text style={styles.stickerEmoji}>{sticker.emoji}</Text>
-                  <Text style={styles.stickerName}>
-                    {sticker.name}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.moodStickersContent}
+        >
+          {categories.map(category => (
+            <View key={category} style={styles.stickerCategory}>
+              <Text style={styles.categoryTitle}>
+                {category.charAt(0).toUpperCase() + category.slice(1)}
+              </Text>
+              <View style={styles.stickersGrid}>
+                {MOOD_STICKERS.filter(s => s.category === category).map((sticker, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    style={styles.stickerButton}
+                    onPress={() => sendMoodSticker(sticker)}
+                  >
+                    <Text style={styles.stickerEmoji}>{sticker.emoji}</Text>
+                    <Text style={styles.stickerName}>
+                      {sticker.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
-          </View>
-        ))}
+          ))}
+        </ScrollView>
       </View>
     );
   };
@@ -4211,6 +5512,73 @@ export default function ConversationScreen() {
 
         
       </View>
+      {pinnedMessageCount > 0 ? (
+        <View style={styles.pinnedBanner}>
+          <BlurView
+            intensity={28}
+            tint={isDark ? 'dark' : 'light'}
+            style={styles.pinnedBannerBlur}
+            pointerEvents="none"
+          />
+          <Pressable
+            style={({ pressed }) => [
+              styles.pinnedBannerContent,
+              pressed && styles.pinnedBannerPressed,
+            ]}
+            onPress={togglePinnedBanner}
+            disabled={pinnedMessageCount === 0}
+          >
+            <View style={styles.pinnedBadge}>
+              <MaterialCommunityIcons name="pin" size={14} color={theme.tint} />
+              <Text style={styles.pinnedBadgeText}>Pinned</Text>
+            </View>
+            <View style={styles.pinnedTextWrap}>
+              <Text style={styles.pinnedMessageText} numberOfLines={1}>
+                {pinnedPreviewText}
+              </Text>
+              {pinnedMessageCount > 1 ? (
+                <Text style={styles.pinnedCountText}>
+                  +{pinnedMessageCount - 1} more
+                </Text>
+              ) : null}
+            </View>
+            <Animated.View style={{ transform: [{ rotate: pinnedChevronRotation }] }}>
+              <MaterialCommunityIcons name="chevron-down" size={18} color={theme.textMuted} />
+            </Animated.View>
+          </Pressable>
+          <Animated.View
+            style={[
+              styles.pinnedBannerActionsWrap,
+              { height: pinnedActionsHeight, opacity: pinnedActionsOpacity },
+            ]}
+            pointerEvents={pinnedBannerExpanded ? 'auto' : 'none'}
+          >
+            <View style={styles.pinnedBannerActions}>
+              <Pressable
+                style={styles.pinnedActionButton}
+                onPress={handlePinnedJump}
+              >
+                <MaterialCommunityIcons name="target" size={16} color={theme.text} />
+                <Text style={styles.pinnedActionLabel}>Jump</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.pinnedActionButton, styles.pinnedActionDanger]}
+                onPress={handlePinnedUnpin}
+              >
+                <MaterialCommunityIcons name="pin-off" size={16} color={theme.danger} />
+                <Text style={[styles.pinnedActionLabel, styles.pinnedActionLabelDanger]}>Unpin</Text>
+              </Pressable>
+              <Pressable
+                style={styles.pinnedActionButton}
+                onPress={handlePinnedSeeAll}
+              >
+                <MaterialCommunityIcons name="pin-outline" size={16} color={theme.text} />
+                <Text style={styles.pinnedActionLabel}>All pins</Text>
+              </Pressable>
+            </View>
+          </Animated.View>
+        </View>
+      ) : null}
       {showHeaderHint ? (
         <Animated.View
           pointerEvents="none"
@@ -4299,13 +5667,15 @@ export default function ConversationScreen() {
             <Text style={styles.headerMenuSectionLabel}>Safety</Text>
             <View style={styles.headerMenuGrid}>
               <MenuCard
-                title="Clear chat"
+                title={clearChatLoading ? 'Clearing...' : 'Clear chat'}
                 icon="trash-can-outline"
                 destructive
                 onPress={() => {
+                  if (clearChatLoading) return;
                   handleCloseHeaderMenu();
                   handleClearChat();
                 }}
+                badgeLabel={clearChatLoading ? 'Working' : null}
               />
               <MenuCard
                 title={isBlockedByMe ? 'Unblock user' : 'Block user'}
@@ -4342,6 +5712,363 @@ export default function ConversationScreen() {
 
       <Modal
         transparent
+        visible={pinnedSheetVisible}
+        animationType="fade"
+        onRequestClose={closePinnedSheet}
+      >
+        <Pressable style={styles.pinnedSheetBackdrop} onPress={closePinnedSheet} />
+        <View style={styles.pinnedSheet}>
+          <BlurView
+            intensity={32}
+            tint={isDark ? 'dark' : 'light'}
+            style={styles.pinnedSheetBlur}
+          />
+          <View style={styles.pinnedSheetHeader}>
+            <View>
+              <Text style={styles.pinnedSheetTitle}>Pinned messages</Text>
+              <Text style={styles.pinnedSheetCount}>{pinnedMessageCount} pinned</Text>
+            </View>
+            <TouchableOpacity onPress={closePinnedSheet} style={styles.pinnedSheetClose}>
+              <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={styles.pinnedSheetContent}>
+            {pinnedMessages.length === 0 ? (
+              <Text style={styles.pinnedSheetEmpty}>No pinned messages loaded yet.</Text>
+            ) : (
+              pinnedMessages.map((message) => (
+                <Pressable
+                  key={message.id}
+                  style={({ pressed }) => [
+                    styles.pinnedSheetCard,
+                    pressed && styles.pinnedSheetCardPressed,
+                  ]}
+                  onPress={() => {
+                    closePinnedSheet();
+                    jumpToMessage(message.id);
+                  }}
+                >
+                  <View style={styles.pinnedSheetIconWrap}>
+                    <MaterialCommunityIcons
+                      name={getPinnedIcon(message)}
+                      size={18}
+                      color={theme.tint}
+                    />
+                  </View>
+                  <View style={styles.pinnedSheetText}>
+                    <Text style={styles.pinnedSheetMessage} numberOfLines={1}>
+                      {getPinnedPreview(message)}
+                    </Text>
+                    <Text style={styles.pinnedSheetMeta}>
+                      {formatDayLabel(message.timestamp)} • {formatTime(message.timestamp)}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.pinnedSheetUnpin}
+                    onPress={() => {
+                      void unpinMessage(message);
+                    }}
+                  >
+                    <MaterialCommunityIcons name="pin-off-outline" size={16} color={theme.textMuted} />
+                  </TouchableOpacity>
+                </Pressable>
+              ))
+            )}
+            {pinnedMessageTotal > pinnedMessageCount ? (
+              <Text style={styles.pinnedSheetHint}>
+                {pinnedMessageCount} of {pinnedMessageTotal} pins loaded. Scroll up to load more.
+              </Text>
+            ) : null}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        visible={reactionSheetVisible}
+        animationType="fade"
+        onRequestClose={closeReactionSheet}
+      >
+        <Pressable style={styles.reactionSheetBackdrop} onPress={closeReactionSheet} />
+        <View style={styles.reactionSheet}>
+          <BlurView
+            intensity={32}
+            tint={isDark ? 'dark' : 'light'}
+            style={styles.reactionSheetBlur}
+          />
+          <View style={styles.reactionSheetHeader}>
+            <View>
+              <Text style={styles.reactionSheetTitle}>Reactions</Text>
+              <Text style={styles.reactionSheetCount}>
+                {reactionSheetMessage?.reactions.length ?? 0} total
+              </Text>
+            </View>
+            <TouchableOpacity onPress={closeReactionSheet} style={styles.reactionSheetClose}>
+              <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.reactionSheetPills}
+          >
+            <Pressable
+              style={[
+                styles.reactionSheetPill,
+                reactionSheetEmoji === null && styles.reactionSheetPillActive,
+              ]}
+              onPress={() => setReactionSheetEmoji(null)}
+            >
+              <Text
+                style={[
+                  styles.reactionSheetPillText,
+                  reactionSheetEmoji === null && styles.reactionSheetPillTextActive,
+                ]}
+              >
+                All
+              </Text>
+            </Pressable>
+            {reactionSummary.map((summary) => (
+              <Pressable
+                key={summary.emoji}
+                style={[
+                  styles.reactionSheetPill,
+                  reactionSheetEmoji === summary.emoji && styles.reactionSheetPillActive,
+                ]}
+                onPress={() => setReactionSheetEmoji(summary.emoji)}
+              >
+                <Text style={styles.reactionSheetPillEmoji}>{summary.emoji}</Text>
+                <Text
+                  style={[
+                    styles.reactionSheetPillText,
+                    reactionSheetEmoji === summary.emoji && styles.reactionSheetPillTextActive,
+                  ]}
+                >
+                  {summary.count}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+          <ScrollView contentContainerStyle={styles.reactionSheetList}>
+            {reactionSheetMessage && reactionSheetList.length === 0 ? (
+              <Text style={styles.reactionSheetEmpty}>No reactions yet.</Text>
+            ) : (
+              reactionSheetList.map((reaction) => {
+                const profileEntry = reactionProfiles[reaction.userId];
+                const label =
+                  reaction.userId === user?.id
+                    ? 'You'
+                    : profileEntry?.name || 'Unknown';
+                const avatarSource =
+                  reaction.userId === user?.id
+                    ? profile?.avatar_url
+                    : profileEntry?.avatar;
+                return (
+                  <View key={`${reaction.userId}-${reaction.emoji}`} style={styles.reactionSheetRow}>
+                    <Image
+                      source={avatarSource ? { uri: avatarSource } : BLOCKED_AVATAR_SOURCE}
+                      style={styles.reactionSheetAvatar}
+                    />
+                    <Text style={styles.reactionSheetName}>{label}</Text>
+                    <Text style={styles.reactionSheetEmoji}>{reaction.emoji}</Text>
+                  </View>
+                );
+              })
+            )}
+            {reactionProfilesLoading ? (
+              <Text style={styles.reactionSheetHint}>Loading profiles…</Text>
+            ) : null}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        visible={chatSearchVisible}
+        animationType="fade"
+        onRequestClose={closeChatSearch}
+      >
+        <Pressable style={styles.searchBackdrop} onPress={closeChatSearch} />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.searchSheet}
+        >
+          <BlurView
+            intensity={36}
+            tint={isDark ? 'dark' : 'light'}
+            style={styles.searchBlur}
+          />
+          <View style={styles.searchContent}>
+            <View style={styles.searchHeader}>
+              <Text style={styles.searchTitle}>Search in chat</Text>
+              <TouchableOpacity style={styles.searchClose} onPress={closeChatSearch}>
+                <MaterialCommunityIcons name="close" size={18} color={theme.text} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.searchBar}>
+              <MaterialCommunityIcons name="magnify" size={18} color={theme.textMuted} />
+              <TextInput
+                value={chatSearchQuery}
+                onChangeText={setChatSearchQuery}
+                placeholder="Search messages"
+                placeholderTextColor={theme.textMuted}
+                style={styles.searchInput}
+                autoFocus
+              />
+            </View>
+            <ScrollView contentContainerStyle={styles.searchResults}>
+              {chatSearchQuery.trim().length === 0 ? (
+                <Text style={styles.searchHint}>Type to search messages.</Text>
+              ) : searchResults.length === 0 ? (
+                <Text style={styles.searchHint}>No matches found.</Text>
+              ) : (
+                searchResults.map((result) => (
+                  <Pressable
+                    key={result.id}
+                    style={styles.searchResult}
+                    onPress={() => {
+                      closeChatSearch();
+                      jumpToMessage(result.id);
+                    }}
+                  >
+                    {renderHighlightedText(result.text, chatSearchQuery)}
+                    <Text style={styles.searchResultMeta}>
+                      {formatDayLabel(result.timestamp)} • {formatTime(result.timestamp)}
+                    </Text>
+                  </Pressable>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
+        transparent
+        visible={mediaHubVisible}
+        animationType="fade"
+        onRequestClose={closeMediaHub}
+      >
+        <Pressable style={styles.mediaHubBackdrop} onPress={closeMediaHub} />
+        <View style={styles.mediaHubSheet}>
+          <BlurView
+            intensity={36}
+            tint={isDark ? 'dark' : 'light'}
+            style={styles.mediaHubBlur}
+          />
+          <View style={styles.mediaHubContent}>
+            <View style={styles.mediaHubHeader}>
+              <Text style={styles.mediaHubTitle}>Media, links & docs</Text>
+              <TouchableOpacity style={styles.mediaHubClose} onPress={closeMediaHub}>
+                <MaterialCommunityIcons name="close" size={18} color={theme.text} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.mediaHubTabs}>
+              {[
+                { key: 'media', label: 'Media' },
+                { key: 'links', label: 'Links' },
+                { key: 'docs', label: 'Docs' },
+              ].map((tab) => {
+                const isActive = mediaTab === tab.key;
+                return (
+                  <Pressable
+                    key={tab.key}
+                    style={[styles.mediaHubTab, isActive && styles.mediaHubTabActive]}
+                    onPress={() => setMediaTab(tab.key as typeof mediaTab)}
+                  >
+                    <Text style={[styles.mediaHubTabText, isActive && styles.mediaHubTabTextActive]}>
+                      {tab.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <ScrollView contentContainerStyle={styles.mediaHubBody}>
+              {mediaTab === 'media' ? (
+                mediaItems.length === 0 ? (
+                  <Text style={styles.mediaHubEmpty}>No media yet.</Text>
+                ) : (
+                  <View style={styles.mediaGrid}>
+                    {mediaItems.map((item) => (
+                      <Pressable
+                        key={item.id}
+                        style={styles.mediaTile}
+                        onPress={() => handleOpenMediaItem(item)}
+                      >
+                        {item.type === 'image' && item.url ? (
+                          <Image source={{ uri: item.url }} style={styles.mediaTileImage} />
+                        ) : (
+                          <View style={styles.mediaTilePlaceholder}>
+                            <MaterialCommunityIcons name="play-circle" size={26} color={theme.textMuted} />
+                            <Text style={styles.mediaTileLabel}>Video</Text>
+                          </View>
+                        )}
+                      </Pressable>
+                    ))}
+                  </View>
+                )
+              ) : mediaTab === 'links' ? (
+                linkItems.length === 0 ? (
+                  <Text style={styles.mediaHubEmpty}>No links shared.</Text>
+                ) : (
+                  <View style={styles.mediaList}>
+                    {linkItems.map((item, idx) => (
+                      <Pressable
+                        key={`${item.id}-${idx}`}
+                        style={styles.mediaListItem}
+                        onPress={() => Linking.openURL(item.url)}
+                      >
+                        <MaterialCommunityIcons name="link-variant" size={18} color={theme.tint} />
+                        <View style={styles.mediaListText}>
+                          <Text style={styles.mediaListTitle} numberOfLines={1}>
+                            {item.url}
+                          </Text>
+                          <Text style={styles.mediaListMeta} numberOfLines={1}>
+                            {formatDayLabel(item.timestamp)} • {formatTime(item.timestamp)}
+                          </Text>
+                        </View>
+                      </Pressable>
+                    ))}
+                  </View>
+                )
+              ) : docItems.length === 0 ? (
+                <Text style={styles.mediaHubEmpty}>No documents yet.</Text>
+              ) : (
+                <View style={styles.mediaList}>
+                  {docItems.map((item) => (
+                    <Pressable
+                      key={item.id}
+                      style={styles.mediaListItem}
+                      onPress={() => {
+                        closeMediaHub();
+                        handleOpenDocument({
+                          name: item.name,
+                          url: item.url,
+                          typeLabel: item.typeLabel ?? undefined,
+                          sizeLabel: item.sizeLabel ?? undefined,
+                        });
+                      }}
+                    >
+                      <MaterialCommunityIcons name="file-document-outline" size={18} color={theme.tint} />
+                      <View style={styles.mediaListText}>
+                        <Text style={styles.mediaListTitle} numberOfLines={1}>
+                          {item.name}
+                        </Text>
+                        <Text style={styles.mediaListMeta} numberOfLines={1}>
+                          {item.typeLabel || 'Document'} • {formatDayLabel(item.timestamp)}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
         visible={messageActionsVisible}
         animationType="fade"
         onRequestClose={closeMessageActions}
@@ -4359,32 +6086,104 @@ export default function ConversationScreen() {
               <>
                 <TouchableOpacity
                   style={styles.messageActionCard}
-                  onPress={() => hideMessageForMe(actionMessage)}
+                  onPress={() => {
+                    triggerActionHaptic(Haptics.ImpactFeedbackStyle.Light);
+                    closeMessageActions();
+                    replyToMessage(actionMessage);
+                  }}
                 >
                   <View style={styles.messageActionIcon}>
-                    <MaterialCommunityIcons name="eye-off-outline" size={18} color={theme.text} />
+                    <MaterialCommunityIcons name="reply" size={22} color={theme.text} />
                   </View>
                   <View style={styles.messageActionText}>
-                    <Text style={styles.messageActionLabel}>Hide for me</Text>
-                    <Text style={styles.messageActionHint}>Only you will stop seeing this message.</Text>
+                    <Text style={styles.messageActionLabel}>Reply</Text>
+                    <Text style={styles.messageActionHint}>Respond to this message.</Text>
                   </View>
                 </TouchableOpacity>
-                {actionMessage.senderId === user?.id && !actionMessage.deletedForAll ? (
-                  <TouchableOpacity
-                    style={[styles.messageActionCard, styles.messageActionDanger]}
-                    onPress={() => confirmDeleteForEveryone(actionMessage)}
-                  >
-                    <View style={[styles.messageActionIcon, styles.messageActionIconDanger]}>
-                      <MaterialCommunityIcons name="trash-can-outline" size={18} color={Colors.light.background} />
-                    </View>
-                    <View style={styles.messageActionText}>
-                      <Text style={[styles.messageActionLabel, styles.messageActionLabelDanger]}>
-                        Delete for everyone
-                      </Text>
-                      <Text style={styles.messageActionHint}>Replaces it with a "Message deleted" placeholder.</Text>
-                    </View>
-                  </TouchableOpacity>
-                ) : null}
+
+                <TouchableOpacity
+                  style={styles.messageActionCard}
+                  onPress={() => {
+                    triggerActionHaptic(Haptics.ImpactFeedbackStyle.Light);
+                    closeMessageActions();
+                    void handleCopyMessage(actionMessage);
+                  }}
+                >
+                  <View style={styles.messageActionIcon}>
+                    <MaterialCommunityIcons name="content-copy" size={22} color={theme.text} />
+                  </View>
+                  <View style={styles.messageActionText}>
+                    <Text style={styles.messageActionLabel}>Copy</Text>
+                    <Text style={styles.messageActionHint}>Copy to clipboard.</Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.messageActionCard}
+                  onPress={() => {
+                    triggerActionHaptic(Haptics.ImpactFeedbackStyle.Medium);
+                    closeMessageActions();
+                    if (isActionPinned) {
+                      void unpinMessage(actionMessage);
+                    } else {
+                      void pinMessage(actionMessage);
+                    }
+                  }}
+                >
+                  <View style={styles.messageActionIcon}>
+                    <MaterialCommunityIcons name="pin-outline" size={22} color={theme.text} />
+                  </View>
+                  <View style={styles.messageActionText}>
+                    <Text style={styles.messageActionLabel}>
+                      {isActionPinned ? 'Unpin message' : 'Pin message'}
+                    </Text>
+                    <Text style={styles.messageActionHint}>
+                      {isActionPinned ? 'Remove this pin.' : 'Keep it at the top for you.'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.messageActionCard}
+                  onPress={() => {
+                    triggerActionHaptic(Haptics.ImpactFeedbackStyle.Light);
+                    closeMessageActions();
+                    handleToggleMute();
+                  }}
+                >
+                  <View style={styles.messageActionIcon}>
+                    <MaterialCommunityIcons
+                      name={isChatMuted ? 'volume-high' : 'volume-off'}
+                      size={22}
+                      color={theme.text}
+                    />
+                  </View>
+                  <View style={styles.messageActionText}>
+                    <Text style={styles.messageActionLabel}>
+                      {isChatMuted ? 'Unmute chat' : 'Mute chat'}
+                    </Text>
+                    <Text style={styles.messageActionHint}>Silence notifications for this chat.</Text>
+                  </View>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.messageActionCard, styles.messageActionDanger]}
+                  onPress={() => {
+                    triggerActionHaptic(Haptics.ImpactFeedbackStyle.Heavy);
+                    closeMessageActions();
+                    handleDeleteAction(actionMessage);
+                  }}
+                >
+                  <View style={[styles.messageActionIcon, styles.messageActionIconDanger]}>
+                    <MaterialCommunityIcons name="trash-can-outline" size={22} color={Colors.light.background} />
+                  </View>
+                  <View style={styles.messageActionText}>
+                    <Text style={[styles.messageActionLabel, styles.messageActionLabelDanger]}>
+                      Delete
+                    </Text>
+                    <Text style={styles.messageActionHint}>Remove this message.</Text>
+                  </View>
+                </TouchableOpacity>
               </>
             ) : null}
           </View>
@@ -4991,6 +6790,13 @@ export default function ConversationScreen() {
             }
           }}
           onScrollBeginDrag={onScrollBeginDrag}
+          onScrollToIndexFailed={({ index, averageItemLength }) => {
+            const offset = Math.max(0, averageItemLength * index);
+            flatListRef.current?.scrollToOffset({ offset, animated: true });
+            setTimeout(() => {
+              flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+            }, 250);
+          }}
           onViewableItemsChanged={onViewableItemsChanged}
           viewabilityConfig={{
             itemVisiblePercentThreshold: 50,
@@ -5055,7 +6861,12 @@ export default function ConversationScreen() {
                 
                 <TouchableOpacity 
                   style={styles.inputActionButton}
-                  onPress={() => Alert.alert('Coming soon', 'Stickers are not available yet.')}
+                  onPress={() => {
+                    if (showImagePicker) {
+                      closeAttachmentSheet();
+                    }
+                    setShowMoodStickers((prev) => !prev);
+                  }}
                 >
                   <MaterialCommunityIcons 
                     name="emoticon-happy" 
@@ -5359,6 +7170,340 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       marginTop: 1,
       flexShrink: 1,
     },
+    pinnedBanner: {
+      marginHorizontal: 16,
+      marginTop: 8,
+      marginBottom: 2,
+      borderRadius: 18,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+      backgroundColor: withAlpha(theme.background, isDark ? 0.2 : 0.85),
+    },
+    pinnedBannerBlur: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    pinnedBannerContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+    },
+    pinnedBannerActionsWrap: {
+      overflow: 'hidden',
+    },
+    pinnedBannerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingTop: 2,
+      paddingBottom: 12,
+    },
+    pinnedActionButton: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 8,
+      borderRadius: 12,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+    },
+    pinnedActionLabel: {
+      fontSize: 12,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    pinnedActionDanger: {
+      backgroundColor: withAlpha(theme.danger, 0.12),
+      borderColor: withAlpha(theme.danger, 0.4),
+    },
+    pinnedActionLabelDanger: {
+      color: theme.danger,
+    },
+    pinnedBannerPressed: {
+      opacity: 0.85,
+    },
+    pinnedBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
+      marginRight: 10,
+    },
+    pinnedBadgeText: {
+      fontSize: 11,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.tint,
+      marginLeft: 4,
+    },
+    pinnedTextWrap: {
+      flex: 1,
+    },
+    pinnedMessageText: {
+      fontSize: 13,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.text,
+    },
+    pinnedCountText: {
+      fontSize: 11,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+      marginTop: 2,
+    },
+    pinnedSheetBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: withAlpha(Colors.dark.background, 0.45),
+    },
+    pinnedSheet: {
+      position: 'absolute',
+      left: 16,
+      right: 16,
+      bottom: 24,
+      maxHeight: screenHeight * 0.65,
+      borderRadius: 22,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.78 : 0.94),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      overflow: 'hidden',
+      shadowColor: Colors.dark.background,
+      shadowOpacity: 0.16,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 8,
+    },
+    pinnedSheetBlur: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    pinnedSheetHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+    },
+    pinnedSheetTitle: {
+      fontSize: 14,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    pinnedSheetCount: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      marginTop: 2,
+    },
+    pinnedSheetClose: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.06),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+    },
+    pinnedSheetContent: {
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      gap: 10,
+    },
+    pinnedSheetCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      borderRadius: 16,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+    },
+    pinnedSheetCardPressed: {
+      opacity: 0.85,
+    },
+    pinnedSheetIconWrap: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
+    },
+    pinnedSheetText: {
+      flex: 1,
+      gap: 4,
+    },
+    pinnedSheetMessage: {
+      fontSize: 13,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    pinnedSheetMeta: {
+      fontSize: 11,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+    },
+    pinnedSheetUnpin: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.06),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+    },
+    pinnedSheetEmpty: {
+      fontSize: 13,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      textAlign: 'center',
+      paddingVertical: 24,
+    },
+    pinnedSheetHint: {
+      fontSize: 11,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      textAlign: 'center',
+      paddingTop: 4,
+    },
+    reactionSheetBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: withAlpha(Colors.dark.background, 0.45),
+    },
+    reactionSheet: {
+      position: 'absolute',
+      left: 16,
+      right: 16,
+      bottom: 24,
+      maxHeight: screenHeight * 0.6,
+      borderRadius: 22,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.78 : 0.94),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      overflow: 'hidden',
+      shadowColor: Colors.dark.background,
+      shadowOpacity: 0.16,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 8,
+    },
+    reactionSheetBlur: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    reactionSheetHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+    },
+    reactionSheetTitle: {
+      fontSize: 14,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    reactionSheetCount: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      marginTop: 2,
+    },
+    reactionSheetClose: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.06),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+    },
+    reactionSheetPills: {
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      gap: 8,
+    },
+    reactionSheetPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+      gap: 6,
+    },
+    reactionSheetPillActive: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
+      borderColor: withAlpha(theme.tint, isDark ? 0.4 : 0.3),
+    },
+    reactionSheetPillText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.textMuted,
+    },
+    reactionSheetPillTextActive: {
+      color: theme.tint,
+    },
+    reactionSheetPillEmoji: {
+      fontSize: 14,
+    },
+    reactionSheetList: {
+      paddingHorizontal: 14,
+      paddingBottom: 14,
+      gap: 10,
+    },
+    reactionSheetRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 16,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+    },
+    reactionSheetAvatar: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+    },
+    reactionSheetName: {
+      flex: 1,
+      fontSize: 13,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    reactionSheetEmoji: {
+      fontSize: 16,
+    },
+    reactionSheetEmpty: {
+      fontSize: 13,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      textAlign: 'center',
+      paddingVertical: 20,
+    },
+    reactionSheetHint: {
+      fontSize: 11,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      textAlign: 'center',
+      paddingTop: 4,
+    },
     headerHint: {
       position: 'absolute',
       top: 72,
@@ -5517,6 +7662,228 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.textMuted,
       textAlign: 'center',
     },
+    searchBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0,0,0,0.35)',
+    },
+    searchSheet: {
+      position: 'absolute',
+      left: 16,
+      right: 16,
+      top: 70,
+      bottom: 70,
+      borderRadius: 24,
+      overflow: 'hidden',
+    },
+    searchBlur: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    searchContent: {
+      flex: 1,
+      padding: 16,
+      gap: 12,
+    },
+    searchHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    searchTitle: {
+      fontSize: 16,
+      fontFamily: 'Archivo_700Bold',
+      color: theme.text,
+    },
+    searchClose: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    searchBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 14,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.12),
+    },
+    searchInput: {
+      flex: 1,
+      fontSize: 14,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.text,
+    },
+    searchResults: {
+      paddingBottom: 16,
+      gap: 10,
+    },
+    searchHint: {
+      fontSize: 13,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+      textAlign: 'center',
+      marginTop: 24,
+    },
+    searchResult: {
+      padding: 12,
+      borderRadius: 14,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.12 : 0.06),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+    },
+    searchResultText: {
+      fontSize: 14,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.text,
+      marginBottom: 4,
+    },
+    searchHighlight: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.35 : 0.2),
+      color: theme.text,
+      borderRadius: 6,
+      paddingHorizontal: 2,
+    },
+    searchResultMeta: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+    },
+    mediaHubBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0,0,0,0.35)',
+    },
+    mediaHubSheet: {
+      position: 'absolute',
+      left: 16,
+      right: 16,
+      top: 90,
+      bottom: 70,
+      borderRadius: 24,
+      overflow: 'hidden',
+    },
+    mediaHubBlur: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    mediaHubContent: {
+      flex: 1,
+      padding: 16,
+    },
+    mediaHubHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 12,
+    },
+    mediaHubTitle: {
+      fontSize: 16,
+      fontFamily: 'Archivo_700Bold',
+      color: theme.text,
+    },
+    mediaHubClose: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    mediaHubTabs: {
+      flexDirection: 'row',
+      gap: 8,
+      marginBottom: 12,
+    },
+    mediaHubTab: {
+      flex: 1,
+      paddingVertical: 8,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+      alignItems: 'center',
+      backgroundColor: theme.backgroundSubtle,
+    },
+    mediaHubTabActive: {
+      borderColor: theme.tint,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.2 : 0.12),
+    },
+    mediaHubTabText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.textMuted,
+    },
+    mediaHubTabTextActive: {
+      color: theme.tint,
+    },
+    mediaHubBody: {
+      paddingBottom: 24,
+    },
+    mediaHubEmpty: {
+      fontSize: 13,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+      textAlign: 'center',
+      marginTop: 20,
+    },
+    mediaGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+    },
+    mediaTile: {
+      width: '30%',
+      aspectRatio: 1,
+      borderRadius: 14,
+      overflow: 'hidden',
+      backgroundColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.12),
+    },
+    mediaTileImage: {
+      width: '100%',
+      height: '100%',
+    },
+    mediaTilePlaceholder: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+    },
+    mediaTileLabel: {
+      fontSize: 11,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.textMuted,
+    },
+    mediaList: {
+      gap: 10,
+    },
+    mediaListItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      padding: 12,
+      borderRadius: 14,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.12 : 0.06),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+    },
+    mediaListText: {
+      flex: 1,
+      gap: 4,
+    },
+    mediaListTitle: {
+      fontSize: 13,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    mediaListMeta: {
+      fontSize: 11,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+    },
 
     // Message Actions Sheet
     messageActionBackdrop: {
@@ -5559,8 +7926,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'center',
       gap: 12,
-      paddingHorizontal: 12,
-      paddingVertical: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 14,
       borderRadius: 16,
       backgroundColor: theme.backgroundSubtle,
       borderWidth: 1,
@@ -5571,9 +7938,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderColor: withAlpha('#ef4444', isDark ? 0.3 : 0.18),
     },
     messageActionIcon: {
-      width: 34,
-      height: 34,
-      borderRadius: 17,
+      width: 42,
+      height: 42,
+      borderRadius: 21,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.12),
@@ -5744,6 +8111,23 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       paddingHorizontal: 16,
       paddingVertical: 20,
     },
+    daySeparator: {
+      alignSelf: 'center',
+      paddingHorizontal: 14,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      marginBottom: 12,
+      marginTop: 2,
+    },
+    daySeparatorText: {
+      fontSize: 11,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.textMuted,
+      letterSpacing: 0.2,
+    },
     loadEarlierContainer: {
       alignItems: 'center',
       paddingBottom: 12,
@@ -5770,6 +8154,28 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       marginBottom: 16,
       position: 'relative',
     },
+    messageRowSpotlight: {
+      position: 'absolute',
+      top: -8,
+      bottom: -8,
+      left: 8,
+      right: 8,
+      borderRadius: 24,
+      overflow: 'hidden',
+      zIndex: 0,
+    },
+    messageRowSpotlightBlur: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    messageRowSpotlightTint: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    messageRowVignetteVertical: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    messageRowVignetteHorizontal: {
+      ...StyleSheet.absoluteFillObject,
+    },
     messageBubbleContainer: {
       flexDirection: 'row',
       alignItems: 'flex-end',
@@ -5794,6 +8200,22 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       paddingVertical: 8,
       borderRadius: 20,
       position: 'relative',
+    },
+    messageFocusSpotlight: {
+      position: 'absolute',
+      top: -6,
+      left: -6,
+      right: -6,
+      bottom: -6,
+      borderRadius: 26,
+      borderWidth: 1,
+      overflow: 'hidden',
+    },
+    messageFocusSpotlightBlur: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    messageFocusSpotlightTint: {
+      ...StyleSheet.absoluteFillObject,
     },
     textWithMeta: {
       flexDirection: 'row',
@@ -5855,6 +8277,18 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontSize: 14.5,
       lineHeight: 19,
       fontFamily: 'Manrope_400Regular',
+    },
+    messageTextHighlight: {
+      borderRadius: 6,
+      paddingHorizontal: 2,
+    },
+    messageTextHighlightMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.22),
+      color: Colors.light.background,
+    },
+    messageTextHighlightTheir: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.28 : 0.16),
+      color: theme.text,
     },
     myMessageText: {
       color: Colors.light.background,
@@ -5928,28 +8362,41 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
 
     // Reactions
-    reactionsContainer: {
+    reactionSummary: {
       flexDirection: 'row',
+      alignItems: 'center',
       position: 'absolute',
-      bottom: -8,
-      right: 8,
-      gap: 4,
-    },
-    reactionBubble: {
-      backgroundColor: theme.background,
-      borderRadius: 12,
+      bottom: -14,
+      gap: 6,
       paddingHorizontal: 6,
-      paddingVertical: 2,
+      paddingVertical: 4,
+      borderRadius: 14,
+      backgroundColor: theme.background,
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
       shadowColor: Colors.dark.background,
       shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.1,
-      shadowRadius: 2,
-      elevation: 2,
+      shadowOpacity: 0.12,
+      shadowRadius: 4,
+      elevation: 3,
     },
-    reactionEmoji: {
-      fontSize: 12,
+    reactionSummaryLeft: {
+      left: 8,
+    },
+    reactionSummaryRight: {
+      right: 8,
+    },
+    reactionSummaryItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 2,
+    },
+    reactionSummaryEmoji: {
+      fontSize: 14,
+    },
+    reactionSummaryCount: {
+      fontSize: 11,
+      fontFamily: 'Manrope_600SemiBold',
       color: theme.text,
     },
 
@@ -5977,26 +8424,52 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     quickReactionsRight: {
       right: 4,
     },
+    messageActionRow: {
+      flexDirection: 'row',
+      gap: 6,
+      marginTop: 6,
+    },
+    messageActionRowLeft: {
+      alignSelf: 'flex-start',
+      marginLeft: 36,
+    },
+    messageActionRowRight: {
+      alignSelf: 'flex-end',
+      marginRight: 4,
+    },
+    messageActionPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      gap: 6,
+    },
+    messageActionPillDanger: {
+      backgroundColor: withAlpha(theme.danger, 0.12),
+      borderColor: withAlpha(theme.danger, 0.3),
+    },
+    messageActionLabel: {
+      fontSize: 12,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    messageActionLabelDanger: {
+      color: theme.danger,
+    },
     quickReactionButton: {
-      width: 32,
-      height: 32,
-      borderRadius: 16,
+      width: 36,
+      height: 36,
+      borderRadius: 18,
       justifyContent: 'center',
       alignItems: 'center',
       backgroundColor: theme.backgroundSubtle,
     },
-    quickActionButton: {
-      width: 32,
-      height: 32,
-      borderRadius: 16,
-      justifyContent: 'center',
-      alignItems: 'center',
-      backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.06),
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
-    },
     quickReactionEmoji: {
-      fontSize: 16,
+      fontSize: 18,
     },
 
     // Typing Indicator
@@ -6054,6 +8527,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       paddingVertical: 12,
       borderBottomWidth: 1,
       borderBottomColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+    },
+    moodStickersContent: {
+      paddingBottom: 16,
     },
     moodStickerTitle: {
       fontSize: 16,
@@ -6835,6 +9311,83 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: Colors.light.background,
       opacity: 0.85,
       fontStyle: 'italic',
+    },
+    replyChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: 14,
+      marginBottom: 8,
+      borderWidth: 1,
+    },
+    replyChipMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.14),
+      borderColor: withAlpha(Colors.light.background, 0.3),
+    },
+    replyChipTheir: {
+      backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.05),
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+    },
+    replyChipLine: {
+      width: 2,
+      height: 28,
+      borderRadius: 2,
+    },
+    replyChipLineMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.7),
+    },
+    replyChipLineTheir: {
+      backgroundColor: withAlpha(theme.text, 0.35),
+    },
+    replyChipContent: {
+      flex: 1,
+      gap: 4,
+    },
+    replyChipHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    replyChipIconWrap: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    replyChipIconWrapMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.2),
+    },
+    replyChipIconWrapTheir: {
+      backgroundColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+    },
+    replyChipLabel: {
+      flexShrink: 1,
+      fontSize: 12,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    replyChipLabelMy: {
+      color: Colors.light.background,
+    },
+    replyChipTime: {
+      marginLeft: 'auto',
+      fontSize: 10,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+    },
+    replyChipTimeMy: {
+      color: withAlpha(Colors.light.background, 0.7),
+    },
+    replyChipPreview: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+    },
+    replyChipPreviewMy: {
+      color: withAlpha(Colors.light.background, 0.85),
     },
     replyPreview: {
       backgroundColor: theme.backgroundSubtle,

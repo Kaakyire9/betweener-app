@@ -7,6 +7,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
@@ -37,10 +38,11 @@ type ConversationType = {
     text: string;
     timestamp: Date;
     senderId: string;
-    type: 'text' | 'voice' | 'image' | 'mood_sticker';
+    type: 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location';
     isRead: boolean;
   };
   unreadCount: number;
+  isMuted: boolean;
   isPinned: boolean;
   matchedAt: Date;
 };
@@ -53,9 +55,12 @@ type MessageRow = {
   receiver_id: string;
   is_read: boolean;
   deleted_for_all?: boolean | null;
+  message_type?: ConversationType['lastMessage']['type'] | null;
 };
 
+const CHAT_PREFS_STORAGE_KEY = 'chat_header_prefs_v1';
 const BLOCKED_AVATAR_SOURCE = require('../../assets/images/circle-logo.png');
+const STICKER_TEXT_PREFIX = 'sticker::';
 
 const withAlpha = (hex: string, alpha: number) => {
   const normalized = hex.replace('#', '');
@@ -64,6 +69,19 @@ const withAlpha = (hex: string, alpha: number) => {
   const g = (bigint >> 8) & 255;
   const b = bigint & 255;
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+};
+
+const parseStickerPreview = (text: string) => {
+  if (!text) return null;
+  if (!text.startsWith(STICKER_TEXT_PREFIX)) return null;
+  try {
+    const parsed = JSON.parse(text.slice(STICKER_TEXT_PREFIX.length));
+    if (!parsed || typeof parsed.emoji !== 'string') return null;
+    const name = typeof parsed.name === 'string' ? parsed.name : 'Sticker';
+    return `${parsed.emoji} ${name}`.trim();
+  } catch {
+    return null;
+  }
 };
 
 export default function ChatScreen() {
@@ -173,13 +191,30 @@ export default function ChatScreen() {
     };
   }, [user?.id]);
 
+  const applyChatPrefs = useCallback(async (items: ConversationType[]) => {
+    try {
+      const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return items.map((item) => {
+        const prefs = parsed?.[item.id] ?? {};
+        return {
+          ...item,
+          isMuted: Boolean(prefs.muted),
+          isPinned: Boolean(prefs.pinned),
+        };
+      });
+    } catch {
+      return items.map((item) => ({ ...item, isMuted: false, isPinned: item.isPinned }));
+    }
+  }, []);
+
   const fetchConversations = useCallback(async () => {
     if (!user?.id) return;
     setIsLoading(true);
     try {
       const { data: messages, error } = await supabase
         .from('messages')
-        .select('id,text,created_at,sender_id,receiver_id,is_read,deleted_for_all')
+        .select('id,text,created_at,sender_id,receiver_id,is_read,deleted_for_all,message_type')
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .order('created_at', { ascending: false })
         .limit(300);
@@ -249,7 +284,8 @@ export default function ChatScreen() {
         const profileRow = profileByUser.get(otherUserId);
         const last = entry?.last;
         const lastTimestamp = last?.created_at ? new Date(last.created_at) : new Date();
-        const lastText = last?.deleted_for_all ? 'Message deleted' : last?.text || '';
+        const lastText = getRowPreviewText(last);
+        const lastType = (last?.message_type ?? 'text') as ConversationType['lastMessage']['type'];
         const blockStatus = blockStatusByUser.get(otherUserId) ?? null;
         return {
           id: otherUserId,
@@ -266,20 +302,22 @@ export default function ChatScreen() {
             text: lastText,
             timestamp: lastTimestamp,
             senderId: last?.sender_id || '',
-            type: 'text',
+            type: lastType,
             isRead: last?.is_read ?? false,
           },
           unreadCount: entry?.unread || 0,
+          isMuted: false,
           isPinned: false,
           matchedAt: lastTimestamp,
         };
       });
 
-      setConversations(nextConversations);
+      const hydrated = await applyChatPrefs(nextConversations);
+      setConversations(hydrated);
     } finally {
       setIsLoading(false);
     }
-  }, [user?.id]);
+  }, [applyChatPrefs, user?.id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -297,12 +335,13 @@ export default function ChatScreen() {
       if (row.sender_id !== user.id && row.receiver_id !== user.id) return;
       const otherId = row.sender_id === user.id ? row.receiver_id : row.sender_id;
       if (!otherId) return;
-      const lastText = row.deleted_for_all ? 'Message deleted' : row.text || '';
+      const lastText = getRowPreviewText(row);
+      const lastType = (row.message_type ?? 'text') as ConversationType['lastMessage']['type'];
       const nextLastMessage = {
         text: lastText,
         timestamp: new Date(row.created_at),
         senderId: row.sender_id,
-        type: 'text' as const,
+        type: lastType,
         isRead: row.is_read,
       };
 
@@ -357,15 +396,21 @@ export default function ChatScreen() {
     };
   }, [fetchConversations, user?.id]);
 
-  if (!fontsLoaded) {
-    return <View style={styles.container} />;
-  }
-
   const formatLastMessageTime = (date: Date) => {
-    return date.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const diffDays = Math.floor((startOfToday.getTime() - startOfDate.getTime()) / 86400000);
+    if (diffDays === 0) return 'Today';
+    if (diffDays === 1) return 'Yesterday';
+    if (diffDays > 1 && diffDays < 7) {
+      return date.toLocaleDateString('en-US', { weekday: 'long' });
+    }
+    const sameYear = now.getFullYear() === date.getFullYear();
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: sameYear ? undefined : '2-digit',
     });
   };
 
@@ -384,18 +429,38 @@ export default function ChatScreen() {
     }
   };
 
+  const getRowPreviewText = (row?: MessageRow | null) => {
+    if (!row) return '';
+    if (row.deleted_for_all) return 'Message deleted';
+    const rowType = (row.message_type ?? 'text') as ConversationType['lastMessage']['type'];
+    if (rowType === 'mood_sticker') {
+      return parseStickerPreview(row.text) || row.text || 'Sticker';
+    }
+    return row.text || '';
+  };
+
   const getLastMessagePreview = (lastMessage: ConversationType['lastMessage']) => {
     switch (lastMessage.type) {
       case 'voice':
         return 'Voice message';
       case 'image':
         return 'Photo';
+      case 'video':
+        return 'Video';
+      case 'document':
+        return 'Document';
+      case 'location':
+        return 'Location';
       case 'mood_sticker':
-        return lastMessage.text || 'Sticker';
+        return parseStickerPreview(lastMessage.text) || lastMessage.text || 'Sticker';
       default:
         return lastMessage.text;
     }
   };
+
+  if (!fontsLoaded) {
+    return <View style={styles.container} />;
+  }
 
   const filteredConversations = conversations
     .filter(conv => {
@@ -442,6 +507,20 @@ export default function ChatScreen() {
         ? { ...conv, isPinned: !conv.isPinned }
         : conv
     ));
+    void (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : {};
+        const current = parsed?.[conversationId] ?? {};
+        parsed[conversationId] = {
+          ...current,
+          pinned: !current?.pinned,
+        };
+        await AsyncStorage.setItem(CHAT_PREFS_STORAGE_KEY, JSON.stringify(parsed));
+      } catch {
+        // Ignore persistence errors.
+      }
+    })();
   };
 
   const markAsRead = async (conversationId: string) => {
@@ -523,6 +602,14 @@ export default function ChatScreen() {
               ]}>
                 {item.matchedUser.name}
               </Text>
+              {item.isMuted && (
+                <MaterialCommunityIcons
+                  name="volume-off"
+                  size={14}
+                  color={theme.textMuted}
+                  style={styles.mutedIcon}
+                />
+              )}
             </View>
 
             <View style={styles.conversationPreview}>
@@ -914,6 +1001,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontFamily: 'Archivo_600SemiBold',
       color: theme.text,
       flex: 1,
+    },
+    mutedIcon: {
+      marginLeft: 6,
     },
     unreadName: {
       fontFamily: 'Archivo_700Bold',

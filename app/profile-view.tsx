@@ -287,6 +287,13 @@ export default function ProfileViewPremiumScreen() {
 
   const isOwnProfilePreview = params.isPreview === 'true' && (params.profileId === currentUser?.id || params.profileId === 'preview');
 
+  useEffect(() => {
+    if (!viewedProfileId) return;
+    if (isOwnProfilePreview) return;
+    if (typeof currentUser?.id === 'string' && viewedProfileId === currentUser.id) return;
+    void supabase.rpc('log_profile_view', { viewed_profile_id: viewedProfileId });
+  }, [currentUser?.id, isOwnProfilePreview, viewedProfileId]);
+
   const baseProfileData: UserProfile = isOwnProfilePreview
     ? {
         id: currentUser?.id || 'preview',
@@ -681,6 +688,16 @@ export default function ProfileViewPremiumScreen() {
       await Share.share({ message: `Check out ${profileData.name}'s profile on Betweener!` });
     } catch (error) {
       console.error(error);
+    }
+  };
+
+  const handleOpenPremium = () => {
+    try {
+      const fallbackProfile = encodeURIComponent(JSON.stringify(profileData));
+      router.push({ pathname: '/Profile-view-premium', params: { profileId: String(profileData.id), fallbackProfile } });
+    } catch (e) {
+      console.log('Navigation to premium profile failed', e);
+      router.push({ pathname: '/Profile-view-premium', params: { profileId: String(profileData.id) } });
     }
   };
 
@@ -1122,6 +1139,10 @@ export default function ProfileViewPremiumScreen() {
             </View>
           ) : (
             <View style={styles.headerActions}>
+              <TouchableOpacity style={styles.headerButton} onPress={handleOpenPremium} accessibilityLabel="Open premium profile view">
+                <Animated.View style={[styles.headerButtonOverlay, { opacity: headerButtonOverlayOpacity }]} />
+                <MaterialCommunityIcons name="crown-outline" size={18} color={theme.text} />
+              </TouchableOpacity>
               <TouchableOpacity style={styles.headerButton} onPress={handleShare}>
                 <Animated.View style={[styles.headerButtonOverlay, { opacity: headerButtonOverlayOpacity }]} />
                 <MaterialCommunityIcons name="share-variant" size={18} color={theme.text} />

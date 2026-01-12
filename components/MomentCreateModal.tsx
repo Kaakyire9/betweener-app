@@ -6,10 +6,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { useMemo, useState } from 'react';
 import { Alert, Modal, Pressable, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
 
-const getPickerMediaTypeImages = () =>
-  ImagePicker.MediaType?.Images ?? ImagePicker.MediaTypeOptions.Images;
-const getPickerMediaTypeVideos = () =>
-  ImagePicker.MediaType?.Videos ?? ImagePicker.MediaTypeOptions.Videos;
+const getPickerMediaTypeImages = () => ImagePicker.MediaTypeOptions.Images;
+const getPickerMediaTypeVideos = () => ImagePicker.MediaTypeOptions.Videos;
 
 type Props = {
   visible: boolean;
@@ -23,6 +21,7 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
   const theme = Colors[resolvedScheme];
   const isDark = resolvedScheme === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const placeholderColor = useMemo(() => withAlpha(theme.textMuted, 0.8), [theme.textMuted]);
   const { user } = useAuth();
   const [mode, setMode] = useState<'menu' | 'text'>('menu');
   const [textBody, setTextBody] = useState('');
@@ -140,7 +139,7 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
               onChangeText={setTextBody}
               style={styles.textArea}
               placeholder="Say something..."
-              placeholderTextColor={styles.placeholderColor}
+              placeholderTextColor={placeholderColor}
               multiline
               maxLength={240}
             />
@@ -155,7 +154,7 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
           onChangeText={setCaption}
           style={styles.captionInput}
           placeholder="Optional caption"
-          placeholderTextColor={styles.placeholderColor}
+          placeholderTextColor={placeholderColor}
           maxLength={80}
         />
 
@@ -179,9 +178,7 @@ const withAlpha = (hex: string, alpha: number) => {
 };
 
 const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
-  const placeholderColor = withAlpha(theme.textMuted, 0.8);
   return StyleSheet.create({
-    placeholderColor,
     backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' },
     sheet: {
       position: 'absolute',
