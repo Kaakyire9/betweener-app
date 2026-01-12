@@ -1,9 +1,13 @@
 ﻿import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { useAuth } from "@/lib/auth-context";
+import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { BlurView } from "expo-blur";
 import { Image } from "expo-image";
+import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -18,26 +22,546 @@ const withAlpha = (hex: string, alpha: number) => {
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
 };
 
+const getGreeting = (date: Date) => {
+  const h = date.getHours();
+  if (h < 12) return "Good morning! ☀️";
+  if (h < 18) return "Good afternoon! 🌤️";
+  return "Good evening! 🌙";
+};
+
+const getInitials = (name: string) => {
+  const cleaned = (name || '').trim();
+  if (!cleaned) return '?';
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  const first = parts[0]?.[0] ?? '';
+  const second = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? '' : '';
+  return (first + second).toUpperCase() || cleaned.slice(0, 1).toUpperCase();
+};
+
+const computeProfileCompletion = (profile: any | null) => {
+  if (!profile) return 0;
+  const photos = Array.isArray(profile.photos) ? profile.photos.filter(Boolean) : [];
+
+  const checks: boolean[] = [
+    !!(profile.full_name || "").trim(),
+    Number.isFinite(profile.age) && Number(profile.age) > 0,
+    !!(profile.gender || "").trim(),
+    !!(profile.region || "").trim(),
+    !!(profile.bio || "").trim(),
+    !!(profile.looking_for || "").trim(),
+    !!(profile.occupation || "").trim(),
+    !!(profile.education || "").trim(),
+    !!(profile.height || "").trim(),
+    photos.length > 0 || !!profile.avatar_url,
+    !!(profile.exercise_frequency || "").trim(),
+    !!(profile.smoking || "").trim(),
+    !!(profile.drinking || "").trim(),
+    !!(profile.has_children || "").trim(),
+    !!(profile.wants_children || "").trim(),
+    !!(profile.personality_type || "").trim(),
+    !!(profile.love_language || "").trim(),
+    Array.isArray(profile.languages_spoken) && profile.languages_spoken.length > 0,
+    !!(profile.current_country || "").trim(),
+  ];
+
+  const filled = checks.filter(Boolean).length;
+  const pct = Math.round((filled / checks.length) * 100);
+  return Math.max(0, Math.min(100, pct));
+};
+
 export default function DashboardScreen() {
   const colorScheme = useColorScheme();
   const resolvedScheme = (colorScheme ?? 'light') === 'dark' ? 'dark' : 'light';
   const theme = Colors[resolvedScheme];
   const isDark = resolvedScheme === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
-  // Mock data - in a real app, this would come from your state management
-  const [profileCompletion] = useState(85);
-  const [newMatchesToday] = useState(3);
-  const [profileViews] = useState(42);
-  const [likesReceived] = useState(18);
-  const [conversationStreak] = useState(4);
-  const [boostsLeft] = useState(2);
-  const [isOnline] = useState(true);
+  const { user, profile } = useAuth();
+  const [greeting, setGreeting] = useState(() => getGreeting(new Date()));
+  const [liveProfile, setLiveProfile] = useState<any | null>(profile ?? null);
 
-  const recentMatches = [
-    { id: 1, name: "Sarah", photo: "👩‍🦰", unread: 2, lastMessage: "Hey! How's your day?" },
-    { id: 2, name: "Emma", photo: "👱‍♀️", unread: 0, lastMessage: "That sounds fun!" },
-    { id: 3, name: "Maya", photo: "👩‍🦱", unread: 1, lastMessage: "Let's meet up!" },
-  ];
+  useEffect(() => {
+    setLiveProfile(profile ?? null);
+  }, [profile]);
+
+  useEffect(() => {
+    // Keep greeting current while the screen is open.
+    const t = setInterval(() => setGreeting(getGreeting(new Date())), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    // Grab freshest profile, then keep it in sync via realtime.
+    const fetchLatest = async () => {
+      try {
+        const { data } = await supabase.from('profiles').select('*').eq('user_id', user.id).single();
+        if (data) setLiveProfile(data);
+      } catch {
+        // ignore
+      }
+    };
+    void fetchLatest();
+
+    const channel = supabase
+      .channel(`profiles:dashboard:${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles', filter: `user_id=eq.${user.id}` },
+        (payload: any) => {
+          if (payload?.new) setLiveProfile(payload.new);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
+
+  const profileCompletion = useMemo(() => computeProfileCompletion(liveProfile), [liveProfile]);
+
+  const myProfileId = typeof liveProfile?.id === 'string' ? liveProfile.id : null;
+
+  const [likesSuperlikesToday, setLikesSuperlikesToday] = useState(0);
+
+  const displayName =
+    (liveProfile?.full_name || '').trim() ||
+    (user?.email ? user.email.split('@')[0] : '') ||
+    'There';
+
+  const avatarSource = useMemo(() => {
+    const url = typeof liveProfile?.avatar_url === 'string' ? liveProfile.avatar_url.trim() : '';
+    return url ? { uri: url } : require("@/assets/images/circle-logo.png");
+  }, [liveProfile?.avatar_url]);
+
+  const profilePhotosCount = useMemo(() => {
+    const photos = Array.isArray(liveProfile?.photos) ? liveProfile.photos.filter(Boolean) : [];
+    return photos.length;
+  }, [liveProfile?.photos]);
+
+  const completionSuggestion = useMemo(() => {
+    if (!liveProfile) return "Complete your profile to get seen";
+    if (profilePhotosCount < 3) return "Add 1 more photo for +20% visibility";
+    const bio = (liveProfile.bio || '').trim();
+    if (bio.length < 40) return "Add a longer bio for better matches";
+    return "Looking good — keep it updated";
+  }, [liveProfile, profilePhotosCount]);
+
+  useEffect(() => {
+    if (!myProfileId) return;
+
+    const startOfToday = () => {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      return d.toISOString();
+    };
+
+    const fetchLikesSuperlikesToday = async () => {
+      try {
+        const { count } = await supabase
+          .from('swipes')
+          .select('id', { count: 'exact', head: true })
+          .eq('target_id', myProfileId)
+          .in('action', ['LIKE', 'SUPERLIKE'])
+          .gte('created_at', startOfToday());
+
+        setLikesSuperlikesToday(typeof count === 'number' ? count : 0);
+      } catch {
+        // ignore
+      }
+    };
+
+    void fetchLikesSuperlikesToday();
+
+    const channel = supabase
+      .channel(`swipes:likes:${myProfileId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'swipes', filter: `target_id=eq.${myProfileId}` },
+        (payload: any) => {
+          const nextAction = payload?.new?.action;
+          const oldAction = payload?.old?.action;
+          const relevant =
+            nextAction === 'LIKE' ||
+            nextAction === 'SUPERLIKE' ||
+            oldAction === 'LIKE' ||
+            oldAction === 'SUPERLIKE';
+          if (!relevant) return;
+          void fetchLikesSuperlikesToday();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [myProfileId]);
+
+  const [matchesTodayCount, setMatchesTodayCount] = useState(0);
+  const [profileViews, setProfileViews] = useState(0);
+  const [likesReceived, setLikesReceived] = useState(0);
+  const [conversationStreak, setConversationStreak] = useState(0);
+  const [boostsLeft] = useState(2);
+  const isOnline = !!liveProfile?.is_active;
+
+  useEffect(() => {
+    if (!user?.id || !myProfileId) {
+      setProfileViews(0);
+      setLikesReceived(0);
+      setConversationStreak(0);
+      return;
+    }
+
+    let cancelled = false;
+
+    const toLocalYmd = (d: Date) => {
+      const yyyy = String(d.getFullYear());
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    };
+
+    const startOfLocalDayIso = (daysAgo: number) => {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - daysAgo);
+      return d.toISOString();
+    };
+
+    const refreshWeekInNumbers = async () => {
+      const weekStartIso = startOfLocalDayIso(6);
+
+      try {
+        const { count, error } = await supabase
+          .from('swipes')
+          .select('id', { count: 'exact', head: true })
+          .eq('target_id', myProfileId)
+          .in('action', ['LIKE', 'SUPERLIKE'])
+          .gte('created_at', weekStartIso);
+
+        if (!cancelled) setLikesReceived(!error && typeof count === 'number' ? count : 0);
+      } catch {
+        if (!cancelled) setLikesReceived(0);
+      }
+
+      try {
+        const { data: msgs, error } = await supabase
+          .from('messages')
+          .select('created_at')
+          .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+          .gte('created_at', startOfLocalDayIso(60))
+          .order('created_at', { ascending: false })
+          .limit(2000);
+
+        if (!cancelled) {
+          if (error || !msgs) {
+            setConversationStreak(0);
+          } else {
+            const daySet = new Set<string>();
+            for (const row of msgs as any[]) {
+              const createdAt = row?.created_at;
+              if (typeof createdAt !== 'string') continue;
+              const d = new Date(createdAt);
+              if (Number.isNaN(d.getTime())) continue;
+              daySet.add(toLocalYmd(d));
+            }
+
+            const cursor = new Date();
+            cursor.setHours(0, 0, 0, 0);
+            let streak = 0;
+            while (daySet.has(toLocalYmd(cursor))) {
+              streak += 1;
+              cursor.setDate(cursor.getDate() - 1);
+            }
+
+            setConversationStreak(streak);
+          }
+        }
+      } catch {
+        if (!cancelled) setConversationStreak(0);
+      }
+
+      // Best-effort: only works if you have a profile views table.
+      try {
+        const { count, error } = await supabase
+          .from('profile_views')
+          .select('id', { count: 'exact', head: true })
+          .eq('viewed_profile_id', myProfileId)
+          .gte('created_at', weekStartIso);
+
+        if (!cancelled) setProfileViews(!error && typeof count === 'number' ? count : 0);
+      } catch {
+        if (!cancelled) setProfileViews(0);
+      }
+    };
+
+    void refreshWeekInNumbers();
+
+    const channel = supabase
+      .channel(`weekstats:${user.id}:${myProfileId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'swipes', filter: `target_id=eq.${myProfileId}` },
+        () => void refreshWeekInNumbers(),
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'messages', filter: `receiver_id=eq.${user.id}` },
+        () => void refreshWeekInNumbers(),
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'messages', filter: `sender_id=eq.${user.id}` },
+        () => void refreshWeekInNumbers(),
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profile_views', filter: `viewed_profile_id=eq.${myProfileId}` },
+        () => void refreshWeekInNumbers(),
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, myProfileId]);
+
+  const startOfTodayIso = useMemo(() => {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }, []);
+
+  const [matchesTodayPeople, setMatchesTodayPeople] = useState<DashboardPerson[]>([]);
+
+  useEffect(() => {
+    if (!myProfileId) {
+      setMatchesTodayCount(0);
+      setMatchesTodayPeople([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchMatchesToday = async () => {
+      try {
+        const { data: matches, error } = await supabase
+          .from('matches')
+          .select('id,user1_id,user2_id,status,created_at')
+          .eq('status', 'ACCEPTED')
+          .gte('created_at', startOfTodayIso)
+          .or(`user1_id.eq.${myProfileId},user2_id.eq.${myProfileId}`)
+          .order('created_at', { ascending: false })
+          .limit(25);
+
+        if (cancelled) return;
+        if (error || !matches) {
+          setMatchesTodayCount(0);
+          setMatchesTodayPeople([]);
+          return;
+        }
+
+        const rows = matches as any[];
+        const otherProfileIds = Array.from(
+          new Set(
+            rows
+              .map((m) => {
+                const otherId = m.user1_id === myProfileId ? m.user2_id : m.user1_id;
+                return typeof otherId === 'string' ? otherId : null;
+              })
+              .filter((v): v is string => Boolean(v)),
+          ),
+        );
+
+        setMatchesTodayCount(otherProfileIds.length);
+        if (otherProfileIds.length === 0) {
+          setMatchesTodayPeople([]);
+          return;
+        }
+
+        const { data: profilesData, error: profilesError } = await supabase
+          .from('profiles')
+          .select('id,full_name,avatar_url')
+          .in('id', otherProfileIds);
+
+        if (cancelled) return;
+        if (profilesError || !profilesData) {
+          setMatchesTodayPeople([]);
+          return;
+        }
+
+        const profileById = new Map<string, any>();
+        (profilesData as any[]).forEach((p) => {
+          if (p?.id) profileById.set(p.id, p);
+        });
+
+        const list: DashboardPerson[] = otherProfileIds
+          .map((pid) => {
+            const p = profileById.get(pid);
+            return {
+              userId: pid,
+              name: (p?.full_name || '').trim() || 'Match',
+              avatarUrl: p?.avatar_url ?? null,
+              unread: 0,
+              lastMessage: '',
+            };
+          })
+          .slice(0, 10);
+
+        setMatchesTodayPeople(list);
+      } catch {
+        if (!cancelled) {
+          setMatchesTodayCount(0);
+          setMatchesTodayPeople([]);
+        }
+      }
+    };
+
+    void fetchMatchesToday();
+
+    const channel = supabase
+      .channel(`matches:dashboard:${myProfileId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'matches', filter: `user1_id=eq.${myProfileId}` },
+        () => void fetchMatchesToday(),
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'matches', filter: `user2_id=eq.${myProfileId}` },
+        () => void fetchMatchesToday(),
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [myProfileId, startOfTodayIso]);
+
+  type DashboardPerson = {
+    userId: string;
+    profileId?: string;
+    name: string;
+    avatarUrl?: string | null;
+    unread: number;
+    lastMessage: string;
+    lastMessageAt?: string;
+  };
+
+  const [recentPeople, setRecentPeople] = useState<DashboardPerson[]>([]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setRecentPeople([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchRecentPeople = async () => {
+      try {
+        const { data: messages, error } = await supabase
+          .from('messages')
+          .select('id,text,created_at,sender_id,receiver_id,is_read,message_type')
+          .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+          .order('created_at', { ascending: false })
+          .limit(200);
+
+        if (cancelled) return;
+        if (error || !messages) {
+          setRecentPeople([]);
+          return;
+        }
+
+        const rows = messages as any[];
+        const convoMap = new Map<string, { lastText: string; lastAt: string; unread: number }>();
+
+        for (const msg of rows) {
+          const otherId = msg.sender_id === user.id ? msg.receiver_id : msg.sender_id;
+          if (!otherId) continue;
+
+          if (!convoMap.has(otherId)) {
+            convoMap.set(otherId, {
+              lastText: typeof msg.text === 'string' ? msg.text : '',
+              lastAt: typeof msg.created_at === 'string' ? msg.created_at : '',
+              unread: 0,
+            });
+          }
+
+          if (msg.receiver_id === user.id && !msg.is_read) {
+            const entry = convoMap.get(otherId);
+            if (entry) entry.unread += 1;
+          }
+        }
+
+        const otherUserIds = Array.from(convoMap.keys());
+        if (otherUserIds.length === 0) {
+          setRecentPeople([]);
+          return;
+        }
+
+        const { data: profilesData, error: profilesError } = await supabase
+          .from('profiles')
+          .select('id,user_id,full_name,avatar_url')
+          .in('user_id', otherUserIds);
+
+        if (cancelled) return;
+        if (profilesError || !profilesData) {
+          setRecentPeople([]);
+          return;
+        }
+
+        const profileByUserId = new Map<string, any>();
+        (profilesData as any[]).forEach((p) => {
+          if (p?.user_id) profileByUserId.set(p.user_id, p);
+        });
+
+        const list: DashboardPerson[] = otherUserIds
+          .map((otherId) => {
+            const p = profileByUserId.get(otherId);
+            const meta = convoMap.get(otherId);
+            return {
+              userId: otherId,
+              profileId: typeof p?.id === 'string' ? p.id : undefined,
+              name: (p?.full_name || '').trim() || 'Match',
+              avatarUrl: p?.avatar_url ?? null,
+              unread: meta?.unread ?? 0,
+              lastMessage: (meta?.lastText || '').trim(),
+              lastMessageAt: meta?.lastAt,
+            };
+          })
+          .slice(0, 10);
+
+        setRecentPeople(list);
+      } catch {
+        if (!cancelled) setRecentPeople([]);
+      }
+    };
+
+    void fetchRecentPeople();
+
+    const channel = supabase
+      .channel(`messages:dashboard:${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'messages', filter: `receiver_id=eq.${user.id}` },
+        () => void fetchRecentPeople(),
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'messages', filter: `sender_id=eq.${user.id}` },
+        () => void fetchRecentPeople(),
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
 
   const badges = [
     { name: "First Match", icon: "🎉", earned: true },
@@ -45,19 +569,47 @@ export default function DashboardScreen() {
     { name: "Consistent", icon: "❤️", earned: false },
   ];
 
+  const goToExplore = () => router.push("/(tabs)/explore");
+  const goToChat = () => router.push("/(tabs)/chat");
+  const goToProfile = () => router.push("/(tabs)/profile");
+  const goToMoments = () => router.push("/moments");
+  const openProfileView = (profileId?: string | null) => {
+    if (!profileId) return;
+    router.push({ pathname: '/profile-view', params: { profileId: String(profileId) } });
+  };
+
+  const CardChrome = () => (
+    <>
+      <BlurView
+        tint={isDark ? 'dark' : 'light'}
+        intensity={isDark ? 16 : 22}
+        style={[StyleSheet.absoluteFillObject, { borderRadius: 20 }]}
+        pointerEvents="none"
+      />
+      <LinearGradient
+        colors={[withAlpha(theme.text, isDark ? 0.08 : 0.05), 'transparent']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[StyleSheet.absoluteFillObject, { borderRadius: 20 }]}
+        pointerEvents="none"
+      />
+    </>
+  );
+
   const ProfileSnapshotCard = () => (
-    <View style={styles.card}>
+    <TouchableOpacity style={styles.card} activeOpacity={0.92} onPress={goToProfile}>
+      <CardChrome />
       <View style={styles.profileHeader}>
         <View style={styles.profilePhotoContainer}>
           <Image
-            source={require("@/assets/images/circle-logo.png")}
+            source={avatarSource}
             style={styles.profilePhoto}
           />
           <View style={[styles.onlineRing, { borderColor: isOnline ? theme.secondary : theme.textMuted }]} />
         </View>
         <View style={styles.profileInfo}>
-          <Text style={styles.profileName}>Alex Johnson</Text>
-          <Text style={styles.lastActive}>Active now</Text>
+          <Text style={styles.profileName}>{displayName}</Text>
+          <Text style={styles.lastActive}>{isOnline ? 'Active now' : 'Offline'}</Text>
           <View style={styles.moodContainer}>
             <Text style={styles.moodSticker}>😊</Text>
             <Text style={styles.moodText}>Happy vibes</Text>
@@ -68,45 +620,104 @@ export default function DashboardScreen() {
       <View style={styles.completionBar}>
         <View style={styles.completionHeader}>
           <Text style={styles.completionText}>Profile: {profileCompletion}%</Text>
-          <Text style={styles.completionSuggestion}>Add 1 more photo for +20% visibility</Text>
+          <Text style={styles.completionSuggestion}>{completionSuggestion}</Text>
         </View>
         <View style={styles.progressBar}>
           <View style={[styles.progressFill, { width: `${profileCompletion}%` }]} />
         </View>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 
   const MatchesOverviewCard = () => (
     <View style={styles.card}>
+      <CardChrome />
       <View style={styles.cardHeader}>
         <Text style={styles.cardTitle}>New Matches Today</Text>
         <View style={styles.badge}>
-          <Text style={styles.badgeText}>{newMatchesToday}</Text>
+          <Text style={styles.badgeText}>{matchesTodayCount}</Text>
         </View>
       </View>
       
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.matchesScroll}>
-        {recentMatches.map((match) => (
-          <View key={match.id} style={styles.matchItem}>
+        {matchesTodayPeople.map((match) => (
+          <TouchableOpacity
+            key={match.userId}
+            style={styles.matchItem}
+            activeOpacity={0.92}
+            onPress={() => openProfileView(match.userId)}
+          >
             <View style={styles.matchPhotoContainer}>
-              <Text style={styles.matchPhoto}>{match.photo}</Text>
-              {match.unread > 0 && (
+              {match.avatarUrl ? (
+                <Image source={{ uri: match.avatarUrl }} style={styles.matchAvatar} />
+              ) : (
+                <View style={styles.matchAvatarFallback}>
+                  <Text style={styles.matchAvatarFallbackText}>{getInitials(match.name)}</Text>
+                </View>
+              )}
+              {match.unread > 0 ? (
                 <View style={styles.unreadBadge}>
                   <Text style={styles.unreadText}>{match.unread}</Text>
                 </View>
-              )}
+              ) : null}
             </View>
             <Text style={styles.matchName}>{match.name}</Text>
             <View style={styles.matchActions}>
-              <TouchableOpacity style={styles.actionBtn}>
+              <TouchableOpacity style={styles.actionBtn} onPress={() => openProfileView(match.userId)}>
                 <MaterialCommunityIcons name="message" size={16} color={Colors.light.background} />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.actionBtn}>
+              <TouchableOpacity style={styles.actionBtn} onPress={() => openProfileView(match.userId)}>
                 <MaterialCommunityIcons name="heart" size={16} color={theme.tint} />
               </TouchableOpacity>
             </View>
-          </View>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+    </View>
+  );
+
+  const LikesSuperlikesCard = () => (
+    <View style={styles.card}>
+      <CardChrome />
+      <View style={styles.cardHeader}>
+        <Text style={styles.cardTitle}>Likes / Superlikes</Text>
+        <View style={styles.badge}>
+          <Text style={styles.badgeText}>{likesSuperlikesToday}</Text>
+        </View>
+      </View>
+
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.matchesScroll}>
+        {recentPeople.map((match) => (
+          <TouchableOpacity
+            key={match.profileId || match.userId}
+            style={styles.matchItem}
+            activeOpacity={0.92}
+            onPress={() => openProfileView(match.profileId)}
+          >
+            <View style={styles.matchPhotoContainer}>
+              {match.avatarUrl ? (
+                <Image source={{ uri: match.avatarUrl }} style={styles.matchAvatar} />
+              ) : (
+                <View style={styles.matchAvatarFallback}>
+                  <Text style={styles.matchAvatarFallbackText}>{getInitials(match.name)}</Text>
+                </View>
+              )}
+              {match.unread > 0 ? (
+                <View style={styles.unreadBadge}>
+                  <Text style={styles.unreadText}>{match.unread}</Text>
+                </View>
+              ) : null}
+            </View>
+            <Text style={styles.matchName}>{match.name}</Text>
+            <View style={styles.matchActions}>
+              <TouchableOpacity style={styles.actionBtn} onPress={() => openProfileView(match.profileId)}>
+                <MaterialCommunityIcons name="heart" size={16} color={Colors.light.background} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.actionBtn} onPress={() => openProfileView(match.profileId)}>
+                <MaterialCommunityIcons name="star" size={16} color={Colors.light.background} />
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
         ))}
       </ScrollView>
     </View>
@@ -114,10 +725,21 @@ export default function DashboardScreen() {
 
   const MessagingSnapshotCard = () => (
     <View style={styles.card}>
+      <CardChrome />
       <Text style={styles.cardTitle}>Recent Conversations</Text>
-      {recentMatches.slice(0, 3).map((match) => (
-        <TouchableOpacity key={match.id} style={styles.conversationItem}>
-          <Text style={styles.conversationPhoto}>{match.photo}</Text>
+      {recentPeople.slice(0, 3).map((match) => (
+        <TouchableOpacity
+          key={match.profileId || match.userId}
+          style={styles.conversationItem}
+          onPress={() => openProfileView(match.profileId)}
+        >
+          {match.avatarUrl ? (
+            <Image source={{ uri: match.avatarUrl }} style={styles.conversationAvatar} />
+          ) : (
+            <View style={styles.conversationAvatarFallback}>
+              <Text style={styles.conversationAvatarFallbackText}>{getInitials(match.name)}</Text>
+            </View>
+          )}
           <View style={styles.conversationInfo}>
             <View style={styles.conversationHeader}>
               <Text style={styles.conversationName}>{match.name}</Text>
@@ -125,11 +747,9 @@ export default function DashboardScreen() {
                 <Text style={styles.statusIcon}>✅</Text>
               </View>
             </View>
-            <Text style={styles.lastMessage}>{match.lastMessage}</Text>
+            <Text style={styles.lastMessage}>{match.lastMessage || 'Say hi 👋'}</Text>
           </View>
-          {match.unread > 0 && (
-            <View style={styles.unreadDot} />
-          )}
+          {match.unread > 0 ? <View style={styles.unreadDot} /> : null}
         </TouchableOpacity>
       ))}
       
@@ -137,7 +757,7 @@ export default function DashboardScreen() {
         <Text style={styles.moodStickersTitle}>Quick Send:</Text>
         <View style={styles.moodStickers}>
           {["😊", "😍", "🔥", "💕", "😂"].map((sticker, index) => (
-            <TouchableOpacity key={index} style={styles.moodStickerBtn}>
+            <TouchableOpacity key={index} style={styles.moodStickerBtn} onPress={goToChat}>
               <Text style={styles.moodStickerText}>{sticker}</Text>
             </TouchableOpacity>
           ))}
@@ -148,6 +768,7 @@ export default function DashboardScreen() {
 
   const EngagementInsightsCard = () => (
     <View style={styles.card}>
+      <CardChrome />
       <Text style={styles.cardTitle}>Your Week in Numbers</Text>
       <View style={styles.insightsGrid}>
         <View style={styles.insightItem}>
@@ -167,31 +788,34 @@ export default function DashboardScreen() {
         </View>
       </View>
       <View style={styles.streakHighlight}>
-        <Text style={styles.streakText}>🔥 You've messaged Sarah 4 days in a row!</Text>
+        <Text style={styles.streakText}>
+          🔥 You've messaged {(recentPeople[0]?.name || 'a match')} {conversationStreak} days in a row!
+        </Text>
       </View>
     </View>
   );
 
   const DiscoverSection = () => (
     <View style={styles.card}>
+      <CardChrome />
       <Text style={styles.cardTitle}>Discover New Matches</Text>
       <View style={styles.discoverCategories}>
-        <TouchableOpacity style={styles.discoverCategory}>
+        <TouchableOpacity style={styles.discoverCategory} onPress={goToExplore}>
           <MaterialCommunityIcons name="map-marker" size={20} color={theme.secondary} />
           <Text style={styles.categoryText}>Most Active Near You</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.discoverCategory}>
+        <TouchableOpacity style={styles.discoverCategory} onPress={goToExplore}>
           <MaterialCommunityIcons name="star" size={20} color={theme.accent} />
           <Text style={styles.categoryText}>New Users</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.discoverCategory}>
+        <TouchableOpacity style={styles.discoverCategory} onPress={goToExplore}>
           <MaterialCommunityIcons name="account-group" size={20} color={theme.tint} />
           <Text style={styles.categoryText}>Similar Interests</Text>
         </TouchableOpacity>
       </View>
       <TouchableOpacity 
         style={styles.swipeButton}
-        onPress={() => router.push("/(tabs)/explore")}
+        onPress={goToExplore}
       >
         <View style={styles.swipeButtonGradient}>
           <MaterialCommunityIcons name="cards-heart" size={24} color={Colors.light.background} />
@@ -203,13 +827,14 @@ export default function DashboardScreen() {
 
   const BoostsCard = () => (
     <View style={styles.card}>
+      <CardChrome />
       <Text style={styles.cardTitle}>Boosts & Features</Text>
       <View style={styles.boostInfo}>
         <View style={styles.boostItem}>
           <MaterialCommunityIcons name="rocket" size={24} color={theme.accent} />
           <Text style={styles.boostText}>{boostsLeft} Free Boosts Left</Text>
         </View>
-        <TouchableOpacity style={styles.superLikeBtn}>
+        <TouchableOpacity style={styles.superLikeBtn} onPress={goToExplore}>
           <View style={styles.superLikeGradient}>
             <MaterialCommunityIcons name="star" size={20} color={Colors.light.background} />
             <Text style={styles.superLikeText}>Try Super Like</Text>
@@ -221,17 +846,18 @@ export default function DashboardScreen() {
 
   const SafetyCard = () => (
     <View style={styles.card}>
+      <CardChrome />
       <Text style={styles.cardTitle}>Safety & Wellness</Text>
       <View style={styles.safetyTip}>
         <MaterialCommunityIcons name="lightbulb" size={20} color={theme.accent} />
         <Text style={styles.safetyText}>💡 Never share financial info with matches</Text>
       </View>
       <View style={styles.safetyActions}>
-        <TouchableOpacity style={styles.safetyBtn}>
+        <TouchableOpacity style={styles.safetyBtn} onPress={goToProfile}>
           <MaterialCommunityIcons name="shield-check" size={16} color={theme.secondary} />
           <Text style={styles.safetyBtnText}>Available</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.safetyBtn}>
+        <TouchableOpacity style={styles.safetyBtn} onPress={goToProfile}>
           <MaterialCommunityIcons name="block-helper" size={16} color={theme.tint} />
           <Text style={styles.safetyBtnText}>Report</Text>
         </TouchableOpacity>
@@ -241,6 +867,7 @@ export default function DashboardScreen() {
 
   const GamificationCard = () => (
     <View style={styles.card}>
+      <CardChrome />
       <Text style={styles.cardTitle}>Your Achievements</Text>
       <View style={styles.badgesContainer}>
         {badges.map((badge, index) => (
@@ -259,11 +886,19 @@ export default function DashboardScreen() {
       <SafeAreaView style={styles.safeArea}>
         <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
           <View style={styles.header}>
-            <Text style={styles.welcomeText}>Good morning! ☀️</Text>
+            <CardChrome />
+            <Text style={styles.welcomeText}>{greeting}</Text>
             <Text style={styles.headerTitle}>Your Dashboard</Text>
+            <LinearGradient
+              colors={[withAlpha(theme.accent, 0.0), withAlpha(theme.accent, isDark ? 0.35 : 0.22), withAlpha(theme.accent, 0.0)]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.premiumHeaderBar}
+            />
           </View>
 
           <ProfileSnapshotCard />
+          <LikesSuperlikesCard />
           <MatchesOverviewCard />
           <MessagingSnapshotCard />
           <EngagementInsightsCard />
@@ -293,8 +928,22 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: theme.background,
     },
     header: {
+      position: 'relative',
+      overflow: 'hidden',
       padding: 20,
-      paddingBottom: 10,
+      paddingBottom: 14,
+      marginHorizontal: 20,
+      marginTop: 8,
+      marginBottom: 16,
+      borderRadius: 20,
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.22 : 0.55),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.08),
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: isDark ? 0.18 : 0.10,
+      shadowRadius: isDark ? 14 : 10,
+      elevation: isDark ? 6 : 4,
     },
     welcomeText: {
       fontSize: 16,
@@ -306,19 +955,25 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.text,
       fontFamily: 'PlayfairDisplay_700Bold',
     },
+    premiumHeaderBar: {
+      marginTop: 10,
+      height: 2,
+      borderRadius: 2,
+      width: '56%',
+    },
     card: {
-      backgroundColor: theme.backgroundSubtle,
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.28 : 0.62),
       marginHorizontal: 20,
       marginBottom: 16,
       borderRadius: 20,
       padding: 20,
       shadowColor: Colors.dark.background,
       shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.12,
-      shadowRadius: 12,
-      elevation: 5,
+      shadowOpacity: isDark ? 0.22 : 0.14,
+      shadowRadius: isDark ? 18 : 14,
+      elevation: isDark ? 7 : 5,
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+      borderColor: withAlpha(theme.text, isDark ? 0.20 : 0.10),
     },
     profileHeader: {
       flexDirection: "row",
@@ -431,9 +1086,24 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       position: "relative",
       marginBottom: 8,
     },
-    matchPhoto: {
-      fontSize: 40,
-      textAlign: "center",
+    matchAvatar: {
+      width: 54,
+      height: 54,
+      borderRadius: 27,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.18 : 0.08),
+    },
+    matchAvatarFallback: {
+      width: 54,
+      height: 54,
+      borderRadius: 27,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.18 : 0.08),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    matchAvatarFallbackText: {
+      color: theme.text,
+      fontSize: 16,
+      fontWeight: '700',
     },
     unreadBadge: {
       position: "absolute",
@@ -473,9 +1143,26 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderBottomWidth: 1,
       borderBottomColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
     },
-    conversationPhoto: {
-      fontSize: 24,
+    conversationAvatar: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
       marginRight: 12,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.18 : 0.08),
+    },
+    conversationAvatarFallback: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      marginRight: 12,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.18 : 0.08),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    conversationAvatarFallbackText: {
+      color: theme.text,
+      fontSize: 12,
+      fontWeight: '700',
     },
     conversationInfo: {
       flex: 1,
