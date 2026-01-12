@@ -38,6 +38,7 @@ type ConversationType = {
     timestamp: Date;
     senderId: string;
     type: 'text' | 'voice' | 'image' | 'mood_sticker';
+    isRead: boolean;
   };
   unreadCount: number;
   isPinned: boolean;
@@ -80,6 +81,7 @@ export default function ChatScreen() {
   const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'pinned'>('all');
   const [presenceOnline, setPresenceOnline] = useState<Record<string, boolean>>({});
   const [presenceLastSeen, setPresenceLastSeen] = useState<Record<string, Date>>({});
+  const [typingStatus, setTypingStatus] = useState<Record<string, boolean>>({});
   
   const searchAnimation = useRef(new Animated.Value(0)).current;
 
@@ -148,6 +150,26 @@ export default function ChatScreen() {
 
     return () => {
       supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const typingChannel = supabase.channel(`typing:chatlist:${user.id}`, {
+      config: {
+        broadcast: { self: false },
+      },
+    });
+
+    typingChannel
+      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+        if (!payload?.senderId) return;
+        setTypingStatus((prev) => ({ ...prev, [payload.senderId]: Boolean(payload.typing) }));
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(typingChannel);
     };
   }, [user?.id]);
 
@@ -245,6 +267,7 @@ export default function ChatScreen() {
             timestamp: lastTimestamp,
             senderId: last?.sender_id || '',
             type: 'text',
+            isRead: last?.is_read ?? false,
           },
           unreadCount: entry?.unread || 0,
           isPinned: false,
@@ -264,23 +287,86 @@ export default function ChatScreen() {
     }, [fetchConversations])
   );
 
+  useEffect(() => {
+    if (!user?.id) return;
+    const channel = supabase.channel(`messages:chatlist:${user.id}`);
+
+    const handleInsert = (payload: { new: MessageRow }) => {
+      const row = payload.new;
+      if (!row?.sender_id || !row?.receiver_id) return;
+      if (row.sender_id !== user.id && row.receiver_id !== user.id) return;
+      const otherId = row.sender_id === user.id ? row.receiver_id : row.sender_id;
+      if (!otherId) return;
+      const lastText = row.deleted_for_all ? 'Message deleted' : row.text || '';
+      const nextLastMessage = {
+        text: lastText,
+        timestamp: new Date(row.created_at),
+        senderId: row.sender_id,
+        type: 'text' as const,
+        isRead: row.is_read,
+      };
+
+      setConversations((prev) => {
+        const index = prev.findIndex((conv) => conv.id === otherId);
+        if (index === -1) {
+          void fetchConversations();
+          return prev;
+        }
+        const current = prev[index];
+        const nextUnread =
+          row.receiver_id === user.id && !row.is_read
+            ? current.unreadCount + 1
+            : current.unreadCount;
+        const updated = {
+          ...current,
+          lastMessage: nextLastMessage,
+          unreadCount: nextUnread,
+          matchedAt: nextLastMessage.timestamp,
+        };
+        const next = [...prev];
+        next[index] = updated;
+        return next;
+      });
+    };
+
+    channel
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `receiver_id=eq.${user.id}`,
+        },
+        handleInsert
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `sender_id=eq.${user.id}`,
+        },
+        handleInsert
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchConversations, user?.id]);
+
   if (!fontsLoaded) {
     return <View style={styles.container} />;
   }
 
   const formatLastMessageTime = (date: Date) => {
-    const now = new Date();
-    const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
-    
-    if (diffInHours < 1) {
-      const diffInMinutes = Math.floor(diffInHours * 60);
-      return diffInMinutes < 1 ? 'now' : `${diffInMinutes}m`;
-    } else if (diffInHours < 24) {
-      return `${Math.floor(diffInHours)}h`;
-    } else {
-      const diffInDays = Math.floor(diffInHours / 24);
-      return diffInDays === 1 ? '1d' : `${diffInDays}d`;
-    }
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
   };
 
   const formatLastSeen = (date: Date) => {
@@ -379,13 +465,8 @@ export default function ChatScreen() {
   const renderConversation = ({ item }: { item: ConversationType }) => {
     const isBlocked = Boolean(item.blockStatus);
     const isUnread = item.unreadCount > 0;
-    const isOnline = isBlocked
-      ? false
-      : presenceOnline[item.matchedUser.id] ?? item.matchedUser.isOnline;
-    const lastSeen = isBlocked
-      ? null
-      : presenceLastSeen[item.matchedUser.id] ?? item.matchedUser.lastSeen;
     const isMyLastMessage = item.lastMessage.senderId === (user?.id || '');
+    const isTyping = !isBlocked && Boolean(typingStatus[item.matchedUser.id]);
     const avatarNode = isBlocked ? (
       <Image source={BLOCKED_AVATAR_SOURCE} style={styles.conversationAvatar} />
     ) : item.matchedUser.avatar_url ? (
@@ -427,9 +508,6 @@ export default function ChatScreen() {
         <View style={styles.conversationLeft}>
           <View style={styles.avatarContainer}>
               {avatarContent}
-              {!isBlocked && isOnline && (
-                <View style={styles.onlineIndicator} />
-              )}
             {item.isPinned && (
               <View style={styles.pinIndicator}>
                 <MaterialCommunityIcons name="pin" size={10} color={Colors.light.background} />
@@ -447,31 +525,47 @@ export default function ChatScreen() {
               </Text>
             </View>
 
-            {!isBlocked && !isOnline && lastSeen && item.unreadCount === 0 && !item.isPinned && (
-              <Text style={styles.lastSeenText}>
-                Last seen {formatLastSeen(lastSeen)}
-              </Text>
-            )}
-            
             <View style={styles.conversationPreview}>
-              <Text 
-                style={[
-                  styles.lastMessage,
-                  isUnread && styles.unreadMessage
-                ]} 
-                numberOfLines={1}
-              >
-                {isMyLastMessage && item.lastMessage.type === 'text' && 'You: '}
-                {getLastMessagePreview(item.lastMessage)}
-              </Text>
-              
-              {item.unreadCount > 0 && (
-                <View style={styles.unreadBadge}>
-                  <Text style={styles.unreadCount}>
-                    {item.unreadCount > 9 ? '9+' : item.unreadCount}
+              {isTyping ? (
+                <View style={styles.lastMessageRow}>
+                  <Text style={[styles.lastMessage, styles.typingText]} numberOfLines={1}>
+                    Typing...
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.lastMessageRow}>
+                  {isMyLastMessage && (
+                    <MaterialCommunityIcons
+                      name={item.lastMessage.isRead ? 'check-all' : 'check'}
+                      size={16}
+                      color={item.lastMessage.isRead ? theme.accent : theme.textMuted}
+                      style={styles.readReceiptIcon}
+                    />
+                  )}
+                  <Text
+                    style={[
+                      styles.lastMessage,
+                      isUnread && styles.unreadMessage,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {getLastMessagePreview(item.lastMessage)}
                   </Text>
                 </View>
               )}
+
+              <View style={styles.conversationMeta}>
+                <Text style={styles.conversationTime}>
+                  {formatLastMessageTime(item.lastMessage.timestamp)}
+                </Text>
+                {item.unreadCount > 0 && (
+                  <View style={styles.unreadBadge}>
+                    <Text style={styles.unreadCount}>
+                      {item.unreadCount > 9 ? '9+' : item.unreadCount}
+                    </Text>
+                  </View>
+                )}
+              </View>
             </View>
           </View>
         </View>
@@ -813,7 +907,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       justifyContent: 'flex-start',
       alignItems: 'center',
       gap: 8,
-      marginBottom: 4,
+      marginBottom: 2,
     },
     conversationName: {
       fontSize: 16,
@@ -839,14 +933,33 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     conversationPreview: {
       flexDirection: 'row',
       justifyContent: 'space-between',
+      alignItems: 'flex-start',
+    },
+    conversationMeta: {
+      alignItems: 'flex-end',
+      gap: 6,
+      minWidth: 40,
+    },
+    lastMessageRow: {
+      flexDirection: 'row',
       alignItems: 'center',
+      flex: 1,
+      minWidth: 0,
     },
     lastMessage: {
       fontSize: 14,
       fontFamily: 'Manrope_400Regular',
       color: theme.textMuted,
       flex: 1,
+      minWidth: 0,
       marginRight: 8,
+    },
+    typingText: {
+      fontFamily: 'Manrope_500Medium',
+      color: theme.accent,
+    },
+    readReceiptIcon: {
+      marginRight: 6,
     },
     unreadMessage: {
       fontFamily: 'Manrope_500Medium',

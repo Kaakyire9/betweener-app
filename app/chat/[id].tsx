@@ -20,6 +20,7 @@ import * as Location from "expo-location";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { WebView } from "react-native-webview";
 import { router, useLocalSearchParams } from "expo-router";
+import type { ComponentProps } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -1111,6 +1112,7 @@ export default function ConversationScreen() {
   const reconnectPendingRef = useRef(false);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const presenceChannelRef = useRef<any>(null);
+  const typingListChannelRef = useRef<any>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const hasAutoScrolledRef = useRef(false);
@@ -1133,6 +1135,16 @@ export default function ConversationScreen() {
     address?: string | null;
     watch?: Location.LocationSubscription | null;
   } | null>(null);
+
+  const updateHiddenMessageIds = useCallback((ids: string[]) => {
+    hiddenMessageIdsRef.current = new Set(ids);
+    setHiddenMessageIds(ids);
+  }, []);
+
+  const isBlockedByMe = blockStatus === BLOCKED_BY_ME;
+  const isBlockedByThem = blockStatus === BLOCKED_BY_THEM;
+  const isChatBlocked = isBlockedByMe || isBlockedByThem;
+  const showMoments = peerHasMoment && !isChatBlocked;
   const liveStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const liveUpdateRef = useRef<{ lastSentAt: number }>({ lastSentAt: 0 });
 
@@ -1601,11 +1613,6 @@ export default function ConversationScreen() {
     if (!actionMessageId) return null;
     return messages.find((msg) => msg.id === actionMessageId) ?? null;
   }, [actionMessageId, messages]);
-
-  const isBlockedByMe = blockStatus === BLOCKED_BY_ME;
-  const isBlockedByThem = blockStatus === BLOCKED_BY_THEM;
-  const isChatBlocked = isBlockedByMe || isBlockedByThem;
-  const showMoments = peerHasMoment && !isChatBlocked;
 
   const fetchNearbyPlaces = useCallback(
     async (coords: { lat: number; lng: number }) => {
@@ -2662,6 +2669,22 @@ export default function ConversationScreen() {
     };
   }, [conversationId, user?.id]);
 
+  useEffect(() => {
+    if (!user?.id || !conversationId) return;
+    const typingListChannel = supabase.channel(`typing:chatlist:${conversationId}`, {
+      config: {
+        broadcast: { self: false },
+      },
+    });
+    typingListChannelRef.current = typingListChannel;
+    typingListChannel.subscribe();
+
+    return () => {
+      typingListChannelRef.current = null;
+      typingListChannel.unsubscribe();
+    };
+  }, [conversationId, user?.id]);
+
   const markAsRead = useCallback(
     async (messageId: string) => {
       if (!user?.id || !conversationId) return;
@@ -2723,30 +2746,36 @@ export default function ConversationScreen() {
   const updateTyping = useCallback(
     (text: string) => {
       if (isChatBlocked) return;
-      const channel = presenceChannelRef.current;
-      if (!channel || !user?.id) return;
+      if (!user?.id) return;
+      const presenceChannel = presenceChannelRef.current;
+      const listChannel = typingListChannelRef.current;
+      if (!presenceChannel && !listChannel) return;
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
       }
+      const sendTypingStatus = (typing: boolean) => {
+        if (presenceChannel) {
+          void presenceChannel.send({
+            type: 'broadcast',
+            event: 'typing',
+            payload: { senderId: user.id, typing },
+          });
+        }
+        if (listChannel) {
+          void listChannel.send({
+            type: 'broadcast',
+            event: 'typing',
+            payload: { senderId: user.id, typing },
+          });
+        }
+      };
       if (text.trim().length === 0) {
-        void channel.send({
-          type: 'broadcast',
-          event: 'typing',
-          payload: { senderId: user.id, typing: false },
-        });
+        sendTypingStatus(false);
         return;
       }
-      void channel.send({
-        type: 'broadcast',
-        event: 'typing',
-        payload: { senderId: user.id, typing: true },
-      });
+      sendTypingStatus(true);
       typingTimeoutRef.current = setTimeout(() => {
-        void channel.send({
-          type: 'broadcast',
-          event: 'typing',
-          payload: { senderId: user.id, typing: false },
-        });
+        sendTypingStatus(false);
       }, 1500);
     },
     [isChatBlocked, user?.id]
@@ -3726,11 +3755,6 @@ export default function ConversationScreen() {
     setMomentViewerUserId(null);
   }, []);
 
-  const updateHiddenMessageIds = useCallback((ids: string[]) => {
-    hiddenMessageIdsRef.current = new Set(ids);
-    setHiddenMessageIds(ids);
-  }, []);
-
   const hideMessageForMe = useCallback(async (message: MessageType) => {
     if (!user?.id || !conversationId) return;
     closeMessageActions();
@@ -4011,14 +4035,14 @@ export default function ConversationScreen() {
     badgeLabel,
   }: {
     title: string;
-    icon: string;
+    icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
     onPress: () => void;
     wide?: boolean;
     destructive?: boolean;
     badgeLabel?: string | null;
   }) => {
     const scale = useRef(new Animated.Value(1)).current;
-    const colors = destructive
+    const colors: [string, string] = destructive
       ? ['#fecaca', '#fee2e2']
       : [
           withAlpha(theme.tint, isDark ? 0.32 : 0.2),
