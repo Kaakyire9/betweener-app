@@ -57,6 +57,17 @@ function formatDistance(distanceKm?: number | null, fallback?: string, unit: Dis
   return `${rounded} ${label} away`;
 }
 
+const parseAiScorePercent = (value: unknown): number | undefined => {
+  const asNumber =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim() !== ''
+        ? Number(value)
+        : NaN;
+  if (!Number.isFinite(asNumber)) return undefined;
+  return Math.max(0, Math.min(100, asNumber));
+};
+
 async function signProfileVideoUrl(path?: string | null) {
   if (!path) return undefined;
   if (path.startsWith('http')) return path;
@@ -445,7 +456,8 @@ export default function useAIRecommendations(
         // Nearby mode: server-side distance sort via RPC
         if (mode === 'nearby') {
           try {
-            const { data, error } = await supabase.rpc('get_recs_nearby', { p_user_id: userId, p_limit: 20 });
+            const scored = await supabase.rpc('get_recs_nearby_scored', { p_user_id: userId, p_limit: 20 });
+            const { data, error } = !scored.error ? scored : await supabase.rpc('get_recs_nearby', { p_user_id: userId, p_limit: 20 });
             if (!error && Array.isArray(data)) {
               const mapped: Match[] = data.map((p: any) => ({
                 id: p.id,
@@ -460,7 +472,7 @@ export default function useAIRecommendations(
                 lastActive: p.last_active ?? null,
                 verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
                 personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
-                aiScore: typeof p.ai_score === 'number' ? p.ai_score : undefined,
+                aiScore: parseAiScorePercent(p.ai_score),
                 profileVideo: (p as any).profile_video || undefined,
                 location: p.location || undefined,
                 tribe: p.tribe,
@@ -483,7 +495,8 @@ export default function useAIRecommendations(
         // Active mode: server-side active filter via RPC
         if (mode === 'active') {
           try {
-            const { data, error } = await supabase.rpc('get_recs_active', { p_user_id: userId, p_window_minutes: activeWindowMinutes });
+            const scored = await supabase.rpc('get_recs_active_scored', { p_user_id: userId, p_window_minutes: activeWindowMinutes });
+            const { data, error } = !scored.error ? scored : await supabase.rpc('get_recs_active', { p_user_id: userId, p_window_minutes: activeWindowMinutes });
             if (!error && Array.isArray(data)) {
               const mapped: Match[] = data.map((p: any) => ({
                 id: p.id,
@@ -498,7 +511,7 @@ export default function useAIRecommendations(
                 lastActive: p.last_active ?? null,
                 verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
                 personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
-                aiScore: typeof p.ai_score === 'number' ? p.ai_score : undefined,
+                aiScore: parseAiScorePercent(p.ai_score),
                 profileVideo: (p as any).profile_video || undefined,
                 location: p.location || undefined,
                 tribe: p.tribe,
@@ -516,6 +529,42 @@ export default function useAIRecommendations(
           } catch (e) {
             console.log('[useAIRecommendations] active rpc error', e);
           }
+        }
+
+        // For-you mode: prefer scored RPC (per-viewer compatibility)
+        try {
+          const { data, error } = await supabase.rpc('get_recs_for_you_scored', { p_user_id: userId, p_limit: 20 });
+          if (!error && Array.isArray(data)) {
+            const mapped: Match[] = data.map((p: any) => ({
+              id: p.id,
+              name: p.full_name || p.user_id || String(p.id),
+              age: p.age,
+              tagline: p.bio || '',
+              interests: Array.isArray(p.interests) ? p.interests : [],
+              avatar_url: p.avatar_url || undefined,
+              distance: formatDistance(p.distance_km, p.location || p.region, unitForFormat),
+              distanceKm: typeof p.distance_km === 'number' ? p.distance_km : undefined,
+              isActiveNow: !!p.online || !!p.is_active,
+              lastActive: p.last_active ?? null,
+              verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
+              personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
+              aiScore: parseAiScorePercent(p.ai_score),
+              profileVideo: (p as any).profile_video || undefined,
+              location: p.location || undefined,
+              tribe: p.tribe,
+              religion: p.religion,
+              region: p.region,
+              current_country: (p as any).current_country,
+              current_country_code: (p as any).current_country_code,
+              location_precision: (p as any).location_precision,
+            } as Match));
+            const withSigned = await resolveProfileVideos(mapped);
+            setMatches(withSigned);
+            if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] forYou scored rpc result', { count: mapped.length });
+            return;
+          }
+        } catch (e) {
+          // fall through to legacy query
         }
 
         // The `profiles` table may vary across environments. Try an
@@ -657,7 +706,7 @@ export default function useAIRecommendations(
               lastActive: p.last_active ?? null,
               verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
               personalityTags: ptags || [],
-              aiScore: typeof p.ai_score === 'number' ? p.ai_score : undefined,
+              aiScore: parseAiScorePercent(p.ai_score),
               profileVideo: p.profile_video || undefined,
               location: p.location || undefined,
               tribe: p.tribe,

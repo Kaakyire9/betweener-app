@@ -17,6 +17,7 @@ import { Dimensions, FlatList, Image, Modal, PanResponder, Pressable, StyleSheet
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Easing,
+    Extrapolate,
     interpolate,
     interpolateColor,
     runOnJS,
@@ -24,6 +25,7 @@ import Animated, {
     useAnimatedStyle,
     useDerivedValue,
     useSharedValue,
+    withRepeat,
     withTiming,
     type SharedValue,
 } from 'react-native-reanimated';
@@ -69,6 +71,7 @@ type PremiumProfile = {
 const IMAGE_ITEM_HEIGHT = Math.max(220, Math.min(280, Math.round(screenHeight * 0.26)));
 const IMAGE_ITEM_GAP = 12;
 const COLUMN_GAP = 14;
+const REACTION_ICONS = ['heart', 'fire', 'star', 'emoticon-happy-outline'] as const;
 
 const ACTIVE_VISIBLE_PERCENT_THRESHOLD = 70;
 const RIGHT_SCROLL_HOLD_MS = 600;
@@ -112,7 +115,7 @@ function buildLocationLine(profile: UserProfile) {
   const base = (profile.location || profile.city || profile.region || '').trim();
   const combined = distance
     ? base && distance !== base
-      ? `${distance} · ${base}`
+      ? `${distance} - ${base}`
       : distance
     : base;
 
@@ -215,7 +218,7 @@ function parseFallbackProfile(rawParam?: string | string[]): UserProfile | null 
                 id: `int-${idx}`,
                 name,
                 category: 'Interest',
-                emoji: '✨',
+                emoji: '*',
               }))
           : [],
       };
@@ -246,7 +249,7 @@ function buildSections(profile: UserProfile): PremiumSection[] {
     .map(String);
 
   const premiumCopy = {
-    aboutEmpty: "This section hasn’t been filled yet — ask something thoughtful.",
+    aboutEmpty: "This section hasn't been filled yet - ask something thoughtful.",
     lifestyleEmpty: 'Lifestyle details coming soon.',
     promptsEmpty: 'Conversation starters coming soon.',
     valuesEmpty: 'Intentions will appear here once shared.',
@@ -371,7 +374,7 @@ function buildAutoSectionsIfNeeded(profile: UserProfile, existing: PremiumSectio
       id: 'auto-ask',
       tag: 'prompts',
       title: 'Ask Me Anything',
-      body: 'Start with something specific — a thoughtful question goes a long way.',
+      body: 'Start with something specific - a thoughtful question goes a long way.',
     },
   ];
 
@@ -393,6 +396,7 @@ function adaptToPremiumProfile(profile: UserProfile): PremiumProfile {
 
 export default function ProfileViewPremiumV2Screen() {
   const colorScheme = useColorScheme();
+  const isDark = colorScheme === 'dark';
   const theme = Colors[colorScheme ?? 'light'];
 
   const params = useLocalSearchParams();
@@ -475,6 +479,7 @@ export default function ProfileViewPremiumV2Screen() {
 
   const [videoModalVisible, setVideoModalVisible] = useState(false);
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const isTextOnlyStory = !hasGalleryImages && meaningfulText && (hasAvatarOnly || !!resolvedProfile.profilePicture);
   const isImagesOnly = hasGalleryImages && !meaningfulText;
@@ -482,8 +487,9 @@ export default function ProfileViewPremiumV2Screen() {
   // --- Soft Sync state ---
   // Stored on UI thread to avoid re-rendering the whole right list.
   const activeTag = useSharedValue<ProfileImageTag>('intro');
+  const heroScrollY = useSharedValue(0);
 
-  // When user scrolls RIGHT column, we freeze highlight to avoid “fighting” user attention.
+  // When user scrolls RIGHT column, we freeze highlight to avoid fighting user attention.
   const highlightEnabled = useSharedValue(1);
   const frozenTag = useSharedValue<ProfileImageTag>('intro');
 
@@ -501,6 +507,9 @@ export default function ProfileViewPremiumV2Screen() {
 
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState(0);
+  const [activeReactionImageId, setActiveReactionImageId] = useState<string | null>(null);
+  const [imageReactions, setImageReactions] = useState<Record<string, string>>({});
+  const [reactionCounts, setReactionCounts] = useState<Record<string, { count: number; topEmoji: string | null }>>({});
 
   useEffect(() => {
     return () => {
@@ -508,6 +517,64 @@ export default function ProfileViewPremiumV2Screen() {
       if (singleTapTimeoutRef.current) clearTimeout(singleTapTimeoutRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    supabase.auth.getSession().then(({ data }) => {
+      if (cancelled) return;
+      setCurrentUserId(data.session?.user?.id ?? null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const loadImageReactions = useCallback(async () => {
+    if (!resolvedProfile.id) return;
+    const { data, error } = await supabase
+      .from('profile_image_reactions')
+      .select('image_url,emoji,reactor_user_id')
+      .eq('profile_id', resolvedProfile.id);
+    if (error) {
+      console.log('[profile] reactions fetch error', error);
+      return;
+    }
+    const counts: Record<string, { count: number; topEmoji: string | null }> = {};
+    const mine: Record<string, string> = {};
+    (data || []).forEach((row) => {
+      const imageUrl = row.image_url as string;
+      const emoji = row.emoji as string;
+      const reactorId = row.reactor_user_id as string;
+      if (!counts[imageUrl]) {
+        counts[imageUrl] = { count: 0, topEmoji: null };
+      }
+      counts[imageUrl].count += 1;
+      counts[imageUrl].topEmoji = emoji;
+      if (currentUserId && reactorId === currentUserId) {
+        mine[imageUrl] = emoji;
+      }
+    });
+    setReactionCounts(counts);
+    setImageReactions(mine);
+  }, [currentUserId, resolvedProfile.id]);
+
+  useEffect(() => {
+    if (!resolvedProfile.id) return;
+    void loadImageReactions();
+    const channel = supabase
+      .channel(`profile_image_reactions:${resolvedProfile.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profile_image_reactions', filter: `profile_id=eq.${resolvedProfile.id}` },
+        () => {
+          void loadImageReactions();
+        },
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadImageReactions, resolvedProfile.id]);
 
   useEffect(() => {
     // Reset any pinned hero image when switching profiles.
@@ -638,7 +705,7 @@ export default function ProfileViewPremiumV2Screen() {
 
       // FlashList view tokens may not always expose a percent, depending on version;
       // so we (a) trust itemVisiblePercentThreshold for membership, then
-      // (b) choose the item closest to the “center” of visible indices.
+      // (b) choose the item closest to the center of visible indices.
       const indices = viewableItems
         .map((t) => (typeof t.index === 'number' ? t.index : null))
         .filter((i): i is number => i != null);
@@ -664,7 +731,7 @@ export default function ProfileViewPremiumV2Screen() {
       const item = best?.item as PremiumImage | undefined;
       if (!item?.tag) return;
 
-      // Only update if the item is considered “viewable” by the threshold.
+      // Only update if the item is considered viewable by the threshold.
       // If fast scrolling yields no qualifying items, keep previous activeTag.
       if ((best as any)?.isViewable === false) return;
 
@@ -765,6 +832,41 @@ export default function ProfileViewPremiumV2Screen() {
     [activeTag, frozenTag, highlightEnabled, theme],
   );
 
+  const toggleImageReactions = useCallback((item: PremiumImage) => {
+    setActiveReactionImageId((prev) => (prev === item.id ? null : item.id));
+    Haptics.selectionAsync().catch(() => undefined);
+  }, []);
+
+  const handleSelectReaction = useCallback((item: PremiumImage, icon: string) => {
+    if (!currentUserId || !resolvedProfile.id) return;
+    setImageReactions((prev) => ({ ...prev, [item.uri]: icon }));
+    setActiveReactionImageId(null);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+    supabase
+      .from('profile_image_reactions')
+      .upsert(
+        {
+          profile_id: resolvedProfile.id,
+          image_url: item.uri,
+          reactor_user_id: currentUserId,
+          emoji: icon,
+        },
+        { onConflict: 'profile_id,image_url,reactor_user_id' },
+      )
+      .then(({ error }) => {
+        if (error) {
+          console.log('[profile] reaction upsert error', error);
+        }
+      });
+  }, [currentUserId, resolvedProfile.id]);
+
+  const onRightScroll = useCallback(
+    (event: any) => {
+      heroScrollY.value = event?.nativeEvent?.contentOffset?.y ?? 0;
+    },
+    [heroScrollY],
+  );
+
   if (gated) {
     return (
       <View style={[styles.screen, { paddingHorizontal: 16, paddingTop: 18 }]}>
@@ -775,6 +877,8 @@ export default function ProfileViewPremiumV2Screen() {
           locationLine={''}
           hasIntro={false}
           heroOverrideUri={null}
+          heroScrollY={heroScrollY}
+          isDark={isDark}
           onBack={() => router.back()}
           onClose={() => router.back()}
         />
@@ -782,9 +886,9 @@ export default function ProfileViewPremiumV2Screen() {
         <View style={[stylesStatic.gateCard, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
           <Text style={[stylesStatic.gateTitle, { color: theme.text }]}>Complete your profile to be seen</Text>
           <Text style={[stylesStatic.gateBody, { color: theme.textMuted }]}>Add at least one of the following:</Text>
-          <Text style={[stylesStatic.gateBody, { color: theme.textMuted }]}>• A photo</Text>
-          <Text style={[stylesStatic.gateBody, { color: theme.textMuted }]}>• A short bio</Text>
-          <Text style={[stylesStatic.gateBody, { color: theme.textMuted }]}>• An intention / prompt</Text>
+          <Text style={[stylesStatic.gateBody, { color: theme.textMuted }]}>- A photo</Text>
+          <Text style={[stylesStatic.gateBody, { color: theme.textMuted }]}>- A short bio</Text>
+          <Text style={[stylesStatic.gateBody, { color: theme.textMuted }]}>- An intention / prompt</Text>
 
           <View style={[stylesStatic.progressTrack, { backgroundColor: theme.outline }]}>
             <View style={[stylesStatic.progressFill, { width: '20%', backgroundColor: theme.tint }]} />
@@ -803,6 +907,8 @@ export default function ProfileViewPremiumV2Screen() {
         locationLine={locationLine}
         hasIntro={hasIntro}
         heroOverrideUri={heroOverrideUri}
+        heroScrollY={heroScrollY}
+        isDark={isDark}
         onHeroPress={openLightboxForUri}
         onIntroPress={() => {
           void openIntroVideo();
@@ -832,7 +938,7 @@ export default function ProfileViewPremiumV2Screen() {
 
       {isLoading ? (
         <View style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
-          <Text style={{ color: theme.textMuted }}>Loading…</Text>
+          <Text style={{ color: theme.textMuted }}>Loading...</Text>
         </View>
       ) : null}
 
@@ -853,6 +959,11 @@ export default function ProfileViewPremiumV2Screen() {
                   isActive={item.tag === activeTagJs}
                   height={IMAGE_ITEM_HEIGHT}
                   onTap={onImageTap}
+                  reactionIcon={imageReactions[item.uri] ?? reactionCounts[item.uri]?.topEmoji ?? null}
+                  reactionCount={reactionCounts[item.uri]?.count ?? 0}
+                  reactionsOpen={activeReactionImageId === item.id}
+                  onToggleReactions={toggleImageReactions}
+                  onSelectReaction={handleSelectReaction}
                 />
               )}
               ItemSeparatorComponent={() => <View style={{ height: IMAGE_ITEM_GAP }} />}
@@ -870,6 +981,8 @@ export default function ProfileViewPremiumV2Screen() {
               showsVerticalScrollIndicator={false}
               viewabilityConfig={storyViewabilityConfig}
               onViewableItemsChanged={onRightViewableItemsChangedForStory}
+              onScroll={onRightScroll}
+              scrollEventThrottle={16}
               contentContainerStyle={styles.rightListContent}
               renderItem={renderSectionItem}
               ListHeaderComponent={
@@ -885,6 +998,8 @@ export default function ProfileViewPremiumV2Screen() {
               onMomentumScrollBegin={onRightScrollBegin}
               onScrollEndDrag={onRightScrollEnd}
               onMomentumScrollEnd={onRightScrollEnd}
+              onScroll={onRightScroll}
+              scrollEventThrottle={16}
               contentContainerStyle={styles.rightListContent}
               renderItem={renderSectionItem}
             />
@@ -904,6 +1019,8 @@ function Header({
   locationLine,
   hasIntro,
   heroOverrideUri,
+  heroScrollY,
+  isDark,
   onHeroPress,
   onIntroPress,
   onBack,
@@ -915,6 +1032,8 @@ function Header({
   locationLine: string;
   hasIntro: boolean;
   heroOverrideUri: string | null;
+  heroScrollY: SharedValue<number>;
+  isDark: boolean;
   onHeroPress?: (heroUri: string) => void;
   onIntroPress?: () => void;
   onBack: () => void;
@@ -926,6 +1045,23 @@ function Header({
     profile.profilePicture ||
     '';
   const heroHeight = Math.max(280, Math.min(420, Math.round(screenHeight * 0.38)));
+  const heroImageStyle = useAnimatedStyle(() => {
+    const translateY = interpolate(
+      heroScrollY.value,
+      [0, heroHeight],
+      [0, -24],
+      Extrapolate.CLAMP,
+    );
+    const scale = interpolate(
+      heroScrollY.value,
+      [0, heroHeight],
+      [1.02, 1.08],
+      Extrapolate.CLAMP,
+    );
+    return {
+      transform: [{ translateY }, { scale }],
+    };
+  }, [heroHeight]);
 
   return (
     <View style={[stylesStatic.header, { borderBottomColor: theme.outline, backgroundColor: theme.background }]}>
@@ -950,7 +1086,18 @@ function Header({
         }}
         style={[stylesStatic.heroWrap, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle, height: heroHeight }]}
       >
-        {heroUri ? <Image source={{ uri: heroUri }} style={stylesStatic.heroImage} /> : null}
+        {heroUri ? (
+          <Animated.Image
+            source={{ uri: heroUri }}
+            style={[stylesStatic.heroImage, heroImageStyle]}
+            resizeMode="cover"
+          />
+        ) : null}
+
+        <LinearGradient
+          colors={['rgba(0,0,0,0.5)', 'transparent']}
+          style={stylesStatic.heroTopGradient}
+        />
 
         <LinearGradient
           colors={['transparent', 'rgba(0,0,0,0.68)']}
@@ -961,23 +1108,47 @@ function Header({
           <Pressable
             onPress={onIntroPress}
             hitSlop={10}
-            style={[stylesStatic.introBadge, { backgroundColor: 'rgba(255,255,255,0.78)', borderColor: theme.outline }]}
+            style={[
+              stylesStatic.introBadge,
+              {
+                backgroundColor: isDark ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.78)',
+                borderColor: theme.outline,
+              },
+            ]}
           >
-            <MaterialCommunityIcons name="play" size={14} color={theme.text} />
-            <Text style={[stylesStatic.introText, { color: theme.text }]}>Intro</Text>
+            <MaterialCommunityIcons
+              name="play"
+              size={14}
+              color={isDark ? Colors.light.background : Colors.dark.background}
+            />
+            <Text style={[stylesStatic.introText, { color: isDark ? Colors.light.background : Colors.dark.background }]}>
+              Intro
+            </Text>
           </Pressable>
         ) : null}
 
         <View style={stylesStatic.heroOverlay}>
           <View style={stylesStatic.heroNameRow}>
-            <Text numberOfLines={1} style={stylesStatic.heroName}>
-              {formatHeaderTitle(profile.name, profile.age)}
-            </Text>
+            <View style={stylesStatic.heroNamePill}>
+              <Text numberOfLines={1} style={stylesStatic.heroName}>
+                {formatHeaderTitle(profile.name, profile.age)}
+              </Text>
+            </View>
             {profile.verified ? <MaterialCommunityIcons name="check-decagram" size={18} color={theme.tint} /> : null}
             {profile.isActiveNow ? (
-              <View style={[stylesStatic.activeBadgeHero, { backgroundColor: 'rgba(255,255,255,0.82)', borderColor: theme.outline }]}>
+              <View
+                style={[
+                  stylesStatic.activeBadgeHero,
+                  {
+                    backgroundColor: isDark ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.82)',
+                    borderColor: theme.outline,
+                  },
+                ]}
+              >
                 <View style={[stylesStatic.activeDot, { backgroundColor: theme.tint }]} />
-                <Text style={[stylesStatic.activeText, { color: theme.text }]}>Online</Text>
+                <Text style={[stylesStatic.activeText, { color: isDark ? Colors.light.background : Colors.dark.background }]}>
+                  Online
+                </Text>
               </View>
             ) : null}
           </View>
@@ -1317,13 +1488,36 @@ const ImageCard = memo(function ImageCard({
   isActive,
   height,
   onTap,
+  reactionIcon,
+  reactionCount = 0,
+  reactionsOpen,
+  onToggleReactions,
+  onSelectReaction,
 }: {
   theme: typeof Colors.light;
   item: PremiumImage;
   isActive: boolean;
   height: number;
   onTap?: (item: PremiumImage) => void;
+  reactionIcon?: string | null;
+  reactionCount?: number;
+  reactionsOpen?: boolean;
+  onToggleReactions?: (item: PremiumImage) => void;
+  onSelectReaction?: (item: PremiumImage, icon: string) => void;
 }) {
+  const shimmer = useSharedValue(0);
+  useEffect(() => {
+    if (isActive) {
+      shimmer.value = withRepeat(
+        withTiming(1, { duration: 1600, easing: Easing.linear }),
+        -1,
+        false,
+      );
+    } else {
+      shimmer.value = withTiming(0, { duration: 300 });
+    }
+  }, [isActive, shimmer]);
+
   const progress = useDerivedValue(() =>
     withTiming(isActive ? 1 : 0, { duration: 180, easing: Easing.out(Easing.cubic) }),
   );
@@ -1340,9 +1534,18 @@ const ImageCard = memo(function ImageCard({
     return { opacity };
   });
   const overlayStyle = useAnimatedStyle(() => {
-    // “Brightness” effect by reducing dark overlay.
+    // Brightness effect by reducing dark overlay.
     const opacity = interpolate(progress.value, [0, 1], [0.18, 0.06]);
     return { opacity };
+  });
+
+  const shimmerStyle = useAnimatedStyle(() => {
+    const translateX = interpolate(shimmer.value, [0, 1], [-60, 140]);
+    const opacity = interpolate(shimmer.value, [0, 0.5, 1], [0, 0.35, 0]);
+    return {
+      opacity,
+      transform: [{ translateX }],
+    };
   });
 
   return (
@@ -1365,6 +1568,49 @@ const ImageCard = memo(function ImageCard({
         pointerEvents="none"
         style={[StyleSheet.absoluteFillObject, { backgroundColor: '#000' }, overlayStyle]}
       />
+
+      <View style={stylesStatic.reactionPillWrap} pointerEvents="box-none">
+        <Pressable
+          onPress={() => onToggleReactions?.(item)}
+          style={[stylesStatic.reactionPill, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle }]}
+        >
+          <MaterialCommunityIcons
+            name={(reactionIcon || 'emoticon-outline') as any}
+            size={18}
+            color={reactionIcon ? theme.tint : theme.textMuted}
+          />
+          {reactionCount > 0 ? (
+            <Text style={[stylesStatic.reactionCount, { color: theme.textMuted }]}>
+              {reactionCount}
+            </Text>
+          ) : null}
+        </Pressable>
+
+        {reactionsOpen ? (
+          <View style={[stylesStatic.reactionRow, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle }]}>
+            {REACTION_ICONS.map((icon) => (
+              <Pressable key={icon} onPress={() => onSelectReaction?.(item, icon)}>
+                <MaterialCommunityIcons name={icon} size={20} color={theme.tint} />
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
+
+      <View style={stylesStatic.filmStripEdge} pointerEvents="none">
+        <View style={[stylesStatic.filmStripHole, { backgroundColor: theme.background }]} />
+        <View style={[stylesStatic.filmStripHole, { backgroundColor: theme.background }]} />
+        <View style={[stylesStatic.filmStripHole, { backgroundColor: theme.background }]} />
+      </View>
+
+      <Animated.View style={[stylesStatic.shimmerOverlay, shimmerStyle]} pointerEvents="none">
+        <LinearGradient
+          colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.22)', 'rgba(255,255,255,0)']}
+          start={{ x: 0, y: 0.5 }}
+          end={{ x: 1, y: 0.5 }}
+          style={stylesStatic.shimmerGradient}
+        />
+      </Animated.View>
 
       {/* Premium active rail */}
       <Animated.View style={[stylesStatic.activeRailWrap, railStyle]} pointerEvents="none">
@@ -1565,9 +1811,9 @@ const SectionBlock = memo(function SectionBlock({
 function FloatingActions({ theme }: { theme: typeof Colors.light }) {
   return (
     <View style={stylesStatic.fabStack} pointerEvents="box-none">
-      <Fab theme={theme} label="♥" onPress={() => {}} />
-      <Fab theme={theme} label="✉" onPress={() => {}} />
-      <Fab theme={theme} label="★" onPress={() => {}} />
+      <Fab theme={theme} label="Like" onPress={() => {}} />
+      <Fab theme={theme} label="Note" onPress={() => {}} />
+      <Fab theme={theme} label="Boost" onPress={() => {}} />
     </View>
   );
 }
@@ -1646,6 +1892,13 @@ const stylesStatic = StyleSheet.create({
   heroImage: {
     width: '100%',
     height: '100%',
+  },
+  heroTopGradient: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    height: 120,
   },
 
   lightboxContainer: {
@@ -1758,6 +2011,14 @@ const stylesStatic = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
+  heroNamePill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.28)',
+  },
   heroName: {
     flexShrink: 1,
     fontSize: 18,
@@ -1861,6 +2122,65 @@ const stylesStatic = StyleSheet.create({
     width: 2,
     height: '60%',
     borderRadius: 999,
+  },
+  reactionPillWrap: {
+    position: 'absolute',
+    right: 10,
+    bottom: 10,
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  reactionPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  reactionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  reactionCount: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  filmStripEdge: {
+    position: 'absolute',
+    left: 8,
+    top: 10,
+    bottom: 10,
+    width: 12,
+    borderRadius: 999,
+    backgroundColor: 'rgba(0,0,0,0.28)',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+  },
+  filmStripHole: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  shimmerOverlay: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+  },
+  shimmerGradient: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 90,
   },
 
   gateCard: {

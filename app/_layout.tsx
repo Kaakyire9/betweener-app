@@ -11,6 +11,7 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 
 import { useAppFonts } from "@/constants/fonts";
 import { AuthProvider } from "@/lib/auth-context";
+import InAppToasts from "@/components/InAppToasts";
 
 // Keep native splash visible until we decide
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -126,6 +127,7 @@ export default function RootLayout() {
       <AuthProvider>
         <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
           <Slot />
+          <InAppToasts />
 
           {showSplash && (
             <View style={styles.splashOverlay}>

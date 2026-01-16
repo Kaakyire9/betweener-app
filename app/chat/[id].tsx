@@ -3,7 +3,9 @@ import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useMoments } from "@/hooks/useMoments";
 import { useAuth } from "@/lib/auth-context";
+import { decryptMediaBytes, encryptMediaBytes, getOrCreateDeviceKeypair } from "@/lib/e2ee";
 import { supabase } from "@/lib/supabase";
+import { encodeBase64 } from "tweetnacl-util";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -49,7 +51,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { PinchGestureHandler, State } from "react-native-gesture-handler";
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
-const ATTACHMENT_SHEET_HEIGHT = 240;
+const ATTACHMENT_SHEET_HEIGHT = 300;
 const LOCATION_SHEET_HEIGHT = 360;
 const CHAT_MEDIA_BUCKET = 'chat-media';
 const LOCATION_TEXT_PREFIX = '\u{1F4CD}';
@@ -73,6 +75,7 @@ const BLOCKED_BY_ME = 'blocked_by_me';
 const BLOCKED_BY_THEM = 'blocked_me';
 const HEADER_HINT_STORAGE_KEY = 'chat_header_longpress_hint_v1';
 const CHAT_PREFS_STORAGE_KEY = 'chat_header_prefs_v1';
+const MESSAGE_SELECT_FIELDS = 'id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,edited_at,reply_to_message_id,is_view_once,encrypted_media,encrypted_media_path,encrypted_key_sender,encrypted_key_receiver,encrypted_key_nonce,encrypted_media_nonce,encrypted_media_alg,encrypted_media_mime,encrypted_media_size';
 const MAP_STYLE_LIGHT = [
   { elementType: 'geometry', stylers: [{ color: '#F3E5D8' }] },
   { elementType: 'labels.text.fill', stylers: [{ color: '#5F706C' }] },
@@ -97,8 +100,8 @@ const MAP_STYLE_DARK = [
   { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#142020' }] },
   { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0B1414' }] },
 ];
-const getPickerMediaTypesAll = () =>
-  ImagePicker.MediaTypeOptions.All;
+// Use new mediaTypes array form (MediaTypeOptions is deprecated)
+const getPickerMediaTypesAll = (): ImagePicker.MediaType[] => ['images', 'videos'];
 
 // Message type definition
 type MessageType = {
@@ -107,12 +110,23 @@ type MessageType = {
   senderId: string;
   timestamp: Date;
   type: 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location';
+  isViewOnce?: boolean;
+  encryptedMedia?: boolean;
+  encryptedMediaPath?: string | null;
+  encryptedKeySender?: string | null;
+  encryptedKeyReceiver?: string | null;
+  encryptedKeyNonce?: string | null;
+  encryptedMediaNonce?: string | null;
+  encryptedMediaAlg?: string | null;
+  encryptedMediaMime?: string | null;
+  encryptedMediaSize?: number | null;
   reactions: { userId: string; emoji: string; }[];
   status?: 'sending' | 'sent' | 'delivered' | 'read';
   readAt?: Date;
   deletedForAll?: boolean;
   deletedAt?: Date | null;
   deletedBy?: string | null;
+  editedAt?: Date | null;
   sticker?: {
     emoji: string;
     color: string;
@@ -162,10 +176,29 @@ type MessageRow = {
   deleted_at?: string | null;
   deleted_by?: string | null;
   reply_to_message_id?: string | null;
+  edited_at?: string | null;
+  is_view_once?: boolean | null;
+  encrypted_media?: boolean | null;
+  encrypted_media_path?: string | null;
+  encrypted_key_sender?: string | null;
+  encrypted_key_receiver?: string | null;
+  encrypted_key_nonce?: string | null;
+  encrypted_media_nonce?: string | null;
+  encrypted_media_alg?: string | null;
+  encrypted_media_mime?: string | null;
+  encrypted_media_size?: number | null;
+};
+
+type MessageEditRow = {
+  id: string;
+  message_id: string;
+  editor_user_id: string;
+  previous_text: string;
+  created_at: string;
 };
 
 type ReactionRow = {
-  id: string;
+  id?: string;
   message_id: string;
   user_id: string;
   emoji: string;
@@ -208,6 +241,7 @@ const DEFAULT_VOICE_WAVEFORM = [0.2, 0.5, 0.35, 0.6, 0.28, 0.72, 0.44, 0.68, 0.3
 const VIDEO_TEXT_PREFIX = '\u{1F3A5} Video';
 const DOCUMENT_TEXT_PREFIX = '\u{1F4CE}';
 const STICKER_TEXT_PREFIX = 'sticker::';
+const VIEW_ONCE_DURATION_SECONDS = 10;
 const buildMapsLink = (lat: number, lng: number) =>
   `https://maps.google.com/?q=${lat},${lng}`;
 
@@ -419,8 +453,10 @@ type MessageRowItemProps = {
   onFocus: (messageId: string) => void;
   onReply: (message: MessageType) => void;
   onReplyJump: (messageId: string) => void;
+  onEditMessage: (message: MessageType) => void;
   onAddReaction: (messageId: string, emoji: string) => void;
   onCloseReactions: () => void;
+  onOpenEditHistory: (message: MessageType) => void;
   onCopyMessage: (message: MessageType) => void;
   onTogglePin: (message: MessageType, isPinned: boolean) => void;
   onDeleteMessage: (message: MessageType) => void;
@@ -432,6 +468,9 @@ type MessageRowItemProps = {
   onOpenDocument: (doc?: MessageType['document']) => void;
   onOpenLocation: (message: MessageType) => void;
   onStopLiveShare: (messageId: string) => void;
+  onOpenViewOnce: (message: MessageType) => void;
+  viewOnceViewedByMe: boolean;
+  viewOnceViewedByPeer: boolean;
   highlightQuery?: string;
   onHighlightPress?: (messageId: string) => void;
   now?: number | null;
@@ -586,8 +625,10 @@ const MessageRowItem = memo(
     onFocus,
     onReply,
     onReplyJump,
+    onEditMessage,
     onAddReaction,
     onCloseReactions,
+    onOpenEditHistory,
     onCopyMessage,
     onTogglePin,
     onDeleteMessage,
@@ -599,6 +640,9 @@ const MessageRowItem = memo(
     onOpenDocument,
     onOpenLocation,
     onStopLiveShare,
+    onOpenViewOnce,
+    viewOnceViewedByMe,
+    viewOnceViewedByPeer,
     highlightQuery,
     onHighlightPress,
     now,
@@ -708,6 +752,36 @@ const MessageRowItem = memo(
       return parts.length ? parts.join(' | ') : null;
     }, [item.type, item.document?.sizeLabel, item.document?.typeLabel]);
 
+    const canEdit = useMemo(
+      () =>
+        isMyMessage &&
+        item.type === 'text' &&
+        !item.deletedForAll &&
+        !item.id.startsWith('temp-'),
+      [isMyMessage, item.deletedForAll, item.id, item.type]
+    );
+
+    const showEdited = Boolean(item.editedAt) && !item.deletedForAll;
+    const isEncryptedViewOnce = Boolean(
+      item.isViewOnce && item.encryptedMedia && (item.type === 'image' || item.type === 'video')
+    );
+    const canOpenViewOnce = !isMyMessage && !viewOnceViewedByMe && isEncryptedViewOnce;
+    const mediaLabel = item.type === 'video' ? 'video' : 'photo';
+    const viewOnceTitle = isMyMessage
+      ? viewOnceViewedByPeer
+        ? 'Opened'
+        : `View once ${mediaLabel}`
+      : viewOnceViewedByMe
+      ? 'Viewed'
+      : `View once ${mediaLabel}`;
+    const viewOnceSubtitle = isMyMessage
+      ? viewOnceViewedByPeer
+        ? 'Recipient opened this media'
+        : 'Encrypted - View once'
+      : viewOnceViewedByMe
+      ? 'This media has disappeared'
+      : 'Tap to view';
+
     const locationRemaining = useMemo(() => {
       if (item.type !== 'location' || !item.location?.live) return null;
       const nowValue = typeof now === 'number' ? now : Date.now();
@@ -779,6 +853,16 @@ const MessageRowItem = memo(
           break;
         default:
           preview = 'Message';
+      }
+      if (item.replyTo.isViewOnce && (item.replyTo.type === 'image' || item.replyTo.type === 'video')) {
+        const replyLabel = item.replyTo.type === 'video' ? 'View once video' : 'View once photo';
+        return {
+          icon: 'lock-outline',
+          label: item.replyTo.senderId === currentUserId ? 'You' : peerName || 'User',
+          preview: replyLabel,
+          time: replyTime,
+          canJump: true,
+        };
       }
       return {
         icon: iconMap[item.replyTo.type],
@@ -989,7 +1073,26 @@ const MessageRowItem = memo(
             {item.type === 'text' ? (
               <View style={styles.textWithMeta}>
                 {messageTextNode}
-                <View style={styles.inlineMetaRow} pointerEvents="none">
+                <View
+                  style={styles.inlineMetaRow}
+                  pointerEvents={showEdited ? 'auto' : 'none'}
+                >
+                  {showEdited ? (
+                    <Pressable
+                      onPress={() => onOpenEditHistory(item)}
+                      hitSlop={6}
+                      style={styles.messageMetaEditedWrap}
+                    >
+                      <Text
+                        style={[
+                          styles.messageMetaEdited,
+                          isMyMessage ? styles.messageMetaEditedMy : styles.messageMetaEditedTheir,
+                        ]}
+                      >
+                        Edited
+                      </Text>
+                    </Pressable>
+                  ) : null}
                   <Text
                     style={[
                       styles.messageMetaText,
@@ -1008,6 +1111,81 @@ const MessageRowItem = memo(
                   )}
                 </View>
               </View>
+            ) : isEncryptedViewOnce ? (
+              <Pressable
+                onPress={() => {
+                  if (canOpenViewOnce) {
+                    onOpenViewOnce(item);
+                  }
+                }}
+                disabled={!canOpenViewOnce}
+                style={styles.viewOnceWrapper}
+              >
+                <LinearGradient
+                  colors={
+                    isMyMessage
+                      ? [withAlpha(theme.tint, 0.92), withAlpha(theme.tint, 0.7)]
+                      : [withAlpha(theme.backgroundSubtle, 0.95), withAlpha(theme.backgroundSubtle, 0.7)]
+                  }
+                  style={[
+                    styles.viewOnceCard,
+                    isMyMessage ? styles.viewOnceCardMy : styles.viewOnceCardTheir,
+                  ]}
+                >
+                  <View style={styles.viewOnceHeader}>
+                    <View style={[
+                      styles.viewOnceLockBadge,
+                      isMyMessage ? styles.viewOnceLockBadgeMy : styles.viewOnceLockBadgeTheir,
+                    ]}>
+                      <MaterialCommunityIcons
+                        name="shield-lock-outline"
+                        size={16}
+                        color={isMyMessage ? Colors.light.background : theme.tint}
+                      />
+                    </View>
+                    <View style={styles.viewOnceTextBlock}>
+                      <Text
+                        style={[
+                          styles.viewOnceTitle,
+                          isMyMessage ? styles.viewOnceTitleMy : styles.viewOnceTitleTheir,
+                        ]}
+                      >
+                        {viewOnceTitle}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.viewOnceSubtitle,
+                          isMyMessage ? styles.viewOnceSubtitleMy : styles.viewOnceSubtitleTheir,
+                        ]}
+                      >
+                        {viewOnceSubtitle}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.viewOnceFooter}>
+                    <View style={[
+                      styles.viewOnceBadge,
+                      isMyMessage ? styles.viewOnceBadgeMy : styles.viewOnceBadgeTheir,
+                    ]}>
+                      <Text
+                        style={[
+                          styles.viewOnceBadgeText,
+                          isMyMessage ? styles.viewOnceBadgeTextMy : styles.viewOnceBadgeTextTheir,
+                        ]}
+                      >
+                        Encrypted
+                      </Text>
+                    </View>
+                    {!isMyMessage && !viewOnceViewedByMe ? (
+                      <MaterialCommunityIcons
+                        name="chevron-right"
+                        size={16}
+                        color={theme.textMuted}
+                      />
+                    ) : null}
+                  </View>
+                </LinearGradient>
+              </Pressable>
             ) : item.type === 'voice' ? (
               <View style={styles.voiceMessageContainer}>
                 <TouchableOpacity
@@ -1304,18 +1482,32 @@ const MessageRowItem = memo(
               }}
             >
               <MaterialCommunityIcons name="reply" size={14} color={theme.text} />
-              <Text style={styles.messageActionLabel}>Reply</Text>
+              <Text style={styles.messageActionPillLabel}>Reply</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.messageActionPill}
-              onPress={() => {
-                onCopyMessage(item);
-                onCloseReactions();
-              }}
-            >
-              <MaterialCommunityIcons name="content-copy" size={14} color={theme.text} />
-              <Text style={styles.messageActionLabel}>Copy</Text>
-            </TouchableOpacity>
+            {!item.isViewOnce && (
+              <TouchableOpacity
+                style={styles.messageActionPill}
+                onPress={() => {
+                  onCopyMessage(item);
+                  onCloseReactions();
+                }}
+              >
+                <MaterialCommunityIcons name="content-copy" size={14} color={theme.text} />
+                <Text style={styles.messageActionPillLabel}>Copy</Text>
+              </TouchableOpacity>
+            )}
+            {canEdit ? (
+              <TouchableOpacity
+                style={styles.messageActionPill}
+                onPress={() => {
+                  onEditMessage(item);
+                  onCloseReactions();
+                }}
+              >
+                <MaterialCommunityIcons name="pencil-outline" size={14} color={theme.text} />
+                <Text style={styles.messageActionPillLabel}>Edit</Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity
               style={styles.messageActionPill}
               onPress={() => {
@@ -1328,7 +1520,7 @@ const MessageRowItem = memo(
                 size={14}
                 color={theme.text}
               />
-              <Text style={styles.messageActionLabel}>
+              <Text style={styles.messageActionPillLabel}>
                 {isActionPinned ? 'Unpin' : 'Pin'}
               </Text>
             </TouchableOpacity>
@@ -1340,7 +1532,7 @@ const MessageRowItem = memo(
               }}
             >
               <MaterialCommunityIcons name="trash-can-outline" size={14} color={theme.danger} />
-              <Text style={[styles.messageActionLabel, styles.messageActionLabelDanger]}>
+              <Text style={[styles.messageActionPillLabel, styles.messageActionPillLabelDanger]}>
                 Delete
               </Text>
             </TouchableOpacity>
@@ -1355,8 +1547,15 @@ const MessageRowItem = memo(
     prev.showAvatar === next.showAvatar &&
     prev.isPlaying === next.isPlaying &&
     prev.isReactionOpen === next.isReactionOpen &&
+    prev.isFocused === next.isFocused &&
+    prev.focusToken === next.focusToken &&
     prev.isActionPinned === next.isActionPinned &&
     prev.onOpenReactionSheet === next.onOpenReactionSheet &&
+    prev.onEditMessage === next.onEditMessage &&
+    prev.onOpenEditHistory === next.onOpenEditHistory &&
+    prev.onOpenViewOnce === next.onOpenViewOnce &&
+    prev.viewOnceViewedByMe === next.viewOnceViewedByMe &&
+    prev.viewOnceViewedByPeer === next.viewOnceViewedByPeer &&
     prev.timeLabel === next.timeLabel &&
     prev.userAvatar === next.userAvatar &&
     prev.currentUserId === next.currentUserId &&
@@ -1435,6 +1634,13 @@ export default function ConversationScreen() {
   const [showImagePicker, setShowImagePicker] = useState(false);
   const [inputBarHeight, setInputBarHeight] = useState(0);
   const [replyingTo, setReplyingTo] = useState<MessageType | null>(null);
+  const [editingMessage, setEditingMessage] = useState<MessageType | null>(null);
+  const [viewOnceMode, setViewOnceMode] = useState(false);
+  const [viewOnceStatus, setViewOnceStatus] = useState<Record<string, { viewedByMe: boolean; viewedByPeer: boolean }>>({});
+  const [viewOnceModalMessage, setViewOnceModalMessage] = useState<MessageType | null>(null);
+  const [viewOnceSecondsLeft, setViewOnceSecondsLeft] = useState<number | null>(null);
+  const [viewOnceMediaUri, setViewOnceMediaUri] = useState<string | null>(null);
+  const [viewOnceDecrypting, setViewOnceDecrypting] = useState(false);
   const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null);
   const [focusTick, setFocusTick] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -1478,6 +1684,10 @@ export default function ConversationScreen() {
   const [pinnedMessageMap, setPinnedMessageMap] = useState<Record<string, MessageType>>({});
   const [pinnedSheetVisible, setPinnedSheetVisible] = useState(false);
   const [pinnedBannerExpanded, setPinnedBannerExpanded] = useState(false);
+  const [editHistoryVisible, setEditHistoryVisible] = useState(false);
+  const [editHistoryMessage, setEditHistoryMessage] = useState<MessageType | null>(null);
+  const [editHistoryEntries, setEditHistoryEntries] = useState<MessageEditRow[]>([]);
+  const [editHistoryLoading, setEditHistoryLoading] = useState(false);
   const [reactionSheetVisible, setReactionSheetVisible] = useState(false);
   const [reactionSheetMessageId, setReactionSheetMessageId] = useState<string | null>(null);
   const [reactionSheetEmoji, setReactionSheetEmoji] = useState<string | null>(null);
@@ -1533,6 +1743,7 @@ export default function ConversationScreen() {
   const jumpSettleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const jumpVisibleRef = useRef(false);
   const suppressSuggestionRef = useRef(false);
+  const viewOnceStatusRef = useRef(viewOnceStatus);
   const liveShareRef = useRef<{
     messageId: string;
     expiresAt: number;
@@ -1595,26 +1806,58 @@ export default function ConversationScreen() {
     if (!conversationId) return;
     setChatPrefsLoaded(false);
     const loadPrefs = async () => {
+      let localMuted = false;
+      let localPinned = false;
       try {
         const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
         const parsed = raw ? JSON.parse(raw) : {};
         const prefs = parsed?.[conversationId] ?? {};
-        if (!isMounted) return;
-        setIsChatMuted(Boolean(prefs.muted));
-        setIsChatPinned(Boolean(prefs.pinned));
+        localMuted = Boolean(prefs.muted);
+        localPinned = Boolean(prefs.pinned);
       } catch {
-        if (!isMounted) return;
-        setIsChatMuted(false);
-        setIsChatPinned(false);
-      } finally {
-        if (isMounted) setChatPrefsLoaded(true);
+        localMuted = false;
+        localPinned = false;
       }
+
+      if (user?.id) {
+        const { data, error } = await supabase
+          .from('chat_prefs')
+          .select('muted,pinned')
+          .eq('user_id', user.id)
+          .eq('peer_id', conversationId)
+          .maybeSingle();
+        if (!isMounted) return;
+        if (!error && data) {
+          setIsChatMuted(Boolean(data.muted));
+          setIsChatPinned(Boolean(data.pinned));
+          try {
+            const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
+            const parsed = raw ? JSON.parse(raw) : {};
+            parsed[conversationId] = {
+              muted: Boolean(data.muted),
+              pinned: Boolean(data.pinned),
+            };
+            await AsyncStorage.setItem(CHAT_PREFS_STORAGE_KEY, JSON.stringify(parsed));
+          } catch {
+            // Ignore persistence errors.
+          }
+        } else {
+          setIsChatMuted(localMuted);
+          setIsChatPinned(localPinned);
+        }
+      } else {
+        if (!isMounted) return;
+        setIsChatMuted(localMuted);
+        setIsChatPinned(localPinned);
+      }
+
+      if (isMounted) setChatPrefsLoaded(true);
     };
     void loadPrefs();
     return () => {
       isMounted = false;
     };
-  }, [conversationId]);
+  }, [conversationId, user?.id]);
 
   const fetchHiddenMessages = useCallback(async () => {
     if (!user?.id || !conversationId) return;
@@ -1630,47 +1873,6 @@ export default function ConversationScreen() {
     const ids = (data || []).map((row: { message_id: string }) => row.message_id);
     updateHiddenMessageIds(ids);
   }, [conversationId, updateHiddenMessageIds, user?.id]);
-
-  const fetchPinnedMessages = useCallback(async () => {
-    if (!user?.id || !conversationId) return;
-    const { data, error } = await supabase
-      .from('message_pins')
-      .select('message_id')
-      .eq('user_id', user.id)
-      .eq('peer_id', conversationId);
-    if (error) {
-      console.log('[chat] fetch pinned messages error', error);
-      return;
-    }
-    const ids = (data || []).map((row: { message_id: string }) => row.message_id);
-    updatePinnedMessageIds(ids);
-    if (ids.length === 0) {
-      setPinnedMessageMap({});
-      return;
-    }
-    const { data: messageRows, error: messageError } = await supabase
-      .from('messages')
-      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
-      .in('id', ids);
-    if (messageError) {
-      console.log('[chat] fetch pinned message rows error', messageError);
-      return;
-    }
-    const mapped = linkReplies(
-      (messageRows || []).map((row: MessageRow) => mapRowToMessage(row))
-    );
-    setPinnedMessageMap((prev) => {
-      const next: Record<string, MessageType> = { ...prev };
-      const idSet = new Set(ids);
-      Object.keys(next).forEach((id) => {
-        if (!idSet.has(id)) delete next[id];
-      });
-      mapped.forEach((msg) => {
-        next[msg.id] = msg;
-      });
-      return next;
-    });
-  }, [conversationId, linkReplies, mapRowToMessage, updatePinnedMessageIds, user?.id]);
 
   const syncMessageReactions = useCallback(async (messageIds: string[]) => {
     if (!user?.id || messageIds.length === 0) return;
@@ -1704,6 +1906,38 @@ export default function ConversationScreen() {
       )
     );
   }, [user?.id]);
+
+  const syncViewOnceStatus = useCallback(async (messageIds: string[]) => {
+    if (!user?.id || !conversationId || messageIds.length === 0) return;
+    const uniqueIds = Array.from(new Set(messageIds)).filter(Boolean);
+    if (uniqueIds.length === 0) return;
+    const { data, error } = await supabase
+      .from('message_views')
+      .select('message_id,viewer_id')
+      .in('message_id', uniqueIds);
+    if (error) {
+      console.log('[chat] fetch view-once status error', error);
+      return;
+    }
+    setViewOnceStatus((prev) => {
+      const next = { ...prev };
+      uniqueIds.forEach((id) => {
+        next[id] = { viewedByMe: false, viewedByPeer: false };
+      });
+      (data || []).forEach((row: any) => {
+        if (!row?.message_id || !row?.viewer_id) return;
+        const current = next[row.message_id] ?? { viewedByMe: false, viewedByPeer: false };
+        if (row.viewer_id === user.id) {
+          current.viewedByMe = true;
+        }
+        if (row.viewer_id === conversationId) {
+          current.viewedByPeer = true;
+        }
+        next[row.message_id] = current;
+      });
+      return next;
+    });
+  }, [conversationId, user?.id]);
 
   const applyReactionUpdate = useCallback((row: ReactionRow, mode: 'upsert' | 'delete') => {
     if (!row?.message_id || !row.user_id) return;
@@ -1846,6 +2080,32 @@ export default function ConversationScreen() {
     };
   }, [conversationId, fetchBlockStatus, user?.id]);
 
+  useEffect(() => {
+    if (!user?.id || !conversationId) return;
+    const channel = supabase
+      .channel(`chat_prefs:${user.id}:${conversationId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'chat_prefs',
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const row = (payload.new || payload.old) as { peer_id?: string; muted?: boolean; pinned?: boolean } | undefined;
+          if (!row || row.peer_id !== conversationId) return;
+          if (typeof row.muted === 'boolean') setIsChatMuted(row.muted);
+          if (typeof row.pinned === 'boolean') setIsChatPinned(row.pinned);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [conversationId, user?.id]);
+
   useFocusEffect(
     useCallback(() => {
       if (!user?.id || !conversationId) return () => {};
@@ -1878,9 +2138,25 @@ export default function ConversationScreen() {
       } catch {
         // Ignore persistence errors.
       }
+      if (!user?.id) return;
+      const { error } = await supabase
+        .from('chat_prefs')
+        .upsert(
+          {
+            user_id: user.id,
+            peer_id: conversationId,
+            muted: isChatMuted,
+            pinned: isChatPinned,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'user_id,peer_id' },
+        );
+      if (error) {
+        console.log('[chat] chat prefs upsert error', error);
+      }
     };
     void persistPrefs();
-  }, [chatPrefsLoaded, conversationId, isChatMuted, isChatPinned]);
+  }, [chatPrefsLoaded, conversationId, isChatMuted, isChatPinned, user?.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1971,9 +2247,21 @@ export default function ConversationScreen() {
         ? 'read'
         : 'delivered';
       const messageType = (row.message_type ?? 'text') as MessageType['type'];
+      const isViewOnce = Boolean(row.is_view_once);
+      const encryptedMedia = Boolean(row.encrypted_media);
+      const encryptedMediaPath = row.encrypted_media_path ?? null;
+      const encryptedKeySender = row.encrypted_key_sender ?? null;
+      const encryptedKeyReceiver = row.encrypted_key_receiver ?? null;
+      const encryptedKeyNonce = row.encrypted_key_nonce ?? null;
+      const encryptedMediaNonce = row.encrypted_media_nonce ?? null;
+      const encryptedMediaAlg = row.encrypted_media_alg ?? null;
+      const encryptedMediaMime = row.encrypted_media_mime ?? null;
+      const encryptedMediaSize = row.encrypted_media_size ?? null;
+      const statusValue = status;
       const deletedForAll = Boolean(row.deleted_for_all);
       const deletedAt = row.deleted_at ? new Date(row.deleted_at) : null;
       const deletedBy = row.deleted_by ?? null;
+      const editedAt = row.edited_at ? new Date(row.edited_at) : null;
       let waveform = DEFAULT_VOICE_WAVEFORM;
       if (Array.isArray(row.audio_waveform)) {
         waveform = row.audio_waveform;
@@ -2006,13 +2294,17 @@ export default function ConversationScreen() {
       }
       if (!deletedForAll) {
         if (messageType === 'image') {
-          const [firstLine, ...rest] = messageText.split('\n');
-          imageUrl = firstLine || undefined;
-          messageText = rest.join('\n');
+          if (!encryptedMedia) {
+            const [firstLine, ...rest] = messageText.split('\n');
+            imageUrl = firstLine || undefined;
+            messageText = rest.join('\n');
+          }
         } else if (messageType === 'video') {
-          const [firstLine, ...rest] = messageText.split('\n');
-          videoUrl = firstLine || undefined;
-          messageText = rest.join('\n');
+          if (!encryptedMedia) {
+            const [firstLine, ...rest] = messageText.split('\n');
+            videoUrl = firstLine || undefined;
+            messageText = rest.join('\n');
+          }
         } else if (messageType === 'text' && messageText.startsWith(`${VIDEO_TEXT_PREFIX}\n`)) {
           const [label, url, ...rest] = messageText.split('\n');
           if (url) {
@@ -2055,8 +2347,8 @@ export default function ConversationScreen() {
         }
         if (
           messageType === 'location' ||
-          messageText.startsWith(LOCATION_TEXT_PREFIX) ||
-          messageText.startsWith(LOCATION_LIVE_PREFIX)
+          (messageText.startsWith(LOCATION_TEXT_PREFIX) ||
+            messageText.startsWith(LOCATION_LIVE_PREFIX))
         ) {
           const parsedLocation = parseLocationMessage(messageText);
           if (parsedLocation) {
@@ -2065,7 +2357,10 @@ export default function ConversationScreen() {
             messageText = '';
           }
         }
-        if (messageType === 'mood_sticker' || messageText.startsWith(STICKER_TEXT_PREFIX)) {
+        if (
+          messageType === 'mood_sticker' ||
+          messageText.startsWith(STICKER_TEXT_PREFIX)
+        ) {
           const parsedSticker = parseStickerPayload(messageText) ?? parseStickerFallback(messageText);
           if (parsedSticker) {
             resolvedType = 'mood_sticker';
@@ -2093,10 +2388,21 @@ export default function ConversationScreen() {
         timestamp: new Date(row.created_at),
         type: resolvedType,
         reactions: [],
-        status,
+        status: statusValue,
         deletedForAll,
         deletedAt,
         deletedBy,
+        editedAt,
+        isViewOnce,
+        encryptedMedia,
+        encryptedMediaPath,
+        encryptedKeySender,
+        encryptedKeyReceiver,
+        encryptedKeyNonce,
+        encryptedMediaNonce,
+        encryptedMediaAlg,
+        encryptedMediaMime,
+        encryptedMediaSize,
         imageUrl,
         videoUrl,
         document:
@@ -2137,6 +2443,47 @@ export default function ConversationScreen() {
     });
   }, []);
 
+  const fetchPinnedMessages = useCallback(async () => {
+    if (!user?.id || !conversationId) return;
+    const { data, error } = await supabase
+      .from('message_pins')
+      .select('message_id')
+      .eq('user_id', user.id)
+      .eq('peer_id', conversationId);
+    if (error) {
+      console.log('[chat] fetch pinned messages error', error);
+      return;
+    }
+    const ids = (data || []).map((row: { message_id: string }) => row.message_id);
+    updatePinnedMessageIds(ids);
+    if (ids.length === 0) {
+      setPinnedMessageMap({});
+      return;
+    }
+    const { data: messageRows, error: messageError } = await supabase
+      .from('messages')
+      .select(MESSAGE_SELECT_FIELDS)
+      .in('id', ids);
+    if (messageError) {
+      console.log('[chat] fetch pinned message rows error', messageError);
+      return;
+    }
+    const mapped = linkReplies(
+      (messageRows || []).map((row: MessageRow) => mapRowToMessage(row))
+    );
+    setPinnedMessageMap((prev) => {
+      const next: Record<string, MessageType> = { ...prev };
+      const idSet = new Set(ids);
+      Object.keys(next).forEach((id) => {
+        if (!idSet.has(id)) delete next[id];
+      });
+      mapped.forEach((msg) => {
+        next[msg.id] = msg;
+      });
+      return next;
+    });
+  }, [conversationId, linkReplies, mapRowToMessage, updatePinnedMessageIds, user?.id]);
+
   const locationViewerMessage = useMemo(() => {
     if (!locationViewerMessageId) return null;
     return messages.find((msg) => msg.id === locationViewerMessageId) ?? null;
@@ -2151,6 +2498,16 @@ export default function ConversationScreen() {
     if (!actionMessage) return false;
     return pinnedMessageIds.includes(actionMessage.id);
   }, [actionMessage, pinnedMessageIds]);
+
+  const canEditAction = useMemo(() => {
+    if (!actionMessage || !user?.id) return false;
+    return (
+      actionMessage.senderId === user.id &&
+      actionMessage.type === 'text' &&
+      !actionMessage.deletedForAll &&
+      !actionMessage.id.startsWith('temp-')
+    );
+  }, [actionMessage, user?.id]);
 
   const reactionSheetMessage = useMemo(() => {
     if (!reactionSheetMessageId) return null;
@@ -2439,6 +2796,11 @@ export default function ConversationScreen() {
     fileName: string;
     contentType: string;
   }) => {
+    // Ensure we have an auth session for storage RLS
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData.session) {
+      throw new Error('unauthenticated_storage');
+    }
     const filePath = `${user?.id ?? 'anon'}/${Date.now()}-${fileName}`;
     const response = await fetch(uri);
     const arrayBuffer = await response.arrayBuffer();
@@ -2454,8 +2816,86 @@ export default function ConversationScreen() {
     const { data } = supabase.storage
       .from(CHAT_MEDIA_BUCKET)
       .getPublicUrl(filePath);
-    return data.publicUrl;
+    return { publicUrl: data.publicUrl, filePath };
   }, [user?.id]);
+
+  const uploadEncryptedChatMedia = useCallback(async ({
+    bytes,
+    fileName,
+  }: {
+    bytes: Uint8Array;
+    fileName: string;
+  }) => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData.session) {
+      throw new Error('unauthenticated_storage');
+    }
+    const filePath = `${user?.id ?? 'anon'}/${Date.now()}-${fileName}`;
+    const { error: uploadError } = await supabase
+      .storage
+      .from(CHAT_MEDIA_BUCKET)
+      .upload(filePath, bytes, { contentType: 'application/octet-stream', upsert: true });
+    if (uploadError) {
+      console.log('[chat] upload encrypted media error', uploadError);
+      throw uploadError;
+    }
+    return filePath;
+  }, [user?.id]);
+
+  const ensureOwnKeypair = useCallback(async () => {
+    if (!user?.id) return null;
+    const keypair = await getOrCreateDeviceKeypair();
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('public_key')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (error) {
+      console.log('[chat] fetch own public key error', error);
+    }
+    if (!data?.public_key || data.public_key !== keypair.publicKeyB64) {
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ public_key: keypair.publicKeyB64 })
+        .eq('user_id', user.id);
+      if (updateError) {
+        console.log('[chat] update public key error', updateError);
+      }
+    }
+    return keypair;
+  }, [user?.id]);
+
+  const fetchPeerPublicKey = useCallback(async () => {
+    if (!conversationId) return null;
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('public_key')
+      .eq('user_id', conversationId)
+      .maybeSingle();
+    if (error) {
+      console.log('[chat] fetch peer public key error', error);
+      return null;
+    }
+    return data?.public_key ?? null;
+  }, [conversationId]);
+
+  const ensureViewOnceKeys = useCallback(async () => {
+    if (!user?.id || !conversationId) return null;
+    const keypair = await ensureOwnKeypair();
+    if (!keypair?.publicKeyB64) {
+      Alert.alert('View once unavailable', 'Your secure keys could not be created.');
+      return null;
+    }
+    const recipientPublicKey = await fetchPeerPublicKey();
+    if (!recipientPublicKey) {
+      Alert.alert(
+        'View once unavailable',
+        'The other user has not enabled secure media yet. Ask them to open the app once.'
+      );
+      return null;
+    }
+    return { keypair, recipientPublicKey };
+  }, [conversationId, ensureOwnKeypair, fetchPeerPublicKey, user?.id]);
 
   const sendAttachmentText = useCallback(async (text: string) => {
     if (isChatBlocked) {
@@ -2479,6 +2919,8 @@ export default function ConversationScreen() {
       },
     ]);
     setReplyingTo(null);
+    setViewOnceMode(false);
+    setEditingMessage(null);
 
     const { data, error } = await supabase
       .from('messages')
@@ -2490,7 +2932,7 @@ export default function ConversationScreen() {
         message_type: 'text',
         reply_to_message_id: replyingTo?.id ?? null,
       })
-      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
+      .select(MESSAGE_SELECT_FIELDS)
       .single();
 
     if (error || !data) {
@@ -2511,7 +2953,26 @@ export default function ConversationScreen() {
     }
   }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
 
-  const sendImageAttachment = useCallback(async (imageUrl: string) => {
+  const sendImageAttachment = useCallback(async ({
+    imageUrl,
+    isViewOnce = false,
+    encryptedPayload,
+    encryptedPath,
+    mimeType,
+    size,
+  }: {
+    imageUrl?: string;
+    isViewOnce?: boolean;
+    encryptedPayload?: {
+      encryptedKeySender: string;
+      encryptedKeyReceiver: string;
+      encryptedKeyNonce: string;
+      encryptedMediaNonce: string;
+    };
+    encryptedPath?: string | null;
+    mimeType?: string | null;
+    size?: number | null;
+  }) => {
     if (isChatBlocked) {
       Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
       return;
@@ -2522,30 +2983,51 @@ export default function ConversationScreen() {
       ...prev,
       {
         id: tempId,
-        text: '',
+        text: imageUrl ?? '',
         senderId: user.id,
         timestamp: new Date(),
         type: 'image',
+        isViewOnce,
+        encryptedMedia: Boolean(encryptedPayload),
+        encryptedMediaPath: encryptedPath ?? null,
+        encryptedKeySender: encryptedPayload?.encryptedKeySender ?? null,
+        encryptedKeyReceiver: encryptedPayload?.encryptedKeyReceiver ?? null,
+        encryptedKeyNonce: encryptedPayload?.encryptedKeyNonce ?? null,
+        encryptedMediaNonce: encryptedPayload?.encryptedMediaNonce ?? null,
+        encryptedMediaAlg: encryptedPayload ? 'nacl-secretbox' : null,
+        encryptedMediaMime: mimeType ?? null,
+        encryptedMediaSize: size ?? null,
         reactions: [],
         status: 'sending',
-        imageUrl,
+        imageUrl: isViewOnce ? undefined : imageUrl,
         replyToId: replyingTo?.id ?? null,
         replyTo: replyingTo || undefined,
       },
     ]);
     setReplyingTo(null);
+    setEditingMessage(null);
 
     const { data, error } = await supabase
       .from('messages')
       .insert({
-        text: imageUrl,
+        text: imageUrl ?? '',
         sender_id: user.id,
         receiver_id: conversationId,
         is_read: false,
         message_type: 'image',
         reply_to_message_id: replyingTo?.id ?? null,
+        is_view_once: isViewOnce,
+        encrypted_media: Boolean(encryptedPayload),
+        encrypted_media_path: encryptedPath ?? null,
+        encrypted_key_sender: encryptedPayload?.encryptedKeySender ?? null,
+        encrypted_key_receiver: encryptedPayload?.encryptedKeyReceiver ?? null,
+        encrypted_key_nonce: encryptedPayload?.encryptedKeyNonce ?? null,
+        encrypted_media_nonce: encryptedPayload?.encryptedMediaNonce ?? null,
+        encrypted_media_alg: encryptedPayload ? 'nacl-secretbox' : null,
+        encrypted_media_mime: mimeType ?? null,
+        encrypted_media_size: size ?? null,
       })
-      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
+      .select(MESSAGE_SELECT_FIELDS)
       .single();
 
     if (error || !data) {
@@ -2562,7 +3044,121 @@ export default function ConversationScreen() {
     }
   }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
 
-  const sendVideoAttachment = useCallback(async (videoUrl: string) => {
+  const sendEncryptedMediaAttachment = useCallback(async ({
+    uri,
+    fileName,
+    contentType,
+    kind,
+  }: {
+    uri: string;
+    fileName: string;
+    contentType: string;
+    kind: 'image' | 'video';
+  }) => {
+    if (isChatBlocked) {
+      Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
+      return;
+    }
+    if (!user?.id || !conversationId) return;
+
+    const keys = await ensureViewOnceKeys();
+    if (!keys) return;
+    const { keypair, recipientPublicKey } = keys;
+
+    const tempId = `temp-viewonce-${Date.now()}`;
+    const optimistic: MessageType = {
+      id: tempId,
+      text: '',
+      senderId: user.id,
+      timestamp: new Date(),
+      type: kind,
+      reactions: [],
+      status: 'sending',
+      isViewOnce: true,
+      encryptedMedia: true,
+      encryptedMediaPath: null,
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    setReplyingTo(null);
+    setEditingMessage(null);
+    setViewOnceMode(false);
+
+    try {
+      const response = await fetch(uri);
+      const arrayBuffer = await response.arrayBuffer();
+      const plaintext = new Uint8Array(arrayBuffer);
+      const encryptedPayload = await encryptMediaBytes({
+        plainBytes: plaintext,
+        senderKeypair: keypair,
+        receiverPublicKeyB64: recipientPublicKey,
+      });
+      plaintext.fill(0);
+
+      const encryptedPath = await uploadEncryptedChatMedia({
+        bytes: encryptedPayload.cipherBytes,
+        fileName: `${fileName}.enc`,
+      });
+
+      const { data, error } = await supabase
+        .from('messages')
+        .insert({
+          text: '',
+          sender_id: user.id,
+          receiver_id: conversationId,
+          is_read: false,
+          message_type: kind,
+          reply_to_message_id: replyingTo?.id ?? null,
+          is_view_once: true,
+          encrypted_media: true,
+          encrypted_media_path: encryptedPath,
+          encrypted_key_sender: encryptedPayload.encryptedKeySenderB64,
+          encrypted_key_receiver: encryptedPayload.encryptedKeyReceiverB64,
+          encrypted_key_nonce: encryptedPayload.keyNonceB64,
+          encrypted_media_nonce: encryptedPayload.mediaNonceB64,
+          encrypted_media_alg: 'nacl-secretbox',
+          encrypted_media_mime: contentType,
+          encrypted_media_size: plaintext.length,
+        })
+        .select(MESSAGE_SELECT_FIELDS)
+        .single();
+
+      if (error || !data) {
+        console.log('[chat] send encrypted view-once error', error);
+        setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
+      } else {
+        setMessages((prev) =>
+          linkReplies(
+            prev.map((msg) => (msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg))
+          )
+        );
+      }
+    } catch (err) {
+      console.log('[chat] encrypted view-once error', err);
+      Alert.alert('View once', 'Unable to send encrypted media.');
+      setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
+    }
+  }, [conversationId, ensureViewOnceKeys, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, uploadEncryptedChatMedia, user?.id]);
+
+  const sendVideoAttachment = useCallback(async ({
+    videoUrl,
+    isViewOnce = false,
+    encryptedPayload,
+    encryptedPath,
+    mimeType,
+    size,
+  }: {
+    videoUrl?: string;
+    isViewOnce?: boolean;
+    encryptedPayload?: {
+      encryptedKeySender: string;
+      encryptedKeyReceiver: string;
+      encryptedKeyNonce: string;
+      encryptedMediaNonce: string;
+    };
+    encryptedPath?: string | null;
+    mimeType?: string | null;
+    size?: number | null;
+  }) => {
     if (isChatBlocked) {
       Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
       return;
@@ -2573,30 +3169,51 @@ export default function ConversationScreen() {
       ...prev,
       {
         id: tempId,
-        text: '',
+        text: videoUrl ?? '',
         senderId: user.id,
         timestamp: new Date(),
         type: 'video',
+        isViewOnce,
+        encryptedMedia: Boolean(encryptedPayload),
+        encryptedMediaPath: encryptedPath ?? null,
+        encryptedKeySender: encryptedPayload?.encryptedKeySender ?? null,
+        encryptedKeyReceiver: encryptedPayload?.encryptedKeyReceiver ?? null,
+        encryptedKeyNonce: encryptedPayload?.encryptedKeyNonce ?? null,
+        encryptedMediaNonce: encryptedPayload?.encryptedMediaNonce ?? null,
+        encryptedMediaAlg: encryptedPayload ? 'nacl-secretbox' : null,
+        encryptedMediaMime: mimeType ?? null,
+        encryptedMediaSize: size ?? null,
         reactions: [],
         status: 'sending',
-        videoUrl,
+        videoUrl: isViewOnce ? undefined : videoUrl,
         replyToId: replyingTo?.id ?? null,
         replyTo: replyingTo || undefined,
       },
     ]);
     setReplyingTo(null);
+    setEditingMessage(null);
 
     const { data, error } = await supabase
       .from('messages')
       .insert({
-        text: videoUrl,
+        text: videoUrl ?? '',
         sender_id: user.id,
         receiver_id: conversationId,
         is_read: false,
         message_type: 'video',
         reply_to_message_id: replyingTo?.id ?? null,
+        is_view_once: isViewOnce,
+        encrypted_media: Boolean(encryptedPayload),
+        encrypted_media_path: encryptedPath ?? null,
+        encrypted_key_sender: encryptedPayload?.encryptedKeySender ?? null,
+        encrypted_key_receiver: encryptedPayload?.encryptedKeyReceiver ?? null,
+        encrypted_key_nonce: encryptedPayload?.encryptedKeyNonce ?? null,
+        encrypted_media_nonce: encryptedPayload?.encryptedMediaNonce ?? null,
+        encrypted_media_alg: encryptedPayload ? 'nacl-secretbox' : null,
+        encrypted_media_mime: mimeType ?? null,
+        encrypted_media_size: size ?? null,
       })
-      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
+      .select(MESSAGE_SELECT_FIELDS)
       .single();
 
     if (error || !data) {
@@ -2680,7 +3297,7 @@ export default function ConversationScreen() {
         message_type: 'location',
         reply_to_message_id: replyingTo?.id ?? null,
       })
-      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
+      .select(MESSAGE_SELECT_FIELDS)
       .single();
 
     if (error || !data) {
@@ -2979,7 +3596,7 @@ export default function ConversationScreen() {
     if (!user?.id || !conversationId) return;
     const { data, error } = await supabase
       .from('messages')
-      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
+      .select(MESSAGE_SELECT_FIELDS)
       .or(
         `and(sender_id.eq.${user.id},receiver_id.eq.${conversationId}),and(sender_id.eq.${conversationId},receiver_id.eq.${user.id})`
       )
@@ -3001,6 +3618,8 @@ export default function ConversationScreen() {
     const linked = linkReplies(ordered);
     setMessages(linked);
     void syncMessageReactions(linked.map((msg) => msg.id));
+    const viewOnceIds = linked.filter((msg) => msg.isViewOnce).map((msg) => msg.id);
+    void syncViewOnceStatus(viewOnceIds);
     setHasMore((data || []).length === PAGE_SIZE);
     setOldestTimestamp(ordered[0]?.timestamp ?? null);
 
@@ -3017,7 +3636,7 @@ export default function ConversationScreen() {
       .eq('receiver_id', user.id)
       .eq('sender_id', conversationId)
       .eq('is_read', false);
-  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, syncMessageReactions, user?.id]);
+  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, syncMessageReactions, syncViewOnceStatus, user?.id]);
 
   const loadEarlier = useCallback(async () => {
     if (!user?.id || !conversationId || loadingEarlier || !oldestTimestamp) return;
@@ -3026,7 +3645,7 @@ export default function ConversationScreen() {
     wasAtBottomRef.current = false;
     const { data, error } = await supabase
       .from('messages')
-      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
+      .select(MESSAGE_SELECT_FIELDS)
       .or(
         `and(sender_id.eq.${user.id},receiver_id.eq.${conversationId}),and(sender_id.eq.${conversationId},receiver_id.eq.${user.id})`
       )
@@ -3046,18 +3665,20 @@ export default function ConversationScreen() {
     ).filter((msg) => !hiddenSet.has(msg.id));
 
     const ordered = mapped.reverse();
-    if (ordered.length > 0) {
-      setMessages((prev) => {
-        const existing = new Set(prev.map((msg) => msg.id));
-        const merged = ordered.filter((msg) => !existing.has(msg.id));
-        return linkReplies([...merged, ...prev]);
-      });
-      void syncMessageReactions(ordered.map((msg) => msg.id));
-      setOldestTimestamp(ordered[0]?.timestamp ?? oldestTimestamp);
-    }
+      if (ordered.length > 0) {
+        setMessages((prev) => {
+          const existing = new Set(prev.map((msg) => msg.id));
+          const merged = ordered.filter((msg) => !existing.has(msg.id));
+          return linkReplies([...merged, ...prev]);
+        });
+        void syncMessageReactions(ordered.map((msg) => msg.id));
+        const viewOnceIds = ordered.filter((msg) => msg.isViewOnce).map((msg) => msg.id);
+        void syncViewOnceStatus(viewOnceIds);
+        setOldestTimestamp(ordered[0]?.timestamp ?? oldestTimestamp);
+      }
     setHasMore((data || []).length === PAGE_SIZE);
     setLoadingEarlier(false);
-  }, [conversationId, linkReplies, loadingEarlier, mapRowToMessage, oldestTimestamp, syncMessageReactions, user?.id]);
+  }, [conversationId, linkReplies, loadingEarlier, mapRowToMessage, oldestTimestamp, syncMessageReactions, syncViewOnceStatus, user?.id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -3105,6 +3726,9 @@ export default function ConversationScreen() {
           });
           if (!hiddenMessageIdsRef.current.has(row.id)) {
             void syncMessageReactions([row.id]);
+            if (row.is_view_once) {
+              void syncViewOnceStatus([row.id]);
+            }
           }
           void supabase
             .from('messages')
@@ -3179,6 +3803,9 @@ export default function ConversationScreen() {
           });
           if (!hiddenMessageIdsRef.current.has(row.id)) {
             void syncMessageReactions([row.id]);
+            if (row.is_view_once) {
+              void syncViewOnceStatus([row.id]);
+            }
           }
         }
       )
@@ -3215,7 +3842,7 @@ export default function ConversationScreen() {
         clearTimeout(reconnectTimerRef.current);
       }
     };
-  }, [conversationId, linkReplies, mapRowToMessage, syncMessageReactions, triggerReconnectToast, user?.id]);
+  }, [conversationId, linkReplies, mapRowToMessage, syncMessageReactions, syncViewOnceStatus, triggerReconnectToast, user?.id]);
 
   useEffect(() => {
     if (!user?.id || !conversationId) return;
@@ -3266,6 +3893,38 @@ export default function ConversationScreen() {
       supabase.removeChannel(channel);
     };
   }, [applyReactionUpdate, conversationId, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || !conversationId) return;
+    const channel = supabase
+      .channel(`message_views:${conversationId}:${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'message_views',
+        },
+        (payload) => {
+          const row = payload.new as { message_id: string; viewer_id: string };
+          if (!row?.message_id || !row?.viewer_id) return;
+          if (!messagesRef.current.some((msg) => msg.id === row.message_id)) return;
+          setViewOnceStatus((prev) => {
+            const current = prev[row.message_id] ?? { viewedByMe: false, viewedByPeer: false };
+            const next = {
+              viewedByMe: current.viewedByMe || row.viewer_id === user.id,
+              viewedByPeer: current.viewedByPeer || row.viewer_id === conversationId,
+            };
+            return { ...prev, [row.message_id]: next };
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [conversationId, user?.id]);
 
   useEffect(() => {
     if (!user?.id || !conversationId) return;
@@ -3691,20 +4350,72 @@ export default function ConversationScreen() {
     updateTyping(text);
   };
 
+  const submitEditMessage = useCallback(async () => {
+    if (!editingMessage || !user?.id) return;
+    const trimmed = inputText.trim();
+    if (!trimmed) return;
+    if (trimmed === (editingMessage.text || '')) {
+      setEditingMessage(null);
+      setInputText('');
+      updateTyping('');
+      return;
+    }
+    const targetId = editingMessage.id;
+    const optimisticEditedAt = new Date();
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === targetId
+          ? { ...msg, text: trimmed, editedAt: optimisticEditedAt }
+          : msg
+      )
+    );
+    setEditingMessage(null);
+    setInputText('');
+    updateTyping('');
+
+    const { data, error } = await supabase.rpc('edit_message', {
+      message_id: targetId,
+      new_text: trimmed,
+    });
+
+    if (error) {
+      console.log('[chat] edit message error', error);
+      Alert.alert('Edit message', 'Unable to update this message right now.');
+      await fetchMessages();
+      return;
+    }
+
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return;
+    const mapped = mapRowToMessage(row as MessageRow);
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === mapped.id
+          ? { ...msg, text: mapped.text, editedAt: mapped.editedAt ?? optimisticEditedAt }
+          : msg
+      )
+    );
+  }, [editingMessage, fetchMessages, inputText, mapRowToMessage, updateTyping, user?.id]);
+
   const sendMessage = async () => {
+    if (editingMessage) {
+      await submitEditMessage();
+      return;
+    }
     if (isChatBlocked) {
       Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
       return;
     }
     const trimmed = inputText.trim();
     if (!trimmed || !user?.id || !conversationId) return;
+    const nextType: MessageType['type'] = 'text';
     const tempId = `temp-${Date.now()}`;
     const optimistic: MessageType = {
       id: tempId,
       text: trimmed,
       senderId: user.id,
       timestamp: new Date(),
-      type: 'text',
+      type: nextType,
       reactions: [],
       status: 'sending',
       replyToId: replyingTo?.id ?? null,
@@ -3715,6 +4426,7 @@ export default function ConversationScreen() {
     setInputText('');
     updateTyping('');
     setReplyingTo(null);
+    setEditingMessage(null);
 
     const { data, error } = await supabase
       .from('messages')
@@ -3726,7 +4438,7 @@ export default function ConversationScreen() {
         message_type: 'text',
         reply_to_message_id: replyingTo?.id ?? null,
       })
-      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
+      .select(MESSAGE_SELECT_FIELDS)
       .single();
 
     if (error || !data) {
@@ -3786,6 +4498,8 @@ export default function ConversationScreen() {
     ]);
     setShowMoodStickers(false);
     setReplyingTo(null);
+    setEditingMessage(null);
+    setViewOnceMode(false);
 
     const payload = buildStickerPayload(sticker);
     const { data, error } = await supabase
@@ -3798,7 +4512,7 @@ export default function ConversationScreen() {
         message_type: 'mood_sticker',
         reply_to_message_id: replyingTo?.id ?? null,
       })
-      .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
+      .select(MESSAGE_SELECT_FIELDS)
       .single();
 
     if (error || !data) {
@@ -4118,7 +4832,7 @@ export default function ConversationScreen() {
         audio_waveform: waveform,
         reply_to_message_id: replyingTo?.id ?? null,
       })
-        .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,reply_to_message_id')
+        .select(MESSAGE_SELECT_FIELDS)
         .single();
 
       if (error || !data) {
@@ -4224,16 +4938,25 @@ export default function ConversationScreen() {
     try {
       const fileName = asset.fileName ?? asset.uri.split('/').pop() ?? `camera-${Date.now()}`;
       const contentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
-      const publicUrl = await uploadChatMedia({ uri: asset.uri, fileName, contentType });
-      if (asset.type === 'image') {
-        await sendImageAttachment(publicUrl);
+      if (viewOnceMode) {
+        await sendEncryptedMediaAttachment({
+          uri: asset.uri,
+          fileName,
+          contentType,
+          kind: asset.type === 'video' ? 'video' : 'image',
+        });
       } else {
-        await sendVideoAttachment(publicUrl);
+        const { publicUrl } = await uploadChatMedia({ uri: asset.uri, fileName, contentType });
+        if (asset.type === 'image') {
+          await sendImageAttachment({ imageUrl: publicUrl });
+        } else {
+          await sendVideoAttachment({ videoUrl: publicUrl });
+        }
       }
     } catch (error) {
       Alert.alert('Attachment', 'Unable to upload this file.');
     }
-  }, [closeAttachmentSheet, sendImageAttachment, sendVideoAttachment, uploadChatMedia]);
+  }, [closeAttachmentSheet, sendEncryptedMediaAttachment, sendImageAttachment, sendVideoAttachment, uploadChatMedia, viewOnceMode]);
 
   const handleLibraryPress = useCallback(async () => {
     const libraryStatus = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -4252,16 +4975,25 @@ export default function ConversationScreen() {
     try {
       const fileName = asset.fileName ?? asset.uri.split('/').pop() ?? `library-${Date.now()}`;
       const contentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
-      const publicUrl = await uploadChatMedia({ uri: asset.uri, fileName, contentType });
-      if (asset.type === 'image') {
-        await sendImageAttachment(publicUrl);
+      if (viewOnceMode) {
+        await sendEncryptedMediaAttachment({
+          uri: asset.uri,
+          fileName,
+          contentType,
+          kind: asset.type === 'video' ? 'video' : 'image',
+        });
       } else {
-        await sendVideoAttachment(publicUrl);
+        const { publicUrl } = await uploadChatMedia({ uri: asset.uri, fileName, contentType });
+        if (asset.type === 'image') {
+          await sendImageAttachment({ imageUrl: publicUrl });
+        } else {
+          await sendVideoAttachment({ videoUrl: publicUrl });
+        }
       }
     } catch (error) {
       Alert.alert('Attachment', 'Unable to upload this file.');
     }
-  }, [closeAttachmentSheet, sendImageAttachment, sendVideoAttachment, uploadChatMedia]);
+  }, [closeAttachmentSheet, sendEncryptedMediaAttachment, sendImageAttachment, sendVideoAttachment, uploadChatMedia, viewOnceMode]);
 
   const handleDocumentPress = useCallback(async () => {
     const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
@@ -4272,7 +5004,7 @@ export default function ConversationScreen() {
     try {
       const fileName = asset.name ?? asset.uri.split('/').pop() ?? `file-${Date.now()}`;
       const contentType = asset.mimeType ?? 'application/octet-stream';
-      const publicUrl = await uploadChatMedia({ uri: asset.uri, fileName, contentType });
+      const { publicUrl } = await uploadChatMedia({ uri: asset.uri, fileName, contentType });
       const sizeLabel = formatFileSize(asset.size);
       const typeLabel = getFileTypeLabel(contentType, fileName);
       const labelParts = [fileName, sizeLabel, typeLabel].filter(Boolean);
@@ -4292,12 +5024,178 @@ export default function ConversationScreen() {
 
   const replyToMessage = useCallback((message: MessageType) => {
     setReplyingTo(message);
+    setEditingMessage(null);
+    setViewOnceMode(false);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, []);
 
   const cancelReply = () => {
     setReplyingTo(null);
   };
+
+  const startEditMessage = useCallback((message: MessageType) => {
+    if (!user?.id) return;
+    if (message.senderId !== user.id) return;
+    if (message.type !== 'text' || message.deletedForAll) return;
+    if (message.id.startsWith('temp-')) return;
+    setEditingMessage(message);
+    setReplyingTo(null);
+    setViewOnceMode(false);
+    setInputText(message.text || '');
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [user?.id]);
+
+  const cancelEdit = () => {
+    setEditingMessage(null);
+  };
+
+  const openEditHistory = useCallback(async (message: MessageType) => {
+    if (!message.editedAt) return;
+    setEditHistoryMessage(message);
+    setEditHistoryVisible(true);
+    setEditHistoryEntries([]);
+    setEditHistoryLoading(true);
+    const { data, error } = await supabase
+      .from('message_edits')
+      .select('id,message_id,editor_user_id,previous_text,created_at')
+      .eq('message_id', message.id)
+      .order('created_at', { ascending: false });
+    if (error) {
+      console.log('[chat] edit history error', error);
+      setEditHistoryEntries([]);
+      setEditHistoryLoading(false);
+      return;
+    }
+    setEditHistoryEntries((data || []) as MessageEditRow[]);
+    setEditHistoryLoading(false);
+  }, []);
+
+  const closeEditHistory = useCallback(() => {
+    setEditHistoryVisible(false);
+    setEditHistoryMessage(null);
+    setEditHistoryEntries([]);
+  }, []);
+
+  const markViewOnceSeen = useCallback(async (message: MessageType) => {
+    if (!user?.id) return;
+    if (message.senderId === user.id) return;
+    if (!message.isViewOnce) return;
+    const current = viewOnceStatusRef.current[message.id];
+    if (current?.viewedByMe) return;
+    setViewOnceStatus((prev) => ({
+      ...prev,
+      [message.id]: {
+        viewedByMe: true,
+        viewedByPeer: prev[message.id]?.viewedByPeer ?? false,
+      },
+    }));
+    const { error } = await supabase
+      .from('message_views')
+      .upsert(
+        {
+          message_id: message.id,
+          viewer_id: user.id,
+        },
+        { onConflict: 'message_id,viewer_id' }
+      );
+    if (error) {
+      console.log('[chat] mark view-once error', error);
+    }
+  }, [user?.id]);
+
+  const closeViewOnceMessage = useCallback(async () => {
+    if (!viewOnceModalMessage) return;
+    const message = viewOnceModalMessage;
+    setViewOnceModalMessage(null);
+    setViewOnceSecondsLeft(null);
+    setViewOnceDecrypting(false);
+    if (viewOnceMediaUri) {
+      try {
+        await FileSystem.deleteAsync(viewOnceMediaUri, { idempotent: true });
+      } catch (error) {
+        console.log('[chat] view-once cleanup error', error);
+      }
+    }
+    setViewOnceMediaUri(null);
+    await markViewOnceSeen(message);
+  }, [markViewOnceSeen, viewOnceMediaUri, viewOnceModalMessage]);
+
+  const openViewOnceMessage = useCallback(async (message: MessageType) => {
+    if (!user?.id) return;
+    if (!message.isViewOnce || !message.encryptedMedia) return;
+    if (message.senderId === user.id) return;
+    if (viewOnceStatusRef.current[message.id]?.viewedByMe) return;
+    if (!message.encryptedMediaPath || !message.encryptedKeyReceiver || !message.encryptedKeyNonce || !message.encryptedMediaNonce) {
+      Alert.alert('View once', 'Missing decryption info.');
+      return;
+    }
+    setViewOnceModalMessage(message);
+    setViewOnceDecrypting(true);
+    setViewOnceSecondsLeft(null);
+
+    try {
+      const keypair = await ensureOwnKeypair();
+      if (!keypair) {
+        throw new Error('missing_keypair');
+      }
+      const senderPublicKey = await fetchPeerPublicKey();
+      if (!senderPublicKey) {
+        throw new Error('missing_sender_key');
+      }
+      const { data: signed, error: signedError } = await supabase
+        .storage
+        .from(CHAT_MEDIA_BUCKET)
+        .createSignedUrl(message.encryptedMediaPath, 120);
+      if (signedError || !signed?.signedUrl) {
+        console.log('[view-once] signed url error', signedError);
+        throw new Error('signed_url');
+      }
+      const res = await fetch(signed.signedUrl);
+      const buf = await res.arrayBuffer();
+      const cipherBytes = new Uint8Array(buf);
+      const plaintext = await decryptMediaBytes({
+        cipherBytes,
+        mediaNonceB64: message.encryptedMediaNonce,
+        keyNonceB64: message.encryptedKeyNonce,
+        encryptedKeyB64: message.encryptedKeyReceiver,
+        senderPublicKeyB64: senderPublicKey,
+        receiverSecretKeyB64: keypair.secretKeyB64,
+      });
+      cipherBytes.fill(0);
+      if (!plaintext) {
+        throw new Error('decrypt_failed');
+      }
+
+      const isVideo = message.type === 'video' || (message.encryptedMediaMime || '').includes('video');
+      const ext = isVideo ? 'mp4' : 'jpg';
+      const tempPath = `${FileSystem.cacheDirectory ?? ''}viewonce-${message.id}.${ext}`;
+      const base64 = encodeBase64(plaintext);
+      plaintext.fill(0);
+      await FileSystem.writeAsStringAsync(tempPath, base64, { encoding: FileSystem.EncodingType.Base64 });
+
+      setViewOnceMediaUri(tempPath);
+      setViewOnceSecondsLeft(VIEW_ONCE_DURATION_SECONDS);
+    } catch (error) {
+      console.log('[view-once] open error', error);
+      Alert.alert('View once', 'Unable to open media.');
+      setViewOnceModalMessage(null);
+      setViewOnceMediaUri(null);
+    } finally {
+      setViewOnceDecrypting(false);
+    }
+  }, [ensureOwnKeypair, fetchPeerPublicKey, user?.id]);
+
+  useEffect(() => {
+    if (!viewOnceModalMessage || viewOnceSecondsLeft == null) return;
+    if (viewOnceSecondsLeft <= 0) {
+      void closeViewOnceMessage();
+      return;
+    }
+    const timer = setTimeout(() => {
+      setViewOnceSecondsLeft((prev) => (prev == null ? null : prev - 1));
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [closeViewOnceMessage, viewOnceModalMessage, viewOnceSecondsLeft]);
 
   const openMessageActions = useCallback((message: MessageType) => {
     setActionMessageId(message.id);
@@ -4455,6 +5353,10 @@ export default function ConversationScreen() {
 
   messagesRef.current = messages;
 
+  useEffect(() => {
+    viewOnceStatusRef.current = viewOnceStatus;
+  }, [viewOnceStatus]);
+
   const maybeScrollToEnd = useCallback((animated: boolean) => {
     if (!flatListRef.current) return;
     if (scrollRequestRef.current !== null) {
@@ -4562,109 +5464,6 @@ export default function ConversationScreen() {
       });
     },
     [markAsRead, user?.id]
-  );
-
-  const renderMessage = useCallback(
-    ({ item, index }: { item: MessageType; index: number }) => {
-      const isMyMessage = item.senderId === (user?.id || '');
-      const prevMessage = messagesRef.current[index - 1];
-      const prevSenderId = prevMessage?.senderId;
-      const showAvatar = !isMyMessage && !isChatBlocked && (index === 0 || prevSenderId !== item.senderId);
-      const isPlaying = playingVoiceId === item.id;
-      const isReactionOpen = showReactions === item.id;
-      const isFocused = focusedMessageId === item.id;
-      const isActionPinned = pinnedMessageIds.includes(item.id);
-      const timeLabel = formatTime(item.timestamp);
-      const showDateSeparator = !prevMessage || !isSameDay(prevMessage.timestamp, item.timestamp);
-      const imageSize = item.type === 'image' && item.imageUrl ? imageSizes[item.imageUrl] : undefined;
-      const videoSize = item.type === 'video' && item.videoUrl ? videoSizes[item.videoUrl] : undefined;
-      const now = item.type === 'location' ? nowTick : null;
-
-      return (
-        <View>
-          {showDateSeparator && (
-            <View style={styles.daySeparator}>
-              <Text style={styles.daySeparatorText}>{formatDayLabel(item.timestamp)}</Text>
-            </View>
-          )}
-          <MessageRowItem
-            item={item}
-            isMyMessage={isMyMessage}
-            showAvatar={showAvatar}
-            isPlaying={isPlaying}
-            isReactionOpen={isReactionOpen}
-            isFocused={isFocused}
-            focusToken={isFocused ? focusTick : 0}
-            timeLabel={timeLabel}
-            userAvatar={userAvatar}
-            currentUserId={user?.id || ''}
-            peerName={userName}
-            imageSize={imageSize}
-            videoSize={videoSize}
-            theme={theme}
-            isDark={isDark}
-            styles={styles}
-            onLongPress={handleLongPress}
-            onToggleVoice={toggleVoicePlayback}
-            onFocus={focusMessage}
-            onReply={replyToMessage}
-            onReplyJump={jumpToMessage}
-            onAddReaction={addReaction}
-            onCloseReactions={() => setShowReactions(null)}
-            onCopyMessage={handleCopyMessage}
-            onTogglePin={handleToggleMessagePin}
-            onDeleteMessage={handleDeleteAction}
-            isActionPinned={isActionPinned}
-            onOpenReactionSheet={openReactionSheet}
-            onViewImage={setImageViewerUrl}
-            onViewVideo={setVideoViewerUrl}
-            onVideoSize={handleVideoSize}
-            onOpenDocument={handleOpenDocument}
-            onOpenLocation={openLocationViewer}
-            onStopLiveShare={stopLiveSharing}
-            highlightQuery={chatSearchQuery}
-            onHighlightPress={chatSearchQuery.trim() ? jumpToNextMatch : undefined}
-            now={now}
-          />
-        </View>
-      );
-    },
-    [
-      focusedMessageId,
-      focusTick,
-      playingVoiceId,
-      showReactions,
-      user?.id,
-      userAvatar,
-      userName,
-      theme,
-      isDark,
-      imageSizes,
-      videoSizes,
-      isChatBlocked,
-      handleLongPress,
-      toggleVoicePlayback,
-      replyToMessage,
-      addReaction,
-      isSameDay,
-      formatDayLabel,
-      formatTime,
-      chatSearchQuery,
-      chatSearchVisible,
-      handleVideoSize,
-      handleOpenDocument,
-      openLocationViewer,
-      stopLiveSharing,
-      handleCopyMessage,
-      handleToggleMessagePin,
-      handleDeleteAction,
-      openReactionSheet,
-      jumpToMessage,
-      jumpToNextMatch,
-      nowTick,
-      focusMessage,
-      pinnedMessageIds,
-    ]
   );
 
   const resetImageScale = useCallback(() => {
@@ -4993,6 +5792,10 @@ export default function ConversationScreen() {
   }, [reactionProfiles, reactionSheetMessage, reactionSheetVisible]);
 
   const handleCopyMessage = useCallback(async (message: MessageType) => {
+    if (message.isViewOnce) {
+      Alert.alert('Copy', 'View once messages cannot be copied.');
+      return;
+    }
     let textToCopy = '';
     if (message.type === 'text') {
       textToCopy = message.text || '';
@@ -5034,6 +5837,121 @@ export default function ConversationScreen() {
     }
     void hideMessageForMe(message);
   }, [closeMessageActions, deleteMessageForEveryone, hideMessageForMe, user?.id]);
+
+  const renderMessage = useCallback(
+    ({ item, index }: { item: MessageType; index: number }) => {
+      const isMyMessage = item.senderId === (user?.id || '');
+      const prevMessage = messagesRef.current[index - 1];
+      const prevSenderId = prevMessage?.senderId;
+      const showAvatar = !isMyMessage && !isChatBlocked && (index === 0 || prevSenderId !== item.senderId);
+      const isPlaying = playingVoiceId === item.id;
+      const isReactionOpen = showReactions === item.id;
+      const isFocused = focusedMessageId === item.id;
+      const isActionPinned = pinnedMessageIds.includes(item.id);
+      const timeLabel = formatTime(item.timestamp);
+      const showDateSeparator = !prevMessage || !isSameDay(prevMessage.timestamp, item.timestamp);
+      const imageSize = item.type === 'image' && item.imageUrl ? imageSizes[item.imageUrl] : undefined;
+      const videoSize = item.type === 'video' && item.videoUrl ? videoSizes[item.videoUrl] : undefined;
+      const now = item.type === 'location' ? nowTick : null;
+      const viewOnceState = viewOnceStatus[item.id];
+      const viewOnceViewedByMe = viewOnceState?.viewedByMe ?? false;
+      const viewOnceViewedByPeer = viewOnceState?.viewedByPeer ?? false;
+
+      return (
+        <View>
+          {showDateSeparator && (
+            <View style={styles.daySeparator}>
+              <Text style={styles.daySeparatorText}>{formatDayLabel(item.timestamp)}</Text>
+            </View>
+          )}
+          <MessageRowItem
+            item={item}
+            isMyMessage={isMyMessage}
+            showAvatar={showAvatar}
+            isPlaying={isPlaying}
+            isReactionOpen={isReactionOpen}
+            isFocused={isFocused}
+            focusToken={isFocused ? focusTick : 0}
+            timeLabel={timeLabel}
+            userAvatar={userAvatar}
+            currentUserId={user?.id || ''}
+            peerName={userName}
+            imageSize={imageSize}
+            videoSize={videoSize}
+            theme={theme}
+            isDark={isDark}
+            styles={styles}
+            onLongPress={handleLongPress}
+            onToggleVoice={toggleVoicePlayback}
+            onFocus={focusMessage}
+            onReply={replyToMessage}
+            onReplyJump={jumpToMessage}
+            onEditMessage={startEditMessage}
+            onAddReaction={addReaction}
+            onCloseReactions={() => setShowReactions(null)}
+            onCopyMessage={handleCopyMessage}
+            onTogglePin={handleToggleMessagePin}
+            onDeleteMessage={handleDeleteAction}
+            isActionPinned={isActionPinned}
+            onOpenReactionSheet={openReactionSheet}
+            onOpenEditHistory={openEditHistory}
+            onViewImage={setImageViewerUrl}
+            onViewVideo={setVideoViewerUrl}
+            onVideoSize={handleVideoSize}
+            onOpenDocument={handleOpenDocument}
+            onOpenLocation={openLocationViewer}
+            onStopLiveShare={stopLiveSharing}
+            onOpenViewOnce={openViewOnceMessage}
+            viewOnceViewedByMe={viewOnceViewedByMe}
+            viewOnceViewedByPeer={viewOnceViewedByPeer}
+            highlightQuery={chatSearchQuery}
+            onHighlightPress={chatSearchQuery.trim() ? jumpToNextMatch : undefined}
+            now={now}
+          />
+        </View>
+      );
+    },
+    [
+      focusedMessageId,
+      focusTick,
+      playingVoiceId,
+      showReactions,
+      user?.id,
+      userAvatar,
+      userName,
+      theme,
+      isDark,
+      imageSizes,
+      videoSizes,
+      isChatBlocked,
+      handleLongPress,
+      toggleVoicePlayback,
+      replyToMessage,
+      startEditMessage,
+      addReaction,
+      isSameDay,
+      formatDayLabel,
+      formatTime,
+      chatSearchQuery,
+      chatSearchVisible,
+      handleVideoSize,
+      handleOpenDocument,
+      openLocationViewer,
+      stopLiveSharing,
+      viewOnceStatus,
+      openViewOnceMessage,
+      handleCopyMessage,
+      handleToggleMessagePin,
+      handleDeleteAction,
+      openReactionSheet,
+      openEditHistory,
+      jumpToMessage,
+      jumpToNextMatch,
+      nowTick,
+      focusMessage,
+      pinnedMessageIds,
+    ]
+  );
 
   const openReportModal = useCallback(() => {
     setReportModalVisible(true);
@@ -6101,22 +7019,62 @@ export default function ConversationScreen() {
                   </View>
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={styles.messageActionCard}
-                  onPress={() => {
-                    triggerActionHaptic(Haptics.ImpactFeedbackStyle.Light);
-                    closeMessageActions();
-                    void handleCopyMessage(actionMessage);
-                  }}
-                >
-                  <View style={styles.messageActionIcon}>
-                    <MaterialCommunityIcons name="content-copy" size={22} color={theme.text} />
-                  </View>
-                  <View style={styles.messageActionText}>
-                    <Text style={styles.messageActionLabel}>Copy</Text>
-                    <Text style={styles.messageActionHint}>Copy to clipboard.</Text>
-                  </View>
-                </TouchableOpacity>
+                {canEditAction ? (
+                  <TouchableOpacity
+                    style={styles.messageActionCard}
+                    onPress={() => {
+                      triggerActionHaptic(Haptics.ImpactFeedbackStyle.Medium);
+                      closeMessageActions();
+                      startEditMessage(actionMessage);
+                    }}
+                  >
+                    <View style={styles.messageActionIcon}>
+                      <MaterialCommunityIcons name="pencil-outline" size={22} color={theme.text} />
+                    </View>
+                    <View style={styles.messageActionText}>
+                      <Text style={styles.messageActionLabel}>Edit message</Text>
+                      <Text style={styles.messageActionHint}>Update the text in place.</Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : null}
+
+                {!actionMessage.isViewOnce ? (
+                  <TouchableOpacity
+                    style={styles.messageActionCard}
+                    onPress={() => {
+                      triggerActionHaptic(Haptics.ImpactFeedbackStyle.Light);
+                      closeMessageActions();
+                      void handleCopyMessage(actionMessage);
+                    }}
+                  >
+                    <View style={styles.messageActionIcon}>
+                      <MaterialCommunityIcons name="content-copy" size={22} color={theme.text} />
+                    </View>
+                    <View style={styles.messageActionText}>
+                      <Text style={styles.messageActionLabel}>Copy</Text>
+                      <Text style={styles.messageActionHint}>Copy to clipboard.</Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : null}
+
+                {actionMessage.editedAt ? (
+                  <TouchableOpacity
+                    style={styles.messageActionCard}
+                    onPress={() => {
+                      triggerActionHaptic(Haptics.ImpactFeedbackStyle.Light);
+                      closeMessageActions();
+                      void openEditHistory(actionMessage);
+                    }}
+                  >
+                    <View style={styles.messageActionIcon}>
+                      <MaterialCommunityIcons name="history" size={22} color={theme.text} />
+                    </View>
+                    <View style={styles.messageActionText}>
+                      <Text style={styles.messageActionLabel}>View edit history</Text>
+                      <Text style={styles.messageActionHint}>See previous versions.</Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : null}
 
                 <TouchableOpacity
                   style={styles.messageActionCard}
@@ -6193,6 +7151,115 @@ export default function ConversationScreen() {
           >
             <Text style={styles.messageActionCancelText}>Cancel</Text>
           </TouchableOpacity>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        visible={editHistoryVisible}
+        animationType="fade"
+        onRequestClose={closeEditHistory}
+      >
+        <Pressable style={styles.editHistoryBackdrop} onPress={closeEditHistory} />
+        <View style={styles.editHistorySheet}>
+          <BlurView
+            intensity={34}
+            tint={isDark ? 'dark' : 'light'}
+            style={styles.editHistoryBlur}
+          />
+          <View style={styles.editHistoryHeader}>
+            <View>
+              <Text style={styles.editHistoryTitle}>Edit history</Text>
+              <Text style={styles.editHistorySubtitle}>
+                {editHistoryMessage
+                  ? `${formatDayLabel(editHistoryMessage.timestamp)} ${formatTime(editHistoryMessage.timestamp)}`
+                  : 'Message edits'}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={closeEditHistory} style={styles.editHistoryClose}>
+              <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView contentContainerStyle={styles.editHistoryContent}>
+            {editHistoryMessage ? (
+              <View style={styles.editHistoryCard}>
+                <View style={styles.editHistoryLabelRow}>
+                  <MaterialCommunityIcons name="pencil-outline" size={14} color={theme.tint} />
+                  <Text style={styles.editHistoryLabel}>Current</Text>
+                </View>
+                <Text style={styles.editHistoryText}>{editHistoryMessage.text}</Text>
+                <Text style={styles.editHistoryMeta}>
+                  {formatDayLabel(editHistoryMessage.timestamp)} {formatTime(editHistoryMessage.timestamp)}
+                </Text>
+              </View>
+            ) : null}
+            {editHistoryLoading ? (
+              <Text style={styles.editHistoryHint}>Loading edit history...</Text>
+            ) : editHistoryEntries.length === 0 ? (
+              <Text style={styles.editHistoryEmpty}>No edits recorded yet.</Text>
+            ) : (
+              editHistoryEntries.map((entry) => {
+                const editedAt = new Date(entry.created_at);
+                return (
+                  <View key={entry.id} style={styles.editHistoryCard}>
+                    <View style={styles.editHistoryLabelRow}>
+                      <MaterialCommunityIcons name="history" size={14} color={theme.textMuted} />
+                      <Text style={styles.editHistoryLabel}>Previous</Text>
+                    </View>
+                    <Text style={styles.editHistoryText}>{entry.previous_text}</Text>
+                    <Text style={styles.editHistoryMeta}>
+                      {formatDayLabel(editedAt)} {formatTime(editedAt)}
+                    </Text>
+                  </View>
+                );
+              })
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      <Modal
+        transparent
+        visible={Boolean(viewOnceModalMessage)}
+        animationType="fade"
+        onRequestClose={closeViewOnceMessage}
+      >
+        <Pressable style={styles.viewOnceModalBackdrop} onPress={closeViewOnceMessage} />
+        <View style={styles.viewOnceModalCard}>
+          <BlurView
+            intensity={28}
+            tint={isDark ? 'dark' : 'light'}
+            style={styles.viewOnceModalBlur}
+          />
+          <View style={styles.viewOnceModalContent}>
+            <View style={styles.viewOnceModalHeader}>
+              <View style={styles.viewOnceModalTitleRow}>
+                <MaterialCommunityIcons name="shield-lock-outline" size={16} color={theme.tint} />
+                <Text style={styles.viewOnceModalTitle}>View once</Text>
+              </View>
+              <View style={styles.viewOnceModalTimer}>
+                <Text style={styles.viewOnceModalTimerText}>
+                  {viewOnceSecondsLeft ?? VIEW_ONCE_DURATION_SECONDS}s
+                </Text>
+              </View>
+            </View>
+            <View style={styles.viewOnceMediaFrame}>
+              {viewOnceDecrypting ? (
+                <ActivityIndicator size="small" color={theme.tint} />
+              ) : viewOnceMediaUri ? (
+                viewOnceModalMessage?.type === 'video' || (viewOnceModalMessage?.encryptedMediaMime || '').includes('video') ? (
+                  <VideoViewer url={viewOnceMediaUri} visible styles={styles} />
+                ) : (
+                  <Image source={{ uri: viewOnceMediaUri }} style={styles.viewOnceMediaImage} />
+                )
+              ) : (
+                <Text style={styles.viewOnceModalText}>Unable to load media.</Text>
+              )}
+            </View>
+            <TouchableOpacity style={styles.viewOnceModalButton} onPress={closeViewOnceMessage}>
+              <Text style={styles.viewOnceModalButtonText}>Done</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </Modal>
 
@@ -6823,6 +7890,22 @@ export default function ConversationScreen() {
           </View>
         )}
 
+        {editingMessage && (
+          <View style={styles.editPreview}>
+            <View style={styles.editPreviewContent}>
+              <View style={styles.editPreviewBadge}>
+                <MaterialCommunityIcons name="pencil-outline" size={14} color={theme.tint} />
+              </View>
+              <Text style={styles.editPreviewText} numberOfLines={1}>
+                Editing: {editingMessage.text || 'Message'}
+              </Text>
+            </View>
+            <TouchableOpacity onPress={cancelEdit} style={styles.cancelEditButton}>
+              <MaterialCommunityIcons name="close" size={16} color={theme.textMuted} />
+            </TouchableOpacity>
+          </View>
+        )}
+
         {isChatBlocked ? (
           <View style={styles.blockedInput}>
             <MaterialCommunityIcons name="block-helper" size={16} color={theme.textMuted} />
@@ -6967,7 +8050,9 @@ export default function ConversationScreen() {
                 {/* Send Button */}
                 {inputText.trim() && (
                   <TouchableOpacity 
-                    style={styles.sendButtonActive}
+                    style={[
+                      styles.sendButtonActive,
+                    ]}
                     onPress={sendMessage}
                   >
                     <MaterialCommunityIcons name="send" size={20} color={Colors.light.background} />
@@ -7007,6 +8092,52 @@ export default function ConversationScreen() {
               </TouchableOpacity>
             </View>
 
+            <TouchableOpacity
+              style={[
+                styles.viewOnceAttachmentRow,
+                viewOnceMode && styles.viewOnceAttachmentRowActive,
+              ]}
+              onPress={async () => {
+                Haptics.selectionAsync().catch(() => {});
+                if (!viewOnceMode) {
+                  const keys = await ensureViewOnceKeys();
+                  if (!keys) return;
+                }
+                setViewOnceMode((prev) => !prev);
+              }}
+            >
+              <View style={styles.viewOnceAttachmentLeft}>
+                <View
+                  style={[
+                    styles.viewOnceAttachmentIcon,
+                    viewOnceMode && styles.viewOnceAttachmentIconActive,
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name={viewOnceMode ? 'shield-lock' : 'shield-lock-outline'}
+                    size={18}
+                    color={viewOnceMode ? Colors.light.background : theme.textMuted}
+                  />
+                </View>
+                <View>
+                  <Text style={styles.viewOnceAttachmentTitle}>View once (encrypted)</Text>
+                  <Text style={styles.viewOnceAttachmentSubtitle}>Only for photos & videos</Text>
+                </View>
+              </View>
+              <View
+                style={[
+                  styles.viewOnceAttachmentToggle,
+                  viewOnceMode && styles.viewOnceAttachmentToggleActive,
+                ]}
+              >
+                <MaterialCommunityIcons
+                  name={viewOnceMode ? 'lock' : 'lock-open-variant'}
+                  size={16}
+                  color={viewOnceMode ? Colors.light.background : theme.textMuted}
+                />
+              </View>
+            </TouchableOpacity>
+
             <View style={styles.imagePickerGrid}>
               <TouchableOpacity
                 style={styles.imagePickerOption}
@@ -7015,6 +8146,12 @@ export default function ConversationScreen() {
                 <View style={styles.imagePickerIcon}>
                   <MaterialCommunityIcons name="camera-outline" size={22} color={theme.tint} />
                 </View>
+                {viewOnceMode && (
+                  <View style={styles.viewOnceMediaBadge}>
+                    <MaterialCommunityIcons name="lock" size={12} color={Colors.light.background} />
+                    <Text style={styles.viewOnceMediaBadgeText}>Once</Text>
+                  </View>
+                )}
                 <Text style={styles.imagePickerLabel}>Camera</Text>
                 <Text style={styles.imagePickerSubLabel}>Photo & video</Text>
               </TouchableOpacity>
@@ -7026,6 +8163,12 @@ export default function ConversationScreen() {
                 <View style={styles.imagePickerIcon}>
                   <MaterialCommunityIcons name="image-multiple-outline" size={22} color={theme.tint} />
                 </View>
+                {viewOnceMode && (
+                  <View style={styles.viewOnceMediaBadge}>
+                    <MaterialCommunityIcons name="lock" size={12} color={Colors.light.background} />
+                    <Text style={styles.viewOnceMediaBadgeText}>Once</Text>
+                  </View>
+                )}
                 <Text style={styles.imagePickerLabel}>Photos</Text>
                 <Text style={styles.imagePickerSubLabel}>Library</Text>
               </TouchableOpacity>
@@ -7978,6 +9121,200 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.text,
     },
 
+    // Edit History Sheet
+    editHistoryBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: withAlpha(Colors.dark.background, 0.45),
+    },
+    editHistorySheet: {
+      position: 'absolute',
+      left: 16,
+      right: 16,
+      bottom: 24,
+      maxHeight: screenHeight * 0.6,
+      borderRadius: 20,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.78 : 0.94),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      overflow: 'hidden',
+      shadowColor: Colors.dark.background,
+      shadowOpacity: 0.16,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 7,
+    },
+    editHistoryBlur: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    editHistoryHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+    },
+    editHistoryTitle: {
+      fontSize: 14,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    editHistorySubtitle: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      marginTop: 2,
+    },
+    editHistoryClose: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.06),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+    },
+    editHistoryContent: {
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      gap: 10,
+    },
+    editHistoryCard: {
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      borderRadius: 16,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+      gap: 6,
+    },
+    editHistoryLabelRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    editHistoryLabel: {
+      fontSize: 11,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.textMuted,
+      textTransform: 'uppercase',
+      letterSpacing: 0.6,
+    },
+    editHistoryText: {
+      fontSize: 14,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.text,
+    },
+    editHistoryMeta: {
+      fontSize: 11,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+    },
+    editHistoryEmpty: {
+      fontSize: 13,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      textAlign: 'center',
+      paddingVertical: 20,
+    },
+    editHistoryHint: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      textAlign: 'center',
+      paddingVertical: 10,
+    },
+    viewOnceModalBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: withAlpha(Colors.dark.background, 0.55),
+    },
+    viewOnceModalCard: {
+      position: 'absolute',
+      left: 20,
+      right: 20,
+      top: '30%',
+      borderRadius: 22,
+      overflow: 'hidden',
+    },
+    viewOnceModalBlur: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    viewOnceModalContent: {
+      paddingHorizontal: 20,
+      paddingTop: 18,
+      paddingBottom: 16,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.5 : 0.7),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+    },
+    viewOnceModalHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 12,
+    },
+    viewOnceModalTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    viewOnceModalTitle: {
+      fontSize: 14,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+      textTransform: 'uppercase',
+      letterSpacing: 0.6,
+    },
+    viewOnceModalTimer: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
+    },
+    viewOnceModalTimerText: {
+      fontSize: 11,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    viewOnceModalText: {
+      fontSize: 16,
+      fontFamily: 'PlayfairDisplay_500Medium',
+      color: theme.text,
+      lineHeight: 22,
+      marginBottom: 18,
+    },
+    viewOnceMediaFrame: {
+      borderRadius: 16,
+      overflow: 'hidden',
+      marginTop: 12,
+      marginBottom: 12,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.1 : 0.06),
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 180,
+    },
+    viewOnceMediaImage: {
+      width: '100%',
+      height: 240,
+      resizeMode: 'cover',
+    },
+    viewOnceModalButton: {
+      alignSelf: 'flex-end',
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderRadius: 999,
+      backgroundColor: theme.tint,
+    },
+    viewOnceModalButtonText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_600SemiBold',
+      color: Colors.light.background,
+      textTransform: 'uppercase',
+      letterSpacing: 0.6,
+    },
+
     // Report Sheet
     reportBackdrop: {
       ...StyleSheet.absoluteFillObject,
@@ -8322,6 +9659,21 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     messageMetaTextTheir: {
       color: theme.textMuted,
     },
+    messageMetaEditedWrap: {
+      marginRight: 4,
+    },
+    messageMetaEdited: {
+      fontSize: 10,
+      fontFamily: 'Manrope_600SemiBold',
+      textTransform: 'uppercase',
+      letterSpacing: 0.4,
+    },
+    messageMetaEditedMy: {
+      color: withAlpha(Colors.light.background, 0.75),
+    },
+    messageMetaEditedTheir: {
+      color: theme.textMuted,
+    },
     messageMetaIcon: {
       marginLeft: 2,
     },
@@ -8359,6 +9711,94 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       textTransform: 'uppercase',
       letterSpacing: 0.5,
       color: theme.text,
+    },
+    viewOnceWrapper: {
+      width: '100%',
+    },
+    viewOnceCard: {
+      borderRadius: 18,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+    },
+    viewOnceCardMy: {
+      borderColor: withAlpha(Colors.light.background, 0.2),
+    },
+    viewOnceCardTheir: {
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+    },
+    viewOnceHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    viewOnceLockBadge: {
+      width: 30,
+      height: 30,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    viewOnceLockBadgeMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.2),
+    },
+    viewOnceLockBadgeTheir: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.12),
+    },
+    viewOnceTextBlock: {
+      flex: 1,
+      gap: 2,
+    },
+    viewOnceTitle: {
+      fontSize: 14,
+      fontFamily: 'Manrope_600SemiBold',
+    },
+    viewOnceTitleMy: {
+      color: Colors.light.background,
+    },
+    viewOnceTitleTheir: {
+      color: theme.text,
+    },
+    viewOnceSubtitle: {
+      fontSize: 11,
+      fontFamily: 'Manrope_400Regular',
+    },
+    viewOnceSubtitleMy: {
+      color: withAlpha(Colors.light.background, 0.8),
+    },
+    viewOnceSubtitleTheir: {
+      color: theme.textMuted,
+    },
+    viewOnceFooter: {
+      marginTop: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    viewOnceBadge: {
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 999,
+      borderWidth: 1,
+    },
+    viewOnceBadgeMy: {
+      borderColor: withAlpha(Colors.light.background, 0.45),
+    },
+    viewOnceBadgeTheir: {
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+    },
+    viewOnceBadgeText: {
+      fontSize: 9,
+      fontFamily: 'Manrope_600SemiBold',
+      letterSpacing: 0.6,
+      textTransform: 'uppercase',
+    },
+    viewOnceBadgeTextMy: {
+      color: withAlpha(Colors.light.background, 0.85),
+    },
+    viewOnceBadgeTextTheir: {
+      color: theme.textMuted,
     },
 
     // Reactions
@@ -8426,7 +9866,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     messageActionRow: {
       flexDirection: 'row',
+      flexWrap: 'wrap',
       gap: 6,
+      rowGap: 6,
       marginTop: 6,
     },
     messageActionRowLeft: {
@@ -8452,12 +9894,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: withAlpha(theme.danger, 0.12),
       borderColor: withAlpha(theme.danger, 0.3),
     },
-    messageActionLabel: {
+    messageActionPillLabel: {
       fontSize: 12,
       fontFamily: 'Manrope_600SemiBold',
       color: theme.text,
     },
-    messageActionLabelDanger: {
+    messageActionPillLabelDanger: {
       color: theme.danger,
     },
     quickReactionButton: {
@@ -8633,6 +10075,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: theme.tint,
       justifyContent: 'center',
       alignItems: 'center',
+    },
+    sendButtonViewOnce: {
+      backgroundColor: theme.secondary,
     },
 
     // Message Status & Info
@@ -9413,6 +10858,62 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     cancelReplyButton: {
       padding: 4,
     },
+    editPreview: {
+      backgroundColor: theme.backgroundSubtle,
+      borderTopWidth: 1,
+      borderTopColor: withAlpha(theme.tint, isDark ? 0.2 : 0.14),
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    editPreviewContent: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    editPreviewBadge: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
+    },
+    editPreviewText: {
+      flex: 1,
+      fontSize: 14,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+    },
+    cancelEditButton: {
+      padding: 4,
+    },
+    viewOncePreview: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginHorizontal: 16,
+      marginBottom: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderRadius: 16,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.secondary, isDark ? 0.3 : 0.2),
+    },
+    viewOncePreviewContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      flex: 1,
+    },
+    viewOncePreviewText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
     replyButton: {
       width: 32,
       height: 32,
@@ -9440,6 +10941,20 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: theme.backgroundSubtle,
       justifyContent: 'center',
       alignItems: 'center',
+    },
+    viewOnceToggle: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.12),
+      backgroundColor: theme.backgroundSubtle,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    viewOnceToggleActive: {
+      backgroundColor: theme.secondary,
+      borderColor: theme.secondary,
     },
 
     // Voice Recording
@@ -9540,6 +11055,58 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
+    viewOnceAttachmentRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 10,
+      paddingHorizontal: 10,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.08 : 0.06),
+    },
+    viewOnceAttachmentRowActive: {
+      borderColor: withAlpha(theme.tint, 0.4),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
+    },
+    viewOnceAttachmentLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    viewOnceAttachmentIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: theme.backgroundSubtle,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    viewOnceAttachmentIconActive: {
+      backgroundColor: theme.tint,
+    },
+    viewOnceAttachmentTitle: {
+      fontSize: 12,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    viewOnceAttachmentSubtitle: {
+      fontSize: 10,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+    },
+    viewOnceAttachmentToggle: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      backgroundColor: theme.backgroundSubtle,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    viewOnceAttachmentToggleActive: {
+      backgroundColor: theme.tint,
+    },
     imagePickerGrid: {
       flexDirection: 'row',
       flexWrap: 'wrap',
@@ -9563,6 +11130,23 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       alignItems: 'center',
       justifyContent: 'center',
       marginBottom: 6,
+    },
+    viewOnceMediaBadge: {
+      position: 'absolute',
+      top: 10,
+      right: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 10,
+      backgroundColor: theme.tint,
+    },
+    viewOnceMediaBadgeText: {
+      fontSize: 9,
+      fontFamily: 'Manrope_600SemiBold',
+      color: Colors.light.background,
     },
     imagePickerLabel: {
       fontSize: 13,
@@ -9605,4 +11189,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: Colors.light.background,
     },
   });
+
+
+
 

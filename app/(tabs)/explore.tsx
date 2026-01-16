@@ -12,6 +12,7 @@ import useAIRecommendations from "@/hooks/useAIRecommendations";
 import { requestAndSavePreciseLocation, saveManualCityLocation } from "@/hooks/useLocationPreference";
 import { useMoments, type MomentUser } from '@/hooks/useMoments';
 import { useAuth } from "@/lib/auth-context";
+import { normalizeAiScorePercent, toRoundedPercentInt } from "@/lib/profile/ai-score";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -851,6 +852,8 @@ export default function ExploreScreen() {
       const m = matchList.find((x) => String(x.id) === String(id));
       if (m) {
         try {
+          const aiScorePct = normalizeAiScorePercent((m as any).aiScore ?? (m as any).ai_score);
+          const compatPct = toRoundedPercentInt(aiScorePct) ?? (m as any).compatibility ?? 85;
           params.fallbackProfile = encodeURIComponent(JSON.stringify({
             id: m.id,
             name: (m as any).name,
@@ -866,9 +869,9 @@ export default function ExploreScreen() {
             distance: (m as any).distance,
             interests: (m as any).interests,
             is_active: (m as any).isActiveNow,
-            compatibility: (m as any).aiScore ?? (m as any).compatibility ?? 85,
+            compatibility: compatPct,
             verified: (m as any).verified,
-            aiScore: (m as any).aiScore,
+            aiScore: aiScorePct,
           }));
         } catch {}
       }

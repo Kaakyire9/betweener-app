@@ -461,11 +461,34 @@ export default function DashboardScreen() {
 
     let cancelled = false;
 
+    const getMessagePreview = (message: any) => {
+      const type = message?.message_type ?? 'text';
+      if (message?.is_view_once && (type === 'image' || type === 'video')) {
+        return type === 'video' ? 'View once video' : 'View once photo';
+      }
+      switch (type) {
+        case 'voice':
+          return 'Voice message';
+        case 'image':
+          return 'Photo';
+        case 'video':
+          return 'Video';
+        case 'document':
+          return 'Document';
+        case 'location':
+          return 'Location';
+        case 'mood_sticker':
+          return 'Sticker';
+        default:
+          return typeof message?.text === 'string' ? message.text : '';
+      }
+    };
+
     const fetchRecentPeople = async () => {
       try {
         const { data: messages, error } = await supabase
           .from('messages')
-          .select('id,text,created_at,sender_id,receiver_id,is_read,message_type')
+          .select('id,text,created_at,sender_id,receiver_id,is_read,message_type,is_view_once')
           .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
           .order('created_at', { ascending: false })
           .limit(200);
@@ -485,7 +508,7 @@ export default function DashboardScreen() {
 
           if (!convoMap.has(otherId)) {
             convoMap.set(otherId, {
-              lastText: typeof msg.text === 'string' ? msg.text : '',
+              lastText: getMessagePreview(msg),
               lastAt: typeof msg.created_at === 'string' ? msg.created_at : '',
               unread: 0,
             });

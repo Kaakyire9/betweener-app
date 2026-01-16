@@ -39,6 +39,7 @@ type ConversationType = {
     timestamp: Date;
     senderId: string;
     type: 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location';
+    isViewOnce?: boolean;
     isRead: boolean;
   };
   unreadCount: number;
@@ -56,6 +57,7 @@ type MessageRow = {
   is_read: boolean;
   deleted_for_all?: boolean | null;
   message_type?: ConversationType['lastMessage']['type'] | null;
+  is_view_once?: boolean | null;
 };
 
 const CHAT_PREFS_STORAGE_KEY = 'chat_header_prefs_v1';
@@ -191,21 +193,26 @@ export default function ChatScreen() {
     };
   }, [user?.id]);
 
-  const applyChatPrefs = useCallback(async (items: ConversationType[]) => {
+  const applyChatPrefs = useCallback(async (
+    items: ConversationType[],
+    serverPrefs: Map<string, { muted: boolean; pinned: boolean }>,
+  ) => {
+    let localParsed: Record<string, { muted?: boolean; pinned?: boolean }> = {};
     try {
       const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
-      const parsed = raw ? JSON.parse(raw) : {};
-      return items.map((item) => {
-        const prefs = parsed?.[item.id] ?? {};
-        return {
-          ...item,
-          isMuted: Boolean(prefs.muted),
-          isPinned: Boolean(prefs.pinned),
-        };
-      });
+      localParsed = raw ? JSON.parse(raw) : {};
     } catch {
-      return items.map((item) => ({ ...item, isMuted: false, isPinned: item.isPinned }));
+      localParsed = {};
     }
+    return items.map((item) => {
+      const local = localParsed?.[item.id] ?? {};
+      const server = serverPrefs.get(item.id);
+      return {
+        ...item,
+        isMuted: server?.muted ?? Boolean(local.muted),
+        isPinned: server?.pinned ?? Boolean(local.pinned) ?? item.isPinned,
+      };
+    });
   }, []);
 
   const fetchConversations = useCallback(async () => {
@@ -214,7 +221,7 @@ export default function ChatScreen() {
     try {
       const { data: messages, error } = await supabase
         .from('messages')
-        .select('id,text,created_at,sender_id,receiver_id,is_read,deleted_for_all,message_type')
+        .select('id,text,created_at,sender_id,receiver_id,is_read,deleted_for_all,message_type,is_view_once')
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .order('created_at', { ascending: false })
         .limit(300);
@@ -286,6 +293,7 @@ export default function ChatScreen() {
         const lastTimestamp = last?.created_at ? new Date(last.created_at) : new Date();
         const lastText = getRowPreviewText(last);
         const lastType = (last?.message_type ?? 'text') as ConversationType['lastMessage']['type'];
+        const lastIsViewOnce = Boolean(last?.is_view_once);
         const blockStatus = blockStatusByUser.get(otherUserId) ?? null;
         return {
           id: otherUserId,
@@ -303,6 +311,7 @@ export default function ChatScreen() {
             timestamp: lastTimestamp,
             senderId: last?.sender_id || '',
             type: lastType,
+            isViewOnce: lastIsViewOnce,
             isRead: last?.is_read ?? false,
           },
           unreadCount: entry?.unread || 0,
@@ -311,8 +320,21 @@ export default function ChatScreen() {
           matchedAt: lastTimestamp,
         };
       });
+      const serverPrefs = new Map<string, { muted: boolean; pinned: boolean }>();
+      const { data: prefsData, error: prefsError } = await supabase
+        .from('chat_prefs')
+        .select('peer_id,muted,pinned')
+        .eq('user_id', user.id)
+        .in('peer_id', otherUserIds);
+      if (prefsError) {
+        console.log('[chat] chat prefs fetch error', prefsError);
+      }
+      (prefsData || []).forEach((row: { peer_id: string; muted: boolean; pinned: boolean }) => {
+        if (!row?.peer_id) return;
+        serverPrefs.set(row.peer_id, { muted: Boolean(row.muted), pinned: Boolean(row.pinned) });
+      });
 
-      const hydrated = await applyChatPrefs(nextConversations);
+      const hydrated = await applyChatPrefs(nextConversations, serverPrefs);
       setConversations(hydrated);
     } finally {
       setIsLoading(false);
@@ -342,6 +364,7 @@ export default function ChatScreen() {
         timestamp: new Date(row.created_at),
         senderId: row.sender_id,
         type: lastType,
+        isViewOnce: Boolean(row.is_view_once),
         isRead: row.is_read,
       };
 
@@ -396,6 +419,41 @@ export default function ChatScreen() {
     };
   }, [fetchConversations, user?.id]);
 
+  useEffect(() => {
+    if (!user?.id) return;
+    const channel = supabase
+      .channel(`chat_prefs:${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'chat_prefs',
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const row = (payload.new || payload.old) as { peer_id?: string; muted?: boolean; pinned?: boolean } | undefined;
+          if (!row?.peer_id) return;
+          setConversations((prev) =>
+            prev.map((conv) =>
+              conv.id === row.peer_id
+                ? {
+                    ...conv,
+                    isMuted: row.muted ?? conv.isMuted,
+                    isPinned: row.pinned ?? conv.isPinned,
+                  }
+                : conv
+            )
+          );
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
+
   const formatLastMessageTime = (date: Date) => {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -433,6 +491,9 @@ export default function ChatScreen() {
     if (!row) return '';
     if (row.deleted_for_all) return 'Message deleted';
     const rowType = (row.message_type ?? 'text') as ConversationType['lastMessage']['type'];
+    if (row.is_view_once && (rowType === 'image' || rowType === 'video')) {
+      return rowType === 'video' ? 'View once video' : 'View once photo';
+    }
     if (rowType === 'mood_sticker') {
       return parseStickerPreview(row.text) || row.text || 'Sticker';
     }
@@ -440,6 +501,9 @@ export default function ChatScreen() {
   };
 
   const getLastMessagePreview = (lastMessage: ConversationType['lastMessage']) => {
+    if (lastMessage.isViewOnce && (lastMessage.type === 'image' || lastMessage.type === 'video')) {
+      return lastMessage.type === 'video' ? 'View once video' : 'View once photo';
+    }
     switch (lastMessage.type) {
       case 'voice':
         return 'Voice message';
@@ -502,6 +566,9 @@ export default function ChatScreen() {
   };
 
   const togglePin = (conversationId: string) => {
+    const current = conversations.find((conv) => conv.id === conversationId);
+    const nextPinned = !Boolean(current?.isPinned);
+    const nextMuted = Boolean(current?.isMuted);
     setConversations(prev => prev.map(conv => 
       conv.id === conversationId 
         ? { ...conv, isPinned: !conv.isPinned }
@@ -519,6 +586,22 @@ export default function ChatScreen() {
         await AsyncStorage.setItem(CHAT_PREFS_STORAGE_KEY, JSON.stringify(parsed));
       } catch {
         // Ignore persistence errors.
+      }
+      if (!user?.id) return;
+      const { error } = await supabase
+        .from('chat_prefs')
+        .upsert(
+          {
+            user_id: user.id,
+            peer_id: conversationId,
+            pinned: nextPinned,
+            muted: nextMuted,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'user_id,peer_id' },
+        );
+      if (error) {
+        console.log('[chat] chat prefs pin upsert error', error);
       }
     })();
   };

@@ -1,5 +1,6 @@
 import { isDistanceLabel, parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
+import { normalizeAiScorePercent, toRoundedPercentInt } from '@/lib/profile/ai-score';
 import { supabase } from '@/lib/supabase';
 import type { Interest, UserProfile } from '@/types/user-profile';
 
@@ -68,8 +69,8 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
   }
 
   const photos = Array.isArray((data as any).photos) ? (data as any).photos : data.avatar_url ? [data.avatar_url] : [];
-  const aiScoreRaw = Number((data as any).ai_score);
-  const aiScoreVal = Number.isFinite(aiScoreRaw) && aiScoreRaw > 0 ? aiScoreRaw : undefined;
+  const aiScoreVal = normalizeAiScorePercent((data as any).ai_score);
+  const aiScoreRounded = toRoundedPercentInt(aiScoreVal);
 
   const computedFallbackKm =
     typeof fallbackDistanceKm === 'number'
@@ -112,8 +113,8 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
     wantsChildren: data.wants_children || undefined,
     locationPrecision: data.location_precision || undefined,
     compatibility:
-      typeof aiScoreVal === 'number'
-        ? Math.round(aiScoreVal)
+      typeof aiScoreRounded === 'number'
+        ? aiScoreRounded
         : typeof (data as any).compatibility === 'number'
           ? (data as any).compatibility
           : 75,
