@@ -1,3 +1,4 @@
+import { normalizeAiScorePercent, toRoundedPercentInt } from '@/lib/profile/ai-score';
 import { DiasporaVerification } from "@/components/DiasporaVerification";
 import PhotoGallery from "@/components/PhotoGallery";
 import ProfileEditModal from "@/components/ProfileEditModal";
@@ -17,8 +18,11 @@ import {
     Animated,
     Dimensions,
     Image,
+    Modal,
     RefreshControl,
+    ScrollView,
     StyleSheet,
+    Switch,
     Text,
     TouchableOpacity,
     View
@@ -29,6 +33,20 @@ const { width: screenWidth } = Dimensions.get('window');
 const DISTANCE_UNIT_KEY = 'distance_unit';
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
+
+type NotificationPrefs = {
+  push_enabled: boolean;
+  inapp_enabled: boolean;
+  messages: boolean;
+  reactions: boolean;
+  likes: boolean;
+  superlikes: boolean;
+  matches: boolean;
+  moments: boolean;
+  verification: boolean;
+  announcements: boolean;
+  preview_text: boolean;
+};
 
 const DISTANCE_UNIT_OPTIONS: { value: DistanceUnit; label: string; subtitle?: string }[] = [
   { value: 'auto', label: 'Auto', subtitle: 'Recommended' },
@@ -131,12 +149,27 @@ export default function ProfileScreen() {
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [userInterests, setUserInterests] = useState<string[]>([]);
   const [loadingInterests, setLoadingInterests] = useState(false);
   const [userPhotos, setUserPhotos] = useState<string[]>([]);
   const [isVerificationModalVisible, setIsVerificationModalVisible] = useState(false);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
+  const [notificationPrefs, setNotificationPrefs] = useState<NotificationPrefs>({
+    push_enabled: true,
+    inapp_enabled: true,
+    messages: true,
+    reactions: true,
+    likes: true,
+    superlikes: true,
+    matches: true,
+    moments: true,
+    verification: true,
+    announcements: false,
+    preview_text: true,
+  });
+  const [notificationPrefsLoaded, setNotificationPrefsLoaded] = useState(false);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -284,6 +317,41 @@ export default function ProfileScreen() {
     }
   }, [profile, user?.id]);
 
+  const loadNotificationPrefs = useCallback(async () => {
+    if (!user?.id) return;
+    setNotificationPrefsLoaded(false);
+    const { data, error } = await supabase
+      .from('notification_prefs')
+      .select('push_enabled,inapp_enabled,messages,reactions,likes,superlikes,matches,moments,verification,announcements,preview_text')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (error) {
+      console.log('[profile] notification prefs error', error);
+      setNotificationPrefsLoaded(true);
+      return;
+    }
+    if (data) {
+      setNotificationPrefs({
+        push_enabled: Boolean(data.push_enabled),
+        inapp_enabled: Boolean(data.inapp_enabled),
+        messages: Boolean(data.messages),
+        reactions: Boolean(data.reactions),
+        likes: Boolean(data.likes),
+        superlikes: Boolean(data.superlikes),
+        matches: Boolean(data.matches),
+        moments: Boolean(data.moments),
+        verification: Boolean(data.verification),
+        announcements: Boolean(data.announcements),
+        preview_text: Boolean(data.preview_text),
+      });
+    }
+    setNotificationPrefsLoaded(true);
+  }, [user?.id]);
+
+  useEffect(() => {
+    void loadNotificationPrefs();
+  }, [loadNotificationPrefs]);
+
   // Check if returning from full preview and should enter preview mode
   useEffect(() => {
     if (params.returnToPreview === 'true') {
@@ -313,10 +381,6 @@ export default function ProfileScreen() {
       void loadDistanceUnit();
     }
   }, [showEditModal, loadDistanceUnit]);
-
-  if (!fontsLoaded) {
-    return <View style={styles.container} />;
-  }
 
   const handleSignOut = async () => {
     await signOut();
@@ -357,6 +421,8 @@ export default function ProfileScreen() {
     };
     try {
       if (profile) {
+        const aiScorePct = normalizeAiScorePercent((profile as any).aiScore ?? (profile as any).ai_score);
+        const compatPct = toRoundedPercentInt(aiScorePct) ?? 100;
         const fallback = {
           id: profile.id,
           name: profile.full_name || profile.id,
@@ -372,8 +438,8 @@ export default function ProfileScreen() {
           distance: profile.region || '',
           interests: (profile as any).interests,
           is_active: true,
-          compatibility: (profile as any).aiScore ?? 100,
-          aiScore: (profile as any).aiScore ?? 100,
+          compatibility: compatPct,
+          aiScore: aiScorePct ?? compatPct,
           verified: !!(profile as any).verification_level,
         };
         params.fallbackProfile = encodeURIComponent(JSON.stringify(fallback));
@@ -412,11 +478,39 @@ export default function ProfileScreen() {
       handleSignOut();
     } else if (itemId === 'admin') {
       router.push('/admin');
+    } else if (itemId === 'notifications') {
+      setShowNotificationsModal(true);
     } else {
       // Handle other settings navigation
       console.log(`Navigate to ${itemId}`);
     }
   };
+
+  const updateNotificationPref = useCallback(
+    async (key: keyof NotificationPrefs, value: boolean) => {
+      const next = { ...notificationPrefs, [key]: value };
+      setNotificationPrefs(next);
+      if (!user?.id) return;
+      const { error } = await supabase
+        .from('notification_prefs')
+        .upsert(
+          {
+            user_id: user.id,
+            ...next,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'user_id' },
+        );
+      if (error) {
+        console.log('[profile] notification prefs update error', error);
+      }
+    },
+    [notificationPrefs, user?.id],
+  );
+
+  if (!fontsLoaded) {
+    return <View style={styles.container} />;
+  }
 
   const closeDropdown = () => {
     if (showSettingsDropdown) {
@@ -610,6 +704,108 @@ export default function ProfileScreen() {
           </Animated.View>
         </>
       )}
+
+      <Modal
+        visible={showNotificationsModal}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setShowNotificationsModal(false)}
+      >
+        <View style={styles.notificationModalBackdrop}>
+          <View style={[styles.notificationModalCard, { backgroundColor: theme.background, borderColor: theme.outline }]}>
+            <View style={styles.notificationModalHeader}>
+              <Text style={[styles.notificationModalTitle, { color: theme.text }]}>Notifications</Text>
+              <TouchableOpacity onPress={() => setShowNotificationsModal(false)}>
+                <MaterialCommunityIcons name="close" size={22} color={theme.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.notificationModalContent}>
+              <View style={styles.notificationSection}>
+                <Text style={[styles.notificationSectionTitle, { color: theme.text }]}>Core</Text>
+                <NotificationToggle
+                  label="Messages"
+                  value={notificationPrefs.messages}
+                  onValueChange={(val) => updateNotificationPref('messages', val)}
+                  theme={theme}
+                />
+                <NotificationToggle
+                  label="Reactions"
+                  value={notificationPrefs.reactions}
+                  onValueChange={(val) => updateNotificationPref('reactions', val)}
+                  theme={theme}
+                />
+                <NotificationToggle
+                  label="Likes"
+                  value={notificationPrefs.likes}
+                  onValueChange={(val) => updateNotificationPref('likes', val)}
+                  theme={theme}
+                />
+                <NotificationToggle
+                  label="Superlikes"
+                  value={notificationPrefs.superlikes}
+                  onValueChange={(val) => updateNotificationPref('superlikes', val)}
+                  theme={theme}
+                />
+                <NotificationToggle
+                  label="Matches"
+                  value={notificationPrefs.matches}
+                  onValueChange={(val) => updateNotificationPref('matches', val)}
+                  theme={theme}
+                />
+              </View>
+
+              <View style={styles.notificationSection}>
+                <Text style={[styles.notificationSectionTitle, { color: theme.text }]}>Control</Text>
+                <NotificationToggle
+                  label="Push notifications"
+                  value={notificationPrefs.push_enabled}
+                  onValueChange={(val) => updateNotificationPref('push_enabled', val)}
+                  theme={theme}
+                />
+                <NotificationToggle
+                  label="In-app notifications"
+                  value={notificationPrefs.inapp_enabled}
+                  onValueChange={(val) => updateNotificationPref('inapp_enabled', val)}
+                  theme={theme}
+                />
+                <NotificationToggle
+                  label="Preview message text"
+                  value={notificationPrefs.preview_text}
+                  onValueChange={(val) => updateNotificationPref('preview_text', val)}
+                  theme={theme}
+                />
+              </View>
+
+              <View style={styles.notificationSection}>
+                <Text style={[styles.notificationSectionTitle, { color: theme.text }]}>Optional</Text>
+                <NotificationToggle
+                  label="Moments"
+                  value={notificationPrefs.moments}
+                  onValueChange={(val) => updateNotificationPref('moments', val)}
+                  theme={theme}
+                />
+                <NotificationToggle
+                  label="Verification updates"
+                  value={notificationPrefs.verification}
+                  onValueChange={(val) => updateNotificationPref('verification', val)}
+                  theme={theme}
+                />
+                <NotificationToggle
+                  label="Announcements"
+                  value={notificationPrefs.announcements}
+                  onValueChange={(val) => updateNotificationPref('announcements', val)}
+                  theme={theme}
+                />
+              </View>
+
+              {!notificationPrefsLoaded ? (
+                <Text style={[styles.notificationLoading, { color: theme.textMuted }]}>Loading preferences...</Text>
+              ) : null}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* Preview Mode Banner */}
       {isPreviewMode && (
@@ -1136,6 +1332,30 @@ export default function ProfileScreen() {
         />
       )}
     </SafeAreaView>
+  );
+}
+
+function NotificationToggle({
+  label,
+  value,
+  onValueChange,
+  theme,
+}: {
+  label: string;
+  value: boolean;
+  onValueChange: (value: boolean) => void;
+  theme: typeof Colors.light;
+}) {
+  return (
+    <View style={styles.notificationToggleRow}>
+      <Text style={[styles.notificationToggleLabel, { color: theme.text }]}>{label}</Text>
+      <Switch
+        value={value}
+        onValueChange={onValueChange}
+        trackColor={{ false: theme.outline, true: theme.tint }}
+        thumbColor={Colors.light.background}
+      />
+    </View>
   );
 }
 
@@ -1706,5 +1926,53 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 8,
     zIndex: 1000,
+  },
+  notificationModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+  },
+  notificationModalCard: {
+    borderWidth: 1,
+    borderRadius: 18,
+    maxHeight: '80%',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  notificationModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  notificationModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  notificationModalContent: {
+    paddingBottom: 10,
+  },
+  notificationSection: {
+    marginBottom: 16,
+  },
+  notificationSectionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  notificationToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+  },
+  notificationToggleLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  notificationLoading: {
+    fontSize: 12,
+    marginTop: 8,
   },
 });

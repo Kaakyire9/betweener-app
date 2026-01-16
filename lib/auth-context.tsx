@@ -1,4 +1,6 @@
 import { supabase } from '@/lib/supabase';
+import { getOrCreateDeviceKeypair } from '@/lib/e2ee';
+import { registerPushToken } from '@/lib/notifications/push';
 import { Session, User } from '@supabase/supabase-js';
 import { createContext, useContext, useEffect, useState } from 'react';
 
@@ -53,6 +55,7 @@ type Profile = {
   years_in_diaspora?: number;
   last_ghana_visit?: string;
   future_ghana_plans?: string;
+  public_key?: string | null;
 };
 
 type AuthContextType = {
@@ -147,6 +150,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await fetchProfile(user.id);
     }
   };
+
+  useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const keypair = await getOrCreateDeviceKeypair();
+        if (cancelled) return;
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('public_key')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        if (error) {
+          console.log('[e2ee] fetch public key error', error);
+          return;
+        }
+        if (!data?.public_key || data.public_key !== keypair.publicKeyB64) {
+          const { error: updateError } = await supabase
+            .from('profiles')
+            .update({ public_key: keypair.publicKeyB64 })
+            .eq('user_id', user.id);
+          if (updateError) {
+            console.log('[e2ee] update public key error', updateError);
+          }
+        }
+        await registerPushToken(user.id);
+      } catch (error) {
+        console.log('[e2ee] ensure identity error', error);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
 
   const signIn = async (email: string, password: string) => {
     setIsAuthenticating(true);
