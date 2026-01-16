@@ -1,8 +1,8 @@
-import * as SecureStore from 'expo-secure-store';
+import { supabase } from '@/lib/supabase';
 import * as Random from 'expo-random';
+import * as SecureStore from 'expo-secure-store';
 import nacl from 'tweetnacl';
 import { decodeBase64, encodeBase64 } from 'tweetnacl-util';
-import { supabase } from '@/lib/supabase';
 
 const PRIVATE_KEY_KEY = 'e2ee_identity_private_v1';
 const PUBLIC_KEY_KEY = 'e2ee_identity_public_v1';

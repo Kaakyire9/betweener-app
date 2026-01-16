@@ -1,6 +1,6 @@
+import { normalizeAiScorePercent, toRoundedPercentInt } from '@/lib/profile/ai-score';
 import { isDistanceLabel, parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
-import { normalizeAiScorePercent, toRoundedPercentInt } from '@/lib/profile/ai-score';
 import { supabase } from '@/lib/supabase';
 import type { Interest, UserProfile } from '@/types/user-profile';
 
