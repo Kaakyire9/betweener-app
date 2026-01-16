@@ -1,6 +1,6 @@
 import nacl from 'tweetnacl';
 import { decodeBase64, encodeBase64 } from 'tweetnacl-util';
-import * as Random from 'expo-random';
+import * as ExpoCrypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 
 const KEYPAIR_STORAGE_KEY = 'e2ee_keypair_v1';
@@ -9,7 +9,7 @@ let prngReady = false;
 const ensurePrng = () => {
   if (prngReady) return;
   nacl.setPRNG((x, n) => {
-    const bytes = Random.getRandomBytes(n);
+    const bytes = ExpoCrypto.getRandomBytes(n);
     x.set(bytes);
   });
   prngReady = true;
@@ -75,11 +75,11 @@ export const encryptMediaBytes = async ({
   receiverPublicKeyB64: string;
 }): Promise<EncryptedMediaPayload> => {
   ensurePrng();
-  const mediaKey = Random.getRandomBytes(nacl.secretbox.keyLength);
-  const mediaNonce = Random.getRandomBytes(nacl.secretbox.nonceLength);
+  const mediaKey = ExpoCrypto.getRandomBytes(nacl.secretbox.keyLength);
+  const mediaNonce = ExpoCrypto.getRandomBytes(nacl.secretbox.nonceLength);
   const cipherBytes = nacl.secretbox(plainBytes, mediaNonce, mediaKey);
 
-  const keyNonce = Random.getRandomBytes(nacl.box.nonceLength);
+  const keyNonce = ExpoCrypto.getRandomBytes(nacl.box.nonceLength);
   const receiverPublicKey = decodeBase64(receiverPublicKeyB64);
   const encryptedKeyReceiver = nacl.box(
     mediaKey,

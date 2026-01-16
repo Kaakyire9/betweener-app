@@ -22,6 +22,10 @@ type NotificationPrefs = {
   likes: boolean;
   superlikes: boolean;
   matches: boolean;
+  quiet_hours_enabled: boolean;
+  quiet_hours_start: string | null;
+  quiet_hours_end: string | null;
+  quiet_hours_tz: string | null;
 };
 
 const TOAST_DURATION_MS = 4200;
@@ -59,7 +63,9 @@ export default function InAppToasts() {
     const loadPrefs = async () => {
       const { data, error } = await supabase
         .from('notification_prefs')
-        .select('inapp_enabled,messages,reactions,likes,superlikes,matches')
+        .select(
+          'inapp_enabled,messages,reactions,likes,superlikes,matches,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
+        )
         .eq('user_id', user.id)
         .maybeSingle();
       if (cancelled) return;
@@ -76,6 +82,10 @@ export default function InAppToasts() {
           likes: Boolean(data.likes),
           superlikes: Boolean(data.superlikes),
           matches: Boolean(data.matches),
+          quiet_hours_enabled: Boolean(data.quiet_hours_enabled),
+          quiet_hours_start: data.quiet_hours_start ?? null,
+          quiet_hours_end: data.quiet_hours_end ?? null,
+          quiet_hours_tz: data.quiet_hours_tz ?? null,
         });
       } else {
         setPrefs(null);
@@ -87,13 +97,71 @@ export default function InAppToasts() {
     };
   }, [user?.id]);
 
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const channel = supabase
+      .channel(`inapp_prefs:${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'notification_prefs', filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          const row = payload.new as any;
+          if (!row) return;
+          setPrefs({
+            inapp_enabled: Boolean(row.inapp_enabled),
+            messages: Boolean(row.messages),
+            reactions: Boolean(row.reactions),
+            likes: Boolean(row.likes),
+            superlikes: Boolean(row.superlikes),
+            matches: Boolean(row.matches),
+            quiet_hours_enabled: Boolean(row.quiet_hours_enabled),
+            quiet_hours_start: row.quiet_hours_start ?? null,
+            quiet_hours_end: row.quiet_hours_end ?? null,
+            quiet_hours_tz: row.quiet_hours_tz ?? null,
+          });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
+
+  const isQuietHours = useMemo(() => {
+    if (!prefs?.quiet_hours_enabled) return false;
+    if (!prefs.quiet_hours_start || !prefs.quiet_hours_end) return false;
+
+    const toMinutes = (value: string) => {
+      const [hour, minute] = value.split(':');
+      const h = Number.parseInt(hour ?? '0', 10);
+      const m = Number.parseInt(minute ?? '0', 10);
+      if (Number.isNaN(h) || Number.isNaN(m)) return 0;
+      return h * 60 + m;
+    };
+
+    const start = toMinutes(prefs.quiet_hours_start);
+    const end = toMinutes(prefs.quiet_hours_end);
+    if (start === end) return false;
+
+    const now = new Date();
+    const current = now.getHours() * 60 + now.getMinutes();
+
+    if (start < end) {
+      return current >= start && current < end;
+    }
+    return current >= start || current < end;
+  }, [prefs]);
+
   const canInAppNotify = useCallback(
     (kind: keyof Omit<NotificationPrefs, 'inapp_enabled'>) => {
       if (!prefs) return true;
+      if (isQuietHours) return false;
       if (!prefs.inapp_enabled) return false;
       return prefs[kind] !== false;
     },
-    [prefs],
+    [isQuietHours, prefs],
   );
 
   const messagePreview = useCallback((row: any) => {
@@ -180,7 +248,6 @@ export default function InAppToasts() {
               id: `superlike-${row.id}`,
               title: 'Superlike',
               body: 'You got a superlike',
-              emoji: '⭐',
             });
             return;
           }
@@ -189,7 +256,6 @@ export default function InAppToasts() {
               id: `like-${row.id}`,
               title: 'New like',
               body: 'Someone liked your profile',
-              emoji: '❤️',
             });
           }
         },
@@ -219,7 +285,6 @@ export default function InAppToasts() {
             id: `match-${row.id}`,
             title: "It's a match",
             body: 'Say hello to your new match',
-            emoji: '✨',
           });
         },
       )
@@ -236,7 +301,6 @@ export default function InAppToasts() {
             id: `match-update-${row.id}`,
             title: "It's a match",
             body: 'Say hello to your new match',
-            emoji: '✨',
           });
         },
       )
