@@ -13,12 +13,13 @@ import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     Animated,
     Dimensions,
     Image,
     Modal,
+    Platform,
     RefreshControl,
     ScrollView,
     StyleSheet,
@@ -27,6 +28,7 @@ import {
     TouchableOpacity,
     View
 } from "react-native";
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const { width: screenWidth } = Dimensions.get('window');
@@ -46,12 +48,22 @@ type NotificationPrefs = {
   verification: boolean;
   announcements: boolean;
   preview_text: boolean;
+  quiet_hours_enabled: boolean;
+  quiet_hours_start: string;
+  quiet_hours_end: string;
+  quiet_hours_tz: string;
 };
 
 const DISTANCE_UNIT_OPTIONS: { value: DistanceUnit; label: string; subtitle?: string }[] = [
   { value: 'auto', label: 'Auto', subtitle: 'Recommended' },
   { value: 'km', label: 'Kilometers' },
   { value: 'mi', label: 'Miles' },
+];
+
+const QUIET_HOURS_PRESETS = [
+  { id: 'late', label: '22:00-08:00', start: '22:00:00', end: '08:00:00' },
+  { id: 'night', label: '23:00-07:00', start: '23:00:00', end: '07:00:00' },
+  { id: 'deep', label: '00:00-06:00', start: '00:00:00', end: '06:00:00' },
 ];
 
 // Settings menu items
@@ -168,6 +180,10 @@ export default function ProfileScreen() {
     verification: true,
     announcements: false,
     preview_text: true,
+    quiet_hours_enabled: false,
+    quiet_hours_start: '22:00:00',
+    quiet_hours_end: '08:00:00',
+    quiet_hours_tz: 'UTC',
   });
   const [notificationPrefsLoaded, setNotificationPrefsLoaded] = useState(false);
 
@@ -322,7 +338,9 @@ export default function ProfileScreen() {
     setNotificationPrefsLoaded(false);
     const { data, error } = await supabase
       .from('notification_prefs')
-      .select('push_enabled,inapp_enabled,messages,reactions,likes,superlikes,matches,moments,verification,announcements,preview_text')
+      .select(
+        'push_enabled,inapp_enabled,messages,reactions,likes,superlikes,matches,moments,verification,announcements,preview_text,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
+      )
       .eq('user_id', user.id)
       .maybeSingle();
     if (error) {
@@ -331,6 +349,7 @@ export default function ProfileScreen() {
       return;
     }
     if (data) {
+      const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
       setNotificationPrefs({
         push_enabled: Boolean(data.push_enabled),
         inapp_enabled: Boolean(data.inapp_enabled),
@@ -343,6 +362,10 @@ export default function ProfileScreen() {
         verification: Boolean(data.verification),
         announcements: Boolean(data.announcements),
         preview_text: Boolean(data.preview_text),
+        quiet_hours_enabled: Boolean(data.quiet_hours_enabled),
+        quiet_hours_start: data.quiet_hours_start ?? '22:00:00',
+        quiet_hours_end: data.quiet_hours_end ?? '08:00:00',
+        quiet_hours_tz: data.quiet_hours_tz ?? localTz,
       });
     }
     setNotificationPrefsLoaded(true);
@@ -486,9 +509,8 @@ export default function ProfileScreen() {
     }
   };
 
-  const updateNotificationPref = useCallback(
-    async (key: keyof NotificationPrefs, value: boolean) => {
-      const next = { ...notificationPrefs, [key]: value };
+  const persistNotificationPrefs = useCallback(
+    async (next: NotificationPrefs) => {
       setNotificationPrefs(next);
       if (!user?.id) return;
       const { error } = await supabase
@@ -505,7 +527,95 @@ export default function ProfileScreen() {
         console.log('[profile] notification prefs update error', error);
       }
     },
-    [notificationPrefs, user?.id],
+    [user?.id],
+  );
+
+  const updateNotificationPref = useCallback(
+    async (key: keyof NotificationPrefs, value: boolean) => {
+      const next = { ...notificationPrefs, [key]: value };
+      await persistNotificationPrefs(next);
+    },
+    [notificationPrefs, persistNotificationPrefs],
+  );
+
+  const updateQuietHours = useCallback(
+    async (enabled: boolean, start: string, end: string) => {
+      const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      const next = {
+        ...notificationPrefs,
+        quiet_hours_enabled: enabled,
+        quiet_hours_start: start,
+        quiet_hours_end: end,
+        quiet_hours_tz: localTz,
+      };
+      await persistNotificationPrefs(next);
+    },
+    [notificationPrefs, persistNotificationPrefs],
+  );
+
+  const quietHoursLabel = useCallback((value: string) => value.slice(0, 5), []);
+
+  const activeQuietPreset = useMemo(() => {
+    return QUIET_HOURS_PRESETS.find(
+      (preset) =>
+        preset.start === notificationPrefs.quiet_hours_start
+        && preset.end === notificationPrefs.quiet_hours_end,
+    );
+  }, [notificationPrefs.quiet_hours_end, notificationPrefs.quiet_hours_start]);
+
+  const quietHoursPreview = useMemo(() => {
+    if (!notificationPrefs.quiet_hours_enabled) return null;
+    const tzLabel = notificationPrefs.quiet_hours_tz || 'UTC';
+    return `Quiet hours use ${tzLabel} time`;
+  }, [notificationPrefs.quiet_hours_enabled, notificationPrefs.quiet_hours_tz]);
+
+  const [showStartPicker, setShowStartPicker] = useState(false);
+  const [showEndPicker, setShowEndPicker] = useState(false);
+
+  const timeStringToDate = useCallback((value: string) => {
+    const [hour = '0', minute = '0'] = value.split(':');
+    const date = new Date();
+    date.setHours(Number(hour));
+    date.setMinutes(Number(minute));
+    date.setSeconds(0);
+    date.setMilliseconds(0);
+    return date;
+  }, []);
+
+  const dateToTimeString = useCallback((value: Date) => {
+    const hh = value.getHours().toString().padStart(2, '0');
+    const mm = value.getMinutes().toString().padStart(2, '0');
+    return `${hh}:${mm}:00`;
+  }, []);
+
+  const handleStartChange = useCallback(
+    (event: DateTimePickerEvent, selected?: Date) => {
+      if (Platform.OS !== 'ios') {
+        setShowStartPicker(false);
+      }
+      if (event.type === 'dismissed' || !selected) return;
+      void updateQuietHours(
+        true,
+        dateToTimeString(selected),
+        notificationPrefs.quiet_hours_end,
+      );
+    },
+    [dateToTimeString, notificationPrefs.quiet_hours_end, updateQuietHours],
+  );
+
+  const handleEndChange = useCallback(
+    (event: DateTimePickerEvent, selected?: Date) => {
+      if (Platform.OS !== 'ios') {
+        setShowEndPicker(false);
+      }
+      if (event.type === 'dismissed' || !selected) return;
+      void updateQuietHours(
+        true,
+        notificationPrefs.quiet_hours_start,
+        dateToTimeString(selected),
+      );
+    },
+    [dateToTimeString, notificationPrefs.quiet_hours_start, updateQuietHours],
   );
 
   if (!fontsLoaded) {
@@ -775,6 +885,97 @@ export default function ProfileScreen() {
                   onValueChange={(val) => updateNotificationPref('preview_text', val)}
                   theme={theme}
                 />
+              </View>
+
+              <View style={styles.notificationSection}>
+                <Text style={[styles.notificationSectionTitle, { color: theme.text }]}>Quiet hours</Text>
+                <NotificationToggle
+                  label="Silence pushes"
+                  value={notificationPrefs.quiet_hours_enabled}
+                  onValueChange={(val) =>
+                    updateQuietHours(val, notificationPrefs.quiet_hours_start, notificationPrefs.quiet_hours_end)
+                  }
+                  theme={theme}
+                />
+                {notificationPrefs.quiet_hours_enabled ? (
+                  <>
+                    <Text style={[styles.quietHoursHint, { color: theme.textMuted }]}>
+                      {`Window: ${quietHoursLabel(notificationPrefs.quiet_hours_start)}-${quietHoursLabel(notificationPrefs.quiet_hours_end)}`}
+                    </Text>
+                    {quietHoursPreview ? (
+                      <Text style={[styles.quietHoursHint, { color: theme.textMuted }]}>
+                        {quietHoursPreview}
+                      </Text>
+                    ) : null}
+                    <View style={styles.quietHoursPills}>
+                      {QUIET_HOURS_PRESETS.map((preset) => {
+                        const active = activeQuietPreset?.id === preset.id;
+                        return (
+                          <TouchableOpacity
+                            key={preset.id}
+                            style={[
+                              styles.quietHoursPill,
+                              { backgroundColor: theme.background, borderColor: theme.outline },
+                              active && { backgroundColor: theme.tint, borderColor: theme.tint },
+                            ]}
+                            onPress={() => updateQuietHours(true, preset.start, preset.end)}
+                          >
+                            <Text
+                              style={[
+                                styles.quietHoursPillText,
+                                { color: theme.text },
+                                active && { color: '#fff' },
+                              ]}
+                            >
+                              {preset.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    <View style={styles.quietHoursCustomRow}>
+                      <TouchableOpacity
+                        style={[
+                          styles.quietHoursInput,
+                          { borderColor: theme.outline, backgroundColor: theme.background },
+                        ]}
+                        onPress={() => setShowStartPicker(true)}
+                      >
+                        <Text style={[styles.quietHoursInputText, { color: theme.text }]}>
+                          {quietHoursLabel(notificationPrefs.quiet_hours_start)}
+                        </Text>
+                      </TouchableOpacity>
+                      <Text style={[styles.quietHoursDash, { color: theme.textMuted }]}>to</Text>
+                      <TouchableOpacity
+                        style={[
+                          styles.quietHoursInput,
+                          { borderColor: theme.outline, backgroundColor: theme.background },
+                        ]}
+                        onPress={() => setShowEndPicker(true)}
+                      >
+                        <Text style={[styles.quietHoursInputText, { color: theme.text }]}>
+                          {quietHoursLabel(notificationPrefs.quiet_hours_end)}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                    {showStartPicker ? (
+                      <DateTimePicker
+                        mode="time"
+                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                        value={timeStringToDate(notificationPrefs.quiet_hours_start)}
+                        onChange={handleStartChange}
+                      />
+                    ) : null}
+                    {showEndPicker ? (
+                      <DateTimePicker
+                        mode="time"
+                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                        value={timeStringToDate(notificationPrefs.quiet_hours_end)}
+                        onChange={handleEndChange}
+                      />
+                    ) : null}
+                  </>
+                ) : null}
               </View>
 
               <View style={styles.notificationSection}>
@@ -1974,5 +2175,49 @@ const styles = StyleSheet.create({
   notificationLoading: {
     fontSize: 12,
     marginTop: 8,
+  },
+  quietHoursHint: {
+    fontSize: 12,
+    marginTop: 6,
+    marginBottom: 8,
+  },
+  quietHoursPills: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  quietHoursPill: {
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  quietHoursPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  quietHoursCustomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 10,
+  },
+  quietHoursInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quietHoursInputText: {
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  quietHoursDash: {
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

@@ -13,7 +13,7 @@ import { Audio } from "expo-av";
 import { BlurView } from "expo-blur";
 import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
@@ -241,7 +241,6 @@ const DEFAULT_VOICE_WAVEFORM = [0.2, 0.5, 0.35, 0.6, 0.28, 0.72, 0.44, 0.68, 0.3
 const VIDEO_TEXT_PREFIX = '\u{1F3A5} Video';
 const DOCUMENT_TEXT_PREFIX = '\u{1F4CE}';
 const STICKER_TEXT_PREFIX = 'sticker::';
-const VIEW_ONCE_DURATION_SECONDS = 10;
 const buildMapsLink = (lat: number, lng: number) =>
   `https://maps.google.com/?q=${lat},${lng}`;
 
@@ -576,9 +575,10 @@ type VideoViewerProps = {
   url: string;
   visible: boolean;
   styles: ReturnType<typeof createStyles>;
+  style?: object;
 };
 
-const VideoViewer = ({ url, visible, styles }: VideoViewerProps) => {
+const VideoViewer = ({ url, visible, styles, style }: VideoViewerProps) => {
   const player = useVideoPlayer(url, (p) => {
     p.loop = false;
     p.muted = false;
@@ -595,7 +595,7 @@ const VideoViewer = ({ url, visible, styles }: VideoViewerProps) => {
   return (
     <VideoView
       player={player}
-      style={styles.videoViewer}
+      style={[styles.videoViewer, style]}
       contentFit="contain"
       nativeControls
     />
@@ -1638,7 +1638,6 @@ export default function ConversationScreen() {
   const [viewOnceMode, setViewOnceMode] = useState(false);
   const [viewOnceStatus, setViewOnceStatus] = useState<Record<string, { viewedByMe: boolean; viewedByPeer: boolean }>>({});
   const [viewOnceModalMessage, setViewOnceModalMessage] = useState<MessageType | null>(null);
-  const [viewOnceSecondsLeft, setViewOnceSecondsLeft] = useState<number | null>(null);
   const [viewOnceMediaUri, setViewOnceMediaUri] = useState<string | null>(null);
   const [viewOnceDecrypting, setViewOnceDecrypting] = useState(false);
   const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null);
@@ -2822,9 +2821,11 @@ export default function ConversationScreen() {
   const uploadEncryptedChatMedia = useCallback(async ({
     bytes,
     fileName,
+    contentType,
   }: {
     bytes: Uint8Array;
     fileName: string;
+    contentType: string;
   }) => {
     const { data: sessionData } = await supabase.auth.getSession();
     if (!sessionData.session) {
@@ -2834,7 +2835,7 @@ export default function ConversationScreen() {
     const { error: uploadError } = await supabase
       .storage
       .from(CHAT_MEDIA_BUCKET)
-      .upload(filePath, bytes, { contentType: 'application/octet-stream', upsert: true });
+      .upload(filePath, bytes, { contentType, upsert: true });
     if (uploadError) {
       console.log('[chat] upload encrypted media error', uploadError);
       throw uploadError;
@@ -3097,6 +3098,7 @@ export default function ConversationScreen() {
       const encryptedPath = await uploadEncryptedChatMedia({
         bytes: encryptedPayload.cipherBytes,
         fileName: `${fileName}.enc`,
+        contentType,
       });
 
       const { data, error } = await supabase
@@ -5107,7 +5109,6 @@ export default function ConversationScreen() {
     if (!viewOnceModalMessage) return;
     const message = viewOnceModalMessage;
     setViewOnceModalMessage(null);
-    setViewOnceSecondsLeft(null);
     setViewOnceDecrypting(false);
     if (viewOnceMediaUri) {
       try {
@@ -5131,7 +5132,6 @@ export default function ConversationScreen() {
     }
     setViewOnceModalMessage(message);
     setViewOnceDecrypting(true);
-    setViewOnceSecondsLeft(null);
 
     try {
       const keypair = await ensureOwnKeypair();
@@ -5171,10 +5171,11 @@ export default function ConversationScreen() {
       const tempPath = `${FileSystem.cacheDirectory ?? ''}viewonce-${message.id}.${ext}`;
       const base64 = encodeBase64(plaintext);
       plaintext.fill(0);
-      await FileSystem.writeAsStringAsync(tempPath, base64, { encoding: FileSystem.EncodingType.Base64 });
+      await FileSystem.writeAsStringAsync(tempPath, base64, {
+        encoding: FileSystem.EncodingType?.Base64 ?? 'base64',
+      });
 
       setViewOnceMediaUri(tempPath);
-      setViewOnceSecondsLeft(VIEW_ONCE_DURATION_SECONDS);
     } catch (error) {
       console.log('[view-once] open error', error);
       Alert.alert('View once', 'Unable to open media.');
@@ -5184,18 +5185,6 @@ export default function ConversationScreen() {
       setViewOnceDecrypting(false);
     }
   }, [ensureOwnKeypair, fetchPeerPublicKey, user?.id]);
-
-  useEffect(() => {
-    if (!viewOnceModalMessage || viewOnceSecondsLeft == null) return;
-    if (viewOnceSecondsLeft <= 0) {
-      void closeViewOnceMessage();
-      return;
-    }
-    const timer = setTimeout(() => {
-      setViewOnceSecondsLeft((prev) => (prev == null ? null : prev - 1));
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [closeViewOnceMessage, viewOnceModalMessage, viewOnceSecondsLeft]);
 
   const openMessageActions = useCallback((message: MessageType) => {
     setActionMessageId(message.id);
@@ -7224,40 +7213,55 @@ export default function ConversationScreen() {
         animationType="fade"
         onRequestClose={closeViewOnceMessage}
       >
-        <Pressable style={styles.viewOnceModalBackdrop} onPress={closeViewOnceMessage} />
-        <View style={styles.viewOnceModalCard}>
-          <BlurView
-            intensity={28}
-            tint={isDark ? 'dark' : 'light'}
-            style={styles.viewOnceModalBlur}
-          />
-          <View style={styles.viewOnceModalContent}>
-            <View style={styles.viewOnceModalHeader}>
-              <View style={styles.viewOnceModalTitleRow}>
-                <MaterialCommunityIcons name="shield-lock-outline" size={16} color={theme.tint} />
-                <Text style={styles.viewOnceModalTitle}>View once</Text>
-              </View>
-              <View style={styles.viewOnceModalTimer}>
-                <Text style={styles.viewOnceModalTimerText}>
-                  {viewOnceSecondsLeft ?? VIEW_ONCE_DURATION_SECONDS}s
-                </Text>
-              </View>
+        <View style={styles.viewOnceModalBackdrop} />
+        <View style={styles.viewOnceFullScreen}>
+          {viewOnceDecrypting ? (
+            <View style={styles.viewOnceLoading}>
+              <ActivityIndicator size="small" color={theme.tint} />
             </View>
-            <View style={styles.viewOnceMediaFrame}>
-              {viewOnceDecrypting ? (
-                <ActivityIndicator size="small" color={theme.tint} />
-              ) : viewOnceMediaUri ? (
-                viewOnceModalMessage?.type === 'video' || (viewOnceModalMessage?.encryptedMediaMime || '').includes('video') ? (
-                  <VideoViewer url={viewOnceMediaUri} visible styles={styles} />
-                ) : (
-                  <Image source={{ uri: viewOnceMediaUri }} style={styles.viewOnceMediaImage} />
-                )
-              ) : (
-                <Text style={styles.viewOnceModalText}>Unable to load media.</Text>
-              )}
+          ) : viewOnceMediaUri ? (
+            viewOnceModalMessage?.type === 'video' || (viewOnceModalMessage?.encryptedMediaMime || '').includes('video') ? (
+              <VideoViewer url={viewOnceMediaUri} visible styles={styles} style={styles.viewOnceMediaVideoFull} />
+            ) : (
+              <Image source={{ uri: viewOnceMediaUri }} style={styles.viewOnceMediaImageFull} />
+            )
+          ) : (
+            <View style={styles.viewOnceLoading}>
+              <Text style={styles.viewOnceModalText}>Unable to load media.</Text>
             </View>
-            <TouchableOpacity style={styles.viewOnceModalButton} onPress={closeViewOnceMessage}>
-              <Text style={styles.viewOnceModalButtonText}>Done</Text>
+          )}
+
+          <View style={styles.viewOnceOverlayHeader}>
+            <TouchableOpacity style={styles.viewOnceHeaderButton} onPress={closeViewOnceMessage}>
+              <MaterialCommunityIcons name="chevron-left" size={22} color={Colors.light.background} />
+            </TouchableOpacity>
+            <View style={styles.viewOnceHeaderBadge}>
+              <MaterialCommunityIcons name="shield-lock" size={14} color={Colors.light.background} />
+              <Text style={styles.viewOnceHeaderText}>Encrypted</Text>
+            </View>
+          </View>
+
+          <View style={styles.viewOnceOverlayFooter}>
+            <TouchableOpacity
+              style={styles.viewOnceFooterButton}
+              onPress={() => {
+                if (viewOnceModalMessage) {
+                  openReactionSheet(viewOnceModalMessage);
+                }
+              }}
+            >
+              <MaterialCommunityIcons name="emoticon-outline" size={22} color={Colors.light.background} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.viewOnceFooterButton}
+              onPress={() => {
+                if (viewOnceModalMessage) {
+                  replyToMessage(viewOnceModalMessage);
+                  closeViewOnceMessage();
+                }
+              }}
+            >
+              <MaterialCommunityIcons name="reply-outline" size={22} color={Colors.light.background} />
             </TouchableOpacity>
           </View>
         </View>
@@ -9228,91 +9232,82 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     viewOnceModalBackdrop: {
       ...StyleSheet.absoluteFillObject,
-      backgroundColor: withAlpha(Colors.dark.background, 0.55),
+      backgroundColor: 'rgba(0,0,0,0.92)',
     },
-    viewOnceModalCard: {
-      position: 'absolute',
-      left: 20,
-      right: 20,
-      top: '30%',
-      borderRadius: 22,
-      overflow: 'hidden',
-    },
-    viewOnceModalBlur: {
+    viewOnceFullScreen: {
       ...StyleSheet.absoluteFillObject,
-    },
-    viewOnceModalContent: {
-      paddingHorizontal: 20,
-      paddingTop: 18,
-      paddingBottom: 16,
-      backgroundColor: withAlpha(theme.background, isDark ? 0.5 : 0.7),
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
-    },
-    viewOnceModalHeader: {
-      flexDirection: 'row',
       alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: 12,
+      justifyContent: 'center',
     },
-    viewOnceModalTitleRow: {
-      flexDirection: 'row',
+    viewOnceLoading: {
+      flex: 1,
       alignItems: 'center',
-      gap: 8,
-    },
-    viewOnceModalTitle: {
-      fontSize: 14,
-      fontFamily: 'Manrope_600SemiBold',
-      color: theme.text,
-      textTransform: 'uppercase',
-      letterSpacing: 0.6,
-    },
-    viewOnceModalTimer: {
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 999,
-      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
-    },
-    viewOnceModalTimerText: {
-      fontSize: 11,
-      fontFamily: 'Manrope_600SemiBold',
-      color: theme.text,
+      justifyContent: 'center',
     },
     viewOnceModalText: {
       fontSize: 16,
       fontFamily: 'PlayfairDisplay_500Medium',
-      color: theme.text,
+      color: Colors.light.background,
       lineHeight: 22,
-      marginBottom: 18,
     },
-    viewOnceMediaFrame: {
-      borderRadius: 16,
-      overflow: 'hidden',
-      marginTop: 12,
-      marginBottom: 12,
-      backgroundColor: withAlpha(theme.text, isDark ? 0.1 : 0.06),
+    viewOnceMediaImageFull: {
+      width: screenWidth,
+      height: screenHeight,
+      resizeMode: 'contain',
+    },
+    viewOnceMediaVideoFull: {
+      width: screenWidth,
+      height: screenHeight,
+    },
+    viewOnceOverlayHeader: {
+      position: 'absolute',
+      top: Platform.OS === 'ios' ? 52 : 24,
+      left: 16,
+      right: 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    viewOnceHeaderButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
       alignItems: 'center',
       justifyContent: 'center',
-      minHeight: 180,
+      backgroundColor: 'rgba(0,0,0,0.35)',
     },
-    viewOnceMediaImage: {
-      width: '100%',
-      height: 240,
-      resizeMode: 'cover',
-    },
-    viewOnceModalButton: {
-      alignSelf: 'flex-end',
-      paddingHorizontal: 16,
-      paddingVertical: 10,
+    viewOnceHeaderBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
       borderRadius: 999,
-      backgroundColor: theme.tint,
+      backgroundColor: 'rgba(0,0,0,0.35)',
     },
-    viewOnceModalButtonText: {
+    viewOnceHeaderText: {
       fontSize: 12,
       fontFamily: 'Manrope_600SemiBold',
       color: Colors.light.background,
       textTransform: 'uppercase',
-      letterSpacing: 0.6,
+      letterSpacing: 0.5,
+    },
+    viewOnceOverlayFooter: {
+      position: 'absolute',
+      left: 24,
+      right: 24,
+      bottom: Platform.OS === 'ios' ? 40 : 28,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    viewOnceFooterButton: {
+      width: 46,
+      height: 46,
+      borderRadius: 23,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(0,0,0,0.35)',
     },
 
     // Report Sheet
