@@ -1,4 +1,3 @@
-import { normalizeAiScorePercent, toRoundedPercentInt } from '@/lib/profile/ai-score';
 import { DiasporaVerification } from "@/components/DiasporaVerification";
 import PhotoGallery from "@/components/PhotoGallery";
 import ProfileEditModal from "@/components/ProfileEditModal";
@@ -9,6 +8,7 @@ import { Colors } from "@/constants/theme";
 import { useColorScheme, useColorSchemePreference } from "@/hooks/use-color-scheme";
 import { useVerificationStatus } from "@/hooks/use-verification-status";
 import { useAuth } from "@/lib/auth-context";
+import { normalizeAiScorePercent, toRoundedPercentInt } from '@/lib/profile/ai-score';
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
