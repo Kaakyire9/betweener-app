@@ -1028,8 +1028,8 @@ const MessageRowItem = memo(
             item.deletedForAll && styles.deletedMessageBubble,
             item.type === 'mood_sticker' && styles.stickerBubble,
             item.type === 'voice' && styles.voiceBubble,
-            item.type === 'image' && styles.imageBubble,
-            item.type === 'video' && styles.videoBubble,
+            item.type === 'image' && !isEncryptedViewOnce && styles.imageBubble,
+            item.type === 'video' && !isEncryptedViewOnce && styles.videoBubble,
             item.type === 'document' && styles.documentBubble,
             item.type === 'location' && styles.locationBubble,
           ]}>
@@ -1159,63 +1159,30 @@ const MessageRowItem = memo(
                   }
                 }}
                 disabled={!canOpenViewOnce}
-                style={styles.viewOnceWrapper}
+                style={styles.viewOnceInlineRow}
               >
-                <LinearGradient
-                  colors={
-                    isMyMessage
-                      ? [withAlpha(theme.tint, 0.92), withAlpha(theme.tint, 0.7)]
-                      : [withAlpha(theme.backgroundSubtle, 0.95), withAlpha(theme.backgroundSubtle, 0.7)]
-                  }
+                <View style={[
+                  styles.viewOnceLockBadge,
+                  isMyMessage ? styles.viewOnceLockBadgeMy : styles.viewOnceLockBadgeTheir,
+                ]}>
+                  <MaterialCommunityIcons
+                    name="shield-lock-outline"
+                    size={16}
+                    color={isMyMessage ? Colors.light.background : theme.tint}
+                  />
+                </View>
+                <Text
+                  numberOfLines={1}
                   style={[
-                    styles.viewOnceCard,
-                    isMyMessage ? styles.viewOnceCardMy : styles.viewOnceCardTheir,
+                    styles.viewOnceTitle,
+                    isMyMessage
+                      ? { color: Colors.light.background }
+                      : styles.viewOnceTitleTheir,
+                    styles.viewOnceInlineLabel,
                   ]}
                 >
-                  <View style={styles.viewOnceHeader}>
-                    <View style={[
-                      styles.viewOnceLockBadge,
-                      isMyMessage ? styles.viewOnceLockBadgeMy : styles.viewOnceLockBadgeTheir,
-                    ]}>
-                      <MaterialCommunityIcons
-                        name="shield-lock-outline"
-                        size={16}
-                        color={isMyMessage ? Colors.light.background : theme.tint}
-                      />
-                    </View>
-                    <View style={styles.viewOnceTextBlock}>
-                      <Text
-                        numberOfLines={1}
-                        style={[
-                          styles.viewOnceTitle,
-                          isMyMessage ? styles.viewOnceTitleMy : styles.viewOnceTitleTheir,
-                        ]}
-                      >
-                        {viewOnceTitle}
-                      </Text>
-                      {viewOnceSubtitle ? (
-                        <Text
-                          numberOfLines={1}
-                          style={[
-                            styles.viewOnceSubtitle,
-                            isMyMessage ? styles.viewOnceSubtitleMy : styles.viewOnceSubtitleTheir,
-                          ]}
-                        >
-                          {viewOnceSubtitle}
-                        </Text>
-                      ) : null}
-                    </View>
-                  </View>
-                  <View style={styles.viewOnceFooter}>
-                    {!isMyMessage && !viewOnceViewedByMe ? (
-                      <MaterialCommunityIcons
-                        name="chevron-right"
-                        size={16}
-                        color={theme.textMuted}
-                      />
-                    ) : null}
-                  </View>
-                </LinearGradient>
+                  {viewOnceTitle}
+                </Text>
               </Pressable>
             ) : item.type === 'voice' ? (
               <View style={styles.voiceMessageContainer}>
@@ -9758,10 +9725,20 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     viewOnceWrapper: {
       width: '100%',
     },
+    viewOnceInlineRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      width: '100%',
+    },
+    viewOnceInlineLabel: {
+      flexShrink: 1,
+      minWidth: 0,
+    },
     viewOnceCard: {
       borderRadius: 18,
       paddingHorizontal: 14,
-      paddingVertical: 12,
+      paddingVertical: 8,
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
       minWidth: 140,
@@ -9791,7 +9768,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.12),
     },
     viewOnceTextBlock: {
-      flex: 1,
+      flexGrow: 1,
+      flexShrink: 1,
       flexDirection: 'row',
       alignItems: 'baseline',
       gap: 6,
@@ -9820,7 +9798,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.textMuted,
     },
     viewOnceFooter: {
-      marginTop: 8,
+      marginTop: 4,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
