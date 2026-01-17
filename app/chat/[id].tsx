@@ -15,6 +15,7 @@ import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Haptics from 'expo-haptics';
+import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Location from "expo-location";
@@ -511,11 +512,56 @@ const getFileTypeLabel = (mimeType?: string | null, fileName?: string | null) =>
   return 'File';
 };
 
+const normalizeHeicImage = async (
+  asset: ImagePicker.ImagePickerAsset,
+  fallbackName: string
+) => {
+  const mime = asset.mimeType?.toLowerCase() ?? '';
+  const name = fallbackName || `image-${Date.now()}`;
+  const lowerName = name.toLowerCase();
+  const isHeic =
+    mime === 'image/heic' ||
+    mime === 'image/heif' ||
+    lowerName.endsWith('.heic') ||
+    lowerName.endsWith('.heif');
+
+  if (!isHeic) {
+    return {
+      uri: asset.uri,
+      fileName: name,
+      contentType: mime || 'image/jpeg',
+    };
+  }
+
+  const result = await ImageManipulator.manipulateAsync(
+    asset.uri,
+    [],
+    { compress: 0.92, format: ImageManipulator.SaveFormat.JPEG }
+  );
+  let jpegName = name.replace(/\.(heic|heif)$/i, '.jpg');
+  if (!/\.[a-z0-9]+$/i.test(jpegName)) {
+    jpegName = `${jpegName}.jpg`;
+  }
+  return {
+    uri: result.uri,
+    fileName: jpegName,
+    contentType: 'image/jpeg',
+  };
+};
+
 type VideoPreviewProps = {
   url: string;
   size?: { width: number; height: number };
   styles: ReturnType<typeof createStyles>;
   onSize: (width: number, height: number) => void;
+};
+
+type ReplyMeta = {
+  icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
+  label: string;
+  preview: string;
+  time: string;
+  canJump: boolean;
 };
 
 const VideoPreview = ({ url, size, styles, onSize }: VideoPreviewProps) => {
@@ -770,17 +816,11 @@ const MessageRowItem = memo(
     const viewOnceTitle = isMyMessage
       ? viewOnceViewedByPeer
         ? 'Opened'
-        : `View once ${mediaLabel}`
+        : 'View once'
       : viewOnceViewedByMe
       ? 'Viewed'
-      : `View once ${mediaLabel}`;
-    const viewOnceSubtitle = isMyMessage
-      ? viewOnceViewedByPeer
-        ? 'Recipient opened this media'
-        : 'Encrypted - View once'
-      : viewOnceViewedByMe
-      ? 'This media has disappeared'
-      : 'Tap to view';
+      : 'View once';
+    const viewOnceSubtitle = '';
 
     const locationRemaining = useMemo(() => {
       if (item.type !== 'location' || !item.location?.live) return null;
@@ -794,11 +834,11 @@ const MessageRowItem = memo(
       return item.location.expiresAt.getTime() > nowValue;
     }, [item.location?.expiresAt, item.location?.live, item.type, now]);
 
-    const replyMeta = useMemo(() => {
+    const replyMeta = useMemo<ReplyMeta | null>(() => {
       if (!item.replyTo) {
         if (!item.replyToId) return null;
         return {
-          icon: 'reply' as const,
+          icon: 'reply' as ReplyMeta['icon'],
           label: 'Reply',
           preview: 'Original message unavailable',
           time: '',
@@ -812,14 +852,14 @@ const MessageRowItem = memo(
       });
       if (item.replyTo.deletedForAll) {
         return {
-          icon: 'message-bulleted-off' as const,
+          icon: 'message-bulleted-off' as ReplyMeta['icon'],
           label: item.replyTo.senderId === currentUserId ? 'You' : peerName || 'User',
           preview: 'Message deleted',
           time: replyTime,
           canJump: true,
         };
       }
-      const iconMap: Record<MessageType['type'], ComponentProps<typeof MaterialCommunityIcons>['name']> = {
+      const iconMap: Record<MessageType['type'], ReplyMeta['icon']> = {
         text: 'chat-outline',
         voice: 'microphone-outline',
         image: 'image-outline',
@@ -857,7 +897,7 @@ const MessageRowItem = memo(
       if (item.replyTo.isViewOnce && (item.replyTo.type === 'image' || item.replyTo.type === 'video')) {
         const replyLabel = item.replyTo.type === 'video' ? 'View once video' : 'View once photo';
         return {
-          icon: 'lock-outline',
+          icon: 'lock-outline' as ReplyMeta['icon'],
           label: item.replyTo.senderId === currentUserId ? 'You' : peerName || 'User',
           preview: replyLabel,
           time: replyTime,
@@ -1145,6 +1185,7 @@ const MessageRowItem = memo(
                     </View>
                     <View style={styles.viewOnceTextBlock}>
                       <Text
+                        numberOfLines={1}
                         style={[
                           styles.viewOnceTitle,
                           isMyMessage ? styles.viewOnceTitleMy : styles.viewOnceTitleTheir,
@@ -1152,30 +1193,20 @@ const MessageRowItem = memo(
                       >
                         {viewOnceTitle}
                       </Text>
-                      <Text
-                        style={[
-                          styles.viewOnceSubtitle,
-                          isMyMessage ? styles.viewOnceSubtitleMy : styles.viewOnceSubtitleTheir,
-                        ]}
-                      >
-                        {viewOnceSubtitle}
-                      </Text>
+                      {viewOnceSubtitle ? (
+                        <Text
+                          numberOfLines={1}
+                          style={[
+                            styles.viewOnceSubtitle,
+                            isMyMessage ? styles.viewOnceSubtitleMy : styles.viewOnceSubtitleTheir,
+                          ]}
+                        >
+                          {viewOnceSubtitle}
+                        </Text>
+                      ) : null}
                     </View>
                   </View>
                   <View style={styles.viewOnceFooter}>
-                    <View style={[
-                      styles.viewOnceBadge,
-                      isMyMessage ? styles.viewOnceBadgeMy : styles.viewOnceBadgeTheir,
-                    ]}>
-                      <Text
-                        style={[
-                          styles.viewOnceBadgeText,
-                          isMyMessage ? styles.viewOnceBadgeTextMy : styles.viewOnceBadgeTextTheir,
-                        ]}
-                      >
-                        Encrypted
-                      </Text>
-                    </View>
                     {!isMyMessage && !viewOnceViewedByMe ? (
                       <MaterialCommunityIcons
                         name="chevron-right"
@@ -4938,17 +4969,26 @@ export default function ConversationScreen() {
     const asset = result.assets?.[0];
     if (!asset?.uri) return;
     try {
-      const fileName = asset.fileName ?? asset.uri.split('/').pop() ?? `camera-${Date.now()}`;
-      const contentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
+      const fallbackName = asset.fileName ?? asset.uri.split('/').pop() ?? `camera-${Date.now()}`;
+      const baseContentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
+      const normalized =
+        asset.type === 'image'
+          ? await normalizeHeicImage(asset, fallbackName)
+          : { uri: asset.uri, fileName: fallbackName, contentType: baseContentType };
+
       if (viewOnceMode) {
         await sendEncryptedMediaAttachment({
-          uri: asset.uri,
-          fileName,
-          contentType,
+          uri: normalized.uri,
+          fileName: normalized.fileName,
+          contentType: normalized.contentType,
           kind: asset.type === 'video' ? 'video' : 'image',
         });
       } else {
-        const { publicUrl } = await uploadChatMedia({ uri: asset.uri, fileName, contentType });
+        const { publicUrl } = await uploadChatMedia({
+          uri: normalized.uri,
+          fileName: normalized.fileName,
+          contentType: normalized.contentType,
+        });
         if (asset.type === 'image') {
           await sendImageAttachment({ imageUrl: publicUrl });
         } else {
@@ -4975,17 +5015,26 @@ export default function ConversationScreen() {
     const asset = result.assets?.[0];
     if (!asset?.uri) return;
     try {
-      const fileName = asset.fileName ?? asset.uri.split('/').pop() ?? `library-${Date.now()}`;
-      const contentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
+      const fallbackName = asset.fileName ?? asset.uri.split('/').pop() ?? `library-${Date.now()}`;
+      const baseContentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
+      const normalized =
+        asset.type === 'image'
+          ? await normalizeHeicImage(asset, fallbackName)
+          : { uri: asset.uri, fileName: fallbackName, contentType: baseContentType };
+
       if (viewOnceMode) {
         await sendEncryptedMediaAttachment({
-          uri: asset.uri,
-          fileName,
-          contentType,
+          uri: normalized.uri,
+          fileName: normalized.fileName,
+          contentType: normalized.contentType,
           kind: asset.type === 'video' ? 'video' : 'image',
         });
       } else {
-        const { publicUrl } = await uploadChatMedia({ uri: asset.uri, fileName, contentType });
+        const { publicUrl } = await uploadChatMedia({
+          uri: normalized.uri,
+          fileName: normalized.fileName,
+          contentType: normalized.contentType,
+        });
         if (asset.type === 'image') {
           await sendImageAttachment({ imageUrl: publicUrl });
         } else {
@@ -7237,7 +7286,6 @@ export default function ConversationScreen() {
             </TouchableOpacity>
             <View style={styles.viewOnceHeaderBadge}>
               <MaterialCommunityIcons name="shield-lock" size={14} color={Colors.light.background} />
-              <Text style={styles.viewOnceHeaderText}>Encrypted</Text>
             </View>
           </View>
 
@@ -9296,7 +9344,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       position: 'absolute',
       left: 24,
       right: 24,
-      bottom: Platform.OS === 'ios' ? 40 : 28,
+      bottom: Platform.OS === 'ios' ? 40 : 56,
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
@@ -9716,6 +9764,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       paddingVertical: 12,
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      minWidth: 140,
     },
     viewOnceCardMy: {
       borderColor: withAlpha(Colors.light.background, 0.2),
@@ -9743,11 +9792,15 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     viewOnceTextBlock: {
       flex: 1,
-      gap: 2,
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      gap: 6,
+      minWidth: 0,
     },
     viewOnceTitle: {
       fontSize: 14,
       fontFamily: 'Manrope_600SemiBold',
+      flexShrink: 1,
     },
     viewOnceTitleMy: {
       color: Colors.light.background,
@@ -9758,6 +9811,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     viewOnceSubtitle: {
       fontSize: 11,
       fontFamily: 'Manrope_400Regular',
+      flexShrink: 1,
     },
     viewOnceSubtitleMy: {
       color: withAlpha(Colors.light.background, 0.8),
