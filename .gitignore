@@ -43,6 +43,5 @@ app-example
 /ios
 /android
 
- # firebase
- google-services.json
-
+# firebase
+google-services.json
