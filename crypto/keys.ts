@@ -12,7 +12,6 @@ let randomReady = false;
 function ensureRandomSource() {
   if (randomReady) return;
   // tweetnacl expects a secure RNG; expo-random provides native entropy.
-  // @ts-expect-error override runtime RNG for React Native.
   nacl.randomBytes = (length: number) => Random.getRandomBytes(length);
   randomReady = true;
 }
@@ -28,7 +27,7 @@ function uint8ToBase64(bytes: Uint8Array): string {
 async function storeString(key: string, value: string) {
   await SecureStore.setItemAsync(key, value, {
     keychainService: key,
-    accessible: SecureStore.AFTER_FIRST_UNLOCK,
+    keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
   });
 }
 

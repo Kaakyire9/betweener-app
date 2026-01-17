@@ -7,6 +7,8 @@ import { supabase } from '@/lib/supabase';
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: false,
     shouldSetBadge: true,
   }),

@@ -17,7 +17,6 @@ export type EncryptResult = {
 };
 
 function ensureRandom() {
-  // @ts-expect-error override RNG in React Native
   nacl.randomBytes = (len: number) => Random.getRandomBytes(len);
 }
 

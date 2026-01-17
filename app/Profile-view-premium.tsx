@@ -13,7 +13,7 @@ import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Dimensions, FlatList, Image, Modal, PanResponder, Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { Dimensions, FlatList, Image, Modal, PanResponder, Pressable, StyleSheet, Text, View, type ImageStyle, type ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Easing,
@@ -1045,7 +1045,7 @@ function Header({
     profile.profilePicture ||
     '';
   const heroHeight = Math.max(280, Math.min(420, Math.round(screenHeight * 0.38)));
-  const heroImageStyle = useAnimatedStyle(() => {
+  const heroImageStyle = useAnimatedStyle<ImageStyle>(() => {
     const translateY = interpolate(
       heroScrollY.value,
       [0, heroHeight],
@@ -1058,8 +1058,9 @@ function Header({
       [1.02, 1.08],
       Extrapolate.CLAMP,
     );
+    const transform: ImageStyle['transform'] = [{ translateY }, { scale }];
     return {
-      transform: [{ translateY }, { scale }],
+      transform,
     };
   }, [heroHeight]);
 
