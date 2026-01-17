@@ -3,6 +3,7 @@ import { Archivo_700Bold, useFonts as useArchivo } from '@expo-google-fonts/arch
 import {
     Manrope_400Regular,
     Manrope_500Medium,
+    Manrope_500Medium_Italic,
     Manrope_600SemiBold,
     Manrope_700Bold,
     useFonts as useManrope,
@@ -18,6 +19,7 @@ export function useAppFonts() {
   const [manropeLoaded] = useManrope({
     Manrope_400Regular,
     Manrope_500Medium,
+    Manrope_500Medium_Italic,
     Manrope_600SemiBold,
     Manrope_700Bold,
   });

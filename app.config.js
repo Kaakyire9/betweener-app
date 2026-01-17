@@ -11,7 +11,13 @@ module.exports = ({ config }) => {
     process.env.GOOGLE_MAPS_API_KEY;
   return {
     ...config,
-    plugins: [...(config.plugins ?? []), 'expo-secure-store', '@react-native-community/datetimepicker'],
+    plugins: [
+      ...(config.plugins ?? []),
+      'expo-secure-store',
+      '@react-native-community/datetimepicker',
+      'expo-audio',
+      'expo-apple-authentication',
+    ],
     ios: {
       ...config.ios,
       config: {

@@ -1,5 +1,4 @@
 import MomentViewer from "@/components/MomentViewer";
-import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useMoments } from "@/hooks/useMoments";
@@ -9,7 +8,14 @@ import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
-import { Audio } from "expo-av";
+import {
+  AudioPlayer,
+  AudioRecorder,
+  createAudioPlayer,
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+} from "expo-audio";
 import { BlurView } from "expo-blur";
 import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
@@ -812,14 +818,14 @@ const MessageRowItem = memo(
       item.isViewOnce && item.encryptedMedia && (item.type === 'image' || item.type === 'video')
     );
     const canOpenViewOnce = !isMyMessage && !viewOnceViewedByMe && isEncryptedViewOnce;
-    const mediaLabel = item.type === 'video' ? 'video' : 'photo';
+    const mediaLabel = item.type === 'video' ? 'Video' : 'Photo';
     const viewOnceTitle = isMyMessage
       ? viewOnceViewedByPeer
         ? 'Opened'
-        : 'View once'
+        : mediaLabel
       : viewOnceViewedByMe
       ? 'Viewed'
-      : 'View once';
+      : mediaLabel;
     const viewOnceSubtitle = '';
 
     const locationRemaining = useMemo(() => {
@@ -1173,14 +1179,15 @@ const MessageRowItem = memo(
                 </View>
                 <Text
                   numberOfLines={1}
-                  style={[
-                    styles.viewOnceTitle,
-                    isMyMessage
-                      ? { color: Colors.light.background }
-                      : styles.viewOnceTitleTheir,
-                    styles.viewOnceInlineLabel,
-                  ]}
-                >
+                    style={[
+                      styles.viewOnceTitle,
+                      isMyMessage
+                        ? { color: Colors.light.background }
+                        : styles.viewOnceTitleTheir,
+                      styles.viewOnceTitleItalic,
+                      styles.viewOnceInlineLabel,
+                    ]}
+                  >
                   {viewOnceTitle}
                 </Text>
               </Pressable>
@@ -1570,7 +1577,6 @@ const MessageRowItem = memo(
 
 export default function ConversationScreen() {
   const { user, profile } = useAuth();
-  const fontsLoaded = useAppFonts();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
@@ -1703,11 +1709,11 @@ export default function ConversationScreen() {
   );
   const typingAnimation = useRef(new Animated.Value(0)).current;
   const recordingAnimation = useRef(new Animated.Value(0)).current;
-  const recordingRef = useRef<Audio.Recording | null>(null);
+  const recordingRef = useRef<AudioRecorder | null>(null);
   const recordingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordingPulseRef = useRef<Animated.CompositeAnimation | null>(null);
   const voiceButtonScale = useRef(new Animated.Value(1)).current;
-  const voiceSoundRef = useRef<Audio.Sound | null>(null);
+  const voiceSoundRef = useRef<AudioPlayer | null>(null);
   const mapRef = useRef<MapView>(null);
   const inputRef = useRef<TextInput>(null);
   const reconnectToastOpacity = useRef(new Animated.Value(0)).current;
@@ -2182,14 +2188,12 @@ export default function ConversationScreen() {
         // Ignore storage failures for hint.
       }
     };
-    if (fontsLoaded) {
-      void maybeShowHint();
-    }
+    void maybeShowHint();
     return () => {
       isMounted = false;
       if (hideTimer) clearTimeout(hideTimer);
     };
-  }, [fontsLoaded, headerHintOpacity]);
+  }, [headerHintOpacity]);
 
   useEffect(() => {
     if (!peerHasMoment) {
@@ -4667,19 +4671,22 @@ export default function ConversationScreen() {
     }
     if (isRecording || isUploadingVoice) return;
     try {
-      const permission = await Audio.requestPermissionsAsync();
+      const permission = await requestRecordingPermissionsAsync();
       if (!permission.granted) {
         Alert.alert('Microphone access', 'Enable microphone access to record voice messages.');
         return;
       }
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+        interruptionMode: 'duckOthers',
+        shouldPlayInBackground: false,
+        shouldRouteThroughEarpiece: false,
       });
 
-      const recording = new Audio.Recording();
-      await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-      await recording.startAsync();
+      const recording = new AudioRecorder(RecordingPresets.HIGH_QUALITY);
+      await recording.prepareToRecordAsync();
+      recording.record();
       recordingRef.current = recording;
       setIsRecording(true);
       setIsRecordingPaused(false);
@@ -4697,7 +4704,7 @@ export default function ConversationScreen() {
   const pauseVoiceRecording = useCallback(async () => {
     if (!recordingRef.current || !isRecording || isRecordingPaused) return;
     try {
-      await recordingRef.current.pauseAsync();
+      recordingRef.current.pause();
       setIsRecordingPaused(true);
       stopRecordingTimer();
       stopRecordingPulse();
@@ -4709,7 +4716,7 @@ export default function ConversationScreen() {
   const resumeVoiceRecording = useCallback(async () => {
     if (!recordingRef.current || !isRecording || !isRecordingPaused) return;
     try {
-      await recordingRef.current.startAsync();
+      recordingRef.current.record();
       setIsRecordingPaused(false);
       startRecordingTimer();
       startRecordingPulse();
@@ -4723,13 +4730,19 @@ export default function ConversationScreen() {
     try {
       const recording = recordingRef.current;
       if (recording) {
-        await recording.stopAndUnloadAsync();
-        const uri = recording.getURI();
+        await recording.stop();
+        const uri = recording.uri;
         if (uri) {
           await FileSystem.deleteAsync(uri, { idempotent: true });
         }
       }
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+        interruptionMode: 'duckOthers',
+        shouldPlayInBackground: false,
+        shouldRouteThroughEarpiece: false,
+      });
     } catch (error) {
       console.log('[chat] discard recording error', error);
     } finally {
@@ -4744,13 +4757,19 @@ export default function ConversationScreen() {
     let uri: string | null = null;
     let durationSeconds = recordingDuration;
     try {
-      const status = await recording.getStatusAsync();
+      const status = recording.getStatus();
       if (typeof status.durationMillis === 'number') {
         durationSeconds = Math.max(durationSeconds, status.durationMillis / 1000);
       }
-      await recording.stopAndUnloadAsync();
-      uri = recording.getURI();
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+      await recording.stop();
+      uri = recording.uri;
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+        interruptionMode: 'duckOthers',
+        shouldPlayInBackground: false,
+        shouldRouteThroughEarpiece: false,
+      });
     } catch (error) {
       console.log('[chat] stop recording error', error);
       Alert.alert('Voice message', 'Could not finish recording. Please try again.');
@@ -4863,8 +4882,8 @@ export default function ConversationScreen() {
       return;
     }
     try {
-      await voiceSoundRef.current.stopAsync();
-      await voiceSoundRef.current.unloadAsync();
+      voiceSoundRef.current.pause();
+      voiceSoundRef.current.remove();
     } catch (error) {
       console.log('[chat] stop playback error', error);
     } finally {
@@ -4897,23 +4916,25 @@ export default function ConversationScreen() {
     }
 
     try {
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-        shouldDuckAndroid: true,
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+        interruptionMode: 'duckOthers',
+        shouldPlayInBackground: false,
+        shouldRouteThroughEarpiece: false,
       });
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: data.signedUrl },
-        { shouldPlay: true }
-      );
-      voiceSoundRef.current = sound;
+      const player = createAudioPlayer({ uri: data.signedUrl }, { updateInterval: 200 });
+      voiceSoundRef.current = player;
       setPlayingVoiceId(messageId);
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (!status.isLoaded) return;
+      player.addListener('playbackStatusUpdate', (status) => {
+        if (!status.isLoaded) {
+          return;
+        }
         if (status.didJustFinish) {
           stopVoicePlayback();
         }
       });
+      player.play();
     } catch (error) {
       console.log('[chat] playback error', error);
       Alert.alert('Voice message', 'Playback failed.');
@@ -5529,12 +5550,12 @@ export default function ConversationScreen() {
       stopRecordingTimer();
       recordingPulseRef.current?.stop();
       if (recordingRef.current) {
-        recordingRef.current.stopAndUnloadAsync().catch(() => {});
+        recordingRef.current.stop().catch(() => {});
         recordingRef.current = null;
       }
       if (voiceSoundRef.current) {
-        voiceSoundRef.current.stopAsync().catch(() => {});
-        voiceSoundRef.current.unloadAsync().catch(() => {});
+        voiceSoundRef.current.pause();
+        voiceSoundRef.current.remove();
         voiceSoundRef.current = null;
       }
     };
@@ -6202,9 +6223,6 @@ export default function ConversationScreen() {
     setHeaderMenuVisible(true);
   }, [dismissHeaderHint]);
 
-  if (!fontsLoaded) {
-    return <View style={styles.container} />;
-  }
 
   const renderMoodStickersPanel = () => {
     if (!showMoodStickers) return null;
@@ -9779,6 +9797,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontSize: 14,
       fontFamily: 'Manrope_600SemiBold',
       flexShrink: 1,
+    },
+    viewOnceTitleItalic: {
+      fontFamily: 'Manrope_500Medium_Italic',
     },
     viewOnceTitleMy: {
       color: Colors.light.background,

@@ -41,7 +41,7 @@ export default function InAppToasts() {
   const timeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   const pushToast = useCallback((toast: ToastItem) => {
-    setToasts((prev) => [toast, ...prev].slice(0, 3));
+    setToasts((prev) => [toast, ...prev.filter((item) => item.id !== toast.id)].slice(0, 3));
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
     if (timeouts.current[toast.id]) {
       clearTimeout(timeouts.current[toast.id]);

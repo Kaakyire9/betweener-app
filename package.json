@@ -22,12 +22,15 @@
     "@react-navigation/elements": "^2.6.3",
     "@react-navigation/native": "^7.1.8",
     "@react-navigation/native-stack": "^7.3.16",
-    "@shopify/flash-list": "^2.2.0",
+    "@shopify/flash-list": "^2.0.2",
     "@supabase/supabase-js": "^2.57.4",
     "babel-preset-expo": "~54.0.9",
     "expo": "~54.0.31",
+    "expo-apple-authentication": "~8.0.8",
+    "expo-application": "~7.0.8",
+    "expo-asset": "~12.0.12",
+    "expo-audio": "~1.1.1",
     "expo-auth-session": "~7.0.10",
-    "expo-av": "~16.0.8",
     "expo-blur": "~15.0.8",
     "expo-clipboard": "~8.0.8",
     "expo-constants": "~18.0.13",
@@ -44,15 +47,13 @@
     "expo-linear-gradient": "~15.0.8",
     "expo-linking": "~8.0.11",
     "expo-location": "~19.0.8",
-    "expo-media-library": "~18.2.1",
     "expo-notifications": "~0.32.16",
-    "expo-random": "^14.0.1",
     "expo-router": "~6.0.21",
     "expo-secure-store": "~15.0.8",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
+    "expo-store-review": "~9.0.9",
     "expo-symbols": "~1.0.8",
-    "expo-system-ui": "~6.0.9",
     "expo-video": "~3.0.15",
     "expo-web-browser": "~15.0.10",
     "lucide-react-native": "^0.544.0",
@@ -62,6 +63,7 @@
     "react-native": "0.81.5",
     "react-native-gesture-handler": "~2.28.0",
     "react-native-maps": "1.20.1",
+    "react-native-purchases": "^9.7.1",
     "react-native-reanimated": "~4.1.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
@@ -71,7 +73,6 @@
     "react-native-worklets": "0.5.1",
     "tweetnacl": "^1.0.3",
     "tweetnacl-util": "^0.15.1",
-    "twilio": "^5.10.2",
     "zustand": "^5.0.8"
   },
   "devDependencies": {
@@ -83,6 +84,10 @@
     "eslint-config-expo": "~10.0.0",
     "metro-react-native-babel-preset": "^0.77.0",
     "typescript": "~5.9.2"
+  },
+  "overrides": {
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
   },
   "private": true
 }

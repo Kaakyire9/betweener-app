@@ -5,7 +5,6 @@ import MatchModal from '@/components/MatchModal';
 import MomentCreateModal from '@/components/MomentCreateModal';
 import MomentViewer from '@/components/MomentViewer';
 import ProfileVideoModal from '@/components/ProfileVideoModal';
-import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import useAIRecommendations from "@/hooks/useAIRecommendations";
@@ -224,7 +223,6 @@ function CompactMomentsStrip({
 export default function ExploreScreen() {
   const insets = useSafeAreaInsets();
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
-  const fontsLoaded = useAppFonts();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
@@ -791,8 +789,6 @@ export default function ExploreScreen() {
     );
   }
 
-  if (!fontsLoaded)
-    return <SafeAreaView style={styles.container} />;
 
   // Buttons
   const animateButtonPress = (cb: () => void) => {

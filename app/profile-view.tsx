@@ -1,7 +1,6 @@
 
 import MatchModal from '@/components/MatchModal';
 import ProfileVideoModal from '@/components/ProfileVideoModal';
-import { useAppFonts } from '@/constants/fonts';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
@@ -207,7 +206,6 @@ const formatDistance = (distanceKm?: number | null, fallback?: string, unit: Dis
 
 export default function ProfileViewPremiumScreen() {
   const { profile: currentUser } = useAuth();
-  const fontsLoaded = useAppFonts();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
@@ -930,9 +928,6 @@ export default function ProfileViewPremiumScreen() {
     </View>
   );
 
-  if (!fontsLoaded) {
-    return <View style={{ flex: 1, backgroundColor: theme.background }} />;
-  }
   return (
     <View style={styles.container}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor="transparent" translucent />

@@ -6,9 +6,8 @@ import { supabase } from '@/lib/supabase';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
+    shouldShowBanner: false,
+    shouldShowList: false,
     shouldPlaySound: false,
     shouldSetBadge: true,
   }),
@@ -23,12 +22,26 @@ const getProjectId = () => {
   );
 };
 
+const ensureAndroidChannel = async () => {
+  if (Platform.OS !== 'android') return;
+  await Notifications.setNotificationChannelAsync('default', {
+    name: 'Default',
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: '#FF231F7C',
+    enableVibrate: true,
+    enableLights: true,
+  });
+};
+
 export const registerPushToken = async (userId: string) => {
   if (!userId) return;
   if (!Device.isDevice) {
     console.log('[push] physical device required for notifications');
     return;
   }
+
+  await ensureAndroidChannel();
 
   const { status: existingStatus } = await Notifications.getPermissionsAsync();
   let finalStatus = existingStatus;

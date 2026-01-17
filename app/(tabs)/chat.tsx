@@ -1,4 +1,3 @@
-import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/lib/auth-context";
@@ -88,7 +87,6 @@ const parseStickerPreview = (text: string) => {
 
 export default function ChatScreen() {
   const { user } = useAuth();
-  const fontsLoaded = useAppFonts();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
@@ -522,9 +520,6 @@ export default function ChatScreen() {
     }
   };
 
-  if (!fontsLoaded) {
-    return <View style={styles.container} />;
-  }
 
   const filteredConversations = conversations
     .filter(conv => {

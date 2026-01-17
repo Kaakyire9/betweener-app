@@ -15,11 +15,17 @@ import {
 interface PhoneVerificationProps {
   onVerificationComplete: (success: boolean, score: number) => void;
   onCancel: () => void;
+  userId?: string | null;
+  allowAnonymous?: boolean;
+  onPhoneVerified?: (phoneNumber: string) => void;
 }
 
 export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
   onVerificationComplete,
   onCancel,
+  userId,
+  allowAnonymous = false,
+  onPhoneVerified,
 }) => {
   const { user } = useAuth();
   const [step, setStep] = useState<'phone' | 'code'>('phone');
@@ -35,14 +41,15 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
       return;
     }
 
-    if (!user?.id) {
-      Alert.alert('Error', 'User not authenticated');
+    const effectiveUserId = userId ?? user?.id ?? null;
+    if (!effectiveUserId && !allowAnonymous) {
+      Alert.alert('Error', 'Please sign in to verify your phone number.');
       return;
     }
 
     setLoading(true);
     try {
-      const result = await PhoneVerificationService.sendVerificationCode(phoneNumber, user.id);
+      const result = await PhoneVerificationService.sendVerificationCode(phoneNumber, effectiveUserId);
       
       if (result.success && result.verificationSid) {
         setVerificationSid(result.verificationSid);
@@ -68,17 +75,23 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
       return;
     }
 
-    if (!user?.id) {
-      Alert.alert('Error', 'User not authenticated');
+    const effectiveUserId = userId ?? user?.id ?? null;
+    if (!effectiveUserId && !allowAnonymous) {
+      Alert.alert('Error', 'Please sign in to verify your phone number.');
       return;
     }
 
     setLoading(true);
     try {
-      const result = await PhoneVerificationService.verifyCode(phoneNumber, verificationCode, user.id);
+      const result = await PhoneVerificationService.verifyCode(
+        phoneNumber,
+        verificationCode,
+        effectiveUserId
+      );
       
       if (result.success && result.verified) {
         Alert.alert('Success', 'Phone number verified successfully!');
+        onPhoneVerified?.(phoneNumber);
         onVerificationComplete(true, result.confidenceScore || phoneScore);
       } else {
         Alert.alert('Error', result.error || 'Invalid verification code');

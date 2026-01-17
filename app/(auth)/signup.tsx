@@ -1,7 +1,8 @@
 import { useAuth } from "@/lib/auth-context";
+import { getSignupPhoneState } from "@/lib/signup-tracking";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -20,6 +21,19 @@ export default function SignupScreen() {
   const [success, setSuccess] = useState("");
   const router = useRouter();
   const { signUp, isAuthenticating } = useAuth();
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      const { verified } = await getSignupPhoneState();
+      if (active && !verified) {
+        router.replace("/(auth)/verify-phone");
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [router]);
 
   const validate = () => {
     if (!email.match(/^[^@\s]+@[^@\s]+\.[^@\s]+$/)) {

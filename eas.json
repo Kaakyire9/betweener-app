@@ -15,12 +15,15 @@
       },
       "env": {
         "EXPO_PUBLIC_SUPABASE_URL": "$EXPO_PUBLIC_SUPABASE_URL",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "$EXPO_PUBLIC_SUPABASE_ANON_KEY"
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "$EXPO_PUBLIC_SUPABASE_ANON_KEY",
+        "EXPO_USE_POD_REPO_UPDATE": "1"
       }
     },
     "preview": {
       "distribution": "internal",
-      "env": {},
+      "env": {
+        "EXPO_USE_POD_REPO_UPDATE": "1"
+      },
       "ios": {
         "image": "latest",
         "cache": {
@@ -30,7 +33,9 @@
     },
     "production": {
       "autoIncrement": true,
-      "env": {},
+      "env": {
+        "EXPO_USE_POD_REPO_UPDATE": "1"
+      },
       "ios": {
         "image": "latest"
       }

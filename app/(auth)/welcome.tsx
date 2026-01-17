@@ -72,7 +72,7 @@ export default function WelcomeScreen() {
         <Pressable
           onPressIn={onPressIn}
           onPressOut={onPressOut}
-          onPress={() => router.replace("/(auth)/login")}
+          onPress={() => router.replace("/(auth)/verify-phone")}
           android_ripple={{ color: "#0FBAB5", borderless: false }}
           style={{
             backgroundColor: "#0FBAB5",

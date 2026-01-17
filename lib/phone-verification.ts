@@ -130,7 +130,7 @@ export class PhoneVerificationService {
    * @param userId - User ID for tracking
    * @returns Promise with verification result
    */
-  static async sendVerificationCode(phoneNumber: string, userId: string): Promise<PhoneVerificationResult> {
+  static async sendVerificationCode(phoneNumber: string, userId?: string | null): Promise<PhoneVerificationResult> {
     try {
       const cleanedPhone = this.cleanPhoneNumber(phoneNumber);
       const config = this.getSupabaseConfig();
@@ -143,7 +143,7 @@ export class PhoneVerificationService {
         },
         body: JSON.stringify({
           phoneNumber: cleanedPhone,
-          userId
+          userId: userId ?? null
         })
       });
 
@@ -181,7 +181,7 @@ export class PhoneVerificationService {
    * @param userId - User ID for tracking
    * @returns Promise with verification result
    */
-  static async verifyCode(phoneNumber: string, code: string, userId: string): Promise<PhoneVerificationResult> {
+  static async verifyCode(phoneNumber: string, code: string, userId?: string | null): Promise<PhoneVerificationResult> {
     try {
       const cleanedPhone = this.cleanPhoneNumber(phoneNumber);
       const config = this.getSupabaseConfig();
@@ -195,7 +195,7 @@ export class PhoneVerificationService {
         body: JSON.stringify({
           phoneNumber: cleanedPhone,
           verificationCode: code,
-          userId
+          userId: userId ?? null
         })
       });
 

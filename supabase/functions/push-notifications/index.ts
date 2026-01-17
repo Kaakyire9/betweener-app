@@ -21,8 +21,13 @@ serve(async (req) => {
   try {
     const secret = Deno.env.get('PUSH_WEBHOOK_SECRET')
     if (secret) {
+      const url = new URL(req.url)
       const headerSecret = req.headers.get('x-push-secret')
-      if (!headerSecret || headerSecret !== secret) {
+      const querySecret =
+        url.searchParams.get('x-push-secret') ??
+        url.searchParams.get('secret')
+      const providedSecret = headerSecret || querySecret
+      if (!providedSecret || providedSecret !== secret) {
         return new Response(JSON.stringify({ error: 'Unauthorized' }), {
           status: 401,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -31,6 +36,7 @@ serve(async (req) => {
     }
 
     const payload: PushRequest = await req.json()
+    console.log('push-notifications payload', payload)
     if (!payload?.user_id || !payload?.title || !payload?.body) {
       return new Response(JSON.stringify({ error: 'user_id, title, body are required' }), {
         status: 400,
@@ -54,11 +60,17 @@ serve(async (req) => {
       })
     }
 
+    console.log('push-notifications tokens', {
+      user_id: payload.user_id,
+      count: tokens?.length ?? 0,
+    })
+
     const expoMessages = (tokens || []).map((row) => ({
       to: row.token,
       sound: 'default',
       title: payload.title,
       body: payload.body,
+      channelId: 'default',
       data: payload.data || {},
     }))
 

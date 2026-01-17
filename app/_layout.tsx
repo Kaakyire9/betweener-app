@@ -21,7 +21,8 @@ export default function RootLayout() {
 
   const colorScheme = useColorScheme();
 
-  const [showSplash, setShowSplash] = useState(true);
+  const [showSplash, setShowSplash] = useState(false);
+  const [allowRender, setAllowRender] = useState(false);
 
   // Logo animations
   const logoOpacity = useRef(new Animated.Value(0)).current;
@@ -53,74 +54,22 @@ export default function RootLayout() {
     return () => subscription.remove();
   }, []);
 
-  // Run splash animation once fonts are ready
+  // Always release native splash even if fonts hang.
   useEffect(() => {
-    if (!fontsLoaded) return;
+    const timer = setTimeout(() => {
+      setAllowRender(true);
+      SplashScreen.hideAsync().catch(() => {});
+    }, 1200);
 
-    const run = async () => {
-      try {
-        await SplashScreen.hideAsync();
-      } catch {}
+    if (fontsLoaded) {
+      setAllowRender(true);
+      SplashScreen.hideAsync().catch(() => {});
+    }
 
-      Animated.sequence([
-        // Logo reveal
-        Animated.parallel([
-          Animated.timing(logoOpacity, {
-            toValue: 1,
-            duration: 520,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: true,
-          }),
-          Animated.timing(logoScale, {
-            toValue: 1,
-            duration: 620,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: true,
-          }),
-        ]),
-
-        // Glow spotlight
-        Animated.parallel([
-          Animated.timing(glowOpacity, {
-            toValue: 0.7,
-            duration: 700,
-            easing: Easing.out(Easing.quad),
-            useNativeDriver: true,
-          }),
-          Animated.timing(glowScale, {
-            toValue: 1.1,
-            duration: 700,
-            easing: Easing.out(Easing.quad),
-            useNativeDriver: true,
-          }),
-        ]),
-
-        // Brand name
-        Animated.parallel([
-          Animated.timing(textOpacity, {
-            toValue: 1,
-            duration: 520,
-            delay: 60,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: true,
-          }),
-          Animated.timing(textTranslate, {
-            toValue: 0,
-            duration: 520,
-            delay: 60,
-            easing: Easing.out(Easing.cubic),
-            useNativeDriver: true,
-          }),
-        ]),
-      ]).start(() => {
-        setTimeout(() => setShowSplash(false), 300);
-      });
-    };
-
-    run();
+    return () => clearTimeout(timer);
   }, [fontsLoaded]);
 
-  if (!fontsLoaded) return null;
+  if (!allowRender) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

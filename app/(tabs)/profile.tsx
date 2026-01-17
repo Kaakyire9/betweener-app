@@ -3,7 +3,6 @@ import PhotoGallery from "@/components/PhotoGallery";
 import ProfileEditModal from "@/components/ProfileEditModal";
 import { VerificationBadge } from "@/components/VerificationBadge";
 import { VerificationNotifications } from "@/components/VerificationNotifications";
-import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useColorScheme, useColorSchemePreference } from "@/hooks/use-color-scheme";
 import { useVerificationStatus } from "@/hooks/use-verification-status";
@@ -144,7 +143,6 @@ const PROFILE_PROMPTS = [
 
 export default function ProfileScreen() {
   const { signOut, user, profile, refreshProfile } = useAuth();
-  const fontsLoaded = useAppFonts();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const params = useLocalSearchParams();
@@ -618,9 +616,6 @@ export default function ProfileScreen() {
     [dateToTimeString, notificationPrefs.quiet_hours_start, updateQuietHours],
   );
 
-  if (!fontsLoaded) {
-    return <View style={styles.container} />;
-  }
 
   const closeDropdown = () => {
     if (showSettingsDropdown) {
