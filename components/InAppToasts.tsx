@@ -21,6 +21,7 @@ type ToastItem = {
 type NotificationPrefs = {
   inapp_enabled: boolean;
   messages: boolean;
+  message_reactions: boolean;
   reactions: boolean;
   likes: boolean;
   superlikes: boolean;
@@ -75,7 +76,7 @@ export default function InAppToasts() {
       const { data, error } = await supabase
         .from('notification_prefs')
         .select(
-          'inapp_enabled,messages,reactions,likes,superlikes,matches,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
+          'inapp_enabled,messages,message_reactions,reactions,likes,superlikes,matches,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
         )
         .eq('user_id', user.id)
         .maybeSingle();
@@ -89,6 +90,7 @@ export default function InAppToasts() {
         setPrefs({
           inapp_enabled: Boolean(data.inapp_enabled),
           messages: Boolean(data.messages),
+          message_reactions: Boolean(data.message_reactions),
           reactions: Boolean(data.reactions),
           likes: Boolean(data.likes),
           superlikes: Boolean(data.superlikes),
@@ -122,6 +124,7 @@ export default function InAppToasts() {
           setPrefs({
             inapp_enabled: Boolean(row.inapp_enabled),
             messages: Boolean(row.messages),
+            message_reactions: Boolean(row.message_reactions),
             reactions: Boolean(row.reactions),
             likes: Boolean(row.likes),
             superlikes: Boolean(row.superlikes),
@@ -219,6 +222,49 @@ export default function InAppToasts() {
       supabase.removeChannel(channel);
     };
   }, [canInAppNotify, messagePreview, pushToast, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const channel = supabase
+      .channel(`inapp_message_reactions:${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'message_reactions' },
+        (payload) => {
+          const row = payload.new as any;
+          if (!row) return;
+          if (row.user_id === user.id) return;
+          if (!canInAppNotify('message_reactions')) return;
+          void (async () => {
+            let name = 'Someone';
+            let avatarUrl: string | null = null;
+            try {
+              const { data } = await supabase
+                .from('profiles')
+                .select('id, full_name, avatar_url')
+                .eq('id', row.user_id)
+                .maybeSingle();
+              if (data?.full_name) name = data.full_name;
+              if (data?.avatar_url) avatarUrl = data.avatar_url;
+            } catch {}
+
+            pushToast({
+              id: `message-reaction-${row.id}`,
+              title: name,
+              body: row.emoji ? `reacted ${row.emoji}` : 'reacted to your message',
+              avatarUrl,
+              profileId: row.user_id,
+            });
+          })();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [canInAppNotify, pushToast, user?.id]);
 
   useEffect(() => {
     if (!profile?.id || !user?.id) return;

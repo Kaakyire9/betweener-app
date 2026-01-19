@@ -39,6 +39,7 @@ type NotificationPrefs = {
   push_enabled: boolean;
   inapp_enabled: boolean;
   messages: boolean;
+  message_reactions: boolean;
   reactions: boolean;
   likes: boolean;
   superlikes: boolean;
@@ -170,6 +171,7 @@ export default function ProfileScreen() {
     push_enabled: true,
     inapp_enabled: true,
     messages: true,
+    message_reactions: true,
     reactions: true,
     likes: true,
     superlikes: true,
@@ -337,7 +339,7 @@ export default function ProfileScreen() {
     const { data, error } = await supabase
       .from('notification_prefs')
       .select(
-        'push_enabled,inapp_enabled,messages,reactions,likes,superlikes,matches,moments,verification,announcements,preview_text,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
+        'push_enabled,inapp_enabled,messages,message_reactions,reactions,likes,superlikes,matches,moments,verification,announcements,preview_text,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
       )
       .eq('user_id', user.id)
       .maybeSingle();
@@ -352,6 +354,7 @@ export default function ProfileScreen() {
         push_enabled: Boolean(data.push_enabled),
         inapp_enabled: Boolean(data.inapp_enabled),
         messages: Boolean(data.messages),
+        message_reactions: Boolean(data.message_reactions),
         reactions: Boolean(data.reactions),
         likes: Boolean(data.likes),
         superlikes: Boolean(data.superlikes),
@@ -832,6 +835,12 @@ export default function ProfileScreen() {
                   label="Messages"
                   value={notificationPrefs.messages}
                   onValueChange={(val) => updateNotificationPref('messages', val)}
+                  theme={theme}
+                />
+                <NotificationToggle
+                  label="Message reactions"
+                  value={notificationPrefs.message_reactions}
+                  onValueChange={(val) => updateNotificationPref('message_reactions', val)}
                   theme={theme}
                 />
                 <NotificationToggle
