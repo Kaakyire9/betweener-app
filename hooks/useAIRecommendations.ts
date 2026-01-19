@@ -243,12 +243,14 @@ export default function useAIRecommendations(
         const row = payload?.new;
         if (!row) return;
         if (row.user1_id !== userId && row.user2_id !== userId) return;
+        if (payload?.eventType === 'UPDATE' && payload?.old?.status === 'ACCEPTED') return;
         const otherId = row.user1_id === userId ? row.user2_id : row.user1_id;
         const nowTs = Date.now();
         if (lastMatchToastRef.current.id === String(otherId) && (nowTs - lastMatchToastRef.current.ts) < 5000) {
           // prevent rapid duplicate toasts for the same match
           return;
         }
+        lastMatchToastRef.current = { id: String(otherId), ts: nowTs };
 
         // try to ensure status ACCEPTED (in case trigger inserted pending)
         try {
@@ -339,7 +341,6 @@ export default function useAIRecommendations(
         } as Match;
 
         console.log('[matches realtime] received accepted match', { otherId });
-        lastMatchToastRef.current = { id: String(otherId), ts: Date.now() };
         setLastMutualMatch(matched);
         setTimeout(() => {
           if (mountedRef.current) setLastMutualMatch(null);

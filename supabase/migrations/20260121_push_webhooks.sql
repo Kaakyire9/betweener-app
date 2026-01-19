@@ -66,12 +66,13 @@ BEGIN
     ) THEN
       RETURN NEW;
     END IF;
+    RAISE LOG 'notify_swipe_push user_id=% action=% swipe_id=%', NEW.target_id, NEW.action, NEW.id;
     PERFORM private.send_push_webhook(
       jsonb_build_object(
         'user_id', NEW.target_id,
         'title', CASE WHEN NEW.action = 'SUPERLIKE' THEN 'Superlike' ELSE 'New like' END,
         'body', CASE WHEN NEW.action = 'SUPERLIKE' THEN 'You got a superlike' ELSE 'Someone liked your profile' END,
-        'data', jsonb_build_object('type', lower(NEW.action), 'swipe_id', NEW.id)
+        'data', jsonb_build_object('type', lower(NEW.action::text), 'swipe_id', NEW.id)
       )
     );
   END IF;

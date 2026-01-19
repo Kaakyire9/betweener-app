@@ -89,6 +89,7 @@ serve(async (req) => {
       body: JSON.stringify(expoMessages),
     })
     const result = await expoResponse.json()
+    console.log('push-notifications expo result', result)
 
     return new Response(JSON.stringify({ ok: true, result }), {
       status: 200,

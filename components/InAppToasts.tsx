@@ -39,8 +39,15 @@ export default function InAppToasts() {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
   const timeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const lastToastAtRef = useRef<Record<string, number>>({});
 
   const pushToast = useCallback((toast: ToastItem) => {
+    const now = Date.now();
+    const lastShownAt = lastToastAtRef.current[toast.id];
+    if (lastShownAt && now - lastShownAt < TOAST_DURATION_MS) {
+      return;
+    }
+    lastToastAtRef.current[toast.id] = now;
     setToasts((prev) => [toast, ...prev.filter((item) => item.id !== toast.id)].slice(0, 3));
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
     if (timeouts.current[toast.id]) {
@@ -294,11 +301,12 @@ export default function InAppToasts() {
         (payload) => {
           const row = payload.new as any;
           if (!row) return;
+          if (payload.old?.status === 'ACCEPTED') return;
           if (row.status !== 'ACCEPTED') return;
           if (row.user1_id !== profile.id && row.user2_id !== profile.id) return;
           if (!canInAppNotify('matches')) return;
           pushToast({
-            id: `match-update-${row.id}`,
+            id: `match-${row.id}`,
             title: "It's a match",
             body: 'Say hello to your new match',
           });
