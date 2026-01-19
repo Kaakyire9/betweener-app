@@ -3,9 +3,10 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, StyleSheet, Text, View } from 'react-native';
+import { Animated, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type ToastItem = {
@@ -13,6 +14,8 @@ type ToastItem = {
   title: string;
   body: string;
   emoji?: string | null;
+  avatarUrl?: string | null;
+  profileId?: string | null;
 };
 
 type NotificationPrefs = {
@@ -35,6 +38,7 @@ export default function InAppToasts() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
@@ -180,6 +184,14 @@ export default function InAppToasts() {
     return 'New message';
   }, []);
 
+  const openProfile = useCallback(
+    (profileId?: string | null) => {
+      if (!profileId) return;
+      router.push({ pathname: '/profile-view', params: { profileId: String(profileId) } });
+    },
+    [router],
+  );
+
   useEffect(() => {
     if (!user?.id) return;
 
@@ -250,21 +262,83 @@ export default function InAppToasts() {
           if (!row) return;
           if (row.action === 'SUPERLIKE' && !canInAppNotify('superlikes')) return;
           if (row.action === 'LIKE' && !canInAppNotify('likes')) return;
-          if (row.action === 'SUPERLIKE') {
-            pushToast({
-              id: `superlike-${row.id}`,
-              title: 'Superlike',
-              body: 'You got a superlike',
-            });
-            return;
-          }
-          if (row.action === 'LIKE') {
-            pushToast({
-              id: `like-${row.id}`,
-              title: 'New like',
-              body: 'Someone liked your profile',
-            });
-          }
+          void (async () => {
+            let name = 'Someone';
+            let avatarUrl: string | null = null;
+            try {
+              const { data } = await supabase
+                .from('profiles')
+                .select('id, full_name, avatar_url')
+                .eq('id', row.swiper_id)
+                .maybeSingle();
+              if (data?.full_name) name = data.full_name;
+              if (data?.avatar_url) avatarUrl = data.avatar_url;
+            } catch {}
+
+            if (row.action === 'SUPERLIKE') {
+              pushToast({
+                id: `superlike-${row.id}`,
+                title: name,
+                body: 'sent you a superlike',
+                avatarUrl,
+                profileId: row.swiper_id,
+              });
+              return;
+            }
+            if (row.action === 'LIKE') {
+              pushToast({
+                id: `like-${row.id}`,
+                title: name,
+                body: 'liked your profile',
+                avatarUrl,
+                profileId: row.swiper_id,
+              });
+            }
+          })();
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'swipes', filter: `target_id=eq.${profile.id}` },
+        (payload) => {
+          const row = payload.new as any;
+          if (!row) return;
+          if (payload.old?.action === row.action) return;
+          if (row.action === 'SUPERLIKE' && !canInAppNotify('superlikes')) return;
+          if (row.action === 'LIKE' && !canInAppNotify('likes')) return;
+          void (async () => {
+            let name = 'Someone';
+            let avatarUrl: string | null = null;
+            try {
+              const { data } = await supabase
+                .from('profiles')
+                .select('id, full_name, avatar_url')
+                .eq('id', row.swiper_id)
+                .maybeSingle();
+              if (data?.full_name) name = data.full_name;
+              if (data?.avatar_url) avatarUrl = data.avatar_url;
+            } catch {}
+
+            if (row.action === 'SUPERLIKE') {
+              pushToast({
+                id: `superlike-${row.id}`,
+                title: name,
+                body: 'sent you a superlike',
+                avatarUrl,
+                profileId: row.swiper_id,
+              });
+              return;
+            }
+            if (row.action === 'LIKE') {
+              pushToast({
+                id: `like-${row.id}`,
+                title: name,
+                body: 'liked your profile',
+                avatarUrl,
+                profileId: row.swiper_id,
+              });
+            }
+          })();
         },
       )
       .subscribe();
@@ -327,15 +401,23 @@ export default function InAppToasts() {
   if (!toasts.length) return null;
 
   return (
-    <View pointerEvents="none" style={containerStyle}>
+    <View pointerEvents="box-none" style={containerStyle}>
       {toasts.map((toast) => (
-        <ToastCard key={toast.id} toast={toast} theme={theme} />
+        <ToastCard key={toast.id} toast={toast} theme={theme} onPress={openProfile} />
       ))}
     </View>
   );
 }
 
-function ToastCard({ toast, theme }: { toast: ToastItem; theme: typeof Colors.light }) {
+function ToastCard({
+  toast,
+  theme,
+  onPress,
+}: {
+  toast: ToastItem;
+  theme: typeof Colors.light;
+  onPress: (profileId?: string | null) => void;
+}) {
   const translateY = useRef(new Animated.Value(-14)).current;
   const opacity = useRef(new Animated.Value(0)).current;
 
@@ -356,38 +438,47 @@ function ToastCard({ toast, theme }: { toast: ToastItem; theme: typeof Colors.li
   }, [opacity, translateY]);
 
   return (
-    <Animated.View
-      style={[
-        styles.toast,
-        {
-          borderColor: theme.outline,
-          backgroundColor: theme.background,
-          shadowColor: theme.text,
-          opacity,
-          transform: [{ translateY }],
-        },
-      ]}
+    <Pressable
+      onPress={() => onPress(toast.profileId)}
+      disabled={!toast.profileId}
+      style={({ pressed }) => [{ opacity: pressed ? 0.88 : 1 }]}
+      pointerEvents="auto"
     >
-      <LinearGradient
-        colors={[theme.tint, theme.accent]}
-        start={{ x: 0, y: 0.5 }}
-        end={{ x: 1, y: 0.5 }}
-        style={styles.toastRail}
-      />
-      <View style={styles.toastContent}>
-        {toast.emoji ? (
-          <Text style={[styles.toastEmoji, { color: theme.text }]}>{toast.emoji}</Text>
-        ) : null}
-        <View style={styles.toastTextCol}>
-          <Text numberOfLines={1} style={[styles.toastTitle, { color: theme.text }]}>
-            {toast.title}
-          </Text>
-          <Text numberOfLines={2} style={[styles.toastBody, { color: theme.textMuted }]}>
-            {toast.body}
-          </Text>
+      <Animated.View
+        style={[
+          styles.toast,
+          {
+            borderColor: theme.outline,
+            backgroundColor: theme.background,
+            shadowColor: theme.text,
+            opacity,
+            transform: [{ translateY }],
+          },
+        ]}
+      >
+        <LinearGradient
+          colors={[theme.tint, theme.accent]}
+          start={{ x: 0, y: 0.5 }}
+          end={{ x: 1, y: 0.5 }}
+          style={styles.toastRail}
+        />
+        <View style={styles.toastContent}>
+          {toast.avatarUrl ? (
+            <Image source={{ uri: toast.avatarUrl }} style={styles.toastAvatar} />
+          ) : toast.emoji ? (
+            <Text style={[styles.toastEmoji, { color: theme.text }]}>{toast.emoji}</Text>
+          ) : null}
+          <View style={styles.toastTextCol}>
+            <Text numberOfLines={1} style={[styles.toastTitle, { color: theme.text }]}>
+              {toast.title}
+            </Text>
+            <Text numberOfLines={2} style={[styles.toastBody, { color: theme.textMuted }]}>
+              {toast.body}
+            </Text>
+          </View>
         </View>
-      </View>
-    </Animated.View>
+      </Animated.View>
+    </Pressable>
   );
 }
 
@@ -424,6 +515,13 @@ const styles = StyleSheet.create({
   },
   toastEmoji: {
     fontSize: 20,
+  },
+  toastAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
   },
   toastTextCol: {
     flex: 1,

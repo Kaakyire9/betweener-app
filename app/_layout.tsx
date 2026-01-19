@@ -1,10 +1,11 @@
 import { LinearGradient } from "expo-linear-gradient";
 import * as Linking from "expo-linking";
-import { Slot } from "expo-router";
+import { Slot, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useRef, useState } from "react";
 import { Animated, Easing, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import * as Notifications from "expo-notifications";
 
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
@@ -18,6 +19,7 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function RootLayout() {
   const fontsLoaded = useAppFonts();
+  const router = useRouter();
 
   const colorScheme = useColorScheme();
 
@@ -53,6 +55,18 @@ export default function RootLayout() {
 
     return () => subscription.remove();
   }, []);
+
+  useEffect(() => {
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data as Record<string, any> | undefined;
+      const profileId = data?.profile_id || data?.profileId;
+      if (profileId) {
+        router.push({ pathname: "/profile-view", params: { profileId: String(profileId) } });
+      }
+    });
+
+    return () => subscription.remove();
+  }, [router]);
 
   // Always release native splash even if fonts hang.
   useEffect(() => {
