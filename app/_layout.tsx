@@ -59,6 +59,22 @@ export default function RootLayout() {
   useEffect(() => {
     const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data as Record<string, any> | undefined;
+      const type = data?.type;
+      if (type === 'message' || type === 'message_reaction') {
+        const chatId = data?.profile_id || data?.reactor_id || data?.user_id;
+        if (chatId) {
+          router.push({
+            pathname: "/chat/[id]",
+            params: {
+              id: String(chatId),
+              userName: data?.name ? String(data.name) : '',
+              userAvatar: data?.avatar_url ? String(data.avatar_url) : '',
+            },
+          });
+          return;
+        }
+      }
+
       const profileId = data?.profile_id || data?.profileId;
       if (profileId) {
         router.push({ pathname: "/profile-view", params: { profileId: String(profileId) } });

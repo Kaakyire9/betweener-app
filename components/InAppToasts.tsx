@@ -3,7 +3,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
+import { usePathname, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Image, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -16,6 +16,7 @@ type ToastItem = {
   emoji?: string | null;
   avatarUrl?: string | null;
   profileId?: string | null;
+  chatId?: string | null;
 };
 
 type NotificationPrefs = {
@@ -40,6 +41,8 @@ export default function InAppToasts() {
   const theme = Colors[colorScheme ?? 'light'];
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const pathname = usePathname();
+  const isChatRoute = useMemo(() => pathname?.startsWith('/chat'), [pathname]);
 
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
@@ -62,6 +65,17 @@ export default function InAppToasts() {
       setToasts((prev) => prev.filter((item) => item.id !== toast.id));
     }, TOAST_DURATION_MS);
   }, []);
+
+  const activeChatId = useMemo(() => {
+    if (!pathname?.startsWith('/chat/')) return null;
+    const parts = pathname.split('/').filter(Boolean);
+    return parts[1] || null;
+  }, [pathname]);
+
+  const isActiveChatWith = useCallback(
+    (otherId?: string | null) => Boolean(activeChatId && otherId && activeChatId === otherId),
+    [activeChatId],
+  );
 
   useEffect(() => {
     return () => {
@@ -187,10 +201,22 @@ export default function InAppToasts() {
     return 'New message';
   }, []);
 
-  const openProfile = useCallback(
-    (profileId?: string | null) => {
-      if (!profileId) return;
-      router.push({ pathname: '/profile-view', params: { profileId: String(profileId) } });
+  const openToastTarget = useCallback(
+    (toast: ToastItem) => {
+      if (toast.chatId) {
+        router.push({
+          pathname: '/chat/[id]',
+          params: {
+            id: toast.chatId,
+            userName: toast.title,
+            userAvatar: toast.avatarUrl ?? '',
+          },
+        });
+        return;
+      }
+      if (toast.profileId) {
+        router.push({ pathname: '/profile-view', params: { profileId: String(toast.profileId) } });
+      }
     },
     [router],
   );
@@ -207,13 +233,31 @@ export default function InAppToasts() {
           const row = payload.new as any;
           if (!row) return;
           if (row.sender_id === user.id) return;
+          if (isChatRoute) return;
+          if (isActiveChatWith(row.sender_id)) return;
           if (!canInAppNotify('messages')) return;
           const preview = messagePreview(row);
-          pushToast({
-            id: `msg-${row.id}`,
-            title: 'New message',
-            body: preview,
-          });
+          void (async () => {
+            let name = 'New message';
+            let avatarUrl: string | null = null;
+            try {
+              const { data } = await supabase
+                .from('profiles')
+                .select('full_name,avatar_url')
+                .eq('id', row.sender_id)
+                .maybeSingle();
+              if (data?.full_name) name = data.full_name;
+              if (data?.avatar_url) avatarUrl = data.avatar_url;
+            } catch {}
+            pushToast({
+              id: `msg-${row.id}`,
+              title: name,
+              body: preview,
+              avatarUrl,
+              profileId: row.sender_id,
+              chatId: row.sender_id,
+            });
+          })();
         },
       )
       .subscribe();
@@ -221,7 +265,7 @@ export default function InAppToasts() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [canInAppNotify, messagePreview, pushToast, user?.id]);
+  }, [canInAppNotify, isChatRoute, messagePreview, pushToast, user?.id]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -235,11 +279,22 @@ export default function InAppToasts() {
           const row = payload.new as any;
           if (!row) return;
           if (row.user_id === user.id) return;
+          if (isChatRoute) return;
           if (!canInAppNotify('message_reactions')) return;
           void (async () => {
             let name = 'Someone';
             let avatarUrl: string | null = null;
+            let otherId: string | null = null;
             try {
+              const { data: messageRow } = await supabase
+                .from('messages')
+                .select('sender_id,receiver_id')
+                .eq('id', row.message_id)
+                .maybeSingle();
+              if (!messageRow?.sender_id || !messageRow?.receiver_id) return;
+              if (messageRow.sender_id !== user.id && messageRow.receiver_id !== user.id) return;
+              otherId = messageRow.sender_id === user.id ? messageRow.receiver_id : messageRow.sender_id;
+              if (isActiveChatWith(otherId)) return;
               const { data } = await supabase
                 .from('profiles')
                 .select('id, full_name, avatar_url')
@@ -254,7 +309,8 @@ export default function InAppToasts() {
               title: name,
               body: row.emoji ? `reacted ${row.emoji}` : 'reacted to your message',
               avatarUrl,
-              profileId: row.user_id,
+              profileId: row.user_id ?? otherId ?? null,
+              chatId: otherId ?? row.user_id ?? null,
             });
           })();
         },
@@ -264,7 +320,7 @@ export default function InAppToasts() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [canInAppNotify, pushToast, user?.id]);
+  }, [canInAppNotify, isActiveChatWith, isChatRoute, pushToast, user?.id]);
 
   useEffect(() => {
     if (!profile?.id || !user?.id) return;
@@ -279,13 +335,27 @@ export default function InAppToasts() {
           if (!row) return;
           if (row.reactor_user_id === user.id) return;
           if (!canInAppNotify('reactions')) return;
-          const emoji = row.emoji || null;
-          pushToast({
-            id: `react-${row.id}`,
-            title: 'New reaction',
-            body: emoji ? `Someone reacted ${emoji}` : 'Someone reacted to your photo',
-            emoji,
-          });
+          void (async () => {
+            const emoji = row.emoji || null;
+            let name = 'Someone';
+            let avatarUrl: string | null = null;
+            try {
+              const { data } = await supabase
+                .from('profiles')
+                .select('full_name,avatar_url')
+                .eq('id', row.reactor_user_id)
+                .maybeSingle();
+              if (data?.full_name) name = data.full_name;
+              if (data?.avatar_url) avatarUrl = data.avatar_url;
+            } catch {}
+            pushToast({
+              id: `react-${row.id}`,
+              title: name,
+              body: emoji ? `reacted ${emoji}` : 'reacted to your photo',
+              avatarUrl,
+              profileId: row.reactor_user_id,
+            });
+          })();
         },
       )
       .subscribe();
@@ -408,11 +478,28 @@ export default function InAppToasts() {
           if (row.status !== 'ACCEPTED') return;
           if (row.user1_id !== profile.id && row.user2_id !== profile.id) return;
           if (!canInAppNotify('matches')) return;
-          pushToast({
-            id: `match-${row.id}`,
-            title: "It's a match",
-            body: 'Say hello to your new match',
-          });
+          void (async () => {
+            const otherId = row.user1_id === profile.id ? row.user2_id : row.user1_id;
+            if (!otherId) return;
+            let name = "It's a match";
+            let avatarUrl: string | null = null;
+            try {
+              const { data } = await supabase
+                .from('profiles')
+                .select('full_name,avatar_url')
+                .eq('id', otherId)
+                .maybeSingle();
+              if (data?.full_name) name = data.full_name;
+              if (data?.avatar_url) avatarUrl = data.avatar_url;
+            } catch {}
+            pushToast({
+              id: `match-${row.id}`,
+              title: name,
+              body: 'It’s a match',
+              avatarUrl,
+              profileId: otherId,
+            });
+          })();
         },
       )
       .on(
@@ -425,11 +512,28 @@ export default function InAppToasts() {
           if (row.status !== 'ACCEPTED') return;
           if (row.user1_id !== profile.id && row.user2_id !== profile.id) return;
           if (!canInAppNotify('matches')) return;
-          pushToast({
-            id: `match-${row.id}`,
-            title: "It's a match",
-            body: 'Say hello to your new match',
-          });
+          void (async () => {
+            const otherId = row.user1_id === profile.id ? row.user2_id : row.user1_id;
+            if (!otherId) return;
+            let name = "It's a match";
+            let avatarUrl: string | null = null;
+            try {
+              const { data } = await supabase
+                .from('profiles')
+                .select('full_name,avatar_url')
+                .eq('id', otherId)
+                .maybeSingle();
+              if (data?.full_name) name = data.full_name;
+              if (data?.avatar_url) avatarUrl = data.avatar_url;
+            } catch {}
+            pushToast({
+              id: `match-${row.id}`,
+              title: name,
+              body: 'It’s a match',
+              avatarUrl,
+              profileId: otherId,
+            });
+          })();
         },
       )
       .subscribe();
@@ -449,7 +553,7 @@ export default function InAppToasts() {
   return (
     <View pointerEvents="box-none" style={containerStyle}>
       {toasts.map((toast) => (
-        <ToastCard key={toast.id} toast={toast} theme={theme} onPress={openProfile} />
+        <ToastCard key={toast.id} toast={toast} theme={theme} onPress={openToastTarget} />
       ))}
     </View>
   );
@@ -462,7 +566,7 @@ function ToastCard({
 }: {
   toast: ToastItem;
   theme: typeof Colors.light;
-  onPress: (profileId?: string | null) => void;
+  onPress: (toast: ToastItem) => void;
 }) {
   const translateY = useRef(new Animated.Value(-14)).current;
   const opacity = useRef(new Animated.Value(0)).current;
@@ -485,8 +589,8 @@ function ToastCard({
 
   return (
     <Pressable
-      onPress={() => onPress(toast.profileId)}
-      disabled={!toast.profileId}
+      onPress={() => onPress(toast)}
+      disabled={!toast.profileId && !toast.chatId}
       style={({ pressed }) => [{ opacity: pressed ? 0.88 : 1 }]}
       pointerEvents="auto"
     >
