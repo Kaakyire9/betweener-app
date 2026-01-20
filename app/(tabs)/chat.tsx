@@ -34,12 +34,19 @@ type ConversationType = {
   };
   blockStatus?: 'blocked_by_me' | 'blocked_me' | null;
   lastMessage: {
+    id: string;
     text: string;
     timestamp: Date;
     senderId: string;
     type: 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location';
     isViewOnce?: boolean;
     isRead: boolean;
+    reactionPreview?: {
+      emoji: string;
+      userId: string;
+      createdAt: Date;
+      targetType?: ConversationType['lastMessage']['type'];
+    };
   };
   unreadCount: number;
   isMuted: boolean;
@@ -305,12 +312,14 @@ export default function ChatScreen() {
           },
           blockStatus,
           lastMessage: {
+            id: last?.id || '',
             text: lastText,
             timestamp: lastTimestamp,
             senderId: last?.sender_id || '',
             type: lastType,
             isViewOnce: lastIsViewOnce,
             isRead: last?.is_read ?? false,
+            reactionPreview: undefined,
           },
           unreadCount: entry?.unread || 0,
           isMuted: false,
@@ -358,12 +367,14 @@ export default function ChatScreen() {
       const lastText = getRowPreviewText(row);
       const lastType = (row.message_type ?? 'text') as ConversationType['lastMessage']['type'];
       const nextLastMessage = {
+        id: row.id,
         text: lastText,
         timestamp: new Date(row.created_at),
         senderId: row.sender_id,
         type: lastType,
         isViewOnce: Boolean(row.is_view_once),
         isRead: row.is_read,
+        reactionPreview: undefined,
       };
 
       setConversations((prev) => {
@@ -416,6 +427,53 @@ export default function ChatScreen() {
       supabase.removeChannel(channel);
     };
   }, [fetchConversations, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const channel = supabase.channel(`message_reactions:chatlist:${user.id}`);
+
+  const handleReaction = async (payload: { new?: any; old?: any }) => {
+      const row = payload.new || payload.old;
+      if (!row?.message_id || !row?.emoji || !row?.user_id) return;
+      const createdAt = row.created_at ? new Date(row.created_at) : new Date();
+      const { data: messageRow, error } = await supabase
+        .from('messages')
+        .select('id,sender_id,receiver_id,message_type')
+        .eq('id', row.message_id)
+        .maybeSingle();
+      if (error) {
+        console.log('[chat] message reaction fetch error', error);
+        return;
+      }
+      if (!messageRow?.sender_id || !messageRow?.receiver_id) return;
+      const otherId = messageRow.sender_id === user.id ? messageRow.receiver_id : messageRow.sender_id;
+      if (!otherId) return;
+      const targetType = (messageRow.message_type ?? 'text') as ConversationType['lastMessage']['type'];
+      setConversations((prev) =>
+        prev.map((conv) => {
+          if (conv.id !== otherId) return conv;
+          const existing = conv.lastMessage.reactionPreview;
+          if (existing && existing.createdAt >= createdAt) return conv;
+          return {
+            ...conv,
+            lastMessage: {
+              ...conv.lastMessage,
+              reactionPreview: { emoji: row.emoji, userId: row.user_id, createdAt, targetType },
+            },
+          };
+        }),
+      );
+    };
+
+    channel
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_reactions' }, handleReaction)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'message_reactions' }, handleReaction)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -519,6 +577,35 @@ export default function ChatScreen() {
         return lastMessage.text;
     }
   };
+
+  const getLastMessageReactionPreview = useCallback(
+    (lastMessage: ConversationType['lastMessage'], matchedName: string, currentUserId: string) => {
+      const reaction = lastMessage.reactionPreview;
+      if (!reaction?.emoji) return null;
+      const name = reaction.userId === currentUserId ? 'You' : matchedName || 'Someone';
+      const reactionTargetType = reaction.targetType ?? lastMessage.type;
+      const target = (() => {
+        switch (reactionTargetType) {
+          case 'image':
+            return 'photo';
+          case 'video':
+            return 'video';
+          case 'voice':
+            return 'voice note';
+          case 'document':
+            return 'document';
+          case 'location':
+            return 'location';
+          case 'mood_sticker':
+            return 'sticker';
+          default:
+            return 'message';
+        }
+      })();
+      return `${name} reacted ${reaction.emoji} to ${target}`;
+    },
+    [],
+  );
 
 
   const filteredConversations = conversations
@@ -624,6 +711,11 @@ export default function ChatScreen() {
     const isUnread = item.unreadCount > 0;
     const isMyLastMessage = item.lastMessage.senderId === (user?.id || '');
     const isTyping = !isBlocked && Boolean(typingStatus[item.matchedUser.id]);
+    const reactionPreview = getLastMessageReactionPreview(
+      item.lastMessage,
+      item.matchedUser.name,
+      user?.id || '',
+    );
     const avatarNode = isBlocked ? (
       <Image source={BLOCKED_AVATAR_SOURCE} style={styles.conversationAvatar} />
     ) : item.matchedUser.avatar_url ? (
@@ -710,11 +802,12 @@ export default function ChatScreen() {
                   <Text
                     style={[
                       styles.lastMessage,
+                      reactionPreview && styles.lastMessageReaction,
                       isUnread && styles.unreadMessage,
                     ]}
                     numberOfLines={1}
                   >
-                    {getLastMessagePreview(item.lastMessage)}
+                    {reactionPreview ?? getLastMessagePreview(item.lastMessage)}
                   </Text>
                 </View>
               )}
@@ -1121,6 +1214,10 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flex: 1,
       minWidth: 0,
       marginRight: 8,
+    },
+    lastMessageReaction: {
+      fontStyle: 'italic',
+      fontFamily: 'Manrope_500Medium',
     },
     typingText: {
       fontFamily: 'Manrope_500Medium',

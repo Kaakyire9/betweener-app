@@ -10,12 +10,13 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useFocusEffect } from "@react-navigation/native";
 import {
   AudioPlayer,
-  AudioRecorder,
   createAudioPlayer,
   RecordingPresets,
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
+  useAudioRecorder,
 } from "expo-audio";
+import type { AudioRecorder } from "expo-audio";
 import { BlurView } from "expo-blur";
 import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
@@ -798,6 +799,35 @@ const MessageRowItem = memo(
       );
     }, [item.deletedForAll, item.reactions, isMyMessage, onOpenReactionSheet, styles]);
 
+    const reactionInlineLabel = useMemo(() => {
+      if (item.deletedForAll) return null;
+      if (!item.reactions.length) return null;
+      const primary = item.reactions.find((reaction) => reaction.userId !== currentUserId) ?? item.reactions[0];
+      if (!primary?.emoji) return null;
+      const name = primary.userId === currentUserId ? 'You' : (peerName || 'Someone');
+      const target = (() => {
+        switch (item.type) {
+          case 'text':
+            return 'message';
+          case 'image':
+            return 'photo';
+          case 'video':
+            return 'video';
+          case 'voice':
+            return 'voice note';
+          case 'document':
+            return 'document';
+          case 'location':
+            return 'location';
+          case 'mood_sticker':
+            return 'sticker';
+          default:
+            return 'message';
+        }
+      })();
+      return `${name} reacted ${primary.emoji} to ${target}`;
+    }, [currentUserId, item.deletedForAll, item.reactions, item.type, peerName]);
+
     const documentMeta = useMemo(() => {
       if (item.type !== 'document') return null;
       const parts = [item.document?.sizeLabel, item.document?.typeLabel].filter(Boolean);
@@ -1427,6 +1457,18 @@ const MessageRowItem = memo(
             )}
 
             {reactionNodes}
+            {reactionInlineLabel ? (
+              <Text
+                style={[
+                  styles.reactionInlineText,
+                  isMyMessage ? styles.reactionInlineTextMy : styles.reactionInlineTextTheir,
+                  { color: isMyMessage ? withAlpha(Colors.light.background, 0.78) : theme.textMuted },
+                ]}
+                numberOfLines={1}
+              >
+                {reactionInlineLabel}
+              </Text>
+            ) : null}
 
             <View
               pointerEvents="none"
@@ -1697,6 +1739,7 @@ export default function ConversationScreen() {
   const [reactionProfiles, setReactionProfiles] = useState<Record<string, { name: string; avatar?: string | null }>>({});
   const [reactionProfilesLoading, setReactionProfilesLoading] = useState(false);
   const showLocationLoading = locationLoading && !currentCoords && !locationError;
+  const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   
   const messagesRef = useRef<MessageType[]>([]);
   const flatListRef = useRef<FlatList>(null);
@@ -4617,10 +4660,10 @@ export default function ConversationScreen() {
 
   const startRecordingTimer = useCallback(() => {
     stopRecordingTimer();
-    recordingIntervalRef.current = setInterval(async () => {
+    recordingIntervalRef.current = setInterval(() => {
       const recording = recordingRef.current;
       if (!recording) return;
-      const status = await recording.getStatusAsync();
+      const status = recording.getStatus();
       const durationSeconds = (status.durationMillis ?? 0) / 1000;
       setRecordingDuration((prev) =>
         Math.abs(prev - durationSeconds) > 0.1 ? durationSeconds : prev
@@ -4684,7 +4727,7 @@ export default function ConversationScreen() {
         shouldRouteThroughEarpiece: false,
       });
 
-      const recording = new AudioRecorder(RecordingPresets.HIGH_QUALITY);
+      const recording = recordingRef.current ?? audioRecorder;
       await recording.prepareToRecordAsync();
       recording.record();
       recordingRef.current = recording;
@@ -9886,6 +9929,18 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontSize: 11,
       fontFamily: 'Manrope_600SemiBold',
       color: theme.text,
+    },
+    reactionInlineText: {
+      marginTop: 16,
+      fontSize: 11,
+      fontStyle: 'italic',
+      fontFamily: 'Manrope_500Medium',
+    },
+    reactionInlineTextMy: {
+      textAlign: 'right',
+    },
+    reactionInlineTextTheir: {
+      textAlign: 'left',
     },
 
     // Quick Reactions
