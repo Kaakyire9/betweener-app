@@ -2,6 +2,7 @@ export type Interest = { id: string; name: string; category: string; emoji: stri
 
 export type UserProfile = {
   id: string;
+  userId?: string;
   name: string;
   age: number;
   location: string;
@@ -25,6 +26,7 @@ export type UserProfile = {
   personalityType?: string;
   height?: string;
   lookingFor?: string;
+  loveLanguage?: string;
   languages?: string[];
   currentCountry?: string;
   currentCountryCode?: string;
@@ -38,5 +40,5 @@ export type UserProfile = {
   locationPrecision?: string;
   interests: Interest[];
   compatibility: number;
-  aiScore?: number;
+  verificationLevel?: number;
 };

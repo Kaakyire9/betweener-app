@@ -16,7 +16,7 @@ export type Match = {
   verified?: boolean;
   personalityTags?: string[];
   profileVideo?: string;
-  aiScore?: number;
+  compatibility?: number;
   region?: string;
   current_country?: string;
   current_country_code?: string;

@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { Match } from '@/types/match';
+import { computeCompatibilityPercent } from '@/lib/compat/compatibility-score';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DeviceEventEmitter, Linking } from 'react-native';
@@ -56,17 +57,6 @@ function formatDistance(distanceKm?: number | null, fallback?: string, unit: Dis
   const label = resolvedUnit === 'mi' && rounded === 1 ? unitSingular : unitPlural;
   return `${rounded} ${label} away`;
 }
-
-const parseAiScorePercent = (value: unknown): number | undefined => {
-  const asNumber =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string' && value.trim() !== ''
-        ? Number(value)
-        : NaN;
-  if (!Number.isFinite(asNumber)) return undefined;
-  return Math.max(0, Math.min(100, asNumber));
-};
 
 async function signProfileVideoUrl(path?: string | null) {
   if (!path) return undefined;
@@ -452,6 +442,76 @@ export default function useAIRecommendations(
           return m;
         });
       };
+      let viewerCompat: {
+        interests?: string[];
+        lookingFor?: string | null;
+        loveLanguage?: string | null;
+        personalityType?: string | null;
+        religion?: string | null;
+        wantsChildren?: string | null;
+        smoking?: string | null;
+      } | null = null;
+      let userCoords: { latitude?: number; longitude?: number } | null = null;
+      if (supabase && userId) {
+        try {
+          const { data: myProfile, error: myErr } = await supabase
+            .from('profiles')
+            .select('latitude, longitude, looking_for, love_language, personality_type, religion, wants_children, smoking')
+            .eq('id', userId)
+            .limit(1)
+            .single();
+          if (!myErr && myProfile) {
+            userCoords = { latitude: myProfile.latitude, longitude: myProfile.longitude };
+            viewerCompat = {
+              interests: [],
+              lookingFor: myProfile.looking_for ?? null,
+              loveLanguage: myProfile.love_language ?? null,
+              personalityType: myProfile.personality_type ?? null,
+              religion: myProfile.religion ?? null,
+              wantsChildren: myProfile.wants_children ?? null,
+              smoking: myProfile.smoking ?? null,
+            };
+          }
+        } catch (e) {
+          userCoords = null;
+        }
+      }
+      if (viewerCompat && supabase && userId) {
+        try {
+          const { data: myInterests, error: myIntErr } = await supabase
+            .from('profile_interests')
+            .select('interests!inner(name)')
+            .eq('profile_id', userId);
+          if (!myIntErr && Array.isArray(myInterests)) {
+            const names: string[] = [];
+            for (const row of myInterests as any[]) {
+              if (Array.isArray(row.interests)) {
+                names.push(...row.interests.map((i: any) => i?.name).filter(Boolean));
+              } else if (row.interests?.name) {
+                names.push(row.interests.name);
+              }
+            }
+            viewerCompat.interests = names;
+          }
+        } catch (e) {
+          // ignore interest errors
+        }
+      }
+      const computeCompatibility = (p: any, interestsArr: string[]) => {
+        const computed = viewerCompat
+          ? computeCompatibilityPercent(viewerCompat, {
+              interests: interestsArr,
+              lookingFor: p?.looking_for ?? null,
+              loveLanguage: p?.love_language ?? null,
+              personalityType: p?.personality_type ?? null,
+              religion: p?.religion ?? null,
+              wantsChildren: p?.wants_children ?? null,
+              smoking: p?.smoking ?? null,
+            })
+          : null;
+        if (typeof computed === 'number') return computed;
+        return typeof p?.compatibility === 'number' ? p.compatibility : null;
+      };
       // If Supabase is configured and we have a user id, fetch profiles
       if (supabase && userId) {
         // Nearby mode: server-side distance sort via RPC
@@ -460,12 +520,15 @@ export default function useAIRecommendations(
             const scored = await supabase.rpc('get_recs_nearby_scored', { p_user_id: userId, p_limit: 20 });
             const { data, error } = !scored.error ? scored : await supabase.rpc('get_recs_nearby', { p_user_id: userId, p_limit: 20 });
             if (!error && Array.isArray(data)) {
-              const mapped: Match[] = data.map((p: any) => ({
+              const mapped: Match[] = data.map((p: any) => {
+                const interestsArr = Array.isArray(p.interests) ? p.interests : [];
+                const compatibility = computeCompatibility(p, interestsArr);
+                return ({
                 id: p.id,
                 name: p.full_name || p.user_id || String(p.id),
                 age: p.age,
                 tagline: p.bio || '',
-                interests: Array.isArray(p.interests) ? p.interests : [],
+                interests: interestsArr,
                 avatar_url: p.avatar_url || undefined,
                 distance: formatDistance(p.distance_km, p.location || p.region, unitForFormat),
                 distanceKm: typeof p.distance_km === 'number' ? p.distance_km : undefined,
@@ -473,7 +536,7 @@ export default function useAIRecommendations(
                 lastActive: p.last_active ?? null,
                 verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
                 personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
-                aiScore: parseAiScorePercent(p.ai_score),
+                compatibility: typeof compatibility === 'number' ? compatibility : undefined,
                 profileVideo: (p as any).profile_video || undefined,
                 location: p.location || undefined,
                 tribe: p.tribe,
@@ -482,7 +545,8 @@ export default function useAIRecommendations(
                 current_country: (p as any).current_country,
                 current_country_code: (p as any).current_country_code,
                 location_precision: (p as any).location_precision,
-              } as Match));
+              } as Match);
+              });
               const withSigned = await resolveProfileVideos(mapped);
               setMatches(withSigned);
             if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] nearby rpc result', { count: mapped.length });
@@ -499,12 +563,15 @@ export default function useAIRecommendations(
             const scored = await supabase.rpc('get_recs_active_scored', { p_user_id: userId, p_window_minutes: activeWindowMinutes });
             const { data, error } = !scored.error ? scored : await supabase.rpc('get_recs_active', { p_user_id: userId, p_window_minutes: activeWindowMinutes });
             if (!error && Array.isArray(data)) {
-              const mapped: Match[] = data.map((p: any) => ({
+              const mapped: Match[] = data.map((p: any) => {
+                const interestsArr = Array.isArray(p.interests) ? p.interests : [];
+                const compatibility = computeCompatibility(p, interestsArr);
+                return ({
                 id: p.id,
                 name: p.full_name || p.user_id || String(p.id),
                 age: p.age,
                 tagline: p.bio || '',
-                interests: Array.isArray(p.interests) ? p.interests : [],
+                interests: interestsArr,
                 avatar_url: p.avatar_url || undefined,
                 distance: p.location || p.region || '',
                 distanceKm: undefined,
@@ -512,7 +579,7 @@ export default function useAIRecommendations(
                 lastActive: p.last_active ?? null,
                 verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
                 personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
-                aiScore: parseAiScorePercent(p.ai_score),
+                compatibility: typeof compatibility === 'number' ? compatibility : undefined,
                 profileVideo: (p as any).profile_video || undefined,
                 location: p.location || undefined,
                 tribe: p.tribe,
@@ -521,7 +588,8 @@ export default function useAIRecommendations(
                 current_country: (p as any).current_country,
                 current_country_code: (p as any).current_country_code,
                 location_precision: (p as any).location_precision,
-              } as Match));
+              } as Match);
+              });
               const withSigned = await resolveProfileVideos(mapped);
               setMatches(withSigned);
               if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] active rpc result', { count: mapped.length });
@@ -536,12 +604,15 @@ export default function useAIRecommendations(
         try {
           const { data, error } = await supabase.rpc('get_recs_for_you_scored', { p_user_id: userId, p_limit: 20 });
           if (!error && Array.isArray(data)) {
-            const mapped: Match[] = data.map((p: any) => ({
+            const mapped: Match[] = data.map((p: any) => {
+              const interestsArr = Array.isArray(p.interests) ? p.interests : [];
+              const compatibility = computeCompatibility(p, interestsArr);
+              return ({
               id: p.id,
               name: p.full_name || p.user_id || String(p.id),
               age: p.age,
               tagline: p.bio || '',
-              interests: Array.isArray(p.interests) ? p.interests : [],
+              interests: interestsArr,
               avatar_url: p.avatar_url || undefined,
               distance: formatDistance(p.distance_km, p.location || p.region, unitForFormat),
               distanceKm: typeof p.distance_km === 'number' ? p.distance_km : undefined,
@@ -549,7 +620,7 @@ export default function useAIRecommendations(
               lastActive: p.last_active ?? null,
               verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
               personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
-              aiScore: parseAiScorePercent(p.ai_score),
+              compatibility: typeof compatibility === 'number' ? compatibility : undefined,
               profileVideo: (p as any).profile_video || undefined,
               location: p.location || undefined,
               tribe: p.tribe,
@@ -558,7 +629,8 @@ export default function useAIRecommendations(
               current_country: (p as any).current_country,
               current_country_code: (p as any).current_country_code,
               location_precision: (p as any).location_precision,
-            } as Match));
+            } as Match);
+            });
             const withSigned = await resolveProfileVideos(mapped);
             setMatches(withSigned);
             if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] forYou scored rpc result', { count: mapped.length });
@@ -573,9 +645,9 @@ export default function useAIRecommendations(
         // due to missing columns (Postgres error 42703), retry with a
         // minimal safe column list to avoid falling back to mocks.
         const extendedSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, online, is_active, verification_level, ai_score, profile_video, current_country, current_country_code, location_precision';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, verification_level, profile_video, current_country, current_country_code, location_precision';
         const minimalSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, online, is_active, verification_level, profile_video, current_country, current_country_code, location_precision';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, verification_level, profile_video, current_country, current_country_code, location_precision';
 
         let data: any[] | null = null;
         let error: any = null;
@@ -647,22 +719,6 @@ export default function useAIRecommendations(
             // ignore profile interests errors
           }
 
-          // Try to fetch the current user's coordinates so we can compute distances
-          let userCoords: { latitude?: number; longitude?: number } | null = null;
-          try {
-            const { data: myProfile, error: myErr } = await supabase
-              .from('profiles')
-              .select('latitude, longitude')
-              .eq('id', userId)
-              .limit(1)
-              .single();
-            if (!myErr && myProfile) {
-              userCoords = { latitude: myProfile.latitude, longitude: myProfile.longitude };
-            }
-          } catch (e) {
-            userCoords = null;
-          }
-
           const haversineKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
             const toRad = (v: number) => (v * Math.PI) / 180;
             const R = 6371; // km
@@ -693,6 +749,7 @@ export default function useAIRecommendations(
             }
 
             const ptags = Array.isArray(p.personality_tags) ? p.personality_tags.map((t: any) => (typeof t === 'string' ? t : t?.name || String(t))) : [];
+            const compatibility = computeCompatibility(p, interestsArr || []);
 
             return ({
               id: p.id,
@@ -707,7 +764,7 @@ export default function useAIRecommendations(
               lastActive: p.last_active ?? null,
               verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
               personalityTags: ptags || [],
-              aiScore: parseAiScorePercent(p.ai_score),
+              compatibility: typeof compatibility === 'number' ? compatibility : undefined,
               profileVideo: p.profile_video || undefined,
               location: p.location || undefined,
               tribe: p.tribe,

@@ -1,10 +1,12 @@
 
 import MatchModal from '@/components/MatchModal';
+import IntentRequestSheet from '@/components/IntentRequestSheet';
 import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
-import { normalizeAiScorePercent, toRoundedPercentInt } from '@/lib/profile/ai-score';
+import { computeCompatibilityPercent } from '@/lib/compat/compatibility-score';
+import { computeFirstReplyHours, computeInterestOverlapRatio, computeMatchScorePercent } from '@/lib/match/match-score';
 import { supabase } from '@/lib/supabase';
 import { Match } from '@/types/match';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -38,6 +40,7 @@ const HERO_HEIGHT = screenHeight * 0.76;
 type Interest = { id: string; name: string; category: string; emoji: string };
 type UserProfile = {
   id: string;
+  userId?: string;
   name: string;
   age: number;
   location: string;
@@ -61,6 +64,7 @@ type UserProfile = {
   personalityType?: string;
   height?: string;
   lookingFor?: string;
+  loveLanguage?: string;
   languages?: string[];
   currentCountry?: string;
   currentCountryCode?: string;
@@ -74,7 +78,7 @@ type UserProfile = {
   locationPrecision?: string;
   interests: Interest[];
   compatibility: number;
-  aiScore?: number;
+  verificationLevel?: number | null;
 };
 
 const emoji = (...codes: number[]) => String.fromCodePoint(...codes);
@@ -205,7 +209,7 @@ const formatDistance = (distanceKm?: number | null, fallback?: string, unit: Dis
 };
 
 export default function ProfileViewPremiumScreen() {
-  const { profile: currentUser } = useAuth();
+  const { profile: currentUser, user } = useAuth();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
@@ -244,9 +248,14 @@ export default function ProfileViewPremiumScreen() {
   const [currentPhotoIndex, setCurrentPhotoIndex] = useState(0);
   const [celebrationMatch, setCelebrationMatch] = useState<Match | null>(null);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
+  const [intentSheetVisible, setIntentSheetVisible] = useState(false);
+  const [matchAccepted, setMatchAccepted] = useState(false);
+  const [matchPercent, setMatchPercent] = useState<number | null>(null);
+  const [myInterests, setMyInterests] = useState<Interest[]>([]);
 
   const placeholderProfile: UserProfile = {
     id: viewedProfileId || 'preview',
+    userId: undefined,
     name: viewedProfileId ? 'Loading profile...' : 'Profile',
     age: 0,
     location: '',
@@ -280,7 +289,7 @@ export default function ProfileViewPremiumScreen() {
     wantsChildren: '',
     locationPrecision: '',
     compatibility: 80,
-    aiScore: undefined,
+    verificationLevel: undefined,
     interests: [],
   };
 
@@ -296,6 +305,7 @@ export default function ProfileViewPremiumScreen() {
   const baseProfileData: UserProfile = isOwnProfilePreview
     ? {
         id: currentUser?.id || 'preview',
+        userId: currentUser?.user_id || undefined,
         name: currentUser?.full_name || 'Your Name',
         age: currentUser?.age || 25,
         location: (currentUser as any)?.location || (currentUser as any)?.city || currentUser?.region || 'Your Location',
@@ -318,6 +328,7 @@ export default function ProfileViewPremiumScreen() {
         personalityType: (currentUser as any)?.personality_type,
         height: (currentUser as any)?.height,
         lookingFor: (currentUser as any)?.looking_for,
+        loveLanguage: (currentUser as any)?.love_language,
         languages: (currentUser as any)?.languages_spoken || [],
         currentCountry: (currentUser as any)?.current_country,
         currentCountryCode: (currentUser as any)?.current_country_code,
@@ -330,7 +341,7 @@ export default function ProfileViewPremiumScreen() {
         wantsChildren: (currentUser as any)?.wants_children,
         locationPrecision: (currentUser as any)?.location_precision,
         compatibility: 100,
-        aiScore: 100,
+        verificationLevel: currentUser?.verification_level ?? null,
         interests: [],
       }
     : placeholderProfile;
@@ -346,6 +357,7 @@ export default function ProfileViewPremiumScreen() {
         const photos = Array.isArray(parsed.photos) ? parsed.photos : parsed.avatar_url ? [parsed.avatar_url] : [];
         return {
           id: parsed.id || placeholderProfile.id,
+          userId: parsed.user_id || parsed.userId || undefined,
           name: parsed.name || 'Profile',
           age: parsed.age || 0,
           location: parsed.location || '',
@@ -379,6 +391,7 @@ export default function ProfileViewPremiumScreen() {
           personalityType: parsed.personality_type,
           height: parsed.height,
           lookingFor: parsed.looking_for,
+          loveLanguage: parsed.love_language,
           languages: parsed.languages_spoken || [],
           currentCountry: parsed.current_country,
           currentCountryCode: parsed.current_country_code,
@@ -390,13 +403,13 @@ export default function ProfileViewPremiumScreen() {
           hasChildren: parsed.has_children,
           wantsChildren: parsed.wants_children,
           locationPrecision: parsed.location_precision,
-          compatibility:
-            typeof parsed.compatibility === 'number'
-              ? parsed.compatibility
-              : typeof parsed.aiScore === 'number'
-              ? Math.round(parsed.aiScore)
-              : 75,
-          aiScore: typeof parsed.aiScore === 'number' ? parsed.aiScore : undefined,
+          compatibility: typeof parsed.compatibility === 'number' ? parsed.compatibility : 0,
+          verificationLevel:
+            typeof parsed.verification_level === 'number'
+              ? parsed.verification_level
+              : typeof parsed.verificationLevel === 'number'
+              ? parsed.verificationLevel
+              : null,
           tribe: parsed.tribe,
           religion: parsed.religion,
           interests: Array.isArray(parsed.interests)
@@ -468,6 +481,49 @@ export default function ProfileViewPremiumScreen() {
     const flag = toFlagEmoji(profileData.currentCountryCode);
     return flag ? `${base} ${flag}` : base;
   }, [distanceWithLocation, profileData.location, profileData.currentCountryCode]);
+  const compatibilityPercent = useMemo(() => {
+    if (!currentUser || !profileData) return profileData.compatibility;
+    const viewerInterests = myInterests.map((i) => i.name).filter(Boolean);
+    const targetInterests = profileData.interests.map((i) => i.name).filter(Boolean);
+    const computed = computeCompatibilityPercent(
+      {
+        interests: viewerInterests,
+        lookingFor: (currentUser as any)?.looking_for,
+        loveLanguage: (currentUser as any)?.love_language,
+        personalityType: (currentUser as any)?.personality_type,
+        religion: (currentUser as any)?.religion,
+        wantsChildren: (currentUser as any)?.wants_children,
+        smoking: (currentUser as any)?.smoking,
+      },
+      {
+        interests: targetInterests,
+        lookingFor: profileData.lookingFor,
+        loveLanguage: profileData.loveLanguage,
+        personalityType: profileData.personalityType,
+        religion: profileData.religion,
+        wantsChildren: profileData.wantsChildren,
+        smoking: profileData.smoking,
+      },
+    );
+    return typeof computed === 'number' ? computed : profileData.compatibility;
+  }, [
+    currentUser,
+    myInterests,
+    profileData.compatibility,
+    profileData.interests,
+    profileData.lookingFor,
+    profileData.loveLanguage,
+    profileData.personalityType,
+    profileData.religion,
+    profileData.wantsChildren,
+    profileData.smoking,
+  ]);
+  const matchBadgeValue =
+    matchAccepted && typeof matchPercent === 'number'
+      ? matchPercent
+      : compatibilityPercent;
+  const matchBadgeLabel =
+    matchAccepted && typeof matchPercent === 'number' ? 'Match' : 'Vibes';
 
   useEffect(() => {
     let mounted = true;
@@ -504,9 +560,9 @@ export default function ProfileViewPremiumScreen() {
       if (!viewedProfileId) return;
       try {
         const selectFull =
-          'id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, religion, personality_type, height, looking_for, languages_spoken, current_country, current_country_code, diaspora_status, willing_long_distance, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, verification_level, ai_score';
+          'id, user_id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, religion, personality_type, height, looking_for, love_language, languages_spoken, current_country, current_country_code, diaspora_status, willing_long_distance, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, verification_level';
         const selectMinimal =
-          'id, full_name, age, region, city, location, avatar_url, bio, tribe, religion, personality_type, is_active, online, verification_level, ai_score, current_country_code';
+          'id, user_id, full_name, age, region, city, location, avatar_url, bio, tribe, religion, personality_type, love_language, is_active, online, verification_level, current_country_code';
         let data: any = null;
         let error: any = null;
         try {
@@ -549,8 +605,6 @@ export default function ProfileViewPremiumScreen() {
         }
 
         const photos = Array.isArray((data as any).photos) ? (data as any).photos : data.avatar_url ? [data.avatar_url] : [];
-        const aiScoreVal = normalizeAiScorePercent((data as any).ai_score);
-        const aiScoreRounded = toRoundedPercentInt(aiScoreVal);
         const fallbackDistance = parsedFallback?.distance;
         const fallbackDistanceKm =
           typeof parsedFallback?.distanceKm === 'number'
@@ -560,6 +614,7 @@ export default function ProfileViewPremiumScreen() {
             : undefined;
         const mapped: UserProfile = {
           id: data.id,
+          userId: data.user_id || undefined,
           name: data.full_name || 'Profile',
           age: data.age || 0,
           location: data.location || data.region || '',
@@ -573,6 +628,7 @@ export default function ProfileViewPremiumScreen() {
           occupation: data.occupation || '',
           education: data.education || '',
           verified: !!data.verification_level,
+          verificationLevel: typeof data.verification_level === 'number' ? data.verification_level : null,
           bio: data.bio || '',
           distance: isDistanceLabel(fallbackDistance) ? fallbackDistance || '' : data.region || data.location || '',
           distanceKm: fallbackDistanceKm,
@@ -580,6 +636,7 @@ export default function ProfileViewPremiumScreen() {
           personalityType: data.personality_type || undefined,
           height: data.height || undefined,
           lookingFor: data.looking_for || undefined,
+          loveLanguage: data.love_language || undefined,
           languages: Array.isArray((data as any).languages_spoken) ? (data as any).languages_spoken : undefined,
           currentCountry: data.current_country || undefined,
           currentCountryCode: data.current_country_code || undefined,
@@ -591,13 +648,7 @@ export default function ProfileViewPremiumScreen() {
           hasChildren: data.has_children || undefined,
           wantsChildren: data.wants_children || undefined,
           locationPrecision: data.location_precision || undefined,
-          compatibility:
-            typeof aiScoreRounded === 'number'
-              ? aiScoreRounded
-              : typeof (data as any).compatibility === 'number'
-              ? (data as any).compatibility
-              : 75,
-          aiScore: aiScoreVal,
+          compatibility: typeof (data as any).compatibility === 'number' ? (data as any).compatibility : 0,
           tribe: data.tribe || undefined,
           religion: data.religion || undefined,
           interests: interestsArr,
@@ -618,6 +669,42 @@ export default function ProfileViewPremiumScreen() {
       mounted = false;
     };
   }, [isOwnProfilePreview, viewedProfileId, parsedFallback?.distance, parsedFallback?.distanceKm]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadMyInterests = async () => {
+      if (!currentUser?.id) {
+        setMyInterests([]);
+        return;
+      }
+      const { data } = await supabase
+        .from('profile_interests')
+        .select('interests!inner(name)')
+        .eq('profile_id', currentUser.id);
+      if (cancelled) return;
+      const names = (data || [])
+        .flatMap((row: any) =>
+          Array.isArray(row.interests)
+            ? row.interests.map((i: any) => i?.name).filter(Boolean)
+            : row.interests?.name
+            ? [row.interests.name]
+            : [],
+        )
+        .filter(Boolean);
+      setMyInterests(
+        names.map((name: string, idx: number) => ({
+          id: `my-int-${idx}`,
+          name,
+          category: 'Interest',
+          emoji: getInterestEmoji(name),
+        })),
+      );
+    };
+    void loadMyInterests();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id]);
 
   useEffect(() => {
     Animated.loop(
@@ -740,7 +827,10 @@ export default function ProfileViewPremiumScreen() {
           `and(user1_id.eq.${currentUser.id},user2_id.eq.${profileData.id},status.eq.ACCEPTED),and(user1_id.eq.${profileData.id},user2_id.eq.${currentUser.id},status.eq.ACCEPTED)`,
         )
         .limit(1);
-      if (data && data.length > 0) setCelebrationMatch(makeMatchObject());
+      const accepted = !!(data && data.length > 0);
+      setMatchAccepted(accepted);
+      if (accepted) setCelebrationMatch(makeMatchObject());
+      return accepted;
     } catch (e) {
       console.log('[profile-view] match check error', e);
     }
@@ -771,6 +861,56 @@ export default function ProfileViewPremiumScreen() {
     await checkMutual();
     await checkMatchAccepted();
   };
+
+  useEffect(() => {
+    if (!profileData.id || isOwnProfilePreview) return;
+    void checkMatchAccepted();
+  }, [currentUser?.id, isOwnProfilePreview, profileData.id]);
+
+  useEffect(() => {
+    if (!matchAccepted || !user?.id || !profileData.userId) {
+      setMatchPercent(null);
+      return;
+    }
+    let cancelled = false;
+    const fetchMatchScore = async () => {
+      const { data, count } = await supabase
+        .from('messages')
+        .select('created_at,sender_id', { count: 'exact' })
+        .or(
+          `and(sender_id.eq.${user.id},receiver_id.eq.${profileData.userId}),and(sender_id.eq.${profileData.userId},receiver_id.eq.${user.id})`,
+        )
+        .order('created_at', { ascending: true })
+        .limit(50);
+      if (cancelled) return;
+      const messageRows = (data as any[] | null) ?? [];
+      const messageCount = typeof count === 'number' ? count : messageRows.length;
+      const firstReplyHours = computeFirstReplyHours(messageRows as any, user.id, profileData.userId);
+      const myNames = myInterests.map((item) => item.name).filter(Boolean);
+      const peerNames = profileData.interests.map((item) => item.name).filter(Boolean);
+      const interestOverlapRatio = computeInterestOverlapRatio(myNames, peerNames) ?? undefined;
+      const bothVerified =
+        (currentUser?.verification_level ?? 0) >= 1 && !!profileData.verified;
+      const score = computeMatchScorePercent({
+        messageCount,
+        firstReplyHours,
+        bothVerified,
+        interestOverlapRatio,
+      });
+      setMatchPercent(score);
+    };
+    void fetchMatchScore();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentUser?.verification_level,
+    matchAccepted,
+    myInterests,
+    profileData.interests,
+    profileData.userId,
+    user?.id,
+  ]);
 
   const makeMatchObject = (): Match => ({
     id: profileData.id,
@@ -1015,7 +1155,7 @@ export default function ProfileViewPremiumScreen() {
                   ]}
                 >
                   <MaterialCommunityIcons name="heart" size={16} color={Colors.light.background} />
-                  <Text style={styles.compatibilityText}>{profileData.compatibility}% Match</Text>
+                  <Text style={styles.compatibilityText}>{`${matchBadgeValue}% ${matchBadgeLabel}`}</Text>
                 </Animated.View>
               </View>
             </Animated.View>
@@ -1178,6 +1318,9 @@ export default function ProfileViewPremiumScreen() {
             <TouchableOpacity style={styles.superLikeButton} onPress={handleSuperLike}>
               <MaterialCommunityIcons name="star" size={22} color={theme.accent} />
             </TouchableOpacity>
+            <TouchableOpacity style={styles.requestButton} onPress={() => setIntentSheetVisible(true)}>
+              <MaterialCommunityIcons name="message-plus-outline" size={22} color={theme.tint} />
+            </TouchableOpacity>
             <TouchableOpacity style={[styles.likeButton, isLiked && styles.likeButtonActive]} onPress={handleLike}>
               <Animated.View
                 style={{
@@ -1202,6 +1345,13 @@ export default function ProfileViewPremiumScreen() {
           setVideoModalVisible(false);
           setVideoModalUrl(null);
         }}
+      />
+      <IntentRequestSheet
+        visible={intentSheetVisible}
+        onClose={() => setIntentSheetVisible(false)}
+        recipientId={profileData.id}
+        recipientName={profileData.name}
+        metadata={{ source: 'profile' }}
       />
     </View>
   );
@@ -1354,6 +1504,16 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       alignItems: 'center',
       borderWidth: 1.5,
       borderColor: withAlpha(theme.accent, 0.7),
+    },
+    requestButton: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      backgroundColor: theme.backgroundSubtle,
+      justifyContent: 'center',
+      alignItems: 'center',
+      borderWidth: 1.5,
+      borderColor: withAlpha(theme.tint, 0.6),
     },
     likeButton: {
       width: 64,

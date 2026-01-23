@@ -1301,9 +1301,9 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
             </View>
           </View>
 
-          {/* Personality & Compatibility */}
+          {/* Personality & Vibes */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Personality & Compatibility</Text>
+            <Text style={styles.sectionTitle}>Personality & Vibes</Text>
             
             <View style={styles.row}>
               <View style={[styles.inputContainer, { flex: 1, marginRight: 8 }]}>

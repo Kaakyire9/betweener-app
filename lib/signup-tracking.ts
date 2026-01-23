@@ -40,11 +40,13 @@ type IpInfo = {
 };
 
 const getAppVersion = () => {
+  const expoConfig = (Constants.expoConfig ?? {}) as any;
+  const manifest = (Constants.manifest ?? {}) as any;
   const version =
-    Constants.expoConfig?.version ||
-    Constants.manifest?.version ||
-    Constants.expoConfig?.runtimeVersion ||
-    Constants.manifest?.runtimeVersion;
+    expoConfig.version ||
+    manifest.version ||
+    expoConfig.runtimeVersion ||
+    manifest.runtimeVersion;
   return typeof version === "string" ? version : null;
 };
 

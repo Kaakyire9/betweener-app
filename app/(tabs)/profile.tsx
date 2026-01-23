@@ -7,7 +7,6 @@ import { Colors } from "@/constants/theme";
 import { useColorScheme, useColorSchemePreference } from "@/hooks/use-color-scheme";
 import { useVerificationStatus } from "@/hooks/use-verification-status";
 import { useAuth } from "@/lib/auth-context";
-import { normalizeAiScorePercent, toRoundedPercentInt } from '@/lib/profile/ai-score';
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -445,8 +444,7 @@ export default function ProfileScreen() {
     };
     try {
       if (profile) {
-        const aiScorePct = normalizeAiScorePercent((profile as any).aiScore ?? (profile as any).ai_score);
-        const compatPct = toRoundedPercentInt(aiScorePct) ?? 100;
+        const compatPct = 100;
         const fallback = {
           id: profile.id,
           name: profile.full_name || profile.id,
@@ -463,7 +461,6 @@ export default function ProfileScreen() {
           interests: (profile as any).interests,
           is_active: true,
           compatibility: compatPct,
-          aiScore: aiScorePct ?? compatPct,
           verified: !!(profile as any).verification_level,
         };
         params.fallbackProfile = encodeURIComponent(JSON.stringify(fallback));

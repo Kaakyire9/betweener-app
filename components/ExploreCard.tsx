@@ -73,6 +73,8 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     () => (isDark ? ["rgba(0,0,0,0)", "rgba(0,0,0,0.7)"] : ["rgba(0,0,0,0)", "rgba(0,0,0,0.55)"] ),
     [isDark]
   );
+  const [showWhy, setShowWhy] = useState(false);
+  const whyAnim = useRef(new Animated.Value(0)).current;
   const isManualLocation = (match as any).location_precision === 'CITY';
   const locationLabel = isManualLocation ? '' : getCityOnly(match.location || match.region || '');
   const distanceLabel = match.distance || '';
@@ -238,6 +240,50 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     opacity: introPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 0.82] }),
   };
 
+  const alignmentChips = useMemo(() => {
+    const chips: { label: string; tone: 'tint' | 'secondary' | 'accent' }[] = [];
+    const interests = Array.isArray(match.interests) ? match.interests : [];
+    const personalities = Array.isArray((match as any).personalityTags) ? (match as any).personalityTags : [];
+    const lookingFor = (match as any).looking_for || (match as any).lookingFor;
+    const loveLanguage = (match as any).love_language || (match as any).loveLanguage;
+
+    if (personalities[0]) chips.push({ label: personalities[0], tone: 'accent' });
+    if (interests[0]) chips.push({ label: interests[0], tone: 'secondary' });
+    if (lookingFor) chips.push({ label: `Intent: ${lookingFor}`, tone: 'tint' });
+    if (loveLanguage && chips.length < 3) chips.push({ label: `Love language: ${loveLanguage}`, tone: 'tint' });
+    if (chips.length === 0) {
+      chips.push({ label: 'Shared values', tone: 'secondary' });
+      chips.push({ label: 'Similar goals', tone: 'accent' });
+    }
+
+    return chips.slice(0, 3);
+  }, [match.interests, (match as any).personalityTags, (match as any).looking_for, (match as any).lookingFor, (match as any).love_language, (match as any).loveLanguage]);
+
+  const alignmentReasons = useMemo(() => {
+    const reasons: string[] = [];
+    const interests = Array.isArray(match.interests) ? match.interests : [];
+    const personalities = Array.isArray((match as any).personalityTags) ? (match as any).personalityTags : [];
+    const lookingFor = (match as any).looking_for || (match as any).lookingFor;
+    const loveLanguage = (match as any).love_language || (match as any).loveLanguage;
+
+    if (personalities[0]) reasons.push(`Personality: ${personalities[0]}`);
+    if (interests[0]) reasons.push(`Shared interest: ${interests[0]}`);
+    if (lookingFor) reasons.push(`Intent: ${lookingFor}`);
+    if (loveLanguage) reasons.push(`Love language: ${loveLanguage}`);
+    if (match.isActiveNow) reasons.push('Active now so you can connect');
+
+    if (reasons.length === 0) reasons.push('Aligned values and lifestyle signals');
+    return reasons.slice(0, 4);
+  }, [match.interests, (match as any).personalityTags, (match as any).looking_for, (match as any).lookingFor, (match as any).love_language, (match as any).loveLanguage, match.isActiveNow]);
+
+  useEffect(() => {
+    Animated.timing(whyAnim, {
+      toValue: showWhy ? 1 : 0,
+      duration: 220,
+      useNativeDriver: false,
+    }).start();
+  }, [showWhy, whyAnim]);
+
   // drive the preview pulse when isPreviewing changes
   useEffect(() => {
     if (!canUseReanimated || !previewPulse) return;
@@ -341,19 +387,8 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
 
           <View style={styles.centerSlot} pointerEvents="none">
             {(() => {
-              const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
-              let score = typeof (match as any).aiScore === 'number' ? clamp((match as any).aiScore) : null;
-              if (score === null) {
-                try {
-                  const id = match.id || '';
-                  let h = 0;
-                  for (let i = 0; i < id.length; i++) h = (h << 5) - h + id.charCodeAt(i);
-                  const v = Math.abs(h) % 39;
-                  score = 60 + v;
-                } catch {
-                  score = 75;
-                }
-              }
+              const score = typeof (match as any).compatibility === 'number' ? Math.round((match as any).compatibility) : null;
+              if (typeof score !== 'number') return null;
 
               if (canUseReanimated && pillAnimatedStyle && ReanimatedAnimated && ReanimatedAnimated.View) {
                 // @ts-ignore
@@ -361,7 +396,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
                   // @ts-ignore
                   <ReanimatedAnimated.View style={pillAnimatedStyle} pointerEvents="none">
                     <LinearGradientSafe colors={[theme.secondary, theme.tint]} start={[0, 0]} end={[1, 1]} style={styles.aiPillInline}>
-                      <Text style={styles.aiPillText}>{`${score}% Match`}</Text>
+                      <Text style={styles.aiPillText}>{`${score}% Vibe`}</Text>
                     </LinearGradientSafe>
                   </ReanimatedAnimated.View>
                 );
@@ -370,7 +405,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
               return (
                 <Animated.View style={{ transform: [{ translateY: pillTranslate }], opacity: pillAnim }} pointerEvents="none">
                   <LinearGradientSafe colors={[theme.secondary, theme.tint]} start={[0, 0]} end={[1, 1]} style={styles.aiPillInline}>
-                    <Text style={styles.aiPillText}>{`${score}% Match`}</Text>
+                    <Text style={styles.aiPillText}>{`${score}% Vibe`}</Text>
                   </LinearGradientSafe>
                 </Animated.View>
               );
@@ -424,6 +459,53 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
               <Text style={styles.location}>{locationDisplay}</Text>
             </View>
           ) : null}
+
+          <View style={styles.alignmentRow}>
+            <View style={styles.alignmentChips}>
+              {alignmentChips.map((chip, idx) => (
+                <View
+                  key={`${chip.label}-${idx}`}
+                  style={[
+                    styles.alignmentChip,
+                    chip.tone === 'tint'
+                      ? styles.alignmentChipTint
+                      : chip.tone === 'secondary'
+                        ? styles.alignmentChipSecondary
+                        : styles.alignmentChipAccent,
+                  ]}
+                >
+                  <Text style={styles.alignmentChipText}>{chip.label}</Text>
+                </View>
+              ))}
+            </View>
+            <TouchableOpacity
+              style={styles.whyToggle}
+              onPress={() => setShowWhy((prev) => !prev)}
+              accessibilityRole="button"
+              accessibilityLabel="Why this vibe"
+            >
+              <MaterialCommunityIcons name={showWhy ? 'chevron-up' : 'chevron-down'} size={16} color="#fff" />
+              <Text style={styles.whyToggleText}>Why this vibe</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Animated.View
+            style={[
+              styles.whyDrawer,
+              {
+                maxHeight: whyAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 160] }),
+                opacity: whyAnim,
+                transform: [{ translateY: whyAnim.interpolate({ inputRange: [0, 1], outputRange: [-6, 0] }) }],
+              },
+            ]}
+          >
+            {alignmentReasons.map((reason, idx) => (
+              <View key={`${reason}-${idx}`} style={styles.whyRow}>
+                <MaterialCommunityIcons name="star-four-points" size={14} color={theme.secondary} />
+                <Text style={styles.whyText}>{reason}</Text>
+              </View>
+            ))}
+          </Animated.View>
 
           <View style={styles.tags}>
             {(() => {
@@ -483,6 +565,23 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
     tagline: { color: "#fff", marginBottom: 12, fontSize: 15, fontFamily: 'Manrope_500Medium' },
     locationRow: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
     location: { color: "#fff", marginLeft: 6 },
+    alignmentRow: { marginBottom: 8 },
+    alignmentChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+    alignmentChip: {
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.text, 0.18),
+    },
+    alignmentChipTint: { backgroundColor: withAlpha(theme.tint, 0.35) },
+    alignmentChipSecondary: { backgroundColor: withAlpha(theme.secondary, 0.32) },
+    alignmentChipAccent: { backgroundColor: withAlpha(theme.accent, 0.32) },
+    alignmentChipText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+    whyToggle: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
+    whyToggleText: { color: '#fff', fontSize: 12, fontWeight: '600', marginLeft: 6 },
+    whyDrawer: { overflow: 'hidden' },
+    whyRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
+    whyText: { color: '#fff', fontSize: 12, marginLeft: 6 },
     tags: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 2 },
     tag: { backgroundColor: tagBg, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, marginRight: 8, marginBottom: 6 },
     tagText: { color: "#fff", fontSize: 12 },

@@ -1,4 +1,3 @@
-import { normalizeAiScorePercent, toRoundedPercentInt } from '@/lib/profile/ai-score';
 import { isDistanceLabel, parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
 import { supabase } from '@/lib/supabase';
@@ -18,9 +17,9 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
   const { viewedProfileId, fallbackDistanceLabel, fallbackDistanceKm } = options;
 
   const selectFull =
-    'id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, religion, personality_type, height, looking_for, languages_spoken, current_country, current_country_code, diaspora_status, willing_long_distance, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, verification_level, ai_score';
+    'id, user_id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, religion, personality_type, height, looking_for, love_language, languages_spoken, current_country, current_country_code, diaspora_status, willing_long_distance, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, verification_level';
   const selectMinimal =
-    'id, full_name, age, region, city, location, avatar_url, bio, tribe, religion, personality_type, is_active, online, verification_level, ai_score, current_country_code';
+    'id, user_id, full_name, age, region, city, location, avatar_url, bio, tribe, religion, personality_type, love_language, is_active, online, verification_level, current_country_code';
 
   let data: any = null;
   let error: any = null;
@@ -69,9 +68,6 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
   }
 
   const photos = Array.isArray((data as any).photos) ? (data as any).photos : data.avatar_url ? [data.avatar_url] : [];
-  const aiScoreVal = normalizeAiScorePercent((data as any).ai_score);
-  const aiScoreRounded = toRoundedPercentInt(aiScoreVal);
-
   const computedFallbackKm =
     typeof fallbackDistanceKm === 'number'
       ? fallbackDistanceKm
@@ -81,6 +77,7 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
 
   const mapped: UserProfile = {
     id: data.id,
+    userId: data.user_id || undefined,
     name: data.full_name || 'Profile',
     age: data.age || 0,
     location: data.location || data.region || '',
@@ -94,6 +91,7 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
     occupation: data.occupation || '',
     education: data.education || '',
     verified: !!data.verification_level,
+    verificationLevel: typeof data.verification_level === 'number' ? data.verification_level : undefined,
     bio: data.bio || '',
     distance: isDistanceLabel(fallbackDistanceLabel) ? fallbackDistanceLabel || '' : data.region || data.location || '',
     distanceKm: computedFallbackKm,
@@ -101,6 +99,7 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
     personalityType: data.personality_type || undefined,
     height: data.height || undefined,
     lookingFor: data.looking_for || undefined,
+    loveLanguage: data.love_language || undefined,
     languages: Array.isArray((data as any).languages_spoken) ? (data as any).languages_spoken : undefined,
     currentCountry: data.current_country || undefined,
     currentCountryCode: data.current_country_code || undefined,
@@ -112,13 +111,7 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
     hasChildren: data.has_children || undefined,
     wantsChildren: data.wants_children || undefined,
     locationPrecision: data.location_precision || undefined,
-    compatibility:
-      typeof aiScoreRounded === 'number'
-        ? aiScoreRounded
-        : typeof (data as any).compatibility === 'number'
-          ? (data as any).compatibility
-          : 75,
-    aiScore: aiScoreVal,
+    compatibility: typeof (data as any).compatibility === 'number' ? (data as any).compatibility : 0,
     tribe: data.tribe || undefined,
     religion: data.religion || undefined,
     interests: interestsArr,

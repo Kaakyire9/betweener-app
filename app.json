@@ -41,6 +41,7 @@
         "foregroundImage": "./assets/images/app-icon-foreground.png",
         "backgroundColor": "#0B1325"
       },
+      "windowSoftInputMode": "adjustResize",
       "package": "com.aduboffour.betweener",
       "intentFilters": [
         {

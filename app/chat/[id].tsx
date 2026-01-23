@@ -4,6 +4,7 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useMoments } from "@/hooks/useMoments";
 import { useAuth } from "@/lib/auth-context";
 import { decryptMediaBytes, encryptMediaBytes, getOrCreateDeviceKeypair } from "@/lib/e2ee";
+import { computeFirstReplyHours, computeInterestOverlapRatio, computeMatchScorePercent } from "@/lib/match/match-score";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -1251,6 +1252,30 @@ const MessageRowItem = memo(
                       imageSize ? { width: imageSize.width, height: imageSize.height } : null,
                     ]}
                   />
+                  <View
+                    style={[
+                      styles.mediaMetaOverlay,
+                      isMyMessage ? styles.mediaMetaOverlayMy : styles.mediaMetaOverlayTheir,
+                    ]}
+                    pointerEvents="none"
+                  >
+                    <Text
+                      style={[
+                        styles.mediaMetaText,
+                        isMyMessage ? styles.mediaMetaTextMy : styles.mediaMetaTextTheir,
+                      ]}
+                    >
+                      {timeLabel}
+                    </Text>
+                    {isMyMessage && (
+                      <MaterialCommunityIcons
+                        name={item.status === 'read' ? 'check-all' : item.status === 'delivered' ? 'check-all' : item.status === 'sent' ? 'check' : 'clock-outline'}
+                        size={11}
+                        color={item.status === 'read' ? theme.secondary : withAlpha(Colors.light.background, 0.9)}
+                        style={styles.mediaMetaIcon}
+                      />
+                    )}
+                  </View>
                   {item.text && (
                     <Text style={[
                       styles.imageCaption,
@@ -1270,6 +1295,30 @@ const MessageRowItem = memo(
                       onSize={handleVideoSize}
                     />
                   )}
+                  <View
+                    style={[
+                      styles.mediaMetaOverlay,
+                      isMyMessage ? styles.mediaMetaOverlayMy : styles.mediaMetaOverlayTheir,
+                    ]}
+                    pointerEvents="none"
+                  >
+                    <Text
+                      style={[
+                        styles.mediaMetaText,
+                        isMyMessage ? styles.mediaMetaTextMy : styles.mediaMetaTextTheir,
+                      ]}
+                    >
+                      {timeLabel}
+                    </Text>
+                    {isMyMessage && (
+                      <MaterialCommunityIcons
+                        name={item.status === 'read' ? 'check-all' : item.status === 'delivered' ? 'check-all' : item.status === 'sent' ? 'check' : 'clock-outline'}
+                        size={11}
+                        color={item.status === 'read' ? theme.secondary : withAlpha(Colors.light.background, 0.9)}
+                        style={styles.mediaMetaIcon}
+                      />
+                    )}
+                  </View>
                   {item.text && (
                     <Text style={[
                       styles.imageCaption,
@@ -1429,7 +1478,7 @@ const MessageRowItem = memo(
                 </View>
               ) : null}
 
-            {item.type !== 'text' && (
+            {item.type !== 'text' && item.type !== 'video' && item.type !== 'image' && (
               <View
                 style={[
                   styles.messageMetaRow,
@@ -1458,16 +1507,24 @@ const MessageRowItem = memo(
 
             {reactionNodes}
             {reactionInlineLabel ? (
-              <Text
+              <View
                 style={[
-                  styles.reactionInlineText,
-                  isMyMessage ? styles.reactionInlineTextMy : styles.reactionInlineTextTheir,
-                  { color: isMyMessage ? withAlpha(Colors.light.background, 0.78) : theme.textMuted },
+                  styles.reactionInlinePill,
+                  isMyMessage ? styles.reactionInlinePillMy : styles.reactionInlinePillTheir,
                 ]}
-                numberOfLines={1}
+                pointerEvents="none"
               >
-                {reactionInlineLabel}
-              </Text>
+                <Text
+                  style={[
+                    styles.reactionInlineText,
+                    isMyMessage ? styles.reactionInlineTextMy : styles.reactionInlineTextTheir,
+                    { color: isMyMessage ? Colors.light.background : theme.textMuted },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {reactionInlineLabel}
+                </Text>
+              </View>
             ) : null}
 
             <View
@@ -1661,6 +1718,11 @@ export default function ConversationScreen() {
   const [messages, setMessages] = useState<MessageType[]>([]);
   const [peerOnline, setPeerOnline] = useState(initialOnline);
   const [peerLastSeen, setPeerLastSeen] = useState<Date | null>(initialLastSeen);
+  const [peerProfile, setPeerProfile] = useState<{ id: string; user_id: string; verification_level?: number | null } | null>(null);
+  const [peerInterests, setPeerInterests] = useState<string[]>([]);
+  const [myInterests, setMyInterests] = useState<string[]>([]);
+  const [matchAccepted, setMatchAccepted] = useState(false);
+  const [matchPercent, setMatchPercent] = useState<number | null>(null);
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [showReactions, setShowReactions] = useState<string | null>(null);
@@ -1740,6 +1802,132 @@ export default function ConversationScreen() {
   const [reactionProfilesLoading, setReactionProfilesLoading] = useState(false);
   const showLocationLoading = locationLoading && !currentCoords && !locationError;
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchPeerProfile = async () => {
+      if (!conversationId) {
+        setPeerProfile(null);
+        return;
+      }
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id,user_id,verification_level')
+        .eq('user_id', conversationId)
+        .maybeSingle();
+      if (error) {
+        console.log('[chat] fetch peer profile error', error);
+      }
+      if (!cancelled) setPeerProfile(data ?? null);
+    };
+    void fetchPeerProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchInterests = async () => {
+      if (!profile?.id && !peerProfile?.id) {
+        setMyInterests([]);
+        setPeerInterests([]);
+        return;
+      }
+      const ids = [profile?.id, peerProfile?.id].filter(Boolean) as string[];
+      if (ids.length === 0) return;
+      const { data } = await supabase
+        .from('profile_interests')
+        .select('profile_id, interests!inner(name)')
+        .in('profile_id', ids);
+      if (cancelled) return;
+      const map: Record<string, string[]> = {};
+      (data || []).forEach((row: any) => {
+        const pid = row?.profile_id;
+        if (!pid) return;
+        let names: string[] = [];
+        if (Array.isArray(row.interests)) {
+          names = row.interests.map((i: any) => i?.name).filter(Boolean);
+        } else if (row.interests?.name) {
+          names = [row.interests.name];
+        }
+        if (!map[pid]) map[pid] = [];
+        map[pid] = [...map[pid], ...names];
+      });
+      setMyInterests(profile?.id && map[profile.id] ? map[profile.id] : []);
+      setPeerInterests(peerProfile?.id && map[peerProfile.id] ? map[peerProfile.id] : []);
+    };
+    void fetchInterests();
+    return () => {
+      cancelled = true;
+    };
+  }, [peerProfile?.id, profile?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const checkAccepted = async () => {
+      if (!profile?.id || !peerProfile?.id) {
+        setMatchAccepted(false);
+        return;
+      }
+      const { data } = await supabase
+        .from('matches')
+        .select('id')
+        .or(
+          `and(user1_id.eq.${profile.id},user2_id.eq.${peerProfile.id},status.eq.ACCEPTED),and(user1_id.eq.${peerProfile.id},user2_id.eq.${profile.id},status.eq.ACCEPTED)`,
+        )
+        .limit(1);
+      if (!cancelled) setMatchAccepted(!!(data && data.length > 0));
+    };
+    void checkAccepted();
+    return () => {
+      cancelled = true;
+    };
+  }, [peerProfile?.id, profile?.id]);
+
+  useEffect(() => {
+    if (!matchAccepted || !user?.id || !conversationId) {
+      setMatchPercent(null);
+      return;
+    }
+    let cancelled = false;
+    const fetchMatchScore = async () => {
+      const { data, count } = await supabase
+        .from('messages')
+        .select('created_at,sender_id', { count: 'exact' })
+        .or(
+          `and(sender_id.eq.${user.id},receiver_id.eq.${conversationId}),and(sender_id.eq.${conversationId},receiver_id.eq.${user.id})`,
+        )
+        .order('created_at', { ascending: true })
+        .limit(50);
+      if (cancelled) return;
+      const messageRows = (data as any[] | null) ?? [];
+      const messageCount = typeof count === 'number' ? count : messageRows.length;
+      const firstReplyHours = computeFirstReplyHours(messageRows as any, user.id, conversationId);
+      const interestOverlapRatio = computeInterestOverlapRatio(myInterests, peerInterests) ?? undefined;
+      const bothVerified =
+        (profile?.verification_level ?? 0) >= 1 && (peerProfile?.verification_level ?? 0) >= 1;
+      const score = computeMatchScorePercent({
+        messageCount,
+        firstReplyHours,
+        bothVerified,
+        interestOverlapRatio,
+      });
+      setMatchPercent(score);
+    };
+    void fetchMatchScore();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    conversationId,
+    matchAccepted,
+    myInterests,
+    peerInterests,
+    peerProfile?.verification_level,
+    profile?.verification_level,
+    user?.id,
+  ]);
   
   const messagesRef = useRef<MessageType[]>([]);
   const flatListRef = useRef<FlatList>(null);
@@ -1790,6 +1978,46 @@ export default function ConversationScreen() {
   const jumpVisibleRef = useRef(false);
   const suppressSuggestionRef = useRef(false);
   const viewOnceStatusRef = useRef(viewOnceStatus);
+  const initialScrollTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const initialAutoScrollDoneRef = useRef(false);
+  const initialAutoScrollAttemptsRef = useRef(0);
+  const lockAutoScrollUntilRef = useRef(0);
+
+  const forceScrollToBottom = useCallback(() => {
+    if (!flatListRef.current) return;
+    const schedule = (delayMs: number) => {
+      const timer = setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: false });
+      }, delayMs);
+      initialScrollTimersRef.current.push(timer);
+    };
+    InteractionManager.runAfterInteractions(() => {
+      flatListRef.current?.scrollToEnd({ animated: false });
+      schedule(60);
+      schedule(220);
+    });
+  }, []);
+
+  useEffect(() => {
+    initialScrollTimersRef.current.forEach((timer) => clearTimeout(timer));
+    initialScrollTimersRef.current = [];
+    initialAutoScrollDoneRef.current = false;
+    initialAutoScrollAttemptsRef.current = 0;
+    lockAutoScrollUntilRef.current = Date.now() + 2500;
+    hasAutoScrolledRef.current = false;
+    shouldAutoScrollRef.current = true;
+    wasAtBottomRef.current = true;
+    listMetricsRef.current = { contentHeight: 0, layoutHeight: 0, offsetY: 0 };
+    setShowJumpToBottom(false);
+    forceScrollToBottom();
+  }, [conversationId]);
+  
+  useEffect(() => {
+    return () => {
+      initialScrollTimersRef.current.forEach((timer) => clearTimeout(timer));
+      initialScrollTimersRef.current = [];
+    };
+  }, []);
   const liveShareRef = useRef<{
     messageId: string;
     expiresAt: number;
@@ -2163,6 +2391,14 @@ export default function ConversationScreen() {
         clearInterval(interval);
       };
     }, [conversationId, fetchBlockStatus, isChatBlocked, user?.id])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      lockAutoScrollUntilRef.current = Date.now() + 2500;
+      forceScrollToBottom();
+      return () => {};
+    }, [conversationId, forceScrollToBottom])
   );
 
   useEffect(() => {
@@ -5330,6 +5566,12 @@ export default function ConversationScreen() {
       layoutHeight: layoutMeasurement.height,
       offsetY: contentOffset.y,
     };
+    if (Date.now() < lockAutoScrollUntilRef.current) {
+      shouldAutoScrollRef.current = true;
+      wasAtBottomRef.current = true;
+      updateJumpToBottomVisibility(0);
+      return;
+    }
     const distanceToBottom =
       contentSize.height - (contentOffset.y + layoutMeasurement.height);
     const paddingToBottom = keyboardVisibleRef.current ? 200 : 60;
@@ -5351,6 +5593,30 @@ export default function ConversationScreen() {
     const { contentHeight, layoutHeight, offsetY } = listMetricsRef.current;
     return Math.max(0, contentHeight - (offsetY + layoutHeight));
   }, []);
+
+  const ensureInitialScrollToBottom = useCallback(() => {
+    if (initialAutoScrollDoneRef.current) return;
+    const { contentHeight, layoutHeight } = listMetricsRef.current;
+    if (!contentHeight || !layoutHeight) return;
+    const distanceToBottom = getDistanceToBottom();
+    const threshold = keyboardVisibleRef.current ? 240 : 120;
+    if (distanceToBottom <= threshold) {
+      initialAutoScrollDoneRef.current = true;
+      initialAutoScrollAttemptsRef.current = 0;
+      return;
+    }
+    if (initialAutoScrollAttemptsRef.current >= 20) {
+      initialAutoScrollDoneRef.current = true;
+      return;
+    }
+    initialAutoScrollAttemptsRef.current += 1;
+    const targetOffset = Math.max(0, contentHeight - layoutHeight);
+    flatListRef.current?.scrollToOffset({ offset: targetOffset, animated: false });
+    const timer = setTimeout(() => {
+      ensureInitialScrollToBottom();
+    }, 200 + initialAutoScrollAttemptsRef.current * 120);
+    initialScrollTimersRef.current.push(timer);
+  }, [getDistanceToBottom]);
 
   const updateJumpToBottomVisibility = useCallback((distanceToBottom: number) => {
     const threshold = keyboardVisibleRef.current ? 240 : 120;
@@ -5456,6 +5722,9 @@ export default function ConversationScreen() {
   const onScrollBeginDrag = useCallback(() => {
     setShowReactions(null);
     clearFocus();
+    initialAutoScrollDoneRef.current = true;
+    initialAutoScrollAttemptsRef.current = 0;
+    lockAutoScrollUntilRef.current = 0;
   }, [clearFocus]);
 
   useEffect(() => {
@@ -6491,6 +6760,12 @@ export default function ConversationScreen() {
                 ? `Last seen ${formatLastSeen(peerLastSeen)}`
                 : 'Last seen recently'}
             </Text>
+            {matchAccepted && typeof matchPercent === 'number' ? (
+              <View style={styles.headerMatchRow}>
+                <MaterialCommunityIcons name="heart" size={14} color={theme.tint} />
+                <Text style={styles.headerMatchText}>{`${matchPercent}% Match`}</Text>
+              </View>
+            ) : null}
           </View>
         </TouchableOpacity>
 
@@ -7902,6 +8177,7 @@ export default function ConversationScreen() {
           </Pressable>
         )}
         <FlatList
+          key={conversationId}
           ref={flatListRef}
           data={messages}
           renderItem={renderMessage}
@@ -7927,6 +8203,7 @@ export default function ConversationScreen() {
             ) {
               maybeScrollToEnd(true);
             }
+            ensureInitialScrollToBottom();
           }}
           onLayout={(event) => {
             listMetricsRef.current.layoutHeight = event.nativeEvent.layout.height;
@@ -7935,6 +8212,7 @@ export default function ConversationScreen() {
             if (shouldAutoScrollRef.current) {
               maybeScrollToEnd(false);
             }
+            ensureInitialScrollToBottom();
           }}
           onScrollBeginDrag={onScrollBeginDrag}
           onScrollToIndexFailed={({ index, averageItemLength }) => {
@@ -8392,6 +8670,17 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.textMuted,
       marginTop: 1,
       flexShrink: 1,
+    },
+    headerMatchRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginTop: 4,
+    },
+    headerMatchText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.tint,
     },
     pinnedBanner: {
       marginHorizontal: 16,
@@ -9931,10 +10220,26 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.text,
     },
     reactionInlineText: {
-      marginTop: 16,
       fontSize: 11,
       fontStyle: 'italic',
       fontFamily: 'Manrope_500Medium',
+    },
+    reactionInlinePill: {
+      marginTop: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 12,
+      maxWidth: '100%',
+    },
+    reactionInlinePillMy: {
+      alignSelf: 'flex-end',
+      backgroundColor: theme.tint,
+    },
+    reactionInlinePillTheir: {
+      alignSelf: 'flex-start',
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
     },
     reactionInlineTextMy: {
       textAlign: 'right',
@@ -10276,6 +10581,36 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: 'rgba(0,0,0,0.18)',
+    },
+    mediaMetaOverlay: {
+      position: 'absolute',
+      right: 8,
+      bottom: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 6,
+      paddingVertical: 3,
+      borderRadius: 10,
+    },
+    mediaMetaOverlayMy: {
+      backgroundColor: 'rgba(0,0,0,0.35)',
+    },
+    mediaMetaOverlayTheir: {
+      backgroundColor: 'rgba(0,0,0,0.28)',
+    },
+    mediaMetaText: {
+      fontSize: 10,
+      fontFamily: 'Manrope_500Medium',
+    },
+    mediaMetaTextMy: {
+      color: withAlpha(Colors.light.background, 0.92),
+    },
+    mediaMetaTextTheir: {
+      color: Colors.light.background,
+    },
+    mediaMetaIcon: {
+      marginLeft: 2,
     },
     documentBubble: {
       paddingHorizontal: 10,

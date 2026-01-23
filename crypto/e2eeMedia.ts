@@ -1,6 +1,6 @@
-import * as Random from 'expo-random';
 import nacl from 'tweetnacl';
 import { decodeBase64, encodeBase64 } from 'tweetnacl-util';
+import { ensureRandomSource, getRandomBytes } from './random';
 
 export type EncMetadata = {
   scheme: 'nacl.box';
@@ -16,10 +16,6 @@ export type EncryptResult = {
   metadata: EncMetadata;
 };
 
-function ensureRandom() {
-  nacl.randomBytes = (len: number) => Random.getRandomBytes(len);
-}
-
 function toBase64(u8: Uint8Array): string {
   return encodeBase64(u8);
 }
@@ -32,11 +28,11 @@ export function encryptViewOnceMedia(params: {
   plaintext: Uint8Array;
   recipientPublicKey: string; // Base64
 }): EncryptResult {
-  ensureRandom();
+  ensureRandomSource();
 
-  const fileKey = Random.getRandomBytes(nacl.secretbox.keyLength);
-  const fileNonce = Random.getRandomBytes(nacl.secretbox.nonceLength);
-  const boxNonce = Random.getRandomBytes(nacl.box.nonceLength);
+  const fileKey = getRandomBytes(nacl.secretbox.keyLength);
+  const fileNonce = getRandomBytes(nacl.secretbox.nonceLength);
+  const boxNonce = getRandomBytes(nacl.box.nonceLength);
 
   const recipientKey = fromBase64(params.recipientPublicKey);
   const eph = nacl.box.keyPair();
@@ -67,7 +63,7 @@ export function decryptViewOnceMedia(params: {
   metadata: EncMetadata;
   myPrivateKey: Uint8Array; // raw secret key
 }): Uint8Array | null {
-  ensureRandom();
+  ensureRandomSource();
   const { metadata } = params;
   const ephPub = fromBase64(metadata.sender_ephemeral_pub);
   const boxNonce = fromBase64(metadata.nonce);

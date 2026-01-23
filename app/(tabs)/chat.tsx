@@ -239,8 +239,10 @@ export default function ChatScreen() {
 
       const rows = (messages || []) as MessageRow[];
       const convoMap = new Map<string, { last: MessageRow; unread: number }>();
+      const messageById = new Map<string, MessageRow>();
 
       rows.forEach((msg) => {
+        if (msg.id) messageById.set(msg.id, msg);
         const otherId = msg.sender_id === user.id ? msg.receiver_id : msg.sender_id;
         if (!otherId) return;
         if (!convoMap.has(otherId)) {
@@ -253,6 +255,35 @@ export default function ChatScreen() {
       });
 
       const otherUserIds = Array.from(convoMap.keys());
+      const messageIds = rows.map((msg) => msg.id).filter(Boolean);
+      const reactionPreviewByUser = new Map<string, ConversationType['lastMessage']['reactionPreview']>();
+      if (messageIds.length > 0) {
+        const { data: reactionsData, error: reactionsError } = await supabase
+          .from('message_reactions')
+          .select('message_id,user_id,emoji,created_at')
+          .in('message_id', messageIds)
+          .order('created_at', { ascending: false });
+        if (reactionsError) {
+          console.log('[chat] message reactions fetch error', reactionsError);
+        } else {
+          (reactionsData || []).forEach((row: any) => {
+            const msg = row?.message_id ? messageById.get(row.message_id) : null;
+            if (!msg || !row?.emoji || !row?.user_id) return;
+            const otherId = msg.sender_id === user.id ? msg.receiver_id : msg.sender_id;
+            if (!otherId) return;
+            const createdAt = row.created_at ? new Date(row.created_at) : new Date();
+            const existing = reactionPreviewByUser.get(otherId);
+            if (existing && existing.createdAt >= createdAt) return;
+            const targetType = (msg.message_type ?? 'text') as ConversationType['lastMessage']['type'];
+            reactionPreviewByUser.set(otherId, {
+              emoji: row.emoji,
+              userId: row.user_id,
+              createdAt,
+              targetType,
+            });
+          });
+        }
+      }
       if (otherUserIds.length === 0) {
         setConversations([]);
         return;
@@ -319,7 +350,7 @@ export default function ChatScreen() {
             type: lastType,
             isViewOnce: lastIsViewOnce,
             isRead: last?.is_read ?? false,
-            reactionPreview: undefined,
+            reactionPreview: reactionPreviewByUser.get(otherUserId),
           },
           unreadCount: entry?.unread || 0,
           isMuted: false,

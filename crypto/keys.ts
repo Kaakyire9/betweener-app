@@ -1,20 +1,11 @@
 import { supabase } from '@/lib/supabase';
-import * as Random from 'expo-random';
 import * as SecureStore from 'expo-secure-store';
 import nacl from 'tweetnacl';
 import { decodeBase64, encodeBase64 } from 'tweetnacl-util';
+import { ensureRandomSource } from './random';
 
 const PRIVATE_KEY_KEY = 'e2ee_identity_private_v1';
 const PUBLIC_KEY_KEY = 'e2ee_identity_public_v1';
-
-let randomReady = false;
-
-function ensureRandomSource() {
-  if (randomReady) return;
-  // tweetnacl expects a secure RNG; expo-random provides native entropy.
-  nacl.randomBytes = (length: number) => Random.getRandomBytes(length);
-  randomReady = true;
-}
 
 function base64ToUint8(base64: string): Uint8Array {
   return decodeBase64(base64);

@@ -1,6 +1,9 @@
 import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/lib/auth-context';
+import { computeCompatibilityPercent } from '@/lib/compat/compatibility-score';
+import { computeFirstReplyHours, computeInterestOverlapRatio, computeMatchScorePercent } from '@/lib/match/match-score';
 import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
@@ -12,8 +15,8 @@ import { FlashList } from '@shopify/flash-list';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Dimensions, FlatList, Image, Modal, PanResponder, Pressable, StyleSheet, Text, View, type ImageStyle, type ViewStyle } from 'react-native';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
+import { Alert, Dimensions, FlatList, Image, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, TextInput, View, type ImageStyle, type ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Easing,
@@ -165,6 +168,7 @@ function parseFallbackProfile(rawParam?: string | string[]): UserProfile | null 
       const photos = Array.isArray(parsed.photos) ? parsed.photos : parsed.avatar_url ? [parsed.avatar_url] : [];
       return {
         id: parsed.id || 'preview',
+        userId: parsed.user_id || parsed.userId || undefined,
         name: parsed.name || parsed.full_name || 'Profile',
         age: parsed.age || 0,
         location: parsed.location || parsed.region || '',
@@ -193,6 +197,7 @@ function parseFallbackProfile(rawParam?: string | string[]): UserProfile | null 
         personalityType: parsed.personality_type,
         height: parsed.height,
         lookingFor: parsed.looking_for,
+        loveLanguage: parsed.love_language,
         languages: Array.isArray(parsed.languages_spoken) ? parsed.languages_spoken : undefined,
         currentCountry: parsed.current_country,
         currentCountryCode: parsed.current_country_code,
@@ -204,8 +209,13 @@ function parseFallbackProfile(rawParam?: string | string[]): UserProfile | null 
         hasChildren: parsed.has_children,
         wantsChildren: parsed.wants_children,
         locationPrecision: parsed.location_precision,
-        compatibility: typeof parsed.compatibility === 'number' ? parsed.compatibility : 75,
-        aiScore: typeof parsed.aiScore === 'number' ? parsed.aiScore : undefined,
+        compatibility: typeof parsed.compatibility === 'number' ? parsed.compatibility : 0,
+        verificationLevel:
+          typeof parsed.verification_level === 'number'
+            ? parsed.verification_level
+            : typeof parsed.verificationLevel === 'number'
+            ? parsed.verificationLevel
+            : undefined,
         interests: Array.isArray(parsed.interests)
           ? parsed.interests
               .map((raw: any) => {
@@ -398,6 +408,7 @@ export default function ProfileViewPremiumV2Screen() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = Colors[colorScheme ?? 'light'];
+  const { profile: currentProfile, user } = useAuth();
 
   const params = useLocalSearchParams();
   const profileId = String((params as any)?.id ?? (params as any)?.profileId ?? 'preview');
@@ -405,6 +416,9 @@ export default function ProfileViewPremiumV2Screen() {
   const fallbackProfile = useMemo(() => parseFallbackProfile((params as any)?.fallbackProfile), [params]);
   const [fetchedProfile, setFetchedProfile] = useState<UserProfile | null>(null);
   const [fetching, setFetching] = useState(false);
+  const [matchAccepted, setMatchAccepted] = useState(false);
+  const [matchPercent, setMatchPercent] = useState<number | null>(null);
+  const [myInterests, setMyInterests] = useState<string[]>([]);
 
   // Fetch using the same logic extracted from app/profile-view.tsx.
   React.useEffect(() => {
@@ -452,9 +466,105 @@ export default function ProfileViewPremiumV2Screen() {
       distanceKm: undefined,
       isActiveNow: false,
       interests: [],
-      compatibility: 75,
+      compatibility: 0,
     };
   }, [fallbackProfile, fetchedProfile, profileId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadMyInterests = async () => {
+      if (!currentProfile?.id) {
+        setMyInterests([]);
+        return;
+      }
+      const { data } = await supabase
+        .from('profile_interests')
+        .select('interests!inner(name)')
+        .eq('profile_id', currentProfile.id);
+      if (cancelled) return;
+      const names = (data || [])
+        .flatMap((row: any) =>
+          Array.isArray(row.interests)
+            ? row.interests.map((i: any) => i?.name).filter(Boolean)
+            : row.interests?.name
+            ? [row.interests.name]
+            : [],
+        )
+        .filter(Boolean);
+      setMyInterests(names);
+    };
+    void loadMyInterests();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentProfile?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const checkAccepted = async () => {
+      if (!currentProfile?.id || !resolvedProfile.id) {
+        setMatchAccepted(false);
+        return;
+      }
+      const { data } = await supabase
+        .from('matches')
+        .select('id')
+        .or(
+          `and(user1_id.eq.${currentProfile.id},user2_id.eq.${resolvedProfile.id},status.eq.ACCEPTED),and(user1_id.eq.${resolvedProfile.id},user2_id.eq.${currentProfile.id},status.eq.ACCEPTED)`,
+        )
+        .limit(1);
+      if (cancelled) return;
+      setMatchAccepted(!!(data && data.length > 0));
+    };
+    void checkAccepted();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentProfile?.id, resolvedProfile.id]);
+
+  useEffect(() => {
+    if (!matchAccepted || !user?.id || !resolvedProfile.userId) {
+      setMatchPercent(null);
+      return;
+    }
+    let cancelled = false;
+    const fetchMatchScore = async () => {
+      const { data, count } = await supabase
+        .from('messages')
+        .select('created_at,sender_id', { count: 'exact' })
+        .or(
+          `and(sender_id.eq.${user.id},receiver_id.eq.${resolvedProfile.userId}),and(sender_id.eq.${resolvedProfile.userId},receiver_id.eq.${user.id})`,
+        )
+        .order('created_at', { ascending: true })
+        .limit(50);
+      if (cancelled) return;
+      const messageRows = (data as any[] | null) ?? [];
+      const messageCount = typeof count === 'number' ? count : messageRows.length;
+      const firstReplyHours = computeFirstReplyHours(messageRows as any, user.id, resolvedProfile.userId);
+      const peerNames = resolvedProfile.interests.map((item) => item.name).filter(Boolean);
+      const interestOverlapRatio = computeInterestOverlapRatio(myInterests, peerNames) ?? undefined;
+      const bothVerified =
+        (currentProfile?.verification_level ?? 0) >= 1 && !!resolvedProfile.verified;
+      const score = computeMatchScorePercent({
+        messageCount,
+        firstReplyHours,
+        bothVerified,
+        interestOverlapRatio,
+      });
+      setMatchPercent(score);
+    };
+    void fetchMatchScore();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    currentProfile?.verification_level,
+    matchAccepted,
+    myInterests,
+    resolvedProfile.interests,
+    resolvedProfile.userId,
+    user?.id,
+  ]);
 
   const hasGalleryImages = useMemo(
     () => Array.isArray(resolvedProfile.photos) && resolvedProfile.photos.some(Boolean),
@@ -476,10 +586,55 @@ export default function ProfileViewPremiumV2Screen() {
   const isLoading = fetching && !fetchedProfile && !fallbackProfile;
   const locationLine = useMemo(() => buildLocationLine(resolvedProfile), [resolvedProfile]);
   const hasIntro = !!(resolvedProfile.profileVideo || resolvedProfile.profileVideoPath);
+  const compatibilityPercent = useMemo(() => {
+    if (!currentProfile || !resolvedProfile) return resolvedProfile.compatibility;
+    const targetInterests = resolvedProfile.interests.map((item) => item.name).filter(Boolean);
+    const computed = computeCompatibilityPercent(
+      {
+        interests: myInterests,
+        lookingFor: (currentProfile as any)?.looking_for,
+        loveLanguage: (currentProfile as any)?.love_language,
+        personalityType: (currentProfile as any)?.personality_type,
+        religion: (currentProfile as any)?.religion,
+        wantsChildren: (currentProfile as any)?.wants_children,
+        smoking: (currentProfile as any)?.smoking,
+      },
+      {
+        interests: targetInterests,
+        lookingFor: resolvedProfile.lookingFor,
+        loveLanguage: resolvedProfile.loveLanguage,
+        personalityType: resolvedProfile.personalityType,
+        religion: resolvedProfile.religion,
+        wantsChildren: resolvedProfile.wantsChildren,
+        smoking: resolvedProfile.smoking,
+      },
+    );
+    return typeof computed === 'number' ? computed : resolvedProfile.compatibility;
+  }, [
+    currentProfile,
+    myInterests,
+    resolvedProfile.compatibility,
+    resolvedProfile.interests,
+    resolvedProfile.lookingFor,
+    resolvedProfile.personalityType,
+    resolvedProfile.religion,
+    resolvedProfile.smoking,
+    resolvedProfile.wantsChildren,
+  ]);
+  const matchBadgeValue =
+    matchAccepted && typeof matchPercent === 'number'
+      ? matchPercent
+      : compatibilityPercent;
+  const matchBadgeLabel =
+    matchAccepted && typeof matchPercent === 'number' ? 'Match' : 'Vibes';
 
   const [videoModalVisible, setVideoModalVisible] = useState(false);
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const isOwnProfile = useMemo(
+    () => Boolean(currentUserId && profileId && currentUserId === profileId),
+    [currentUserId, profileId],
+  );
 
   const isTextOnlyStory = !hasGalleryImages && meaningfulText && (hasAvatarOnly || !!resolvedProfile.profilePicture);
   const isImagesOnly = hasGalleryImages && !meaningfulText;
@@ -837,28 +992,72 @@ export default function ProfileViewPremiumV2Screen() {
     Haptics.selectionAsync().catch(() => undefined);
   }, []);
 
-  const handleSelectReaction = useCallback((item: PremiumImage, icon: string) => {
+  const handleSelectReaction = useCallback(async (item: PremiumImage, icon: string) => {
     if (!currentUserId || !resolvedProfile.id) return;
-    setImageReactions((prev) => ({ ...prev, [item.uri]: icon }));
+    const existing = imageReactions[item.uri];
     setActiveReactionImageId(null);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-    supabase
-      .from('profile_image_reactions')
-      .upsert(
-        {
-          profile_id: resolvedProfile.id,
-          image_url: item.uri,
-          reactor_user_id: currentUserId,
-          emoji: icon,
-        },
-        { onConflict: 'profile_id,image_url,reactor_user_id' },
-      )
-      .then(({ error }) => {
-        if (error) {
-          console.log('[profile] reaction upsert error', error);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setImageReactions((prev) => {
+      const next = { ...prev };
+      if (existing === icon) {
+        delete next[item.uri];
+      } else {
+        next[item.uri] = icon;
+      }
+      return next;
+    });
+    const rollback = () => {
+      setImageReactions((prev) => {
+        const next = { ...prev };
+        if (existing) {
+          next[item.uri] = existing;
+        } else {
+          delete next[item.uri];
         }
+        return next;
       });
-  }, [currentUserId, resolvedProfile.id]);
+      setActiveReactionImageId(item.id);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    };
+    if (existing === icon) {
+      try {
+        const { error } = await supabase
+          .from('profile_image_reactions')
+          .delete()
+          .eq('profile_id', resolvedProfile.id)
+          .eq('image_url', item.uri)
+          .eq('reactor_user_id', currentUserId);
+        if (error) {
+          console.log('[profile] reaction delete error', error);
+          rollback();
+        }
+      } catch (error) {
+        console.log('[profile] reaction delete error', error);
+        rollback();
+      }
+      return;
+    }
+    try {
+      const { error } = await supabase
+        .from('profile_image_reactions')
+        .upsert(
+          {
+            profile_id: resolvedProfile.id,
+            image_url: item.uri,
+            reactor_user_id: currentUserId,
+            emoji: icon,
+          },
+          { onConflict: 'profile_id,image_url,reactor_user_id' },
+        );
+      if (error) {
+        console.log('[profile] reaction upsert error', error);
+        rollback();
+      }
+    } catch (error) {
+      console.log('[profile] reaction upsert error', error);
+      rollback();
+    }
+  }, [currentUserId, imageReactions, resolvedProfile.id]);
 
   const onRightScroll = useCallback(
     (event: any) => {
@@ -870,18 +1069,20 @@ export default function ProfileViewPremiumV2Screen() {
   if (gated) {
     return (
       <View style={[styles.screen, { paddingHorizontal: 16, paddingTop: 18 }]}>
-        <Header
-          theme={theme}
-          profile={resolvedProfile}
-          title={'Complete your profile'}
-          locationLine={''}
-          hasIntro={false}
-          heroOverrideUri={null}
-          heroScrollY={heroScrollY}
-          isDark={isDark}
-          onBack={() => router.back()}
-          onClose={() => router.back()}
-        />
+      <Header
+        theme={theme}
+        profile={resolvedProfile}
+        title={'Complete your profile'}
+        locationLine={''}
+        hasIntro={false}
+        heroOverrideUri={null}
+        heroScrollY={heroScrollY}
+        isDark={isDark}
+        matchBadgeValue={matchBadgeValue}
+        matchBadgeLabel={matchBadgeLabel}
+        onBack={() => router.back()}
+        onClose={() => router.back()}
+      />
 
         <View style={[stylesStatic.gateCard, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
           <Text style={[stylesStatic.gateTitle, { color: theme.text }]}>Complete your profile to be seen</Text>
@@ -909,6 +1110,8 @@ export default function ProfileViewPremiumV2Screen() {
         heroOverrideUri={heroOverrideUri}
         heroScrollY={heroScrollY}
         isDark={isDark}
+        matchBadgeValue={matchBadgeValue}
+        matchBadgeLabel={matchBadgeLabel}
         onHeroPress={openLightboxForUri}
         onIntroPress={() => {
           void openIntroVideo();
@@ -1007,7 +1210,12 @@ export default function ProfileViewPremiumV2Screen() {
         </View>
       </View>
 
-      <FloatingActions theme={theme} />
+      <FloatingActions
+        theme={theme}
+        profileId={profileId}
+        currentUserId={currentUserId}
+        isOwnProfile={isOwnProfile}
+      />
     </View>
   );
 }
@@ -1021,6 +1229,8 @@ function Header({
   heroOverrideUri,
   heroScrollY,
   isDark,
+  matchBadgeValue,
+  matchBadgeLabel,
   onHeroPress,
   onIntroPress,
   onBack,
@@ -1034,6 +1244,8 @@ function Header({
   heroOverrideUri: string | null;
   heroScrollY: SharedValue<number>;
   isDark: boolean;
+  matchBadgeValue: number | null;
+  matchBadgeLabel: string;
   onHeroPress?: (heroUri: string) => void;
   onIntroPress?: () => void;
   onBack: () => void;
@@ -1165,10 +1377,10 @@ function Header({
 
           {profile.occupation ? <Text numberOfLines={1} style={stylesStatic.heroOccupation}>{profile.occupation}</Text> : null}
 
-          {typeof profile.compatibility === 'number' ? (
+          {typeof matchBadgeValue === 'number' ? (
             <View style={[stylesStatic.matchBadge, { backgroundColor: theme.tint }]}>
               <MaterialCommunityIcons name="heart" size={14} color={Colors.light.background} />
-              <Text style={stylesStatic.matchBadgeText}>{Math.round(profile.compatibility)}% Match</Text>
+              <Text style={stylesStatic.matchBadgeText}>{`${Math.round(matchBadgeValue)}% ${matchBadgeLabel}`}</Text>
             </View>
           ) : null}
         </View>
@@ -1809,20 +2021,292 @@ const SectionBlock = memo(function SectionBlock({
   );
 });
 
-function FloatingActions({ theme }: { theme: typeof Colors.light }) {
+function FloatingActions({
+  theme,
+  profileId,
+  currentUserId,
+  isOwnProfile,
+}: {
+  theme: typeof Colors.light;
+  profileId: string;
+  currentUserId: string | null;
+  isOwnProfile: boolean;
+}) {
+  const insets = useSafeAreaInsets();
+  const [giftOpen, setGiftOpen] = useState(false);
+  const [selectedGift, setSelectedGift] = useState<string | null>(null);
+  const [giftSending, setGiftSending] = useState(false);
+  const [noteOpen, setNoteOpen] = useState(false);
+  const [noteText, setNoteText] = useState('');
+  const [noteSending, setNoteSending] = useState(false);
+  const noteOpenAtRef = useRef(0);
+  const [boostSending, setBoostSending] = useState(false);
+  const giftOptions = useMemo(
+    () => [
+      { id: 'rose', label: 'Rose', icon: 'flower', note: 'Classic and elegant' },
+      { id: 'teddy', label: 'Teddy Bear', icon: 'teddy-bear', note: 'Sweet and safe' },
+      { id: 'ring', label: 'Ring', icon: 'ring', note: 'Bold and premium' },
+    ],
+    [],
+  );
+
+  const canSendToProfile = Boolean(currentUserId && profileId && currentUserId !== profileId);
+  const noteLength = noteText.trim().length;
+
+  const openNote = () => {
+    if (!canSendToProfile) {
+      Alert.alert('Note unavailable', 'Notes can only be sent to other profiles.');
+      return;
+    }
+    Haptics.selectionAsync().catch(() => undefined);
+    noteOpenAtRef.current = Date.now();
+    setNoteOpen(true);
+  };
+  const openGift = () => {
+    if (!canSendToProfile) {
+      Alert.alert('Gift unavailable', 'Gifts can only be sent to other profiles.');
+      return;
+    }
+    Haptics.selectionAsync().catch(() => undefined);
+    setSelectedGift(null);
+    setGiftOpen(true);
+  };
+  const closeGift = () => setGiftOpen(false);
+  const sendGift = async () => {
+    if (!selectedGift || !currentUserId) return;
+    setGiftSending(true);
+    const { error } = await supabase.from('profile_gifts').insert({
+      profile_id: profileId,
+      sender_id: currentUserId,
+      gift_type: selectedGift,
+    });
+    setGiftSending(false);
+    if (error) {
+      Alert.alert('Unable to send gift', error.message);
+      return;
+    }
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+    setGiftOpen(false);
+  };
+
+  const closeNote = () => setNoteOpen(false);
+
+  const sendNote = async () => {
+    const note = noteText.trim();
+    if (!note || !currentUserId) return;
+    setNoteSending(true);
+    const { error } = await supabase.from('profile_notes').insert({
+      profile_id: profileId,
+      sender_id: currentUserId,
+      note,
+    });
+    setNoteSending(false);
+    if (error) {
+      Alert.alert('Unable to send note', error.message);
+      return;
+    }
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+    setNoteText('');
+    setNoteOpen(false);
+  };
+
+  const sendBoost = async () => {
+    if (!currentUserId) return;
+    setBoostSending(true);
+    const endsAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    const { error } = await supabase.from('profile_boosts').insert({
+      user_id: currentUserId,
+      ends_at: endsAt,
+    });
+    setBoostSending(false);
+    if (error) {
+      Alert.alert('Unable to boost', error.message);
+      return;
+    }
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+    Alert.alert('Boost active', 'Your profile is boosted for 30 minutes.');
+  };
+
   return (
-    <View style={stylesStatic.fabStack} pointerEvents="box-none">
-      <Fab theme={theme} label="Like" onPress={() => {}} />
-      <Fab theme={theme} label="Note" onPress={() => {}} />
-      <Fab theme={theme} label="Boost" onPress={() => {}} />
-    </View>
+    <>
+      <View
+        style={[stylesStatic.fabStack, { bottom: 18 + Math.max(0, insets.bottom) }]}
+        pointerEvents="box-none"
+      >
+        {!isOwnProfile ? (
+          <Fab
+            theme={theme}
+            label="Note"
+            icon="message-text-outline"
+            colors={[theme.tint, '#0C6E7A'] as const}
+            onPress={openNote}
+          />
+        ) : null}
+        {isOwnProfile ? (
+          <Fab
+            theme={theme}
+            label={boostSending ? 'Boosting' : 'Boost'}
+            icon="rocket-launch-outline"
+            colors={['#F6C453', '#C68B1E'] as const}
+            onPress={sendBoost}
+          />
+        ) : (
+          <Fab
+            theme={theme}
+            label="Gift"
+            icon="gift-outline"
+            colors={['#F3A0B4', '#C6607E'] as const}
+            onPress={openGift}
+          />
+        )}
+      </View>
+      <Modal
+        visible={noteOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={closeNote}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1 }}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? -20 : 0}
+        >
+          <Pressable
+            style={stylesStatic.giftBackdrop}
+            onPress={() => {
+              if (Date.now() - noteOpenAtRef.current < 250) return;
+              closeNote();
+            }}
+          >
+            <Pressable
+              style={[
+                stylesStatic.giftSheet,
+                { backgroundColor: theme.background, marginBottom: 0 },
+              ]}
+              onPress={() => undefined}
+            >
+            <View style={stylesStatic.giftHandle} />
+            <Text style={[stylesStatic.giftTitle, { color: theme.text }]}>Send a Note</Text>
+            <Text style={[stylesStatic.giftSubtitle, { color: theme.textMuted }]}>
+              Keep it short and personal.
+            </Text>
+            <View style={[stylesStatic.noteInputWrap, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle }]}>
+              <TextInput
+                value={noteText}
+                onChangeText={setNoteText}
+                placeholder="Write a short opener..."
+                placeholderTextColor={theme.textMuted}
+                multiline
+                maxLength={280}
+                autoFocus
+                textAlignVertical="top"
+                style={[stylesStatic.noteInput, { color: theme.text }]}
+              />
+            </View>
+            <Text style={[stylesStatic.noteCounter, { color: theme.textMuted }]}>{noteLength}/280</Text>
+            <Pressable
+              onPress={sendNote}
+              disabled={!noteLength || noteSending}
+              style={[
+                stylesStatic.giftSendButton,
+                {
+                  backgroundColor: noteLength ? theme.tint : theme.outline,
+                  opacity: noteLength ? 1 : 0.6,
+                },
+              ]}
+            >
+              <Text style={[stylesStatic.giftSendText, { color: Colors.light.background }]}>
+                {noteSending ? 'Sending...' : 'Send Note'}
+              </Text>
+            </Pressable>
+            </Pressable>
+          </Pressable>
+        </KeyboardAvoidingView>
+      </Modal>
+      <Modal
+        visible={giftOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={closeGift}
+      >
+        <Pressable style={stylesStatic.giftBackdrop} onPress={closeGift} />
+        <View style={[stylesStatic.giftSheet, { backgroundColor: theme.background }]}>
+          <View style={stylesStatic.giftHandle} />
+          <Text style={[stylesStatic.giftTitle, { color: theme.text }]}>Send a Gift</Text>
+          <Text style={[stylesStatic.giftSubtitle, { color: theme.textMuted }]}>
+            Pick a gesture to stand out.
+          </Text>
+          <View style={stylesStatic.giftGrid}>
+            {giftOptions.map((gift) => {
+              const isSelected = selectedGift === gift.id;
+              return (
+                <Pressable
+                  key={gift.id}
+                  onPress={() => {
+                    Haptics.selectionAsync().catch(() => undefined);
+                    setSelectedGift(gift.id);
+                  }}
+                  style={[
+                    stylesStatic.giftCard,
+                    {
+                      borderColor: isSelected ? theme.tint : theme.outline,
+                      backgroundColor: theme.backgroundSubtle,
+                    },
+                  ]}
+                >
+                  <View style={isSelected ? stylesStatic.giftIconGlow : undefined}>
+                    <MaterialCommunityIcons
+                      name={gift.icon as any}
+                      size={26}
+                      color={isSelected ? theme.tint : theme.textMuted}
+                    />
+                  </View>
+                  <Text style={[stylesStatic.giftLabel, { color: theme.text }]}>{gift.label}</Text>
+                  <Text style={[stylesStatic.giftNote, { color: theme.textMuted }]}>{gift.note}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Pressable
+            onPress={sendGift}
+            disabled={!selectedGift || giftSending}
+            style={[
+              stylesStatic.giftSendButton,
+              {
+                backgroundColor: selectedGift ? theme.tint : theme.outline,
+                opacity: selectedGift ? 1 : 0.6,
+              },
+            ]}
+          >
+            <Text style={[stylesStatic.giftSendText, { color: Colors.light.background }]}>
+              {giftSending ? 'Sending...' : 'Send Gift'}
+            </Text>
+          </Pressable>
+        </View>
+      </Modal>
+    </>
   );
 }
 
-function Fab({ theme, label, onPress }: { theme: typeof Colors.light; label: string; onPress: () => void }) {
+function Fab({
+  theme,
+  label,
+  icon,
+  colors,
+  onPress,
+}: {
+  theme: typeof Colors.light;
+  label: string;
+  icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
+  colors: readonly [string, string, ...string[]];
+  onPress: () => void;
+}) {
   return (
-    <Pressable onPress={onPress} style={[stylesStatic.fab, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
-      <Text style={[stylesStatic.fabLabel, { color: theme.text }]}>{label}</Text>
+    <Pressable onPress={onPress} style={stylesStatic.fabWrap}>
+      <LinearGradient colors={colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={stylesStatic.fab}>
+        <MaterialCommunityIcons name={icon} size={18} color={Colors.light.background} />
+        <Text style={[stylesStatic.fabLabel, { color: Colors.light.background }]}>{label}</Text>
+      </LinearGradient>
     </Pressable>
   );
 }
@@ -2329,19 +2813,124 @@ const stylesStatic = StyleSheet.create({
   fabStack: {
     position: 'absolute',
     right: 14,
-    bottom: 18,
     gap: 10,
   },
+  fabWrap: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    elevation: 8,
+  },
   fab: {
-    width: 44,
+    minWidth: 104,
     height: 44,
     borderRadius: 22,
-    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    gap: 8,
   },
   fabLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+  },
+  giftBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  giftSheet: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 18,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 18,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
+    elevation: 12,
+  },
+  giftHandle: {
+    alignSelf: 'center',
+    width: 48,
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: 'rgba(0,0,0,0.18)',
+    marginBottom: 10,
+  },
+  giftTitle: {
     fontSize: 18,
     fontWeight: '700',
+  },
+  giftSubtitle: {
+    marginTop: 4,
+    fontSize: 12,
+  },
+  giftGrid: {
+    marginTop: 14,
+    flexDirection: 'row',
+    gap: 10,
+  },
+  noteInputWrap: {
+    marginTop: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  noteInput: {
+    minHeight: 88,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  noteCounter: {
+    marginTop: 6,
+    fontSize: 11,
+    textAlign: 'right',
+  },
+  giftCard: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    gap: 4,
+    alignItems: 'flex-start',
+  },
+  giftLabel: {
+    marginTop: 6,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  giftIconGlow: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    padding: 6,
+    backgroundColor: 'rgba(186,155,255,0.22)',
+    shadowColor: '#9b7bff',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  giftNote: {
+    fontSize: 11,
+  },
+  giftSendButton: {
+    marginTop: 16,
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  giftSendText: {
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.4,
   },
 });

@@ -27,6 +27,9 @@ type NotificationPrefs = {
   likes: boolean;
   superlikes: boolean;
   matches: boolean;
+  notes: boolean;
+  gifts: boolean;
+  boosts: boolean;
   quiet_hours_enabled: boolean;
   quiet_hours_start: string | null;
   quiet_hours_end: string | null;
@@ -90,7 +93,7 @@ export default function InAppToasts() {
       const { data, error } = await supabase
         .from('notification_prefs')
         .select(
-          'inapp_enabled,messages,message_reactions,reactions,likes,superlikes,matches,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
+          'inapp_enabled,messages,message_reactions,reactions,likes,superlikes,matches,notes,gifts,boosts,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
         )
         .eq('user_id', user.id)
         .maybeSingle();
@@ -109,6 +112,9 @@ export default function InAppToasts() {
           likes: Boolean(data.likes),
           superlikes: Boolean(data.superlikes),
           matches: Boolean(data.matches),
+          notes: Boolean(data.notes),
+          gifts: Boolean(data.gifts),
+          boosts: Boolean(data.boosts),
           quiet_hours_enabled: Boolean(data.quiet_hours_enabled),
           quiet_hours_start: data.quiet_hours_start ?? null,
           quiet_hours_end: data.quiet_hours_end ?? null,
@@ -143,6 +149,9 @@ export default function InAppToasts() {
             likes: Boolean(row.likes),
             superlikes: Boolean(row.superlikes),
             matches: Boolean(row.matches),
+            notes: Boolean(row.notes),
+            gifts: Boolean(row.gifts),
+            boosts: Boolean(row.boosts),
             quiet_hours_enabled: Boolean(row.quiet_hours_enabled),
             quiet_hours_start: row.quiet_hours_start ?? null,
             quiet_hours_end: row.quiet_hours_end ?? null,
@@ -199,6 +208,19 @@ export default function InAppToasts() {
     if (row?.message_type === 'voice') return 'Voice message';
     if (row?.message_type === 'location') return 'Location';
     return 'New message';
+  }, []);
+
+  const giftLabel = useCallback((giftType?: string | null) => {
+    switch (giftType) {
+      case 'rose':
+        return 'a rose';
+      case 'teddy':
+        return 'a teddy bear';
+      case 'ring':
+        return 'a ring';
+      default:
+        return 'a gift';
+    }
   }, []);
 
   const openToastTarget = useCallback(
@@ -356,6 +378,119 @@ export default function InAppToasts() {
               profileId: row.reactor_user_id,
             });
           })();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [canInAppNotify, profile?.id, pushToast, user?.id]);
+
+  useEffect(() => {
+    if (!profile?.id || !user?.id) return;
+
+    const channel = supabase
+      .channel(`inapp_notes:${profile.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'profile_notes', filter: `profile_id=eq.${profile.id}` },
+        (payload) => {
+          const row = payload.new as any;
+          if (!row) return;
+          if (row.sender_id === user.id) return;
+          if (!canInAppNotify('notes')) return;
+          void (async () => {
+            let name = 'New note';
+            let avatarUrl: string | null = null;
+            try {
+              const { data } = await supabase
+                .from('profiles')
+                .select('full_name,avatar_url')
+                .eq('id', row.sender_id)
+                .maybeSingle();
+              if (data?.full_name) name = data.full_name;
+              if (data?.avatar_url) avatarUrl = data.avatar_url;
+            } catch {}
+            pushToast({
+              id: `note-${row.id}`,
+              title: name,
+              body: row.note || 'sent you a note',
+              avatarUrl,
+              profileId: row.sender_id,
+            });
+          })();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [canInAppNotify, profile?.id, pushToast, user?.id]);
+
+  useEffect(() => {
+    if (!profile?.id || !user?.id) return;
+
+    const channel = supabase
+      .channel(`inapp_gifts:${profile.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'profile_gifts', filter: `profile_id=eq.${profile.id}` },
+        (payload) => {
+          const row = payload.new as any;
+          if (!row) return;
+          if (row.sender_id === user.id) return;
+          if (!canInAppNotify('gifts')) return;
+          void (async () => {
+            let name = 'New gift';
+            let avatarUrl: string | null = null;
+            try {
+              const { data } = await supabase
+                .from('profiles')
+                .select('full_name,avatar_url')
+                .eq('id', row.sender_id)
+                .maybeSingle();
+              if (data?.full_name) name = data.full_name;
+              if (data?.avatar_url) avatarUrl = data.avatar_url;
+            } catch {}
+            pushToast({
+              id: `gift-${row.id}`,
+              title: name,
+              body: `${name} sent you ${giftLabel(row.gift_type)}`,
+              avatarUrl,
+              profileId: row.sender_id,
+            });
+          })();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [canInAppNotify, giftLabel, profile?.id, pushToast, user?.id]);
+
+  useEffect(() => {
+    if (!profile?.id || !user?.id) return;
+
+    const channel = supabase
+      .channel(`inapp_boosts:${profile.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'profile_boosts', filter: `user_id=eq.${profile.id}` },
+        (payload) => {
+          const row = payload.new as any;
+          if (!row) return;
+          if (row.user_id !== profile.id) return;
+          if (!canInAppNotify('boosts')) return;
+          pushToast({
+            id: `boost-${row.id}`,
+            title: 'Boost active',
+            body: 'Your profile is now boosted',
+            emoji: '🚀',
+            profileId: row.user_id,
+          });
         },
       )
       .subscribe();

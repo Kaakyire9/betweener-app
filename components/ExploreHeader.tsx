@@ -2,12 +2,14 @@
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 type Tab = { id: string; label: string; icon: string };
 
 export default function ExploreHeader({
+  title = 'Vibes',
+  subtitle = 'Ghana Diaspora Connections',
   tabs,
   activeTab,
   setActiveTab,
@@ -15,7 +17,10 @@ export default function ExploreHeader({
   total,
   smartCount,
   onPressFilter,
+  rightAccessory,
 }: {
+  title?: string;
+  subtitle?: string;
   tabs: Tab[];
   activeTab: string;
   setActiveTab: (id: string) => void;
@@ -23,6 +28,7 @@ export default function ExploreHeader({
   total: number;
   smartCount?: number;
   onPressFilter?: () => void;
+  rightAccessory?: ReactNode;
 }) {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? "light"];
@@ -33,14 +39,17 @@ export default function ExploreHeader({
     <View style={styles.header}>
       <View style={styles.topRow}>
         <View style={{ flex: 1 }}>
-          <Text style={styles.title}>Discover</Text>
-          <Text style={styles.subtitle}>Ghana Diaspora Connections</Text>
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.subtitle}>{subtitle}</Text>
         </View>
-        {onPressFilter ? (
-          <TouchableOpacity style={styles.filterButton} onPress={onPressFilter} activeOpacity={0.85}>
-            <MaterialCommunityIcons name="filter-variant" size={20} color={theme.tint} />
-          </TouchableOpacity>
-        ) : null}
+        <View style={styles.rightRow}>
+          {rightAccessory}
+          {onPressFilter ? (
+            <TouchableOpacity style={styles.filterButton} onPress={onPressFilter} activeOpacity={0.85}>
+              <MaterialCommunityIcons name="filter-variant" size={20} color={theme.tint} />
+            </TouchableOpacity>
+          ) : null}
+        </View>
       </View>
 
       <View style={styles.tabContainer}>
@@ -70,6 +79,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
   return StyleSheet.create({
     header: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8, backgroundColor: surface, borderBottomColor: outline, borderBottomWidth: 1 },
     topRow: { marginBottom: 6, flexDirection: 'row', alignItems: 'center' },
+    rightRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
     title: { fontSize: 28, color: theme.text, fontFamily: 'PlayfairDisplay_700Bold', letterSpacing: 0.2 },
     subtitle: { color: theme.tint, marginTop: 2, fontFamily: 'Manrope_600SemiBold' },
     filterButton: {
