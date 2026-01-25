@@ -166,6 +166,74 @@ export default function InAppToasts() {
     };
   }, [user?.id]);
 
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const channel = supabase
+      .channel(`inapp_system_messages:${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'system_messages', filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          const row = payload.new as any;
+          if (!row) return;
+          if (!canInAppNotify('messages')) return;
+          pushToast({
+            id: `system-${row.id}`,
+            title: 'Request update',
+            body: row.text ?? 'Request update',
+            emoji: '✨',
+          });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [canInAppNotify, pushToast, user?.id]);
+
+  useEffect(() => {
+    if (!profile?.id) return;
+
+    const channel = supabase
+      .channel(`inapp_intent_requests:${profile.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'intent_requests', filter: `recipient_id=eq.${profile.id}` },
+        async (payload) => {
+          const row = payload.new as any;
+          if (!row) return;
+          if (!canInAppNotify('messages')) return;
+
+          let actorName: string | null = null;
+          let actorAvatar: string | null = null;
+          const { data } = await supabase
+            .from('profiles')
+            .select('full_name,avatar_url')
+            .eq('id', row.actor_id)
+            .maybeSingle();
+          if (data) {
+            actorName = data.full_name ?? null;
+            actorAvatar = data.avatar_url ?? null;
+          }
+
+          pushToast({
+            id: `intent-${row.id}`,
+            title: actorName ? `${actorName} sent a request` : 'New request',
+            body: row.message ? row.message : 'Open to respond.',
+            avatarUrl: actorAvatar,
+            profileId: row.actor_id,
+          });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [canInAppNotify, profile?.id, pushToast]);
+
   const isQuietHours = useMemo(() => {
     if (!prefs?.quiet_hours_enabled) return false;
     if (!prefs.quiet_hours_start || !prefs.quiet_hours_end) return false;

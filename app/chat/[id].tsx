@@ -118,7 +118,7 @@ type MessageType = {
   text: string;
   senderId: string;
   timestamp: Date;
-  type: 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location';
+  type: 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location' | 'system';
   isViewOnce?: boolean;
   encryptedMedia?: boolean;
   encryptedMediaPath?: string | null;
@@ -133,6 +133,7 @@ type MessageType = {
   status?: 'sending' | 'sent' | 'delivered' | 'read';
   readAt?: Date;
   deletedForAll?: boolean;
+  isSystem?: boolean;
   deletedAt?: Date | null;
   deletedBy?: string | null;
   editedAt?: Date | null;
@@ -196,6 +197,17 @@ type MessageRow = {
   encrypted_media_alg?: string | null;
   encrypted_media_mime?: string | null;
   encrypted_media_size?: number | null;
+};
+
+type SystemMessageRow = {
+  id: string;
+  user_id: string;
+  peer_user_id: string;
+  text: string;
+  created_at: string;
+  event_type?: string | null;
+  intent_request_id?: string | null;
+  metadata?: any;
 };
 
 type MessageEditRow = {
@@ -701,6 +713,15 @@ const MessageRowItem = memo(
     onHighlightPress,
     now,
   }: MessageRowItemProps) => {
+    if (item.type === 'system' || item.isSystem) {
+      return (
+        <View style={styles.systemRow}>
+          <View style={styles.systemBubble}>
+            <Text style={styles.systemText}>{item.text}</Text>
+          </View>
+        </View>
+      );
+    }
     const focusPulse = useRef(new Animated.Value(0)).current;
     const accent = isMyMessage ? Colors.light.background : theme.tint;
     const focusPulseStyle = useMemo(() => ({
@@ -898,6 +919,7 @@ const MessageRowItem = memo(
       }
       const iconMap: Record<MessageType['type'], ReplyMeta['icon']> = {
         text: 'chat-outline',
+        system: 'information-outline',
         voice: 'microphone-outline',
         image: 'image-outline',
         video: 'video-outline',
@@ -909,6 +931,9 @@ const MessageRowItem = memo(
       switch (item.replyTo.type) {
         case 'text':
           preview = item.replyTo.text || 'Message';
+          break;
+        case 'system':
+          preview = item.replyTo.text || 'System message';
           break;
         case 'voice':
           preview = 'Voice message';
@@ -2711,6 +2736,20 @@ export default function ConversationScreen() {
     [user?.id]
   );
 
+  const mapSystemRowToMessage = useCallback((row: SystemMessageRow): MessageType => {
+    return {
+      id: `system:${row.id}`,
+      text: row.text,
+      senderId: 'system',
+      timestamp: new Date(row.created_at),
+      type: 'system',
+      reactions: [],
+      status: 'read',
+      deletedForAll: false,
+      isSystem: true,
+    };
+  }, []);
+
   const linkReplies = useCallback((items: MessageType[]) => {
     if (items.length === 0) return items;
     const map = new Map(items.map((msg) => [msg.id, msg]));
@@ -3875,6 +3914,22 @@ export default function ConversationScreen() {
     }
   }, [closeAttachmentSheet, showImagePicker]);
 
+  const fetchSystemMessages = useCallback(async () => {
+    if (!user?.id || !conversationId) return [] as MessageType[];
+    const { data, error } = await supabase
+      .from('system_messages')
+      .select('id,user_id,peer_user_id,text,created_at,event_type,intent_request_id,metadata')
+      .eq('user_id', user.id)
+      .eq('peer_user_id', conversationId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.log('[chat] fetch system messages error', error);
+      return [] as MessageType[];
+    }
+    return (data || []).map((row: SystemMessageRow) => mapSystemRowToMessage(row));
+  }, [conversationId, mapSystemRowToMessage, user?.id]);
+
   const fetchMessages = useCallback(async () => {
     if (!user?.id || !conversationId) return;
     const { data, error } = await supabase
@@ -3898,9 +3953,11 @@ export default function ConversationScreen() {
     ).filter((msg) => !hiddenSet.has(msg.id));
 
     const ordered = mapped.reverse();
-    const linked = linkReplies(ordered);
+    const systemRows = await fetchSystemMessages();
+    const combined = [...ordered, ...systemRows].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+    const linked = linkReplies(combined);
     setMessages(linked);
-    void syncMessageReactions(linked.map((msg) => msg.id));
+    void syncMessageReactions(linked.map((msg) => msg.id).filter((id) => !id.startsWith('system:')));
     const viewOnceIds = linked.filter((msg) => msg.isViewOnce).map((msg) => msg.id);
     void syncViewOnceStatus(viewOnceIds);
     setHasMore((data || []).length === PAGE_SIZE);
@@ -3952,9 +4009,10 @@ export default function ConversationScreen() {
         setMessages((prev) => {
           const existing = new Set(prev.map((msg) => msg.id));
           const merged = ordered.filter((msg) => !existing.has(msg.id));
-          return linkReplies([...merged, ...prev]);
+          const combined = [...merged, ...prev].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+          return linkReplies(combined);
         });
-        void syncMessageReactions(ordered.map((msg) => msg.id));
+        void syncMessageReactions(ordered.map((msg) => msg.id).filter((id) => !id.startsWith('system:')));
         const viewOnceIds = ordered.filter((msg) => msg.isViewOnce).map((msg) => msg.id);
         void syncViewOnceStatus(viewOnceIds);
         setOldestTimestamp(ordered[0]?.timestamp ?? oldestTimestamp);
@@ -4118,14 +4176,49 @@ export default function ConversationScreen() {
       )
       .subscribe(handleRealtimeStatus);
 
+    const systemChannel = supabase
+      .channel(`system_messages:${user.id}:${conversationId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'system_messages',
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const row = payload.new as SystemMessageRow;
+          if (row.peer_user_id !== conversationId) return;
+          const nextMessage = mapSystemRowToMessage(row);
+          setMessages((prev) => {
+            if (prev.some((msg) => msg.id === nextMessage.id)) return prev;
+            const combined = [...prev, nextMessage].sort(
+              (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
+            );
+            return linkReplies(combined);
+          });
+        }
+      )
+      .subscribe(handleRealtimeStatus);
+
     return () => {
       supabase.removeChannel(inboxChannel);
       supabase.removeChannel(sentChannel);
+      supabase.removeChannel(systemChannel);
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
       }
     };
-  }, [conversationId, linkReplies, mapRowToMessage, syncMessageReactions, syncViewOnceStatus, triggerReconnectToast, user?.id]);
+  }, [
+    conversationId,
+    linkReplies,
+    mapRowToMessage,
+    mapSystemRowToMessage,
+    syncMessageReactions,
+    syncViewOnceStatus,
+    triggerReconnectToast,
+    user?.id,
+  ]);
 
   useEffect(() => {
     if (!user?.id || !conversationId) return;
@@ -4413,9 +4506,11 @@ export default function ConversationScreen() {
   const getPinnedPreview = useCallback((message?: MessageType | null) => {
     if (!message) return 'Pinned message';
     if (message.deletedForAll) return 'Message deleted';
-    switch (message.type) {
-      case 'text':
-        return message.text?.trim() || 'Pinned message';
+      switch (message.type) {
+        case 'system':
+          return message.text?.trim() || 'System message';
+        case 'text':
+          return message.text?.trim() || 'Pinned message';
       case 'image':
         return 'Photo';
       case 'video':
@@ -4438,6 +4533,8 @@ export default function ConversationScreen() {
   const getPinnedIcon = useCallback((message?: MessageType | null) => {
     if (!message) return 'pin-outline';
     switch (message.type) {
+      case 'system':
+        return 'information-outline';
       case 'image':
         return 'image-outline';
       case 'video':
@@ -6178,10 +6275,11 @@ export default function ConversationScreen() {
 
   const renderMessage = useCallback(
     ({ item, index }: { item: MessageType; index: number }) => {
-      const isMyMessage = item.senderId === (user?.id || '');
+      const isSystemMessage = item.type === 'system' || item.isSystem;
+      const isMyMessage = !isSystemMessage && item.senderId === (user?.id || '');
       const prevMessage = messagesRef.current[index - 1];
       const prevSenderId = prevMessage?.senderId;
-      const showAvatar = !isMyMessage && !isChatBlocked && (index === 0 || prevSenderId !== item.senderId);
+      const showAvatar = !isSystemMessage && !isMyMessage && !isChatBlocked && (index === 0 || prevSenderId !== item.senderId);
       const isPlaying = playingVoiceId === item.id;
       const isReactionOpen = showReactions === item.id;
       const isFocused = focusedMessageId === item.id;
@@ -9824,6 +9922,26 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontFamily: 'Manrope_600SemiBold',
       color: theme.textMuted,
       letterSpacing: 0.2,
+    },
+    systemRow: {
+      alignItems: 'center',
+      marginBottom: 12,
+      marginTop: 2,
+    },
+    systemBubble: {
+      paddingHorizontal: 14,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
+      maxWidth: '88%',
+    },
+    systemText: {
+      fontSize: 12,
+      color: theme.textMuted,
+      fontFamily: 'Manrope_500Medium',
+      textAlign: 'center',
     },
     loadEarlierContainer: {
       alignItems: 'center',

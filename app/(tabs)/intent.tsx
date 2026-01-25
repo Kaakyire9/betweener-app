@@ -314,20 +314,26 @@ export default function IntentScreen() {
       if (expired) {
         return;
       }
-      await supabase.rpc('rpc_decide_intent_request', { p_request_id: item.id, p_decision: 'accept' });
-      await ensureMatch(item.actor_id, item.recipient_id);
-      const senderName = profile?.full_name || 'Someone';
-      await supabase.from('messages').insert({
-        sender_id: user.id,
-        receiver_id: item.actor_id,
-        text: '✨ Request accepted. Start with a thoughtful hello.',
-        message_type: 'text',
+      const { error: decideError } = await supabase.rpc('rpc_decide_intent_request', {
+        p_request_id: item.id,
+        p_decision: 'accept',
       });
+      if (decideError) {
+        console.log('[intent] accept request error', decideError);
+        return;
+      }
+      const { error: systemError } = await supabase.rpc('rpc_insert_request_acceptance_system_messages', {
+        p_request_id: item.id,
+      });
+      if (systemError) {
+        console.log('[intent] system message error', systemError);
+      }
+      await ensureMatch(item.actor_id, item.recipient_id);
       const actor = profiles[item.actor_id];
       openChat(item.actor_id, actor?.full_name || 'Request', actor?.avatar_url || null);
       await refresh();
     },
-    [ensureMatch, openChat, profiles, refresh, user, profile?.full_name],
+    [ensureMatch, openChat, profiles, refresh, user],
   );
 
   const passRequest = useCallback(async (item: IntentRequest) => {

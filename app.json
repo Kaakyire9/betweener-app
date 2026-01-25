@@ -5,88 +5,62 @@
     "slug": "betweener",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/app-icon-foreground.png",
     "scheme": "betweenerapp",
-    "platforms": [
-      "ios",
-      "android"
-    ],
+    "platforms": ["ios", "android"],
     "userInterfaceStyle": "automatic",
+
+    "icon": "./assets/images/ios-icon-1024.png",
+
     "ios": {
       "bundleIdentifier": "com.aduboffour.betweener",
-      "associatedDomains": [
-        "applinks:getbetweener.com"
-      ],
+      "buildNumber": "2",
+      "icon": "./assets/images/ios-icon-1024.png",
+      "associatedDomains": ["applinks:getbetweener.com"],
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "CFBundleURLTypes": [
           {
             "CFBundleURLName": "com.aduboffour.betweener",
-            "CFBundleURLSchemes": [
-              "betweenerapp"
-            ]
+            "CFBundleURLSchemes": ["betweenerapp"]
           }
         ],
-        "LSApplicationQueriesSchemes": [
-          "betweenerapp"
-        ],
+        "LSApplicationQueriesSchemes": ["betweenerapp"],
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         }
       }
     },
+
     "android": {
-      "googleServicesFile": "./google-services.json",
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/images/app-icon-foreground.png",
-        "backgroundColor": "#0B1325"
-      },
-      "windowSoftInputMode": "adjustResize",
       "package": "com.aduboffour.betweener",
+      "googleServicesFile": "./google-services.json",
+      "softwareKeyboardLayoutMode": "resize",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/foreground-icon.png",
+        "backgroundImage": "./assets/images/background-icon.png"
+      },
       "intentFilters": [
         {
           "action": "VIEW",
-          "data": [
-            {
-              "scheme": "betweenerapp"
-            }
-          ],
-          "category": [
-            "BROWSABLE",
-            "DEFAULT"
-          ],
+          "data": [{ "scheme": "betweenerapp" }],
+          "category": ["BROWSABLE", "DEFAULT"],
           "autoVerify": true
         },
         {
           "action": "VIEW",
-          "data": [
-            {
-              "scheme": "betweenerapp",
-              "host": "auth"
-            }
-          ],
-          "category": [
-            "BROWSABLE",
-            "DEFAULT"
-          ],
+          "data": [{ "scheme": "betweenerapp", "host": "auth" }],
+          "category": ["BROWSABLE", "DEFAULT"],
           "autoVerify": true
         },
         {
           "action": "VIEW",
-          "data": [
-            {
-              "scheme": "https",
-              "host": "getbetweener.com"
-            }
-          ],
-          "category": [
-            "BROWSABLE",
-            "DEFAULT"
-          ],
+          "data": [{ "scheme": "https", "host": "getbetweener.com" }],
+          "category": ["BROWSABLE", "DEFAULT"],
           "autoVerify": true
         }
       ]
     },
+
     "plugins": [
       [
         "expo-splash-screen",
@@ -110,6 +84,7 @@
       "expo-web-browser",
       "expo-video"
     ],
+
     "extra": {
       "eas": {
         "projectId": "7de6cdc4-8616-446f-99de-82764af3a7e6"
