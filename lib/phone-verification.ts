@@ -130,7 +130,11 @@ export class PhoneVerificationService {
    * @param userId - User ID for tracking
    * @returns Promise with verification result
    */
-  static async sendVerificationCode(phoneNumber: string, userId?: string | null): Promise<PhoneVerificationResult> {
+  static async sendVerificationCode(
+    phoneNumber: string,
+    userId?: string | null,
+    signupSessionId?: string | null
+  ): Promise<PhoneVerificationResult> {
     try {
       const cleanedPhone = this.cleanPhoneNumber(phoneNumber);
       const config = this.getSupabaseConfig();
@@ -140,15 +144,16 @@ export class PhoneVerificationService {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${config.supabaseKey}`,
+          'apikey': config.supabaseKey,
         },
         body: JSON.stringify({
           phoneNumber: cleanedPhone,
-          userId: userId ?? null
+          userId: userId ?? null,
+          signupSessionId: signupSessionId ?? null
         })
       });
 
       const data = await response.json();
-
       if (!response.ok) {
         return {
           success: false,
@@ -181,7 +186,12 @@ export class PhoneVerificationService {
    * @param userId - User ID for tracking
    * @returns Promise with verification result
    */
-  static async verifyCode(phoneNumber: string, code: string, userId?: string | null): Promise<PhoneVerificationResult> {
+  static async verifyCode(
+    phoneNumber: string,
+    code: string,
+    userId?: string | null,
+    signupSessionId?: string | null
+  ): Promise<PhoneVerificationResult> {
     try {
       const cleanedPhone = this.cleanPhoneNumber(phoneNumber);
       const config = this.getSupabaseConfig();
@@ -191,16 +201,17 @@ export class PhoneVerificationService {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${config.supabaseKey}`,
+          'apikey': config.supabaseKey,
         },
         body: JSON.stringify({
           phoneNumber: cleanedPhone,
           verificationCode: code,
-          userId: userId ?? null
+          userId: userId ?? null,
+          signupSessionId: signupSessionId ?? null
         })
       });
 
       const data = await response.json();
-
       if (!response.ok) {
         return {
           success: false,
@@ -213,6 +224,7 @@ export class PhoneVerificationService {
           success: true,
           phoneNumber: cleanedPhone,
           verified: true,
+          confidenceScore: data.confidenceScore,
           message: 'Phone number verified successfully'
         };
       } else {

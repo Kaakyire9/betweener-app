@@ -150,12 +150,9 @@ export const logSignupEvent = async (payload: Omit<SignupEventPayload, "signup_s
     ...payload,
   };
 
-  const { error } = await supabase
-    .from("signup_events")
-    .upsert(body, {
-      onConflict: "signup_session_id",
-      ignoreDuplicates: true,
-    });
+  const { error } = await supabase.functions.invoke("log-signup-event", {
+    body,
+  });
 
   if (error) {
     console.log("[signup] log event error", error);
@@ -168,13 +165,13 @@ export const updateSignupEventForUser = async (
 ) => {
   const signup_session_id = await getSignupSessionId();
   if (!signup_session_id) return;
-  const { error } = await supabase
-    .from("signup_events")
-    .update({
+  const { error } = await supabase.functions.invoke("log-signup-event", {
+    body: {
+      signup_session_id,
       ...updates,
       user_id: userId,
-    })
-    .eq("signup_session_id", signup_session_id);
+    },
+  });
 
   if (error) {
     console.log("[signup] update event error", error);
@@ -186,6 +183,17 @@ export const setPendingAuthMethod = async (authMethod: string, oauthProvider?: s
     [SIGNUP_AUTH_METHOD_KEY, authMethod],
     [SIGNUP_OAUTH_PROVIDER_KEY, oauthProvider ?? ""],
   ]);
+};
+
+export const finalizeSignupPhoneVerification = async () => {
+  const signupSessionId = await getSignupSessionId();
+  if (!signupSessionId) return;
+  const { error } = await supabase.functions.invoke("finalize-signup", {
+    body: { signupSessionId },
+  });
+  if (error) {
+    console.log("[signup] finalize signup error", error);
+  }
 };
 
 export const consumeSignupMetadata = async () => {

@@ -1,6 +1,6 @@
 import { getOrCreateDeviceKeypair } from '@/lib/e2ee';
 import { registerPushToken } from '@/lib/notifications/push';
-import { clearSignupSession, consumeSignupMetadata, updateSignupEventForUser } from '@/lib/signup-tracking';
+import { clearSignupSession, consumeSignupMetadata, finalizeSignupPhoneVerification, updateSignupEventForUser } from '@/lib/signup-tracking';
 import { supabase } from '@/lib/supabase';
 import { Session, User } from '@supabase/supabase-js';
 import { createContext, useContext, useEffect, useState } from 'react';
@@ -119,6 +119,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           await fetchProfile(session.user.id);
           const metadata = await consumeSignupMetadata();
           await updateSignupEventForUser(session.user.id, metadata);
+          await finalizeSignupPhoneVerification();
           await clearSignupSession();
         } else {
           setProfile(null);

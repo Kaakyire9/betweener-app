@@ -35,38 +35,36 @@ export const VerificationBadge: React.FC<VerificationBadgeProps> = ({
       };
     }
 
-    const configs = [
-      { 
-        level: 0, 
-        label: 'Unverified', 
-        color: '#9E9E9E', 
-        icon: 'help-circle-outline',
-        bgColor: '#f5f5f5',
-      },
-      { 
-        level: 1, 
-        label: 'Basic', 
-        color: '#4CAF50', 
-        icon: 'checkmark-circle',
-        bgColor: '#e8f5e8',
-      },
-      { 
-        level: 2, 
-        label: 'Verified', 
-        color: '#2196F3', 
+    if (verificationLevel >= 2) {
+      return {
+        level: 2,
+        label: 'ID Verified',
+        color: '#7A5A00',
         icon: 'shield-checkmark',
-        bgColor: '#e3f2fd',
-      },
-      { 
-        level: 3, 
-        label: 'Premium', 
-        color: '#FF9800', 
-        icon: 'star',
-        bgColor: '#fff3e0',
-      },
-    ];
-    
-    return configs.find(c => c.level === verificationLevel) || configs[0];
+        bgColor: '#FFF4D6',
+        borderColor: '#F0D18A',
+      };
+    }
+
+    if (verificationLevel === 1) {
+      return {
+        level: 1,
+        label: 'Phone Verified',
+        color: '#0F766E',
+        icon: 'checkmark-circle',
+        bgColor: '#E7F6F4',
+        borderColor: '#9FDAD5',
+      };
+    }
+
+    return {
+      level: 0,
+      label: 'Unverified',
+      color: '#9E9E9E',
+      icon: 'help-circle-outline',
+      bgColor: '#f5f5f5',
+      borderColor: '#e2e2e2',
+    };
   };
 
   const getSizeConfig = (badgeSize: string) => {
@@ -86,6 +84,7 @@ export const VerificationBadge: React.FC<VerificationBadgeProps> = ({
       styles.badge,
       {
         backgroundColor: badge.bgColor,
+        borderColor: badge.borderColor || 'transparent',
         padding: sizeConfig.padding,
         borderRadius: sizeConfig.borderRadius,
       },

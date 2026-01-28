@@ -1,14 +1,22 @@
 import { useAuth } from '@/lib/auth-context';
 import { PhoneVerificationService } from '@/lib/phone-verification';
+import { Colors, Fonts } from '@/constants/theme';
+import countryData from '@/data/countries.json';
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
+  SectionList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   View,
 } from 'react-native';
 
@@ -18,6 +26,9 @@ interface PhoneVerificationProps {
   userId?: string | null;
   allowAnonymous?: boolean;
   onPhoneVerified?: (phoneNumber: string) => void;
+  signupSessionId?: string | null;
+  countryLabel?: string;
+  dialCode?: string;
 }
 
 export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
@@ -26,14 +37,59 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
   userId,
   allowAnonymous = false,
   onPhoneVerified,
+  signupSessionId,
+  countryLabel = 'Ghana',
+  dialCode = '+233',
 }) => {
   const { user } = useAuth();
+  const theme = useMemo(() => Colors.light, []);
+  const [countryModalVisible, setCountryModalVisible] = useState(false);
+  const [countrySearch, setCountrySearch] = useState('');
+  const [selectedCountry, setSelectedCountry] = useState({
+    label: countryLabel,
+    dial: dialCode,
+  });
   const [step, setStep] = useState<'phone' | 'code'>('phone');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
   const [verificationSid, setVerificationSid] = useState('');
   const [loading, setLoading] = useState(false);
-  const [phoneScore, setPhoneScore] = useState(0);
+
+  useEffect(() => {
+    setSelectedCountry({ label: countryLabel, dial: dialCode });
+  }, [countryLabel, dialCode]);
+
+  const countryOptions = useMemo(() => countryData, []);
+  const topCountryCodes = useMemo(() => ['GB', 'US', 'CA', 'GH', 'NG'], []);
+  const topCountries = useMemo(
+    () => countryOptions.filter((item) => topCountryCodes.includes(item.code)),
+    [countryOptions, topCountryCodes]
+  );
+  const otherCountries = useMemo(
+    () => countryOptions.filter((item) => !topCountryCodes.includes(item.code)),
+    [countryOptions, topCountryCodes]
+  );
+
+  const filteredCountries = useMemo(() => {
+    const query = countrySearch.trim().toLowerCase();
+    if (!query) return countryOptions;
+    const clean = query.replace('+', '');
+    return countryOptions.filter(
+      (item) =>
+        item.label.toLowerCase().includes(query) ||
+        item.dial.replace('+', '').includes(clean)
+    );
+  }, [countryOptions, countrySearch]);
+  const countrySections = useMemo(() => {
+    const query = countrySearch.trim();
+    if (query) {
+      return [{ title: 'Results', data: filteredCountries }];
+    }
+    return [
+      { title: 'Top countries', data: topCountries },
+      { title: 'All countries', data: otherCountries },
+    ];
+  }, [countrySearch, filteredCountries, topCountries, otherCountries]);
 
   const handleSendCode = async () => {
     if (!phoneNumber.trim()) {
@@ -46,18 +102,26 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
       Alert.alert('Error', 'Please sign in to verify your phone number.');
       return;
     }
+    if (!effectiveUserId && allowAnonymous && !signupSessionId) {
+      Alert.alert('Error', 'Signup session not ready. Please try again.');
+      return;
+    }
 
     setLoading(true);
     try {
-      const result = await PhoneVerificationService.sendVerificationCode(phoneNumber, effectiveUserId);
+      const fullNumber = `${selectedCountry.dial}${phoneNumber}`;
+      const result = await PhoneVerificationService.sendVerificationCode(
+        fullNumber,
+        effectiveUserId,
+        signupSessionId ?? null
+      );
       
       if (result.success && result.verificationSid) {
         setVerificationSid(result.verificationSid);
-        setPhoneScore(result.confidenceScore || 0);
         setStep('code');
         Alert.alert(
           'Code Sent',
-          `A verification code has been sent to ${result.phoneNumber || phoneNumber}${result.phoneNumber?.startsWith('+233') ? ' 🇬🇭' : ''}`
+          `A verification code has been sent to ${result.phoneNumber || fullNumber}`
         );
       } else {
         Alert.alert('Error', result.error || 'Failed to send verification code');
@@ -80,19 +144,25 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
       Alert.alert('Error', 'Please sign in to verify your phone number.');
       return;
     }
+    if (!effectiveUserId && allowAnonymous && !signupSessionId) {
+      Alert.alert('Error', 'Signup session not ready. Please try again.');
+      return;
+    }
 
     setLoading(true);
     try {
+      const fullNumber = `${selectedCountry.dial}${phoneNumber}`;
       const result = await PhoneVerificationService.verifyCode(
-        phoneNumber,
+        fullNumber,
         verificationCode,
-        effectiveUserId
+        effectiveUserId,
+        signupSessionId ?? null
       );
       
       if (result.success && result.verified) {
         Alert.alert('Success', 'Phone number verified successfully!');
-        onPhoneVerified?.(phoneNumber);
-        onVerificationComplete(true, result.confidenceScore || phoneScore);
+        onPhoneVerified?.(fullNumber);
+        onVerificationComplete(true, result.confidenceScore || 0);
       } else {
         Alert.alert('Error', result.error || 'Invalid verification code');
         setVerificationCode('');
@@ -104,67 +174,60 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
     }
   };
 
-  const formatPhoneNumber = (text: string) => {
-    // Auto-format phone number as user types
-    let cleaned = text.replace(/[^\d+]/g, '');
-    
-    if (cleaned.startsWith('0')) {
-      cleaned = '+233 ' + cleaned.substring(1);
-    } else if (cleaned.startsWith('233')) {
-      cleaned = '+233 ' + cleaned.substring(3);
-    } else if (!cleaned.startsWith('+')) {
-      if (cleaned.length > 0) {
-        cleaned = '+233 ' + cleaned;
-      }
-    }
-    
-    return cleaned;
-  };
+  const formatPhoneNumber = (text: string) => text.replace(/[^\d]/g, '');
 
-  const getScoreDisplay = (score: number) => {
-    if (score >= 0.8) return { text: 'High Confidence', color: '#4CAF50' };
-    if (score >= 0.6) return { text: 'Medium Confidence', color: '#FF9800' };
-    return { text: 'Low Confidence', color: '#f44336' };
-  };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
+    <View style={[styles.container, { backgroundColor: 'transparent' }]}>
+      <View style={[styles.panel, { backgroundColor: 'rgba(247, 236, 226, 0.86)' }]}>
+        <View style={styles.header}>
         <TouchableOpacity onPress={onCancel} style={styles.closeButton}>
-          <Ionicons name="close" size={24} color="#333" />
+          <Ionicons name="chevron-back" size={22} color={theme.text} />
         </TouchableOpacity>
-        <Text style={styles.title}>Phone Verification</Text>
+        <Text style={[styles.title, { color: theme.text }]}>Phone Verification</Text>
         <View style={styles.placeholder} />
-      </View>
+        </View>
 
-      <View style={styles.content}>
+        <View style={styles.content}>
         {step === 'phone' ? (
           <>
-            <View style={styles.iconContainer}>
-              <Ionicons name="phone-portrait" size={48} color="#007AFF" />
-            </View>
-            
-            <Text style={styles.description}>
-              Verify your phone number to increase your verification level
+            <Text style={[styles.promptTitle, { color: theme.text }]}>
+              Can we get your number?
             </Text>
-            
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Phone Number</Text>
+            <View style={[styles.phoneRow, { borderBottomColor: theme.outline }]}>
+              <TouchableOpacity
+                style={[styles.countryPill, { borderRightColor: theme.outline }]}
+                activeOpacity={0.8}
+                onPress={() => setCountryModalVisible(true)}
+              >
+                <Text style={[styles.countryText, { color: theme.text }]}>{selectedCountry.label}</Text>
+                <Text style={[styles.countryCode, { color: theme.textMuted }]}>{selectedCountry.dial}</Text>
+                <Ionicons name="chevron-down" size={16} color={theme.textMuted} />
+              </TouchableOpacity>
               <TextInput
-                style={styles.input}
+                style={[styles.phoneInput, { color: theme.text }]}
                 value={phoneNumber}
                 onChangeText={(text) => setPhoneNumber(formatPhoneNumber(text))}
-                placeholder="+233 20 123 4567"
+                placeholder="Phone number"
                 keyboardType="phone-pad"
                 autoComplete="tel"
+                placeholderTextColor={theme.textMuted}
               />
-              <Text style={styles.hint}>
-                Include country code. Ghana numbers start with +233
-              </Text>
             </View>
+            <Text style={[styles.noticeText, { color: theme.textMuted }]}>
+              By entering your number, you agree to receive texts about your account, including
+              verification codes and important updates.
+            </Text>
+            <Text style={[styles.noticeText, { color: theme.textMuted }]}>
+              Message frequency varies. Reply STOP to cancel.
+            </Text>
 
             <TouchableOpacity
-              style={[styles.button, loading && styles.buttonDisabled]}
+              style={[
+                styles.button,
+                { backgroundColor: theme.tint },
+                loading && styles.buttonDisabled,
+              ]}
               onPress={handleSendCode}
               disabled={loading}
             >
@@ -172,47 +235,45 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
                 <ActivityIndicator color="#fff" />
               ) : (
                 <>
-                  <Ionicons name="send" size={20} color="#fff" />
-                  <Text style={styles.buttonText}>Send Verification Code</Text>
+                  <Text style={styles.buttonText}>Next</Text>
                 </>
               )}
             </TouchableOpacity>
           </>
         ) : (
           <>
-            <View style={styles.iconContainer}>
-              <Ionicons name="chatbubble-ellipses" size={48} color="#007AFF" />
-            </View>
-            
-            <Text style={styles.description}>
-              Enter the 6-digit code sent to {phoneNumber}
+            <Text style={[styles.promptTitle, { color: theme.text }]}>Enter your code</Text>
+            <Text style={[styles.description, { color: theme.textMuted }]}>
+              We sent a 6-digit code to {selectedCountry.dial} {phoneNumber}
             </Text>
             
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>Verification Code</Text>
+              <Text style={[styles.label, { color: theme.text }]}>Verification Code</Text>
               <TextInput
-                style={[styles.input, styles.codeInput]}
+                style={[
+                  styles.input,
+                  styles.codeInput,
+                  { borderColor: theme.outline, color: theme.text, backgroundColor: theme.backgroundSubtle },
+                ]}
                 value={verificationCode}
                 onChangeText={setVerificationCode}
                 placeholder="123456"
                 keyboardType="number-pad"
                 maxLength={6}
                 autoComplete="sms-otp"
+                placeholderTextColor={theme.textMuted}
               />
               
-              {phoneScore > 0 && (
-                <View style={styles.scoreContainer}>
-                  <Text style={styles.scoreLabel}>Verification Confidence:</Text>
-                  <Text style={[styles.scoreText, { color: getScoreDisplay(phoneScore).color }]}>
-                    {getScoreDisplay(phoneScore).text} ({(phoneScore * 100).toFixed(0)}%)
-                  </Text>
-                </View>
-              )}
+              {/* Confidence score intentionally hidden in UI (internal only). */}
             </View>
 
             <View style={styles.buttonContainer}>
               <TouchableOpacity
-                style={[styles.button, loading && styles.buttonDisabled]}
+                style={[
+                  styles.button,
+                  { backgroundColor: theme.tint },
+                  loading && styles.buttonDisabled,
+                ]}
                 onPress={handleVerifyCode}
                 disabled={loading}
               >
@@ -231,12 +292,76 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
                 onPress={() => setStep('phone')}
                 disabled={loading}
               >
-                <Text style={styles.resendText}>Change Phone Number</Text>
+                <Text style={[styles.resendText, { color: theme.tint }]}>Change Phone Number</Text>
               </TouchableOpacity>
             </View>
           </>
         )}
+        </View>
       </View>
+      <Modal
+        visible={countryModalVisible}
+        transparent
+        animationType="slide"
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
+        onRequestClose={() => setCountryModalVisible(false)}
+      >
+        <View style={styles.modalRoot}>
+          <TouchableWithoutFeedback
+            onPress={() => {
+              setCountryModalVisible(false);
+              setCountrySearch('');
+            }}
+          >
+            <View style={styles.modalBackdrop} />
+          </TouchableWithoutFeedback>
+          <KeyboardAvoidingView
+            style={styles.modalKeyboard}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
+            <View style={[styles.modalCard, { backgroundColor: theme.background }]}>
+              <View style={styles.modalHandle} />
+              <Text style={[styles.modalTitle, { color: theme.text }]}>Choose country</Text>
+              <TextInput
+                style={[styles.searchInput, { borderColor: theme.outline, color: theme.text }]}
+                placeholder="Search country or code"
+                placeholderTextColor={theme.textMuted}
+                value={countrySearch}
+                onChangeText={setCountrySearch}
+                autoFocus
+              />
+              <SectionList
+                sections={countrySections}
+                keyExtractor={(item) => `${item.label}-${item.dial}`}
+                renderSectionHeader={({ section }) => (
+                  <Text style={[styles.sectionHeader, { color: theme.textMuted }]}>
+                    {section.title}
+                  </Text>
+                )}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={[styles.countryRow, { borderBottomColor: theme.outline }]}
+                    onPress={() => {
+                      setSelectedCountry(item);
+                      setCountryModalVisible(false);
+                      setCountrySearch('');
+                    }}
+                  >
+                    <Text style={[styles.countryRowText, { color: theme.text }]}>{item.label}</Text>
+                    <Text style={[styles.countryRowDial, { color: theme.textMuted }]}>{item.dial}</Text>
+                  </TouchableOpacity>
+                )}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                stickySectionHeadersEnabled={false}
+                contentContainerStyle={styles.sectionContent}
+                style={styles.sectionList}
+              />
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -244,17 +369,25 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    paddingVertical: 8,
+  },
+  panel: {
+    flex: 1,
+    borderRadius: 28,
+    overflow: 'hidden',
+    shadowColor: '#0f172a',
+    shadowOpacity: 0.14,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 6,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingTop: 50,
-    paddingBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
+    paddingTop: 12,
+    paddingBottom: 12,
   },
   closeButton: {
     padding: 8,
@@ -262,26 +395,63 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#333',
+    fontFamily: Fonts?.sans,
+    letterSpacing: 0.2,
   },
   placeholder: {
     width: 40,
   },
   content: {
     flex: 1,
-    padding: 20,
-    alignItems: 'center',
+    padding: 24,
   },
-  iconContainer: {
-    marginVertical: 30,
+  promptTitle: {
+    fontSize: 30,
+    fontFamily: 'Archivo_700Bold',
+    letterSpacing: 0.2,
+    marginBottom: 18,
+  },
+  phoneRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    borderBottomWidth: 1,
+    paddingBottom: 8,
+    marginBottom: 14,
+  },
+  countryPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingRight: 12,
+    borderRightWidth: 1,
+  },
+  countryText: {
+    fontSize: 14,
+    fontFamily: 'Manrope_600SemiBold',
+  },
+  countryCode: {
+    fontSize: 14,
+    fontFamily: 'Manrope_600SemiBold',
+  },
+  phoneInput: {
+    flex: 1,
+    fontSize: 16,
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    fontFamily: 'Manrope_500Medium',
+  },
+  noticeText: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 10,
+    fontFamily: 'Manrope_400Regular',
   },
   description: {
     fontSize: 16,
-    color: '#666',
-    textAlign: 'center',
+    textAlign: 'left',
     marginBottom: 30,
     lineHeight: 24,
+    fontFamily: 'Manrope_400Regular',
   },
   inputContainer: {
     width: '100%',
@@ -289,51 +459,31 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
+    fontFamily: 'Manrope_600SemiBold',
     marginBottom: 8,
   },
   input: {
     borderWidth: 2,
-    borderColor: '#e0e0e0',
     borderRadius: 12,
     padding: 16,
     fontSize: 16,
-    backgroundColor: '#f9f9f9',
+    fontFamily: 'Manrope_500Medium',
   },
   codeInput: {
     textAlign: 'center',
     fontSize: 24,
-    fontWeight: '600',
+    fontFamily: 'Archivo_700Bold',
     letterSpacing: 4,
   },
   hint: {
     fontSize: 12,
-    color: '#999',
     marginTop: 8,
-  },
-  scoreContainer: {
-    marginTop: 12,
-    padding: 12,
-    backgroundColor: '#f0f0f0',
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  scoreLabel: {
-    fontSize: 12,
-    color: '#666',
-    marginBottom: 4,
-  },
-  scoreText: {
-    fontSize: 14,
-    fontWeight: '600',
   },
   buttonContainer: {
     width: '100%',
     gap: 12,
   },
   button: {
-    backgroundColor: '#007AFF',
     borderRadius: 12,
     padding: 16,
     flexDirection: 'row',
@@ -347,7 +497,7 @@ const styles = StyleSheet.create({
   buttonText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: '600',
+    fontFamily: 'Manrope_700Bold',
   },
   resendButton: {
     padding: 12,
@@ -356,6 +506,74 @@ const styles = StyleSheet.create({
   resendText: {
     color: '#007AFF',
     fontSize: 14,
-    fontWeight: '500',
+    fontFamily: 'Manrope_600SemiBold',
+  },
+  modalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  modalKeyboard: {
+    justifyContent: 'flex-end',
+  },
+  modalCard: {
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 24,
+    maxHeight: '85%',
+  },
+  modalHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 999,
+    backgroundColor: '#cbd5e1',
+    alignSelf: 'center',
+    marginBottom: 12,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontFamily: 'Manrope_700Bold',
+    marginBottom: 12,
+  },
+  searchInput: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    marginBottom: 12,
+  },
+  sectionList: {
+    flexGrow: 0,
+  },
+  sectionContent: {
+    paddingBottom: 8,
+  },
+  countryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  sectionHeader: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  countryRowText: {
+    fontSize: 15,
+    fontFamily: 'Manrope_600SemiBold',
+  },
+  countryRowDial: {
+    fontSize: 14,
+    fontFamily: 'Manrope_600SemiBold',
   },
 });

@@ -1,4 +1,5 @@
 import ProfileVideoModal from '@/components/ProfileVideoModal';
+import { VerificationBadge } from '@/components/VerificationBadge';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
@@ -1347,7 +1348,12 @@ function Header({
                 {formatHeaderTitle(profile.name, profile.age)}
               </Text>
             </View>
-            {profile.verified ? <MaterialCommunityIcons name="check-decagram" size={18} color={theme.tint} /> : null}
+            {(profile.verificationLevel ?? (profile.verified ? 1 : 0)) > 0 ? (
+              <VerificationBadge
+                level={profile.verificationLevel ?? (profile.verified ? 1 : 0)}
+                size="small"
+              />
+            ) : null}
             {profile.isActiveNow ? (
               <View
                 style={[
@@ -1865,7 +1871,12 @@ const StoryHeader = memo(function StoryHeader({
           <Text style={[stylesStatic.storyName, { color: theme.text }]} numberOfLines={1}>
             {formatHeaderTitle(profile.name, profile.age) || 'Profile'}
           </Text>
-          {profile.verified ? <MaterialCommunityIcons name="check-decagram" size={18} color={theme.tint} /> : null}
+          {(profile.verificationLevel ?? (profile.verified ? 1 : 0)) > 0 ? (
+            <VerificationBadge
+              level={profile.verificationLevel ?? (profile.verified ? 1 : 0)}
+              size="small"
+            />
+          ) : null}
           {profile.isActiveNow ? (
             <View
               style={[

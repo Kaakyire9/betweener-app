@@ -175,7 +175,10 @@ export default function useVibesFeed({
       list = list.filter((m) => !swipedTodayIds.has(String(m.id)));
     }
     if (filters.verifiedOnly) {
-      list = list.filter((m) => !!m.verified);
+      list = list.filter((m) => {
+        const level = typeof (m as any).verification_level === 'number' ? (m as any).verification_level : null;
+        return level != null ? level > 0 : !!m.verified;
+      });
     }
     if (filters.distanceFilterKm != null) {
       list = list.filter((m) => {

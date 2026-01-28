@@ -87,6 +87,13 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
   const locationDisplay = locationDisplayBase
     ? `${locationDisplayBase}${countryFlag ? ` ${countryFlag}` : ''}`
     : countryFlag;
+  const verificationLevel =
+    typeof (match as any).verification_level === 'number'
+      ? (match as any).verification_level
+      : match.verified
+      ? 1
+      : 0;
+  const badgeVariant = verificationLevel >= 2 ? 'id' : verificationLevel >= 1 ? 'phone' : null;
 
   // compute recently active (within last 3 hours)
   const recentlyActive = (() => {
@@ -172,7 +179,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
   const introPulse = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (match.verified) {
+    if (badgeVariant) {
       if (canUseReanimated && verifiedScale && verifiedOpacity) {
         try {
           verifiedScale.value = ReanimatedModule.withTiming(1, { duration: 300 });
@@ -214,7 +221,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
         Animated.timing(pillTranslate, { toValue: 0, duration: 300, useNativeDriver: true }),
       ]).start();
     }
-  }, [match.verified, match.isActiveNow, match.lastActive]);
+  }, [badgeVariant, match.isActiveNow, match.lastActive]);
 
   useEffect(() => {
     if (!(match as any).profileVideo) return;
@@ -358,27 +365,72 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
         <View style={styles.topRow} pointerEvents="box-none">
           {canUseReanimated && ReanimatedAnimated && slotAnimatedStyle ? (
             <ReanimatedAnimated.View style={[styles.leftSlot, slotAnimatedStyle]} pointerEvents="none">
-              {match.verified ? (
+              {badgeVariant ? (
                 // @ts-ignore
-                <ReanimatedAnimated.View style={[styles.verifiedBadgeInline, verifiedAnimatedStyle]} pointerEvents="none" onLayout={(e: any) => { try { setLeftBadgeWidth(e.nativeEvent.layout.width || 0); } catch {} }}>
-                  <MaterialCommunityIcons name="check-decagram" size={14} color="#fff" style={{ marginRight: 6 }} />
-                  <Text style={styles.verifiedText}>Verified</Text>
+                <ReanimatedAnimated.View
+                  style={[styles.badgeWrapper, verifiedAnimatedStyle]}
+                  pointerEvents="none"
+                  onLayout={(e: any) => {
+                    try {
+                      setLeftBadgeWidth(e.nativeEvent.layout.width || 0);
+                    } catch {}
+                  }}
+                >
+                  {badgeVariant === 'id' ? (
+                    <LinearGradientSafe colors={['#F6D58A', '#D3A33C']} start={[0, 0]} end={[1, 1]} style={styles.idBadge}>
+                      <MaterialCommunityIcons name="shield-check" size={14} color="#2b1b00" />
+                    </LinearGradientSafe>
+                  ) : (
+                    <View style={styles.phoneBadge}>
+                      <MaterialCommunityIcons name="phone-check" size={14} color={theme.tint} />
+                    </View>
+                  )}
                 </ReanimatedAnimated.View>
               ) : null}
             </ReanimatedAnimated.View>
           ) : (
             <View style={[styles.leftSlot, { minWidth: slotWidth }]} pointerEvents="none">
-              {match.verified ? (
+              {badgeVariant ? (
                 canUseReanimated && verifiedAnimatedStyle && ReanimatedAnimated && ReanimatedAnimated.View ? (
                   // @ts-ignore
-                  <ReanimatedAnimated.View style={[styles.verifiedBadgeInline, verifiedAnimatedStyle]} pointerEvents="none" onLayout={(e: any) => { try { setLeftBadgeWidth(e.nativeEvent.layout.width || 0); } catch {} }}>
-                    <MaterialCommunityIcons name="check-decagram" size={14} color="#fff" style={{ marginRight: 6 }} />
-                    <Text style={styles.verifiedText}>Verified</Text>
+                  <ReanimatedAnimated.View
+                    style={[styles.badgeWrapper, verifiedAnimatedStyle]}
+                    pointerEvents="none"
+                    onLayout={(e: any) => {
+                      try {
+                        setLeftBadgeWidth(e.nativeEvent.layout.width || 0);
+                      } catch {}
+                    }}
+                  >
+                    {badgeVariant === 'id' ? (
+                      <LinearGradientSafe colors={['#F6D58A', '#D3A33C']} start={[0, 0]} end={[1, 1]} style={styles.idBadge}>
+                        <MaterialCommunityIcons name="shield-check" size={14} color="#2b1b00" />
+                      </LinearGradientSafe>
+                    ) : (
+                      <View style={styles.phoneBadge}>
+                        <MaterialCommunityIcons name="phone-check" size={14} color={theme.tint} />
+                      </View>
+                    )}
                   </ReanimatedAnimated.View>
                 ) : (
-                  <Animated.View style={[styles.verifiedBadgeInline, { transform: [{ translateY: verifiedTranslate }], opacity: verifiedAnim }]} pointerEvents="none" onLayout={(e: any) => { try { setLeftBadgeWidth(e.nativeEvent.layout.width || 0); } catch {} }}>
-                    <MaterialCommunityIcons name="check-decagram" size={14} color="#fff" style={{ marginRight: 6 }} />
-                    <Text style={styles.verifiedText}>Verified</Text>
+                  <Animated.View
+                    style={[styles.badgeWrapper, { transform: [{ translateY: verifiedTranslate }], opacity: verifiedAnim }]}
+                    pointerEvents="none"
+                    onLayout={(e: any) => {
+                      try {
+                        setLeftBadgeWidth(e.nativeEvent.layout.width || 0);
+                      } catch {}
+                    }}
+                  >
+                    {badgeVariant === 'id' ? (
+                      <LinearGradientSafe colors={['#F6D58A', '#D3A33C']} start={[0, 0]} end={[1, 1]} style={styles.idBadge}>
+                        <MaterialCommunityIcons name="shield-check" size={14} color="#2b1b00" />
+                      </LinearGradientSafe>
+                    ) : (
+                      <View style={styles.phoneBadge}>
+                        <MaterialCommunityIcons name="phone-check" size={14} color={theme.tint} />
+                      </View>
+                    )}
                   </Animated.View>
                 )
               ) : null}
@@ -597,7 +649,6 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       borderRadius: 14,
       zIndex: 30,
     },
-    verifiedText: { color: '#fff', fontSize: 12, fontWeight: '700' },
     activeTopRight: {
       position: 'absolute',
       top: 12,
@@ -631,7 +682,36 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
     leftSlot: { alignItems: 'flex-start' },
     centerSlot: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     rightSlot: { alignItems: 'flex-end' },
-    verifiedBadgeInline: { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.tint, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 },
+    badgeWrapper: { flexDirection: 'row', alignItems: 'center' },
+    idBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.35)',
+      shadowColor: '#D3A33C',
+      shadowOpacity: isDark ? 0.25 : 0.35,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 6,
+    },
+    phoneBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, 0.45),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.2 : 0.16),
+      shadowColor: theme.tint,
+      shadowOpacity: isDark ? 0.18 : 0.12,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 4,
+    },
     activeInline: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 },
     aiPillInline: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, minWidth: 100, maxWidth: '70%', alignItems: 'center' },
     personalityRow: { flexDirection: 'row', marginBottom: 8, gap: 8 },

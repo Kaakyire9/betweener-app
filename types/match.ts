@@ -14,6 +14,7 @@ export type Match = {
   lastActive?: string;
   isActiveNow?: boolean;
   verified?: boolean;
+  verification_level?: number;
   personalityTags?: string[];
   profileVideo?: string;
   compatibility?: number;

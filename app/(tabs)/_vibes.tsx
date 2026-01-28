@@ -816,6 +816,38 @@ export default function ExploreScreen() {
             { paddingBottom: Math.max(insets.bottom + 180, 180) },
           ]}
         >
+          {needsLocationPrompt ? (
+            <View style={styles.locationBanner}>
+              <Text style={styles.locationTitle}>Set your location</Text>
+              <Text style={styles.locationSubtitle}>
+                Enable location to see nearby matches and more accurate distance. You can also set
+                your city anytime from Filters.
+              </Text>
+              <View style={styles.locationActions}>
+                <TouchableOpacity
+                  style={[styles.locationButton, styles.locationPrimary]}
+                  onPress={handleUseMyLocation}
+                  disabled={isSavingLocation}
+                >
+                  <Text style={styles.locationPrimaryText}>
+                    {isSavingLocation ? 'Saving...' : 'Use my location'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.locationButton, styles.locationGhost]}
+                  onPress={openManualLocationModal}
+                  disabled={isSavingLocation}
+                >
+                  <Text style={styles.locationGhostText}>
+                    {hasCityOnly ? 'Edit city' : 'Enter city'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              {locationError ? (
+                <Text style={[styles.locationError, { marginTop: 8 }]}>{locationError}</Text>
+              ) : null}
+            </View>
+          ) : null}
           {user?.id ? (
             <VibesMomentsStrip
               users={momentStripUsers}
