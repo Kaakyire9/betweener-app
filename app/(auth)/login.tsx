@@ -1,165 +1,212 @@
-import { useAuth } from "@/lib/auth-context";
+import { supabase } from "@/lib/supabase";
+import * as AppleAuthentication from "expo-apple-authentication";
+import { makeRedirectUri } from "expo-auth-session";
+import * as WebBrowser from "expo-web-browser";
 import { useRouter } from "expo-router";
-import { useState } from "react";
-import {
-    Image,
-    Pressable,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
-} from "react-native";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Colors } from "@/constants/theme";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export default function LoginScreen() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  WebBrowser.maybeCompleteAuthSession();
   const router = useRouter();
-  const { signIn, isAuthenticating } = useAuth();
+  const [loadingProvider, setLoadingProvider] = useState<string | null>(null);
 
-  const handleLogin = async () => {
-    setError("");
-    const { error } = await signIn(email, password);
-    if (error) {
-      setError(error.message);
+  useEffect(() => {
+    void supabase.auth.getSession();
+  }, []);
+
+  const getRedirectUrl = () =>
+    makeRedirectUri({
+      scheme: "betweenerapp",
+      path: "auth/callback",
+    });
+
+  const handleGoogle = async () => {
+    setLoadingProvider("google");
+    try {
+      const redirectTo = getRedirectUrl();
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo },
+      });
+      if (error || !data?.url) {
+        throw error ?? new Error("Unable to start Google sign-in.");
+      }
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+      if (result.type === "success" && result.url) {
+        await AsyncStorage.setItem("last_deep_link_url", result.url);
+        router.replace("/(auth)/callback");
+      }
+    } catch (error) {
+      console.error("[auth] google sign-in error", error);
+    } finally {
+      setLoadingProvider(null);
     }
-    // No need to manually navigate - AuthGuard will handle routing
+  };
+
+  const handleApple = async () => {
+    if (Platform.OS !== "ios") return;
+    setLoadingProvider("apple");
+    try {
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+      if (!credential.identityToken) {
+        throw new Error("Apple sign-in failed to return a token.");
+      }
+      const { error } = await supabase.auth.signInWithIdToken({
+        provider: "apple",
+        token: credential.identityToken,
+      });
+      if (error) {
+        throw error;
+      }
+    } catch (error) {
+      console.error("[auth] apple sign-in error", error);
+    } finally {
+      setLoadingProvider(null);
+    }
   };
 
   return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: "#F8FAFC",
-        justifyContent: "center",
-        padding: 24,
-      }}
+    <LinearGradient
+      colors={[Colors.light.tint, Colors.light.accent, Colors.light.background]}
+      start={{ x: 0.1, y: 0.05 }}
+      end={{ x: 0.9, y: 0.95 }}
+      style={styles.gradient}
     >
-      {/* Logo at the top */}
-      <View style={{ alignItems: "center", marginBottom: 24 }}>
-        <Image
-          source={require("../../assets/images/circle-logo.png")}
-          style={{ width: 100, height: 100, borderRadius: 50 }}
-          resizeMode="contain"
-        />
-      </View>
-
-      <Text
-        style={{
-          fontFamily: "Archivo_700Bold",
-          fontSize: 32,
-          color: "#0F172A",
-          marginBottom: 32,
-          textAlign: "center",
-        }}
-      >
-        Login
-      </Text>
-
-      {error ? (
-        <Text
-          style={{ color: "#FF6B6B", marginBottom: 12, textAlign: "center" }}
-        >
-          {error}
+      <View style={styles.panel}>
+        <Text style={styles.title}>Welcome back</Text>
+        <Text style={styles.subtitle}>
+          Sign in with Google or Apple, or use a secure email link.
         </Text>
-      ) : null}
 
-      <TextInput
-        placeholder="Email"
-        placeholderTextColor="#94A3B8"
-        value={email}
-        onChangeText={setEmail}
-        autoCapitalize="none"
-        keyboardType="email-address"
-        style={{
-          backgroundColor: "#fff",
-          borderRadius: 16,
-          padding: 16,
-          fontSize: 16,
-          marginBottom: 16,
-          fontFamily: "Manrope_400Regular",
-          borderWidth: 1,
-          borderColor: "#E2E8F0",
-        }}
-      />
-
-      <TextInput
-        placeholder="Password"
-        placeholderTextColor="#94A3B8"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-        style={{
-          backgroundColor: "#fff",
-          borderRadius: 16,
-          padding: 16,
-          fontSize: 16,
-          marginBottom: 8,
-          fontFamily: "Manrope_400Regular",
-          borderWidth: 1,
-          borderColor: "#E2E8F0",
-        }}
-      />
-
-      <Pressable onPress={() => router.push("/(auth)/forgot-password")}>
-        <Text
-          style={{
-            color: "#0FBAB5",
-            fontSize: 14,
-            textAlign: "right",
-            marginBottom: 24,
-          }}
+        <Pressable
+          onPress={handleGoogle}
+          disabled={loadingProvider !== null}
+          style={[
+            styles.providerButton,
+            styles.googleButton,
+            loadingProvider && loadingProvider !== "google" && styles.buttonDisabled,
+          ]}
         >
-          Forgot password?
-        </Text>
-      </Pressable>
+          {loadingProvider === "google" ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <>
+              <MaterialCommunityIcons name="google" size={20} color="#fff" />
+              <Text style={styles.providerText}>Continue with Google</Text>
+            </>
+          )}
+        </Pressable>
 
-      <TouchableOpacity
-        style={{
-          backgroundColor: "#FF6B6B",
-          borderRadius: 16,
-          paddingVertical: 16,
-          alignItems: "center",
-          marginBottom: 32,
-          opacity: isAuthenticating ? 0.7 : 1,
-        }}
-        onPress={handleLogin}
-        disabled={isAuthenticating}
-      >
-        <Text
-          style={{
-            color: "#fff",
-            fontFamily: "Archivo_700Bold",
-            fontSize: 18,
-            letterSpacing: 1,
-          }}
-        >
-          {isAuthenticating ? "Logging In..." : "Log In"}
-        </Text>
-      </TouchableOpacity>
-
-      <View style={{ flexDirection: "row", justifyContent: "center" }}>
-        <Text
-          style={{
-            color: "#64748B",
-            fontFamily: "Manrope_400Regular",
-            fontSize: 15,
-          }}
-        >
-          Don’t have an account?{" "}
-        </Text>
-        <Pressable onPress={() => router.push("/(auth)/signup")}>
-          <Text
-            style={{
-              color: "#0FBAB5",
-              fontFamily: "Manrope_400Regular",
-              fontSize: 15,
-            }}
+        {Platform.OS === "ios" && (
+          <Pressable
+            onPress={handleApple}
+            disabled={loadingProvider !== null}
+            style={[
+              styles.providerButton,
+              styles.appleButton,
+              loadingProvider && loadingProvider !== "apple" && styles.buttonDisabled,
+            ]}
           >
-            Sign Up
-          </Text>
+            {loadingProvider === "apple" ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <MaterialCommunityIcons name="apple" size={20} color="#fff" />
+                <Text style={styles.providerText}>Continue with Apple</Text>
+              </>
+            )}
+          </Pressable>
+        )}
+
+        <Pressable
+          onPress={() => router.push("/(auth)/magic-link")}
+          disabled={loadingProvider !== null}
+          style={[styles.providerButton, styles.emailButton]}
+        >
+          <MaterialCommunityIcons name="email-outline" size={20} color="#fff" />
+          <Text style={styles.providerText}>Sign in with email link</Text>
+        </Pressable>
+
+        <Pressable onPress={() => router.replace("/(auth)/welcome")} style={styles.loginLink}>
+          <Text style={styles.loginText}>New here? Create an account</Text>
         </Pressable>
       </View>
-    </View>
+    </LinearGradient>
   );
 }
+
+const styles = StyleSheet.create({
+  gradient: {
+    flex: 1,
+    padding: 24,
+    justifyContent: "center",
+  },
+  panel: {
+    backgroundColor: "rgba(247, 236, 226, 0.9)",
+    borderRadius: 24,
+    padding: 24,
+    shadowColor: "#0f172a",
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 6,
+  },
+  title: {
+    fontFamily: "Archivo_700Bold",
+    fontSize: 28,
+    color: "#0F172A",
+    marginBottom: 12,
+  },
+  subtitle: {
+    fontFamily: "Manrope_400Regular",
+    fontSize: 15.5,
+    color: "#5B6B6B",
+    lineHeight: 22,
+    marginBottom: 28,
+  },
+  providerButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingVertical: 15,
+    borderRadius: 16,
+    marginBottom: 12,
+  },
+  googleButton: {
+    backgroundColor: "#111827",
+  },
+  appleButton: {
+    backgroundColor: "#000",
+  },
+  emailButton: {
+    backgroundColor: "#0FBAB5",
+    marginBottom: 22,
+  },
+  providerText: {
+    color: "#fff",
+    fontFamily: "Archivo_700Bold",
+    fontSize: 15.5,
+    letterSpacing: 0.4,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  loginLink: {
+    alignItems: "center",
+  },
+  loginText: {
+    fontFamily: "Manrope_500Medium",
+    color: "#0FBAB5",
+  },
+});

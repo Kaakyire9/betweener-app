@@ -58,7 +58,11 @@ const enforceRateLimit = async (
     return { allowed: false, error: 'Rate limiter unavailable' }
   }
   const row = Array.isArray(data) ? data[0] : data
-  return { allowed: !!row?.allowed, count: row?.current_count ?? 0 }
+  return {
+    allowed: !!row?.allowed,
+    count: row?.current_count ?? 0,
+    windowBucket: row?.window_bucket_out ?? row?.window_bucket ?? null,
+  }
 }
 
 function cleanPhoneNumber(phone: string): string {
@@ -142,12 +146,15 @@ serve(async (req) => {
 
     // Rate limits (defaults)
     const clientIp = getClientIp(req) || 'unknown'
+    const environment = Deno.env.get('ENVIRONMENT') || 'production'
     const rateChecks = [
       { name: 'ip_10min', key: `ip:${clientIp}`, windowSeconds: 600, limit: 5 },
       { name: 'phone_10min', key: `phone:${cleanedPhone}`, windowSeconds: 600, limit: 3 },
-      { name: 'phone_day', key: `phone:${cleanedPhone}:day`, windowSeconds: 86400, limit: 5 },
       { name: 'signup_10min', key: `signup:${signupSessionId}`, windowSeconds: 600, limit: 5 },
     ]
+    if (environment !== 'development') {
+      rateChecks.splice(2, 0, { name: 'phone_day', key: `phone:${cleanedPhone}:day`, windowSeconds: 86400, limit: 5 })
+    }
     const rateResults = await Promise.all(
       rateChecks.map(async (rule) => {
         const res = await enforceRateLimit(supabase, rule.key, rule.windowSeconds, rule.limit)
@@ -156,17 +163,23 @@ serve(async (req) => {
     )
     const blocked = rateResults.find((r) => !r.allowed)
     if (blocked) {
+      const errorMessage =
+        blocked.name === 'phone_day'
+          ? 'Too many requests. Please wait and try again after 24 hours.'
+          : 'Too many requests. Please wait and try again.'
       return new Response(
         JSON.stringify({
-          error: 'Too many requests. Please wait and try again.',
+          error: errorMessage,
           limit: {
             name: blocked.name,
             key: blocked.key,
             windowSeconds: blocked.windowSeconds,
             limit: blocked.limit,
             count: blocked.count ?? null,
+            windowBucket: blocked.windowBucket ?? null,
           },
           clientIp,
+          serverTime: new Date().toISOString(),
         }),
         { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )

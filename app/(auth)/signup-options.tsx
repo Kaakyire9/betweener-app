@@ -13,6 +13,7 @@ import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors } from "@/constants/theme";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export default function SignupOptionsScreen() {
   WebBrowser.maybeCompleteAuthSession();
@@ -51,9 +52,13 @@ export default function SignupOptionsScreen() {
       if (error || !data?.url) {
         throw error ?? new Error("Unable to start Google sign-in.");
       }
-      await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+      if (result.type === "success" && result.url) {
+        await AsyncStorage.setItem("last_deep_link_url", result.url);
+        router.replace("/(auth)/callback");
+      }
     } catch (error) {
-      console.log("[auth] google sign-in error", error);
+      console.error("[auth] google sign-in error", error);
     } finally {
       setLoadingProvider(null);
     }
@@ -82,7 +87,7 @@ export default function SignupOptionsScreen() {
         throw error;
       }
     } catch (error) {
-      console.log("[auth] apple sign-in error", error);
+      console.error("[auth] apple sign-in error", error);
     } finally {
       setLoadingProvider(null);
     }

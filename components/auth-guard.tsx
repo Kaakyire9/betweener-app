@@ -16,21 +16,6 @@ export function AuthGuard({ children, fallback }: AuthGuardProps) {
     canAccessApp 
   } = useAuthGuard();
   
-  const { isAuthenticated, isEmailVerified, hasProfile, profile } = useAuth();
-
-  // Debug logging
-  console.log("AuthGuard Debug:", {
-    isLoading,
-    needsAuth,
-    needsEmailVerification, 
-    needsProfileSetup,
-    canAccessApp,
-    isAuthenticated,
-    isEmailVerified,
-    hasProfile,
-    profileExists: !!profile
-  });
-
   // Show loading spinner while checking auth
   if (isLoading) {
     return fallback || (

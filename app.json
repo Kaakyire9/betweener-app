@@ -13,7 +13,6 @@
 
     "ios": {
       "bundleIdentifier": "com.aduboffour.betweener",
-      "buildNumber": "2",
       "icon": "./assets/images/ios-icon-1024.png",
       "associatedDomains": ["applinks:getbetweener.com"],
       "infoPlist": {

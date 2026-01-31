@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { Animated, Easing, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import * as Notifications from "expo-notifications";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
@@ -40,17 +41,26 @@ export default function RootLayout() {
 
   // Handle deep links
   useEffect(() => {
-    const prefix = Linking.createURL("/");
-    console.log("App URL prefix:", prefix);
+    Linking.createURL("/");
+
+    const hasAuthPayload = (url: string) =>
+      url.includes("access_token=") ||
+      url.includes("refresh_token=") ||
+      url.includes("code=") ||
+      url.includes("token_hash=");
 
     Linking.getInitialURL().then((url) => {
       if (url) {
-        console.log("Initial URL:", url);
+        if (hasAuthPayload(url)) {
+          AsyncStorage.setItem("last_deep_link_url", url).catch(() => {});
+        }
       }
     });
 
     const subscription = Linking.addEventListener("url", ({ url }) => {
-      console.log("Deep link received:", url);
+      if (hasAuthPayload(url)) {
+        AsyncStorage.setItem("last_deep_link_url", url).catch(() => {});
+      }
     });
 
     return () => subscription.remove();

@@ -155,9 +155,21 @@ export class PhoneVerificationService {
 
       const data = await response.json();
       if (!response.ok) {
+        let errorMessage = data.error || 'Failed to send verification code';
+        const twilioMessage = String(data.twilioError || '').toLowerCase();
+        const twilioCode = String(data.twilioCode || '').toLowerCase();
+        if (
+          twilioMessage.includes('invalid') ||
+          twilioMessage.includes('not a valid') ||
+          twilioMessage.includes('unverified') ||
+          twilioCode.includes('60200') ||
+          twilioCode.includes('20404')
+        ) {
+          errorMessage = 'That phone number looks invalid. Please check the country code and number.';
+        }
         return {
           success: false,
-          error: data.error || 'Failed to send verification code'
+          error: errorMessage
         };
       }
       

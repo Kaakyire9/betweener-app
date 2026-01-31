@@ -12,13 +12,25 @@ export default function AuthCallback() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isComplete, setIsComplete] = useState(false);
   const processingRef = useRef(false);
+  const oauthPendingRef = useRef(false);
+  const didNavigateRef = useRef(false);
 
   const hasRunRef = useRef(false);
+
+  const logCallbackError = (error: unknown, context: string) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[auth-callback] ${context}: ${message}`);
+  };
+
+  const routeAfterSignIn = async () => {
+    if (didNavigateRef.current) return;
+    didNavigateRef.current = true;
+    router.replace("/(tabs)/");
+  };
   
   const exchange = useCallback(async () => {
     // Prevent multiple executions using multiple guards
     if (processingRef.current || hasRunRef.current || isComplete) {
-      console.log("Callback already processing or completed, skipping...");
       return;
     }
     
@@ -27,16 +39,14 @@ export default function AuthCallback() {
     setIsProcessing(true);
       
       try {
-        console.log("=== AuthCallback Start ===");
-        console.log("AuthCallback received params:", params);
+        
         
         // Check current session state first
         const { data: initialSession } = await supabase.auth.getSession();
-        console.log("Initial session state:", initialSession?.session ? "SIGNED IN" : "NOT SIGNED IN");
+        
         
         // If already signed in, just redirect to success
         if (initialSession?.session) {
-          console.log("User already signed in, redirecting to success");
           setStatus("Already verified! Redirecting...");
           setIsComplete(true);
           setTimeout(() => {
@@ -45,6 +55,41 @@ export default function AuthCallback() {
           return;
         }
         
+        const mergeUrlParamsFromUrl = (target: Record<string, any>, url: string) => {
+          if (url.includes('#')) {
+            const fragmentPart = url.split('#')[1];
+            if (fragmentPart) {
+              try {
+                const fragmentParams = new URLSearchParams(fragmentPart);
+                const fragmentEntries = Object.fromEntries(fragmentParams.entries());
+                Object.keys(fragmentEntries).forEach((key) => {
+                  target[key] = fragmentEntries[key];
+                });
+              } catch {
+                // ignore parse errors
+              }
+            }
+          }
+
+          if (url.includes('?')) {
+            let queryPart = url.split('?')[1];
+            if (queryPart.includes('#')) {
+              queryPart = queryPart.split('#')[0];
+            }
+            if (queryPart) {
+              try {
+                const queryParams = new URLSearchParams(queryPart);
+                const queryEntries = Object.fromEntries(queryParams.entries());
+                Object.keys(queryEntries).forEach((key) => {
+                  target[key] = queryEntries[key];
+                });
+              } catch {
+                // ignore parse errors
+              }
+            }
+          }
+        };
+
         // Also try to get the URL from the linking event or stored URL
         let urlParams: any = { ...params };
         let currentUrl: string | null = null;
@@ -52,12 +97,12 @@ export default function AuthCallback() {
         try {
           // Try to get the initial URL first
           const initialUrl = await Linking.getInitialURL();
-          console.log("Initial URL for parsing:", initialUrl);
+          
           
           // If no initial URL, try to get from stored deep link URL
           if (!initialUrl || !initialUrl.includes('access_token')) {
             const storedUrl = await AsyncStorage.getItem('last_deep_link_url');
-            console.log("Stored deep link URL:", storedUrl);
+            
             if (storedUrl && storedUrl.includes('access_token')) {
               currentUrl = storedUrl;
               // Clear it so it doesn't get reused
@@ -65,72 +110,27 @@ export default function AuthCallback() {
             }
           }
           
-          currentUrl = initialUrl;
+          if (initialUrl) {
+            const hasAuthPayload =
+              initialUrl.includes('access_token=') ||
+              initialUrl.includes('refresh_token=') ||
+              initialUrl.includes('code=') ||
+              initialUrl.includes('token_hash=');
+            if (hasAuthPayload) {
+              currentUrl = initialUrl;
+            }
+          }
           
-          console.log("Final URL to parse:", currentUrl);
-          console.log("URL contains #:", currentUrl?.includes('#'));
-          console.log("URL contains ?:", currentUrl?.includes('?'));
+          
           
           if (currentUrl && (currentUrl.includes('#') || currentUrl.includes('?'))) {
-            console.log("Parsing URL:", currentUrl);
-            
-            // Parse fragments (after #) manually - this is the main case for Supabase
-            if (currentUrl.includes('#')) {
-              const fragmentPart = currentUrl.split('#')[1];
-              console.log("Fragment part:", fragmentPart);
-              
-              if (fragmentPart) {
-                try {
-                  const fragmentParams = new URLSearchParams(fragmentPart);
-                  const fragmentEntries = Object.fromEntries(fragmentParams.entries());
-                  console.log("Parsed fragment params:", fragmentEntries);
-                  
-                  // Merge fragment params with url params
-                  Object.keys(fragmentEntries).forEach((key) => {
-                    urlParams[key] = fragmentEntries[key];
-                  });
-                } catch (e) {
-                  console.log("Fragment parsing error:", e);
-                }
-              }
-            }
-            
-            // Also parse query params manually (after ? but before #)
-            if (currentUrl.includes('?')) {
-              let queryPart = currentUrl.split('?')[1];
-              // Remove fragment part if it exists
-              if (queryPart.includes('#')) {
-                queryPart = queryPart.split('#')[0];
-              }
-              
-              console.log("Query part:", queryPart);
-              
-              if (queryPart) {
-                try {
-                  const queryParams = new URLSearchParams(queryPart);
-                  const queryEntries = Object.fromEntries(queryParams.entries());
-                  console.log("Parsed query params:", queryEntries);
-                  
-                  Object.keys(queryEntries).forEach((key) => {
-                    urlParams[key] = queryEntries[key];
-                  });
-                } catch (e) {
-                  console.log("Query parsing error:", e);
-                }
-              }
-            }
-            
-            console.log("Final parsed params:", urlParams);
-          } else {
-            console.log("No URL to parse or URL doesn't contain # or ?");
+            mergeUrlParamsFromUrl(urlParams, currentUrl);
           }
         } catch (urlError) {
-          console.log("URL parsing error (continuing with router params):", urlError);
+          
         }
         
-        console.log("Combined URL params:", urlParams);
-        console.log("Router params:", params);
-        console.log("Available param keys:", Object.keys(urlParams));
+        
         
         // Check for different token types from URL fragments or query params
         const access_token = urlParams.access_token as string | undefined;
@@ -141,13 +141,28 @@ export default function AuthCallback() {
         const error_code = urlParams.error_code as string | undefined;
         const type = urlParams.type as string | undefined;
         const test = urlParams.test as string | undefined;
+        const provider_token = urlParams.provider_token as string | undefined;
         
-        console.log("Extracted params:", { access_token: !!access_token, refresh_token: !!refresh_token, code: !!code, token_hash: !!token_hash, test, type });
+        
+
+        const hasAuthParams =
+          !!urlParams.access_token ||
+          !!urlParams.refresh_token ||
+          !!urlParams.code ||
+          !!urlParams.token_hash;
+
+        if (!hasAuthParams) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+          const retryUrl = await AsyncStorage.getItem('last_deep_link_url');
+          if (retryUrl && retryUrl !== currentUrl && (retryUrl.includes('#') || retryUrl.includes('?'))) {
+            mergeUrlParamsFromUrl(urlParams, retryUrl);
+          }
+        }
 
         // Handle error cases first
         if (error_description || error_code) {
           const errorMsg = error_description || `Error code: ${error_code}`;
-          console.log("AuthCallback error:", errorMsg);
+          logCallbackError(errorMsg, "oauth_error");
           Alert.alert("Verification Error", errorMsg);
           router.replace(`/(auth)/verify-email?error=${encodeURIComponent(errorMsg)}`);
           return;
@@ -156,7 +171,7 @@ export default function AuthCallback() {
         // Handle token_hash verification (Supabase email confirmation)
         if (token_hash && type) {
           setStatus("Verifying email confirmation...");
-          console.log("Received token_hash for email verification");
+          
           
           try {
             const { data, error } = await supabase.auth.verifyOtp({
@@ -165,11 +180,11 @@ export default function AuthCallback() {
             });
             
             if (error) {
-              console.log("Token hash verification error:", error);
+              
               
               // Handle rate limiting specifically
               if (error.message.includes("rate limit")) {
-                console.log("Rate limit hit, checking if user is already signed in");
+                
                 setStatus("Checking authentication status...");
                 
                 // Wait a moment then check session
@@ -177,14 +192,14 @@ export default function AuthCallback() {
                 const { data: session } = await supabase.auth.getSession();
                 
                 if (session?.session) {
-                  console.log("User is already signed in despite rate limit");
+                  
                   setStatus("Email verified successfully! Redirecting...");
                   setTimeout(() => {
                     router.replace("/(auth)/verify-email?verified=true");
                   }, 500);
                   return;
                 } else {
-                  console.log("Rate limit hit and no session found");
+                  
                   Alert.alert("Too Many Attempts", "Please wait a moment and try clicking the email link again.");
                   router.replace(`/(auth)/verify-email?error=${encodeURIComponent("Rate limit reached")}`);
                   return;
@@ -194,7 +209,7 @@ export default function AuthCallback() {
               // For other errors, check if user is actually signed in
               const { data: session } = await supabase.auth.getSession();
               if (session?.session) {
-                console.log("Session found despite error - user is actually signed in");
+              
                 setStatus("Email verified successfully! Redirecting...");
                 setTimeout(() => {
                   router.replace("/(auth)/verify-email?verified=true");
@@ -203,14 +218,15 @@ export default function AuthCallback() {
               }
               
               // Only show error if no session exists
-              console.log("No session found, showing error");
+              
+              logCallbackError(error, "token_hash_verify");
               Alert.alert("Verification Error", error.message);
               router.replace(`/(auth)/verify-email?error=${encodeURIComponent(error.message)}`);
               return;
             } 
             
             if (data?.session) {
-              console.log("Session established successfully from token_hash");
+              
               setStatus("Email verified successfully! Redirecting...");
               
               // Small delay to show success message
@@ -223,7 +239,7 @@ export default function AuthCallback() {
             // Check if session exists even without explicit session in response
             const { data: currentSession } = await supabase.auth.getSession();
             if (currentSession?.session) {
-              console.log("Session found after verification - success!");
+              
               setStatus("Email verified successfully! Redirecting...");
               setTimeout(() => {
                 router.replace("/(auth)/verify-email?verified=true");
@@ -231,22 +247,22 @@ export default function AuthCallback() {
               return;
             }
             
-            console.log("No session created from token_hash");
+            
             router.replace("/(auth)/verify-email?error=No session created");
             return;
           } catch (tokenError) {
-            console.error("Token hash verification error:", tokenError);
+            logCallbackError(tokenError, "token_hash_verify_exception");
             
             // Handle rate limiting in catch block too
             if (tokenError instanceof Error && tokenError.message.includes("rate limit")) {
-              console.log("Rate limit exception caught, checking session after delay");
+              
               setStatus("Too many requests, checking status...");
               
               await new Promise(resolve => setTimeout(resolve, 1000));
               try {
                 const { data: session } = await supabase.auth.getSession();
                 if (session?.session) {
-                  console.log("Session found despite rate limit exception");
+                  
                   setStatus("Email verified successfully! Redirecting...");
                   setTimeout(() => {
                     router.replace("/(auth)/verify-email?verified=true");
@@ -254,7 +270,7 @@ export default function AuthCallback() {
                   return;
                 }
               } catch (sessionError) {
-                console.log("Could not check session after rate limit:", sessionError);
+                
               }
               
               Alert.alert("Too Many Attempts", "Please wait a moment before trying again.");
@@ -266,7 +282,7 @@ export default function AuthCallback() {
             try {
               const { data: session } = await supabase.auth.getSession();
               if (session?.session) {
-                console.log("Session found despite exception - user is signed in");
+                
                 setStatus("Email verified successfully! Redirecting...");
                 setTimeout(() => {
                   router.replace("/(auth)/verify-email?verified=true");
@@ -274,7 +290,7 @@ export default function AuthCallback() {
                 return;
               }
             } catch (sessionError) {
-              console.log("Could not check session:", sessionError);
+              
             }
             
             router.replace("/(auth)/verify-email?error=Failed to verify email");
@@ -283,8 +299,10 @@ export default function AuthCallback() {
         }
         // Handle direct token response (URL fragments - for other auth flows)
         else if (access_token && refresh_token) {
-          setStatus("Processing authentication tokens...");
-          console.log("Received direct tokens from email verification");
+          const isOAuthFlow = !!provider_token && !type;
+          setStatus(isOAuthFlow ? "Signing you in..." : "Processing authentication tokens...");
+          
+          oauthPendingRef.current = isOAuthFlow;
           
           try {
             // Set the session directly using the tokens
@@ -293,40 +311,63 @@ export default function AuthCallback() {
               refresh_token,
             });
             
+            
             if (error) {
-              console.log("Token processing error:", error);
+              logCallbackError(error, "set_session");
               Alert.alert("Verification Error", error.message);
               router.replace(`/(auth)/verify-email?error=${encodeURIComponent(error.message)}`);
-            } else if (data?.session) {
-              console.log("Session established successfully from tokens");
-              setStatus("Email verified successfully! Redirecting...");
-              
-              // Small delay to show success message
-              setTimeout(() => {
-                router.replace("/(auth)/verify-email?verified=true");
-              }, 1000);
-            } else {
-              console.log("No session created from tokens");
-              router.replace("/(auth)/verify-email?error=No session created");
+              return;
             }
+
+            if (isOAuthFlow) {
+              
+              setIsComplete(true);
+              setStatus("Signed in! Redirecting...");
+              await routeAfterSignIn();
+              return;
+              setTimeout(async () => {
+                const { data: fallbackSession } = await supabase.auth.getSession();
+                if (fallbackSession?.session) {
+                  await routeAfterSignIn();
+                }
+              }, 600);
+              return;
+            }
+
+            let session = data?.session ?? null;
+            if (!session) {
+              const { data: freshSession } = await supabase.auth.getSession();
+              session = freshSession?.session ?? null;
+            }
+
+            if (session) {
+              
+              setIsComplete(true);
+              setStatus("Email verified successfully! Redirecting...");
+              router.replace("/(auth)/verify-email?verified=true");
+              return;
+            }
+            
+            
+            router.replace("/(auth)/verify-email?error=No session created");
           } catch (tokenError) {
-            console.error("Token processing error:", tokenError);
+            logCallbackError(tokenError, "set_session_exception");
             router.replace("/(auth)/verify-email?error=Failed to process verification tokens");
           }
         }
         // Handle code exchange (traditional OAuth flow)
         else if (code) {
           setStatus("Exchanging verification code...");
-          console.log("Exchanging code for session...");
+          
           
           const { data, error } = await supabase.auth.exchangeCodeForSession(code);
           
           if (error) {
-            console.log("Exchange error:", error);
+            logCallbackError(error, "exchange_code");
             Alert.alert("Verification Error", error.message);
             router.replace(`/(auth)/verify-email?error=${encodeURIComponent(error.message)}`);
           } else if (data?.session) {
-            console.log("Session established successfully from code");
+            
             setStatus("Email verified successfully! Redirecting...");
             
             // Small delay to show success message
@@ -334,21 +375,34 @@ export default function AuthCallback() {
               router.replace("/(auth)/verify-email?verified=true");
             }, 1000);
           } else {
-            console.log("No session created from code");
+            
             router.replace("/(auth)/verify-email?error=No session created");
           }
         } else if (test) {
-          console.log("Test parameter detected:", test);
+          
           Alert.alert("Deep Link Test", `Deep linking is working! Test parameter: ${test}`);
           router.replace("/(auth)/verify-email?verified=test");
         } else {
-          console.log("No verification tokens, token_hash, or code found");
-          console.log("Available params:", Object.keys(urlParams));
+          setStatus("Finalizing sign-in...");
+          let resolvedSession = null;
+          for (let attempt = 0; attempt < 5; attempt += 1) {
+            await new Promise(resolve => setTimeout(resolve, 400));
+            const { data: fallbackSession } = await supabase.auth.getSession();
+            if (fallbackSession?.session) {
+              resolvedSession = fallbackSession.session;
+              break;
+            }
+          }
+          if (resolvedSession) {
+            await routeAfterSignIn();
+            return;
+          }
+
           Alert.alert("No Verification Data", "No verification tokens, token_hash, or code found in the URL.");
           router.replace("/(auth)/verify-email?error=No verification data found");
         }
       } catch (err) {
-        console.error("AuthCallback error:", err);
+        logCallbackError(err, "callback_exception");
         const errorMsg = err instanceof Error ? err.message : "Unexpected error";
         Alert.alert("Verification Error", errorMsg);
         router.replace(`/(auth)/verify-email?error=${encodeURIComponent(errorMsg)}`);
@@ -364,6 +418,22 @@ export default function AuthCallback() {
       exchange();
     }
   }, []); // Empty dependency array - run only once
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_IN") {
+        setIsComplete(true);
+        setStatus("Signed in! Redirecting...");
+        void routeAfterSignIn();
+        setTimeout(() => {
+          if (!didNavigateRef.current) {
+            router.replace("/(auth)/onboarding");
+          }
+        }, 2000);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [router]);
 
   return (
     <View style={{ 

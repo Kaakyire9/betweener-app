@@ -102,7 +102,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
-      console.log('Initial session:', session?.user?.id, session?.user?.email);
       setSession(session);
       setUser(session?.user ?? null);
       setIsLoading(false);
@@ -110,8 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('Auth event:', event, 'User ID:', session?.user?.id);
+      async (_event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
         
@@ -169,7 +167,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .eq('user_id', user.id)
           .maybeSingle();
         if (error) {
-          console.log('[e2ee] fetch public key error', error);
+          console.error('[e2ee] fetch public key error', error);
           return;
         }
         if (!data?.public_key || data.public_key !== keypair.publicKeyB64) {
@@ -178,12 +176,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             .update({ public_key: keypair.publicKeyB64 })
             .eq('user_id', user.id);
           if (updateError) {
-            console.log('[e2ee] update public key error', updateError);
+            console.error('[e2ee] update public key error', updateError);
           }
         }
         await registerPushToken(user.id);
       } catch (error) {
-        console.log('[e2ee] ensure identity error', error);
+        console.error('[e2ee] ensure identity error', error);
       }
     })();
     return () => {
@@ -209,8 +207,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       // Use custom scheme for deep linking
       const redirectUrl = 'betweenerapp://auth/callback';
-      console.log('Using redirect URL:', redirectUrl);
-
       const { error } = await supabase.auth.signUp({
         email,
         password,

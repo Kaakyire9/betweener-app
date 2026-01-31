@@ -218,6 +218,12 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
               By entering your number, you agree to receive texts about your account, including
               verification codes and important updates.
             </Text>
+            <View style={styles.helperRow}>
+              <Ionicons name="information-circle-outline" size={14} color={theme.accent} />
+              <Text style={[styles.helperText, { color: theme.accent }]}>
+                Tip: Confirm your country code matches your number.
+              </Text>
+            </View>
             <Text style={[styles.noticeText, { color: theme.textMuted }]}>
               Message frequency varies. Reply STOP to cancel.
             </Text>
@@ -445,6 +451,20 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginTop: 10,
     fontFamily: 'Manrope_400Regular',
+  },
+  helperText: {
+    fontSize: 12,
+    lineHeight: 18,
+    marginTop: 6,
+    fontFamily: 'Manrope_400Regular',
+    fontStyle: 'italic',
+  },
+  helperRow: {
+    marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
   },
   description: {
     fontSize: 16,

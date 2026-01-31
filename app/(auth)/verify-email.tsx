@@ -52,7 +52,6 @@ export default function VerifyEmailScreen() {
       if (userEmail) {
         const { data: { user }, error } = await supabase.auth.getUser();
         if (user && user.email_confirmed_at) {
-          console.log('User is verified but session may be missing, attempting sign in');
           setVerifiedAndRedirect();
         }
       }
