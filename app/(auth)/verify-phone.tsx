@@ -7,7 +7,7 @@ import {
   setSignupPhoneNumber,
   setSignupPhoneVerified,
 } from "@/lib/signup-tracking";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { LinearGradient } from "expo-linear-gradient";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
@@ -16,6 +16,9 @@ import { Colors } from "@/constants/theme";
 
 export default function VerifyPhoneScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
+  const nextParam = params.next;
+  const nextRoute = typeof nextParam === "string" ? decodeURIComponent(nextParam) : null;
   const [isPreparing, setIsPreparing] = useState(true);
   const [showVerification, setShowVerification] = useState(false);
   const [verifiedPhoneNumber, setVerifiedPhoneNumber] = useState<string | null>(null);
@@ -30,6 +33,11 @@ export default function VerifyPhoneScreen() {
   useEffect(() => {
     let active = true;
     (async () => {
+      const { verified } = await getSignupPhoneState();
+      if (verified) {
+        router.replace(nextRoute ?? "/(auth)/signup-options");
+        return;
+      }
       const sessionId = await getOrCreateSignupSessionId();
       const context = await captureSignupContext();
       if (!active) return;
@@ -104,7 +112,7 @@ export default function VerifyPhoneScreen() {
                   geo_lng: signupContext?.location?.geo_lng ?? null,
                   geo_accuracy: signupContext?.location?.geo_accuracy ?? null,
                 });
-                router.replace("/(auth)/signup-options");
+                router.replace(nextRoute ?? "/(auth)/signup-options");
               }
             }}
           />

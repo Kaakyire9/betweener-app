@@ -174,8 +174,6 @@ export default function Onboarding() {
     setMessage("");
 
     try {
-      console.log("Starting profile creation...");
-      console.log("User from context:", user?.id, user?.email);
 
       // 1. Check if user is available from auth context
       if (!user) {
@@ -186,7 +184,6 @@ export default function Onboarding() {
 
       // 2. Upload image
       if (image) {
-        console.log("Uploading image...");
         const fileExt = image.split(".").pop() || "jpg";
         const fileName = `${user.id}/${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
 
@@ -202,18 +199,15 @@ export default function Onboarding() {
           });
 
         if (uploadError) {
-          console.error("Image upload error:", uploadError);
           throw new Error(`Image upload failed: ${uploadError.message}`);
         }
 
         const { data } = supabase.storage.from("profiles").getPublicUrl(fileName);
         imageUrl = data.publicUrl;
-        console.log("Image uploaded successfully:", imageUrl);
       }
 
       // 3. Create/update profile using auth context
-      console.log("Creating profile...");
-      console.log("Form data before processing:", {
+      const profilePreview = {
         fullName: form.fullName,
         age: form.age,
         gender: form.gender,
@@ -221,11 +215,10 @@ export default function Onboarding() {
         region: form.region,
         tribe: form.tribe,
         religion: form.religion
-      });
+      };
       
       // Safety check for gender field
       if (!form.gender || form.gender.trim() === '') {
-        console.error("Gender field is empty during submission!");
         Alert.alert("Error", "Please select your gender before continuing.");
         return;
       }
@@ -250,17 +243,12 @@ export default function Onboarding() {
         years_in_diaspora: form.livingLocation === "Abroad" ? Number(form.yearsAbroad) || 0 : 0,
       };
 
-      console.log("Profile data to be sent to database:", profileData);
-
       const { error: updateError } = await updateProfile(profileData);
 
       if (updateError) {
-        console.error("Profile update error:", updateError);
         throw new Error(`Profile creation failed: ${updateError.message}`);
       }
 
-      console.log("Profile created successfully!");
-      
       // Different success messages based on location
       if (form.livingLocation === "Abroad") {
         setMessage("Profile created successfully! 🎉\n\n✨ As a diaspora member, consider verifying your status to build trust and increase your visibility!");
@@ -272,22 +260,14 @@ export default function Onboarding() {
       
       // Force refresh the auth context to ensure profile state is updated
       setTimeout(async () => {
-        console.log("Refreshing auth state...");
         await refreshProfile();
-        
-        console.log("Checking auth state before navigation...");
-        console.log("User:", user?.id);
-        console.log("User email verified:", user?.email_confirmed_at);
-        
+
         // Wait a bit longer to ensure database is fully updated
         await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        console.log("Navigating to main app...");
         router.dismissAll();
         router.replace("/(tabs)/");
       }, 2000);
     } catch (error: any) {
-      console.error("Onboarding error:", error);
       setMessage(error.message || "An error occurred");
     } finally {
       setLoading(false);
@@ -317,7 +297,6 @@ export default function Onboarding() {
               await signOut();
               router.replace("/(auth)/login");
             } catch (error) {
-              console.error("Sign out error:", error);
               Alert.alert("Error", "Failed to sign out. Please try again.");
             }
           },
@@ -900,7 +879,6 @@ export default function Onboarding() {
         {renderHeader()}
         
         <View style={styles.content}>
-          {__DEV__ && <AuthDebugPanel />}
           {renderCurrentStep()}
         </View>
         

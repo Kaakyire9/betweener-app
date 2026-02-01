@@ -67,20 +67,13 @@ export const registerPushToken = async (userId: string) => {
   const deviceId = (Constants as any).deviceId || Device.osBuildId || null;
   const appVersion = Constants.nativeAppVersion || null;
 
-  const { error } = await supabase
-    .from('push_tokens')
-    .upsert(
-      {
-        user_id: userId,
-        token,
-        platform: Platform.OS,
-        device_id: deviceId,
-        app_version: appVersion,
-        last_seen_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'token' },
-    );
+  const { error } = await supabase.rpc('upsert_push_token', {
+    p_user_id: userId,
+    p_token: token,
+    p_platform: Platform.OS,
+    p_device_id: deviceId,
+    p_app_version: appVersion,
+  });
 
   if (error) {
     console.log('[push] token upsert error', error);

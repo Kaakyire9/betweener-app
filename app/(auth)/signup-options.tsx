@@ -4,6 +4,7 @@ import {
   setPendingAuthMethod,
 } from "@/lib/signup-tracking";
 import { supabase } from "@/lib/supabase";
+import * as AppleAuthentication from "expo-apple-authentication";
 import { makeRedirectUri } from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
 import { useRouter } from "expo-router";
@@ -69,19 +70,36 @@ export default function SignupOptionsScreen() {
     try {
       await setPendingAuthMethod("oauth", "apple");
       await logSignupEvent({ auth_method: "oauth", oauth_provider: "apple" });
-      const redirectTo = getRedirectUrl();
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: "apple",
-        options: { redirectTo },
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
       });
-      if (error || !data?.url) {
-        throw error ?? new Error("Unable to start Apple sign-in.");
+      if (!credential.identityToken) {
+        throw new Error("Apple sign-in failed to return a token.");
       }
-      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-      if (result.type === "success" && result.url) {
-        await AsyncStorage.setItem("last_deep_link_url", result.url);
-        router.replace("/(auth)/callback");
+      const { error } = await supabase.auth.signInWithIdToken({
+        provider: "apple",
+        token: credential.identityToken,
+      });
+      if (error) {
+        throw error;
       }
+      const { data: userData } = await supabase.auth.getUser();
+      const userId = userData?.user?.id;
+      if (!userId) {
+        throw new Error("Apple sign-in completed without a user.");
+      }
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (profileError && profileError.code !== "PGRST116") {
+        throw profileError;
+      }
+      router.replace(profile ? "/(tabs)/" : "/(auth)/onboarding");
     } catch (error) {
       console.error("[auth] apple sign-in error", error);
     } finally {
@@ -89,10 +107,10 @@ export default function SignupOptionsScreen() {
     }
   };
 
-  const handleEmail = async () => {
-    await setPendingAuthMethod("password");
-    await logSignupEvent({ auth_method: "password" });
-    router.push("/(auth)/signup");
+  const handleEmailLink = async () => {
+    await setPendingAuthMethod("otp");
+    await logSignupEvent({ auth_method: "otp" });
+    router.push({ pathname: "/(auth)/magic-link", params: { mode: "signup" } });
   };
 
   const theme = Colors.light;
@@ -107,7 +125,7 @@ export default function SignupOptionsScreen() {
       <View style={styles.panel}>
         <Text style={styles.title}>Create your account</Text>
         <Text style={styles.subtitle}>
-          Continue with Google or Apple for the fastest setup, or use email and password.
+          Continue with Google or Apple for the fastest setup, or use a secure email link.
         </Text>
 
       <Pressable
@@ -151,17 +169,30 @@ export default function SignupOptionsScreen() {
       )}
 
       <Pressable
-        onPress={handleEmail}
+        onPress={handleEmailLink}
         disabled={loadingProvider !== null}
         style={[styles.providerButton, styles.emailButton]}
       >
         <MaterialCommunityIcons name="email-outline" size={20} color="#fff" />
-        <Text style={styles.providerText}>Use email and password</Text>
+        <Text style={styles.providerText}>Continue with email link</Text>
+      </Pressable>
+
+      <Pressable
+        onPress={() =>
+          router.push({
+            pathname: "/(auth)/verify-phone",
+            params: { next: encodeURIComponent("/(auth)/signup") },
+          })
+        }
+        style={styles.secondaryLink}
+      >
+        <Text style={styles.secondaryText}>Prefer password? Use email and password</Text>
       </Pressable>
 
         <Pressable onPress={() => router.replace("/(auth)/login")} style={styles.loginLink}>
           <Text style={styles.loginText}>Already have an account? Log in</Text>
         </Pressable>
+
       </View>
     </LinearGradient>
   );
@@ -226,6 +257,15 @@ const styles = StyleSheet.create({
   },
   loginLink: {
     alignItems: "center",
+  },
+  secondaryLink: {
+    alignItems: "center",
+    marginBottom: 18,
+  },
+  secondaryText: {
+    fontFamily: "Manrope_500Medium",
+    color: "#64748B",
+    fontSize: 14,
   },
   loginText: {
     fontFamily: "Manrope_500Medium",

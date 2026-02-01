@@ -233,6 +233,7 @@ export default function AuthCallback() {
               setTimeout(() => {
                 router.replace("/(auth)/verify-email?verified=true");
               }, 1000);
+              await AsyncStorage.removeItem("last_deep_link_url");
               return;
             } 
             
@@ -244,6 +245,7 @@ export default function AuthCallback() {
               setTimeout(() => {
                 router.replace("/(auth)/verify-email?verified=true");
               }, 500);
+              await AsyncStorage.removeItem("last_deep_link_url");
               return;
             }
             
@@ -287,6 +289,7 @@ export default function AuthCallback() {
                 setTimeout(() => {
                   router.replace("/(auth)/verify-email?verified=true");
                 }, 500);
+                await AsyncStorage.removeItem("last_deep_link_url");
                 return;
               }
             } catch (sessionError) {
@@ -324,6 +327,7 @@ export default function AuthCallback() {
               setIsComplete(true);
               setStatus("Signed in! Redirecting...");
               await routeAfterSignIn();
+              await AsyncStorage.removeItem("last_deep_link_url");
               return;
               setTimeout(async () => {
                 const { data: fallbackSession } = await supabase.auth.getSession();
@@ -345,6 +349,7 @@ export default function AuthCallback() {
               setIsComplete(true);
               setStatus("Email verified successfully! Redirecting...");
               router.replace("/(auth)/verify-email?verified=true");
+              await AsyncStorage.removeItem("last_deep_link_url");
               return;
             }
             
@@ -374,6 +379,7 @@ export default function AuthCallback() {
             setTimeout(() => {
               router.replace("/(auth)/verify-email?verified=true");
             }, 1000);
+            await AsyncStorage.removeItem("last_deep_link_url");
           } else {
             
             router.replace("/(auth)/verify-email?error=No session created");

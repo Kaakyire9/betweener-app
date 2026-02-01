@@ -1,28 +1,60 @@
+import { useAuth } from "@/lib/auth-context";
+import { Colors } from "@/constants/theme";
+import { LinearGradient } from "expo-linear-gradient";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
 
-export default function ResetPasswordScreen() {
+export default function PasswordLoginScreen() {
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [focused, setFocused] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
+  const [focusedField, setFocusedField] = useState<"email" | "password" | null>(null);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const router = useRouter();
+  const { signIn, isAuthenticating } = useAuth();
 
-  const handleReset = async () => {
-    setLoading(true);
+  const validate = () => {
+    if (!email.match(/^[^@\s]+@[^@\s]+\.[^@\s]+$/)) {
+      setError("Please enter a valid email address.");
+      return false;
+    }
+    if (!password) {
+      setError("Please enter your password.");
+      return false;
+    }
     setError("");
-    setMessage("");
-    // TODO: Implement Supabase password update logic here
-    setTimeout(() => {
-      setLoading(false);
-      setMessage("Password reset successful! You can now log in.");
-      setTimeout(() => router.replace("/(auth)/login"), 1500);
-    }, 1000);
+    return true;
+  };
+
+  const handleLogin = async () => {
+    if (!validate()) return;
+    setError("");
+    setSuccess("");
+
+    try {
+      const { error } = await signIn(email, password);
+      if (error) {
+        setError(error.message);
+        return;
+      }
+      setSuccess("Signed in successfully.");
+      setTimeout(() => {
+        router.replace("/(tabs)/");
+      }, 800);
+    } catch {
+      setError("An unexpected error occurred. Please try again.");
+    }
   };
 
   return (
@@ -41,24 +73,44 @@ export default function ResetPasswordScreen() {
           </View>
           <View style={styles.brandRule} />
         </View>
+        <Text style={styles.title}>Password Login</Text>
+        <Text style={styles.subtitle}>
+          Use this if you prefer a password. For a faster, more secure experience, use the email link.
+        </Text>
 
-        <Text style={styles.title}>Reset Password</Text>
-        <Text style={styles.subtitle}>Set a new password to keep your account secure.</Text>
+        <View style={[styles.inputShell, focusedField === "email" && styles.inputShellActive]}>
+          <MaterialCommunityIcons
+            name="email-outline"
+            size={18}
+            color={focusedField === "email" ? "#7C5FE6" : "#94A3B8"}
+          />
+          <TextInput
+            placeholder="Email"
+            placeholderTextColor="#94A3B8"
+            value={email}
+            onChangeText={setEmail}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            onFocus={() => setFocusedField("email")}
+            onBlur={() => setFocusedField((prev) => (prev === "email" ? null : prev))}
+            style={styles.input}
+          />
+        </View>
 
-        <View style={[styles.inputShell, focused && styles.inputShellActive]}>
+        <View style={[styles.inputShell, focusedField === "password" && styles.inputShellActive]}>
           <MaterialCommunityIcons
             name="lock-outline"
             size={18}
-            color={focused ? "#7C5FE6" : "#94A3B8"}
+            color={focusedField === "password" ? "#7C5FE6" : "#94A3B8"}
           />
           <TextInput
-            placeholder="New Password"
+            placeholder="Password"
             placeholderTextColor="#94A3B8"
             value={password}
             onChangeText={setPassword}
             secureTextEntry={!showPassword}
-            onFocus={() => setFocused(true)}
-            onBlur={() => setFocused(false)}
+            onFocus={() => setFocusedField("password")}
+            onBlur={() => setFocusedField((prev) => (prev === "password" ? null : prev))}
             style={styles.input}
           />
           <Pressable
@@ -70,30 +122,40 @@ export default function ResetPasswordScreen() {
             <MaterialCommunityIcons
               name={showPassword ? "eye-off-outline" : "eye-outline"}
               size={18}
-              color={focused ? "#7C5FE6" : "#94A3B8"}
+              color={focusedField === "password" ? "#7C5FE6" : "#94A3B8"}
             />
           </Pressable>
         </View>
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
-        {message ? <Text style={styles.successText}>{message}</Text> : null}
+        {success ? <Text style={styles.successText}>{success}</Text> : null}
 
         <TouchableOpacity
-          style={[styles.primaryButton, loading && styles.buttonDisabled]}
-          onPress={handleReset}
-          disabled={loading}
+          style={[styles.primaryButton, isAuthenticating && styles.buttonDisabled]}
+          onPress={handleLogin}
+          disabled={isAuthenticating}
         >
           <Text style={styles.primaryButtonText}>
-            {loading ? "Resetting..." : "Reset Password"}
+            {isAuthenticating ? "Signing In..." : "Sign In"}
           </Text>
           <MaterialCommunityIcons name="arrow-right" size={18} color="#fff" />
         </TouchableOpacity>
 
-        <Pressable onPress={() => router.push("/(auth)/login")} style={styles.inlineRow}>
-          <Text style={styles.inlineLink}>Back to Login</Text>
+        <View style={styles.inlineRow}>
+          <Text style={styles.inlineText}>Prefer the secure link? </Text>
+          <Pressable onPress={() => router.push("/(auth)/magic-link")}>
+            <Text style={styles.inlineLink}>Send email link</Text>
+          </Pressable>
+        </View>
+
+        <Pressable
+          onPress={() => router.push("/(auth)/forgot-password")}
+          style={styles.forgotLink}
+        >
+          <Text style={styles.forgotText}>Forgot your password?</Text>
         </Pressable>
 
-        {loading && <ActivityIndicator style={{ marginTop: 8 }} />}
+        {isAuthenticating && <ActivityIndicator style={{ marginTop: 8 }} />}
       </View>
     </LinearGradient>
   );
@@ -168,6 +230,13 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 22,
   },
+  input: {
+    flex: 1,
+    paddingVertical: 14,
+    fontSize: 16,
+    fontFamily: "Manrope_400Regular",
+    color: "#0F172A",
+  },
   inputShell: {
     flexDirection: "row",
     alignItems: "center",
@@ -186,13 +255,6 @@ const styles = StyleSheet.create({
   inputShellActive: {
     borderColor: "#7C5FE6",
     shadowOpacity: 0.12,
-  },
-  input: {
-    flex: 1,
-    paddingVertical: 14,
-    fontSize: 16,
-    fontFamily: "Manrope_400Regular",
-    color: "#0F172A",
   },
   iconButton: {
     padding: 6,
@@ -232,9 +294,23 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "center",
   },
+  inlineText: {
+    color: "#64748B",
+    fontFamily: "Manrope_400Regular",
+    fontSize: 15,
+  },
   inlineLink: {
     color: "#0FBAB5",
     fontFamily: "Manrope_500Medium",
     fontSize: 15,
+  },
+  forgotLink: {
+    marginTop: 16,
+    alignItems: "center",
+  },
+  forgotText: {
+    color: "#64748B",
+    fontFamily: "Manrope_500Medium",
+    fontSize: 14,
   },
 });
