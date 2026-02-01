@@ -1,5 +1,4 @@
 import { supabase } from "@/lib/supabase";
-import * as AppleAuthentication from "expo-apple-authentication";
 import { makeRedirectUri } from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
 import { useRouter } from "expo-router";
@@ -52,21 +51,18 @@ export default function LoginScreen() {
     if (Platform.OS !== "ios") return;
     setLoadingProvider("apple");
     try {
-      const credential = await AppleAuthentication.signInAsync({
-        requestedScopes: [
-          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
-          AppleAuthentication.AppleAuthenticationScope.EMAIL,
-        ],
-      });
-      if (!credential.identityToken) {
-        throw new Error("Apple sign-in failed to return a token.");
-      }
-      const { error } = await supabase.auth.signInWithIdToken({
+      const redirectTo = getRedirectUrl();
+      const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "apple",
-        token: credential.identityToken,
+        options: { redirectTo },
       });
-      if (error) {
-        throw error;
+      if (error || !data?.url) {
+        throw error ?? new Error("Unable to start Apple sign-in.");
+      }
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+      if (result.type === "success" && result.url) {
+        await AsyncStorage.setItem("last_deep_link_url", result.url);
+        router.replace("/(auth)/callback");
       }
     } catch (error) {
       console.error("[auth] apple sign-in error", error);
