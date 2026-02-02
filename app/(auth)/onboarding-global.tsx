@@ -67,6 +67,31 @@ const INTERESTS = [
   "Reading",
   "Art",
 ];
+const OCCUPATION_OPTIONS = [
+  "Student",
+  "Software Engineer",
+  "Teacher",
+  "Doctor",
+  "Lawyer",
+  "Nurse",
+  "Business Owner",
+  "Marketing",
+  "Sales",
+  "Designer",
+  "Accountant",
+  "Engineer",
+  "Consultant",
+  "Manager",
+  "Artist",
+  "Writer",
+  "Photographer",
+  "Chef",
+  "Fitness Trainer",
+  "Real Estate",
+  "Healthcare",
+  "Finance",
+  "Other",
+];
 
 const ONBOARDING_STEPS = [
   { id: 'welcome', title: 'Where connection begins', subtitle: 'A more intentional way to meet' },
@@ -84,11 +109,14 @@ export default function Onboarding() {
   const fontsLoaded = useAppFonts();
   
   const [currentStep, setCurrentStep] = useState(0);
+  const [focusedField, setFocusedField] = useState<string | null>(null);
+  const [customOccupation, setCustomOccupation] = useState("");
   const [form, setForm] = useState({
     fullName: "",
     age: "",
     gender: "",
     bio: "",
+    occupation: "",
     region: "",
     tribe: "",
     religion: "",
@@ -107,7 +135,17 @@ export default function Onboarding() {
   // Animation values
   const progressAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(0)).current;
+  const SLIDE_UP_DISTANCE = 18;
   const fadeAnim = useRef(new Animated.Value(1)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const burstShownRef = useRef(false);
+  const [showBurst, setShowBurst] = useState(false);
+  const burstAnims = useRef(Array.from({ length: 6 }, () => ({
+    y: new Animated.Value(0),
+    x: new Animated.Value(0),
+    opacity: new Animated.Value(0),
+    scale: new Animated.Value(0.6),
+  }))).current;
 
   const pickImage = async () => {
     try {
@@ -141,6 +179,9 @@ export default function Onboarding() {
         if (!form.age || Number(form.age) < 18) newErrors.age = "You must be at least 18.";
         if (!form.gender) newErrors.gender = "Gender is required.";
         if (!form.bio.trim()) newErrors.bio = "Bio is required.";
+        if (!form.occupation) newErrors.occupation = "Occupation is required.";
+        if (form.occupation === "Other" && !customOccupation.trim())
+          newErrors.occupation = "Please enter your occupation.";
         break;
       case 2: // Photo
         if (!image) newErrors.profilePic = "Profile picture is required.";
@@ -269,6 +310,10 @@ export default function Onboarding() {
         age: form.age,
         gender: form.gender,
         bio: form.bio,
+        occupation:
+          form.occupation === "Other" && customOccupation.trim()
+            ? customOccupation.trim()
+            : form.occupation,
         region: form.region,
         tribe: form.tribe,
         religion: form.religion
@@ -287,6 +332,10 @@ export default function Onboarding() {
         age: Number(form.age),
         gender: form.gender.toUpperCase(),
         bio: form.bio,
+        occupation:
+          form.occupation === "Other" && customOccupation.trim()
+            ? customOccupation.trim()
+            : form.occupation,
         region: form.region,
         tribe: form.tribe,
         religion: form.religion.toUpperCase(),
@@ -318,7 +367,7 @@ export default function Onboarding() {
 
       await finalizeSignupPhoneVerification();
       await clearSignupSession();
-      setMessage("Profile created successfully! Welcome to Betweener! ??");
+      setMessage("Profile created successfully! Welcome to Betweener!");
       
       setProfileCreated(true);
       
@@ -379,6 +428,41 @@ export default function Onboarding() {
     }).start();
   }, [currentStep]);
 
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.12, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulseAnim]);
+
+  useEffect(() => {
+    const isLast = currentStep === ONBOARDING_STEPS.length - 1;
+    if (!isLast || burstShownRef.current) return;
+    burstShownRef.current = true;
+    setShowBurst(true);
+    burstAnims.forEach((anim, idx) => {
+      anim.x.setValue((idx - 2.5) * 6);
+      anim.y.setValue(8);
+      anim.opacity.setValue(0);
+      anim.scale.setValue(0.6);
+      Animated.sequence([
+        Animated.delay(idx * 80),
+        Animated.parallel([
+          Animated.timing(anim.opacity, { toValue: 1, duration: 180, useNativeDriver: true }),
+          Animated.timing(anim.y, { toValue: -20 - idx * 6, duration: 900, useNativeDriver: true }),
+          Animated.timing(anim.scale, { toValue: 1, duration: 260, useNativeDriver: true }),
+        ]),
+        Animated.timing(anim.opacity, { toValue: 0, duration: 220, useNativeDriver: true }),
+      ]).start();
+    });
+    const t = setTimeout(() => setShowBurst(false), 1400);
+    return () => clearTimeout(t);
+  }, [burstAnims, currentStep]);
+
   const nextStep = () => {
     if (currentStep < ONBOARDING_STEPS.length - 1) {
       Animated.sequence([
@@ -388,7 +472,7 @@ export default function Onboarding() {
           useNativeDriver: true,
         }),
         Animated.timing(slideAnim, {
-          toValue: -screenWidth,
+          toValue: SLIDE_UP_DISTANCE,
           duration: 0,
           useNativeDriver: true,
         }),
@@ -418,7 +502,7 @@ export default function Onboarding() {
           useNativeDriver: true,
         }),
         Animated.timing(slideAnim, {
-          toValue: screenWidth,
+          toValue: SLIDE_UP_DISTANCE,
           duration: 0,
           useNativeDriver: true,
         }),
@@ -450,7 +534,7 @@ export default function Onboarding() {
   const renderProgressBar = () => (
     <View style={styles.progressContainer}>
       <LinearGradient
-        colors={["rgba(255,255,255,0.88)", "rgba(239,230,219,0.8)"]}
+        colors={["rgba(255,255,255,0.7)", "rgba(239,230,219,0.45)"]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.progressBand}
@@ -477,10 +561,53 @@ export default function Onboarding() {
         </Animated.View>
       </View>
     </View>
-      <Text style={styles.progressText}>
-        {currentStep + 1} of {ONBOARDING_STEPS.length}
-      </Text>
-      <Text style={styles.progressHint}>Takes less than 2 minutes</Text>
+      <View style={styles.progressHeartsRow}>
+        {ONBOARDING_STEPS.map((_, idx) => {
+          const isDone = idx < currentStep;
+          const isActive = idx === currentStep;
+          const scaleStyle = isActive ? { transform: [{ scale: pulseAnim }] } : undefined;
+          return (
+            <Animated.View
+              key={`heart-${idx}`}
+              style={[
+                styles.progressHeartWrap,
+                isActive && styles.progressHeartActive,
+                scaleStyle,
+              ]}
+            >
+            <MaterialCommunityIcons
+              name={isDone || isActive ? 'heart' : 'heart-outline'}
+              size={isActive ? 24 : 20}
+              color={isDone || isActive ? BRAND_LILAC : 'rgba(15,23,42,0.25)'}
+            />
+            </Animated.View>
+          );
+        })}
+        {showBurst ? (
+          <View style={styles.progressBurstLayer} pointerEvents="none">
+            {burstAnims.map((anim, idx) => (
+              <Animated.View
+                key={`burst-${idx}`}
+                style={{
+                  position: 'absolute',
+                  opacity: anim.opacity,
+                  transform: [
+                    { translateX: anim.x },
+                    { translateY: anim.y },
+                    { scale: anim.scale },
+                  ],
+                }}
+              >
+                <MaterialCommunityIcons
+                  name="heart"
+                  size={14}
+                  color={BRAND_LILAC}
+                />
+              </Animated.View>
+            ))}
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 
@@ -503,24 +630,16 @@ export default function Onboarding() {
         <Text style={styles.stepSubtitle}>{ONBOARDING_STEPS[currentStep].subtitle}</Text>
       </View>
       
-      <View style={styles.headerRight}>
-        <Pressable
-          onPress={handleSignOut}
-          style={styles.signOutButton}
-          accessibilityLabel="Sign out"
-        >
-          <MaterialCommunityIcons name="logout" size={20} color="#ef4444" />
-        </Pressable>
-      </View>
+      <View style={styles.headerRight} />
     </View>
   );
 
   const renderWelcomeStep = () => (
-    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }] }]}> 
+    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}> 
       <View style={styles.welcomeContainer}>
         <View style={styles.heroCard}>
           <LinearGradient
-            colors={["rgba(255,255,255,0.92)", "rgba(246,241,232,0.88)"]}
+            colors={["rgba(255,255,255,0.94)", "rgba(232,218,202,0.95)"]}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={styles.heroCardInner}
@@ -540,6 +659,15 @@ export default function Onboarding() {
             <View style={styles.gradientTitleWrap}>
               <Text style={[styles.gradientTitleText, { color: BRAND_TEAL }]}>Betweener</Text>
               <Text style={[styles.gradientTitleText, styles.gradientTitleTop, { color: BRAND_LILAC }]}>Betweener</Text>
+            </View>
+
+            <View style={styles.titleUnderlineWrap}>
+              <LinearGradient
+                colors={[BRAND_TEAL, BRAND_LILAC]}
+                start={{ x: 0, y: 0.5 }}
+                end={{ x: 1, y: 0.5 }}
+                style={styles.titleUnderline}
+              />
             </View>
 
             <Text style={styles.taglineText}>Meaningful connection, in the in-between.</Text>
@@ -571,81 +699,187 @@ export default function Onboarding() {
   );
 
   const renderBasicInfoStep = () => (
-    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }] }]}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <View style={styles.inputContainer}>
-          <Text style={styles.label}>Full Name</Text>
-          <TextInput
-            style={[styles.input, errors.fullName && styles.inputError]}
-            value={form.fullName}
-            onChangeText={(text) => setForm((prev) => ({ ...prev, fullName: text }))}
-            placeholder="Enter your full name"
-            placeholderTextColor="#9ca3af"
-          />
-          {errors.fullName && <Text style={styles.errorText}>{errors.fullName}</Text>}
-        </View>
-
-        <View style={styles.inputRow}>
-          <View style={[styles.inputContainer, { flex: 1 }]}>
-            <Text style={styles.label}>Age</Text>
-            <TextInput
-              style={[styles.input, errors.age && styles.inputError]}
-              value={form.age}
-              onChangeText={(text) => setForm((prev) => ({ ...prev, age: text }))}
-              placeholder="Age"
-              keyboardType="numeric"
-              placeholderTextColor="#9ca3af"
-            />
-            {errors.age && <Text style={styles.errorText}>{errors.age}</Text>}
-          </View>
-        </View>
-
-        <View style={styles.inputContainer}>
-          <Text style={styles.label}>Gender</Text>
-          <View style={styles.genderContainer}>
-            {["Male", "Female", "Other"].map((gender) => (
-              <TouchableOpacity
-                key={gender}
+    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.formScrollContent}>
+        <View style={styles.formCard}>
+          <LinearGradient
+            colors={["rgba(255,255,255,0.96)", "rgba(238,226,212,0.96)"]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.formCardInner}
+          >
+            <View style={styles.inputContainer}>
+              <View style={styles.labelRow}>
+                <Text style={styles.labelInline}>Name</Text>
+                <View style={styles.requiredBadge}>
+                  <Text style={styles.requiredBadgeText}>Required</Text>
+                </View>
+              </View>
+              <TextInput
                 style={[
-                  styles.genderOption,
-                  form.gender === gender && styles.genderOptionSelected,
+                  styles.input,
+                  focusedField === "fullName" && styles.inputFocused,
+                  errors.fullName && styles.inputError,
                 ]}
-                onPress={() => setForm((prev) => ({ ...prev, gender }))}
-              >
-                <Text
-                  style={[
-                    styles.genderText,
-                    form.gender === gender && styles.genderTextSelected,
-                  ]}
-                >
-                  {gender}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          {errors.gender && <Text style={styles.errorText}>{errors.gender}</Text>}
-        </View>
+                value={form.fullName}
+                onChangeText={(text) => setForm((prev) => ({ ...prev, fullName: text }))}
+                placeholder="Enter your name"
+                placeholderTextColor="#9ca3af"
+                onFocus={() => setFocusedField("fullName")}
+                onBlur={() => setFocusedField(null)}
+              />
+              {errors.fullName && <Text style={styles.errorText}>{errors.fullName}</Text>}
+            </View>
 
-        <View style={styles.inputContainer}>
-          <Text style={styles.label}>Bio</Text>
-          <TextInput
-            style={[styles.textArea, errors.bio && styles.inputError]}
-            value={form.bio}
-            onChangeText={(text) => setForm((prev) => ({ ...prev, bio: text }))}
-            placeholder="Tell us about yourself..."
-            multiline
-            numberOfLines={4}
-            textAlignVertical="top"
-            placeholderTextColor="#9ca3af"
-          />
-          {errors.bio && <Text style={styles.errorText}>{errors.bio}</Text>}
+            <View style={styles.inputRow}>
+              <View style={[styles.inputContainer, { flex: 1 }]}>
+                <View style={styles.labelRow}>
+                  <Text style={styles.labelInline}>Age</Text>
+                  <View style={styles.requiredBadge}>
+                    <Text style={styles.requiredBadgeText}>Required</Text>
+                  </View>
+                </View>
+                <TextInput
+                  style={[
+                    styles.input,
+                    focusedField === "age" && styles.inputFocused,
+                    errors.age && styles.inputError,
+                  ]}
+                  value={form.age}
+                  onChangeText={(text) => setForm((prev) => ({ ...prev, age: text }))}
+                  placeholder="Age"
+                  keyboardType="numeric"
+                  placeholderTextColor="#9ca3af"
+                  onFocus={() => setFocusedField("age")}
+                  onBlur={() => setFocusedField(null)}
+                />
+                {errors.age && <Text style={styles.errorText}>{errors.age}</Text>}
+              </View>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <View style={styles.labelRow}>
+                <Text style={styles.labelInline}>Gender</Text>
+                <View style={styles.requiredBadge}>
+                  <Text style={styles.requiredBadgeText}>Required</Text>
+                </View>
+              </View>
+              <View style={styles.genderContainer}>
+                {["Male", "Female", "Other"].map((gender) => (
+                  <TouchableOpacity
+                    key={gender}
+                    style={[
+                      styles.genderOption,
+                      form.gender === gender && styles.genderOptionSelected,
+                    ]}
+                    onPress={() => setForm((prev) => ({ ...prev, gender }))}
+                  >
+                    <Text
+                      style={[
+                        styles.genderText,
+                        form.gender === gender && styles.genderTextSelected,
+                      ]}
+                    >
+                      {gender}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {errors.gender && <Text style={styles.errorText}>{errors.gender}</Text>}
+            </View>
+
+            <View style={styles.inputContainer}>
+              <View style={styles.labelRow}>
+                <Text style={styles.labelInline}>Bio</Text>
+                <View style={styles.requiredBadge}>
+                  <Text style={styles.requiredBadgeText}>Required</Text>
+                </View>
+              </View>
+              <TextInput
+                style={[
+                  styles.textArea,
+                  focusedField === "bio" && styles.textAreaFocused,
+                  errors.bio && styles.inputError,
+                ]}
+                value={form.bio}
+                onChangeText={(text) => setForm((prev) => ({ ...prev, bio: text }))}
+                placeholder="Tell us about yourself..."
+                multiline
+                numberOfLines={4}
+                textAlignVertical="top"
+                placeholderTextColor="#9ca3af"
+                onFocus={() => setFocusedField("bio")}
+                onBlur={() => setFocusedField(null)}
+              />
+              {errors.bio && <Text style={styles.errorText}>{errors.bio}</Text>}
+            </View>
+
+            <View style={styles.inputContainer}>
+              <View style={styles.labelRow}>
+                <Text style={styles.labelInline}>Occupation</Text>
+                <View style={styles.requiredBadge}>
+                  <Text style={styles.requiredBadgeText}>Required</Text>
+                </View>
+              </View>
+              <View style={styles.optionsGrid}>
+                {OCCUPATION_OPTIONS.map((occupation) => (
+                  <TouchableOpacity
+                    key={occupation}
+                    style={[
+                      styles.gridOption,
+                      form.occupation === occupation && styles.gridOptionSelected,
+                    ]}
+                    onPress={() => {
+                      setForm((prev) => ({ ...prev, occupation }));
+                      setErrors((prev) => ({ ...prev, occupation: "" }));
+                      if (occupation !== "Other") {
+                        setCustomOccupation("");
+                      }
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.gridOptionText,
+                        form.occupation === occupation && styles.gridOptionTextSelected,
+                      ]}
+                    >
+                      {occupation}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {form.occupation === "Other" ? (
+                <TextInput
+                  style={[
+                    styles.input,
+                    focusedField === "customOccupation" && styles.inputFocused,
+                    errors.occupation && styles.inputError,
+                  ]}
+                  value={customOccupation}
+                  onChangeText={(text) => {
+                    setCustomOccupation(text);
+                    if (text.trim()) {
+                      setErrors((prev) => ({ ...prev, occupation: "" }));
+                    }
+                  }}
+                  placeholder="Enter your occupation"
+                  placeholderTextColor="#9ca3af"
+                  onFocus={() => setFocusedField("customOccupation")}
+                  onBlur={() => setFocusedField(null)}
+                />
+              ) : null}
+              {errors.occupation && (
+                <Text style={styles.errorText}>{errors.occupation}</Text>
+              )}
+            </View>
+          </LinearGradient>
         </View>
       </ScrollView>
     </Animated.View>
   );
 
   const renderPhotoStep = () => (
-    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }] }]}>
+    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
       <View style={styles.photoContainer}>
         <TouchableOpacity onPress={pickImage} style={styles.photoUpload}>
           <View style={styles.photoPreview}>
@@ -668,10 +902,15 @@ export default function Onboarding() {
   );
 
   const renderLocationStep = () => (
-    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }] }]}>
+    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
       <ScrollView showsVerticalScrollIndicator={false}>
         <View style={styles.inputContainer}>
-          <Text style={styles.label}>Current Country</Text>
+          <View style={styles.labelRow}>
+            <Text style={styles.labelInline}>Current Country</Text>
+            <View style={styles.requiredBadge}>
+              <Text style={styles.requiredBadgeText}>Required</Text>
+            </View>
+          </View>
           <View style={styles.optionsGrid}>
             {["United States", "United Kingdom", "Canada", "Germany", "Netherlands", "Australia", "Other"].map((country) => (
               <TouchableOpacity
@@ -697,7 +936,12 @@ export default function Onboarding() {
         </View>
 
         <View style={styles.inputContainer}>
-          <Text style={styles.label}>Region</Text>
+          <View style={styles.labelRow}>
+            <Text style={styles.labelInline}>Region</Text>
+            <View style={styles.requiredBadge}>
+              <Text style={styles.requiredBadgeText}>Required</Text>
+            </View>
+          </View>
           <View style={styles.optionsGrid}>
             {REGIONS.map((region) => (
               <TouchableOpacity
@@ -723,7 +967,12 @@ export default function Onboarding() {
         </View>
 
         <View style={styles.inputContainer}>
-          <Text style={styles.label}>Cultural background</Text>
+          <View style={styles.labelRow}>
+            <Text style={styles.labelInline}>Cultural background</Text>
+            <View style={styles.requiredBadge}>
+              <Text style={styles.requiredBadgeText}>Required</Text>
+            </View>
+          </View>
           <View style={styles.optionsGrid}>
             {TRIBES.map((tribe) => (
               <TouchableOpacity
@@ -749,7 +998,12 @@ export default function Onboarding() {
         </View>
 
         <View style={styles.inputContainer}>
-          <Text style={styles.label}>Religion</Text>
+          <View style={styles.labelRow}>
+            <Text style={styles.labelInline}>Religion</Text>
+            <View style={styles.requiredBadge}>
+              <Text style={styles.requiredBadgeText}>Required</Text>
+            </View>
+          </View>
           <View style={styles.optionsGrid}>
             {RELIGIONS.map((religion) => (
               <TouchableOpacity
@@ -778,10 +1032,15 @@ export default function Onboarding() {
   );
 
   const renderPreferencesStep = () => (
-    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }] }]}>
+    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
       <ScrollView showsVerticalScrollIndicator={false}>
         <View style={styles.inputContainer}>
-          <Text style={styles.label}>Interests</Text>
+          <View style={styles.labelRow}>
+            <Text style={styles.labelInline}>Interests</Text>
+            <View style={styles.requiredBadge}>
+              <Text style={styles.requiredBadgeText}>Required</Text>
+            </View>
+          </View>
           <Text style={styles.inputHint}>Select what you're passionate about</Text>
           <View style={styles.interestsGrid}>
             {INTERESTS.map((interest) => (
@@ -811,31 +1070,48 @@ export default function Onboarding() {
   );
 
   const renderDatingStep = () => (
-    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }] }]}>
+    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
       <ScrollView showsVerticalScrollIndicator={false}>
         <View style={styles.inputContainer}>
-          <Text style={styles.label}>Age Preference</Text>
+          <View style={styles.labelRow}>
+            <Text style={styles.labelInline}>Age Preference</Text>
+            <View style={styles.requiredBadge}>
+              <Text style={styles.requiredBadgeText}>Required</Text>
+            </View>
+          </View>
           <Text style={styles.inputHint}>What age range are you interested in?</Text>
           <View style={styles.ageRangeContainer}>
             <View style={styles.ageInputContainer}>
               <Text style={styles.ageLabel}>Min Age</Text>
               <TextInput
-                style={[styles.ageInput, errors.minAgeInterest && styles.inputError]}
+                style={[
+                  styles.ageInput,
+                  focusedField === "minAgeInterest" && styles.ageInputFocused,
+                  errors.minAgeInterest && styles.inputError,
+                ]}
                 value={form.minAgeInterest}
                 onChangeText={(text) => setForm((prev) => ({ ...prev, minAgeInterest: text }))}
                 keyboardType="numeric"
                 textAlign="center"
+                onFocus={() => setFocusedField("minAgeInterest")}
+                onBlur={() => setFocusedField(null)}
               />
             </View>
             <Text style={styles.ageRangeText}>to</Text>
             <View style={styles.ageInputContainer}>
               <Text style={styles.ageLabel}>Max Age</Text>
               <TextInput
-                style={[styles.ageInput, errors.maxAgeInterest && styles.inputError]}
+                style={[
+                  styles.ageInput,
+                  focusedField === "maxAgeInterest" && styles.ageInputFocused,
+                  errors.maxAgeInterest && styles.inputError,
+                ]}
                 value={form.maxAgeInterest}
                 onChangeText={(text) => setForm((prev) => ({ ...prev, maxAgeInterest: text }))}
                 keyboardType="numeric"
                 textAlign="center"
+                onFocus={() => setFocusedField("maxAgeInterest")}
+                onBlur={() => setFocusedField(null)}
               />
             </View>
           </View>
@@ -850,7 +1126,7 @@ export default function Onboarding() {
   );
 
   const renderCompleteStep = () => (
-    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateX: slideAnim }] }]}>
+    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
       <View style={styles.completeContainer}>
         <MaterialCommunityIcons name="check-circle" size={80} color={BRAND_LILAC} />
         <Text style={styles.completeTitle}>Almost Done!</Text>
@@ -916,7 +1192,7 @@ export default function Onboarding() {
 
   return (
     <LinearGradient
-      colors={['#EFE6DB', '#FFF9F2']}
+      colors={['#E9DDCF', '#FFF5EE']}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={styles.background}
@@ -986,19 +1262,32 @@ const styles = StyleSheet.create({
   progressFillGradient: {
     ...StyleSheet.absoluteFillObject,
   },
-  progressText: {
-    fontSize: 12,
-    fontFamily: 'Manrope_400Regular',
-    color: '#52606D',
-    textAlign: 'center',
+  progressHeartsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
     marginTop: 8,
+    position: 'relative',
   },
-  progressHint: {
-    fontSize: 11,
-    fontFamily: 'Manrope_400Regular',
-    color: '#8A94A6',
-    textAlign: 'center',
-    marginTop: 4,
+  progressHeartWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  progressHeartActive: {
+    backgroundColor: 'rgba(201,167,255,0.12)',
+  },
+  progressBurstLayer: {
+    position: 'absolute',
+    right: 4,
+    top: -18,
+    width: 1,
+    height: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   // Header
@@ -1040,7 +1329,7 @@ const styles = StyleSheet.create({
   stepSubtitle: {
     fontSize: 14,
     fontFamily: 'Manrope_400Regular',
-    color: '#52606D',
+    color: '#445160',
     textAlign: 'center',
     marginTop: 2,
   },
@@ -1064,6 +1353,9 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingTop: 32,
   },
+  formScrollContent: {
+    paddingBottom: 24,
+  },
 
     // Welcome Step
   welcomeContainer: {
@@ -1080,9 +1372,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(201,167,255,0.28)',
     shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: 16 },
-    shadowOpacity: 0.18,
-    shadowRadius: 24,
-    elevation: 14,
+    shadowOpacity: 0.24,
+    shadowRadius: 30,
+    elevation: 16,
   },
   heroCardInner: {
     borderRadius: 26,
@@ -1091,7 +1383,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.82)',
+    borderColor: 'rgba(255,255,255,0.9)',
   },
   heroGlow: {
     position: 'absolute',
@@ -1142,24 +1434,40 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   gradientTitleText: {
-    fontSize: 42,
+    fontSize: 44,
     fontFamily: 'Archivo_700Bold',
-    letterSpacing: 0.6,
+    letterSpacing: 0.8,
     textAlign: 'center',
+    textShadowColor: 'rgba(12,110,122,0.38)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 10,
+  },
+  titleUnderlineWrap: {
+    marginTop: 6,
+    marginBottom: 4,
+    width: 84,
+    height: 4,
+  },
+  titleUnderline: {
+    width: '100%',
+    height: 4,
+    borderRadius: 999,
+    opacity: 0.9,
   },
   gradientTitleTop: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
-    textShadowColor: 'rgba(201,167,255,0.75)',
+    opacity: 0.35,
+    textShadowColor: 'rgba(201,167,255,0.55)',
     textShadowOffset: { width: 0, height: 0 },
     textShadowRadius: 12,
   },
   taglineText: {
     fontSize: 16,
     fontFamily: 'Manrope_400Regular',
-    color: '#52606D',
+    color: '#445160',
     textAlign: 'center',
   },
   featureChipsRow: {
@@ -1172,28 +1480,51 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.92)',
+    backgroundColor: 'rgba(255,255,255,0.95)',
     borderWidth: 1,
-    borderColor: 'rgba(15,23,42,0.12)',
+    borderColor: 'rgba(15,23,42,0.14)',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 4,
   },
   featureIconBubble: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     backgroundColor: 'rgba(201,167,255,0.28)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   featureChipText: {
     fontSize: 13,
-    fontFamily: 'Manrope_400Regular',
-    color: '#334155',
+    fontFamily: 'Archivo_700Bold',
+    color: '#2f3a45',
   },
 
   // Form Elements
+  formCard: {
+    borderRadius: 24,
+    padding: 2,
+    backgroundColor: 'rgba(201,167,255,0.22)',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.18,
+    shadowRadius: 22,
+    elevation: 10,
+  },
+  formCardInner: {
+    borderRadius: 22,
+    paddingHorizontal: 20,
+    paddingVertical: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.9)',
+    backgroundColor: 'transparent',
+  },
   inputContainer: {
     marginBottom: 24,
   },
@@ -1207,6 +1538,31 @@ const styles = StyleSheet.create({
     color: BRAND_INK,
     marginBottom: 8,
   },
+  labelInline: {
+    fontSize: 16,
+    fontFamily: 'Archivo_700Bold',
+    color: BRAND_INK,
+  },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  requiredBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: 'rgba(12,110,122,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(12,110,122,0.22)',
+  },
+  requiredBadgeText: {
+    fontSize: 11,
+    fontFamily: 'Archivo_700Bold',
+    color: BRAND_TEAL,
+    letterSpacing: 0.3,
+  },
   inputHint: {
     fontSize: 14,
     fontFamily: 'Manrope_400Regular',
@@ -1214,20 +1570,32 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   input: {
-    backgroundColor: 'rgba(255,255,255,0.92)',
-    borderWidth: 2,
-    borderColor: 'rgba(15,23,42,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.1)',
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 16,
     fontFamily: 'Manrope_400Regular',
     color: BRAND_INK,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  inputFocused: {
+    borderColor: BRAND_TEAL,
+    shadowColor: BRAND_TEAL,
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    elevation: 6,
   },
   textArea: {
-    backgroundColor: 'rgba(255,255,255,0.92)',
-    borderWidth: 2,
-    borderColor: 'rgba(15,23,42,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.1)',
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 14,
@@ -1236,6 +1604,18 @@ const styles = StyleSheet.create({
     color: BRAND_INK,
     minHeight: 100,
     textAlignVertical: 'top',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  textAreaFocused: {
+    borderColor: BRAND_TEAL,
+    shadowColor: BRAND_TEAL,
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    elevation: 6,
   },
   inputError: {
     borderColor: '#ef4444',
@@ -1257,10 +1637,15 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 16,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.8)',
-    borderWidth: 2,
-    borderColor: 'rgba(15,23,42,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.1)',
     alignItems: 'center',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 3,
   },
   genderOptionSelected: {
     backgroundColor: BRAND_LILAC,
@@ -1402,9 +1787,9 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   ageInput: {
-    backgroundColor: 'rgba(255,255,255,0.92)',
-    borderWidth: 2,
-    borderColor: 'rgba(15,23,42,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.1)',
     borderRadius: 12,
     paddingVertical: 14,
     paddingHorizontal: 16,
@@ -1413,6 +1798,18 @@ const styles = StyleSheet.create({
     color: BRAND_INK,
     textAlign: 'center',
     minWidth: 80,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  ageInputFocused: {
+    borderColor: BRAND_TEAL,
+    shadowColor: BRAND_TEAL,
+    shadowOpacity: 0.16,
+    shadowRadius: 12,
+    elevation: 6,
   },
   ageRangeText: {
     fontSize: 16,

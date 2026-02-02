@@ -722,6 +722,15 @@ export default function ProfileScreen() {
           
           {!isPreviewMode && (
             <>
+              {__DEV__ && (
+                <TouchableOpacity
+                  style={styles.devButton}
+                  onPress={() => router.push("/(auth)/onboarding?variant=ghana")}
+                  accessibilityLabel="Open Ghana onboarding (dev)"
+                >
+                  <Text style={styles.devButtonText}>GH</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity 
                 style={[styles.settingsButton, showSettingsDropdown && styles.settingsButtonActive]} 
                 onPress={toggleSettingsDropdown}
@@ -1706,6 +1715,22 @@ const styles = StyleSheet.create({
   },
   previewButtonTextActive: {
     color: '#fff',
+  },
+  devButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.light.tint,
+    backgroundColor: 'transparent',
+  },
+  devButtonText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.light.tint,
+    letterSpacing: 0.4,
   },
   settingsButton: {
     width: 40,
