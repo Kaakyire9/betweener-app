@@ -123,7 +123,10 @@ const FUTURE_GHANA_PLANS_OPTIONS = [
   "Uncertain about return", "Staying abroad permanently", "Other"
 ];
 
-const withAlpha = (hex: string, alpha: number) => {
+const withAlpha = (hex: string | undefined | null, alpha: number) => {
+  if (!hex) {
+    return `rgba(0,0,0,${Math.max(0, Math.min(1, alpha))})`;
+  }
   const normalized = hex.replace('#', '');
   const bigint = parseInt(normalized.length === 3 ? normalized.split('').map((c) => c + c).join('') : normalized, 16);
   const r = (bigint >> 16) & 255;

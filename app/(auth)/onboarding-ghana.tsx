@@ -224,8 +224,7 @@ export default function Onboarding() {
     }
     
     if (validateStep(currentStep)) {
-      if (currentStep === ONBOARDING_STEPS.length - 2) {
-        // Last step - submit
+      if (currentStep === ONBOARDING_STEPS.length - 1) {
         handleSubmit();
       } else {
         nextStep();
@@ -235,7 +234,7 @@ export default function Onboarding() {
 
   const handleSubmit = async () => {
     // Validate all steps before final submission
-    for (let step = 1; step <= 5; step++) {
+    for (let step = 1; step <= ONBOARDING_STEPS.length - 2; step++) {
       if (!validateStep(step)) {
         setMessage("Please complete all required fields.");
         return;
@@ -1167,10 +1166,18 @@ export default function Onboarding() {
         ) : (
           <>
             <Text style={styles.nextButtonText}>
-              {currentStep === ONBOARDING_STEPS.length - 1 ? 'Create Profile' : "Let's begin"}
+              {currentStep === 0
+                ? "Let's begin"
+                : currentStep === ONBOARDING_STEPS.length - 1
+                  ? "Finish"
+                  : "Continue"}
             </Text>
-            {currentStep < ONBOARDING_STEPS.length - 1 && (
+            {currentStep > 0 && currentStep < ONBOARDING_STEPS.length - 1 ? (
               <MaterialCommunityIcons name="arrow-right" size={20} color="#fff" />
+            ) : (
+              currentStep === ONBOARDING_STEPS.length - 1 ? (
+                <MaterialCommunityIcons name="thumb-up" size={20} color="#fff" />
+              ) : null
             )}
           </>
         )}
