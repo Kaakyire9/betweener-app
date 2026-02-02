@@ -74,6 +74,13 @@ serve(async (req) => {
       .limit(1)
       .maybeSingle()
 
+    if (!profileRow) {
+      return new Response(
+        JSON.stringify({ success: true, skipped: true, reason: 'profile_not_created' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
     const nextLevel = Math.max(profileRow?.verification_level ?? 0, 1)
 
     const { error: profileError } = await supabase

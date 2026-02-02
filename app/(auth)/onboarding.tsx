@@ -2,7 +2,7 @@ import { AuthDebugPanel } from "@/components/auth-debug";
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
-import { getSignupPhoneState } from "@/lib/signup-tracking";
+import { clearSignupSession, finalizeSignupPhoneVerification, getSignupPhoneState } from "@/lib/signup-tracking";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
@@ -304,6 +304,9 @@ export default function Onboarding() {
         }
         throw new Error(`Profile creation failed: ${updateError.message}`);
       }
+
+      await finalizeSignupPhoneVerification();
+      await clearSignupSession();
 
       // Different success messages based on location
       if (form.livingLocation === "Abroad") {

@@ -114,11 +114,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(session?.user ?? null);
         
         if (session?.user) {
-          await fetchProfile(session.user.id);
+          const profileData = await fetchProfile(session.user.id);
           const metadata = await consumeSignupMetadata();
           await updateSignupEventForUser(session.user.id, metadata);
-          await finalizeSignupPhoneVerification();
-          await clearSignupSession();
+          if (profileData) {
+            await finalizeSignupPhoneVerification();
+            await clearSignupSession();
+          }
         } else {
           setProfile(null);
         }
@@ -139,12 +141,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (error && error.code !== 'PGRST116') {
         console.error('Error fetching profile:', error);
-        return;
+        return null;
       }
 
       setProfile(data || null);
+      return data || null;
     } catch (error) {
       console.error('Error fetching profile:', error);
+      return null;
     }
   };
 
