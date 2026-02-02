@@ -49,7 +49,7 @@ export default function MagicLinkScreen() {
         email: email,
         options: {
           shouldCreateUser: isSignup,
-          emailRedirectTo: "betweenerapp://auth/callback",
+          emailRedirectTo: "https://getbetweener.com/auth/callback",
         },
       });
 

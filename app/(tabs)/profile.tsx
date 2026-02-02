@@ -23,6 +23,7 @@ import {
     StyleSheet,
     Switch,
     Text,
+    TextInput,
     TouchableOpacity,
     View
 } from "react-native";
@@ -71,6 +72,12 @@ const SETTINGS_MENU_ITEMS = [
     id: 'notifications',
     title: 'Notifications',
     icon: 'bell',
+    color: Colors.light.tint
+  },
+  {
+    id: 'email',
+    title: 'Email & Account',
+    icon: 'email-outline',
     color: Colors.light.tint
   },
   {
@@ -160,6 +167,11 @@ export default function ProfileScreen() {
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
+  const [showEmailModal, setShowEmailModal] = useState(false);
+  const [emailInput, setEmailInput] = useState('');
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [emailMessage, setEmailMessage] = useState('');
+  const [emailError, setEmailError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [userInterests, setUserInterests] = useState<string[]>([]);
   const [loadingInterests, setLoadingInterests] = useState(false);
@@ -499,11 +511,46 @@ export default function ProfileScreen() {
       handleSignOut();
     } else if (itemId === 'admin') {
       router.push('/admin');
+    } else if (itemId === 'email') {
+      setEmailMessage('');
+      setEmailError('');
+      setEmailInput(user?.email ?? '');
+      setShowEmailModal(true);
     } else if (itemId === 'notifications') {
       setShowNotificationsModal(true);
     } else {
       // Handle other settings navigation
       console.log(`Navigate to ${itemId}`);
+    }
+  };
+
+  const handleEmailUpdate = async () => {
+    const trimmed = emailInput.trim().toLowerCase();
+    setEmailError('');
+    setEmailMessage('');
+    if (!trimmed) {
+      setEmailError('Please enter an email address.');
+      return;
+    }
+    if (!/^\S+@\S+\.\S+$/.test(trimmed)) {
+      setEmailError('Please enter a valid email address.');
+      return;
+    }
+    try {
+      setEmailSaving(true);
+      const { error } = await supabase.auth.updateUser(
+        { email: trimmed },
+        { emailRedirectTo: 'https://getbetweener.com/auth/callback' },
+      );
+      if (error) {
+        setEmailError(error.message);
+        return;
+      }
+      setEmailMessage('Check your new email to confirm the change.');
+    } catch (error: any) {
+      setEmailError(error?.message ?? 'Unable to update email.');
+    } finally {
+      setEmailSaving(false);
     }
   };
 
@@ -1005,6 +1052,55 @@ export default function ProfileScreen() {
                 <Text style={[styles.notificationLoading, { color: theme.textMuted }]}>Loading preferences...</Text>
               ) : null}
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showEmailModal}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setShowEmailModal(false)}
+      >
+        <View style={styles.emailModalBackdrop}>
+          <View style={[styles.emailModalCard, { backgroundColor: theme.background, borderColor: theme.outline }]}>
+            <View style={styles.emailModalHeader}>
+              <Text style={[styles.emailModalTitle, { color: theme.text }]}>Email & Account</Text>
+              <TouchableOpacity onPress={() => setShowEmailModal(false)}>
+                <MaterialCommunityIcons name="close" size={20} color={theme.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <Text style={[styles.emailModalBody, { color: theme.textMuted }]}>
+              Update the email you use to sign in. We’ll send a confirmation link to your new email.
+            </Text>
+            <TextInput
+              value={emailInput}
+              onChangeText={setEmailInput}
+              placeholder="you@example.com"
+              placeholderTextColor={theme.textMuted}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              style={[
+                styles.emailInput,
+                { color: theme.text, borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
+              ]}
+            />
+            {emailError ? (
+              <Text style={[styles.emailError, { color: '#ef4444' }]}>{emailError}</Text>
+            ) : null}
+            {emailMessage ? (
+              <Text style={[styles.emailMessage, { color: theme.tint }]}>{emailMessage}</Text>
+            ) : null}
+            <TouchableOpacity
+              style={[
+                styles.emailSaveButton,
+                { backgroundColor: theme.tint, opacity: emailSaving ? 0.6 : 1 },
+              ]}
+              onPress={handleEmailUpdate}
+              disabled={emailSaving}
+            >
+              <Text style={styles.emailSaveText}>{emailSaving ? 'Sending...' : 'Send confirmation'}</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -2176,6 +2272,60 @@ const styles = StyleSheet.create({
   notificationLoading: {
     fontSize: 12,
     marginTop: 8,
+  },
+  emailModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+  },
+  emailModalCard: {
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingVertical: 18,
+    paddingHorizontal: 18,
+  },
+  emailModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  emailModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  emailModalBody: {
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 14,
+  },
+  emailInput: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: 'Manrope_500Medium',
+  },
+  emailError: {
+    fontSize: 12,
+    marginTop: 8,
+  },
+  emailMessage: {
+    fontSize: 12,
+    marginTop: 8,
+  },
+  emailSaveButton: {
+    marginTop: 16,
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  emailSaveText: {
+    color: '#fff',
+    fontSize: 14,
+    fontFamily: 'Manrope_600SemiBold',
   },
   quietHoursHint: {
     fontSize: 12,

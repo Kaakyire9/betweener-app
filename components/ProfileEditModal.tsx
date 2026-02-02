@@ -210,6 +210,8 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
   const [isVerificationModalVisible, setIsVerificationModalVisible] = useState(false);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusTone, setStatusTone] = useState<'error' | 'success' | null>(null);
   
   // DIASPORA custom input states (simplified)
   const [customFutureGhanaPlans, setCustomFutureGhanaPlans] = useState('');
@@ -254,6 +256,8 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   // Load current profile data when modal opens
   useEffect(() => {
     if (visible && profile) {
+      setStatusMessage(null);
+      setStatusTone(null);
       setFormData({
         full_name: profile.full_name || '',
         bio: profile.bio || '',
@@ -877,6 +881,18 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       const { error } = await updateProfile(updateData);
 
       if (error) {
+        if ((error as any).code === '23505') {
+          setStatusTone('error');
+          setStatusMessage(
+            'This phone number is already linked to another account. Please sign in or use a different number.'
+          );
+          return;
+        }
+        if ((error as any).code === '23514') {
+          setStatusTone('error');
+          setStatusMessage('Please verify your phone number before updating your profile.');
+          return;
+        }
         console.error('Profile update error:', error);
         throw error;
       }
@@ -898,7 +914,8 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       onClose();
     } catch (error) {
       console.error('Error updating profile:', error);
-      Alert.alert('Error', 'Failed to update profile. Please try again.');
+      setStatusTone('error');
+      setStatusMessage('Failed to update profile. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -925,6 +942,29 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
             )}
           </TouchableOpacity>
         </View>
+
+        {statusMessage && (
+          <View
+            style={[
+              styles.statusBanner,
+              statusTone === 'error' ? styles.statusBannerError : styles.statusBannerSuccess,
+            ]}
+          >
+            <MaterialCommunityIcons
+              name={statusTone === 'error' ? 'alert-circle' : 'check-circle'}
+              size={18}
+              color={statusTone === 'error' ? theme.danger : theme.success}
+            />
+            <Text
+              style={[
+                styles.statusBannerText,
+                statusTone === 'error' ? styles.statusBannerTextError : styles.statusBannerTextSuccess,
+              ]}
+            >
+              {statusMessage}
+            </Text>
+          </View>
+        )}
 
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
           {/* Avatar Section */}
@@ -2538,6 +2578,36 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontFamily: 'Manrope_400Regular',
       color: theme.textMuted,
       marginTop: 2,
+    },
+    statusBanner: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderRadius: 12,
+      borderWidth: 1,
+      marginTop: 12,
+    },
+    statusBannerError: {
+      backgroundColor: withAlpha(theme.danger, isDark ? 0.18 : 0.12),
+      borderColor: withAlpha(theme.danger, isDark ? 0.45 : 0.28),
+    },
+    statusBannerSuccess: {
+      backgroundColor: withAlpha(theme.success, isDark ? 0.18 : 0.12),
+      borderColor: withAlpha(theme.success, isDark ? 0.45 : 0.28),
+    },
+    statusBannerText: {
+      flex: 1,
+      fontSize: 13,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.text,
+    },
+    statusBannerTextError: {
+      color: theme.danger,
+    },
+    statusBannerTextSuccess: {
+      color: theme.success,
     },
     statusDisplay: {
       padding: 16,

@@ -1,3 +1,4 @@
+import { supabase } from "@/lib/supabase";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
@@ -17,12 +18,21 @@ export default function ResetPasswordScreen() {
     setLoading(true);
     setError("");
     setMessage("");
-    // TODO: Implement Supabase password update logic here
-    setTimeout(() => {
+    if (password.length < 6) {
       setLoading(false);
-      setMessage("Password reset successful! You can now log in.");
-      setTimeout(() => router.replace("/(auth)/login"), 1500);
-    }, 1000);
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) {
+      setLoading(false);
+      setError(error.message);
+      return;
+    }
+    await supabase.auth.signOut();
+    setLoading(false);
+    setMessage("Password reset successful! You can now log in.");
+    setTimeout(() => router.replace("/(auth)/login"), 1500);
   };
 
   return (

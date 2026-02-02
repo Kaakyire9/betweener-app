@@ -206,7 +206,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsAuthenticating(true);
     try {
       // Use custom scheme for deep linking
-      const redirectUrl = 'betweenerapp://auth/callback';
+      const redirectUrl = 'https://getbetweener.com/auth/callback';
       const { error } = await supabase.auth.signUp({
         email,
         password,

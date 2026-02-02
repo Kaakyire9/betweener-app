@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+﻿import { supabase } from "@/lib/supabase";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
@@ -17,12 +17,19 @@ export default function ForgotPasswordScreen() {
     setLoading(true);
     setError("");
     setMessage("");
-    const { error } = await supabase.auth.resetPasswordForEmail(email);
+    if (!email.match(/^[^@\s]+@[^@\s]+\.[^@\s]+$/)) {
+      setLoading(false);
+      setError("Please enter a valid email address.");
+      return;
+    }
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: "https://getbetweener.com/auth/callback",
+    });
     setLoading(false);
     if (error) {
       setError(error.message);
     } else {
-      setMessage("If an account exists, we’ll email a secure reset link shortly.");
+      setMessage("If an account exists, we'll email a secure reset link shortly.");
     }
   };
 
@@ -45,7 +52,7 @@ export default function ForgotPasswordScreen() {
 
         <Text style={styles.title}>Forgot Password</Text>
         <Text style={styles.subtitle}>
-          Enter the email on your account and we’ll send a private reset link.
+          Enter the email on your account and we'll send a private reset link.
         </Text>
 
         <View style={[styles.inputShell, focused && styles.inputShellActive]}>
@@ -227,3 +234,4 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
 });
+

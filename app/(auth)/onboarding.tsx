@@ -2,6 +2,7 @@ import { AuthDebugPanel } from "@/components/auth-debug";
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
+import { getSignupPhoneState } from "@/lib/signup-tracking";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
@@ -174,6 +175,39 @@ export default function Onboarding() {
     setMessage("");
 
     try {
+      const { phoneNumber, verified } = await getSignupPhoneState();
+      if (!verified || !phoneNumber) {
+        Alert.alert(
+          "Phone verification required",
+          "Please verify your phone number to complete your account."
+        );
+        router.replace({
+          pathname: "/(auth)/verify-phone",
+          params: { next: encodeURIComponent("/(auth)/onboarding") },
+        });
+        return;
+      }
+
+      const { data: existingPhoneProfile, error: phoneLookupError } = await supabase
+        .from("profiles")
+        .select("user_id")
+        .eq("phone_number", phoneNumber)
+        .is("deleted_at", null)
+        .maybeSingle();
+
+      if (phoneLookupError && phoneLookupError.code !== "PGRST116") {
+        throw new Error(`Phone lookup failed: ${phoneLookupError.message}`);
+      }
+
+      if (existingPhoneProfile?.user_id && existingPhoneProfile.user_id !== user?.id) {
+        Alert.alert(
+          "Phone already in use",
+          "This phone number is already linked to another account. Please sign in or use a different number."
+        );
+        await signOut();
+        router.replace("/(auth)/login");
+        return;
+      }
 
       // 1. Check if user is available from auth context
       if (!user) {
@@ -234,6 +268,8 @@ export default function Onboarding() {
         tribe: form.tribe,
         religion: form.religion.toUpperCase(),
         avatar_url: imageUrl,
+        phone_number: phoneNumber,
+        phone_verified: true,
         min_age_interest: Number(form.minAgeInterest),
         max_age_interest: Number(form.maxAgeInterest),
         // Diaspora fields based on simple choice
@@ -246,6 +282,26 @@ export default function Onboarding() {
       const { error: updateError } = await updateProfile(profileData);
 
       if (updateError) {
+        if (updateError.code === "23505") {
+          Alert.alert(
+            "Phone already in use",
+            "This phone number is already linked to another account. Please sign in or use a different number."
+          );
+          await signOut();
+          router.replace("/(auth)/login");
+          return;
+        }
+        if (updateError.code === "23514") {
+          Alert.alert(
+            "Phone verification required",
+            "Please verify your phone number before creating your profile."
+          );
+          router.replace({
+            pathname: "/(auth)/verify-phone",
+            params: { next: encodeURIComponent("/(auth)/onboarding") },
+          });
+          return;
+        }
         throw new Error(`Profile creation failed: ${updateError.message}`);
       }
 
