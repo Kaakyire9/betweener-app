@@ -15,6 +15,15 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors } from "@/constants/theme";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+const isAppleAuthCancelled = (error: unknown) => {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return message.includes("canceled") || message.includes("cancelled");
+};
+
 export default function SignupOptionsScreen() {
   WebBrowser.maybeCompleteAuthSession();
   const router = useRouter();
@@ -101,7 +110,9 @@ export default function SignupOptionsScreen() {
       }
       router.replace(profile ? "/(tabs)/" : "/(auth)/onboarding");
     } catch (error) {
-      console.error("[auth] apple sign-in error", error);
+      if (!isAppleAuthCancelled(error)) {
+        console.error("[auth] apple sign-in error", error);
+      }
     } finally {
       setLoadingProvider(null);
     }
