@@ -80,6 +80,7 @@ const REACTION_ICONS = ['heart', 'fire', 'star', 'emoticon-happy-outline'] as co
 const ACTIVE_VISIBLE_PERCENT_THRESHOLD = 70;
 const RIGHT_SCROLL_HOLD_MS = 600;
 const ACTIVE_TAG_MIN_INTERVAL_MS = 120;
+const ACTIVE_NOW_MS = 3 * 60 * 1000;
 
 // Content heuristics for empty-state branching.
 // Goal: "images-only" should trigger unless the profile has real narrative/intent content.
@@ -125,6 +126,13 @@ function buildLocationLine(profile: UserProfile) {
 
   const flag = toFlagEmoji(profile.currentCountryCode);
   return flag ? `${combined} ${flag}` : combined;
+}
+
+function isActiveNowFromLastActive(lastActive?: string | null) {
+  if (!lastActive) return false;
+  const then = new Date(lastActive).getTime();
+  if (Number.isNaN(then)) return false;
+  return Date.now() - then <= ACTIVE_NOW_MS;
 }
 
 function hasMeaningfulText(profile: UserProfile) {
@@ -416,6 +424,10 @@ export default function ProfileViewPremiumV2Screen() {
 
   const fallbackProfile = useMemo(() => parseFallbackProfile((params as any)?.fallbackProfile), [params]);
   const [fetchedProfile, setFetchedProfile] = useState<UserProfile | null>(null);
+  const [presenceState, setPresenceState] = useState<{
+    online: boolean;
+    last_active: string | null;
+  } | null>(null);
   const [fetching, setFetching] = useState(false);
   const [matchAccepted, setMatchAccepted] = useState(false);
   const [matchPercent, setMatchPercent] = useState<number | null>(null);
@@ -470,6 +482,47 @@ export default function ProfileViewPremiumV2Screen() {
       compatibility: 0,
     };
   }, [fallbackProfile, fetchedProfile, profileId]);
+
+  useEffect(() => {
+    if (!resolvedProfile.id || resolvedProfile.id === 'preview') {
+      setPresenceState(null);
+      return;
+    }
+    let cancelled = false;
+    const fetchPresence = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('online,last_active')
+          .eq('id', resolvedProfile.id)
+          .maybeSingle();
+        if (cancelled) return;
+        if (error || !data) return;
+        setPresenceState({
+          online: !!data.online,
+          last_active: data.last_active ?? null,
+        });
+      } catch {
+        // ignore presence fetch errors
+      }
+    };
+    void fetchPresence();
+    const intervalId = setInterval(fetchPresence, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [resolvedProfile.id]);
+
+  const presenceProfile = useMemo(() => {
+    const online = presenceState?.online ?? (resolvedProfile as any).online;
+    const lastActive =
+      presenceState?.last_active ?? (resolvedProfile as any).last_active;
+    const is_active =
+      isActiveNowFromLastActive(lastActive) ||
+      !!(resolvedProfile as any).is_active;
+    return { ...(resolvedProfile as any), online, is_active } as UserProfile;
+  }, [presenceState, resolvedProfile]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1072,7 +1125,7 @@ export default function ProfileViewPremiumV2Screen() {
       <View style={[styles.screen, { paddingHorizontal: 16, paddingTop: 18 }]}>
       <Header
         theme={theme}
-        profile={resolvedProfile}
+        profile={presenceProfile}
         title={'Complete your profile'}
         locationLine={''}
         hasIntro={false}
@@ -1104,7 +1157,7 @@ export default function ProfileViewPremiumV2Screen() {
     <View style={styles.screen}>
       <Header
         theme={theme}
-        profile={resolvedProfile}
+        profile={presenceProfile}
         title={formatHeaderTitle(profile.name, profile.age)}
         locationLine={locationLine}
         hasIntro={hasIntro}
@@ -1190,7 +1243,7 @@ export default function ProfileViewPremiumV2Screen() {
               contentContainerStyle={styles.rightListContent}
               renderItem={renderSectionItem}
               ListHeaderComponent={
-                <StoryHeader theme={theme} profile={resolvedProfile} locationLine={locationLine} />
+                <StoryHeader theme={theme} profile={presenceProfile} locationLine={locationLine} />
               }
             />
           ) : (
@@ -1257,6 +1310,10 @@ function Header({
     (Array.isArray(profile.photos) && profile.photos.find(Boolean)) ||
     profile.profilePicture ||
     '';
+  const isOnlineNow = !!(profile as any).online;
+  const isActiveNow = profile.isActiveNow || !!(profile as any).is_active;
+  const showPresence = isOnlineNow || isActiveNow;
+  const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
   const heroHeight = Math.max(280, Math.min(420, Math.round(screenHeight * 0.38)));
   const heroImageStyle = useAnimatedStyle<ImageStyle>(() => {
     const translateY = interpolate(
@@ -1354,7 +1411,7 @@ function Header({
                 size="small"
               />
             ) : null}
-            {profile.isActiveNow ? (
+            {showPresence ? (
               <View
                 style={[
                   stylesStatic.activeBadgeHero,
@@ -1366,7 +1423,7 @@ function Header({
               >
                 <View style={[stylesStatic.activeDot, { backgroundColor: theme.tint }]} />
                 <Text style={[stylesStatic.activeText, { color: isDark ? Colors.light.background : Colors.dark.background }]}>
-                  Online
+                  {presenceLabel}
                 </Text>
               </View>
             ) : null}
@@ -1855,6 +1912,10 @@ const StoryHeader = memo(function StoryHeader({
   locationLine: string;
 }) {
   const avatarUri = profile.profilePicture || '';
+  const isOnlineNow = !!(profile as any).online;
+  const isActiveNow = profile.isActiveNow || !!(profile as any).is_active;
+  const showPresence = isOnlineNow || isActiveNow;
+  const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
   return (
     <View style={[stylesStatic.storyHeader, { backgroundColor: theme.background }]}>
       <View
@@ -1877,7 +1938,7 @@ const StoryHeader = memo(function StoryHeader({
               size="small"
             />
           ) : null}
-          {profile.isActiveNow ? (
+          {showPresence ? (
             <View
               style={[
                 stylesStatic.activeBadgeHero,
@@ -1885,7 +1946,7 @@ const StoryHeader = memo(function StoryHeader({
               ]}
             >
               <View style={[stylesStatic.activeDot, { backgroundColor: theme.tint }]} />
-              <Text style={[stylesStatic.activeText, { color: theme.textMuted }]}>Online</Text>
+              <Text style={[stylesStatic.activeText, { color: theme.textMuted }]}>{presenceLabel}</Text>
             </View>
           ) : null}
         </View>

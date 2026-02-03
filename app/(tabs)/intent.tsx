@@ -582,7 +582,7 @@ export default function IntentScreen() {
             <View style={styles.emptyState}>
               <Text style={styles.emptyText}>{emptyCopy}</Text>
               <View style={styles.emptyActions}>
-                <TouchableOpacity style={styles.ghostButton} onPress={() => router.push('/(tabs)/index')}>
+                <TouchableOpacity style={styles.ghostButton} onPress={() => router.push('/(tabs)/vibes')}>
                   <Text style={styles.ghostText}>Go to Vibes</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.secondaryButton} onPress={() => router.push('/(tabs)/explore')}>

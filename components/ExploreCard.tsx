@@ -95,17 +95,23 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
       : 0;
   const badgeVariant = verificationLevel >= 2 ? 'id' : verificationLevel >= 1 ? 'phone' : null;
 
-  // compute recently active (within last 3 hours)
-  const recentlyActive = (() => {
-    if (!match.lastActive) return false;
+  const isOnlineNow = !!(match as any).online;
+  const lastActiveValue = match.lastActive || (match as any).last_active;
+  const ACTIVE_NOW_MS = 3 * 60 * 1000;
+  const RECENTLY_ACTIVE_MS = 45 * 60 * 1000;
+  const { isActiveNow, recentlyActive } = (() => {
+    if (!lastActiveValue) return { isActiveNow: false, recentlyActive: false };
     try {
-      const then = new Date(match.lastActive).getTime();
-      if (isNaN(then)) return false;
-      const now = Date.now();
-      const diffMs = now - then;
-      return diffMs > 0 && diffMs <= 3 * 60 * 60 * 1000; // 3 hours
+      const then = new Date(lastActiveValue).getTime();
+      if (isNaN(then)) return { isActiveNow: false, recentlyActive: false };
+      const diffMs = Date.now() - then;
+      if (diffMs <= 0) return { isActiveNow: false, recentlyActive: false };
+      return {
+        isActiveNow: diffMs <= ACTIVE_NOW_MS,
+        recentlyActive: diffMs > ACTIVE_NOW_MS && diffMs <= RECENTLY_ACTIVE_MS,
+      };
     } catch (e) {
-      return false;
+      return { isActiveNow: false, recentlyActive: false };
     }
   })();
 
@@ -193,9 +199,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
       }
     }
 
-    if (match.isActiveNow || (match.lastActive && (() => {
-      try { const then = new Date(match.lastActive!).getTime(); return Date.now() - then <= 3 * 60 * 60 * 1000; } catch { return false; }
-    })())) {
+    if (isOnlineNow || isActiveNow || recentlyActive) {
       if (canUseReanimated && activeScale && activeOpacity) {
         try {
           activeScale.value = ReanimatedModule.withTiming(1, { duration: 300 });
@@ -221,7 +225,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
         Animated.timing(pillTranslate, { toValue: 0, duration: 300, useNativeDriver: true }),
       ]).start();
     }
-  }, [badgeVariant, match.isActiveNow, match.lastActive]);
+  }, [badgeVariant, isOnlineNow, isActiveNow, recentlyActive, lastActiveValue]);
 
   useEffect(() => {
     if (!(match as any).profileVideo) return;
@@ -277,11 +281,12 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     if (interests[0]) reasons.push(`Shared interest: ${interests[0]}`);
     if (lookingFor) reasons.push(`Intent: ${lookingFor}`);
     if (loveLanguage) reasons.push(`Love language: ${loveLanguage}`);
-    if (match.isActiveNow) reasons.push('Active now so you can connect');
+    if (isOnlineNow) reasons.push('Online now so you can connect');
+    else if (isActiveNow) reasons.push('Active now so you can connect');
 
     if (reasons.length === 0) reasons.push('Aligned values and lifestyle signals');
     return reasons.slice(0, 4);
-  }, [match.interests, (match as any).personalityTags, (match as any).looking_for, (match as any).lookingFor, (match as any).love_language, (match as any).loveLanguage, match.isActiveNow]);
+  }, [match.interests, (match as any).personalityTags, (match as any).looking_for, (match as any).lookingFor, (match as any).love_language, (match as any).loveLanguage, isOnlineNow, isActiveNow]);
 
   useEffect(() => {
     Animated.timing(whyAnim, {
@@ -466,27 +471,27 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
 
           {canUseReanimated && ReanimatedAnimated && slotAnimatedStyle ? (
             <ReanimatedAnimated.View style={[styles.rightSlot, slotAnimatedStyle]} pointerEvents="none">
-              {(match.isActiveNow || recentlyActive) ? (
+              {(isOnlineNow || isActiveNow || recentlyActive) ? (
                 // @ts-ignore
-                <ReanimatedAnimated.View style={[styles.activeInline, match.isActiveNow ? styles.activeNowBg : styles.recentlyActiveBg, activeAnimatedStyle]} pointerEvents="none" onLayout={(e: any) => { try { setRightBadgeWidth(e.nativeEvent.layout.width || 0); } catch {} }}>
+                <ReanimatedAnimated.View style={[styles.activeInline, (isOnlineNow || isActiveNow) ? styles.activeNowBg : styles.recentlyActiveBg, activeAnimatedStyle]} pointerEvents="none" onLayout={(e: any) => { try { setRightBadgeWidth(e.nativeEvent.layout.width || 0); } catch {} }}>
                   <View style={styles.activeDotSmall} />
-                  <Text style={styles.activeTopText}>{match.isActiveNow ? 'Active Now' : 'Recently Active'}</Text>
+                  <Text style={styles.activeTopText}>{isOnlineNow ? 'Online' : isActiveNow ? 'Active Now' : 'Recently Active'}</Text>
                 </ReanimatedAnimated.View>
               ) : null}
             </ReanimatedAnimated.View>
           ) : (
             <View style={[styles.rightSlot, { minWidth: slotWidth }]} pointerEvents="none">
-              {(match.isActiveNow || recentlyActive) ? (
+              {(isOnlineNow || isActiveNow || recentlyActive) ? (
                 canUseReanimated && activeAnimatedStyle && ReanimatedAnimated && ReanimatedAnimated.View ? (
                   // @ts-ignore
-                  <ReanimatedAnimated.View style={[styles.activeInline, match.isActiveNow ? styles.activeNowBg : styles.recentlyActiveBg, activeAnimatedStyle]} pointerEvents="none" onLayout={(e: any) => { try { setRightBadgeWidth(e.nativeEvent.layout.width || 0); } catch {} }}>
+                  <ReanimatedAnimated.View style={[styles.activeInline, (isOnlineNow || isActiveNow) ? styles.activeNowBg : styles.recentlyActiveBg, activeAnimatedStyle]} pointerEvents="none" onLayout={(e: any) => { try { setRightBadgeWidth(e.nativeEvent.layout.width || 0); } catch {} }}>
                     <View style={styles.activeDotSmall} />
-                    <Text style={styles.activeTopText}>{match.isActiveNow ? 'Active Now' : 'Recently Active'}</Text>
+                    <Text style={styles.activeTopText}>{isOnlineNow ? 'Online' : isActiveNow ? 'Active Now' : 'Recently Active'}</Text>
                   </ReanimatedAnimated.View>
                 ) : (
-                  <Animated.View style={[styles.activeInline, match.isActiveNow ? styles.activeNowBg : styles.recentlyActiveBg, { transform: [{ translateY: activeTranslate }], opacity: activeAnim }]} pointerEvents="none" onLayout={(e: any) => { try { setRightBadgeWidth(e.nativeEvent.layout.width || 0); } catch {} }}>
+                  <Animated.View style={[styles.activeInline, (isOnlineNow || isActiveNow) ? styles.activeNowBg : styles.recentlyActiveBg, { transform: [{ translateY: activeTranslate }], opacity: activeAnim }]} pointerEvents="none" onLayout={(e: any) => { try { setRightBadgeWidth(e.nativeEvent.layout.width || 0); } catch {} }}>
                     <View style={styles.activeDotSmall} />
-                    <Text style={styles.activeTopText}>{match.isActiveNow ? 'Active Now' : 'Recently Active'}</Text>
+                    <Text style={styles.activeTopText}>{isOnlineNow ? 'Online' : isActiveNow ? 'Active Now' : 'Recently Active'}</Text>
                   </Animated.View>
                 )
               ) : null}

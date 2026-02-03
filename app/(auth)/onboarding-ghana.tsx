@@ -385,7 +385,7 @@ export default function Onboarding() {
         // Wait a bit longer to ensure database is fully updated
         await new Promise(resolve => setTimeout(resolve, 1000));
         router.dismissAll();
-        router.replace("/(tabs)/");
+        router.replace("/(tabs)/vibes");
       }, 2000);
     } catch (error: any) {
       setMessage(error.message || "An error occurred");

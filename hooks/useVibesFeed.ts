@@ -55,7 +55,7 @@ const isRecentlyActive = (lastActive?: string | null) => {
   try {
     const then = new Date(lastActive).getTime();
     if (Number.isNaN(then)) return false;
-    return Date.now() - then <= 3 * 60 * 60 * 1000;
+    return Date.now() - then <= 45 * 60 * 1000;
   } catch {
     return false;
   }
@@ -153,11 +153,11 @@ export default function useVibesFeed({
   }, []);
 
   const refresh = useCallback(() => {
-    if (refreshCount >= 3) return;
+    if (refreshing || refreshCount >= 3) return;
     setRefreshCount((count) => count + 1);
     setRefreshing(true);
     refreshMatches();
-  }, [refreshCount, refreshMatches]);
+  }, [refreshCount, refreshMatches, refreshing]);
 
   useEffect(() => {
     if (refreshing) {

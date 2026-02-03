@@ -37,6 +37,7 @@ export default function TabLayout() {
   return (
     <AuthGuard>
       <Tabs
+        initialRouteName="vibes"
         screenOptions={{
           tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
           tabBarInactiveTintColor: Colors[colorScheme ?? 'light'].textMuted,
@@ -51,7 +52,7 @@ export default function TabLayout() {
           tabBarButton: HapticTab,
         }}>
         <Tabs.Screen
-          name="index"
+          name="vibes"
           options={{
             title: 'Vibes',
             tabBarIcon: ({ color }) => (

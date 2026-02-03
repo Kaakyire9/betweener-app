@@ -79,7 +79,7 @@ export function GuestGuard({ children }: { children: React.ReactNode }) {
 
   // If fully authenticated, redirect to main app
   if (isAuthenticated && isEmailVerified && hasProfile) {
-    return <Redirect href="/(tabs)/" />;
+    return <Redirect href="/(tabs)/vibes" />;
   }
 
   return <>{children}</>;

@@ -3,6 +3,7 @@ import PhotoGallery from "@/components/PhotoGallery";
 import ProfileEditModal from "@/components/ProfileEditModal";
 import { VerificationBadge } from "@/components/VerificationBadge";
 import { VerificationNotifications } from "@/components/VerificationNotifications";
+import ProfileVideoModal from "@/components/ProfileVideoModal";
 import { Colors } from "@/constants/theme";
 import { useColorScheme, useColorSchemePreference } from "@/hooks/use-color-scheme";
 import { useVerificationStatus } from "@/hooks/use-verification-status";
@@ -13,22 +14,25 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-    Animated,
-    Dimensions,
-    Image,
-    Modal,
-    Platform,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Switch,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  Animated,
+  Dimensions,
+  Image,
+  ImageBackground,
+  Modal,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { SafeAreaView } from "react-native-safe-area-context";
+import { LinearGradient } from "expo-linear-gradient";
+import { VideoView, useVideoPlayer } from "expo-video";
 
 const { width: screenWidth } = Dimensions.get('window');
 const DISTANCE_UNIT_KEY = 'distance_unit';
@@ -136,15 +140,6 @@ const PROFILE_PROMPTS = [
       'Learn something new',
       'Connect with old friends'
     ]
-  },
-  {
-    id: 'vibe_song',
-    title: 'My current vibe song is...',
-    responses: [
-      '"Essence" by Wizkid',
-      '"Soco" by Starboy',
-      '"Ye" by Burna Boy'
-    ]
   }
 ];
 
@@ -162,6 +157,18 @@ export default function ProfileScreen() {
     week_goal: 1,
     vibe_song: 2
   });
+  const [promptAnswers, setPromptAnswers] = useState<Array<{
+    id: string;
+    prompt_key: string;
+    prompt_title: string | null;
+    answer: string;
+    created_at: string;
+  }>>([]);
+  const [promptsLoading, setPromptsLoading] = useState(false);
+  const [showPromptEditor, setShowPromptEditor] = useState(false);
+  const [customPromptTitle, setCustomPromptTitle] = useState('');
+  const [customPromptAnswer, setCustomPromptAnswer] = useState('');
+  const [customPromptSaving, setCustomPromptSaving] = useState(false);
   
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
@@ -203,6 +210,7 @@ export default function ProfileScreen() {
     try {
       await refreshProfile();
       await fetchUserInterests();
+      await loadPromptAnswers();
       await loadUserPhotos();
       console.log('Profile manually refreshed');
     } catch (error) {
@@ -211,6 +219,47 @@ export default function ProfileScreen() {
       setRefreshing(false);
     }
   };
+
+  const loadPromptAnswers = useCallback(async () => {
+    if (!profile?.id) {
+      setPromptAnswers([]);
+      setPromptsLoading(false);
+      return;
+    }
+    setPromptsLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('profile_prompts')
+        .select('id,prompt_key,prompt_title,answer,created_at')
+        .eq('profile_id', profile.id)
+        .order('created_at', { ascending: false })
+        .limit(10);
+      if (error) {
+        console.log('[profile] prompt fetch error', error);
+        return;
+      }
+      const rows = (data || []) as Array<{
+        id: string;
+        prompt_key: string;
+        prompt_title: string | null;
+        answer: string;
+        created_at: string;
+      }>;
+      setPromptAnswers(rows);
+      setSelectedPrompts((prev) => {
+        const nextSelected: Record<string, number> = { ...prev };
+        rows.forEach((row) => {
+          const prompt = PROFILE_PROMPTS.find((p) => p.id === row.prompt_key);
+          if (!prompt) return;
+          const idx = prompt.responses.findIndex((r) => r === row.answer);
+          if (idx >= 0) nextSelected[row.prompt_key] = idx;
+        });
+        return nextSelected;
+      });
+    } finally {
+      setPromptsLoading(false);
+    }
+  }, [profile?.id]);
 
   // Fetch user interests from profile_interests table
   const fetchUserInterests = async () => {
@@ -341,8 +390,9 @@ export default function ProfileScreen() {
     if (profile && user?.id) {
       fetchUserInterests();
       loadUserPhotos();
+      loadPromptAnswers();
     }
-  }, [profile, user?.id]);
+  }, [profile, user?.id, loadPromptAnswers]);
 
   const loadNotificationPrefs = useCallback(async () => {
     if (!user?.id) return;
@@ -421,14 +471,18 @@ export default function ProfileScreen() {
     await signOut();
   };
 
-  const handlePromptSelect = (promptId: string, index: number) => {
+  const handlePromptSelect = async (promptId: string, index: number) => {
     if (isPreviewMode) return; // Don't allow changes in preview mode
-    
-    setSelectedPrompts(prev => ({
+
+    const prompt = PROFILE_PROMPTS.find((p) => p.id === promptId);
+    const answer = prompt?.responses?.[index];
+    if (!prompt || !answer) return;
+
+    setSelectedPrompts((prev) => ({
       ...prev,
-      [promptId]: index
+      [promptId]: index,
     }));
-    
+
     // Add slight animation feedback
     Animated.sequence([
       Animated.timing(scaleAnim, {
@@ -442,6 +496,41 @@ export default function ProfileScreen() {
         useNativeDriver: true,
       }),
     ]).start();
+
+    if (!profile?.id) return;
+    const { error } = await supabase.from('profile_prompts').insert({
+      profile_id: profile.id,
+      prompt_key: prompt.id,
+      prompt_title: prompt.title,
+      answer,
+    });
+    if (error) {
+      console.log('[profile] prompt insert error', error);
+      return;
+    }
+    void loadPromptAnswers();
+  };
+
+  const saveCustomPrompt = async () => {
+    if (isPreviewMode || !profile?.id) return;
+    const title = customPromptTitle.trim();
+    const answer = customPromptAnswer.trim();
+    if (!title || !answer) return;
+    setCustomPromptSaving(true);
+    const { error } = await supabase.from('profile_prompts').insert({
+      profile_id: profile.id,
+      prompt_key: 'custom',
+      prompt_title: title,
+      answer,
+    });
+    setCustomPromptSaving(false);
+    if (error) {
+      console.log('[profile] custom prompt insert error', error);
+      return;
+    }
+    setCustomPromptTitle('');
+    setCustomPromptAnswer('');
+    void loadPromptAnswers();
   };
 
   const togglePreviewMode = () => {
@@ -614,8 +703,87 @@ export default function ProfileScreen() {
     return `Quiet hours use ${tzLabel} time`;
   }, [notificationPrefs.quiet_hours_enabled, notificationPrefs.quiet_hours_tz]);
 
+  const heroImageUri =
+    userPhotos[0]
+    || profile?.avatar_url
+    || 'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=600&h=900&fit=crop&crop=face';
+  const avatarImageUri =
+    profile?.avatar_url
+    || userPhotos[0]
+    || 'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=600&h=900&fit=crop&crop=face';
+  const heroVideoSource =
+    (profile as any)?.profile_video
+    || (profile as any)?.profileVideo
+    || '';
+  const heroVideoThumbnail =
+    (profile as any)?.profile_video_thumbnail
+    || (profile as any)?.profileVideoThumbnail
+    || null;
+  const displayName =
+    profile?.full_name
+    || (profile as any)?.name
+    || 'Your Name';
+  const displayAge = profile?.age ? String(profile.age) : '';
+  const rawBio = (profile?.bio || '').trim();
+  const defaultHookLines = [
+    'Here for something intentional, not rushed.',
+    'Calm energy, deep conversations, good laughs.',
+    'I value presence, honesty, and real connection.',
+  ];
+  const userIdSeed = user?.id || profile?.id || '';
+  const hookIndex = userIdSeed
+    ? Array.from(userIdSeed).reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % defaultHookLines.length
+    : new Date().getDate() % defaultHookLines.length;
+  const isPlaceholderBio =
+    rawBio.length < 8 ||
+    /^(i'?m|im)\s+(a|an|the)\s+/i.test(rawBio) ||
+    /(developer|engineer|founder|ceo|entrepreneur|student)\b/i.test(rawBio);
+  const useDefaultBio = !rawBio || isPlaceholderBio;
+  const displayBio = useDefaultBio ? defaultHookLines[hookIndex] : rawBio;
+
+  const locationPartsRaw = [
+    (profile as any)?.city,
+    profile?.region,
+    profile?.location,
+    (profile as any)?.current_country,
+  ]
+    .map((part: string | undefined) => (part || '').trim())
+    .filter(Boolean);
+  const locationParts = locationPartsRaw.filter((part, index, arr) => {
+    const key = part.toLowerCase();
+    return arr.findIndex((p) => p.toLowerCase() === key) === index;
+  });
+  const locationDisplay = locationParts.length
+    ? locationParts.join(', ')
+    : 'Location not set';
+  const verificationLevel =
+    (profile as any)?.verification_level
+    ?? (profile as any)?.verificationLevel
+    ?? ((profile as any)?.verified ? 1 : 0);
+  const isOnlineNow = !!(profile as any)?.online;
+  const isActiveNow = !!(profile as any)?.is_active || !!(profile as any)?.isActiveNow;
+  const showPresence = isOnlineNow || isActiveNow;
+  const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
+  const aboutMeText = rawBio || 'Add a few lines about you.';
+  const promptHighlights = useMemo(
+    () =>
+      promptAnswers
+        .map((row) => {
+          const prompt = PROFILE_PROMPTS.find((p) => p.id === row.prompt_key);
+          return {
+            id: row.id,
+            title: row.prompt_title || prompt?.title || 'Prompt',
+            answer: row.answer,
+          };
+        })
+        .slice(0, 2),
+    [promptAnswers],
+  );
+
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
+  const [heroVideoUrl, setHeroVideoUrl] = useState<string | null>(null);
+  const [introVideoOpen, setIntroVideoOpen] = useState(false);
 
   const timeStringToDate = useCallback((value: string) => {
     const [hour = '0', minute = '0'] = value.split(':');
@@ -663,6 +831,64 @@ export default function ProfileScreen() {
     [dateToTimeString, notificationPrefs.quiet_hours_start, updateQuietHours],
   );
 
+  useEffect(() => {
+    let mounted = true;
+    const resolveHeroVideo = async () => {
+      const source = heroVideoSource;
+      if (!source) {
+        if (mounted) setHeroVideoUrl(null);
+        return;
+      }
+      if (source.startsWith('http')) {
+        if (mounted) setHeroVideoUrl(source);
+        return;
+      }
+      const { data, error } = await supabase.storage
+        .from('profile-videos')
+        .createSignedUrl(source, 3600);
+      if (!mounted) return;
+      if (error || !data?.signedUrl) {
+        setHeroVideoUrl(null);
+        return;
+      }
+      setHeroVideoUrl(data.signedUrl);
+    };
+    void resolveHeroVideo();
+    return () => {
+      mounted = false;
+    };
+  }, [heroVideoSource]);
+
+  const HeroVideo = ({ uri }: { uri: string }) => {
+    const player = useVideoPlayer(uri, (p) => {
+      p.loop = true;
+      p.muted = true;
+      try {
+        p.play();
+      } catch {}
+    });
+
+    useEffect(() => {
+      try {
+        player.play();
+      } catch {}
+      return () => {
+        try {
+          player.pause();
+        } catch {}
+      };
+    }, [player]);
+
+    return (
+      <VideoView
+        style={StyleSheet.absoluteFillObject}
+        player={player}
+        contentFit="cover"
+        nativeControls={false}
+      />
+    );
+  };
+
 
   const closeDropdown = () => {
     if (showSettingsDropdown) {
@@ -686,7 +912,7 @@ export default function ProfileScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
       {/* Verification Notifications */}
-      {profile?.id && <VerificationNotifications />}
+      {Boolean(profile?.id) && <VerificationNotifications />}
       
       {/* Animated Header */}
       <Animated.View
@@ -873,7 +1099,13 @@ export default function ProfileScreen() {
         onRequestClose={() => setShowNotificationsModal(false)}
       >
         <View style={styles.notificationModalBackdrop}>
-          <View style={[styles.notificationModalCard, { backgroundColor: theme.background, borderColor: theme.outline }]}>
+          <View
+            style={[
+              styles.notificationModalCard,
+              styles.cardShadow,
+              { backgroundColor: theme.background, borderColor: theme.outline },
+            ]}
+          >
             <View style={styles.notificationModalHeader}>
               <Text style={[styles.notificationModalTitle, { color: theme.text }]}>Notifications</Text>
               <TouchableOpacity onPress={() => setShowNotificationsModal(false)}>
@@ -1072,7 +1304,13 @@ export default function ProfileScreen() {
         onRequestClose={() => setShowEmailModal(false)}
       >
         <View style={styles.emailModalBackdrop}>
-          <View style={[styles.emailModalCard, { backgroundColor: theme.background, borderColor: theme.outline }]}>
+          <View
+            style={[
+              styles.emailModalCard,
+              styles.cardShadow,
+              { backgroundColor: theme.background, borderColor: theme.outline },
+            ]}
+          >
             <View style={styles.emailModalHeader}>
               <Text style={[styles.emailModalTitle, { color: theme.text }]}>Email & Account</Text>
               <TouchableOpacity onPress={() => setShowEmailModal(false)}>
@@ -1149,49 +1387,180 @@ export default function ProfileScreen() {
         }
       >
         {/* Profile Header Section */}
-        <View style={[styles.profileHeader, { backgroundColor: theme.backgroundSubtle }]}> 
-          <View style={styles.avatarContainer}>
-            <Image
-              source={{
-                uri: profile?.avatar_url || 'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=400&h=600&fit=crop&crop=face'
-              }}
-              style={[styles.avatar, { borderColor: theme.background }]}
-            />
+        <View style={[styles.profileHeader, { backgroundColor: theme.background }]}>
+          <View
+            style={[
+              styles.heroCard,
+              { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+            ]}
+          >
+            {heroVideoUrl ? (
+              <View style={styles.heroImage}>
+                <HeroVideo uri={heroVideoUrl} />
+                <View style={styles.heroTint} />
+                <LinearGradient
+                  colors={["rgba(0,0,0,0.35)", "transparent"]}
+                  style={styles.heroTopGradient}
+                />
+                <LinearGradient
+                  colors={["transparent", "rgba(0,0,0,0.55)"]}
+                  style={styles.heroBottomGradient}
+                />
+                <View style={styles.heroVignette} pointerEvents="none" />
+                <View style={styles.heroInnerStroke} pointerEvents="none" />
+                <View style={styles.heroGrain} pointerEvents="none" />
+                <View style={styles.heroTopRow}>
+                  <View
+                    style={[
+                      styles.heroPill,
+                      { backgroundColor: "rgba(255,255,255,0.8)", borderColor: theme.outline },
+                    ]}
+                  >
+                    <MaterialCommunityIcons name="star-four-points" size={12} color={theme.tint} />
+                    <Text style={[styles.heroPillText, { color: theme.text }]}>Profile</Text>
+                  </View>
+                  {!isPreviewMode && (
+                    <TouchableOpacity
+                      style={[
+                        styles.heroEditButton,
+                        { backgroundColor: "rgba(255,255,255,0.9)", borderColor: theme.outline },
+                      ]}
+                      onPress={() => setShowEditModal(true)}
+                    >
+                      <MaterialCommunityIcons name="pencil" size={16} color={theme.text} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            ) : (
+              <ImageBackground
+                source={{ uri: heroImageUri }}
+                style={styles.heroImage}
+                imageStyle={styles.heroImageStyle}
+              >
+                <View style={styles.heroTint} />
+                <LinearGradient
+                  colors={["rgba(0,0,0,0.35)", "transparent"]}
+                  style={styles.heroTopGradient}
+                />
+                <LinearGradient
+                  colors={["transparent", "rgba(0,0,0,0.55)"]}
+                  style={styles.heroBottomGradient}
+                />
+                <View style={styles.heroVignette} pointerEvents="none" />
+                <View style={styles.heroInnerStroke} pointerEvents="none" />
+                <View style={styles.heroGrain} pointerEvents="none" />
+                <View style={styles.heroTopRow}>
+                  <View
+                    style={[
+                      styles.heroPill,
+                      { backgroundColor: "rgba(255,255,255,0.8)", borderColor: theme.outline },
+                    ]}
+                  >
+                    <MaterialCommunityIcons name="star-four-points" size={12} color={theme.tint} />
+                    <Text style={[styles.heroPillText, { color: theme.text }]}>Profile</Text>
+                  </View>
+                  {!isPreviewMode && (
+                    <TouchableOpacity
+                      style={[
+                        styles.heroEditButton,
+                        { backgroundColor: "rgba(255,255,255,0.9)", borderColor: theme.outline },
+                      ]}
+                      onPress={() => setShowEditModal(true)}
+                    >
+                      <MaterialCommunityIcons name="pencil" size={16} color={theme.text} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </ImageBackground>
+            )}
+          </View>
+
+          <View style={styles.heroAvatarWrap}>
+            <View style={styles.heroAvatarGlow} />
+            <LinearGradient
+              colors={[theme.tint, theme.accent]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.avatarRing}
+            >
+              <View style={[styles.avatarInner, { backgroundColor: theme.background }]}>
+                <Image
+                  source={{ uri: avatarImageUri }}
+                  style={[styles.avatar, { borderColor: theme.background }]}
+                />
+              </View>
+            </LinearGradient>
             {!isPreviewMode && (
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.editAvatarButton}
                 onPress={() => setShowEditModal(true)}
               >
-                <MaterialCommunityIcons name="camera" size={16} color="#fff" />
+                <MaterialCommunityIcons name="camera" size={14} color="#fff" />
               </TouchableOpacity>
             )}
           </View>
-          
-          <Text style={[styles.profileName, { color: theme.text }]}> {`${profile?.full_name || 'Your Name'}, ${profile?.age || 25}`}</Text>
 
-          
-          <View style={styles.locationContainer}>
+          <View style={styles.heroNameRow}>
+            <Text style={[styles.profileName, { color: theme.text }]}>
+              {displayName}
+              {displayAge ? `, ${displayAge}` : ""}
+            </Text>
+            {verificationLevel > 0 ? (
+              <VerificationBadge level={verificationLevel} size="small" />
+            ) : null}
+            {showPresence ? (
+              <View
+                style={[
+                  styles.presenceBadge,
+                  { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+                ]}
+              >
+                <View style={[styles.presenceDot, { backgroundColor: theme.tint }]} />
+                <Text style={[styles.presenceText, { color: theme.textMuted }]}>
+                  {presenceLabel}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+
+          <View style={styles.heroLocationRow}>
             <MaterialCommunityIcons name="map-marker" size={16} color={theme.tint} />
             <Text style={[styles.locationText, { color: theme.textMuted }]}>
-              {profile?.region || 'Accra'}, Ghana
+              {locationDisplay}
             </Text>
           </View>
-          
-          <Text style={[styles.bio, { color: theme.text }]}> 
-            {profile?.bio || 'Your bio will appear here...'}
-          </Text>
+
+          <View
+            style={[
+              styles.heroBioCard,
+              { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+            ]}
+          >
+            <Text style={[styles.bio, { color: theme.text }]}>
+              {displayBio}
+            </Text>
+          </View>
+          {useDefaultBio ? (
+            <View style={[styles.intentDivider, { backgroundColor: theme.outline }]} />
+          ) : null}
+          {useDefaultBio ? (
+            <Text style={[styles.intentLine, { color: theme.textMuted }]}>
+              Open to meaningful connection
+            </Text>
+          ) : null}
 
           {/* Profile Details */}
           <View style={styles.profileDetails}>
             {/* Age and Height Row */}
             <View style={styles.detailRow}>
-              {profile?.age && (
+              {typeof profile?.age === 'number' && profile.age > 0 && (
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="cake-variant" size={16} color={theme.tint} />
                   <Text style={[styles.detailText, { color: theme.text }]}>{profile?.age ? `${profile.age} years old` : "Age not set"}</Text>
                 </View>
               )}
-              {(profile as any)?.height && (
+              {Boolean((profile as any)?.height) && (
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="human-male-height" size={16} color={theme.tint} />
                   <Text style={[styles.detailText, { color: theme.text }]}>Height: {(profile as any).height}</Text>
@@ -1199,7 +1568,7 @@ export default function ProfileScreen() {
               )}
             </View>
 
-            {(profile as any)?.kids && (
+            {Boolean((profile as any)?.kids) && (
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="baby-face-outline" size={16} color={theme.tint} />
@@ -1208,7 +1577,7 @@ export default function ProfileScreen() {
               </View>
             )}
 
-            {(profile as any)?.family_plans && (
+            {Boolean((profile as any)?.family_plans) && (
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="home-heart" size={16} color={theme.tint} />
@@ -1218,7 +1587,7 @@ export default function ProfileScreen() {
             )}
 
             {/* Occupation */}
-            {(profile as any)?.occupation && (
+            {Boolean((profile as any)?.occupation) && (
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="briefcase" size={16} color={theme.tint} />
@@ -1228,7 +1597,7 @@ export default function ProfileScreen() {
             )}
 
             {/* Education */}
-            {(profile as any)?.education && (
+            {Boolean((profile as any)?.education) && (
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="school" size={16} color={theme.tint} />
@@ -1238,7 +1607,7 @@ export default function ProfileScreen() {
             )}
 
             {/* Looking For */}
-            {(profile as any)?.looking_for && (
+            {Boolean((profile as any)?.looking_for) && (
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="heart-outline" size={16} color={theme.tint} />
@@ -1248,7 +1617,7 @@ export default function ProfileScreen() {
             )}
 
             {/* DIASPORA: Location Information */}
-            {(profile as any)?.current_country && (
+            {Boolean((profile as any)?.current_country) && (
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="map-marker" size={16} color={theme.tint} />
@@ -1260,7 +1629,7 @@ export default function ProfileScreen() {
             )}
 
             {/* Diaspora Status with Verification */}
-            {(profile as any)?.diaspora_status && (profile as any).diaspora_status !== 'LOCAL' && (
+            {Boolean((profile as any)?.diaspora_status) && (profile as any).diaspora_status !== 'LOCAL' && (
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons 
@@ -1289,7 +1658,7 @@ export default function ProfileScreen() {
             )}
 
             {/* Years in Diaspora */}
-            {(profile as any)?.years_in_diaspora && (profile as any).years_in_diaspora > 0 && (
+            {typeof (profile as any)?.years_in_diaspora === 'number' && (profile as any).years_in_diaspora > 0 && (
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="calendar" size={16} color={theme.tint} />
@@ -1299,7 +1668,7 @@ export default function ProfileScreen() {
             )}
 
             {/* Long Distance Preference */}
-            {(profile as any)?.willing_long_distance && (
+            {Boolean((profile as any)?.willing_long_distance) && (
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="earth" size={16} color={theme.tint} />
@@ -1309,7 +1678,7 @@ export default function ProfileScreen() {
             )}
 
             {/* Future Ghana Plans */}
-            {(profile as any)?.future_ghana_plans && (
+            {Boolean((profile as any)?.future_ghana_plans) && (
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="compass" size={16} color={theme.tint} />
@@ -1319,7 +1688,7 @@ export default function ProfileScreen() {
             )}
 
             {/* HIGH PRIORITY: Lifestyle Fields */}
-            {(profile as any)?.exercise_frequency && (
+            {Boolean((profile as any)?.exercise_frequency) && (
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="dumbbell" size={16} color={theme.tint} />
@@ -1330,13 +1699,13 @@ export default function ProfileScreen() {
 
             {/* Smoking and Drinking Row */}
             <View style={styles.detailRow}>
-              {(profile as any)?.smoking && (
+              {Boolean((profile as any)?.smoking) && (
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="smoking-off" size={16} color={theme.tint} />
                   <Text style={[styles.detailText, { color: theme.text }]}>Smoking: {(profile as any).smoking}</Text>
                 </View>
               )}
-              {(profile as any)?.drinking && (
+              {Boolean((profile as any)?.drinking) && (
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="glass-cocktail" size={16} color={theme.tint} />
                   <Text style={[styles.detailText, { color: theme.text }]}>Drinking: {(profile as any).drinking}</Text>
@@ -1347,13 +1716,13 @@ export default function ProfileScreen() {
             {/* HIGH PRIORITY: Family Fields */}
             {/* Children Row */}
             <View style={styles.detailRow}>
-              {(profile as any)?.has_children && (
+              {Boolean((profile as any)?.has_children) && (
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="baby" size={16} color={theme.tint} />
                   <Text style={[styles.detailText, { color: theme.text }]}>Children: {(profile as any).has_children}</Text>
                 </View>
               )}
-              {(profile as any)?.wants_children && (
+              {Boolean((profile as any)?.wants_children) && (
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="heart-plus" size={16} color={theme.tint} />
                   <Text style={[styles.detailText, { color: theme.text }]}>Wants: {(profile as any).wants_children}</Text>
@@ -1362,7 +1731,7 @@ export default function ProfileScreen() {
             </View>
 
             {/* HIGH PRIORITY: Personality Fields */}
-            {(profile as any)?.personality_type && (
+            {Boolean((profile as any)?.personality_type) && (
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="account-circle" size={16} color={theme.tint} />
@@ -1371,7 +1740,7 @@ export default function ProfileScreen() {
               </View>
             )}
 
-            {(profile as any)?.love_language && (
+            {Boolean((profile as any)?.love_language) && (
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="heart-multiple" size={16} color={theme.tint} />
@@ -1383,13 +1752,13 @@ export default function ProfileScreen() {
             {/* HIGH PRIORITY: Living Situation Fields */}
             {/* Living and Pets Row */}
             <View style={styles.detailRow}>
-              {(profile as any)?.living_situation && (
+              {Boolean((profile as any)?.living_situation) && (
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="home" size={16} color={theme.tint} />
                   <Text style={[styles.detailText, { color: theme.text }]}>{(profile as any).living_situation}</Text>
                 </View>
               )}
-              {(profile as any)?.pets && (
+              {Boolean((profile as any)?.pets) && (
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="paw" size={16} color={theme.tint} />
                   <Text style={[styles.detailText, { color: theme.text }]}>{(profile as any).pets}</Text>
@@ -1398,7 +1767,7 @@ export default function ProfileScreen() {
             </View>
 
             {/* HIGH PRIORITY: Languages */}
-            {(profile as any)?.languages_spoken && (profile as any).languages_spoken.length > 0 && (
+            {Array.isArray((profile as any)?.languages_spoken) && (profile as any).languages_spoken.length > 0 && (
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="translate" size={16} color={theme.tint} />
@@ -1421,7 +1790,21 @@ export default function ProfileScreen() {
 
         {/* Quick Stats - Hidden in preview mode */}
         {!isPreviewMode && (
-          <View style={[styles.statsContainer, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline, borderWidth: 1, borderRadius: 16 }]}> 
+          <View
+            style={[
+              styles.statsContainer,
+              styles.cardShadow,
+              { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline, borderWidth: 1, borderRadius: 18 },
+            ]}
+          >
+            <View style={styles.statsHighlight}>
+              <LinearGradient
+                colors={[theme.tint, theme.accent, "transparent"]}
+                start={{ x: 0, y: 0.5 }}
+                end={{ x: 1, y: 0.5 }}
+                style={styles.statsHighlightLine}
+              />
+            </View>
             <View style={styles.statItem}>
               <Text style={[styles.statNumber, { color: theme.text }]}>12</Text>
               <Text style={[styles.statLabel, { color: theme.textMuted }]}>Matches</Text>
@@ -1434,16 +1817,26 @@ export default function ProfileScreen() {
             <View style={[styles.statDivider, { backgroundColor: theme.outline }]} />
             <View style={styles.statItem}>
               <Text style={[styles.statNumber, { color: theme.text }]}>89%</Text>
-              <Text style={[styles.statLabel, { color: theme.textMuted }]}>Match Rate</Text>
+              <Text style={[styles.statLabel, { color: theme.textMuted }]}>Match Quality</Text>
             </View>
+            <Text style={[styles.statsHint, { color: theme.textMuted }]}>
+              Based on mutual intent alignment
+            </Text>
           </View>
         )}
 
         {/* Photo Gallery Section */}
-        <View style={[styles.section, { marginBottom: 0, paddingBottom: 10 }]}>
+        <View
+          style={[
+            styles.section,
+            styles.sectionCard,
+            styles.cardShadowSoft,
+            { marginBottom: 0, paddingBottom: 10, backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+          ]}
+        >
           <View style={styles.sectionHeader}>
             <Text style={[styles.sectionTitle, { color: theme.text }]}>
-              Photos
+              Gallery
             </Text>
             {!isPreviewMode && (
               <TouchableOpacity 
@@ -1462,14 +1855,30 @@ export default function ProfileScreen() {
               'https://images.unsplash.com/photo-1501003211169-0a1dd7228f2d?w=300&h=400&fit=crop&crop=face',
               'https://images.unsplash.com/photo-1502003119688-b3b9e7b2e1e8?w=300&h=400&fit=crop&crop=face'
             ]}
+            introVideoUrl={heroVideoUrl}
+            introVideoThumbnail={heroVideoThumbnail || avatarImageUri}
+            onOpenVideo={() => setIntroVideoOpen(true)}
             canEdit={!isPreviewMode}
             onAddPhoto={() => setShowEditModal(true)}
             onRemovePhoto={removePhoto}
           />
         </View>
 
-        {/* Interactive Prompts Section */}
-        <View style={[styles.section, { paddingTop: 5 }]}>
+        <ProfileVideoModal
+          visible={introVideoOpen}
+          videoUrl={heroVideoUrl ?? undefined}
+          onClose={() => setIntroVideoOpen(false)}
+        />
+
+        {/* About Me Section */}
+        <View
+          style={[
+            styles.section,
+            styles.sectionCard,
+            styles.cardShadowSoft,
+            { paddingTop: 5, backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+          ]}
+        >
           <View style={styles.sectionHeader}>
             <Text style={[styles.sectionTitle, { color: theme.text }]}>
               About Me
@@ -1484,52 +1893,170 @@ export default function ProfileScreen() {
               </TouchableOpacity>
             )}
           </View>
-          
-          <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
-            {PROFILE_PROMPTS.map((prompt) => (
+
+          <View
+            style={[
+              styles.aboutCard,
+              { backgroundColor: theme.background, borderColor: theme.outline },
+            ]}
+          >
+            <Text
+              style={[
+                styles.aboutText,
+                { color: rawBio ? theme.text : theme.textMuted },
+              ]}
+            >
+              {aboutMeText}
+            </Text>
+          </View>
+
+          {promptsLoading ? (
+            <Text style={[styles.promptEmptyText, { color: theme.textMuted }]}>
+              Loading prompts...
+            </Text>
+          ) : promptHighlights.length ? (
+            <View style={styles.promptHighlights}>
+              {promptHighlights.map((prompt) => (
+                <View
+                  key={prompt.id}
+                  style={[
+                    styles.promptHighlightCard,
+                    { backgroundColor: theme.background, borderColor: theme.outline },
+                  ]}
+                >
+                  <Text style={[styles.promptHighlightTitle, { color: theme.textMuted }]}>
+                    {prompt.title}
+                  </Text>
+                  <Text style={[styles.promptHighlightAnswer, { color: theme.text }]}>
+                    {prompt.answer}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <Text style={[styles.promptEmptyText, { color: theme.textMuted }]}>
+              Add a prompt or two to share more about you.
+            </Text>
+          )}
+
+          {!isPreviewMode ? (
+            <View style={styles.promptActionsRow}>
+              <TouchableOpacity
+                style={[styles.promptActionButton, { borderColor: theme.outline }]}
+                onPress={() => setShowPromptEditor((prev) => !prev)}
+              >
+                <MaterialCommunityIcons name="comment-quote-outline" size={16} color={theme.tint} />
+                <Text style={[styles.promptActionText, { color: theme.tint }]}>
+                  {showPromptEditor ? 'Hide prompts' : 'Add prompt'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
+          {showPromptEditor ? (
+            <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
               <View
-                key={prompt.id}
                 style={[
                   styles.promptCard,
-                  { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+                  styles.cardShadowSoft,
+                  { backgroundColor: theme.background, borderColor: theme.outline },
                 ]}
               >
-                <Text style={[styles.promptTitle, { color: theme.text }]}>{prompt.title}</Text>
-                <View style={styles.promptOptions}>
-                  {prompt.responses.map((response, index) => {
-                    const selected = selectedPrompts[prompt.id] === index;
-                    return (
-                      <TouchableOpacity
-                        key={index}
-                        style={[
-                          styles.promptOption,
-                          { backgroundColor: theme.background, borderColor: theme.outline },
-                          selected && { backgroundColor: theme.tint, borderColor: theme.tint },
-                          isPreviewMode && styles.promptOptionPreview,
-                        ]}
-                        onPress={() => handlePromptSelect(prompt.id, index)}
-                        disabled={isPreviewMode}
-                      >
-                        <Text
-                          style={[
-                            styles.promptOptionText,
-                            { color: theme.text },
-                            selected && styles.promptOptionTextSelected,
-                          ]}
-                        >
-                          {response}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
+                <Text style={[styles.promptTitle, { color: theme.text }]}>
+                  Create your own
+                </Text>
+                <View style={styles.customPromptGroup}>
+                  <TextInput
+                    value={customPromptTitle}
+                    onChangeText={setCustomPromptTitle}
+                    placeholder="Write your question..."
+                    placeholderTextColor={theme.textMuted}
+                    style={[
+                      styles.customPromptInput,
+                      { color: theme.text, borderColor: theme.outline },
+                    ]}
+                  />
+                  <TextInput
+                    value={customPromptAnswer}
+                    onChangeText={setCustomPromptAnswer}
+                    placeholder="Your answer..."
+                    placeholderTextColor={theme.textMuted}
+                    style={[
+                      styles.customPromptInput,
+                      styles.customPromptAnswer,
+                      { color: theme.text, borderColor: theme.outline },
+                    ]}
+                    multiline
+                  />
+                  <TouchableOpacity
+                    onPress={saveCustomPrompt}
+                    disabled={!customPromptTitle.trim() || !customPromptAnswer.trim() || customPromptSaving}
+                    style={[
+                      styles.customPromptSave,
+                      {
+                        backgroundColor: customPromptTitle.trim() && customPromptAnswer.trim()
+                          ? theme.tint
+                          : theme.outline,
+                      },
+                    ]}
+                  >
+                    <Text style={styles.customPromptSaveText}>
+                      {customPromptSaving ? 'Saving...' : 'Save prompt'}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               </View>
-            ))}
-          </Animated.View>
+              {PROFILE_PROMPTS.map((prompt) => (
+                <View
+                  key={prompt.id}
+                  style={[
+                    styles.promptCard,
+                    styles.cardShadowSoft,
+                    { backgroundColor: theme.background, borderColor: theme.outline },
+                  ]}
+                >
+                  <Text style={[styles.promptTitle, { color: theme.text }]}>{prompt.title}</Text>
+                  <View style={styles.promptOptions}>
+                    {prompt.responses.map((response, index) => {
+                      const selected = selectedPrompts[prompt.id] === index;
+                      return (
+                        <TouchableOpacity
+                          key={index}
+                          style={[
+                            styles.promptOption,
+                            { backgroundColor: theme.background, borderColor: theme.outline },
+                            selected && { backgroundColor: theme.tint, borderColor: theme.tint },
+                          ]}
+                          onPress={() => handlePromptSelect(prompt.id, index)}
+                        >
+                          <Text
+                            style={[
+                              styles.promptOptionText,
+                              { color: theme.text },
+                              selected && styles.promptOptionTextSelected,
+                            ]}
+                          >
+                            {response}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              ))}
+            </Animated.View>
+          ) : null}
         </View>
 
         {/* Interests Section */}
-        <View style={[styles.section, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline, borderWidth: 0 }]}> 
+        <View
+          style={[
+            styles.section,
+            styles.sectionCard,
+            styles.cardShadowSoft,
+            { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+          ]}
+        >
           <View style={styles.sectionHeader}>
             <Text style={[styles.sectionTitle, { color: theme.text }]}>
               Interests
@@ -1561,7 +2088,14 @@ export default function ProfileScreen() {
         </View>
 
         {/* Distance Unit Section */}
-        <View style={[styles.section, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline, borderWidth: 1 }]}>
+        <View
+          style={[
+            styles.section,
+            styles.sectionCard,
+            styles.cardShadowSoft,
+            { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+          ]}
+        >
           <View style={styles.sectionHeader}>
             <Text style={[styles.sectionTitle, { color: theme.text }]}>
               Distance Unit
@@ -1787,63 +2321,206 @@ const styles = StyleSheet.create({
   profileHeader: {
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 32,
+    paddingTop: 16,
+    paddingBottom: 24,
     marginBottom: 8,
   },
-  avatarContainer: {
-    position: 'relative',
-    marginBottom: 16,
+  heroCard: {
+    width: '100%',
+    height: 232,
+    borderRadius: 24,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  heroTint: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.08)',
+  },
+  heroImage: {
+    flex: 1,
+  },
+  heroImageStyle: {
+    borderRadius: 24,
+  },
+  heroTopGradient: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    height: 96,
+  },
+  heroBottomGradient: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 140,
+  },
+  heroVignette: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.08)',
+  },
+  heroInnerStroke: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 24,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.65)',
+  },
+  heroGrain: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255,255,255,0.02)',
+  },
+  heroTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 14,
+  },
+  heroPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  heroPillText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_600SemiBold',
+  },
+  heroEditButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  heroAvatarWrap: {
+    marginTop: -48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroAvatarGlow: {
+    position: 'absolute',
+    width: 126,
+    height: 126,
+    borderRadius: 63,
+    backgroundColor: 'rgba(255,255,255,0.52)',
+    shadowColor: '#a78bfa',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.24,
+    shadowRadius: 18,
+    elevation: 10,
+  },
+  avatarRing: {
+    padding: 3,
+    borderRadius: 48,
+  },
+  avatarInner: {
+    padding: 2,
+    borderRadius: 44,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.9)',
   },
   avatar: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    borderWidth: 4,
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    borderWidth: 2,
     borderColor: '#fff',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18,
     shadowRadius: 12,
-    elevation: 8,
+    elevation: 10,
   },
   editAvatarButton: {
     position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    bottom: -2,
+    right: 10,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: Colors.light.tint,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
     borderColor: '#fff',
   },
+  heroNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 14,
+  },
+  presenceBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  presenceDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  presenceText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
   profileName: {
-    fontSize: 28,
+    fontSize: 29,
     fontFamily: 'PlayfairDisplay_700Bold',
     color: '#111827',
     textAlign: 'center',
-    marginBottom: 8,
+    letterSpacing: 0.4,
   },
-  locationContainer: {
+  heroLocationRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
+    gap: 6,
+    marginTop: 8,
   },
   locationText: {
-    fontSize: 16,
+    fontSize: 13,
     fontFamily: 'Manrope_400Regular',
     color: '#6b7280',
-    marginLeft: 4,
+  },
+  heroBioCard: {
+    marginTop: 16,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
   },
   bio: {
-    fontSize: 16,
+    fontSize: 14,
     fontFamily: 'Manrope_400Regular',
     color: '#374151',
     textAlign: 'center',
-    lineHeight: 24,
-    paddingHorizontal: 20,
+    lineHeight: 22,
+    letterSpacing: 0.2,
+  },
+  intentDivider: {
+    width: 36,
+    height: StyleSheet.hairlineWidth,
+    marginTop: 10,
+    borderRadius: 999,
+    opacity: 0.6,
+  },
+  intentLine: {
+    marginTop: 6,
+    fontSize: 12,
+    fontFamily: 'Manrope_500Medium',
+    letterSpacing: 0.2,
+    textAlign: 'center',
   },
   compatibilityContainer: {
     flexDirection: 'row',
@@ -1865,25 +2542,47 @@ const styles = StyleSheet.create({
   statsContainer: {
     flexDirection: 'row',
     backgroundColor: 'transparent',
-    paddingVertical: 20,
+    paddingVertical: 18,
     marginBottom: 8,
+  },
+  statsHighlight: {
+    position: 'absolute',
+    top: 10,
+    left: 16,
+    right: 16,
+    height: 2,
+  },
+  statsHighlightLine: {
+    height: 2,
+    borderRadius: 999,
   },
   statItem: {
     flex: 1,
     alignItems: 'center',
   },
   statNumber: {
-    fontSize: 24,
+    fontSize: 22,
     fontFamily: 'Archivo_700Bold',
     color: Colors.light.tint,
     marginBottom: 4,
+    letterSpacing: 0.3,
   },
   statLabel: {
-    fontSize: 12,
+    fontSize: 10,
     fontFamily: 'Manrope_400Regular',
     color: '#6b7280',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 1,
+  },
+  statsHint: {
+    position: 'absolute',
+    bottom: 8,
+    left: 0,
+    right: 0,
+    textAlign: 'center',
+    fontSize: 10,
+    fontFamily: 'Manrope_400Regular',
+    letterSpacing: 0.2,
   },
   statDivider: {
     width: 1,
@@ -1895,8 +2594,12 @@ const styles = StyleSheet.create({
   section: {
     backgroundColor: 'transparent',
     paddingHorizontal: 20,
-    paddingVertical: 20,
-    marginBottom: 8,
+    paddingVertical: 18,
+    marginBottom: 12,
+  },
+  sectionCard: {
+    borderRadius: 20,
+    borderWidth: 1,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -1908,6 +2611,92 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontFamily: 'PlayfairDisplay_600SemiBold',
     color: '#111827',
+  },
+  aboutCard: {
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  aboutText: {
+    fontSize: 14,
+    fontFamily: 'Manrope_400Regular',
+    lineHeight: 22,
+    letterSpacing: 0.2,
+  },
+  promptHighlights: {
+    marginTop: 12,
+    gap: 10,
+  },
+  promptActionsRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  promptActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  promptActionText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 0.2,
+  },
+  promptHighlightCard: {
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  promptHighlightTitle: {
+    fontSize: 12,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 0.4,
+    marginBottom: 6,
+  },
+  promptHighlightAnswer: {
+    fontSize: 14,
+    fontFamily: 'Manrope_500Medium',
+    lineHeight: 21,
+  },
+  promptEmptyText: {
+    marginTop: 10,
+    fontSize: 12,
+    fontFamily: 'Manrope_400Regular',
+    letterSpacing: 0.2,
+  },
+  customPromptGroup: {
+    marginTop: 8,
+    gap: 10,
+  },
+  customPromptInput: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: 'Manrope_400Regular',
+  },
+  customPromptAnswer: {
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  customPromptSave: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  customPromptSaveText: {
+    color: '#fff',
+    fontSize: 12,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 0.2,
   },
   
   // Buttons
@@ -2074,6 +2863,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'transparent',
   },
+  cardShadow: {
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    elevation: 12,
+  },
+  cardShadowSoft: {
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
+    elevation: 8,
+  },
   settingLabel: {
     fontSize: 14,
     fontFamily: 'Manrope_500Medium',
@@ -2154,11 +2957,11 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingVertical: 8,
     minWidth: 200,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.15,
-    shadowRadius: 20,
-    elevation: 12,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    elevation: 14,
     zIndex: 999,
     borderWidth: 1,
     borderColor: 'transparent',
@@ -2218,26 +3021,36 @@ const styles = StyleSheet.create({
   profileDetails: {
     marginTop: 16,
     gap: 8,
+    width: '100%',
   },
   detailRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    gap: 10,
     flexWrap: 'wrap',
+    justifyContent: 'center',
+    marginBottom: 2,
   },
   detailItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
     backgroundColor: 'transparent',
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    borderWidth: 1,
+    paddingVertical: 8,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#e2e8f0',
+    flexBasis: '48%',
+    flexGrow: 1,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 2,
   },
   detailText: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#475569',
     fontFamily: 'Manrope_500Medium',
   },
@@ -2260,39 +3073,43 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 18,
     maxHeight: '80%',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingVertical: 18,
+    paddingHorizontal: 18,
   },
   notificationModalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    marginBottom: 14,
   },
   notificationModalTitle: {
     fontSize: 18,
     fontWeight: '700',
+    letterSpacing: 0.2,
   },
   notificationModalContent: {
-    paddingBottom: 10,
+    paddingBottom: 12,
   },
   notificationSection: {
-    marginBottom: 16,
+    marginBottom: 18,
   },
   notificationSectionTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
-    marginBottom: 8,
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+    marginBottom: 10,
   },
   notificationToggleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 8,
+    paddingVertical: 10,
   },
   notificationToggleLabel: {
     fontSize: 14,
     fontWeight: '600',
+    letterSpacing: 0.1,
   },
   notificationLoading: {
     fontSize: 12,
@@ -2307,44 +3124,45 @@ const styles = StyleSheet.create({
   emailModalCard: {
     borderWidth: 1,
     borderRadius: 18,
-    paddingVertical: 18,
-    paddingHorizontal: 18,
+    paddingVertical: 20,
+    paddingHorizontal: 20,
   },
   emailModalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 12,
   },
   emailModalTitle: {
     fontSize: 18,
     fontWeight: '700',
+    letterSpacing: 0.2,
   },
   emailModalBody: {
     fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 14,
+    lineHeight: 19,
+    marginBottom: 16,
   },
   emailInput: {
     borderWidth: 1,
     borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     fontSize: 14,
     fontFamily: 'Manrope_500Medium',
   },
   emailError: {
     fontSize: 12,
-    marginTop: 8,
+    marginTop: 10,
   },
   emailMessage: {
     fontSize: 12,
-    marginTop: 8,
+    marginTop: 10,
   },
   emailSaveButton: {
-    marginTop: 16,
+    marginTop: 18,
     borderRadius: 14,
-    paddingVertical: 12,
+    paddingVertical: 13,
     alignItems: 'center',
   },
   emailSaveText: {

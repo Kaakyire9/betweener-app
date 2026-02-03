@@ -25,7 +25,7 @@ export default function AuthCallback() {
   const routeAfterSignIn = async () => {
     if (didNavigateRef.current) return;
     didNavigateRef.current = true;
-    router.replace("/(tabs)/");
+    router.replace("/(tabs)/vibes");
   };
   
   const exchange = useCallback(async () => {

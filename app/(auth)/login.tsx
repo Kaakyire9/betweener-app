@@ -92,7 +92,7 @@ export default function LoginScreen() {
       if (profileError && profileError.code !== "PGRST116") {
         throw profileError;
       }
-      router.replace(profile ? "/(tabs)/" : "/(auth)/onboarding");
+      router.replace(profile ? "/(tabs)/vibes" : "/(auth)/onboarding");
     } catch (error) {
       if (!isAppleAuthCancelled(error)) {
         console.error("[auth] apple sign-in error", error);

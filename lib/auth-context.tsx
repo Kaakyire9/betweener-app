@@ -3,7 +3,8 @@ import { registerPushToken } from '@/lib/notifications/push';
 import { clearSignupSession, consumeSignupMetadata, finalizeSignupPhoneVerification, updateSignupEventForUser } from '@/lib/signup-tracking';
 import { supabase } from '@/lib/supabase';
 import { Session, User } from '@supabase/supabase-js';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { AppState } from 'react-native';
 
 type Profile = {
   id: string;
@@ -92,6 +93,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const presenceUpdateAtRef = useRef(0);
 
   // Computed states
   const isAuthenticated = !!session && !!user;
@@ -157,6 +159,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await fetchProfile(user.id);
     }
   };
+
+  const updatePresence = async (nextOnline: boolean) => {
+    if (!user?.id) return;
+    const now = Date.now();
+    if (now - presenceUpdateAtRef.current < 5_000) return;
+    presenceUpdateAtRef.current = now;
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          online: nextOnline,
+          last_active: new Date().toISOString(),
+        })
+        .eq('user_id', user.id);
+      if (error) {
+        console.error('[presence] update error', error);
+      } else if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log('[presence] set', { online: nextOnline });
+      }
+    } catch (error) {
+      console.error('[presence] update error', error);
+    }
+  };
+
+  useEffect(() => {
+    if (!user?.id) return;
+    let mounted = true;
+    const setOnline = () => mounted && void updatePresence(true);
+    const setOffline = () => mounted && void updatePresence(false);
+
+    setOnline();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') setOnline();
+      else setOffline();
+    });
+
+    return () => {
+      mounted = false;
+      subscription.remove();
+      void updatePresence(false);
+    };
+  }, [user?.id]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -225,6 +269,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signOut = async () => {
+    if (user?.id) {
+      await updatePresence(false);
+    }
     const { error } = await supabase.auth.signOut();
     if (error) {
       console.error('Error signing out:', error);

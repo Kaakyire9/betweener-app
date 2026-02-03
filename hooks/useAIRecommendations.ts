@@ -10,6 +10,7 @@ const ACTIVE_WINDOW_MINUTES = 15;
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const KM_PER_MILE = 1.60934;
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
+const ACTIVE_NOW_MS = 3 * 60 * 1000;
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
 
@@ -58,6 +59,18 @@ function formatDistance(distanceKm?: number | null, fallback?: string, unit: Dis
   return `${rounded} ${label} away`;
 }
 
+const isActiveNowFromLastActive = (online: boolean | null | undefined, lastActive?: string | null) => {
+  if (online) return true;
+  if (!lastActive) return false;
+  try {
+    const then = new Date(lastActive).getTime();
+    if (Number.isNaN(then)) return false;
+    return Date.now() - then <= ACTIVE_NOW_MS;
+  } catch {
+    return false;
+  }
+};
+
 async function signProfileVideoUrl(path?: string | null) {
   if (!path) return undefined;
   if (path.startsWith('http')) return path;
@@ -86,6 +99,7 @@ export default function useAIRecommendations(
   const [lastMutualMatch, setLastMutualMatch] = useState<Match | null>(null);
   const [swipeHistory, setSwipeHistory] = useState<Array<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }>>([]);
   const mountedRef = useRef(true);
+  const presencePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mode = opts?.mode ?? 'forYou';
   const activeWindowMinutes = opts?.activeWindowMinutes ?? ACTIVE_WINDOW_MINUTES;
   const effectiveDistanceUnit =
@@ -104,6 +118,48 @@ export default function useAIRecommendations(
     } catch {}
     return effectiveDistanceUnit;
   }, [effectiveDistanceUnit]);
+
+  const refreshPresence = useCallback(async (ids: string[]) => {
+    if (!ids.length) return;
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, online, last_active')
+        .in('id', ids);
+      if (error || !Array.isArray(data)) return;
+      const map = new Map<string, { online?: boolean | null; last_active?: string | null }>();
+      data.forEach((row: any) => {
+        if (row?.id) map.set(String(row.id), row);
+      });
+      setMatches((prev) => {
+        let changed = false;
+        const next = prev.map((m) => {
+          const row = map.get(String(m.id));
+          if (!row) return m;
+          const online = !!row.online;
+          const lastActive = row.last_active ?? m.lastActive ?? null;
+          const nextIsActive = isActiveNowFromLastActive(online, lastActive);
+          if (
+            online === (m as any).online &&
+            lastActive === m.lastActive &&
+            nextIsActive === m.isActiveNow
+          ) {
+            return m;
+          }
+          changed = true;
+          return {
+            ...m,
+            online,
+            lastActive,
+            isActiveNow: nextIsActive,
+          };
+        });
+        return changed ? next : prev;
+      });
+    } catch {
+      // ignore presence refresh errors
+    }
+  }, []);
 
   useEffect(() => {
     setMatches((prev) =>
@@ -124,6 +180,30 @@ export default function useAIRecommendations(
       })
     );
   }, [resolvedDistanceUnit]);
+
+  const presenceIdsKey = useMemo(
+    () => matches.map((m) => String(m.id)).join(','),
+    [matches]
+  );
+
+  useEffect(() => {
+    if (!presenceIdsKey) return;
+    if (presencePollRef.current) {
+      clearInterval(presencePollRef.current);
+      presencePollRef.current = null;
+    }
+    const ids = presenceIdsKey.split(',').filter(Boolean);
+    void refreshPresence(ids);
+    presencePollRef.current = setInterval(() => {
+      void refreshPresence(ids);
+    }, 15_000);
+    return () => {
+      if (presencePollRef.current) {
+        clearInterval(presencePollRef.current);
+        presencePollRef.current = null;
+      }
+    };
+  }, [presenceIdsKey, refreshPresence]);
 
   useEffect(() => {
     let mounted = true;
@@ -532,7 +612,7 @@ export default function useAIRecommendations(
                 avatar_url: p.avatar_url || undefined,
                 distance: formatDistance(p.distance_km, p.location || p.region, unitForFormat),
                 distanceKm: typeof p.distance_km === 'number' ? p.distance_km : undefined,
-                isActiveNow: !!p.online || !!p.is_active,
+                isActiveNow: isActiveNowFromLastActive(!!p.online, p.last_active ?? null),
                 lastActive: p.last_active ?? null,
                 verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
                 verification_level: typeof p.verification_level === 'number' ? p.verification_level : undefined,
@@ -576,7 +656,7 @@ export default function useAIRecommendations(
                 avatar_url: p.avatar_url || undefined,
                 distance: p.location || p.region || '',
                 distanceKm: undefined,
-                isActiveNow: !!p.online || !!p.is_active,
+                isActiveNow: isActiveNowFromLastActive(!!p.online, p.last_active ?? null),
                 lastActive: p.last_active ?? null,
                 verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
                 verification_level: typeof p.verification_level === 'number' ? p.verification_level : undefined,
@@ -618,7 +698,7 @@ export default function useAIRecommendations(
               avatar_url: p.avatar_url || undefined,
               distance: formatDistance(p.distance_km, p.location || p.region, unitForFormat),
               distanceKm: typeof p.distance_km === 'number' ? p.distance_km : undefined,
-              isActiveNow: !!p.online || !!p.is_active,
+              isActiveNow: isActiveNowFromLastActive(!!p.online, p.last_active ?? null),
               lastActive: p.last_active ?? null,
               verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
               verification_level: typeof p.verification_level === 'number' ? p.verification_level : undefined,
@@ -648,9 +728,9 @@ export default function useAIRecommendations(
         // due to missing columns (Postgres error 42703), retry with a
         // minimal safe column list to avoid falling back to mocks.
         const extendedSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, verification_level, profile_video, current_country, current_country_code, location_precision';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision';
         const minimalSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, verification_level, profile_video, current_country, current_country_code, location_precision';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision';
 
         let data: any[] | null = null;
         let error: any = null;
@@ -763,7 +843,7 @@ export default function useAIRecommendations(
               avatar_url: p.avatar_url || undefined,
               distance: distanceStr || '',
               distanceKm: typeof distanceKm === 'number' && !Number.isNaN(distanceKm) ? distanceKm : undefined,
-              isActiveNow: !!p.online || !!p.is_active,
+              isActiveNow: isActiveNowFromLastActive(!!p.online, p.last_active ?? null),
               lastActive: p.last_active ?? null,
               verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
               verification_level: typeof p.verification_level === 'number' ? p.verification_level : undefined,
@@ -831,7 +911,7 @@ export default function useAIRecommendations(
       // fetch optional profile fields
       const { data: profileData, error: pErr } = await supabase
         .from('profiles')
-              .select('id, profile_video, latitude, longitude, region, tribe, religion, current_country, current_country_code, location_precision, personality_type, online, is_active, verification_level')
+              .select('id, profile_video, latitude, longitude, region, tribe, religion, current_country, current_country_code, location_precision, personality_type, online, is_active, last_active, verification_level')
         .eq('id', profileId)
         .limit(1)
         .single();
