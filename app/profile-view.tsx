@@ -1432,6 +1432,8 @@ export default function ProfileViewPremiumV2Screen() {
               </Text>
             ) : null}
 
+            <View style={[stylesStatic.heroDetailsDivider, { backgroundColor: theme.outline }]} />
+
             {typeof matchBadgeValue === 'number' || vibeReasons.length ? (
               <View style={stylesStatic.heroBadgesRow}>
                 {typeof matchBadgeValue === 'number' ? (
@@ -1444,11 +1446,11 @@ export default function ProfileViewPremiumV2Screen() {
                 )}
                 {vibeReasons.length ? (
                   <View style={stylesStatic.heroWhyInline}>
-                    <Text style={[stylesStatic.heroWhyTitle, { color: theme.accent }]}>
+                    <Text style={[stylesStatic.heroWhyTitle, { color: theme.textMuted }]}>
                       Why this vibe
                     </Text>
                     <View style={stylesStatic.heroWhyRow}>
-                      <MaterialCommunityIcons name="star-four-points" size={14} color={theme.accent} />
+                      <MaterialCommunityIcons name="star-four-points" size={12} color={theme.accent} />
                       <RNAnimated.Text
                         style={[
                           stylesStatic.heroWhyText,
@@ -3015,12 +3017,16 @@ const stylesStatic = StyleSheet.create({
     paddingBottom: 4,
   },
   heroBadgesRow: {
-    marginTop: 10,
+    marginTop: 8,
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 10,
     paddingRight: 6,
+  },
+  heroDetailsDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginTop: 8,
   },
   heroDetailsCard: {
     borderWidth: 1,
@@ -3044,7 +3050,7 @@ const stylesStatic = StyleSheet.create({
   heroWhyRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
     minHeight: 18,
     maxWidth: 200,
   },

@@ -147,6 +147,7 @@ export default function ProfileScreen() {
   const { signOut, user, profile, refreshProfile } = useAuth();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
+  const isDark = colorScheme === 'dark';
   const params = useLocalSearchParams();
   const { status: verificationStatus, refreshStatus } = useVerificationStatus(profile?.id);
   const { preference: themePreference, setPreference: setThemePreference } = useColorSchemePreference();
@@ -1413,7 +1414,10 @@ export default function ProfileScreen() {
                   <View
                     style={[
                       styles.heroPill,
-                      { backgroundColor: "rgba(255,255,255,0.8)", borderColor: theme.outline },
+                      {
+                        backgroundColor: isDark ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.8)",
+                        borderColor: theme.outline,
+                      },
                     ]}
                   >
                     <MaterialCommunityIcons name="star-four-points" size={12} color={theme.tint} />
@@ -1423,7 +1427,10 @@ export default function ProfileScreen() {
                     <TouchableOpacity
                       style={[
                         styles.heroEditButton,
-                        { backgroundColor: "rgba(255,255,255,0.9)", borderColor: theme.outline },
+                        {
+                          backgroundColor: isDark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.9)",
+                          borderColor: theme.outline,
+                        },
                       ]}
                       onPress={() => setShowEditModal(true)}
                     >
@@ -1454,7 +1461,10 @@ export default function ProfileScreen() {
                   <View
                     style={[
                       styles.heroPill,
-                      { backgroundColor: "rgba(255,255,255,0.8)", borderColor: theme.outline },
+                      {
+                        backgroundColor: isDark ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.8)",
+                        borderColor: theme.outline,
+                      },
                     ]}
                   >
                     <MaterialCommunityIcons name="star-four-points" size={12} color={theme.tint} />
@@ -1464,7 +1474,10 @@ export default function ProfileScreen() {
                     <TouchableOpacity
                       style={[
                         styles.heroEditButton,
-                        { backgroundColor: "rgba(255,255,255,0.9)", borderColor: theme.outline },
+                        {
+                          backgroundColor: isDark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.9)",
+                          borderColor: theme.outline,
+                        },
                       ]}
                       onPress={() => setShowEditModal(true)}
                     >
