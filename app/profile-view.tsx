@@ -1000,6 +1000,12 @@ export default function ProfileViewPremiumV2Screen() {
     });
     Haptics.selectionAsync().catch(() => undefined);
   }, [heroImageUri, heroVideoUrl, showHeroVideo]);
+  const handleBack = useCallback(() => {
+    router.back();
+  }, [router]);
+  const handleClose = useCallback(() => {
+    router.back();
+  }, [router]);
 
   const setActiveTagSafely = useCallback(
     (nextTag: ProfileImageTag) => {
@@ -1148,16 +1154,23 @@ export default function ProfileViewPremiumV2Screen() {
   );
 
   const renderImageItem = useCallback(
-    ({ item }: { item: PremiumImage }) => (
-      <ImageCard
-        theme={theme}
-        item={item}
-        isActive={item.tag === activeTagJs}
-        height={IMAGE_ITEM_HEIGHT}
-        isVideo={item.isVideo}
-      />
-    ),
-    [activeTagJs, theme],
+    ({ item }: { item: PremiumImage }) => {
+      const hasVideoTile = !!heroVideoUrl;
+      const isIntroActive = activeTagJs === 'intro';
+      const isActive = item.isVideo
+        ? isIntroActive
+        : item.tag === activeTagJs && !(hasVideoTile && item.tag === 'intro');
+      return (
+        <ImageCard
+          theme={theme}
+          item={item}
+          isActive={isActive}
+          height={IMAGE_ITEM_HEIGHT}
+          isVideo={item.isVideo}
+        />
+      );
+    },
+    [activeTagJs, heroVideoUrl, theme],
   );
 
   const onImageTap = useCallback(
@@ -1307,11 +1320,11 @@ export default function ProfileViewPremiumV2Screen() {
           heroVideoUrl={null}
           heroScrollY={heroScrollY}
           isDark={isDark}
-          matchBadgeValue={matchBadgeValue}
-          matchBadgeLabel={matchBadgeLabel}
-          onBack={() => router.back()}
-          onClose={() => router.back()}
-        />
+        matchBadgeValue={matchBadgeValue}
+        matchBadgeLabel={matchBadgeLabel}
+        onBack={handleBack}
+        onClose={handleClose}
+      />
 
         <View style={[stylesStatic.gateCard, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
           <Text style={[stylesStatic.gateTitle, { color: theme.text }]}>Complete your profile to be seen</Text>
@@ -1344,8 +1357,8 @@ export default function ProfileViewPremiumV2Screen() {
         matchBadgeLabel={matchBadgeLabel}
         onHeroPress={handleHeroPress}
         onHeroDoubleTap={handleHeroDoubleTap}
-        onBack={() => router.back()}
-        onClose={() => router.back()}
+        onBack={handleBack}
+        onClose={handleClose}
       />
 
       <PhotoLightboxModal
@@ -1541,7 +1554,7 @@ export default function ProfileViewPremiumV2Screen() {
   );
 }
 
-function Header({
+const Header = memo(function Header({
   theme,
   profile,
   title,
@@ -1676,17 +1689,9 @@ function Header({
   return (
     <View style={[stylesStatic.header, { borderBottomColor: theme.outline, backgroundColor: theme.background }]}>
       <View style={stylesStatic.headerTopRow}>
-        <Pressable onPress={onBack} hitSlop={12} style={stylesStatic.headerBtn}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color={theme.text} />
-        </Pressable>
-
         <Text numberOfLines={1} style={[stylesStatic.headerTitle, { color: theme.text }]}>
           {title || 'Profile'}
         </Text>
-
-        <Pressable onPress={onClose} hitSlop={12} style={stylesStatic.headerBtn}>
-          <MaterialCommunityIcons name="close" size={22} color={theme.text} />
-        </Pressable>
       </View>
 
       <Pressable
@@ -1752,7 +1757,7 @@ function Header({
       </Pressable>
     </View>
   );
-}
+});
 
 function PhotoLightboxModal({
   theme,
@@ -2149,8 +2154,8 @@ const ImageCard = memo(function ImageCard({
         style={[StyleSheet.absoluteFillObject, { backgroundColor: '#000' }, overlayStyle]}
       />
 
-      {!isVideo ? (
-        <View style={stylesStatic.reactionPillWrap} pointerEvents="box-none">
+        {!isVideo ? (
+          <View style={stylesStatic.reactionPillWrap} pointerEvents="box-none">
           <Pressable
             onPress={() => onToggleReactions?.(item)}
             style={[stylesStatic.reactionPill, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle }]}
@@ -2177,18 +2182,26 @@ const ImageCard = memo(function ImageCard({
             </View>
           ) : null}
         </View>
-      ) : (
-        <View
-          style={[
-            stylesStatic.videoPill,
-            { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
-          ]}
-          pointerEvents="none"
-        >
-          <MaterialCommunityIcons name="play" size={18} color={theme.textMuted} />
-          <Text style={[stylesStatic.reactionCount, { color: theme.textMuted }]}>Intro</Text>
-        </View>
-      )}
+        ) : (
+          <View
+            style={[
+              stylesStatic.videoPill,
+              { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
+            ]}
+            pointerEvents="none"
+          >
+            <MaterialCommunityIcons name="play" size={18} color={theme.textMuted} />
+            <Text style={[stylesStatic.reactionCount, { color: theme.textMuted }]}>Intro</Text>
+          </View>
+        )}
+
+        {isVideo ? (
+          <View style={[stylesStatic.videoBadge, { borderColor: theme.outline }]}>
+            <Text style={[stylesStatic.videoBadgeText, { color: theme.textMuted }]}>
+              Intro
+            </Text>
+          </View>
+        ) : null}
 
       <View style={stylesStatic.filmStripEdge} pointerEvents="none">
         <View style={[stylesStatic.filmStripHole, { backgroundColor: theme.background }]} />
@@ -2710,7 +2723,7 @@ function createStyles(theme: typeof Colors.light) {
       flex: 1,
       flexDirection: 'row',
       paddingHorizontal: 12,
-      paddingTop: 10,
+      paddingTop: 16,
       paddingBottom: 18,
     },
     leftCol: {
@@ -2723,6 +2736,7 @@ function createStyles(theme: typeof Colors.light) {
       minWidth: 0,
     },
     leftListContent: {
+      paddingTop: 4,
       paddingBottom: 120,
     },
     rightListContent: {
@@ -3115,6 +3129,21 @@ const stylesStatic = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 6,
+  },
+  videoBadge: {
+    position: 'absolute',
+    left: 10,
+    top: 10,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+  },
+  videoBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   reactionPill: {
     flexDirection: 'row',
