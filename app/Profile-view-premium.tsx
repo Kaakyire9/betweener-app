@@ -15,6 +15,7 @@ import type { ViewToken } from '@shopify/flash-list';
 import { FlashList } from '@shopify/flash-list';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { Alert, Dimensions, FlatList, Image, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, TextInput, View, type ImageStyle, type ViewStyle } from 'react-native';
@@ -428,6 +429,7 @@ export default function ProfileViewPremiumV2Screen() {
     online: boolean;
     last_active: string | null;
   } | null>(null);
+  const [heroVideoUrl, setHeroVideoUrl] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
   const [matchAccepted, setMatchAccepted] = useState(false);
   const [matchPercent, setMatchPercent] = useState<number | null>(null);
@@ -482,6 +484,35 @@ export default function ProfileViewPremiumV2Screen() {
       compatibility: 0,
     };
   }, [fallbackProfile, fetchedProfile, profileId]);
+
+  useEffect(() => {
+    let mounted = true;
+    const resolveHeroVideo = async () => {
+      const source =
+        resolvedProfile.profileVideoPath || resolvedProfile.profileVideo;
+      if (!source) {
+        if (mounted) setHeroVideoUrl(null);
+        return;
+      }
+      if (source.startsWith('http')) {
+        if (mounted) setHeroVideoUrl(source);
+        return;
+      }
+      const { data, error } = await supabase.storage
+        .from('profile-videos')
+        .createSignedUrl(source, 3600);
+      if (!mounted) return;
+      if (error || !data?.signedUrl) {
+        setHeroVideoUrl(null);
+        return;
+      }
+      setHeroVideoUrl(data.signedUrl);
+    };
+    void resolveHeroVideo();
+    return () => {
+      mounted = false;
+    };
+  }, [resolvedProfile.profileVideo, resolvedProfile.profileVideoPath]);
 
   useEffect(() => {
     if (!resolvedProfile.id || resolvedProfile.id === 'preview') {
@@ -1130,6 +1161,7 @@ export default function ProfileViewPremiumV2Screen() {
         locationLine={''}
         hasIntro={false}
         heroOverrideUri={null}
+        heroVideoUrl={null}
         heroScrollY={heroScrollY}
         isDark={isDark}
         matchBadgeValue={matchBadgeValue}
@@ -1162,6 +1194,7 @@ export default function ProfileViewPremiumV2Screen() {
         locationLine={locationLine}
         hasIntro={hasIntro}
         heroOverrideUri={heroOverrideUri}
+        heroVideoUrl={heroVideoUrl}
         heroScrollY={heroScrollY}
         isDark={isDark}
         matchBadgeValue={matchBadgeValue}
@@ -1281,6 +1314,7 @@ function Header({
   locationLine,
   hasIntro,
   heroOverrideUri,
+  heroVideoUrl,
   heroScrollY,
   isDark,
   matchBadgeValue,
@@ -1296,6 +1330,7 @@ function Header({
   locationLine: string;
   hasIntro: boolean;
   heroOverrideUri: string | null;
+  heroVideoUrl?: string | null;
   heroScrollY: SharedValue<number>;
   isDark: boolean;
   matchBadgeValue: number | null;
@@ -1314,7 +1349,44 @@ function Header({
   const isActiveNow = profile.isActiveNow || !!(profile as any).is_active;
   const showPresence = isOnlineNow || isActiveNow;
   const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
+  const showHeroVideo = !!heroVideoUrl;
+  const [heroMuted, setHeroMuted] = useState(true);
   const heroHeight = Math.max(280, Math.min(420, Math.round(screenHeight * 0.38)));
+  const HeroVideo = ({ uri, muted }: { uri: string; muted: boolean }) => {
+    const player = useVideoPlayer(uri, (p) => {
+      p.loop = true;
+      p.muted = muted;
+      try {
+        p.play();
+      } catch {}
+    });
+
+    useEffect(() => {
+      try {
+        player.muted = muted;
+      } catch {}
+    }, [player, muted]);
+
+    useEffect(() => {
+      try {
+        player.play();
+      } catch {}
+      return () => {
+        try {
+          player.pause();
+        } catch {}
+      };
+    }, [player]);
+
+    return (
+      <VideoView
+        style={StyleSheet.absoluteFillObject}
+        player={player}
+        contentFit="cover"
+        nativeControls={false}
+      />
+    );
+  };
   const heroImageStyle = useAnimatedStyle<ImageStyle>(() => {
     const translateY = interpolate(
       heroScrollY.value,
@@ -1357,7 +1429,11 @@ function Header({
         }}
         style={[stylesStatic.heroWrap, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle, height: heroHeight }]}
       >
-        {heroUri ? (
+        {showHeroVideo ? (
+          <View style={StyleSheet.absoluteFillObject}>
+            <HeroVideo uri={heroVideoUrl!} muted={heroMuted} />
+          </View>
+        ) : heroUri ? (
           <Animated.Image
             source={{ uri: heroUri }}
             style={[stylesStatic.heroImage, heroImageStyle]}
@@ -1374,6 +1450,23 @@ function Header({
           colors={['transparent', 'rgba(0,0,0,0.68)']}
           style={stylesStatic.heroBottomGradient}
         />
+
+        {showHeroVideo ? (
+          <Pressable
+            style={stylesStatic.heroAudioPill}
+            onPress={() => {
+              setHeroMuted((prev) => !prev);
+              Haptics.selectionAsync().catch(() => undefined);
+            }}
+            hitSlop={10}
+          >
+            <MaterialCommunityIcons
+              name={heroMuted ? 'volume-off' : 'volume-high'}
+              size={18}
+              color="#fff"
+            />
+          </Pressable>
+        ) : null}
 
         {hasIntro ? (
           <Pressable
@@ -2635,6 +2728,21 @@ const stylesStatic = StyleSheet.create({
   introText: {
     fontSize: 12,
     fontWeight: '800',
+  },
+  heroAudioPill: {
+    position: 'absolute',
+    right: 12,
+    bottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.22)',
+    zIndex: 6,
+    elevation: 6,
   },
 
   matchBadge: {

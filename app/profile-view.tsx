@@ -15,9 +15,10 @@ import type { ViewToken } from '@shopify/flash-list';
 import { FlashList } from '@shopify/flash-list';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
-import { Alert, Dimensions, FlatList, Image, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, TextInput, View, type ImageStyle, type ViewStyle } from 'react-native';
+import { Alert, Animated as RNAnimated, Dimensions, FlatList, Image, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, TextInput, View, type ImageStyle, type ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Easing,
@@ -428,6 +429,7 @@ export default function ProfileViewPremiumV2Screen() {
     online: boolean;
     last_active: string | null;
   } | null>(null);
+  const [heroVideoUrl, setHeroVideoUrl] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
   const [matchAccepted, setMatchAccepted] = useState(false);
   const [matchPercent, setMatchPercent] = useState<number | null>(null);
@@ -484,6 +486,35 @@ export default function ProfileViewPremiumV2Screen() {
   }, [fallbackProfile, fetchedProfile, profileId]);
 
   useEffect(() => {
+    let mounted = true;
+    const resolveHeroVideo = async () => {
+      const source =
+        resolvedProfile.profileVideoPath || resolvedProfile.profileVideo;
+      if (!source) {
+        if (mounted) setHeroVideoUrl(null);
+        return;
+      }
+      if (source.startsWith('http')) {
+        if (mounted) setHeroVideoUrl(source);
+        return;
+      }
+      const { data, error } = await supabase.storage
+        .from('profile-videos')
+        .createSignedUrl(source, 3600);
+      if (!mounted) return;
+      if (error || !data?.signedUrl) {
+        setHeroVideoUrl(null);
+        return;
+      }
+      setHeroVideoUrl(data.signedUrl);
+    };
+    void resolveHeroVideo();
+    return () => {
+      mounted = false;
+    };
+  }, [resolvedProfile.profileVideo, resolvedProfile.profileVideoPath]);
+
+  useEffect(() => {
     if (!resolvedProfile.id || resolvedProfile.id === 'preview') {
       setPresenceState(null);
       return;
@@ -523,6 +554,70 @@ export default function ProfileViewPremiumV2Screen() {
       !!(resolvedProfile as any).is_active;
     return { ...(resolvedProfile as any), online, is_active } as UserProfile;
   }, [presenceState, resolvedProfile]);
+  const isOnlineNow = !!(presenceProfile as any).online;
+  const isActiveNow =
+    presenceProfile.isActiveNow || !!(presenceProfile as any).is_active;
+  const showPresence = isOnlineNow || isActiveNow;
+  const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
+  const vibeReasons = useMemo(() => {
+    const reasons: string[] = [];
+    const interests = Array.isArray(resolvedProfile.interests)
+      ? resolvedProfile.interests.map((i) => i?.name).filter(Boolean)
+      : [];
+    const personality = resolvedProfile.personalityType;
+    const lookingFor = resolvedProfile.lookingFor;
+    const loveLanguage = resolvedProfile.loveLanguage;
+
+    if (personality) reasons.push(`Personality: ${personality}`);
+    if (interests[0]) reasons.push(`Shared interest: ${interests[0]}`);
+    if (lookingFor) reasons.push(`Intent: ${lookingFor}`);
+    if (loveLanguage) reasons.push(`Love language: ${loveLanguage}`);
+    if (isOnlineNow) reasons.push('Online now so you can connect');
+    else if (isActiveNow) reasons.push('Active now so you can connect');
+
+    if (reasons.length === 0)
+      reasons.push('Aligned values and lifestyle signals');
+    return reasons.slice(0, 4);
+  }, [
+    resolvedProfile.interests,
+    resolvedProfile.personalityType,
+    resolvedProfile.lookingFor,
+    resolvedProfile.loveLanguage,
+    isOnlineNow,
+    isActiveNow,
+  ]);
+  const [vibeReasonIndex, setVibeReasonIndex] = useState(0);
+  const vibeGlow = useRef(new RNAnimated.Value(0)).current;
+  useEffect(() => {
+    if (!vibeReasons.length) return;
+    setVibeReasonIndex(0);
+    if (vibeReasons.length < 2) return;
+    const id = setInterval(() => {
+      setVibeReasonIndex((prev) => (prev + 1) % vibeReasons.length);
+    }, 3200);
+    return () => clearInterval(id);
+  }, [vibeReasons]);
+  useEffect(() => {
+    if (!vibeReasons.length) return;
+    const anim = RNAnimated.loop(
+      RNAnimated.sequence([
+        RNAnimated.timing(vibeGlow, {
+          toValue: 1,
+          duration: 1400,
+          useNativeDriver: true,
+        }),
+        RNAnimated.timing(vibeGlow, {
+          toValue: 0,
+          duration: 1400,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    anim.start();
+    return () => {
+      anim.stop();
+    };
+  }, [vibeGlow, vibeReasons.length]);
 
   useEffect(() => {
     let cancelled = false;
@@ -639,7 +734,6 @@ export default function ProfileViewPremiumV2Screen() {
 
   const isLoading = fetching && !fetchedProfile && !fallbackProfile;
   const locationLine = useMemo(() => buildLocationLine(resolvedProfile), [resolvedProfile]);
-  const hasIntro = !!(resolvedProfile.profileVideo || resolvedProfile.profileVideoPath);
   const compatibilityPercent = useMemo(() => {
     if (!currentProfile || !resolvedProfile) return resolvedProfile.compatibility;
     const targetInterests = resolvedProfile.interests.map((item) => item.name).filter(Boolean);
@@ -833,22 +927,6 @@ export default function ProfileViewPremiumV2Screen() {
     },
     [lightboxItems, openLightboxAtIndex],
   );
-
-  const openIntroVideo = useCallback(async () => {
-    const source = resolvedProfile.profileVideoPath || resolvedProfile.profileVideo;
-    if (!source) return;
-
-    if (source.startsWith('http')) {
-      setVideoModalUrl(source);
-      setVideoModalVisible(true);
-      return;
-    }
-
-    const { data, error } = await supabase.storage.from('profile-videos').createSignedUrl(source, 3600);
-    if (error || !data?.signedUrl) return;
-    setVideoModalUrl(data.signedUrl);
-    setVideoModalVisible(true);
-  }, [resolvedProfile.profileVideo, resolvedProfile.profileVideoPath]);
 
   const setActiveTagSafely = useCallback(
     (nextTag: ProfileImageTag) => {
@@ -1128,8 +1206,8 @@ export default function ProfileViewPremiumV2Screen() {
         profile={presenceProfile}
         title={'Complete your profile'}
         locationLine={''}
-        hasIntro={false}
         heroOverrideUri={null}
+        heroVideoUrl={null}
         heroScrollY={heroScrollY}
         isDark={isDark}
         matchBadgeValue={matchBadgeValue}
@@ -1160,16 +1238,13 @@ export default function ProfileViewPremiumV2Screen() {
         profile={presenceProfile}
         title={formatHeaderTitle(profile.name, profile.age)}
         locationLine={locationLine}
-        hasIntro={hasIntro}
         heroOverrideUri={heroOverrideUri}
+        heroVideoUrl={heroVideoUrl}
         heroScrollY={heroScrollY}
         isDark={isDark}
         matchBadgeValue={matchBadgeValue}
         matchBadgeLabel={matchBadgeLabel}
         onHeroPress={openLightboxForUri}
-        onIntroPress={() => {
-          void openIntroVideo();
-        }}
         onBack={() => router.back()}
         onClose={() => router.back()}
       />
@@ -1197,7 +1272,95 @@ export default function ProfileViewPremiumV2Screen() {
         <View style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
           <Text style={{ color: theme.textMuted }}>Loading...</Text>
         </View>
-      ) : null}
+      ) : (
+        <View style={stylesStatic.heroDetailsWrap}>
+          <View
+            style={[
+              stylesStatic.heroDetailsCard,
+              { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+            ]}
+          >
+            <View style={stylesStatic.heroDetailsTopRow}>
+              <Text style={[stylesStatic.heroDetailsName, { color: theme.text }]} numberOfLines={1}>
+                {formatHeaderTitle(profile.name, profile.age)}
+              </Text>
+              {(profile.verificationLevel ?? (profile.verified ? 1 : 0)) > 0 ? (
+                <VerificationBadge
+                  level={profile.verificationLevel ?? (profile.verified ? 1 : 0)}
+                  size="small"
+                />
+              ) : null}
+              {showPresence ? (
+                <View
+                  style={[
+                    stylesStatic.activeBadgeHero,
+                    { backgroundColor: theme.background, borderColor: theme.outline },
+                  ]}
+                >
+                  <View style={[stylesStatic.activeDot, { backgroundColor: theme.tint }]} />
+                  <Text style={[stylesStatic.activeText, { color: theme.textMuted }]}>
+                    {presenceLabel}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+
+            {locationLine ? (
+              <View style={stylesStatic.heroDetailsSubRow}>
+                <MaterialCommunityIcons name="map-marker" size={14} color={theme.textMuted} />
+                <Text style={[stylesStatic.heroDetailsSubText, { color: theme.textMuted }]} numberOfLines={1}>
+                  {locationLine}
+                </Text>
+              </View>
+            ) : null}
+
+            {profile.occupation ? (
+              <Text style={[stylesStatic.heroDetailsMeta, { color: theme.textMuted }]} numberOfLines={1}>
+                {profile.occupation}
+              </Text>
+            ) : null}
+
+            {typeof matchBadgeValue === 'number' || vibeReasons.length ? (
+              <View style={stylesStatic.heroBadgesRow}>
+                {typeof matchBadgeValue === 'number' ? (
+                  <View style={[stylesStatic.matchBadge, { backgroundColor: theme.tint }]}>
+                    <MaterialCommunityIcons name="heart" size={14} color={Colors.light.background} />
+                    <Text style={stylesStatic.matchBadgeText}>{`${Math.round(matchBadgeValue)}% ${matchBadgeLabel}`}</Text>
+                  </View>
+                ) : (
+                  <View />
+                )}
+                {vibeReasons.length ? (
+                  <View style={stylesStatic.heroWhyInline}>
+                    <Text style={[stylesStatic.heroWhyTitle, { color: theme.accent }]}>
+                      Why this vibe
+                    </Text>
+                    <View style={stylesStatic.heroWhyRow}>
+                      <MaterialCommunityIcons name="star-four-points" size={14} color={theme.accent} />
+                      <RNAnimated.Text
+                        style={[
+                          stylesStatic.heroWhyText,
+                          {
+                            color: theme.accent,
+                            opacity: vibeGlow.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [0.75, 1],
+                            }),
+                          },
+                        ]}
+                        numberOfLines={1}
+                        ellipsizeMode="tail"
+                      >
+                        {vibeReasons[vibeReasonIndex] ?? vibeReasons[0]}
+                      </RNAnimated.Text>
+                    </View>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+          </View>
+        </View>
+      )}
 
       <View style={styles.columnsRow}>
         {!isTextOnlyStory ? (
@@ -1279,8 +1442,8 @@ function Header({
   profile,
   title,
   locationLine,
-  hasIntro,
   heroOverrideUri,
+  heroVideoUrl,
   heroScrollY,
   isDark,
   matchBadgeValue,
@@ -1294,14 +1457,13 @@ function Header({
   profile: UserProfile;
   title: string;
   locationLine: string;
-  hasIntro: boolean;
   heroOverrideUri: string | null;
+  heroVideoUrl?: string | null;
   heroScrollY: SharedValue<number>;
   isDark: boolean;
   matchBadgeValue: number | null;
   matchBadgeLabel: string;
   onHeroPress?: (heroUri: string) => void;
-  onIntroPress?: () => void;
   onBack: () => void;
   onClose: () => void;
 }) {
@@ -1314,7 +1476,44 @@ function Header({
   const isActiveNow = profile.isActiveNow || !!(profile as any).is_active;
   const showPresence = isOnlineNow || isActiveNow;
   const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
+  const showHeroVideo = !!heroVideoUrl;
+  const [heroMuted, setHeroMuted] = useState(true);
   const heroHeight = Math.max(280, Math.min(420, Math.round(screenHeight * 0.38)));
+  const HeroVideo = ({ uri, muted }: { uri: string; muted: boolean }) => {
+    const player = useVideoPlayer(uri, (p) => {
+      p.loop = true;
+      p.muted = muted;
+      try {
+        p.play();
+      } catch {}
+    });
+
+    useEffect(() => {
+      try {
+        player.muted = muted;
+      } catch {}
+    }, [player, muted]);
+
+    useEffect(() => {
+      try {
+        player.play();
+      } catch {}
+      return () => {
+        try {
+          player.pause();
+        } catch {}
+      };
+    }, [player]);
+
+    return (
+      <VideoView
+        style={StyleSheet.absoluteFillObject}
+        player={player}
+        contentFit="cover"
+        nativeControls={false}
+      />
+    );
+  };
   const heroImageStyle = useAnimatedStyle<ImageStyle>(() => {
     const translateY = interpolate(
       heroScrollY.value,
@@ -1357,7 +1556,11 @@ function Header({
         }}
         style={[stylesStatic.heroWrap, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle, height: heroHeight }]}
       >
-        {heroUri ? (
+        {showHeroVideo ? (
+          <View style={StyleSheet.absoluteFillObject}>
+            <HeroVideo uri={heroVideoUrl!} muted={heroMuted} />
+          </View>
+        ) : heroUri ? (
           <Animated.Image
             source={{ uri: heroUri }}
             style={[stylesStatic.heroImage, heroImageStyle]}
@@ -1375,78 +1578,40 @@ function Header({
           style={stylesStatic.heroBottomGradient}
         />
 
-        {hasIntro ? (
+        {showHeroVideo ? (
           <Pressable
-            onPress={onIntroPress}
+            style={stylesStatic.heroAudioPill}
+            onPress={() => {
+              setHeroMuted((prev) => !prev);
+              Haptics.selectionAsync().catch(() => undefined);
+            }}
             hitSlop={10}
-            style={[
-              stylesStatic.introBadge,
-              {
-                backgroundColor: isDark ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.78)',
-                borderColor: theme.outline,
-              },
-            ]}
           >
             <MaterialCommunityIcons
-              name="play"
-              size={14}
-              color={isDark ? Colors.light.background : Colors.dark.background}
+              name={heroMuted ? 'volume-off' : 'volume-high'}
+              size={18}
+              color="#fff"
             />
-            <Text style={[stylesStatic.introText, { color: isDark ? Colors.light.background : Colors.dark.background }]}>
-              Intro
-            </Text>
           </Pressable>
         ) : null}
 
-        <View style={stylesStatic.heroOverlay}>
-          <View style={stylesStatic.heroNameRow}>
-            <View style={stylesStatic.heroNamePill}>
-              <Text numberOfLines={1} style={stylesStatic.heroName}>
-                {formatHeaderTitle(profile.name, profile.age)}
-              </Text>
-            </View>
-            {(profile.verificationLevel ?? (profile.verified ? 1 : 0)) > 0 ? (
-              <VerificationBadge
-                level={profile.verificationLevel ?? (profile.verified ? 1 : 0)}
-                size="small"
-              />
-            ) : null}
-            {showPresence ? (
-              <View
-                style={[
-                  stylesStatic.activeBadgeHero,
-                  {
-                    backgroundColor: isDark ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.82)',
-                    borderColor: theme.outline,
-                  },
-                ]}
-              >
-                <View style={[stylesStatic.activeDot, { backgroundColor: theme.tint }]} />
-                <Text style={[stylesStatic.activeText, { color: isDark ? Colors.light.background : Colors.dark.background }]}>
-                  {presenceLabel}
-                </Text>
-              </View>
-            ) : null}
-          </View>
-
-          {locationLine ? (
-            <View style={stylesStatic.heroSubRow}>
-              <MaterialCommunityIcons name="map-marker" size={14} color={'rgba(255,255,255,0.92)'} />
-              <Text numberOfLines={1} style={stylesStatic.heroSubText}>
-                {locationLine}
-              </Text>
-            </View>
-          ) : null}
-
-          {profile.occupation ? <Text numberOfLines={1} style={stylesStatic.heroOccupation}>{profile.occupation}</Text> : null}
-
-          {typeof matchBadgeValue === 'number' ? (
-            <View style={[stylesStatic.matchBadge, { backgroundColor: theme.tint }]}>
-              <MaterialCommunityIcons name="heart" size={14} color={Colors.light.background} />
-              <Text style={stylesStatic.matchBadgeText}>{`${Math.round(matchBadgeValue)}% ${matchBadgeLabel}`}</Text>
-            </View>
-          ) : null}
-        </View>
+        <Pressable
+          onPress={onClose}
+          hitSlop={10}
+          style={[
+            stylesStatic.heroCloseButton,
+            {
+              backgroundColor: isDark ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.78)',
+              borderColor: theme.outline,
+            },
+          ]}
+        >
+          <MaterialCommunityIcons
+            name="close"
+            size={16}
+            color={isDark ? Colors.light.background : Colors.dark.background}
+          />
+        </Pressable>
       </Pressable>
     </View>
   );
@@ -2600,6 +2765,17 @@ const stylesStatic = StyleSheet.create({
     fontWeight: '700',
     color: 'rgba(255,255,255,0.86)',
   },
+  heroCloseButton: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
 
   activeBadgeHero: {
     flexDirection: 'row',
@@ -2636,21 +2812,110 @@ const stylesStatic = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
   },
+  heroAudioPill: {
+    position: 'absolute',
+    right: 12,
+    bottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.22)',
+    zIndex: 6,
+    elevation: 6,
+  },
 
   matchBadge: {
-    marginTop: 10,
+    marginTop: 6,
     alignSelf: 'flex-start',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 5,
     borderRadius: 999,
   },
   matchBadgeText: {
     color: Colors.light.background,
     fontSize: 12,
     fontWeight: '800',
+  },
+  heroDetailsWrap: {
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 4,
+  },
+  heroBadgesRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingRight: 6,
+  },
+  heroDetailsCard: {
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  heroWhyInline: {
+    flex: 1,
+    alignItems: 'flex-start',
+    marginLeft: 8,
+    maxWidth: 200,
+  },
+  heroWhyTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+    lineHeight: 12,
+    marginBottom: -1,
+  },
+  heroWhyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minHeight: 18,
+    maxWidth: 200,
+  },
+  heroWhyText: {
+    fontSize: 12,
+    fontWeight: '600',
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  heroDetailsTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  heroDetailsName: {
+    fontSize: 20,
+    fontWeight: '900',
+    letterSpacing: 0.2,
+    lineHeight: 22,
+  },
+  heroDetailsSubRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  heroDetailsSubText: {
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 16,
+  },
+  heroDetailsMeta: {
+    marginTop: 3,
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 16,
   },
 
   imageTagPill: {
@@ -2832,7 +3097,7 @@ const stylesStatic = StyleSheet.create({
     borderRadius: 16,
     paddingHorizontal: 14,
     paddingVertical: 14,
-    marginBottom: 12,
+    marginBottom: 16,
   },
   sectionHeader: {
     flexDirection: 'row',

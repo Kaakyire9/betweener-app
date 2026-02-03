@@ -73,8 +73,6 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     () => (isDark ? ["rgba(0,0,0,0)", "rgba(0,0,0,0.7)"] : ["rgba(0,0,0,0)", "rgba(0,0,0,0.55)"] ),
     [isDark]
   );
-  const [showWhy, setShowWhy] = useState(false);
-  const whyAnim = useRef(new Animated.Value(0)).current;
   const isManualLocation = (match as any).location_precision === 'CITY';
   const locationLabel = isManualLocation ? '' : getCityOnly(match.location || match.region || '');
   const distanceLabel = match.distance || '';
@@ -269,32 +267,6 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
 
     return chips.slice(0, 3);
   }, [match.interests, (match as any).personalityTags, (match as any).looking_for, (match as any).lookingFor, (match as any).love_language, (match as any).loveLanguage]);
-
-  const alignmentReasons = useMemo(() => {
-    const reasons: string[] = [];
-    const interests = Array.isArray(match.interests) ? match.interests : [];
-    const personalities = Array.isArray((match as any).personalityTags) ? (match as any).personalityTags : [];
-    const lookingFor = (match as any).looking_for || (match as any).lookingFor;
-    const loveLanguage = (match as any).love_language || (match as any).loveLanguage;
-
-    if (personalities[0]) reasons.push(`Personality: ${personalities[0]}`);
-    if (interests[0]) reasons.push(`Shared interest: ${interests[0]}`);
-    if (lookingFor) reasons.push(`Intent: ${lookingFor}`);
-    if (loveLanguage) reasons.push(`Love language: ${loveLanguage}`);
-    if (isOnlineNow) reasons.push('Online now so you can connect');
-    else if (isActiveNow) reasons.push('Active now so you can connect');
-
-    if (reasons.length === 0) reasons.push('Aligned values and lifestyle signals');
-    return reasons.slice(0, 4);
-  }, [match.interests, (match as any).personalityTags, (match as any).looking_for, (match as any).lookingFor, (match as any).love_language, (match as any).loveLanguage, isOnlineNow, isActiveNow]);
-
-  useEffect(() => {
-    Animated.timing(whyAnim, {
-      toValue: showWhy ? 1 : 0,
-      duration: 220,
-      useNativeDriver: false,
-    }).start();
-  }, [showWhy, whyAnim]);
 
   // drive the preview pulse when isPreviewing changes
   useEffect(() => {
@@ -535,34 +507,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
                 </View>
               ))}
             </View>
-            <TouchableOpacity
-              style={styles.whyToggle}
-              onPress={() => setShowWhy((prev) => !prev)}
-              accessibilityRole="button"
-              accessibilityLabel="Why this vibe"
-            >
-              <MaterialCommunityIcons name={showWhy ? 'chevron-up' : 'chevron-down'} size={16} color="#fff" />
-              <Text style={styles.whyToggleText}>Why this vibe</Text>
-            </TouchableOpacity>
           </View>
-
-          <Animated.View
-            style={[
-              styles.whyDrawer,
-              {
-                maxHeight: whyAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 160] }),
-                opacity: whyAnim,
-                transform: [{ translateY: whyAnim.interpolate({ inputRange: [0, 1], outputRange: [-6, 0] }) }],
-              },
-            ]}
-          >
-            {alignmentReasons.map((reason, idx) => (
-              <View key={`${reason}-${idx}`} style={styles.whyRow}>
-                <MaterialCommunityIcons name="star-four-points" size={14} color={theme.secondary} />
-                <Text style={styles.whyText}>{reason}</Text>
-              </View>
-            ))}
-          </Animated.View>
 
           <View style={styles.tags}>
             {(() => {
@@ -634,11 +579,6 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
     alignmentChipSecondary: { backgroundColor: withAlpha(theme.secondary, 0.32) },
     alignmentChipAccent: { backgroundColor: withAlpha(theme.accent, 0.32) },
     alignmentChipText: { color: '#fff', fontSize: 12, fontWeight: '600' },
-    whyToggle: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
-    whyToggleText: { color: '#fff', fontSize: 12, fontWeight: '600', marginLeft: 6 },
-    whyDrawer: { overflow: 'hidden' },
-    whyRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
-    whyText: { color: '#fff', fontSize: 12, marginLeft: 6 },
     tags: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 2 },
     tag: { backgroundColor: tagBg, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, marginRight: 8, marginBottom: 6 },
     tagText: { color: "#fff", fontSize: 12 },
