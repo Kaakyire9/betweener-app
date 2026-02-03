@@ -956,7 +956,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
             <MaterialCommunityIcons
               name={statusTone === 'error' ? 'alert-circle' : 'check-circle'}
               size={18}
-              color={statusTone === 'error' ? theme.danger : theme.success}
+              color={statusTone === 'error' ? theme.danger : theme.tint}
             />
             <Text
               style={[
@@ -2597,8 +2597,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderColor: withAlpha(theme.danger, isDark ? 0.45 : 0.28),
     },
     statusBannerSuccess: {
-      backgroundColor: withAlpha(theme.success, isDark ? 0.18 : 0.12),
-      borderColor: withAlpha(theme.success, isDark ? 0.45 : 0.28),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
+      borderColor: withAlpha(theme.tint, isDark ? 0.45 : 0.28),
     },
     statusBannerText: {
       flex: 1,
@@ -2610,7 +2610,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.danger,
     },
     statusBannerTextSuccess: {
-      color: theme.success,
+      color: theme.tint,
     },
     statusDisplay: {
       padding: 16,

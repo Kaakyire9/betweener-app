@@ -11,7 +11,7 @@ import { Colors } from "@/constants/theme";
 export default function WelcomeScreen() {
   const router = useRouter();
   const gradientColors = useMemo(
-    () => [Colors.light.tint, Colors.light.accent, Colors.light.background],
+    () => [Colors.light.tint, Colors.light.accent, Colors.light.background] as const,
     []
   );
 

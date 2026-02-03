@@ -44,6 +44,7 @@ type PremiumImage = {
   id: string;
   uri: string;
   tag: ProfileImageTag;
+  isVideo?: boolean;
 };
 
 type PremiumSection = {
@@ -430,6 +431,7 @@ export default function ProfileViewPremiumV2Screen() {
     last_active: string | null;
   } | null>(null);
   const [heroVideoUrl, setHeroVideoUrl] = useState<string | null>(null);
+  const [heroOverrideType, setHeroOverrideType] = useState<'image' | 'video' | null>(null);
   const [fetching, setFetching] = useState(false);
   const [matchAccepted, setMatchAccepted] = useState(false);
   const [matchPercent, setMatchPercent] = useState<number | null>(null);
@@ -882,6 +884,7 @@ export default function ProfileViewPremiumV2Screen() {
   useEffect(() => {
     // Reset any pinned hero image when switching profiles.
     setHeroOverrideUri(null);
+    setHeroOverrideType(null);
     lastTapRef.current = null;
 
     if (singleTapTimeoutRef.current) clearTimeout(singleTapTimeoutRef.current);
@@ -908,6 +911,28 @@ export default function ProfileViewPremiumV2Screen() {
     const uris = photos.length ? photos : resolvedProfile.profilePicture ? [resolvedProfile.profilePicture] : [];
     return uris.map((uri) => ({ uri }));
   }, [profile.images, profile.sections, resolvedProfile.photos, resolvedProfile.profilePicture]);
+  const heroImageUri = useMemo(() => {
+    if (heroOverrideType === 'image' && heroOverrideUri) return heroOverrideUri;
+    const photos = Array.isArray(resolvedProfile.photos) ? resolvedProfile.photos : [];
+    return photos.find(Boolean) || resolvedProfile.profilePicture || '';
+  }, [heroOverrideType, heroOverrideUri, resolvedProfile.photos, resolvedProfile.profilePicture]);
+  const showHeroVideo =
+    heroOverrideType === 'video'
+      ? true
+      : heroOverrideType === 'image'
+        ? false
+        : !!heroVideoUrl;
+  const videoThumbUri = useMemo(() => {
+    if (resolvedProfile.profilePicture) return resolvedProfile.profilePicture;
+    const photos = Array.isArray(resolvedProfile.photos) ? resolvedProfile.photos : [];
+    return photos.find(Boolean) || '';
+  }, [resolvedProfile.photos, resolvedProfile.profilePicture]);
+  const leftRailItems = useMemo<PremiumImage[]>(() => {
+    if (!heroVideoUrl) return profile.images;
+    const thumb = videoThumbUri || profile.images[0]?.uri || '';
+    const videoItem: PremiumImage = { id: 'vid-0', uri: thumb, tag: 'intro', isVideo: true };
+    return [videoItem, ...profile.images];
+  }, [heroVideoUrl, profile.images, videoThumbUri]);
 
   const openLightboxAtIndex = useCallback(
     (nextIndex: number) => {
@@ -927,6 +952,54 @@ export default function ProfileViewPremiumV2Screen() {
     },
     [lightboxItems, openLightboxAtIndex],
   );
+  const openIntroVideo = useCallback(async () => {
+    const source = resolvedProfile.profileVideoPath || resolvedProfile.profileVideo;
+    if (!source) return;
+
+    if (source.startsWith('http')) {
+      setVideoModalUrl(source);
+      setVideoModalVisible(true);
+      return;
+    }
+
+    const { data, error } = await supabase.storage.from('profile-videos').createSignedUrl(source, 3600);
+    if (error || !data?.signedUrl) return;
+    setVideoModalUrl(data.signedUrl);
+    setVideoModalVisible(true);
+  }, [resolvedProfile.profileVideo, resolvedProfile.profileVideoPath]);
+  const handleHeroPress = useCallback(
+    (uri?: string) => {
+      if (showHeroVideo && heroVideoUrl) {
+        void openIntroVideo();
+        return;
+      }
+      const target = uri || heroImageUri;
+      if (!target) return;
+      openLightboxForUri(target);
+    },
+    [heroImageUri, heroVideoUrl, openIntroVideo, openLightboxForUri, showHeroVideo],
+  );
+  const handleHeroDoubleTap = useCallback(() => {
+    if (heroVideoUrl) {
+      if (showHeroVideo) {
+        if (!heroImageUri) return;
+        setHeroOverrideType('image');
+        setHeroOverrideUri(heroImageUri);
+      } else {
+        setHeroOverrideType('video');
+        setHeroOverrideUri(null);
+      }
+      Haptics.selectionAsync().catch(() => undefined);
+      return;
+    }
+    if (!heroImageUri) return;
+    setHeroOverrideUri((cur) => {
+      const next = cur ? null : heroImageUri;
+      setHeroOverrideType(next ? 'image' : null);
+      return next;
+    });
+    Haptics.selectionAsync().catch(() => undefined);
+  }, [heroImageUri, heroVideoUrl, showHeroVideo]);
 
   const setActiveTagSafely = useCallback(
     (nextTag: ProfileImageTag) => {
@@ -1076,7 +1149,13 @@ export default function ProfileViewPremiumV2Screen() {
 
   const renderImageItem = useCallback(
     ({ item }: { item: PremiumImage }) => (
-      <ImageCard theme={theme} item={item} isActive={item.tag === activeTagJs} height={IMAGE_ITEM_HEIGHT} />
+      <ImageCard
+        theme={theme}
+        item={item}
+        isActive={item.tag === activeTagJs}
+        height={IMAGE_ITEM_HEIGHT}
+        isVideo={item.isVideo}
+      />
     ),
     [activeTagJs, theme],
   );
@@ -1095,13 +1174,30 @@ export default function ProfileViewPremiumV2Screen() {
           clearTimeout(singleTapTimeoutRef.current);
           singleTapTimeoutRef.current = null;
         }
-        setHeroOverrideUri((cur) => (cur === item.uri ? null : item.uri));
+        if (item.isVideo) {
+          setHeroOverrideType('video');
+          setHeroOverrideUri(null);
+        } else {
+          setHeroOverrideUri((cur) => {
+            const next = cur === item.uri ? null : item.uri;
+            setHeroOverrideType(next ? 'image' : null);
+            return next;
+          });
+        }
         Haptics.selectionAsync().catch(() => undefined);
         return;
       }
 
       lastTapRef.current = { id: item.id, ts: now };
       if (singleTapTimeoutRef.current) clearTimeout(singleTapTimeoutRef.current);
+      if (item.isVideo) {
+        singleTapTimeoutRef.current = setTimeout(() => {
+          singleTapTimeoutRef.current = null;
+          lastTapRef.current = null;
+          void openIntroVideo();
+        }, 260);
+        return;
+      }
       const index = profile.images.findIndex((img) => img.id === item.id);
       singleTapTimeoutRef.current = setTimeout(() => {
         singleTapTimeoutRef.current = null;
@@ -1109,7 +1205,7 @@ export default function ProfileViewPremiumV2Screen() {
         openLightboxAtIndex(index >= 0 ? index : 0);
       }, 260);
     },
-    [openLightboxAtIndex, profile.images],
+    [openIntroVideo, openLightboxAtIndex, profile.images],
   );
 
   const renderSectionItem = useCallback(
@@ -1201,20 +1297,21 @@ export default function ProfileViewPremiumV2Screen() {
   if (gated) {
     return (
       <View style={[styles.screen, { paddingHorizontal: 16, paddingTop: 18 }]}>
-      <Header
-        theme={theme}
-        profile={presenceProfile}
-        title={'Complete your profile'}
-        locationLine={''}
-        heroOverrideUri={null}
-        heroVideoUrl={null}
-        heroScrollY={heroScrollY}
-        isDark={isDark}
-        matchBadgeValue={matchBadgeValue}
-        matchBadgeLabel={matchBadgeLabel}
-        onBack={() => router.back()}
-        onClose={() => router.back()}
-      />
+        <Header
+          theme={theme}
+          profile={presenceProfile}
+          title={'Complete your profile'}
+          locationLine={''}
+          heroOverrideUri={null}
+          heroOverrideType={null}
+          heroVideoUrl={null}
+          heroScrollY={heroScrollY}
+          isDark={isDark}
+          matchBadgeValue={matchBadgeValue}
+          matchBadgeLabel={matchBadgeLabel}
+          onBack={() => router.back()}
+          onClose={() => router.back()}
+        />
 
         <View style={[stylesStatic.gateCard, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
           <Text style={[stylesStatic.gateTitle, { color: theme.text }]}>Complete your profile to be seen</Text>
@@ -1239,12 +1336,14 @@ export default function ProfileViewPremiumV2Screen() {
         title={formatHeaderTitle(profile.name, profile.age)}
         locationLine={locationLine}
         heroOverrideUri={heroOverrideUri}
+        heroOverrideType={heroOverrideType}
         heroVideoUrl={heroVideoUrl}
         heroScrollY={heroScrollY}
         isDark={isDark}
         matchBadgeValue={matchBadgeValue}
         matchBadgeLabel={matchBadgeLabel}
-        onHeroPress={openLightboxForUri}
+        onHeroPress={handleHeroPress}
+        onHeroDoubleTap={handleHeroDoubleTap}
         onBack={() => router.back()}
         onClose={() => router.back()}
       />
@@ -1284,9 +1383,9 @@ export default function ProfileViewPremiumV2Screen() {
               <Text style={[stylesStatic.heroDetailsName, { color: theme.text }]} numberOfLines={1}>
                 {formatHeaderTitle(profile.name, profile.age)}
               </Text>
-              {(profile.verificationLevel ?? (profile.verified ? 1 : 0)) > 0 ? (
+              {(presenceProfile.verificationLevel ?? (presenceProfile.verified ? 1 : 0)) > 0 ? (
                 <VerificationBadge
-                  level={profile.verificationLevel ?? (profile.verified ? 1 : 0)}
+                  level={presenceProfile.verificationLevel ?? (presenceProfile.verified ? 1 : 0)}
                   size="small"
                 />
               ) : null}
@@ -1314,9 +1413,9 @@ export default function ProfileViewPremiumV2Screen() {
               </View>
             ) : null}
 
-            {profile.occupation ? (
+            {presenceProfile.occupation ? (
               <Text style={[stylesStatic.heroDetailsMeta, { color: theme.textMuted }]} numberOfLines={1}>
-                {profile.occupation}
+                {presenceProfile.occupation}
               </Text>
             ) : null}
 
@@ -1366,7 +1465,7 @@ export default function ProfileViewPremiumV2Screen() {
         {!isTextOnlyStory ? (
           <View style={styles.leftCol}>
             <FlashList
-              data={profile.images}
+              data={leftRailItems}
               keyExtractor={(item) => item.id}
               showsVerticalScrollIndicator={false}
               viewabilityConfig={viewabilityConfig}
@@ -1379,11 +1478,16 @@ export default function ProfileViewPremiumV2Screen() {
                   isActive={item.tag === activeTagJs}
                   height={IMAGE_ITEM_HEIGHT}
                   onTap={onImageTap}
-                  reactionIcon={imageReactions[item.uri] ?? reactionCounts[item.uri]?.topEmoji ?? null}
-                  reactionCount={reactionCounts[item.uri]?.count ?? 0}
-                  reactionsOpen={activeReactionImageId === item.id}
-                  onToggleReactions={toggleImageReactions}
-                  onSelectReaction={handleSelectReaction}
+                  isVideo={item.isVideo}
+                  reactionIcon={
+                    item.isVideo
+                      ? null
+                      : imageReactions[item.uri] ?? reactionCounts[item.uri]?.topEmoji ?? null
+                  }
+                  reactionCount={item.isVideo ? 0 : reactionCounts[item.uri]?.count ?? 0}
+                  reactionsOpen={!item.isVideo && activeReactionImageId === item.id}
+                  onToggleReactions={item.isVideo ? undefined : toggleImageReactions}
+                  onSelectReaction={item.isVideo ? undefined : handleSelectReaction}
                 />
               )}
               ItemSeparatorComponent={() => <View style={{ height: IMAGE_ITEM_GAP }} />}
@@ -1443,13 +1547,14 @@ function Header({
   title,
   locationLine,
   heroOverrideUri,
+  heroOverrideType,
   heroVideoUrl,
   heroScrollY,
   isDark,
   matchBadgeValue,
   matchBadgeLabel,
   onHeroPress,
-  onIntroPress,
+  onHeroDoubleTap,
   onBack,
   onClose,
 }: {
@@ -1458,17 +1563,19 @@ function Header({
   title: string;
   locationLine: string;
   heroOverrideUri: string | null;
+  heroOverrideType?: 'image' | 'video' | null;
   heroVideoUrl?: string | null;
   heroScrollY: SharedValue<number>;
   isDark: boolean;
   matchBadgeValue: number | null;
   matchBadgeLabel: string;
   onHeroPress?: (heroUri: string) => void;
+  onHeroDoubleTap?: () => void;
   onBack: () => void;
   onClose: () => void;
 }) {
   const heroUri =
-    heroOverrideUri ||
+    (heroOverrideType === 'image' && heroOverrideUri) ||
     (Array.isArray(profile.photos) && profile.photos.find(Boolean)) ||
     profile.profilePicture ||
     '';
@@ -1476,9 +1583,16 @@ function Header({
   const isActiveNow = profile.isActiveNow || !!(profile as any).is_active;
   const showPresence = isOnlineNow || isActiveNow;
   const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
-  const showHeroVideo = !!heroVideoUrl;
+  const showHeroVideo =
+    heroOverrideType === 'video'
+      ? true
+      : heroOverrideType === 'image'
+        ? false
+        : !!heroVideoUrl;
   const [heroMuted, setHeroMuted] = useState(true);
-  const heroHeight = Math.max(280, Math.min(420, Math.round(screenHeight * 0.38)));
+  const lastHeroTapRef = useRef<number | null>(null);
+  const heroTapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const heroHeight = Math.max(260, Math.min(390, Math.round(screenHeight * 0.36)));
   const HeroVideo = ({ uri, muted }: { uri: string; muted: boolean }) => {
     const player = useVideoPlayer(uri, (p) => {
       p.loop = true;
@@ -1513,6 +1627,32 @@ function Header({
         nativeControls={false}
       />
     );
+  };
+  useEffect(() => {
+    return () => {
+      if (heroTapTimeoutRef.current) clearTimeout(heroTapTimeoutRef.current);
+    };
+  }, []);
+  const handleHeroTap = () => {
+    const now = Date.now();
+    const prev = lastHeroTapRef.current;
+    if (prev && now - prev <= 260) {
+      lastHeroTapRef.current = null;
+      if (heroTapTimeoutRef.current) {
+        clearTimeout(heroTapTimeoutRef.current);
+        heroTapTimeoutRef.current = null;
+      }
+      onHeroDoubleTap?.();
+      return;
+    }
+    lastHeroTapRef.current = now;
+    if (heroTapTimeoutRef.current) clearTimeout(heroTapTimeoutRef.current);
+    heroTapTimeoutRef.current = setTimeout(() => {
+      heroTapTimeoutRef.current = null;
+      lastHeroTapRef.current = null;
+      if (!heroUri && !showHeroVideo) return;
+      onHeroPress?.(heroUri);
+    }, 260);
   };
   const heroImageStyle = useAnimatedStyle<ImageStyle>(() => {
     const translateY = interpolate(
@@ -1550,10 +1690,7 @@ function Header({
       </View>
 
       <Pressable
-        onPress={() => {
-          if (!heroUri) return;
-          onHeroPress?.(heroUri);
-        }}
+        onPress={handleHeroTap}
         style={[stylesStatic.heroWrap, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle, height: heroHeight }]}
       >
         {showHeroVideo ? (
@@ -1929,6 +2066,7 @@ const ImageCard = memo(function ImageCard({
   isActive,
   height,
   onTap,
+  isVideo,
   reactionIcon,
   reactionCount = 0,
   reactionsOpen,
@@ -1940,6 +2078,7 @@ const ImageCard = memo(function ImageCard({
   isActive: boolean;
   height: number;
   onTap?: (item: PremiumImage) => void;
+  isVideo?: boolean;
   reactionIcon?: string | null;
   reactionCount?: number;
   reactionsOpen?: boolean;
@@ -2010,33 +2149,46 @@ const ImageCard = memo(function ImageCard({
         style={[StyleSheet.absoluteFillObject, { backgroundColor: '#000' }, overlayStyle]}
       />
 
-      <View style={stylesStatic.reactionPillWrap} pointerEvents="box-none">
-        <Pressable
-          onPress={() => onToggleReactions?.(item)}
-          style={[stylesStatic.reactionPill, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle }]}
-        >
-          <MaterialCommunityIcons
-            name={(reactionIcon || 'emoticon-outline') as any}
-            size={18}
-            color={reactionIcon ? theme.tint : theme.textMuted}
-          />
-          {reactionCount > 0 ? (
-            <Text style={[stylesStatic.reactionCount, { color: theme.textMuted }]}>
-              {reactionCount}
-            </Text>
-          ) : null}
-        </Pressable>
+      {!isVideo ? (
+        <View style={stylesStatic.reactionPillWrap} pointerEvents="box-none">
+          <Pressable
+            onPress={() => onToggleReactions?.(item)}
+            style={[stylesStatic.reactionPill, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle }]}
+          >
+            <MaterialCommunityIcons
+              name={(reactionIcon || 'emoticon-outline') as any}
+              size={18}
+              color={reactionIcon ? theme.tint : theme.textMuted}
+            />
+            {reactionCount > 0 ? (
+              <Text style={[stylesStatic.reactionCount, { color: theme.textMuted }]}>
+                {reactionCount}
+              </Text>
+            ) : null}
+          </Pressable>
 
-        {reactionsOpen ? (
-          <View style={[stylesStatic.reactionRow, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle }]}>
-            {REACTION_ICONS.map((icon) => (
-              <Pressable key={icon} onPress={() => onSelectReaction?.(item, icon)}>
-                <MaterialCommunityIcons name={icon} size={20} color={theme.tint} />
-              </Pressable>
-            ))}
-          </View>
-        ) : null}
-      </View>
+          {reactionsOpen ? (
+            <View style={[stylesStatic.reactionRow, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle }]}>
+              {REACTION_ICONS.map((icon) => (
+                <Pressable key={icon} onPress={() => onSelectReaction?.(item, icon)}>
+                  <MaterialCommunityIcons name={icon} size={20} color={theme.tint} />
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+        </View>
+      ) : (
+        <View
+          style={[
+            stylesStatic.videoPill,
+            { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
+          ]}
+          pointerEvents="none"
+        >
+          <MaterialCommunityIcons name="play" size={18} color={theme.textMuted} />
+          <Text style={[stylesStatic.reactionCount, { color: theme.textMuted }]}>Intro</Text>
+        </View>
+      )}
 
       <View style={stylesStatic.filmStripEdge} pointerEvents="none">
         <View style={[stylesStatic.filmStripHole, { backgroundColor: theme.background }]} />
@@ -2951,6 +3103,18 @@ const stylesStatic = StyleSheet.create({
     bottom: 10,
     alignItems: 'flex-end',
     gap: 8,
+  },
+  videoPill: {
+    position: 'absolute',
+    right: 10,
+    bottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
   },
   reactionPill: {
     flexDirection: 'row',

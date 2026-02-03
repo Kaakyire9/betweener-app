@@ -265,7 +265,11 @@ export default function Onboarding() {
         .is("deleted_at", null)
         .maybeSingle();
 
-      if (phoneLookupError && phoneLookupError.code !== "PGRST116") {
+      if (
+        phoneLookupError &&
+        "code" in phoneLookupError &&
+        phoneLookupError.code !== "PGRST116"
+      ) {
         throw new Error(`Phone lookup failed: ${phoneLookupError.message}`);
       }
 
@@ -359,7 +363,7 @@ export default function Onboarding() {
       const { error: updateError } = await updateProfile(profileData);
 
       if (updateError) {
-        if (updateError.code === "23505") {
+        if ("code" in updateError && updateError.code === "23505") {
           Alert.alert(
             "Phone already in use",
             "This phone number is already linked to another account. Please sign in or use a different number."

@@ -166,6 +166,41 @@ export default function InAppToasts() {
     };
   }, [user?.id]);
 
+  const isQuietHours = useMemo(() => {
+    if (!prefs?.quiet_hours_enabled) return false;
+    if (!prefs.quiet_hours_start || !prefs.quiet_hours_end) return false;
+
+    const toMinutes = (value: string) => {
+      const [hour, minute] = value.split(':');
+      const h = Number.parseInt(hour ?? '0', 10);
+      const m = Number.parseInt(minute ?? '0', 10);
+      if (Number.isNaN(h) || Number.isNaN(m)) return 0;
+      return h * 60 + m;
+    };
+
+    const start = toMinutes(prefs.quiet_hours_start);
+    const end = toMinutes(prefs.quiet_hours_end);
+    if (start === end) return false;
+
+    const now = new Date();
+    const current = now.getHours() * 60 + now.getMinutes();
+
+    if (start < end) {
+      return current >= start && current < end;
+    }
+    return current >= start || current < end;
+  }, [prefs]);
+
+  const canInAppNotify = useCallback(
+    (kind: keyof Omit<NotificationPrefs, 'inapp_enabled'>) => {
+      if (!prefs) return true;
+      if (isQuietHours) return false;
+      if (!prefs.inapp_enabled) return false;
+      return prefs[kind] !== false;
+    },
+    [isQuietHours, prefs],
+  );
+
   useEffect(() => {
     if (!user?.id) return;
 
@@ -233,41 +268,6 @@ export default function InAppToasts() {
       supabase.removeChannel(channel);
     };
   }, [canInAppNotify, profile?.id, pushToast]);
-
-  const isQuietHours = useMemo(() => {
-    if (!prefs?.quiet_hours_enabled) return false;
-    if (!prefs.quiet_hours_start || !prefs.quiet_hours_end) return false;
-
-    const toMinutes = (value: string) => {
-      const [hour, minute] = value.split(':');
-      const h = Number.parseInt(hour ?? '0', 10);
-      const m = Number.parseInt(minute ?? '0', 10);
-      if (Number.isNaN(h) || Number.isNaN(m)) return 0;
-      return h * 60 + m;
-    };
-
-    const start = toMinutes(prefs.quiet_hours_start);
-    const end = toMinutes(prefs.quiet_hours_end);
-    if (start === end) return false;
-
-    const now = new Date();
-    const current = now.getHours() * 60 + now.getMinutes();
-
-    if (start < end) {
-      return current >= start && current < end;
-    }
-    return current >= start || current < end;
-  }, [prefs]);
-
-  const canInAppNotify = useCallback(
-    (kind: keyof Omit<NotificationPrefs, 'inapp_enabled'>) => {
-      if (!prefs) return true;
-      if (isQuietHours) return false;
-      if (!prefs.inapp_enabled) return false;
-      return prefs[kind] !== false;
-    },
-    [isQuietHours, prefs],
-  );
 
   const messagePreview = useCallback((row: any) => {
     if (row?.text) return row.text;
