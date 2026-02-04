@@ -8,9 +8,10 @@ import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Image, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import IntentRequestSheet from '@/components/IntentRequestSheet';
 
 type Direction = 'incoming' | 'sent';
 type Filter = 'action' | 'all' | 'accepted' | 'passed';
@@ -32,6 +33,16 @@ type ProfileSnippet = {
   wants_children?: string | null;
   smoking?: string | null;
   verification_level?: number | null;
+};
+
+type SuggestedMove = {
+  id: string;
+  full_name?: string | null;
+  age?: number | null;
+  avatar_url?: string | null;
+  short_tags?: string[] | null;
+  has_intro_video?: boolean | null;
+  distance_km?: number | null;
 };
 
 const timeAgo = (iso?: string | null) => {
@@ -109,6 +120,11 @@ export default function IntentScreen() {
   const [interestsByProfile, setInterestsByProfile] = useState<Record<string, string[]>>({});
   const [myProfile, setMyProfile] = useState<ProfileSnippet | null>(null);
   const [matchMetrics, setMatchMetrics] = useState<Record<string, { messageCount: number; firstReplyHours: number | null }>>({});
+  const [suggestedMoves, setSuggestedMoves] = useState<SuggestedMove[]>([]);
+  const [suggestedLoading, setSuggestedLoading] = useState(false);
+  const suggestedLoadedRef = useRef(false);
+  const [intentSheetOpen, setIntentSheetOpen] = useState(false);
+  const [intentTarget, setIntentTarget] = useState<{ id: string; name?: string | null } | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -272,6 +288,35 @@ export default function IntentScreen() {
       return true;
     });
   }, [direction, filter, incoming, sent]);
+
+  const hasPendingIncoming = useMemo(
+    () => incoming.some((item) => item.status === 'pending' && !isExpired(item)),
+    [incoming],
+  );
+
+  useEffect(() => {
+    if (!currentProfileId || loading || suggestedLoadedRef.current) return;
+    let cancelled = false;
+    const loadSuggested = async () => {
+      setSuggestedLoading(true);
+      const { data, error } = await supabase.rpc('rpc_get_suggested_moves', {
+        p_profile_id: currentProfileId,
+        p_limit: 6,
+      });
+      if (cancelled) return;
+      if (error) {
+        console.log('[intent] suggested moves error', error);
+      } else {
+        setSuggestedMoves((data as SuggestedMove[]) || []);
+      }
+      setSuggestedLoading(false);
+      suggestedLoadedRef.current = true;
+    };
+    void loadSuggested();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentProfileId, loading]);
 
   const openChat = useCallback((peerId?: string | null, name?: string, avatar?: string | null) => {
     if (!peerId) return;
@@ -530,6 +575,63 @@ export default function IntentScreen() {
     return 'Nothing here yet.';
   }, [filter]);
 
+  const handleSuggestedRequest = useCallback((item: SuggestedMove) => {
+    setIntentTarget({ id: item.id, name: item.full_name ?? null });
+    setIntentSheetOpen(true);
+  }, []);
+
+  const handleIntentSent = useCallback(() => {
+    if (!intentTarget?.id) return;
+    setSuggestedMoves((prev) => prev.filter((item) => item.id !== intentTarget.id));
+  }, [intentTarget?.id]);
+
+  const renderSuggestedCard = useCallback(
+    ({ item }: { item: SuggestedMove }) => {
+      const tags = Array.isArray(item.short_tags) ? item.short_tags.filter(Boolean).slice(0, 2) : [];
+      return (
+        <View style={styles.suggestedCard}>
+          <View style={styles.suggestedHeader}>
+            {item.avatar_url ? (
+              <Image source={{ uri: item.avatar_url }} style={styles.suggestedAvatar} />
+            ) : (
+              <View style={styles.avatarFallback}>
+                <MaterialCommunityIcons name="account-circle" size={40} color={theme.textMuted} />
+              </View>
+            )}
+            <View style={styles.suggestedInfo}>
+              <Text style={styles.suggestedName}>
+                {`${item.full_name ?? 'Someone'}${item.age ? `, ${item.age}` : ''}`}
+              </Text>
+              {tags.length ? (
+                <View style={styles.suggestedTags}>
+                  {tags.map((tag) => (
+                    <View key={`${item.id}-${tag}`} style={styles.suggestedTag}>
+                      <Text style={styles.suggestedTagText}>{tag}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+          </View>
+          <View style={styles.suggestedActions}>
+            <TouchableOpacity style={styles.primaryButton} onPress={() => handleSuggestedRequest(item)}>
+              <Text style={styles.primaryText}>Request</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => router.push({ pathname: '/profile-view', params: { profileId: String(item.id) } })}
+            >
+              <Text style={styles.secondaryText}>View profile</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      );
+    },
+    [handleSuggestedRequest, router, styles, theme.textMuted],
+  );
+
+  const shouldShowSuggested = direction === 'incoming' && suggestedMoves.length > 0;
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -575,12 +677,34 @@ export default function IntentScreen() {
         renderItem={renderItem}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
+        ListFooterComponent={
+          shouldShowSuggested ? (
+            <View style={styles.suggestedSection}>
+              <View style={styles.suggestedTitleRow}>
+                <Text style={styles.suggestedTitle}>Suggested moves</Text>
+                <Text style={styles.suggestedSubtitle}>Based on what you have been exploring</Text>
+              </View>
+              <FlatList
+                data={suggestedMoves}
+                keyExtractor={(item) => item.id}
+                renderItem={renderSuggestedCard}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.suggestedList}
+                removeClippedSubviews
+              />
+            </View>
+          ) : null
+        }
         ListEmptyComponent={
           loading ? (
             <Text style={styles.emptyText}>Loading requests...</Text>
           ) : (
             <View style={styles.emptyState}>
               <Text style={styles.emptyText}>{emptyCopy}</Text>
+              {filter === 'action' && direction === 'incoming' && !hasPendingIncoming ? (
+                <Text style={styles.emptyHint}>Make the first move.</Text>
+              ) : null}
               <View style={styles.emptyActions}>
                 <TouchableOpacity style={styles.ghostButton} onPress={() => router.push('/(tabs)/vibes')}>
                   <Text style={styles.ghostText}>Go to Vibes</Text>
@@ -589,9 +713,23 @@ export default function IntentScreen() {
                   <Text style={styles.secondaryText}>Explore Circles</Text>
                 </TouchableOpacity>
               </View>
+              {!loading && direction === 'incoming' && !hasPendingIncoming && suggestedMoves.length === 0 && !suggestedLoading ? (
+                <View style={styles.emptyStateMuted}>
+                  <Text style={styles.emptyText}>Nothing yet — but you are early.</Text>
+                  <Text style={styles.emptyHint}>Post a Moment or explore Vibes to spark new requests.</Text>
+                </View>
+              ) : null}
             </View>
           )
         }
+      />
+
+      <IntentRequestSheet
+        visible={intentSheetOpen}
+        onClose={() => setIntentSheetOpen(false)}
+        recipientId={intentTarget?.id}
+        recipientName={intentTarget?.name ?? null}
+        onSent={handleIntentSent}
       />
     </SafeAreaView>
   );
@@ -751,5 +889,36 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     profileText: { color: theme.tint, fontWeight: '700' },
     emptyState: { marginTop: 20, gap: 12, alignItems: 'center' },
     emptyText: { fontSize: 13, color: theme.textMuted, textAlign: 'center' },
+    emptyHint: { fontSize: 12, color: theme.textMuted, textAlign: 'center' },
     emptyActions: { flexDirection: 'row', gap: 10 },
+    emptyStateMuted: { marginTop: 12, gap: 6, alignItems: 'center' },
+    suggestedSection: { marginTop: 16, gap: 12 },
+    suggestedTitleRow: { gap: 4, paddingHorizontal: 2 },
+    suggestedTitle: { fontSize: 14, fontWeight: '700', color: theme.text },
+    suggestedSubtitle: { fontSize: 11, color: theme.textMuted },
+    suggestedList: { paddingVertical: 4, gap: 12 },
+    suggestedCard: {
+      width: 240,
+      padding: 12,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.outline,
+      backgroundColor: theme.backgroundSubtle,
+      marginRight: 12,
+    },
+    suggestedHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    suggestedAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.backgroundSubtle },
+    suggestedInfo: { flex: 1, gap: 6 },
+    suggestedName: { fontSize: 13, fontWeight: '700', color: theme.text },
+    suggestedTags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+    suggestedTag: {
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.outline,
+      backgroundColor: theme.background,
+    },
+    suggestedTagText: { fontSize: 10, color: theme.textMuted, fontWeight: '600' },
+    suggestedActions: { flexDirection: 'row', gap: 8, marginTop: 12 },
   });

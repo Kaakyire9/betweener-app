@@ -8,6 +8,7 @@ import { computeFirstReplyHours, computeInterestOverlapRatio, computeMatchScoreP
 import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
+import { recordProfileSignal } from '@/lib/profile-signals';
 import { supabase } from '@/lib/supabase';
 import type { UserProfile } from '@/types/user-profile';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -438,6 +439,9 @@ export default function ProfileViewPremiumV2Screen() {
   const [matchAccepted, setMatchAccepted] = useState(false);
   const [matchPercent, setMatchPercent] = useState<number | null>(null);
   const [myInterests, setMyInterests] = useState<string[]>([]);
+  const signalOpenedRef = useRef<string | null>(null);
+  const signalIntroRef = useRef<string | null>(null);
+  const dwellTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Fetch using the same logic extracted from app/profile-view.tsx.
   React.useEffect(() => {
@@ -488,6 +492,19 @@ export default function ProfileViewPremiumV2Screen() {
       compatibility: 0,
     };
   }, [fallbackProfile, fetchedProfile, profileId]);
+
+  useEffect(() => {
+    if (!currentProfile?.id || !resolvedProfile?.id || resolvedProfile.id === 'preview') return;
+    if (currentProfile.id === resolvedProfile.id) return;
+    const key = `${currentProfile.id}:${resolvedProfile.id}`;
+    if (signalOpenedRef.current === key) return;
+    signalOpenedRef.current = key;
+    void recordProfileSignal({
+      profileId: currentProfile.id,
+      targetProfileId: resolvedProfile.id,
+      openedDelta: 1,
+    });
+  }, [currentProfile?.id, resolvedProfile.id]);
 
   useEffect(() => {
     let mounted = true;
@@ -788,6 +805,25 @@ export default function ProfileViewPremiumV2Screen() {
     [currentUserId, profileId],
   );
 
+  useEffect(() => {
+    if (!currentProfile?.id || !resolvedProfile?.id) return;
+    if (resolvedProfile.id === 'preview' || resolvedProfile.id === currentProfile.id) return;
+    if (dwellTimerRef.current) clearInterval(dwellTimerRef.current);
+    dwellTimerRef.current = setInterval(() => {
+      void recordProfileSignal({
+        profileId: currentProfile.id,
+        targetProfileId: resolvedProfile.id,
+        dwellDelta: 2,
+      });
+    }, 12000);
+    return () => {
+      if (dwellTimerRef.current) {
+        clearInterval(dwellTimerRef.current);
+        dwellTimerRef.current = null;
+      }
+    };
+  }, [currentProfile?.id, resolvedProfile.id]);
+
 
   const isTextOnlyStory = !hasGalleryImages && meaningfulText && (hasAvatarOnly || !!resolvedProfile.profilePicture);
   const isImagesOnly = hasGalleryImages && !meaningfulText;
@@ -926,6 +962,18 @@ export default function ProfileViewPremiumV2Screen() {
       : heroOverrideType === 'image'
         ? false
         : !!heroVideoUrl;
+  useEffect(() => {
+    if (!currentProfile?.id || !resolvedProfile?.id) return;
+    if (!showHeroVideo || !heroVideoUrl) return;
+    const key = `${currentProfile.id}:${resolvedProfile.id}:intro`;
+    if (signalIntroRef.current === key) return;
+    signalIntroRef.current = key;
+    void recordProfileSignal({
+      profileId: currentProfile.id,
+      targetProfileId: resolvedProfile.id,
+      introVideoStarted: true,
+    });
+  }, [currentProfile?.id, heroVideoUrl, resolvedProfile.id, showHeroVideo]);
   const videoThumbUri = useMemo(() => {
     if (resolvedProfile.profilePicture) return resolvedProfile.profilePicture;
     const photos = Array.isArray(resolvedProfile.photos) ? resolvedProfile.photos : [];
@@ -1586,6 +1634,7 @@ export default function ProfileViewPremiumV2Screen() {
         theme={theme}
         profileId={profileId}
         currentUserId={currentUserId}
+        viewerProfileId={currentProfile?.id ?? null}
         isOwnProfile={isOwnProfile}
         onOpenRequest={openIntentSheet}
       />
@@ -2466,12 +2515,14 @@ function FloatingActions({
   theme,
   profileId,
   currentUserId,
+  viewerProfileId,
   isOwnProfile,
   onOpenRequest,
 }: {
   theme: typeof Colors.light;
   profileId: string;
   currentUserId: string | null;
+  viewerProfileId: string | null;
   isOwnProfile: boolean;
   onOpenRequest?: () => void;
 }) {
@@ -2617,6 +2668,13 @@ function FloatingActions({
     }
     setLiked(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+    if (viewerProfileId) {
+      void recordProfileSignal({
+        profileId: viewerProfileId,
+        targetProfileId: profileId,
+        liked: true,
+      });
+    }
   };
 
   return (

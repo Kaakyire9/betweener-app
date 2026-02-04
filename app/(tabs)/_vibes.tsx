@@ -11,6 +11,7 @@ import { requestAndSavePreciseLocation, saveManualCityLocation } from "@/hooks/u
 import { useMoments, type MomentUser } from '@/hooks/useMoments';
 import useVibesFeed from "@/hooks/useVibesFeed";
 import { useAuth } from "@/lib/auth-context";
+import { recordProfileSignal } from '@/lib/profile-signals';
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -675,6 +676,13 @@ export default function ExploreScreen() {
 
   const onProfileTap = async (id: string) => {
     try {
+      if (profile?.id && id && String(id) !== String(profile.id)) {
+        void recordProfileSignal({
+          profileId: profile.id,
+          targetProfileId: id,
+          openedDelta: 1,
+        });
+      }
       // fetch optional fields on demand and merge into matches
       const updated = await fetchProfileDetails?.(id);
       const videoUrl = (updated && (updated as any).profileVideo) ? String((updated as any).profileVideo) : undefined;
@@ -875,6 +883,13 @@ export default function ExploreScreen() {
                   try {
                     if (previewingId) return;
                     setPreviewingId(String(id));
+                    if (profile?.id && id && String(id) !== String(profile.id)) {
+                      void recordProfileSignal({
+                        profileId: profile.id,
+                        targetProfileId: id,
+                        introVideoStarted: true,
+                      });
+                    }
                     const updated = await fetchProfileDetails?.(id);
                     const videoUrl = (updated && (updated as any).profileVideo) ? String((updated as any).profileVideo) : undefined;
                     if (videoUrl) {

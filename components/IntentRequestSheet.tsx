@@ -13,6 +13,7 @@ type IntentRequestSheetProps = {
   recipientId?: string | null;
   recipientName?: string | null;
   metadata?: Record<string, unknown>;
+  onSent?: (requestId: string | null) => void;
 };
 
 const optionLabels: { type: IntentRequestType; label: string; subtitle: string; icon: string }[] = [
@@ -28,6 +29,7 @@ export default function IntentRequestSheet({
   recipientId,
   recipientName,
   metadata,
+  onSent,
 }: IntentRequestSheetProps) {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
@@ -69,6 +71,7 @@ export default function IntentRequestSheet({
       if (error) throw error;
       if (data) {
         Alert.alert('Request sent', `Your request to ${recipientName || 'connect'} is on the way.`);
+        onSent?.(data as string);
         onClose();
       }
     } catch (err) {
