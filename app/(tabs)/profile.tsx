@@ -33,6 +33,7 @@ import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/dat
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { VideoView, useVideoPlayer } from "expo-video";
+import * as Haptics from "expo-haptics";
 
 const { width: screenWidth } = Dimensions.get('window');
 const DISTANCE_UNIT_KEY = 'distance_unit';
@@ -143,6 +144,82 @@ const PROFILE_PROMPTS = [
   }
 ];
 
+const PROFILE_COMPLETION_MIN_INTERESTS = 3;
+const BIO_MIN_PUBLIC_CHARS = 20;
+const LOOKING_FOR_MIN_CHARS = 10;
+
+const computeProfileCompletion = (
+  profile: any,
+  interests: string[],
+  promptCount: number,
+  photoCount: number,
+) => {
+  if (!profile) {
+    return { percent: 0, missing: [] as string[] };
+  }
+
+  const hasName = !!(profile.full_name || '').trim();
+  const hasAge = typeof profile.age === 'number' && profile.age >= 18;
+  const hasGender = !!(profile.gender || '').toString().trim();
+  const hasBio = (profile.bio || '').trim().length >= BIO_MIN_PUBLIC_CHARS;
+  const hasRegion = !!(profile.region || '').trim();
+  const hasTribe = !!(profile.tribe || '').trim();
+  const hasOccupation = !!(profile.occupation || '').trim();
+  const hasEducation = !!(profile.education || '').trim();
+  const hasIntent = (profile.looking_for || '').trim().length >= LOOKING_FOR_MIN_CHARS;
+  const hasExercise = !!(profile.exercise_frequency || '').trim();
+  const hasSmoking = !!(profile.smoking || '').trim();
+  const hasDrinking = !!(profile.drinking || '').trim();
+  const hasChildren = !!(profile.has_children || '').trim();
+  const wantsChildren = !!(profile.wants_children || '').trim();
+  const hasPersonality = !!(profile.personality_type || '').trim();
+  const hasLoveLanguage = !!(profile.love_language || '').trim();
+  const hasLivingSituation = !!(profile.living_situation || '').trim();
+  const hasPets = !!(profile.pets || '').trim();
+  const hasLanguages =
+    Array.isArray(profile.languages_spoken) && profile.languages_spoken.filter(Boolean).length > 0;
+  const hasInterests = Array.isArray(interests) && interests.length >= PROFILE_COMPLETION_MIN_INTERESTS;
+  const hasPhotos = photoCount >= 2 || (Array.isArray(profile.photos) && profile.photos.filter(Boolean).length >= 2);
+  const hasAvatar = !!(profile.avatar_url || '').trim();
+  const hasVideo = !!(profile.profile_video || '').trim();
+  const hasHeight = !!(profile.height || '').trim();
+  const hasPrompts = promptCount > 0;
+
+  const checks: Array<{ label: string; ok: boolean }> = [
+    { label: 'Add your name', ok: hasName },
+    { label: 'Add your age', ok: hasAge },
+    { label: 'Add your gender', ok: hasGender },
+    { label: 'Share a little about you', ok: hasBio },
+    { label: 'Add your region', ok: hasRegion },
+    { label: 'Add your tribe or ethnicity', ok: hasTribe },
+    { label: 'Add your occupation', ok: hasOccupation },
+    { label: 'Add your education', ok: hasEducation },
+    { label: "Express what you're here for", ok: hasIntent },
+    { label: 'Add exercise frequency', ok: hasExercise },
+    { label: 'Add smoking preference', ok: hasSmoking },
+    { label: 'Add drinking preference', ok: hasDrinking },
+    { label: 'Add children status', ok: hasChildren },
+    { label: 'Add family plans', ok: wantsChildren },
+    { label: 'Add personality type', ok: hasPersonality },
+    { label: 'Add love language', ok: hasLoveLanguage },
+    { label: 'Add living situation', ok: hasLivingSituation },
+    { label: 'Add pets preference', ok: hasPets },
+    { label: 'Add languages spoken', ok: hasLanguages },
+    { label: 'Add your interests', ok: hasInterests },
+    { label: 'Add at least 2 photos', ok: hasPhotos },
+    { label: 'Add a profile photo', ok: hasAvatar },
+    { label: 'Add your height', ok: hasHeight },
+    { label: 'Answer a prompt', ok: hasPrompts },
+  ];
+
+  const total = checks.length || 1;
+  const earned = checks.reduce((sum, c) => sum + (c.ok ? 1 : 0), 0);
+  const percent = Math.max(0, Math.min(100, Math.round((earned / total) * 100)));
+  const missing = checks.filter((c) => !c.ok).map((c) => c.label);
+
+  return { percent, missing };
+};
+
 export default function ProfileScreen() {
   const { signOut, user, profile, refreshProfile } = useAuth();
   const colorScheme = useColorScheme();
@@ -205,6 +282,77 @@ export default function ProfileScreen() {
     quiet_hours_tz: 'UTC',
   });
   const [notificationPrefsLoaded, setNotificationPrefsLoaded] = useState(false);
+  const [matchesCount, setMatchesCount] = useState(0);
+  const [chatsCount, setChatsCount] = useState(0);
+  const [matchQuality, setMatchQuality] = useState<number | null>(null);
+  const profileCompletion = useMemo(
+    () => computeProfileCompletion(profile, userInterests, promptAnswers.length, userPhotos.length),
+    [profile, promptAnswers.length, userInterests, userPhotos.length],
+  );
+  const progressAnim = useRef(new Animated.Value(profileCompletion.percent)).current;
+  const progressGlowAnim = useRef(new Animated.Value(0)).current;
+  const progressAnimatedOnceRef = useRef(false);
+  const prevProgressRef = useRef(profileCompletion.percent);
+  const [rewardText, setRewardText] = useState<string | null>(null);
+  const [progressTrackWidth, setProgressTrackWidth] = useState(0);
+
+  const progressSubtitle = useMemo(() => {
+    if (profileCompletion.percent >= 100) return "Your profile feels complete";
+    if (profileCompletion.percent >= 80) return "Almost there - looking good";
+    if (profileCompletion.percent >= 50) return "Your profile is taking shape";
+    return "Start shaping your presence";
+  }, [profileCompletion.percent]);
+
+  const nextPrompt = useMemo(() => {
+    const missing = profileCompletion.missing;
+    if (!missing.length) return null;
+    const first = missing[0];
+    if (first === "Share a little about you") return "Next: Share a little about you";
+    if (first === "Express what you're here for") return "Next: Express what you're here for";
+    if (first === "Add at least 2 photos") return "Next: Add your best photos";
+    if (first === "Add a profile photo") return "Next: Add your profile photo";
+    if (first === "Answer a prompt") return "Next: Add your voice";
+    return `Next: ${first}`;
+  }, [profileCompletion.missing]);
+
+  useEffect(() => {
+    if (!progressAnimatedOnceRef.current) {
+      progressAnim.setValue(0);
+      Animated.timing(progressAnim, {
+        toValue: profileCompletion.percent,
+        duration: 720,
+        delay: 180,
+        useNativeDriver: false,
+      }).start(() => {
+        progressAnimatedOnceRef.current = true;
+      });
+      if (progressTrackWidth > 0) {
+        progressGlowAnim.setValue(0);
+        Animated.timing(progressGlowAnim, {
+          toValue: 1,
+          duration: 1100,
+          delay: 220,
+          useNativeDriver: true,
+        }).start();
+      }
+    } else {
+      Animated.timing(progressAnim, {
+        toValue: profileCompletion.percent,
+        duration: 520,
+        useNativeDriver: false,
+      }).start();
+    }
+
+    if (profileCompletion.percent > prevProgressRef.current) {
+      prevProgressRef.current = profileCompletion.percent;
+      setRewardText("That adds depth");
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+      const timer = setTimeout(() => setRewardText(null), 900);
+      return () => clearTimeout(timer);
+    }
+    prevProgressRef.current = profileCompletion.percent;
+    return undefined;
+  }, [profileCompletion.percent, progressAnim, progressGlowAnim, progressTrackWidth]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -213,6 +361,7 @@ export default function ProfileScreen() {
       await fetchUserInterests();
       await loadPromptAnswers();
       await loadUserPhotos();
+      await fetchProfileStats();
       console.log('Profile manually refreshed');
     } catch (error) {
       console.error('Error refreshing profile:', error);
@@ -331,6 +480,86 @@ export default function ProfileScreen() {
     }
   };
 
+  const fetchProfileStats = useCallback(async () => {
+    if (!profile?.id || !user?.id) {
+      setMatchesCount(0);
+      setChatsCount(0);
+      setMatchQuality(null);
+      return;
+    }
+
+    try {
+      const { data: matches, error: matchesError } = await supabase
+        .from('matches')
+        .select('id,user1_id,user2_id,status')
+        .eq('status', 'ACCEPTED')
+        .or(`user1_id.eq.${profile.id},user2_id.eq.${profile.id}`)
+        .limit(500);
+
+      if (matchesError || !matches) {
+        setMatchesCount(0);
+        setMatchQuality(null);
+      } else {
+        const rows = matches as any[];
+        const otherIds = Array.from(
+          new Set(
+            rows
+              .map((m) => (m.user1_id === profile.id ? m.user2_id : m.user1_id))
+              .filter((v): v is string => typeof v === 'string' && v.length > 0),
+          ),
+        );
+        setMatchesCount(otherIds.length);
+
+        if (otherIds.length > 0) {
+          const { data: profilesData, error: profilesError } = await supabase
+            .from('profiles')
+            .select('id,compatibility')
+            .in('id', otherIds);
+          if (profilesError || !profilesData) {
+            setMatchQuality(null);
+          } else {
+            const scores = (profilesData as any[])
+              .map((p) => (typeof p?.compatibility === 'number' ? p.compatibility : null))
+              .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+            if (scores.length > 0) {
+              const avg = scores.reduce((sum, v) => sum + v, 0) / scores.length;
+              setMatchQuality(Math.max(0, Math.min(100, Math.round(avg))));
+            } else {
+              setMatchQuality(null);
+            }
+          }
+        } else {
+          setMatchQuality(null);
+        }
+      }
+    } catch {
+      setMatchesCount(0);
+      setMatchQuality(null);
+    }
+
+    try {
+      const { data: messages, error: messagesError } = await supabase
+        .from('messages')
+        .select('sender_id,receiver_id')
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .order('created_at', { ascending: false })
+        .limit(500);
+
+      if (messagesError || !messages) {
+        setChatsCount(0);
+      } else {
+        const convoIds = new Set<string>();
+        (messages as any[]).forEach((m) => {
+          const otherId = m.sender_id === user.id ? m.receiver_id : m.sender_id;
+          if (typeof otherId === 'string' && otherId.length > 0) convoIds.add(otherId);
+        });
+        setChatsCount(convoIds.size);
+      }
+    } catch {
+      setChatsCount(0);
+    }
+  }, [profile?.id, user?.id]);
+
   // Remove photo function
   const removePhoto = async (index: number) => {
     if (!user?.id || index < 0 || index >= userPhotos.length) return;
@@ -392,8 +621,9 @@ export default function ProfileScreen() {
       fetchUserInterests();
       loadUserPhotos();
       loadPromptAnswers();
+      void fetchProfileStats();
     }
-  }, [profile, user?.id, loadPromptAnswers]);
+  }, [profile, user?.id, loadPromptAnswers, fetchProfileStats]);
 
   const loadNotificationPrefs = useCallback(async () => {
     if (!user?.id) return;
@@ -1563,6 +1793,105 @@ export default function ProfileScreen() {
             </Text>
           ) : null}
 
+          {!isPreviewMode ? (
+            <View
+              style={[
+                styles.progressCard,
+                { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+              ]}
+            >
+              <View style={styles.progressTopRow}>
+                <View>
+                  <Text style={[styles.progressTitle, { color: theme.text }]}>
+                    Profile progress
+                  </Text>
+                  <Text style={[styles.progressSub, { color: theme.textMuted }]}>
+                    {rewardText ?? progressSubtitle}
+                  </Text>
+                </View>
+                <View style={styles.progressPctWrap}>
+                  <Text style={[styles.progressPct, { color: theme.text }]}>
+                    {profileCompletion.percent}%
+                  </Text>
+                </View>
+              </View>
+              <View
+                style={[styles.progressTrack, { backgroundColor: theme.outline }]}
+                onLayout={(event) => {
+                  const width = event.nativeEvent.layout.width;
+                  if (width && width !== progressTrackWidth) {
+                    setProgressTrackWidth(width);
+                  }
+                }}
+              >
+                <Animated.View
+                  style={[
+                    styles.progressFill,
+                    {
+                      backgroundColor: theme.tint,
+                      width: progressAnim.interpolate({
+                        inputRange: [0, 100],
+                        outputRange: ["0%", "100%"],
+                      }),
+                    },
+                  ]}
+                />
+                {progressTrackWidth > 0 && !progressAnimatedOnceRef.current ? (
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      styles.progressGlow,
+                      {
+                        transform: [
+                          {
+                            translateX: progressGlowAnim.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [-60, progressTrackWidth + 60],
+                            }),
+                          },
+                        ],
+                        opacity: progressGlowAnim.interpolate({
+                          inputRange: [0, 0.1, 0.6, 1],
+                          outputRange: [0, 0.35, 0.22, 0],
+                        }),
+                      },
+                    ]}
+                  />
+                ) : null}
+              </View>
+              {profileCompletion.percent < 100 ? (
+                <Text style={[styles.progressHelper, { color: theme.textMuted }]}>
+                  Thoughtful details help you feel more understood.
+                </Text>
+              ) : (
+                <Text style={[styles.progressHelper, { color: theme.textMuted }]}>
+                  You're all set.
+                </Text>
+              )}
+              {profileCompletion.percent < 100 && !profile?.profile_video ? (
+                <Text style={[styles.progressHelper, { color: theme.textMuted }]}>
+                  Bonus: Add an intro video
+                </Text>
+              ) : null}
+              {nextPrompt ? (
+                <TouchableOpacity
+                  style={styles.progressHintRow}
+                  activeOpacity={0.7}
+                  onPress={() => setShowEditModal(true)}
+                >
+                  <MaterialCommunityIcons name="star-four-points" size={14} color={theme.accent} />
+                  <Text
+                    style={[styles.progressHint, { color: theme.textMuted }]}
+                    numberOfLines={1}
+                  >
+                    {nextPrompt}
+                  </Text>
+                  <MaterialCommunityIcons name="chevron-right" size={14} color={theme.textMuted} />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : null}
+
           {/* Profile Details */}
           <View style={styles.profileDetails}>
             {/* Age and Height Row */}
@@ -1819,17 +2148,23 @@ export default function ProfileScreen() {
               />
             </View>
             <View style={styles.statItem}>
-              <Text style={[styles.statNumber, { color: theme.text }]}>12</Text>
+              <Text style={[styles.statNumber, { color: theme.text }]}>
+                {matchesCount}
+              </Text>
               <Text style={[styles.statLabel, { color: theme.textMuted }]}>Matches</Text>
             </View>
             <View style={[styles.statDivider, { backgroundColor: theme.outline }]} />
             <View style={styles.statItem}>
-              <Text style={[styles.statNumber, { color: theme.text }]}>3</Text>
+              <Text style={[styles.statNumber, { color: theme.text }]}>
+                {chatsCount}
+              </Text>
               <Text style={[styles.statLabel, { color: theme.textMuted }]}>Chats</Text>
             </View>
             <View style={[styles.statDivider, { backgroundColor: theme.outline }]} />
             <View style={styles.statItem}>
-              <Text style={[styles.statNumber, { color: theme.text }]}>89%</Text>
+              <Text style={[styles.statNumber, { color: theme.text }]}>
+                {typeof matchQuality === 'number' ? `${matchQuality}%` : '—'}
+              </Text>
               <Text style={[styles.statLabel, { color: theme.textMuted }]}>Match Quality</Text>
             </View>
             <Text style={[styles.statsHint, { color: theme.textMuted }]}>
@@ -2535,6 +2870,68 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
     textAlign: 'center',
   },
+  progressCard: {
+    marginTop: 14,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    width: '100%',
+  },
+  progressTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  progressTitle: {
+    fontSize: 14,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 0.2,
+  },
+  progressSub: {
+    marginTop: 2,
+    fontSize: 12,
+    fontFamily: 'Manrope_400Regular',
+  },
+  progressPctWrap: {
+    minWidth: 54,
+    alignItems: 'flex-end',
+  },
+  progressPct: {
+    fontSize: 16,
+    fontFamily: 'Archivo_700Bold',
+    letterSpacing: 0.2,
+  },
+  progressTrack: {
+    marginTop: 10,
+    height: 8,
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: 8,
+    borderRadius: 999,
+  },
+  progressGlow: {
+    position: 'absolute',
+    top: -6,
+    bottom: -6,
+    width: 60,
+    borderRadius: 999,
+    backgroundColor: 'rgba(183,153,255,0.45)',
+  },
+  progressHintRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  progressHint: {
+    fontSize: 12,
+    fontFamily: 'Manrope_500Medium',
+    flexShrink: 1,
+  },
   compatibilityContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3228,3 +3625,4 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+

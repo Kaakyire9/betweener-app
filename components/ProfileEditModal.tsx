@@ -1,5 +1,3 @@
-import { DiasporaVerification } from '@/components/DiasporaVerification';
-import { VerificationBadge } from '@/components/VerificationBadge';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
@@ -102,9 +100,92 @@ const PETS_OPTIONS = [
   "No Pets", "Dog Lover", "Cat Lover", "Other Pets", "Allergic to Pets", "Other"
 ];
 
+// Ghana-specific regions and tribes
+const GHANA_REGIONS_OPTIONS = [
+  "Ahafo",
+  "Ashanti",
+  "Bono",
+  "Bono East",
+  "Central",
+  "Eastern",
+  "Greater Accra",
+  "North East",
+  "Northern",
+  "Oti",
+  "Savannah",
+  "Upper East",
+  "Upper West",
+  "Volta",
+  "Western",
+  "Western North",
+  "Other",
+];
+
+const GHANA_TRIBES_OPTIONS = [
+  "Asante",
+  "Fante",
+  "Akuapem",
+  "Akyem",
+  "Brong (Bono)",
+  "Kwahu",
+  "Wassa",
+  "Sefwi",
+  "Nzema",
+  "Ga",
+  "Ewe",
+  "Mole-Dagbon",
+  "Other",
+];
+
+const GLOBAL_TRIBES_OPTIONS = [
+  "African",
+  "Caribbean",
+  "European",
+  "Latin American",
+  "Middle Eastern",
+  "Asian",
+  "Mixed",
+  "Other",
+];
+
 // HIGH PRIORITY: Ghana-focused languages
-const LANGUAGES_OPTIONS = [
-  "English", "Twi", "Ga", "Ewe", "Fante", "Hausa", "Dagbani", "Gonja", "Nzema", "Kasem", "Dagaare", "French", "Arabic", "Other"
+const GHANA_LANGUAGES_OPTIONS = [
+  "English",
+  "Twi",
+  "Ga",
+  "Ewe",
+  "Fante",
+  "Hausa",
+  "Dagbani",
+  "Gonja",
+  "Nzema",
+  "Kasem",
+  "Dagaare",
+  "French",
+  "Arabic",
+  "Other",
+];
+
+// Global languages (lighter, broader list)
+const GLOBAL_LANGUAGES_OPTIONS = [
+  "English",
+  "Spanish",
+  "French",
+  "German",
+  "Italian",
+  "Portuguese",
+  "Dutch",
+  "Swedish",
+  "Norwegian",
+  "Arabic",
+  "Hindi",
+  "Chinese",
+  "Japanese",
+  "Korean",
+  "Yoruba",
+  "Igbo",
+  "Swahili",
+  "Other",
 ];
 
 // DIASPORA: Country options (focusing on major Ghanaian diaspora locations)
@@ -134,6 +215,15 @@ const withAlpha = (hex: string | undefined | null, alpha: number) => {
   const b = bigint & 255;
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
 };
+
+const normalizeLanguages = (items?: string[]) =>
+  Array.from(
+    new Set(
+      (items ?? [])
+        .map((item) => (typeof item === 'string' ? item.trim() : ''))
+        .filter(Boolean)
+    )
+  );
 
 interface ProfileEditModalProps {
   visible: boolean;
@@ -167,6 +257,18 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const isGhanaProfile = useMemo(() => {
+    const currentCountry = (profile as any)?.current_country;
+    const countryCode = (profile as any)?.current_country_code;
+    const region = (profile as any)?.region;
+    if (countryCode === 'GH') return true;
+    if (currentCountry && currentCountry.toLowerCase().includes('ghana')) return true;
+    if (region && GHANA_REGIONS_OPTIONS.includes(region)) return true;
+    return false;
+  }, [profile]);
+  const languagesOptions = isGhanaProfile
+    ? GHANA_LANGUAGES_OPTIONS
+    : GLOBAL_LANGUAGES_OPTIONS;
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [videoUploading, setVideoUploading] = useState(false);
@@ -177,6 +279,8 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const [showOccupationPicker, setShowOccupationPicker] = useState(false);
   const [showEducationPicker, setShowEducationPicker] = useState(false);
   const [showLookingForPicker, setShowLookingForPicker] = useState(false);
+  const [showRegionPicker, setShowRegionPicker] = useState(false);
+  const [showTribePicker, setShowTribePicker] = useState(false);
   
   // HIGH PRIORITY picker visibility states
   const [showExercisePicker, setShowExercisePicker] = useState(false);
@@ -198,6 +302,8 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const [customOccupation, setCustomOccupation] = useState('');
   const [customEducation, setCustomEducation] = useState('');
   const [customLookingFor, setCustomLookingFor] = useState('');
+  const [customRegion, setCustomRegion] = useState('');
+  const [customTribe, setCustomTribe] = useState('');
   
   // HIGH PRIORITY custom input states
   const [customExercise, setCustomExercise] = useState('');
@@ -211,7 +317,6 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const [customPets, setCustomPets] = useState('');
   const [customLanguage, setCustomLanguage] = useState('');
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
-  const [isVerificationModalVisible, setIsVerificationModalVisible] = useState(false);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusTone, setStatusTone] = useState<'error' | 'success' | null>(null);
@@ -231,6 +336,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     bio: '',
     age: '',
     region: '',
+    tribe: '',
     occupation: '',
     education: '',
     height: '',
@@ -255,17 +361,31 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     last_ghana_visit: '',
     future_ghana_plans: '',
   });
+  const displayLanguages = useMemo(() => {
+    const base =
+      formData?.languages_spoken && formData.languages_spoken.length > 0
+        ? formData.languages_spoken
+        : selectedLanguages;
+    return normalizeLanguages(base);
+  }, [formData?.languages_spoken, selectedLanguages]);
 
   // Load current profile data when modal opens
   useEffect(() => {
     if (visible && profile) {
       setStatusMessage(null);
       setStatusTone(null);
+      const normalizedLanguages = normalizeLanguages(
+        (profile as any).languages_spoken || []
+      );
+      const filteredLanguages = normalizedLanguages.filter(
+        (lang) => languagesOptions.includes(lang) || lang === 'Other'
+      );
       setFormData({
         full_name: profile.full_name || '',
         bio: profile.bio || '',
         age: profile.age?.toString() || '',
         region: profile.region || '',
+        tribe: (profile as any).tribe || '',
         occupation: (profile as any).occupation || '',
         education: (profile as any).education || '',
         height: (profile as any).height || '',
@@ -283,7 +403,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         love_language: (profile as any).love_language || '',
         living_situation: (profile as any).living_situation || '',
         pets: (profile as any).pets || '',
-        languages_spoken: (profile as any).languages_spoken || [],
+        languages_spoken: filteredLanguages,
         // DIASPORA fields (preserve existing, don't override status)
         willing_long_distance: (profile as any).willing_long_distance || false,
         years_in_diaspora: (profile as any).years_in_diaspora || 0,
@@ -291,7 +411,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         future_ghana_plans: (profile as any).future_ghana_plans || '',
       });
       // Set selected languages for multi-select
-      setSelectedLanguages((profile as any).languages_spoken || []);
+      setSelectedLanguages(filteredLanguages);
     }
     
     // Load available interests and user's current interests when modal opens
@@ -822,6 +942,9 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
           updateData.location_updated_at = new Date().toISOString();
         }
       }
+      if (formData.tribe && formData.tribe.trim()) {
+        updateData.tribe = formData.tribe.trim();
+      }
       if (formData.occupation && formData.occupation.trim()) {
         updateData.occupation = formData.occupation.trim();
       }
@@ -972,7 +1095,17 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
           {/* Avatar Section */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Profile Photo</Text>
+            <View style={styles.sectionTitleRow}>
+              <View style={styles.sectionIconWrap}>
+                <MaterialCommunityIcons
+                  name="account-circle-outline"
+                  size={18}
+                  color={theme.accent}
+                  style={styles.sectionIcon}
+                />
+              </View>
+              <Text style={styles.sectionTitle}>Profile Photo</Text>
+            </View>
             <View style={styles.avatarContainer}>
               <Image
                 source={{
@@ -996,7 +1129,17 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
 
           {/* Basic Info */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Basic Information</Text>
+            <View style={styles.sectionTitleRow}>
+              <View style={styles.sectionIconWrap}>
+                <MaterialCommunityIcons
+                  name="card-account-details-outline"
+                  size={18}
+                  color={theme.accent}
+                  style={styles.sectionIcon}
+                />
+              </View>
+              <Text style={styles.sectionTitle}>Basic Information</Text>
+            </View>
             
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Full Name *</Text>
@@ -1069,20 +1212,149 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
             </View>
 
             <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Location</Text>
-              <TextInput
-                style={styles.textInput}
-                value={formData.region}
-                onChangeText={(text) => handleInputChange('region', text)}
-                placeholder="Accra, Ghana"
-                maxLength={100}
-              />
+              <Text style={styles.inputLabel}>
+                {isGhanaProfile ? 'Region' : 'Location'}
+              </Text>
+              {isGhanaProfile ? (
+                <>
+                  <TouchableOpacity
+                    style={styles.selectButton}
+                    onPress={() => setShowRegionPicker(true)}
+                  >
+                    <Text
+                      style={[
+                        formData.region
+                          ? styles.selectButtonText
+                          : styles.selectButtonPlaceholder,
+                      ]}
+                    >
+                      {formData.region || 'Select region'}
+                    </Text>
+                    <MaterialCommunityIcons
+                      name="chevron-down"
+                      size={20}
+                      color={theme.textMuted}
+                    />
+                  </TouchableOpacity>
+                  {formData.region === 'Other' && (
+                    <TextInput
+                      style={[styles.textInput, { marginTop: 8 }]}
+                      value={customRegion}
+                      onChangeText={setCustomRegion}
+                      placeholder="Enter your region"
+                      maxLength={100}
+                      onBlur={() => {
+                        if (customRegion.trim()) {
+                          handleInputChange('region', customRegion.trim());
+                        }
+                      }}
+                    />
+                  )}
+                </>
+              ) : (
+                <TextInput
+                  style={styles.textInput}
+                  value={formData.region}
+                  onChangeText={(text) => handleInputChange('region', text)}
+                  placeholder="City, Country"
+                  maxLength={100}
+                />
+              )}
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>
+                {isGhanaProfile ? 'Tribe' : 'Tribe / Ethnicity'}
+              </Text>
+              {isGhanaProfile ? (
+                <>
+                  <TouchableOpacity
+                    style={styles.selectButton}
+                    onPress={() => setShowTribePicker(true)}
+                  >
+                    <Text
+                      style={[
+                        formData.tribe
+                          ? styles.selectButtonText
+                          : styles.selectButtonPlaceholder,
+                      ]}
+                    >
+                      {formData.tribe || 'Select tribe'}
+                    </Text>
+                    <MaterialCommunityIcons
+                      name="chevron-down"
+                      size={20}
+                      color={theme.textMuted}
+                    />
+                  </TouchableOpacity>
+                  {formData.tribe === 'Other' && (
+                    <TextInput
+                      style={[styles.textInput, { marginTop: 8 }]}
+                      value={customTribe}
+                      onChangeText={setCustomTribe}
+                      placeholder="Enter your tribe"
+                      maxLength={100}
+                      onBlur={() => {
+                        if (customTribe.trim()) {
+                          handleInputChange('tribe', customTribe.trim());
+                        }
+                      }}
+                    />
+                  )}
+                </>
+              ) : (
+                <>
+                  <TouchableOpacity
+                    style={styles.selectButton}
+                    onPress={() => setShowTribePicker(true)}
+                  >
+                    <Text
+                      style={[
+                        formData.tribe
+                          ? styles.selectButtonText
+                          : styles.selectButtonPlaceholder,
+                      ]}
+                    >
+                      {formData.tribe || 'Select ethnicity'}
+                    </Text>
+                    <MaterialCommunityIcons
+                      name="chevron-down"
+                      size={20}
+                      color={theme.textMuted}
+                    />
+                  </TouchableOpacity>
+                  {formData.tribe === 'Other' && (
+                    <TextInput
+                      style={[styles.textInput, { marginTop: 8 }]}
+                      value={customTribe}
+                      onChangeText={setCustomTribe}
+                      placeholder="Enter your ethnicity"
+                      maxLength={100}
+                      onBlur={() => {
+                        if (customTribe.trim()) {
+                          handleInputChange('tribe', customTribe.trim());
+                        }
+                      }}
+                    />
+                  )}
+                </>
+              )}
             </View>
           </View>
 
           {/* Professional Info */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Professional</Text>
+            <View style={styles.sectionTitleRow}>
+              <View style={styles.sectionIconWrap}>
+                <MaterialCommunityIcons
+                  name="briefcase-outline"
+                  size={18}
+                  color={theme.accent}
+                  style={styles.sectionIcon}
+                />
+              </View>
+              <Text style={styles.sectionTitle}>Professional</Text>
+            </View>
             
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Occupation</Text>
@@ -1147,7 +1419,17 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
 
           {/* Dating Preferences */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Dating Preferences</Text>
+            <View style={styles.sectionTitleRow}>
+              <View style={styles.sectionIconWrap}>
+                <MaterialCommunityIcons
+                  name="heart-outline"
+                  size={18}
+                  color={theme.accent}
+                  style={styles.sectionIcon}
+                />
+              </View>
+              <Text style={styles.sectionTitle}>Dating Preferences</Text>
+            </View>
             
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Looking For</Text>
@@ -1182,7 +1464,17 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
 
           {/* Lifestyle */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Lifestyle</Text>
+            <View style={styles.sectionTitleRow}>
+              <View style={styles.sectionIconWrap}>
+                <MaterialCommunityIcons
+                  name="sprout"
+                  size={18}
+                  color={theme.accent}
+                  style={styles.sectionIcon}
+                />
+              </View>
+              <Text style={styles.sectionTitle}>Lifestyle</Text>
+            </View>
             
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Exercise Frequency</Text>
@@ -1279,7 +1571,17 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
 
           {/* Family & Relationship */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Family & Relationship</Text>
+            <View style={styles.sectionTitleRow}>
+              <View style={styles.sectionIconWrap}>
+                <MaterialCommunityIcons
+                  name="account-heart-outline"
+                  size={18}
+                  color={theme.accent}
+                  style={styles.sectionIcon}
+                />
+              </View>
+              <Text style={styles.sectionTitle}>Family & Relationship</Text>
+            </View>
             
             <View style={styles.row}>
               <View style={[styles.inputContainer, { flex: 1, marginRight: 8 }]}>
@@ -1484,19 +1786,19 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                 onPress={() => setShowLanguagesPicker(true)}
               >
                 <Text style={[
-                  selectedLanguages.length > 0 ? styles.selectButtonText : styles.selectButtonPlaceholder
+                  displayLanguages.length > 0 ? styles.selectButtonText : styles.selectButtonPlaceholder
                 ]}>
-                  {selectedLanguages.length > 0 
-                    ? selectedLanguages.length === 1 
-                      ? selectedLanguages[0]
-                      : `${selectedLanguages.length} languages selected`
+                  {displayLanguages.length > 0 
+                    ? displayLanguages.length === 1 
+                      ? displayLanguages[0]
+                      : `${displayLanguages.length} languages selected`
                     : 'Select languages'
                   }
                 </Text>
                   <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
               </TouchableOpacity>
               
-              {selectedLanguages.includes('Other') && (
+              {displayLanguages.includes('Other') && (
                 <TextInput
                   style={[styles.textInput, { marginTop: 8 }]}
                   value={customLanguage}
@@ -1505,8 +1807,10 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                   maxLength={50}
                   onBlur={() => {
                     if (customLanguage.trim()) {
-                      const updatedLanguages = selectedLanguages.map(lang => 
-                        lang === 'Other' ? customLanguage.trim() : lang
+                      const updatedLanguages = normalizeLanguages(
+                        selectedLanguages.map((lang) =>
+                          lang === 'Other' ? customLanguage.trim() : lang
+                        )
                       );
                       setSelectedLanguages(updatedLanguages);
                       handleInputChange('languages_spoken', updatedLanguages);
@@ -1519,7 +1823,17 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
 
           {/* Interests Section */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Interests & Hobbies</Text>
+            <View style={styles.sectionTitleRow}>
+              <View style={styles.sectionIconWrap}>
+                <MaterialCommunityIcons
+                  name="star-outline"
+                  size={18}
+                  color={theme.accent}
+                  style={styles.sectionIcon}
+                />
+              </View>
+              <Text style={styles.sectionTitle}>Interests & Hobbies</Text>
+            </View>
             
             <View style={styles.inputContainer}>
               <Text style={styles.inputLabel}>Select Your Interests</Text>
@@ -1567,7 +1881,17 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
 
           {/* Distance Unit Section */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Distance Unit</Text>
+            <View style={styles.sectionTitleRow}>
+              <View style={styles.sectionIconWrap}>
+                <MaterialCommunityIcons
+                  name="map-marker-radius-outline"
+                  size={18}
+                  color={theme.accent}
+                  style={styles.sectionIcon}
+                />
+              </View>
+              <Text style={styles.sectionTitle}>Distance Unit</Text>
+            </View>
             <View style={styles.distanceUnitGroup}>
               {DISTANCE_UNIT_OPTIONS.map((option) => {
                 const selected = distanceUnit === option.value;
@@ -1590,120 +1914,22 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
             </View>
           </View>
 
-          {/* DIASPORA Section - Detail Refinement Only */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Location Details</Text>
-            
-            {/* Show current status (read-only) with verification */}
-            <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>Current Status</Text>
-              <View style={styles.statusDisplay}>
-                <View style={styles.statusRow}>
-                  <Text style={styles.statusText}>
-                    {(profile as any)?.diaspora_status === 'LOCAL' ? '🇬🇭 Living in Ghana' :
-                     (profile as any)?.diaspora_status === 'DIASPORA' ? '🌍 Ghanaian abroad' :
-                     (profile as any)?.diaspora_status === 'VISITING' ? '✈️ Visiting Ghana' : 'Not set'}
-                  </Text>
-                  {(profile as any)?.diaspora_status === 'DIASPORA' && (
-                    <VerificationBadge 
-                      level={(profile as any)?.verification_level || 0}
-                      size="small"
-                      showLabel
-                      onPress={() => setIsVerificationModalVisible(true)}
-                      style={{ marginLeft: 12 }}
-                    />
-                  )}
-                </View>
-                <Text style={styles.statusSubtext}>
-                  Set during registration. Contact support to change.
-                </Text>
-              </View>
-            </View>
+          {/* Diaspora section removed for cleaner edit experience */
 
-            {/* Only show diaspora fields if user is abroad */}
-            {(profile as any)?.diaspora_status === 'DIASPORA' && (
-              <>
-                {/* Years in Diaspora */}
-                <View style={styles.inputContainer}>
-                  <Text style={styles.inputLabel}>Years abroad</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    value={formData.years_in_diaspora?.toString() || ''}
-                    onChangeText={(text) => {
-                      const years = parseInt(text) || 0;
-                      setFormData(prev => ({ ...prev, years_in_diaspora: years }));
-                    }}
-                    placeholder="How many years abroad?"
-                    keyboardType="numeric"
-                  />
-                </View>
-
-                {/* Last Ghana Visit */}
-                <View style={styles.inputContainer}>
-                  <Text style={styles.inputLabel}>Last visit to Ghana</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    value={formData.last_ghana_visit}
-                    onChangeText={(text) => setFormData(prev => ({ ...prev, last_ghana_visit: text }))}
-                    placeholder="e.g., December 2024"
-                  />
-                </View>
-
-                {/* Future Ghana Plans */}
-                <View style={styles.inputContainer}>
-                  <Text style={styles.inputLabel}>Future plans with Ghana</Text>
-                  <TouchableOpacity
-                    style={styles.selectButton}
-                    onPress={() => setShowFutureGhanaPlansPicker(true)}
-                  >
-                    <Text style={[
-                      formData.future_ghana_plans ? styles.selectButtonText : styles.selectButtonPlaceholder
-                    ]}>
-                      {formData.future_ghana_plans || 'Your future plans'}
-                    </Text>
-                    <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
-                  </TouchableOpacity>
-                </View>
-              </>
-            )}
-
-            {/* Long Distance Preference - Only for diaspora users */}
-            {(profile as any)?.diaspora_status === 'DIASPORA' && (
-              <View style={styles.inputContainer}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TouchableOpacity
-                    style={[
-                      { 
-                        width: 20, 
-                        height: 20, 
-                        borderRadius: 4, 
-                        borderWidth: 2, 
-                        borderColor: formData.willing_long_distance ? theme.tint : withAlpha(theme.text, isDark ? 0.3 : 0.2),
-                        backgroundColor: formData.willing_long_distance ? theme.tint : 'transparent',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        marginRight: 10
-                      }
-                    ]}
-                    onPress={() => setFormData(prev => ({ ...prev, willing_long_distance: !prev.willing_long_distance }))}
-                  >
-                    {formData.willing_long_distance && (
-                      <MaterialCommunityIcons name="check" size={16} color={theme.background} />
-                    )}
-                  </TouchableOpacity>
-                  <Text style={styles.inputLabel}>Open to long-distance connections</Text>
-                </View>
-                <Text style={styles.statusSubtext}>
-                  Connect with Ghanaians living in Ghana
-                </Text>
-              </View>
-            )}
-          </View>
-
-          {/* Profile Video Section */}
+/* Profile Video Section */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Profile Video</Text>
+              <View style={styles.sectionTitleRow}>
+                <View style={styles.sectionIconWrap}>
+                  <MaterialCommunityIcons
+                    name="play-circle-outline"
+                    size={18}
+                    color={theme.accent}
+                    style={styles.sectionIcon}
+                  />
+                </View>
+                <Text style={styles.sectionTitle}>Profile Video</Text>
+              </View>
               <TouchableOpacity
                 style={styles.addPhotoButton}
                 onPress={pickProfileVideo}
@@ -1755,7 +1981,17 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
           {/* Photos Section */}
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Additional Photos</Text>
+              <View style={styles.sectionTitleRow}>
+                <View style={styles.sectionIconWrap}>
+                  <MaterialCommunityIcons
+                    name="image-multiple-outline"
+                    size={18}
+                    color={theme.accent}
+                    style={styles.sectionIcon}
+                  />
+                </View>
+                <Text style={styles.sectionTitle}>Additional Photos</Text>
+              </View>
               <TouchableOpacity
                 style={styles.addPhotoButton}
                 onPress={() => pickImage(false)}
@@ -1835,6 +2071,38 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
           handleInputChange('height', value);
         }}
         currentValue={formData.height}
+      />
+
+      {/* Ghana Region Picker */}
+      {isGhanaProfile && (
+        <FieldPicker
+          title="Select Region"
+          options={GHANA_REGIONS_OPTIONS}
+          visible={showRegionPicker}
+          onClose={() => setShowRegionPicker(false)}
+          onSelect={(value) => {
+            if (value === 'Other') {
+              setCustomRegion('');
+            }
+            handleInputChange('region', value);
+          }}
+          currentValue={formData.region}
+        />
+      )}
+
+      {/* Tribe / Ethnicity Picker */}
+      <FieldPicker
+        title={isGhanaProfile ? 'Select Tribe' : 'Select Ethnicity'}
+        options={isGhanaProfile ? GHANA_TRIBES_OPTIONS : GLOBAL_TRIBES_OPTIONS}
+        visible={showTribePicker}
+        onClose={() => setShowTribePicker(false)}
+        onSelect={(value) => {
+          if (value === 'Other') {
+            setCustomTribe('');
+          }
+          handleInputChange('tribe', value);
+        }}
+        currentValue={formData.tribe}
       />
 
       {/* Occupation Picker */}
@@ -2028,7 +2296,9 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
             </TouchableOpacity>
             <Text style={styles.pickerTitle}>Languages Spoken</Text>
             <TouchableOpacity onPress={() => {
-              handleInputChange('languages_spoken', selectedLanguages);
+              const cleaned = normalizeLanguages(selectedLanguages);
+              handleInputChange('languages_spoken', cleaned);
+              setSelectedLanguages(cleaned);
               setShowLanguagesPicker(false);
             }}>
               <Text style={styles.saveButton}>Done</Text>
@@ -2036,7 +2306,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
           </View>
           
           <FlatList
-            data={LANGUAGES_OPTIONS}
+            data={languagesOptions}
             keyExtractor={(item) => item}
             style={styles.pickerList}
             renderItem={({ item }) => {
@@ -2048,11 +2318,11 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                     isSelected && styles.pickerItemSelected
                   ]}
                   onPress={() => {
-                    if (isSelected) {
-                      setSelectedLanguages(prev => prev.filter(lang => lang !== item));
-                    } else {
-                      setSelectedLanguages(prev => [...prev, item]);
-                    }
+                    const next = isSelected
+                      ? selectedLanguages.filter((lang) => lang !== item)
+                      : normalizeLanguages([...selectedLanguages, item]);
+                    setSelectedLanguages(next);
+                    setFormData((prev) => ({ ...prev, languages_spoken: next }));
                   }}
                 >
                   <Text style={[
@@ -2129,78 +2399,6 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         </SafeAreaView>
       </Modal>
 
-      {/* Future Ghana Plans Picker Modal - Only for diaspora users */}
-      {(profile as any)?.diaspora_status === 'DIASPORA' && (
-        <Modal visible={showFutureGhanaPlansPicker} animationType="slide" presentationStyle="pageSheet">
-          <SafeAreaView style={styles.pickerContainer}>
-            <View style={styles.pickerHeader}>
-              <TouchableOpacity onPress={() => setShowFutureGhanaPlansPicker(false)}>
-                <Text style={styles.pickerCancel}>Cancel</Text>
-              </TouchableOpacity>
-              <Text style={styles.pickerTitle}>Future Plans with Ghana</Text>
-              <View style={{ width: 50 }} />
-            </View>
-            <FlatList
-              style={styles.pickerList}
-              data={FUTURE_GHANA_PLANS_OPTIONS}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[
-                    styles.pickerItem,
-                    formData.future_ghana_plans === item && styles.pickerItemSelected
-                  ]}
-                  onPress={() => {
-                    setFormData(prev => ({ ...prev, future_ghana_plans: item }));
-                    setShowFutureGhanaPlansPicker(false);
-                    setCustomFutureGhanaPlans('');
-                  }}
-                >
-                  <Text style={[
-                    styles.pickerItemText,
-                    formData.future_ghana_plans === item && styles.pickerItemTextSelected
-                  ]}>
-                    {item}
-                  </Text>
-                </TouchableOpacity>
-              )}
-            />
-            <View style={{ padding: 20 }}>
-              <Text style={styles.inputLabel}>Or enter custom plans:</Text>
-              <TextInput
-                style={[styles.textInput, { marginTop: 8 }]}
-                value={customFutureGhanaPlans}
-                onChangeText={setCustomFutureGhanaPlans}
-                placeholder="Describe your future plans"
-              />
-              {customFutureGhanaPlans.trim() !== '' && (
-                <TouchableOpacity
-                  style={[styles.pickerItem, { marginTop: 10 }]}
-                  onPress={() => {
-                    setFormData(prev => ({ ...prev, future_ghana_plans: customFutureGhanaPlans.trim() }));
-                    setShowFutureGhanaPlansPicker(false);
-                    setCustomFutureGhanaPlans('');
-                  }}
-                >
-                  <Text style={styles.pickerItemText}>{customFutureGhanaPlans.trim()}</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </SafeAreaView>
-        </Modal>
-      )}
-
-      {/* Diaspora Verification Modal */}
-      <DiasporaVerification
-        visible={isVerificationModalVisible}
-        onClose={() => setIsVerificationModalVisible(false)}
-        profile={profile}
-        onVerificationUpdate={(level) => {
-          // Update profile verification level in UI
-          if (profile) {
-            (profile as any).verification_level = level;
-          }
-        }}
-      />
     </Modal>
   );
 }
@@ -2261,12 +2459,37 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       justifyContent: 'space-between',
       marginBottom: 8,
     },
+    sectionTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      flexShrink: 1,
+      marginBottom: 12,
+    },
+    sectionIcon: {
+      marginTop: 1,
+    },
+    sectionIconWrap: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.accent, isDark ? 0.2 : 0.14),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.accent, isDark ? 0.45 : 0.3),
+      shadowColor: theme.accent,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: isDark ? 0.35 : 0.22,
+      shadowRadius: 10,
+      elevation: 6,
+    },
     sectionTitle: {
       fontSize: 16,
       fontWeight: '700',
       letterSpacing: 0.2,
       color: theme.text,
-      marginBottom: 12,
+      lineHeight: 20,
     },
     avatarContainer: {
       alignItems: 'center',

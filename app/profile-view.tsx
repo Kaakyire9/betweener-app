@@ -13,6 +13,7 @@ import type { UserProfile } from '@/types/user-profile';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import type { ViewToken } from '@shopify/flash-list';
 import { FlashList } from '@shopify/flash-list';
+import IntentRequestSheet from '@/components/IntentRequestSheet';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { VideoView, useVideoPlayer } from 'expo-video';
@@ -90,6 +91,7 @@ const BIO_MEANINGFUL_MIN_CHARS = 40;
 const BIO_MIN_PUBLIC_CHARS = 20;
 const LOOKING_FOR_MEANINGFUL_MIN_CHARS = 10;
 const INTERESTS_MEANINGFUL_MIN_COUNT = 3;
+const PROFILE_COMPLETION_MIN_INTERESTS = 3;
 
 function formatHeaderTitle(name: string, age: number) {
   if (!name) return '';
@@ -786,6 +788,7 @@ export default function ProfileViewPremiumV2Screen() {
     [currentUserId, profileId],
   );
 
+
   const isTextOnlyStory = !hasGalleryImages && meaningfulText && (hasAvatarOnly || !!resolvedProfile.profilePicture);
   const isImagesOnly = hasGalleryImages && !meaningfulText;
 
@@ -815,6 +818,7 @@ export default function ProfileViewPremiumV2Screen() {
   const [activeReactionImageId, setActiveReactionImageId] = useState<string | null>(null);
   const [imageReactions, setImageReactions] = useState<Record<string, string>>({});
   const [reactionCounts, setReactionCounts] = useState<Record<string, { count: number; topEmoji: string | null }>>({});
+  const [intentSheetOpen, setIntentSheetOpen] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -967,6 +971,11 @@ export default function ProfileViewPremiumV2Screen() {
     setVideoModalUrl(data.signedUrl);
     setVideoModalVisible(true);
   }, [resolvedProfile.profileVideo, resolvedProfile.profileVideoPath]);
+
+  const openIntentSheet = useCallback(() => {
+    if (!resolvedProfile.id || isOwnProfile) return;
+    setIntentSheetOpen(true);
+  }, [isOwnProfile, resolvedProfile.id]);
   const handleHeroPress = useCallback(
     (uri?: string) => {
       if (showHeroVideo && heroVideoUrl) {
@@ -1380,6 +1389,14 @@ export default function ProfileViewPremiumV2Screen() {
         }}
       />
 
+      <IntentRequestSheet
+        visible={intentSheetOpen}
+        onClose={() => setIntentSheetOpen(false)}
+        recipientId={resolvedProfile.id}
+        recipientName={resolvedProfile.name}
+        metadata={{ source: 'profile' }}
+      />
+
       {isLoading ? (
         <View style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
           <Text style={{ color: theme.textMuted }}>Loading...</Text>
@@ -1426,10 +1443,29 @@ export default function ProfileViewPremiumV2Screen() {
               </View>
             ) : null}
 
-            {presenceProfile.occupation ? (
-              <Text style={[stylesStatic.heroDetailsMeta, { color: theme.textMuted }]} numberOfLines={1}>
-                {presenceProfile.occupation}
-              </Text>
+            {presenceProfile.occupation || !isOwnProfile ? (
+              <View style={stylesStatic.heroMetaRow}>
+                {presenceProfile.occupation ? (
+                  <Text style={[stylesStatic.heroDetailsMeta, { color: theme.textMuted }]} numberOfLines={1}>
+                    {presenceProfile.occupation}
+                  </Text>
+                ) : (
+                  <View />
+                )}
+                {!isOwnProfile ? (
+                  <Pressable onPress={openIntentSheet} style={stylesStatic.heroRequestWrap}>
+                    <LinearGradient
+                      colors={['#2FB2BE', '#7D7CF3']}
+                      start={{ x: 0, y: 0.5 }}
+                      end={{ x: 1, y: 0.5 }}
+                      style={stylesStatic.heroRequestButton}
+                    >
+                      <MaterialCommunityIcons name="inbox-outline" size={15} color={Colors.light.background} />
+                      <Text style={stylesStatic.heroRequestText}>Request</Text>
+                    </LinearGradient>
+                  </Pressable>
+                ) : null}
+              </View>
             ) : null}
 
             <View style={[stylesStatic.heroDetailsDivider, { backgroundColor: theme.outline }]} />
@@ -1551,6 +1587,7 @@ export default function ProfileViewPremiumV2Screen() {
         profileId={profileId}
         currentUserId={currentUserId}
         isOwnProfile={isOwnProfile}
+        onOpenRequest={openIntentSheet}
       />
     </View>
   );
@@ -2430,11 +2467,13 @@ function FloatingActions({
   profileId,
   currentUserId,
   isOwnProfile,
+  onOpenRequest,
 }: {
   theme: typeof Colors.light;
   profileId: string;
   currentUserId: string | null;
   isOwnProfile: boolean;
+  onOpenRequest?: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const [giftOpen, setGiftOpen] = useState(false);
@@ -2445,6 +2484,8 @@ function FloatingActions({
   const [noteSending, setNoteSending] = useState(false);
   const noteOpenAtRef = useRef(0);
   const [boostSending, setBoostSending] = useState(false);
+  const [likeSending, setLikeSending] = useState(false);
+  const [liked, setLiked] = useState(false);
   const giftOptions = useMemo(
     () => [
       { id: 'rose', label: 'Rose', icon: 'flower', note: 'Classic and elegant' },
@@ -2531,12 +2572,72 @@ function FloatingActions({
     Alert.alert('Boost active', 'Your profile is boosted for 30 minutes.');
   };
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadLikeState = async () => {
+      if (!currentUserId || !profileId || isOwnProfile) {
+        setLiked(false);
+        return;
+      }
+      const { data } = await supabase
+        .from('swipes')
+        .select('action')
+        .eq('swiper_id', currentUserId)
+        .eq('target_id', profileId)
+        .in('action', ['LIKE', 'SUPERLIKE'])
+        .limit(1);
+      if (cancelled) return;
+      setLiked(!!(data && data.length > 0));
+    };
+    void loadLikeState();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserId, isOwnProfile, profileId]);
+
+  const sendLike = async () => {
+    if (!currentUserId || !profileId || isOwnProfile || likeSending) return;
+    setLikeSending(true);
+    const { error } = await supabase
+      .from('swipes')
+      .upsert(
+        [
+          {
+            swiper_id: currentUserId,
+            target_id: profileId,
+            action: 'LIKE',
+          },
+        ],
+        { onConflict: 'swiper_id,target_id' },
+      );
+    setLikeSending(false);
+    if (error) {
+      Alert.alert('Unable to like', error.message);
+      return;
+    }
+    setLiked(true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+  };
+
   return (
     <>
       <View
-        style={[stylesStatic.fabStack, { bottom: 18 + Math.max(0, insets.bottom) }]}
+        style={[
+          stylesStatic.fabStack,
+          { bottom: 10 + Math.max(0, insets.bottom) },
+        ]}
         pointerEvents="box-none"
       >
+        {!isOwnProfile ? (
+          <Fab
+            theme={theme}
+            label={liked ? 'Liked' : 'Like'}
+            icon={liked ? 'heart' : 'heart-outline'}
+            colors={['#C7B3FF', '#7D7CF3'] as const}
+            onPress={sendLike}
+            showLabel={false}
+          />
+        ) : null}
         {!isOwnProfile ? (
           <Fab
             theme={theme}
@@ -2544,6 +2645,7 @@ function FloatingActions({
             icon="message-text-outline"
             colors={[theme.tint, '#0C6E7A'] as const}
             onPress={openNote}
+            showLabel={false}
           />
         ) : null}
         {isOwnProfile ? (
@@ -2553,6 +2655,7 @@ function FloatingActions({
             icon="rocket-launch-outline"
             colors={['#F6C453', '#C68B1E'] as const}
             onPress={sendBoost}
+            showLabel={false}
           />
         ) : (
           <Fab
@@ -2561,6 +2664,7 @@ function FloatingActions({
             icon="gift-outline"
             colors={['#F3A0B4', '#C6607E'] as const}
             onPress={openGift}
+            showLabel={false}
           />
         )}
       </View>
@@ -2698,18 +2802,22 @@ function Fab({
   icon,
   colors,
   onPress,
+  showLabel = true,
 }: {
   theme: typeof Colors.light;
   label: string;
   icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
   colors: readonly [string, string, ...string[]];
   onPress: () => void;
+  showLabel?: boolean;
 }) {
   return (
     <Pressable onPress={onPress} style={stylesStatic.fabWrap}>
       <LinearGradient colors={colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={stylesStatic.fab}>
         <MaterialCommunityIcons name={icon} size={18} color={Colors.light.background} />
-        <Text style={[stylesStatic.fabLabel, { color: Colors.light.background }]}>{label}</Text>
+        {showLabel ? (
+          <Text style={[stylesStatic.fabLabel, { color: Colors.light.background }]}>{label}</Text>
+        ) : null}
       </LinearGradient>
     </Pressable>
   );
@@ -3089,6 +3197,37 @@ const stylesStatic = StyleSheet.create({
     fontWeight: '600',
     lineHeight: 16,
   },
+  heroMetaRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  heroRequestWrap: {
+    alignSelf: 'flex-end',
+    borderRadius: 999,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 14,
+    elevation: 6,
+  },
+  heroRequestButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 5,
+    borderRadius: 999,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  heroRequestText: {
+    color: Colors.light.background,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
 
   imageTagPill: {
     position: 'absolute',
@@ -3348,8 +3487,12 @@ const stylesStatic = StyleSheet.create({
 
   fabStack: {
     position: 'absolute',
+    left: 14,
     right: 14,
-    gap: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
   },
   fabWrap: {
     shadowColor: '#000',
@@ -3359,7 +3502,7 @@ const stylesStatic = StyleSheet.create({
     elevation: 8,
   },
   fab: {
-    minWidth: 104,
+    minWidth: 44,
     height: 44,
     borderRadius: 22,
     alignItems: 'center',

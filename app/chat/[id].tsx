@@ -210,6 +210,16 @@ type SystemMessageRow = {
   metadata?: any;
 };
 
+type IntentRequestSummary = {
+  id: string;
+  actor_id: string;
+  recipient_id: string;
+  type: 'connect' | 'date_request' | 'like_with_note' | 'circle_intro';
+  message?: string | null;
+  expires_at: string;
+  status: 'pending' | 'accepted' | 'passed' | 'expired' | 'cancelled';
+};
+
 type MessageEditRow = {
   id: string;
   message_id: string;
@@ -530,6 +540,30 @@ const getFileTypeLabel = (mimeType?: string | null, fileName?: string | null) =>
   if (safeMime.startsWith('video/') || ['mp4', 'mov'].includes(ext)) return 'Video';
   if (ext) return ext.toUpperCase();
   return 'File';
+};
+
+const intentTypeLabel = (type?: IntentRequestSummary['type'] | null) => {
+  switch (type) {
+    case 'connect':
+      return 'Connect request';
+    case 'date_request':
+      return 'Date request';
+    case 'like_with_note':
+      return 'Note request';
+    case 'circle_intro':
+      return 'Circle intro';
+    default:
+      return 'Request';
+  }
+};
+
+const intentExpiresIn = (iso?: string | null) => {
+  if (!iso) return '';
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return '';
+  const diffMs = Math.max(0, ts - Date.now());
+  const hours = Math.ceil(diffMs / 3600000);
+  return `${hours}h`;
 };
 
 const normalizeHeicImage = async (
@@ -1748,6 +1782,8 @@ export default function ConversationScreen() {
   const [myInterests, setMyInterests] = useState<string[]>([]);
   const [matchAccepted, setMatchAccepted] = useState(false);
   const [matchPercent, setMatchPercent] = useState<number | null>(null);
+  const [pendingIntentRequest, setPendingIntentRequest] = useState<IntentRequestSummary | null>(null);
+  const [pendingIntentLoading, setPendingIntentLoading] = useState(false);
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [showReactions, setShowReactions] = useState<string | null>(null);
@@ -1909,6 +1945,91 @@ export default function ConversationScreen() {
       cancelled = true;
     };
   }, [peerProfile?.id, profile?.id]);
+
+  const ensureMatch = useCallback(async () => {
+    if (!profile?.id || !peerProfile?.id) return;
+    const { data } = await supabase
+      .from('matches')
+      .select('id,status')
+      .or(
+        `and(user1_id.eq.${profile.id},user2_id.eq.${peerProfile.id}),and(user1_id.eq.${peerProfile.id},user2_id.eq.${profile.id})`,
+      )
+      .limit(1);
+    if (data && data.length > 0) {
+      const match = data[0];
+      if (match.status !== 'ACCEPTED') {
+        await supabase.from('matches').update({ status: 'ACCEPTED' }).eq('id', match.id);
+      }
+      return;
+    }
+    const [user1, user2] = [profile.id, peerProfile.id].sort();
+    await supabase.from('matches').insert({ user1_id: user1, user2_id: user2, status: 'ACCEPTED' });
+  }, [peerProfile?.id, profile?.id]);
+
+  const refreshPendingIntent = useCallback(async () => {
+    if (!profile?.id || !peerProfile?.id) {
+      setPendingIntentRequest(null);
+      return;
+    }
+    setPendingIntentLoading(true);
+    try {
+      await supabase.rpc('rpc_mark_expired_intent_requests');
+      const { data } = await supabase
+        .from('intent_requests')
+        .select('id,actor_id,recipient_id,type,message,expires_at,status')
+        .eq('status', 'pending')
+        .eq('actor_id', peerProfile.id)
+        .eq('recipient_id', profile.id)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      const row = (data && data[0]) as IntentRequestSummary | undefined;
+      const expired = row?.expires_at ? Date.parse(row.expires_at) < Date.now() : false;
+      setPendingIntentRequest(row && !expired ? row : null);
+    } finally {
+      setPendingIntentLoading(false);
+    }
+  }, [peerProfile?.id, profile?.id]);
+
+  useEffect(() => {
+    void refreshPendingIntent();
+  }, [refreshPendingIntent]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshPendingIntent();
+    }, [refreshPendingIntent]),
+  );
+
+  const acceptPendingIntent = useCallback(async () => {
+    if (!pendingIntentRequest || !profile?.id) return;
+    const expired = pendingIntentRequest.expires_at
+      ? Date.parse(pendingIntentRequest.expires_at) < Date.now()
+      : false;
+    if (expired) {
+      setPendingIntentRequest(null);
+      return;
+    }
+    const { error } = await supabase.rpc('rpc_decide_intent_request', {
+      p_request_id: pendingIntentRequest.id,
+      p_decision: 'accept',
+    });
+    if (error) return;
+    await supabase.rpc('rpc_insert_request_acceptance_system_messages', {
+      p_request_id: pendingIntentRequest.id,
+    });
+    await ensureMatch();
+    setPendingIntentRequest(null);
+    setMatchAccepted(true);
+  }, [ensureMatch, pendingIntentRequest, profile?.id]);
+
+  const passPendingIntent = useCallback(async () => {
+    if (!pendingIntentRequest) return;
+    await supabase.rpc('rpc_decide_intent_request', {
+      p_request_id: pendingIntentRequest.id,
+      p_decision: 'pass',
+    });
+    setPendingIntentRequest(null);
+  }, [pendingIntentRequest]);
 
   useEffect(() => {
     if (!matchAccepted || !user?.id || !conversationId) {
@@ -6869,6 +6990,27 @@ export default function ConversationScreen() {
 
         
       </View>
+      {pendingIntentRequest ? (
+        <View style={styles.intentBanner}>
+          <View style={styles.intentBannerText}>
+            <Text style={styles.intentBannerTitle}>Pending request</Text>
+            <Text style={styles.intentBannerSubtitle}>
+              {intentTypeLabel(pendingIntentRequest.type)}
+              {pendingIntentRequest.expires_at
+                ? ` · Closes in ${intentExpiresIn(pendingIntentRequest.expires_at)}`
+                : ''}
+            </Text>
+          </View>
+          <View style={styles.intentBannerActions}>
+            <TouchableOpacity style={styles.intentAcceptButton} onPress={acceptPendingIntent}>
+              <Text style={styles.intentAcceptText}>Accept</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.intentPassButton} onPress={passPendingIntent}>
+              <Text style={styles.intentPassText}>Pass</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
       {pinnedMessageCount > 0 ? (
         <View style={styles.pinnedBanner}>
           <BlurView
@@ -8680,6 +8822,61 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       shadowOpacity: 0.08,
       shadowRadius: 3,
       elevation: 3,
+    },
+    intentBanner: {
+      marginHorizontal: 16,
+      marginTop: 8,
+      padding: 12,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+      backgroundColor: theme.backgroundSubtle,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    intentBannerText: {
+      flex: 1,
+    },
+    intentBannerTitle: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: theme.text,
+    },
+    intentBannerSubtitle: {
+      marginTop: 2,
+      fontSize: 12,
+      color: theme.textMuted,
+    },
+    intentBannerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    intentAcceptButton: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: theme.tint,
+    },
+    intentAcceptText: {
+      color: Colors.light.background,
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    intentPassButton: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.12),
+      backgroundColor: theme.background,
+    },
+    intentPassText: {
+      color: theme.textMuted,
+      fontSize: 12,
+      fontWeight: '700',
     },
     backButton: {
       width: 40,
