@@ -126,6 +126,23 @@ export default function IntentScreen() {
   const [intentSheetOpen, setIntentSheetOpen] = useState(false);
   const [intentTarget, setIntentTarget] = useState<{ id: string; name?: string | null } | null>(null);
 
+  const upsertSignal = useCallback(
+    async (targetId: string, opts?: { openedDelta?: number; liked?: boolean; dwellDelta?: number }) => {
+      if (!currentProfileId || !targetId) return;
+      const openedDelta = opts?.openedDelta ?? 0;
+      const dwellDelta = opts?.dwellDelta ?? 0;
+      const liked = opts?.liked === true ? true : null;
+      await supabase.rpc('rpc_upsert_profile_signal', {
+        p_profile_id: currentProfileId,
+        p_target_profile_id: targetId,
+        p_opened_delta: openedDelta,
+        p_liked: liked,
+        p_dwell_delta: dwellDelta,
+      });
+    },
+    [currentProfileId],
+  );
+
   useFocusEffect(
     useCallback(() => {
       void refresh();
@@ -575,21 +592,30 @@ export default function IntentScreen() {
     return 'Nothing here yet.';
   }, [filter]);
 
-  const handleSuggestedRequest = useCallback((item: SuggestedMove) => {
-    setIntentTarget({ id: item.id, name: item.full_name ?? null });
-    setIntentSheetOpen(true);
-  }, []);
+  const handleSuggestedRequest = useCallback(
+    (item: SuggestedMove) => {
+      setIntentTarget({ id: item.id, name: item.full_name ?? null });
+      setIntentSheetOpen(true);
+    },
+    [],
+  );
 
   const handleIntentSent = useCallback(() => {
     if (!intentTarget?.id) return;
+    void upsertSignal(intentTarget.id, { openedDelta: 1, liked: true, dwellDelta: 3 });
     setSuggestedMoves((prev) => prev.filter((item) => item.id !== intentTarget.id));
-  }, [intentTarget?.id]);
+  }, [intentTarget?.id, upsertSignal]);
 
   const renderSuggestedCard = useCallback(
     ({ item }: { item: SuggestedMove }) => {
       const tags = Array.isArray(item.short_tags) ? item.short_tags.filter(Boolean).slice(0, 2) : [];
       return (
-        <View style={styles.suggestedCard}>
+        <Pressable
+          style={styles.suggestedCard}
+          onPress={() => {
+            void upsertSignal(item.id, { openedDelta: 0, dwellDelta: 1 });
+          }}
+        >
           <View style={styles.suggestedHeader}>
             {item.avatar_url ? (
               <Image source={{ uri: item.avatar_url }} style={styles.suggestedAvatar} />
@@ -619,12 +645,15 @@ export default function IntentScreen() {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.secondaryButton}
-              onPress={() => router.push({ pathname: '/profile-view', params: { profileId: String(item.id) } })}
+              onPress={() => {
+                void upsertSignal(item.id, { openedDelta: 1, dwellDelta: 5 });
+                router.push({ pathname: '/profile-view', params: { profileId: String(item.id) } });
+              }}
             >
               <Text style={styles.secondaryText}>View profile</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </Pressable>
       );
     },
     [handleSuggestedRequest, router, styles, theme.textMuted],

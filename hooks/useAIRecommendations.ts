@@ -496,6 +496,16 @@ export default function useAIRecommendations(
     return Math.max(0, Math.min(5, Math.floor(matches.length / 2)));
   }, [matches]);
 
+  const filterDiscoverable = useCallback((list: Match[]) => {
+    return list.filter((m) => {
+      const helper = !!(m as any).matchmaking_mode;
+      const discoverable = (m as any).discoverable_in_vibes;
+      if (helper) return false;
+      if (discoverable === false) return false;
+      return true;
+    });
+  }, []);
+
   const fetchMatchesFromServer = useCallback(async () => {
     try {
       const storedUnit = await getStoredDistanceUnit();
@@ -629,7 +639,7 @@ export default function useAIRecommendations(
               } as Match);
               });
               const withSigned = await resolveProfileVideos(mapped);
-              setMatches(withSigned);
+              setMatches(filterDiscoverable(withSigned));
             if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] nearby rpc result', { count: mapped.length });
             return;
           }
@@ -673,7 +683,7 @@ export default function useAIRecommendations(
               } as Match);
               });
               const withSigned = await resolveProfileVideos(mapped);
-              setMatches(withSigned);
+              setMatches(filterDiscoverable(withSigned));
               if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] active rpc result', { count: mapped.length });
               return;
             }
@@ -715,7 +725,7 @@ export default function useAIRecommendations(
             } as Match);
             });
             const withSigned = await resolveProfileVideos(mapped);
-            setMatches(withSigned);
+            setMatches(filterDiscoverable(withSigned));
             if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] forYou scored rpc result', { count: mapped.length });
             return;
           }
@@ -728,9 +738,9 @@ export default function useAIRecommendations(
         // due to missing columns (Postgres error 42703), retry with a
         // minimal safe column list to avoid falling back to mocks.
         const extendedSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes';
         const minimalSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes';
 
         let data: any[] | null = null;
         let error: any = null;
@@ -857,10 +867,12 @@ export default function useAIRecommendations(
               current_country: p.current_country,
               current_country_code: (p as any).current_country_code,
               location_precision: p.location_precision,
+              matchmaking_mode: (p as any).matchmaking_mode ?? false,
+              discoverable_in_vibes: (p as any).discoverable_in_vibes ?? true,
             } as Match);
           });
           const withSigned = await resolveProfileVideos(mapped);
-          setMatches(withSigned);
+          setMatches(filterDiscoverable(withSigned));
           if (typeof __DEV__ !== 'undefined' && __DEV__) {
             console.log('[useAIRecommendations] fetched matches from server', { count: mapped.length, sample: mapped.slice(0, 3) });
           }

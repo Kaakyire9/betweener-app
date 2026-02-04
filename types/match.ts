@@ -22,4 +22,6 @@ export type Match = {
   current_country?: string;
   current_country_code?: string;
   location_precision?: string;
+  matchmaking_mode?: boolean;
+  discoverable_in_vibes?: boolean;
 };

@@ -332,20 +332,22 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   
   // Form state
   const [formData, setFormData] = useState({
-    full_name: '',
-    bio: '',
-    age: '',
-    region: '',
-    tribe: '',
+      full_name: '',
+      bio: '',
+      age: '',
+      region: '',
+      tribe: '',
     occupation: '',
     education: '',
     height: '',
     looking_for: '',
-    avatar_url: '',
-    photos: [] as string[],
-    profile_video: '',
-    // HIGH PRIORITY fields
-    exercise_frequency: '',
+      avatar_url: '',
+      photos: [] as string[],
+      profile_video: '',
+      matchmaking_mode: false,
+      discoverable_in_vibes: true,
+      // HIGH PRIORITY fields
+      exercise_frequency: '',
     smoking: '',
     drinking: '',
     has_children: '',
@@ -389,11 +391,13 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         occupation: (profile as any).occupation || '',
         education: (profile as any).education || '',
         height: (profile as any).height || '',
-        looking_for: (profile as any).looking_for || '',
-        avatar_url: profile.avatar_url || '',
-        photos: (profile as any).photos || [],
-        profile_video: (profile as any).profile_video || '',
-        // HIGH PRIORITY fields
+          looking_for: (profile as any).looking_for || '',
+          avatar_url: profile.avatar_url || '',
+          photos: (profile as any).photos || [],
+          profile_video: (profile as any).profile_video || '',
+          matchmaking_mode: Boolean((profile as any).matchmaking_mode),
+          discoverable_in_vibes: (profile as any).discoverable_in_vibes ?? true,
+          // HIGH PRIORITY fields
         exercise_frequency: (profile as any).exercise_frequency || '',
         smoking: (profile as any).smoking || '',
         drinking: (profile as any).drinking || '',
@@ -915,6 +919,8 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         avatar_url: formData.avatar_url,
         photos: formData.photos,
         profile_video: formData.profile_video && formData.profile_video.trim() ? formData.profile_video.trim() : null,
+        matchmaking_mode: Boolean(formData.matchmaking_mode),
+        discoverable_in_vibes: Boolean(formData.discoverable_in_vibes),
         // Preserve existing required fields to avoid null constraint violations
         gender: profile?.gender || 'OTHER',
         age: profile?.age || 18,
@@ -1460,6 +1466,95 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                 />
               )}
             </View>
+          </View>
+
+          {/* Matchmaking & Visibility */}
+          <View style={styles.section}>
+            <View style={styles.sectionTitleRow}>
+              <View style={styles.sectionIconWrap}>
+                <MaterialCommunityIcons
+                  name="account-group"
+                  size={18}
+                  color={theme.accent}
+                  style={styles.sectionIcon}
+                />
+              </View>
+              <Text style={styles.sectionTitle}>Matchmaking & Visibility</Text>
+            </View>
+
+            <View style={styles.toggleRow}>
+              <View style={styles.toggleTextCol}>
+                <Text style={styles.toggleLabel}>Matchmaking mode</Text>
+                <Text style={styles.toggleSub}>
+                  Help friends find matches. Your profile stays private in Vibes.
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() =>
+                  setFormData((prev) => {
+                    const next = !prev.matchmaking_mode;
+                    return {
+                      ...prev,
+                      matchmaking_mode: next,
+                      discoverable_in_vibes: next ? false : true,
+                    };
+                  })
+                }
+                style={[
+                  styles.togglePill,
+                  formData.matchmaking_mode ? styles.togglePillActive : null,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.toggleText,
+                    formData.matchmaking_mode ? styles.toggleTextActive : null,
+                  ]}
+                >
+                  {formData.matchmaking_mode ? 'On' : 'Off'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.toggleRow}>
+              <View style={styles.toggleTextCol}>
+                <Text style={styles.toggleLabel}>Visible in Vibes</Text>
+                <Text style={styles.toggleSub}>
+                  Show your profile in Vibes discovery.
+                </Text>
+              </View>
+              <TouchableOpacity
+                disabled={formData.matchmaking_mode}
+                onPress={() =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    discoverable_in_vibes: !prev.discoverable_in_vibes,
+                  }))
+                }
+                style={[
+                  styles.togglePill,
+                  formData.discoverable_in_vibes ? styles.togglePillActive : null,
+                  formData.matchmaking_mode ? styles.togglePillDisabled : null,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.toggleText,
+                    formData.discoverable_in_vibes ? styles.toggleTextActive : null,
+                    formData.matchmaking_mode ? styles.toggleTextDisabled : null,
+                  ]}
+                >
+                  {formData.matchmaking_mode
+                    ? 'Hidden'
+                    : formData.discoverable_in_vibes
+                      ? 'On'
+                      : 'Off'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.toggleHelper}>
+              Matchmaking mode hides you from Vibes while you help others connect.
+            </Text>
           </View>
 
           {/* Lifestyle */}
@@ -2523,6 +2618,63 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontWeight: '600',
       color: withAlpha(theme.text, isDark ? 0.72 : 0.58),
       marginBottom: 8,
+    },
+    toggleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      paddingVertical: 10,
+    },
+    toggleTextCol: {
+      flex: 1,
+    },
+    toggleLabel: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.text,
+    },
+    toggleSub: {
+      marginTop: 4,
+      fontSize: 12,
+      lineHeight: 16,
+      color: theme.textMuted,
+    },
+    togglePill: {
+      minWidth: 64,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.75 : 0.9),
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: withAlpha(theme.text, isDark ? 0.22 : 0.14),
+    },
+    togglePillActive: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.24 : 0.16),
+      borderColor: withAlpha(theme.tint, isDark ? 0.5 : 0.38),
+    },
+    togglePillDisabled: {
+      opacity: 0.6,
+    },
+    toggleText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: theme.textMuted,
+      letterSpacing: 0.2,
+    },
+    toggleTextActive: {
+      color: theme.tint,
+    },
+    toggleTextDisabled: {
+      color: theme.textMuted,
+    },
+    toggleHelper: {
+      marginTop: 6,
+      fontSize: 12,
+      lineHeight: 16,
+      color: theme.textMuted,
     },
     textInput: {
       borderWidth: StyleSheet.hairlineWidth,
