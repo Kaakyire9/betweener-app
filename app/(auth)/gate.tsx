@@ -165,7 +165,10 @@ export default function AuthGateScreen() {
         if (!verified) {
           guardRoute({
             pathname: "/(auth)/verify-phone",
-            params: { next: encodeURIComponent("/(auth)/onboarding") },
+            params: {
+              next: encodeURIComponent("/(auth)/onboarding"),
+              reason: "required_for_access",
+            },
           });
           return;
         }

@@ -2,7 +2,7 @@ import { AuthDebugPanel } from "@/components/auth-debug";
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
-import { clearSignupSession, finalizeSignupPhoneVerification } from "@/lib/signup-tracking";
+import { clearSignupSession, finalizeSignupPhoneVerification, getSignupPhoneState } from "@/lib/signup-tracking";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
@@ -18,7 +18,6 @@ import {
     Image,
     KeyboardAvoidingView,
     Platform,
-    Pressable,
     ScrollView,
     StyleSheet,
     Text,
@@ -238,25 +237,39 @@ export default function Onboarding() {
     setMessage("");
 
     try {
-      const { phoneNumber } = await getSignupPhoneState();
-      if (!phoneNumber) {
+      const signupPhoneState = await getSignupPhoneState();
+      const isPhoneVerified = phoneVerified || signupPhoneState.verified;
+      let phoneNumber: string | null = signupPhoneState.phoneNumber ?? null;
+
+      if (isPhoneVerified && !phoneNumber) {
+        const { data: phoneStatus } = await supabase.rpc("rpc_get_phone_verification_status");
+        const verifiedPhone = (phoneStatus as { phone_number?: string } | null)?.phone_number ?? null;
+        if (verifiedPhone) phoneNumber = verifiedPhone;
+      }
+
+      if (!isPhoneVerified) {
         Alert.alert(
-          "Phone number missing",
+          "Phone verification required",
           "Please verify your phone number before creating your profile."
         );
         router.replace({
           pathname: "/(auth)/verify-phone",
-          params: { next: encodeURIComponent("/(auth)/onboarding") },
+          params: {
+            next: encodeURIComponent("/(auth)/onboarding"),
+            reason: "required_for_access",
+          },
         });
         return;
       }
 
-      const { data: existingPhoneProfile, error: phoneLookupError } = await supabase
-        .from("profiles")
-        .select("user_id")
-        .eq("phone_number", phoneNumber)
-        .is("deleted_at", null)
-        .maybeSingle();
+      const { data: existingPhoneProfile, error: phoneLookupError } = phoneNumber
+        ? await supabase
+            .from("profiles")
+            .select("user_id")
+            .eq("phone_number", phoneNumber)
+            .is("deleted_at", null)
+            .maybeSingle()
+        : { data: null, error: null };
 
       if (
         phoneLookupError &&
@@ -397,28 +410,6 @@ export default function Onboarding() {
         ? prev.interests.filter((i) => i !== interest)
         : [...prev.interests, interest],
     }));
-  };
-
-  const handleSignOut = () => {
-    Alert.alert(
-      "Sign Out",
-      "Are you sure you want to sign out? You'll need to log in again to complete your profile.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Sign Out",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await signOut();
-              router.replace("/(auth)/login");
-            } catch (error) {
-              Alert.alert("Error", "Failed to sign out. Please try again.");
-            }
-          },
-        },
-      ]
-    );
   };
 
   // Animation effects
@@ -633,75 +624,73 @@ export default function Onboarding() {
         <Text style={styles.stepSubtitle}>{ONBOARDING_STEPS[currentStep].subtitle}</Text>
       </View>
       
-      <View style={styles.headerRight}>
-        <Pressable onPress={handleSignOut} style={styles.signOutButton}>
-          <Text style={styles.signOutText}>Sign out</Text>
-        </Pressable>
-      </View>
+      <View style={styles.headerRight} />
     </View>
   );
 
   const renderWelcomeStep = () => (
-    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}> 
-      <View style={styles.welcomeContainer}>
-        <View style={styles.heroCard}>
-          <LinearGradient
-            colors={["rgba(255,255,255,0.94)", "rgba(232,218,202,0.95)"]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.heroCardInner}
-          >
-            <View style={styles.heroGlow} />
-            <View style={styles.heroHalo} />
-            <View style={styles.logoWrap}>
-              <LinearGradient
-                colors={["rgba(12,110,122,0.18)", "rgba(201,167,255,0.22)"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.logoGlow}
-              />
-              <Image source={LOGO} style={styles.logoImage} resizeMode="contain" />
-            </View>
+    <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.welcomeScrollContent}>
+        <View style={styles.welcomeContainer}>
+          <View style={styles.heroCard}>
+            <LinearGradient
+              colors={["rgba(255,255,255,0.94)", "rgba(232,218,202,0.95)"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.heroCardInner}
+            >
+              <View style={styles.heroGlow} />
+              <View style={styles.heroHalo} />
+              <View style={styles.logoWrap}>
+                <LinearGradient
+                  colors={["rgba(12,110,122,0.18)", "rgba(201,167,255,0.22)"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.logoGlow}
+                />
+                <Image source={LOGO} style={styles.logoImage} resizeMode="contain" />
+              </View>
 
-            <View style={styles.gradientTitleWrap}>
-              <Text style={[styles.gradientTitleText, { color: BRAND_TEAL }]}>Betweener</Text>
-              <Text style={[styles.gradientTitleText, styles.gradientTitleTop, { color: BRAND_LILAC }]}>Betweener</Text>
-            </View>
+              <View style={styles.gradientTitleWrap}>
+                <Text style={[styles.gradientTitleText, { color: BRAND_TEAL }]}>Betweener</Text>
+                <Text style={[styles.gradientTitleText, styles.gradientTitleTop, { color: BRAND_LILAC }]}>Betweener</Text>
+              </View>
 
-            <View style={styles.titleUnderlineWrap}>
-              <LinearGradient
-                colors={[BRAND_TEAL, BRAND_LILAC]}
-                start={{ x: 0, y: 0.5 }}
-                end={{ x: 1, y: 0.5 }}
-                style={styles.titleUnderline}
-              />
-            </View>
+              <View style={styles.titleUnderlineWrap}>
+                <LinearGradient
+                  colors={[BRAND_TEAL, BRAND_LILAC]}
+                  start={{ x: 0, y: 0.5 }}
+                  end={{ x: 1, y: 0.5 }}
+                  style={styles.titleUnderline}
+                />
+              </View>
 
-            <Text style={styles.taglineText}>Meaningful connection, in the in-between.</Text>
-          </LinearGradient>
+              <Text style={styles.taglineText}>Meaningful connection, in the in-between.</Text>
+            </LinearGradient>
+          </View>
+
+          <View style={styles.featureChipsRow}>
+            <View style={styles.featureChip}>
+              <View style={styles.featureIconBubble}>
+                <MaterialCommunityIcons name="shield-check" size={16} color={BRAND_LILAC} />
+              </View>
+              <Text style={styles.featureChipText}>Built on trust & privacy</Text>
+            </View>
+            <View style={styles.featureChip}>
+              <View style={styles.featureIconBubble}>
+                <MaterialCommunityIcons name="star-four-points" size={16} color={BRAND_LILAC} />
+              </View>
+              <Text style={styles.featureChipText}>Match beyond the swipe</Text>
+            </View>
+            <View style={styles.featureChip}>
+              <View style={styles.featureIconBubble}>
+                <MaterialCommunityIcons name="map-marker" size={16} color={BRAND_LILAC} />
+              </View>
+              <Text style={styles.featureChipText}>Intentional, real connections</Text>
+            </View>
+          </View>
         </View>
-
-        <View style={styles.featureChipsRow}>
-          <View style={styles.featureChip}>
-            <View style={styles.featureIconBubble}>
-              <MaterialCommunityIcons name="shield-check" size={16} color={BRAND_LILAC} />
-            </View>
-            <Text style={styles.featureChipText}>Built on trust & privacy</Text>
-          </View>
-          <View style={styles.featureChip}>
-            <View style={styles.featureIconBubble}>
-              <MaterialCommunityIcons name="star-four-points" size={16} color={BRAND_LILAC} />
-            </View>
-            <Text style={styles.featureChipText}>Match beyond the swipe</Text>
-          </View>
-          <View style={styles.featureChip}>
-            <View style={styles.featureIconBubble}>
-              <MaterialCommunityIcons name="map-marker" size={16} color={BRAND_LILAC} />
-            </View>
-            <Text style={styles.featureChipText}>Intentional, real connections</Text>
-          </View>
-        </View>
-      </View>
+      </ScrollView>
     </Animated.View>
   );
 
@@ -1348,22 +1337,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 2,
   },
-  signOutButton: {
-    height: 32,
-    borderRadius: 16,
-    paddingHorizontal: 10,
-    backgroundColor: 'rgba(254,242,242,0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(239,68,68,0.35)',
-  },
-  signOutText: {
-    fontSize: 11,
-    fontFamily: 'Manrope_600SemiBold',
-    color: '#B91C1C',
-  },
-
   // Content
   content: {
     flex: 1,
@@ -1376,13 +1349,18 @@ const styles = StyleSheet.create({
   formScrollContent: {
     paddingBottom: 24,
   },
+  welcomeScrollContent: {
+    flexGrow: 1,
+    paddingBottom: Platform.OS === 'android' ? 12 : 0,
+  },
 
     // Welcome Step
   welcomeContainer: {
     flex: 1,
-    justifyContent: 'center',
+    justifyContent: Platform.OS === 'android' ? 'flex-start' : 'center',
     alignItems: 'center',
     paddingHorizontal: 20,
+    paddingBottom: Platform.OS === 'android' ? 8 : 0,
   },
   heroCard: {
     width: '100%',
@@ -1491,7 +1469,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   featureChipsRow: {
-    marginTop: 22,
+    marginTop: Platform.OS === 'android' ? 16 : 22,
     gap: 10,
     width: '100%',
   },

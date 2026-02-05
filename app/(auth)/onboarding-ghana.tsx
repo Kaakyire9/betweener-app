@@ -2,7 +2,7 @@ import { AuthDebugPanel } from "@/components/auth-debug";
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
-import { clearSignupSession, finalizeSignupPhoneVerification } from "@/lib/signup-tracking";
+import { clearSignupSession, finalizeSignupPhoneVerification, getSignupPhoneState } from "@/lib/signup-tracking";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
@@ -245,25 +245,39 @@ export default function Onboarding() {
     setMessage("");
 
     try {
-      const { phoneNumber } = await getSignupPhoneState();
-      if (!phoneNumber) {
+      const signupPhoneState = await getSignupPhoneState();
+      const isPhoneVerified = phoneVerified || signupPhoneState.verified;
+      let phoneNumber: string | null = signupPhoneState.phoneNumber ?? null;
+
+      if (isPhoneVerified && !phoneNumber) {
+        const { data: phoneStatus } = await supabase.rpc("rpc_get_phone_verification_status");
+        const verifiedPhone = (phoneStatus as { phone_number?: string } | null)?.phone_number ?? null;
+        if (verifiedPhone) phoneNumber = verifiedPhone;
+      }
+
+      if (!isPhoneVerified) {
         Alert.alert(
-          "Phone number missing",
+          "Phone verification required",
           "Please verify your phone number before creating your profile."
         );
         router.replace({
           pathname: "/(auth)/verify-phone",
-          params: { next: encodeURIComponent("/(auth)/onboarding") },
+          params: {
+            next: encodeURIComponent("/(auth)/onboarding"),
+            reason: "required_for_access",
+          },
         });
         return;
       }
 
-      const { data: existingPhoneProfile, error: phoneLookupError } = await supabase
-        .from("profiles")
-        .select("user_id")
-        .eq("phone_number", phoneNumber)
-        .is("deleted_at", null)
-        .maybeSingle();
+      const { data: existingPhoneProfile, error: phoneLookupError } = phoneNumber
+        ? await supabase
+            .from("profiles")
+            .select("user_id")
+            .eq("phone_number", phoneNumber)
+            .is("deleted_at", null)
+            .maybeSingle()
+        : { data: null, error: null };
 
       if (
         phoneLookupError &&
