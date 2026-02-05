@@ -103,9 +103,6 @@ export default function AuthCallback() {
       try {
         const hasExistingSession = await waitForSession(800);
         if (hasExistingSession) {
-          if (typeof __DEV__ !== "undefined" && __DEV__) {
-            console.log("[auth-callback] existing session found, routing to gate");
-          }
           await routeToGate(800);
           return;
         }
@@ -140,9 +137,6 @@ export default function AuthCallback() {
         if (callbackSig) {
           const lastSig = await AsyncStorage.getItem(AUTH_CALLBACK_LAST_SIG_KEY);
           if (lastSig === callbackSig) {
-            if (typeof __DEV__ !== "undefined" && __DEV__) {
-              console.log("[auth-callback] duplicate callback payload, skipping re-apply");
-            }
             await routeToGate(1800);
             if (!didNavigateRef.current) {
               didNavigateRef.current = true;
@@ -196,7 +190,7 @@ export default function AuthCallback() {
               createdAt: Date.now(),
             })
           );
-          const setSessionResult = await Promise.race([
+          await Promise.race([
             supabase.auth.setSession({
               access_token: accessToken,
               refresh_token: refreshToken,
@@ -229,7 +223,9 @@ export default function AuthCallback() {
           router.replace("/(auth)/gate");
         }
       } catch (error) {
-        console.error("[auth-callback] callback error", error);
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.error("[auth-callback] callback error", error);
+        }
         await routeToGate();
         if (!didNavigateRef.current) {
           didNavigateRef.current = true;

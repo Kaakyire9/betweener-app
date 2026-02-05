@@ -225,7 +225,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return true;
       }
     } catch (error) {
-      console.error("[auth] phone verification lookup error", error);
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.error("[auth] phone verification lookup error", error);
+      }
     } finally {
       phoneRefreshInFlightRef.current = false;
     }

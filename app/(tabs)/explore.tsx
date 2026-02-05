@@ -28,6 +28,11 @@ type CircleMembership = {
   circles?: Circle | null;
 };
 
+const normalizeCircle = (input: Circle | Circle[] | null | undefined): Circle | null => {
+  if (!input) return null;
+  return Array.isArray(input) ? (input[0] ?? null) : input;
+};
+
 export default function CirclesScreen() {
   const { profile, user } = useAuth();
   const colorScheme = useColorScheme();
@@ -86,7 +91,13 @@ export default function CirclesScreen() {
         .select('id,circle_id,role,status,circles (id,name,description,visibility,category,created_by_profile_id,image_path,image_updated_at)')
         .eq('profile_id', currentProfileId);
 
-      const memberships = (membershipRows || []) as CircleMembership[];
+      const memberships: CircleMembership[] = (membershipRows || []).map((row: any) => ({
+        id: String(row.id),
+        circle_id: String(row.circle_id),
+        role: row.role,
+        status: row.status,
+        circles: normalizeCircle(row.circles),
+      }));
       setMyCircles(memberships);
 
       const { data: circlesRows } = await supabase

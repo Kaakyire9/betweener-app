@@ -1868,7 +1868,7 @@ export default function ProfileScreen() {
                   You're all set.
                 </Text>
               )}
-              {profileCompletion.percent < 100 && !profile?.profile_video ? (
+              {profileCompletion.percent < 100 && !(profile as any)?.profile_video ? (
                 <Text style={[styles.progressHelper, { color: theme.textMuted }]}>
                   Bonus: Add an intro video
                 </Text>
@@ -2926,6 +2926,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+  },
+  progressHelper: {
+    marginTop: 8,
+    fontSize: 12,
+    fontFamily: 'Manrope_400Regular',
+    lineHeight: 16,
   },
   progressHint: {
     fontSize: 12,
