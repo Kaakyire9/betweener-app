@@ -8,14 +8,16 @@ import {
   setSignupPhoneVerified,
 } from "@/lib/signup-tracking";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LinearGradient } from "expo-linear-gradient";
 import { ActivityIndicator, StyleSheet, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Colors } from "@/constants/theme";
+import { useAuth } from "@/lib/auth-context";
 
 export default function VerifyPhoneScreen() {
   const router = useRouter();
+  const { refreshPhoneState, isAuthenticated, hasProfile, phoneVerified } = useAuth();
   const params = useLocalSearchParams();
   const nextParam = params.next;
   const nextRoute = typeof nextParam === "string" ? decodeURIComponent(nextParam) : null;
@@ -29,15 +31,27 @@ export default function VerifyPhoneScreen() {
     ipInfo: Awaited<ReturnType<typeof captureSignupContext>>["ipInfo"];
     location: Awaited<ReturnType<typeof captureSignupContext>>["location"];
   } | null>(null);
+  const routedRef = useRef(false);
+
+  const routeAfterVerified = async () => {
+    if (routedRef.current) return;
+    routedRef.current = true;
+    if (isAuthenticated) {
+      router.replace("/(auth)/gate");
+      return;
+    }
+    router.replace(nextRoute ?? "/(auth)/signup-options");
+  };
 
   useEffect(() => {
     let active = true;
     (async () => {
-      const { verified } = await getSignupPhoneState();
-      if (verified) {
-        router.replace(nextRoute ?? "/(auth)/signup-options");
+      const verifiedNow = await refreshPhoneState();
+      if (verifiedNow) {
+        await routeAfterVerified();
         return;
       }
+      const { verified } = await getSignupPhoneState();
       const sessionId = await getOrCreateSignupSessionId();
       const context = await captureSignupContext();
       if (!active) return;
@@ -77,6 +91,26 @@ export default function VerifyPhoneScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!phoneVerified) return;
+    void routeAfterVerified();
+  }, [phoneVerified, hasProfile, isAuthenticated, nextRoute]);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      if (!isAuthenticated || phoneVerified) return;
+      const verifiedNow = await refreshPhoneState();
+      if (!active) return;
+      if (verifiedNow) {
+        await routeAfterVerified();
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [isAuthenticated, phoneVerified, refreshPhoneState, hasProfile, nextRoute]);
+
   return (
     <LinearGradient
       colors={[Colors.light.tint, Colors.light.accent, Colors.light.background]}
@@ -99,6 +133,7 @@ export default function VerifyPhoneScreen() {
             onVerificationComplete={async (success) => {
               if (success) {
                 await setSignupPhoneVerified(true);
+                await refreshPhoneState();
                 const { phoneNumber } = await getSignupPhoneState();
                 await logSignupEvent({
                   phone_verified: true,
@@ -112,7 +147,7 @@ export default function VerifyPhoneScreen() {
                   geo_lng: signupContext?.location?.geo_lng ?? null,
                   geo_accuracy: signupContext?.location?.geo_accuracy ?? null,
                 });
-                router.replace(nextRoute ?? "/(auth)/signup-options");
+                await routeAfterVerified();
               }
             }}
           />

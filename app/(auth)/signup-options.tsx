@@ -1,14 +1,15 @@
 import {
-  getSignupPhoneState,
   logSignupEvent,
   setPendingAuthMethod,
+  setSignupPhoneNumber,
+  setSignupPhoneVerified,
 } from "@/lib/signup-tracking";
 import { supabase } from "@/lib/supabase";
 import * as AppleAuthentication from "expo-apple-authentication";
 import { makeRedirectUri } from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
 import { useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -29,28 +30,27 @@ export default function SignupOptionsScreen() {
   const router = useRouter();
   const [loadingProvider, setLoadingProvider] = useState<string | null>(null);
 
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      const { verified } = await getSignupPhoneState();
-      if (active && !verified) {
-        router.replace("/(auth)/verify-phone");
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [router]);
-
   const getRedirectUrl = () =>
     makeRedirectUri({
       scheme: "betweenerapp",
       path: "auth/callback",
     });
 
+  const waitForSession = async (timeoutMs = 6000) => {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.user) return true;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return false;
+  };
+
   const handleGoogle = async () => {
     setLoadingProvider("google");
     try {
+      await setSignupPhoneVerified(false);
+      await setSignupPhoneNumber("");
       await setPendingAuthMethod("oauth", "google");
       await logSignupEvent({ auth_method: "oauth", oauth_provider: "google" });
       const redirectTo = getRedirectUrl();
@@ -77,6 +77,8 @@ export default function SignupOptionsScreen() {
     if (Platform.OS !== "ios") return;
     setLoadingProvider("apple");
     try {
+      await setSignupPhoneVerified(false);
+      await setSignupPhoneNumber("");
       await setPendingAuthMethod("oauth", "apple");
       await logSignupEvent({ auth_method: "oauth", oauth_provider: "apple" });
       const credential = await AppleAuthentication.signInAsync({
@@ -95,20 +97,8 @@ export default function SignupOptionsScreen() {
       if (error) {
         throw error;
       }
-      const { data: userData } = await supabase.auth.getUser();
-      const userId = userData?.user?.id;
-      if (!userId) {
-        throw new Error("Apple sign-in completed without a user.");
-      }
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("user_id", userId)
-        .maybeSingle();
-      if (profileError && profileError.code !== "PGRST116") {
-        throw profileError;
-      }
-      router.replace(profile ? "/(tabs)/vibes" : "/(auth)/onboarding");
+      await waitForSession();
+      router.replace("/(auth)/gate");
     } catch (error) {
       if (!isAppleAuthCancelled(error)) {
         console.error("[auth] apple sign-in error", error);
@@ -189,12 +179,7 @@ export default function SignupOptionsScreen() {
       </Pressable>
 
       <Pressable
-        onPress={() =>
-          router.push({
-            pathname: "/(auth)/verify-phone",
-            params: { next: encodeURIComponent("/(auth)/signup") },
-          })
-        }
+        onPress={() => router.push("/(auth)/signup")}
         style={styles.secondaryLink}
       >
         <Text style={styles.secondaryText}>Prefer password? Use email and password</Text>

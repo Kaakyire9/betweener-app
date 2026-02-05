@@ -66,14 +66,14 @@ export default function WelcomeScreen() {
           </Text>
 
           <Pressable
-            onPress={() => router.replace("/(auth)/verify-phone")}
+            onPress={() => router.replace("/(auth)/signup-options")}
             style={styles.ctaButtonPrimary}
           >
             <Ionicons name="call" size={18} color="#0F172A" />
-            <Text style={styles.ctaText}>Continue with phone</Text>
+            <Text style={styles.ctaText}>Create account</Text>
           </Pressable>
           <Text style={styles.ctaNote}>
-            We’ll send a secure verification code. Please use a number you can access.
+            Continue with Google, Apple, or email, then verify your phone to complete signup.
           </Text>
 
           <Pressable onPress={() => router.replace("/(auth)/login")}>

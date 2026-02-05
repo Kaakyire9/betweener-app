@@ -2,7 +2,7 @@ import { AuthDebugPanel } from "@/components/auth-debug";
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
-import { clearSignupSession, finalizeSignupPhoneVerification, getSignupPhoneState } from "@/lib/signup-tracking";
+import { clearSignupSession, finalizeSignupPhoneVerification } from "@/lib/signup-tracking";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
@@ -115,7 +115,7 @@ const ONBOARDING_STEPS = [
 
 export default function Onboarding() {
   const router = useRouter();
-  const { updateProfile, user, signOut, refreshProfile } = useAuth();
+  const { updateProfile, user, signOut, refreshProfile, phoneVerified } = useAuth();
   const fontsLoaded = useAppFonts();
   
   const [currentStep, setCurrentStep] = useState(0);

@@ -36,6 +36,16 @@ export default function LoginScreen() {
       path: "auth/callback",
     });
 
+  const waitForSession = async (timeoutMs = 6000) => {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.user) return true;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return false;
+  };
+
   const handleGoogle = async () => {
     setLoadingProvider("google");
     try {
@@ -79,20 +89,8 @@ export default function LoginScreen() {
       if (error) {
         throw error;
       }
-      const { data: userData } = await supabase.auth.getUser();
-      const userId = userData?.user?.id;
-      if (!userId) {
-        throw new Error("Apple sign-in completed without a user.");
-      }
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("user_id", userId)
-        .maybeSingle();
-      if (profileError && profileError.code !== "PGRST116") {
-        throw profileError;
-      }
-      router.replace(profile ? "/(tabs)/vibes" : "/(auth)/onboarding");
+      await waitForSession();
+      router.replace("/(auth)/gate");
     } catch (error) {
       if (!isAppleAuthCancelled(error)) {
         console.error("[auth] apple sign-in error", error);
@@ -177,12 +175,7 @@ export default function LoginScreen() {
         </Pressable>
 
         <Pressable
-          onPress={() =>
-            router.push({
-              pathname: "/(auth)/verify-phone",
-              params: { next: encodeURIComponent("/(auth)/signup-options") },
-            })
-          }
+          onPress={() => router.push("/(auth)/signup-options")}
           style={styles.loginLink}
         >
           <Text style={styles.loginText}>New here? Create an account</Text>

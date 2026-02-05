@@ -50,7 +50,7 @@ export default function PasswordLoginScreen() {
       }
       setSuccess("Signed in successfully.");
       setTimeout(() => {
-        router.replace("/(tabs)/vibes");
+        router.replace("/(auth)/gate");
       }, 800);
     } catch {
       setError("An unexpected error occurred. Please try again.");

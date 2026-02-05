@@ -67,8 +67,9 @@ export default function VerifyEmailScreen() {
     // Start success animation sequence
     startSuccessAnimation();
     
-    setTimeout(() => {
-      router.replace("/(auth)/onboarding");
+    setTimeout(async () => {
+      // Let auth gate decide the correct next step (phone, onboarding, or app).
+      router.replace("/(auth)/gate");
     }, 3500); // Extended to show full animation
   };
   

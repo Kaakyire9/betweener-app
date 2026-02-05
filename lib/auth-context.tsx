@@ -1,6 +1,6 @@
 import { getOrCreateDeviceKeypair } from '@/lib/e2ee';
 import { registerPushToken } from '@/lib/notifications/push';
-import { clearSignupSession, consumeSignupMetadata, finalizeSignupPhoneVerification, updateSignupEventForUser } from '@/lib/signup-tracking';
+import { clearSignupSession, consumeSignupMetadata, finalizeSignupPhoneVerification, getSignupPhoneState, getSignupSessionId, updateSignupEventForUser } from '@/lib/signup-tracking';
 import { supabase } from '@/lib/supabase';
 import { Session, User } from '@supabase/supabase-js';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
@@ -58,6 +58,8 @@ type Profile = {
   last_ghana_visit?: string;
   future_ghana_plans?: string;
   public_key?: string | null;
+  phone_verified?: boolean;
+  phone_number?: string | null;
 };
 
 type AuthContextType = {
@@ -74,12 +76,14 @@ type AuthContextType = {
   isAuthenticated: boolean;
   hasProfile: boolean;
   isEmailVerified: boolean;
+  phoneVerified: boolean;
   
   // Auth Actions
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
+  refreshPhoneState: () => Promise<boolean>;
   
   // Profile Actions
   updateProfile: (updates: Partial<Profile>) => Promise<{ error: Error | null }>;
@@ -93,7 +97,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [phoneVerified, setPhoneVerified] = useState(false);
   const presenceUpdateAtRef = useRef(0);
+  const phoneRefreshInFlightRef = useRef(false);
 
   // Computed states
   const isAuthenticated = !!session && !!user;
@@ -120,8 +126,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const metadata = await consumeSignupMetadata();
           await updateSignupEventForUser(session.user.id, metadata);
           if (profileData) {
-            await finalizeSignupPhoneVerification();
-            await clearSignupSession();
+            await refreshPhoneState();
+            const { verified } = await getSignupPhoneState();
+            if (verified) {
+              await finalizeSignupPhoneVerification();
+              await clearSignupSession();
+            }
           }
         } else {
           setProfile(null);
@@ -158,6 +168,69 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (user) {
       await fetchProfile(user.id);
     }
+  };
+
+  const refreshPhoneState = async (): Promise<boolean> => {
+    if (phoneRefreshInFlightRef.current) return phoneVerified;
+    phoneRefreshInFlightRef.current = true;
+    try {
+      if (!user?.id) {
+        setPhoneVerified(false);
+        return false;
+      }
+
+      if (profile?.phone_verified === true) {
+        setPhoneVerified(true);
+        return true;
+      }
+
+      const { data: profileRow, error: profileErr } = await supabase
+        .from("profiles")
+        .select("phone_verified, phone_number")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (profileErr) {
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] refreshPhoneState: profile lookup error", profileErr);
+        }
+      }
+      if (profileRow?.phone_verified === true) {
+        setPhoneVerified(true);
+        await refreshProfile();
+        return true;
+      }
+
+      // If signup verified happened before user auth attached, link it now.
+      const signupSessionId = await getSignupSessionId();
+      if (signupSessionId) {
+        try {
+          await supabase.rpc("rpc_link_phone_verification", {
+            p_signup_session_id: signupSessionId,
+          });
+        } catch {
+          // ignore link errors; RPC status check below is source of truth
+        }
+      }
+
+      const { data: phoneStatus, error: phoneStatusError } = await supabase
+        .rpc("rpc_get_phone_verification_status");
+      if (phoneStatusError) {
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] refreshPhoneState: phone status rpc error", phoneStatusError);
+        }
+      }
+      if ((phoneStatus as { verified?: boolean } | null)?.verified === true) {
+        setPhoneVerified(true);
+        await refreshProfile();
+        return true;
+      }
+    } catch (error) {
+      console.error("[auth] phone verification lookup error", error);
+    } finally {
+      phoneRefreshInFlightRef.current = false;
+    }
+    setPhoneVerified(false);
+    return false;
   };
 
   const updatePresence = async (nextOnline: boolean) => {
@@ -201,6 +274,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       void updatePresence(false);
     };
   }, [user?.id]);
+
+  useEffect(() => {
+    void refreshPhoneState();
+  }, [user?.id, profile?.phone_verified]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -316,12 +393,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isAuthenticated,
     hasProfile,
     isEmailVerified,
+    phoneVerified,
     
     // Actions
     signIn,
     signUp,
     signOut,
     refreshProfile,
+    refreshPhoneState,
     updateProfile,
   };
 
@@ -342,13 +421,14 @@ export function useAuth() {
 
 // Auth guard hook for protected routes
 export function useAuthGuard() {
-  const { isAuthenticated, isLoading, isEmailVerified, hasProfile } = useAuth();
+  const { isAuthenticated, isLoading, isEmailVerified, hasProfile, phoneVerified } = useAuth();
   
   return {
     isLoading,
     needsAuth: !isAuthenticated,
     needsEmailVerification: isAuthenticated && !isEmailVerified,
-    needsProfileSetup: isAuthenticated && isEmailVerified && !hasProfile,
-    canAccessApp: isAuthenticated && isEmailVerified && hasProfile,
+    needsPhoneVerification: isAuthenticated && isEmailVerified && !phoneVerified,
+    needsProfileSetup: isAuthenticated && isEmailVerified && phoneVerified && !hasProfile,
+    canAccessApp: isAuthenticated && isEmailVerified && phoneVerified && hasProfile,
   };
 }

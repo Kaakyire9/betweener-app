@@ -12,6 +12,7 @@ export function AuthGuard({ children, fallback }: AuthGuardProps) {
     isLoading, 
     needsAuth, 
     needsEmailVerification, 
+    needsPhoneVerification,
     needsProfileSetup,
     canAccessApp 
   } = useAuthGuard();
@@ -32,6 +33,10 @@ export function AuthGuard({ children, fallback }: AuthGuardProps) {
 
   if (needsEmailVerification) {
     return <Redirect href="/(auth)/verify-email" />;
+  }
+
+  if (needsPhoneVerification) {
+    return <Redirect href="/(auth)/verify-phone" />;
   }
 
   if (needsProfileSetup) {
@@ -67,7 +72,7 @@ export function withAuthGuard<P extends object>(
 
 // Guest-only guard (for auth screens)
 export function GuestGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isEmailVerified, hasProfile, isLoading } = useAuth();
+  const { isAuthenticated, isEmailVerified, hasProfile, phoneVerified, isLoading } = useAuth();
 
   if (isLoading) {
     return (
@@ -78,7 +83,7 @@ export function GuestGuard({ children }: { children: React.ReactNode }) {
   }
 
   // If fully authenticated, redirect to main app
-  if (isAuthenticated && isEmailVerified && hasProfile) {
+  if (isAuthenticated && isEmailVerified && phoneVerified && hasProfile) {
     return <Redirect href="/(tabs)/vibes" />;
   }
 

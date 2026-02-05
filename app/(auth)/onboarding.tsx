@@ -1,4 +1,5 @@
-﻿import { Colors } from "@/constants/theme";
+import { Colors } from "@/constants/theme";
+import { useAuth } from "@/lib/auth-context";
 import { getSignupPhoneState } from "@/lib/signup-tracking";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect } from "react";
@@ -7,6 +8,7 @@ import { ActivityIndicator, Text, View } from "react-native";
 export default function OnboardingRouter() {
   const router = useRouter();
   const params = useLocalSearchParams();
+  const { phoneVerified, profile, refreshPhoneState } = useAuth();
 
   const variantParam = (() => {
     const raw = params?.variant;
@@ -16,19 +18,18 @@ export default function OnboardingRouter() {
   })();
 
   useEffect(() => {
-    let mounted = true;
-
     const route = async () => {
-      const { phoneNumber, verified } = await getSignupPhoneState();
-      if (!mounted) return;
-
-      if (!phoneNumber || !verified) {
+      const signupState = await getSignupPhoneState();
+      const verifiedNow = phoneVerified || (await refreshPhoneState()) || signupState.verified;
+      if (!verifiedNow) {
         router.replace({
           pathname: "/(auth)/verify-phone",
           params: { next: encodeURIComponent("/(auth)/onboarding") },
         });
         return;
       }
+
+      const phoneNumber = profile?.phone_number || signupState.phoneNumber || "";
 
       const normalizedVariant = variantParam?.toLowerCase();
       const target =
@@ -42,11 +43,7 @@ export default function OnboardingRouter() {
     };
 
     void route();
-
-    return () => {
-      mounted = false;
-    };
-  }, [router, variantParam]);
+  }, [router, variantParam, phoneVerified, profile?.phone_number, refreshPhoneState]);
 
   return (
     <View

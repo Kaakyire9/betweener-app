@@ -2,7 +2,7 @@ import { AuthDebugPanel } from "@/components/auth-debug";
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
-import { clearSignupSession, finalizeSignupPhoneVerification, getSignupPhoneState } from "@/lib/signup-tracking";
+import { clearSignupSession, finalizeSignupPhoneVerification } from "@/lib/signup-tracking";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
@@ -105,7 +105,7 @@ const ONBOARDING_STEPS = [
 
 export default function Onboarding() {
   const router = useRouter();
-  const { updateProfile, user, signOut, refreshProfile } = useAuth();
+  const { updateProfile, user, signOut, refreshProfile, phoneVerified } = useAuth();
   const fontsLoaded = useAppFonts();
   
   const [currentStep, setCurrentStep] = useState(0);
@@ -633,7 +633,11 @@ export default function Onboarding() {
         <Text style={styles.stepSubtitle}>{ONBOARDING_STEPS[currentStep].subtitle}</Text>
       </View>
       
-      <View style={styles.headerRight} />
+      <View style={styles.headerRight}>
+        <Pressable onPress={handleSignOut} style={styles.signOutButton}>
+          <Text style={styles.signOutText}>Sign out</Text>
+        </Pressable>
+      </View>
     </View>
   );
 
@@ -1318,7 +1322,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerRight: {
-    width: 40,
+    minWidth: 72,
     alignItems: 'flex-end',
   },
   backButton: {
@@ -1345,14 +1349,19 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   signOutButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    height: 32,
+    borderRadius: 16,
+    paddingHorizontal: 10,
     backgroundColor: 'rgba(254,242,242,0.9)',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
     borderColor: 'rgba(239,68,68,0.35)',
+  },
+  signOutText: {
+    fontSize: 11,
+    fontFamily: 'Manrope_600SemiBold',
+    color: '#B91C1C',
   },
 
   // Content

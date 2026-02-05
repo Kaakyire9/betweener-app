@@ -54,8 +54,15 @@ export default function MagicLinkScreen() {
       });
 
       if (error) {
-        if (!isSignup && error.message.includes("User not found")) {
-          setError("No account found with this email. Create an account first.");
+        const raw = (error.message || "").toLowerCase();
+        const isMissingAccount =
+          raw.includes("user not found") ||
+          raw.includes("invalid login") ||
+          raw.includes("otp") ||
+          raw.includes("email not confirmed");
+
+        if (!isSignup && isMissingAccount) {
+          setError("No account found with this email. Tap Create account to get started.");
         } else {
           setError(error.message);
         }
@@ -141,14 +148,7 @@ export default function MagicLinkScreen() {
         {!isSignup ? (
           <View style={styles.inlineRow}>
             <Text style={styles.inlineText}>New here? </Text>
-            <Pressable
-              onPress={() =>
-                router.push({
-                  pathname: "/(auth)/verify-phone",
-                  params: { next: encodeURIComponent("/(auth)/magic-link?mode=signup") },
-                })
-              }
-            >
+            <Pressable onPress={() => router.push("/(auth)/signup-options")}>
               <Text style={styles.inlineLink}>Create an account</Text>
             </Pressable>
           </View>
@@ -166,10 +166,7 @@ export default function MagicLinkScreen() {
           <Pressable
             onPress={() =>
               isSignup
-                ? router.push({
-                    pathname: "/(auth)/verify-phone",
-                    params: { next: encodeURIComponent("/(auth)/signup") },
-                  })
+                ? router.push("/(auth)/signup")
                 : router.push("/(auth)/password-login")
             }
           >
