@@ -36,6 +36,12 @@ export default function VerifyPhoneScreen() {
   const routeAfterVerified = async () => {
     if (routedRef.current) return;
     routedRef.current = true;
+    if (typeof __DEV__ !== "undefined" && __DEV__) {
+      console.log("[verify-phone] routeAfterVerified", {
+        isAuthenticated,
+        nextRoute,
+      });
+    }
     if (isAuthenticated) {
       router.replace("/(auth)/gate");
       return;
@@ -46,8 +52,14 @@ export default function VerifyPhoneScreen() {
   useEffect(() => {
     let active = true;
     (async () => {
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[verify-phone] init");
+      }
       const verifiedNow = await refreshPhoneState();
       if (verifiedNow) {
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[verify-phone] verified on mount");
+        }
         await routeAfterVerified();
         return;
       }
@@ -93,6 +105,9 @@ export default function VerifyPhoneScreen() {
 
   useEffect(() => {
     if (!phoneVerified) return;
+    if (typeof __DEV__ !== "undefined" && __DEV__) {
+      console.log("[verify-phone] phoneVerified true");
+    }
     void routeAfterVerified();
   }, [phoneVerified, hasProfile, isAuthenticated, nextRoute]);
 
@@ -103,6 +118,9 @@ export default function VerifyPhoneScreen() {
       const verifiedNow = await refreshPhoneState();
       if (!active) return;
       if (verifiedNow) {
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[verify-phone] verified via refreshPhoneState");
+        }
         await routeAfterVerified();
       }
     })();

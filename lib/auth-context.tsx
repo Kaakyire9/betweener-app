@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { Session, User } from '@supabase/supabase-js';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type Profile = {
   id: string;
@@ -60,6 +61,7 @@ type Profile = {
   public_key?: string | null;
   phone_verified?: boolean;
   phone_number?: string | null;
+  profile_completed?: boolean;
 };
 
 type AuthContextType = {
@@ -90,6 +92,105 @@ type AuthContextType = {
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const PHONE_VERIFIED_CACHE_KEY_PREFIX = "phone_verified_cache_v1:";
+const PHONE_VERIFIED_CACHE_TTL_MS = 60_000;
+const PROFILE_DIAG_TIMEOUT_MS = 8000;
+const PROFILE_CACHE_TTL_MS = 60_000;
+
+const getPhoneVerifiedCacheKey = (userId: string) =>
+  `${PHONE_VERIFIED_CACHE_KEY_PREFIX}${userId}`;
+
+const diagnoseProfileFetch = async (userId: string) => {
+  if (typeof __DEV__ === "undefined" || !__DEV__) return;
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) {
+    console.log("[auth] diagnoseProfileFetch: missing env");
+    return;
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PROFILE_DIAG_TIMEOUT_MS);
+  const url = `${supabaseUrl}/rest/v1/profiles?select=id,profile_completed,phone_verified&user_id=eq.${userId}&limit=1`;
+  const startedAt = Date.now();
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${anonKey}`,
+      },
+      signal: controller.signal,
+    });
+    const ms = Date.now() - startedAt;
+    console.log("[auth] diagnoseProfileFetch: rest", {
+      status: res.status,
+      ok: res.ok,
+      ms,
+    });
+  } catch (error) {
+    const ms = Date.now() - startedAt;
+    console.log("[auth] diagnoseProfileFetch: error", { ms, error });
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const fetchProfileViaRest = async (userId: string, accessToken?: string | null) => {
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PROFILE_DIAG_TIMEOUT_MS);
+  const url = `${supabaseUrl}/rest/v1/profiles?select=*&user_id=eq.${userId}&limit=1`;
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${accessToken || anonKey}`,
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as Array<Profile>;
+    return data?.[0] ?? null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const fetchVerifiedPhoneViaRest = async (userId: string, accessToken?: string | null) => {
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PROFILE_DIAG_TIMEOUT_MS);
+  const url = `${supabaseUrl}/rest/v1/phone_verifications?select=phone_number,status,is_verified,verified_at&user_id=eq.${userId}&status=eq.verified&limit=1`;
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${accessToken || anonKey}`,
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as Array<{
+      phone_number?: string | null;
+      status?: string | null;
+      is_verified?: boolean | null;
+      verified_at?: string | null;
+    }>;
+    return data?.[0] ?? null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -100,16 +201,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [phoneVerified, setPhoneVerified] = useState(false);
   const presenceUpdateAtRef = useRef(0);
   const phoneRefreshInFlightRef = useRef(false);
+  const profileCacheRef = useRef<{ userId: string; profile: Profile | null; fetchedAt: number } | null>(null);
 
   // Computed states
   const isAuthenticated = !!session && !!user;
-  const hasProfile = !!profile;
+  const hasProfile = !!profile && profile.profile_completed === true;
   const isEmailVerified = !!user?.email_confirmed_at;
 
   // Initialize auth state
   useEffect(() => {
     // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[auth] initial session", {
+          hasSession: !!session,
+          hasUser: !!session?.user,
+        });
+      }
       setSession(session);
       setUser(session?.user ?? null);
       setIsLoading(false);
@@ -118,6 +226,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] onAuthStateChange", {
+            event: _event,
+            hasSession: !!session,
+            hasUser: !!session?.user,
+          });
+        }
         setSession(session);
         setUser(session?.user ?? null);
         
@@ -145,21 +260,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Fetch user profile
   const fetchProfile = async (userId: string) => {
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('user_id', userId)
-        .single();
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[auth] fetchProfile: start", { userId });
+      }
+      const cached = profileCacheRef.current;
+      if (cached && cached.userId === userId && Date.now() - cached.fetchedAt < PROFILE_CACHE_TTL_MS) {
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] fetchProfile: cache hit");
+        }
+        setProfile(cached.profile);
+        return cached.profile;
+      }
 
-      if (error && error.code !== 'PGRST116') {
-        console.error('Error fetching profile:', error);
+      const accessToken = session?.access_token;
+      const restProfile = await fetchProfileViaRest(userId, accessToken);
+      if (!restProfile) {
+        void diagnoseProfileFetch(userId);
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] fetchProfile: rest fetch failed");
+        }
         return null;
       }
 
-      setProfile(data || null);
-      return data || null;
+      profileCacheRef.current = { userId, profile: restProfile, fetchedAt: Date.now() };
+      setProfile(restProfile);
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[auth] fetchProfile: rest ok");
+      }
+      return restProfile;
     } catch (error) {
-      console.error('Error fetching profile:', error);
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[auth] fetchProfile: error", error);
+      }
       return null;
     }
   };
@@ -173,34 +305,120 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshPhoneState = async (): Promise<boolean> => {
     if (phoneRefreshInFlightRef.current) return phoneVerified;
     phoneRefreshInFlightRef.current = true;
+    let knownVerified = phoneVerified || profile?.phone_verified === true;
     try {
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[auth] refreshPhoneState: start", {
+          hasUser: !!user?.id,
+          profilePhoneVerified: profile?.phone_verified ?? null,
+          knownVerified,
+        });
+      }
       if (!user?.id) {
         setPhoneVerified(false);
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] refreshPhoneState: no user -> false");
+        }
         return false;
       }
 
-      if (profile?.phone_verified === true) {
-        setPhoneVerified(true);
-        return true;
-      }
-
-      const { data: profileRow, error: profileErr } = await supabase
-        .from("profiles")
-        .select("phone_verified, phone_number")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      if (profileErr) {
-        if (typeof __DEV__ !== "undefined" && __DEV__) {
-          console.log("[auth] refreshPhoneState: profile lookup error", profileErr);
+      if (!knownVerified) {
+        try {
+          const cachedRaw = await AsyncStorage.getItem(getPhoneVerifiedCacheKey(user.id));
+          if (cachedRaw) {
+            const cached = JSON.parse(cachedRaw) as { verified?: boolean; expiresAt?: number };
+            const isFresh = typeof cached.expiresAt === "number" && cached.expiresAt > Date.now();
+            if (!isFresh) {
+              await AsyncStorage.removeItem(getPhoneVerifiedCacheKey(user.id));
+            } else if (cached.verified === true) {
+              knownVerified = true;
+              setPhoneVerified(true);
+              if (typeof __DEV__ !== "undefined" && __DEV__) {
+                console.log("[auth] refreshPhoneState: using cached verified");
+              }
+            }
+          }
+        } catch {
+          // ignore cache errors
         }
       }
-      if (profileRow?.phone_verified === true) {
+
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[auth] refreshPhoneState: profile lookup start");
+      }
+      const accessToken = session?.access_token;
+      const restProfile = await fetchProfileViaRest(user.id, accessToken);
+      let effectiveRow = restProfile
+        ? { phone_verified: restProfile.phone_verified, phone_number: restProfile.phone_number }
+        : null;
+      if (restProfile) {
+        profileCacheRef.current = { userId: user.id, profile: restProfile, fetchedAt: Date.now() };
+        setProfile(restProfile);
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] refreshPhoneState: rest ok");
+        }
+      } else if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[auth] refreshPhoneState: rest fetch failed");
+      }
+
+      if (effectiveRow) {
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] refreshPhoneState: profile row", effectiveRow);
+        }
+        if (effectiveRow.phone_verified === true) {
+          setPhoneVerified(true);
+          try {
+            await AsyncStorage.setItem(
+              getPhoneVerifiedCacheKey(user.id),
+              JSON.stringify({ verified: true, expiresAt: Date.now() + PHONE_VERIFIED_CACHE_TTL_MS })
+            );
+          } catch {
+            // ignore cache errors
+          }
+          await refreshProfile();
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[auth] refreshPhoneState: profile verified");
+          }
+          return true;
+        }
+        if (effectiveRow.phone_verified === false) {
+          setPhoneVerified(false);
+          try {
+            await AsyncStorage.setItem(
+              getPhoneVerifiedCacheKey(user.id),
+              JSON.stringify({ verified: false, expiresAt: Date.now() + PHONE_VERIFIED_CACHE_TTL_MS })
+            );
+          } catch {
+            // ignore cache errors
+          }
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[auth] refreshPhoneState: profile verified=false");
+          }
+          return false;
+        }
+      }
+
+      const verifiedRow = await fetchVerifiedPhoneViaRest(user.id, accessToken);
+      if (verifiedRow?.status === "verified" || verifiedRow?.is_verified === true) {
         setPhoneVerified(true);
-        await refreshProfile();
+        try {
+          await AsyncStorage.setItem(
+            getPhoneVerifiedCacheKey(user.id),
+            JSON.stringify({ verified: true, expiresAt: Date.now() + PHONE_VERIFIED_CACHE_TTL_MS })
+          );
+        } catch {
+          // ignore cache errors
+        }
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] refreshPhoneState: verified via phone_verifications rest");
+        }
         return true;
       }
 
       // If signup verified happened before user auth attached, link it now.
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[auth] refreshPhoneState: signup session lookup");
+      }
       const signupSessionId = await getSignupSessionId();
       if (signupSessionId) {
         try {
@@ -212,25 +430,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      const { data: phoneStatus, error: phoneStatusError } = await supabase
-        .rpc("rpc_get_phone_verification_status");
-      if (phoneStatusError) {
-        if (typeof __DEV__ !== "undefined" && __DEV__) {
-          console.log("[auth] refreshPhoneState: phone status rpc error", phoneStatusError);
-        }
+      const { data: phoneStatus, error: phoneStatusError } = await Promise.race([
+        supabase.rpc("rpc_get_phone_verification_status"),
+        new Promise<{ data: null; error: Error }>((resolve) =>
+          setTimeout(() => resolve({ data: null, error: new Error("phone_status_timeout") }), 6000)
+        ),
+      ]);
+      if (phoneStatusError && typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[auth] refreshPhoneState: phone status rpc error", phoneStatusError);
+      }
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[auth] refreshPhoneState: phone status rpc", phoneStatus);
       }
       if ((phoneStatus as { verified?: boolean } | null)?.verified === true) {
         setPhoneVerified(true);
+        try {
+          await AsyncStorage.setItem(
+            getPhoneVerifiedCacheKey(user.id),
+            JSON.stringify({ verified: true, expiresAt: Date.now() + PHONE_VERIFIED_CACHE_TTL_MS })
+          );
+        } catch {
+          // ignore cache errors
+        }
         await refreshProfile();
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] refreshPhoneState: verified via rpc");
+        }
         return true;
       }
     } catch (error) {
-      console.error("[auth] phone verification lookup error", error);
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[auth] refreshPhoneState: error", error);
+      }
     } finally {
       phoneRefreshInFlightRef.current = false;
     }
-    setPhoneVerified(false);
-    return false;
+    if (typeof __DEV__ !== "undefined" && __DEV__) {
+      console.log("[auth] refreshPhoneState: fallback known", { knownVerified });
+    }
+    return knownVerified;
   };
 
   const updatePresence = async (nextOnline: boolean) => {

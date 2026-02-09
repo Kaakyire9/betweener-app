@@ -1,35 +1,73 @@
 import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
 import { getSignupPhoneState, getSignupSessionId } from "@/lib/signup-tracking";
-import { supabase } from "@/lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 
 const AUTH_PENDING_TOKENS_KEY = "auth_pending_tokens_v1";
+const PROFILE_FLAGS_TIMEOUT_MS = 4000;
+
+const fetchProfileFlags = async (userId: string, accessToken?: string | null) => {
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PROFILE_FLAGS_TIMEOUT_MS);
+  const url = `${supabaseUrl}/rest/v1/profiles?select=phone_verified,profile_completed&user_id=eq.${userId}&limit=1`;
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${accessToken || anonKey}`,
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as Array<{ phone_verified?: boolean; profile_completed?: boolean }>;
+    return data?.[0] ?? null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
 
 export default function AuthGateScreen() {
   const router = useRouter();
-  const { isLoading, session, user, profile } = useAuth();
+  const { isLoading, session, user, profile, refreshPhoneState } = useAuth();
   const routedRef = useRef(false);
+  const runInFlightRef = useRef(false);
+  const lastUserIdRef = useRef<string | null>(null);
   const [statusText, setStatusText] = useState("Checking your account...");
 
   useEffect(() => {
     if (routedRef.current) return;
+    if (runInFlightRef.current && lastUserIdRef.current === user?.id) return;
+    runInFlightRef.current = true;
+    lastUserIdRef.current = user?.id ?? null;
     let active = true;
     const hardFallbackTimer = setTimeout(() => {
       if (!active || routedRef.current) return;
       routedRef.current = true;
-      if (session?.user) {
-        router.replace(profile?.id ? "/(tabs)/vibes" : "/(auth)/onboarding");
-      } else {
-        router.replace("/(auth)/welcome");
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[auth-gate] fallback timer fired");
       }
+      if (session?.user) {
+        const completed = profile?.profile_completed === true;
+        router.replace(completed ? "/(tabs)/vibes" : "/(auth)/onboarding");
+        return;
+      }
+      router.replace("/(auth)/welcome");
     }, 10000);
 
     const run = async () => {
       try {
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth-gate] run start");
+        }
         const guardRoute = (
           target: string | { pathname: string; params?: Record<string, string> },
           smooth = false
@@ -37,6 +75,9 @@ export default function AuthGateScreen() {
           if (!active || routedRef.current) return;
           routedRef.current = true;
           if (smooth) setStatusText("Almost there...");
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[auth-gate] route", target);
+          }
           const routeNow = () => router.replace(target as any);
           if (smooth) {
             setTimeout(routeNow, 140);
@@ -108,6 +149,9 @@ export default function AuthGateScreen() {
         }
 
         if (!sessionToUse || !userToUse) {
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[auth-gate] no session/user");
+          }
           const signupState = await getSignupPhoneState();
           if (signupState.verified) {
             guardRoute("/(auth)/onboarding", true);
@@ -118,48 +162,30 @@ export default function AuthGateScreen() {
         }
 
         if (!userToUse.email_confirmed_at) {
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[auth-gate] email not verified");
+          }
           guardRoute("/(auth)/verify-email");
           return;
         }
 
-        // Premium fast-path: verified fresh signup without profile goes straight to onboarding.
         const [signupState, signupSessionId] = await Promise.all([
           getSignupPhoneState(),
           getSignupSessionId(),
         ]);
-        if (!profile?.id && signupState.verified && !!signupSessionId) {
-          guardRoute("/(auth)/onboarding", true);
-          return;
+
+        const flags = await fetchProfileFlags(userToUse.id, sessionToUse?.access_token);
+        const verifiedFromFlags = flags?.phone_verified === true;
+        const completedFromFlags = flags?.profile_completed === true;
+        const verified = verifiedFromFlags || (await refreshPhoneState());
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth-gate] refreshPhoneState done");
         }
-
-        const { data: profileRow, error: profileError } = await Promise.race([
-          supabase
-            .from("profiles")
-            .select("id, phone_verified")
-            .eq("user_id", userToUse.id)
-            .maybeSingle(),
-          new Promise<{ data: null; error: Error }>((resolve) =>
-            setTimeout(() => resolve({ data: null, error: new Error("profile_lookup_timeout") }), 12000)
-          ),
-        ]);
-        void profileError;
-
-        let verified = profileRow?.phone_verified === true || profile?.phone_verified === true;
-
-        // If this is a fresh signup with verified phone and no profile yet, skip extra phone RPC.
-        if (!verified && !profileRow?.id && !profile?.id && signupState.verified) {
-          verified = true;
-        }
-
-        if (!verified) {
-          const { data: rpcData, error: rpcError } = await Promise.race([
-            supabase.rpc("rpc_get_phone_verification_status"),
-            new Promise<{ data: null; error: Error }>((resolve) =>
-              setTimeout(() => resolve({ data: null, error: new Error("phone_status_timeout") }), 8000)
-            ),
-          ]);
-          void rpcError;
-          verified = (rpcData as { verified?: boolean } | null)?.verified === true;
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth-gate] verified", {
+            verified,
+            profileCompleted: completedFromFlags ?? profile?.profile_completed ?? null,
+          });
         }
 
         if (!verified) {
@@ -170,20 +196,19 @@ export default function AuthGateScreen() {
           return;
         }
 
-        if (!profile?.id && !profileRow?.id) {
+        if (!(completedFromFlags ?? profile?.profile_completed)) {
           guardRoute("/(auth)/onboarding", true);
           return;
         }
 
         guardRoute("/(tabs)/vibes", true);
       } catch (error) {
-        if (typeof __DEV__ !== "undefined" && __DEV__) {
-          console.log("[auth-gate] unexpected error", error);
-        }
         if (active && !routedRef.current) {
           routedRef.current = true;
           router.replace("/(auth)/welcome");
         }
+      } finally {
+        runInFlightRef.current = false;
       }
     };
 
@@ -192,7 +217,7 @@ export default function AuthGateScreen() {
       active = false;
       clearTimeout(hardFallbackTimer);
     };
-  }, [isLoading, session, user, profile, router]);
+  }, [isLoading, session?.user?.id, profile?.profile_completed, router]);
 
   return (
     <View

@@ -351,6 +351,7 @@ export default function Onboarding() {
         diaspora_status: "LOCAL" as const,
         willing_long_distance: false,
         years_in_diaspora: 0,
+        profile_completed: true,
       };
 
       const { error: updateError } = await updateProfile(profileData);
