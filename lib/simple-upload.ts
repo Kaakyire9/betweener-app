@@ -1,5 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { supabase } from './supabase';
+import { supabase } from '@/lib/supabase';
 
 export interface SimpleUploadResult {
   success: boolean;

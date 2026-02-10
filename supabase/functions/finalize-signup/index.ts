@@ -67,31 +67,52 @@ serve(async (req) => {
 
     const normalizedScore = Math.max(0, Math.min(1, (verification.confidence_score ?? 0) / 100))
 
-    const { data: profileRow } = await supabase
+    // Ensure a minimal profile row exists (Phase-2 allows progressive completion).
+    const { error: ensureProfileError } = await supabase
+      .from('profiles')
+      .upsert({ user_id: user.id }, { onConflict: 'user_id' })
+    if (ensureProfileError) {
+      console.log('Ensure profile error', ensureProfileError)
+    }
+
+    // Link verified phone_verifications rows to this user (prevents "verified but unlinked" dead-ends).
+    const { error: linkPhoneError } = await supabase
+      .from('phone_verifications')
+      .update({ user_id: user.id })
+      .eq('signup_session_id', signupSessionId)
+      .eq('status', 'verified')
+      .is('user_id', null)
+
+    if (linkPhoneError) {
+      console.log('Phone verification link error', linkPhoneError)
+    }
+
+    const { data: profileRow, error: profileFetchError } = await supabase
       .from('profiles')
       .select('verification_level')
       .eq('user_id', user.id)
       .limit(1)
       .maybeSingle()
 
-    if (!profileRow) {
-      return new Response(
-        JSON.stringify({ success: true, skipped: true, reason: 'profile_not_created' }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+    if (profileFetchError) {
+      console.log('Profile fetch error', profileFetchError)
     }
 
     const nextLevel = Math.max(profileRow?.verification_level ?? 0, 1)
 
+    // Upsert verification flags (belt + suspenders).
     const { error: profileError } = await supabase
       .from('profiles')
-      .update({
-        phone_number: verification.phone_number,
-        phone_verified: true,
-        phone_verification_score: normalizedScore,
-        verification_level: nextLevel,
-      })
-      .eq('user_id', user.id)
+      .upsert(
+        {
+          user_id: user.id,
+          phone_number: verification.phone_number,
+          phone_verified: true,
+          phone_verification_score: normalizedScore,
+          verification_level: nextLevel,
+        },
+        { onConflict: 'user_id' }
+      )
 
     if (profileError) {
       return new Response(JSON.stringify({ error: 'Failed to update profile' }), {

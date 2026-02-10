@@ -1,43 +1,21 @@
 import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
-import { getSignupPhoneState, getSignupSessionId } from "@/lib/signup-tracking";
+import { getSignupSessionId } from "@/lib/signup-tracking";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
+import { supabase } from "@/lib/supabase";
 
 const AUTH_PENDING_TOKENS_KEY = "auth_pending_tokens_v1";
-const PROFILE_FLAGS_TIMEOUT_MS = 4000;
-
-const fetchProfileFlags = async (userId: string, accessToken?: string | null) => {
-  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-  if (!supabaseUrl || !anonKey) return null;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), PROFILE_FLAGS_TIMEOUT_MS);
-  const url = `${supabaseUrl}/rest/v1/profiles?select=phone_verified,profile_completed&user_id=eq.${userId}&limit=1`;
-  try {
-    const res = await fetch(url, {
-      method: "GET",
-      headers: {
-        apikey: anonKey,
-        Authorization: `Bearer ${accessToken || anonKey}`,
-      },
-      signal: controller.signal,
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as Array<{ phone_verified?: boolean; profile_completed?: boolean }>;
-    return data?.[0] ?? null;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-};
+// Disable auth-bootstrap while stabilizing core auth/phone verification routing.
+// It can be re-enabled once the function is proven reliable in production.
+const ENABLE_AUTH_BOOTSTRAP = false;
 
 export default function AuthGateScreen() {
   const router = useRouter();
-  const { isLoading, session, user, profile, refreshPhoneState } = useAuth();
+  const authContext = useAuth();
+  const { isLoading, session, user, profile, refreshPhoneState, refreshProfile, phoneVerified } = authContext;
   const routedRef = useRef(false);
   const runInFlightRef = useRef(false);
   const lastUserIdRef = useRef<string | null>(null);
@@ -45,22 +23,67 @@ export default function AuthGateScreen() {
 
   useEffect(() => {
     if (routedRef.current) return;
+    if (isLoading) {
+      runInFlightRef.current = false;
+      return;
+    }
     if (runInFlightRef.current && lastUserIdRef.current === user?.id) return;
     runInFlightRef.current = true;
     lastUserIdRef.current = user?.id ?? null;
     let active = true;
     const hardFallbackTimer = setTimeout(() => {
       if (!active || routedRef.current) return;
-      routedRef.current = true;
+
       if (typeof __DEV__ !== "undefined" && __DEV__) {
-        console.log("[auth-gate] fallback timer fired");
+        console.log("[auth-gate] hard fallback fired");
       }
-      if (session?.user) {
-        const completed = profile?.profile_completed === true;
-        router.replace(completed ? "/(tabs)/vibes" : "/(auth)/onboarding");
+
+      // If no session, go welcome
+      if (!session?.user || !user?.id) {
+        routedRef.current = true;
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth-gate] hard fallback route", "/(auth)/welcome");
+        }
+        router.replace("/(auth)/welcome");
         return;
       }
-      router.replace("/(auth)/welcome");
+
+      // If email not verified, force verify-email
+      if (!user.email_confirmed_at) {
+        routedRef.current = true;
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth-gate] hard fallback route", "/(auth)/verify-email");
+        }
+        router.replace("/(auth)/verify-email");
+        return;
+      }
+
+      const bestVerified = phoneVerified || profile?.phone_verified === true;
+      const bestCompleted = profile?.profile_completed === true;
+
+      routedRef.current = true;
+
+      if (!bestVerified) {
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth-gate] hard fallback route", "/(auth)/verify-phone");
+        }
+        router.replace({
+          pathname: "/(auth)/verify-phone",
+          params: {
+            next: encodeURIComponent("/(auth)/onboarding"),
+            reason: "required_for_access",
+          },
+        });
+        return;
+      }
+
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log(
+          "[auth-gate] hard fallback route",
+          bestCompleted ? "/(tabs)/vibes" : "/(auth)/onboarding"
+        );
+      }
+      router.replace(bestCompleted ? "/(tabs)/vibes" : "/(auth)/onboarding");
     }, 10000);
 
     const run = async () => {
@@ -152,11 +175,6 @@ export default function AuthGateScreen() {
           if (typeof __DEV__ !== "undefined" && __DEV__) {
             console.log("[auth-gate] no session/user");
           }
-          const signupState = await getSignupPhoneState();
-          if (signupState.verified) {
-            guardRoute("/(auth)/onboarding", true);
-            return;
-          }
           guardRoute("/(auth)/welcome");
           return;
         }
@@ -169,34 +187,86 @@ export default function AuthGateScreen() {
           return;
         }
 
-        const [signupState, signupSessionId] = await Promise.all([
-          getSignupPhoneState(),
-          getSignupSessionId(),
-        ]);
+        // Optional: single server-side bootstrap (authoritative + fast).
+        if (ENABLE_AUTH_BOOTSTRAP) {
+          try {
+            setStatusText("Bootstrapping your session...");
+            const signupSessionId = await getSignupSessionId();
+            const { data: freshSession } = await supabase.auth.getSession();
+            if (freshSession?.session?.user) {
+              sessionToUse = freshSession.session;
+              userToUse = freshSession.session.user;
+            }
+            if (typeof __DEV__ !== "undefined" && __DEV__) {
+              const baseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+              const fnUrl = baseUrl ? `${baseUrl}/functions/v1/auth-bootstrap` : "missing SUPABASE_URL";
+              console.log("[auth-gate] bootstrap url", fnUrl);
+              console.log("[auth-gate] bootstrap session", { hasSession: !!sessionToUse?.access_token });
+            }
+            const { data: bootstrapData, error: bootstrapError } = await Promise.race([
+              supabase.functions.invoke("auth-bootstrap", {
+                body: { signupSessionId },
+              }),
+              new Promise<{ data: null; error: Error }>((resolve) =>
+                setTimeout(() => resolve({ data: null, error: new Error("bootstrap_timeout") }), 6000)
+              ),
+            ]);
+            if (typeof __DEV__ !== "undefined" && __DEV__) {
+              console.log("[auth-gate] bootstrap", { error: bootstrapError, data: bootstrapData });
+            }
+            if (bootstrapError && bootstrapError.message === "bootstrap_timeout") {
+              setStatusText("Bootstrap timeout, checking profile...");
+            }
+            if (!bootstrapError && bootstrapData) {
+              const verified = bootstrapData.verified === true;
+              const profileCompleted = bootstrapData.profile_completed === true;
+              if (!verified) {
+                guardRoute({
+                  pathname: "/(auth)/verify-phone",
+                  params: {
+                    next: encodeURIComponent("/(auth)/onboarding"),
+                    reason: "required_for_access",
+                  },
+                });
+                return;
+              }
+              guardRoute(profileCompleted ? "/(tabs)/vibes" : "/(auth)/onboarding", true);
+              // Refresh context in background
+              void refreshProfile();
+              void refreshPhoneState();
+              return;
+            }
+          } catch (error) {
+            if (typeof __DEV__ !== "undefined" && __DEV__) {
+              console.log("[auth-gate] bootstrap error", error);
+            }
+          }
+        }
 
-        const flags = await fetchProfileFlags(userToUse.id, sessionToUse?.access_token);
-        const verifiedFromFlags = flags?.phone_verified === true;
-        const completedFromFlags = flags?.profile_completed === true;
-        const verified = verifiedFromFlags || (await refreshPhoneState());
+        void refreshProfile();
+        const verified = await refreshPhoneState();
+        const profileCompleted = authContext.profile?.profile_completed === true;
+
         if (typeof __DEV__ !== "undefined" && __DEV__) {
           console.log("[auth-gate] refreshPhoneState done");
-        }
-        if (typeof __DEV__ !== "undefined" && __DEV__) {
           console.log("[auth-gate] verified", {
             verified,
-            profileCompleted: completedFromFlags ?? profile?.profile_completed ?? null,
+            profileCompleted,
           });
         }
 
         if (!verified) {
           guardRoute({
             pathname: "/(auth)/verify-phone",
-            params: { next: encodeURIComponent("/(auth)/onboarding") },
+            params: {
+              next: encodeURIComponent("/(auth)/onboarding"),
+              reason: "required_for_access",
+            },
           });
           return;
         }
 
-        if (!(completedFromFlags ?? profile?.profile_completed)) {
+        if (!profileCompleted) {
           guardRoute("/(auth)/onboarding", true);
           return;
         }
@@ -217,7 +287,7 @@ export default function AuthGateScreen() {
       active = false;
       clearTimeout(hardFallbackTimer);
     };
-  }, [isLoading, session?.user?.id, profile?.profile_completed, router]);
+  }, [isLoading, user?.id, profile?.profile_completed, router]);
 
   return (
     <View

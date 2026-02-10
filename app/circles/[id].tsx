@@ -38,6 +38,13 @@ type MemberRow = {
   } | null;
 };
 
+const normalizeMemberProfile = (
+  input: MemberRow["profiles"] | MemberRow["profiles"][] | undefined
+): MemberRow["profiles"] => {
+  if (!input) return null;
+  return Array.isArray(input) ? (input[0] ?? null) : input;
+};
+
 export default function CircleDetailScreen() {
   const { profile, user } = useAuth();
   const params = useLocalSearchParams();
@@ -119,7 +126,14 @@ export default function CircleDetailScreen() {
         .select('id,role,status,is_visible,profile_id,profiles (id,full_name,avatar_url,age,location,city,region)')
         .eq('circle_id', circleId);
 
-      const rows = (memberRows || []) as MemberRow[];
+      const rows: MemberRow[] = (memberRows || []).map((row: any) => ({
+        id: String(row.id),
+        role: row.role,
+        status: row.status,
+        is_visible: row.is_visible,
+        profile_id: String(row.profile_id),
+        profiles: normalizeMemberProfile(row.profiles),
+      }));
       setMembers(rows.filter((row) => row.status === 'active' && row.is_visible !== false));
       setPendingMembers(rows.filter((row) => row.status === 'pending'));
     } finally {

@@ -1,8 +1,7 @@
-import { AuthDebugPanel } from "@/components/auth-debug";
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
-import { clearSignupSession, finalizeSignupPhoneVerification } from "@/lib/signup-tracking";
+import { clearSignupSession, finalizeSignupPhoneVerification, getSignupPhoneState } from "@/lib/signup-tracking";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
@@ -245,25 +244,56 @@ export default function Onboarding() {
     setMessage("");
 
     try {
-      const { phoneNumber } = await getSignupPhoneState();
-      if (!phoneNumber) {
+      const signupPhoneState = await getSignupPhoneState();
+      const isPhoneVerified = phoneVerified || signupPhoneState.verified;
+      let phoneNumber: string | null = signupPhoneState.phoneNumber ?? null;
+
+      if (isPhoneVerified && !phoneNumber && user?.id) {
+        // Prefer profiles as source of truth; avoid RPC calls here (can hang on mobile networks).
+        try {
+          const { data: phoneRow, error: phoneRowError } = await Promise.race([
+            supabase
+              .from("profiles")
+              .select("phone_number")
+              .eq("user_id", user.id)
+              .limit(1)
+              .maybeSingle(),
+            new Promise<{ data: null; error: Error }>((resolve) =>
+              setTimeout(() => resolve({ data: null, error: new Error("phone_number_timeout") }), 2500)
+            ),
+          ]);
+          if (!phoneRowError) {
+            const serverPhone = (phoneRow as { phone_number?: string | null } | null)?.phone_number ?? null;
+            if (serverPhone) phoneNumber = serverPhone;
+          }
+        } catch {
+          // best-effort only
+        }
+      }
+
+      if (!isPhoneVerified) {
         Alert.alert(
-          "Phone number missing",
+          "Phone verification required",
           "Please verify your phone number before creating your profile."
         );
         router.replace({
           pathname: "/(auth)/verify-phone",
-          params: { next: encodeURIComponent("/(auth)/onboarding") },
+          params: {
+            next: encodeURIComponent("/(auth)/onboarding"),
+            reason: "required_for_access",
+          },
         });
         return;
       }
 
-      const { data: existingPhoneProfile, error: phoneLookupError } = await supabase
-        .from("profiles")
-        .select("user_id")
-        .eq("phone_number", phoneNumber)
-        .is("deleted_at", null)
-        .maybeSingle();
+      const { data: existingPhoneProfile, error: phoneLookupError } = phoneNumber
+        ? await supabase
+            .from("profiles")
+            .select("user_id")
+            .eq("phone_number", phoneNumber)
+            .is("deleted_at", null)
+            .maybeSingle()
+        : { data: null, error: null };
 
       if (
         phoneLookupError &&
@@ -642,7 +672,11 @@ export default function Onboarding() {
         <Text style={styles.stepSubtitle}>{ONBOARDING_STEPS[currentStep].subtitle}</Text>
       </View>
       
-      <View style={styles.headerRight} />
+      <View style={styles.headerRight}>
+        <TouchableOpacity style={styles.signOutButton} onPress={signOut} accessibilityLabel="Sign out">
+          <Text style={styles.signOutText}>Sign out</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
@@ -1311,6 +1345,20 @@ const styles = StyleSheet.create({
   headerRight: {
     width: 40,
     alignItems: 'flex-end',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  signOutButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: BRAND_TEAL,
+  },
+  signOutText: {
+    fontSize: 13,
+    fontFamily: 'Archivo_700Bold',
+    color: BRAND_TEAL,
   },
   backButton: {
     width: 40,

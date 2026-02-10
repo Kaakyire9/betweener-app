@@ -25,7 +25,7 @@
         ],
         "LSApplicationQueriesSchemes": ["betweenerapp"],
         "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true
+          "NSAllowsArbitraryLoads": false
         }
       }
     },

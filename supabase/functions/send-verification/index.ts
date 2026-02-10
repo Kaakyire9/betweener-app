@@ -144,6 +144,27 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
+    // Only trust userId when the caller is authenticated as that user.
+    // These functions can be called anonymously (verify_jwt=false), so we must not accept arbitrary user IDs.
+    const authHeader = req.headers.get('Authorization') ?? ''
+    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+    let authedUserId: string | null = null
+    if (bearer) {
+      try {
+        const { data: authData, error: authError } = await supabase.auth.getUser(bearer)
+        authedUserId = !authError && authData?.user?.id ? authData.user.id : null
+      } catch {
+        authedUserId = null
+      }
+    }
+    if (userId && authedUserId && userId !== authedUserId) {
+      return new Response(
+        JSON.stringify({ error: 'User mismatch' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+    const effectiveUserId = authedUserId
+
     // Rate limits (defaults)
     const clientIp = getClientIp(req) || 'unknown'
     const environment = Deno.env.get('ENVIRONMENT') || 'production'
@@ -238,7 +259,7 @@ serve(async (req) => {
       .from('phone_verifications')
       .insert({
         signup_session_id: signupSessionId,
-        user_id: userId ?? null,
+        user_id: effectiveUserId ?? null,
         phone_number: cleanedPhone,
         verification_sid: twilioData.sid,
         confidence_score: confidenceScore,

@@ -185,15 +185,20 @@ export const setPendingAuthMethod = async (authMethod: string, oauthProvider?: s
   ]);
 };
 
-export const finalizeSignupPhoneVerification = async () => {
+export const finalizeSignupPhoneVerification = async (): Promise<boolean> => {
   const signupSessionId = await getSignupSessionId();
-  if (!signupSessionId) return;
-  const { error } = await supabase.functions.invoke("finalize-signup", {
+  if (!signupSessionId) return false;
+  const { data, error } = await supabase.functions.invoke("finalize-signup", {
     body: { signupSessionId },
   });
   if (error) {
     console.log("[signup] finalize signup error", error);
+    return false;
   }
+  if (typeof __DEV__ !== "undefined" && __DEV__) {
+    console.log("[signup] finalize signup ok", data ?? null);
+  }
+  return true;
 };
 
 export const consumeSignupMetadata = async () => {

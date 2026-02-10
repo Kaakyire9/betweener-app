@@ -45,3 +45,6 @@ app-example
 
 # firebase
 google-services.json
+
+# temp/backup files
+*.tmp

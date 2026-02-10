@@ -41,7 +41,7 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
   countryLabel = 'Ghana',
   dialCode = '+233',
 }) => {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const theme = useMemo(() => Colors.light, []);
   const [countryModalVisible, setCountryModalVisible] = useState(false);
   const [countrySearch, setCountrySearch] = useState('');
@@ -110,11 +110,16 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
     setLoading(true);
     try {
       const fullNumber = `${selectedCountry.dial}${phoneNumber}`;
+      const accessToken = session?.access_token ?? null;
       const result = await PhoneVerificationService.sendVerificationCode(
         fullNumber,
         effectiveUserId,
-        signupSessionId ?? null
+        signupSessionId ?? null,
+        accessToken
       );
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log('[phone-ui] sendVerificationCode result', result);
+      }
       
       if (result.success && result.verificationSid) {
         setVerificationSid(result.verificationSid);
@@ -152,16 +157,26 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
     setLoading(true);
     try {
       const fullNumber = `${selectedCountry.dial}${phoneNumber}`;
+      const accessToken = session?.access_token ?? null;
       const result = await PhoneVerificationService.verifyCode(
         fullNumber,
         verificationCode,
         effectiveUserId,
-        signupSessionId ?? null
+        signupSessionId ?? null,
+        accessToken
       );
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log('[phone-ui] verifyCode result', result);
+      }
       
       if (result.success && result.verified) {
         Alert.alert('Success', 'Phone number verified successfully!');
-        onPhoneVerified?.(fullNumber);
+        // Ensure any async parent state (e.g. AsyncStorage phone number) is persisted before completion runs.
+        try {
+          await Promise.resolve(onPhoneVerified?.(fullNumber));
+        } catch {
+          // best-effort only
+        }
         onVerificationComplete(true, result.confidenceScore || 0);
       } else {
         Alert.alert('Error', result.error || 'Invalid verification code');

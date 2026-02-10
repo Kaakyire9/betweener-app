@@ -79,6 +79,27 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
+    // Only trust userId when the caller is authenticated as that user.
+    // This function is callable anonymously (verify_jwt=false), so do not accept arbitrary user IDs.
+    const authHeader = req.headers.get('Authorization') ?? ''
+    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+    let authedUserId: string | null = null
+    if (bearer) {
+      try {
+        const { data: authData, error: authError } = await supabase.auth.getUser(bearer)
+        authedUserId = !authError && authData?.user?.id ? authData.user.id : null
+      } catch {
+        authedUserId = null
+      }
+    }
+    if (userId && authedUserId && userId !== authedUserId) {
+      return new Response(
+        JSON.stringify({ error: 'User mismatch' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+    const effectiveUserId = authedUserId
+
     // Rate limits (defaults)
     const clientIp = getClientIp(req) || 'unknown'
     const environment = Deno.env.get('ENVIRONMENT') || 'production'
@@ -164,18 +185,25 @@ serve(async (req) => {
     const attempts = (latestRecord?.attempts ?? 0) + 1
     const confidenceScore = latestRecord?.confidence_score ?? 0
 
+    const approved = twilioData.status === 'approved'
+    const nowIso = new Date().toISOString()
     const updateData: any = {
-      status: twilioData.status === 'approved' ? 'verified' : 'failed',
-      verified_at: twilioData.status === 'approved' ? new Date().toISOString() : null,
-      attempts
+      status: approved ? 'verified' : 'failed',
+      verified_at: approved ? nowIso : null,
+      attempts,
+      // If the user is already authenticated, bind this verification row to the account.
+      // This prevents "verified but unlinked" dead-ends on first sign-in.
+      ...(approved && effectiveUserId ? { user_id: effectiveUserId } : {}),
     }
 
+    // Update all rows for this signup session + phone number (idempotent).
+    // We intentionally do NOT constrain by status='pending' because some flows can retry
+    // after a partial success; we still want to bind user_id and touch verified_at.
     const { error: updateError } = await supabase
       .from('phone_verifications')
       .update(updateData)
       .eq('signup_session_id', signupSessionId)
       .eq('phone_number', phoneNumber)
-      .eq('status', 'pending')
 
     if (updateError) {
       console.error('Database update error:', updateError)
@@ -188,8 +216,8 @@ serve(async (req) => {
       )
     }
 
-    // If verification successful, update user profile
-    if (twilioData.status === 'approved') {
+    // If verification successful, update signup session metadata and (if possible) profile flags.
+    if (approved) {
       const { error: signupError } = await supabase
         .from('signup_events')
         .update({
@@ -201,6 +229,26 @@ serve(async (req) => {
 
       if (signupError) {
         console.error('Signup event update error:', signupError)
+      }
+
+      // Best-effort: persist verified flags on profile when userId is present.
+      // This is safe under Phase-2 because profiles can be minimal.
+      if (effectiveUserId) {
+        try {
+          await supabase
+            .from('profiles')
+            .upsert(
+              {
+                user_id: effectiveUserId,
+                phone_verified: true,
+                phone_number: phoneNumber,
+                updated_at: nowIso,
+              },
+              { onConflict: 'user_id' }
+            )
+        } catch (error) {
+          console.error('Profile upsert error:', error)
+        }
       }
     }
 
