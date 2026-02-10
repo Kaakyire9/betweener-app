@@ -5,25 +5,39 @@
 
 import { Platform } from 'react-native';
 
-const tintColorLight = '#0a7ea4';
-const tintColorDark = '#fff';
+// Intentional Connection palette (teal/oat milk/purple)
+const tintColorPrimary = '#008080';
+const secondaryColor = '#4FA7A3';
+const accentColor = '#7D5BA6';
 
 export const Colors = {
   light: {
-    text: '#11181C',
-    background: '#fff',
-    tint: tintColorLight,
-    icon: '#687076',
-    tabIconDefault: '#687076',
-    tabIconSelected: tintColorLight,
+    text: '#1F2A2A',
+    textMuted: '#5F706C',
+    background: '#F3E5D8',
+    backgroundSubtle: '#F7ECE2',
+    tint: tintColorPrimary,
+    secondary: secondaryColor,
+    accent: accentColor,
+    danger: '#DC2626',
+    outline: '#DCCFC2',
+    icon: '#5F706C',
+    tabIconDefault: '#5F706C',
+    tabIconSelected: tintColorPrimary,
   },
   dark: {
-    text: '#ECEDEE',
-    background: '#151718',
-    tint: tintColorDark,
-    icon: '#9BA1A6',
-    tabIconDefault: '#9BA1A6',
-    tabIconSelected: tintColorDark,
+    text: '#E8F0ED',
+    textMuted: '#9CB3AE',
+    background: '#0F1A1A',
+    backgroundSubtle: '#152222',
+    tint: '#00A0A0',
+    secondary: '#5BC1BB',
+    accent: '#9B7CC8',
+    danger: '#F87171',
+    outline: '#1F2C2C',
+    icon: '#9CB3AE',
+    tabIconDefault: '#9CB3AE',
+    tabIconSelected: '#00A0A0',
   },
 };
 

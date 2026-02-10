@@ -18,6 +18,9 @@ const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 interface PhotoGalleryProps {
   photos: string[];
+  introVideoUrl?: string | null;
+  introVideoThumbnail?: string | null;
+  onOpenVideo?: () => void;
   canEdit?: boolean;
   onAddPhoto?: () => void;
   onRemovePhoto?: (index: number) => void;
@@ -25,6 +28,9 @@ interface PhotoGalleryProps {
 
 export default function PhotoGallery({ 
   photos, 
+  introVideoUrl,
+  introVideoThumbnail,
+  onOpenVideo,
   canEdit = false, 
   onAddPhoto,
   onRemovePhoto 
@@ -70,6 +76,24 @@ export default function PhotoGallery({
   return (
     <View style={styles.container}>
       <View style={styles.grid}>
+          {introVideoUrl ? (
+          <TouchableOpacity
+            style={[styles.photoContainer, { width: itemWidth, height: itemHeight }]}
+            onPress={onOpenVideo}
+            activeOpacity={0.85}
+          >
+            <Image
+              source={{ uri: introVideoThumbnail || photos[0] || '' }}
+              style={styles.photo}
+              resizeMode="cover"
+            />
+            <View style={styles.videoOverlay} />
+            <View style={styles.videoBadge}>
+              <MaterialCommunityIcons name="play" size={18} color="#fff" />
+            </View>
+            <Text style={styles.videoHint}>Tap to play</Text>
+          </TouchableOpacity>
+        ) : null}
         {photos.map((photo, index) => (
           <TouchableOpacity
             key={index}
@@ -252,6 +276,34 @@ const styles = StyleSheet.create({
     color: '#9ca3af',
     marginTop: 4,
     fontWeight: '500',
+  },
+  videoOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+  },
+  videoBadge: {
+    position: 'absolute',
+    right: 8,
+    bottom: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.6)',
+  },
+  videoHint: {
+    position: 'absolute',
+    left: 8,
+    bottom: 8,
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.9)',
+    fontWeight: '600',
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   modalContainer: {
     flex: 1,

@@ -52,7 +52,6 @@ export default function VerifyEmailScreen() {
       if (userEmail) {
         const { data: { user }, error } = await supabase.auth.getUser();
         if (user && user.email_confirmed_at) {
-          console.log('User is verified but session may be missing, attempting sign in');
           setVerifiedAndRedirect();
         }
       }
@@ -68,8 +67,9 @@ export default function VerifyEmailScreen() {
     // Start success animation sequence
     startSuccessAnimation();
     
-    setTimeout(() => {
-      router.replace("/(auth)/onboarding");
+    setTimeout(async () => {
+      // Let auth gate decide the correct next step (phone, onboarding, or app).
+      router.replace("/(auth)/gate");
     }, 3500); // Extended to show full animation
   };
   

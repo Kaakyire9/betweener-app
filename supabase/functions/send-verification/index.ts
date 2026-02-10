@@ -14,7 +14,8 @@ const twilioVerifyServiceSid = Deno.env.get('TWILIO_VERIFY_SERVICE_SID')!
 
 interface SendVerificationRequest {
   phoneNumber: string
-  userId: string
+  userId?: string | null
+  signupSessionId?: string
 }
 
 interface TwilioCarrierInfo {
@@ -31,6 +32,37 @@ interface TwilioVerifyResponse {
   status: string
   valid: boolean
   lookup?: TwilioLookupInfo
+}
+
+const getClientIp = (req: Request) => {
+  const forwarded = req.headers.get('x-forwarded-for')
+  if (forwarded) {
+    return forwarded.split(',')[0]?.trim()
+  }
+  return req.headers.get('cf-connecting-ip') || req.headers.get('x-real-ip') || null
+}
+
+const enforceRateLimit = async (
+  supabase: any,
+  key: string,
+  windowSeconds: number,
+  limit: number
+) => {
+  const { data, error } = await supabase.rpc('bump_rate_limit', {
+    p_key: key,
+    p_window_seconds: windowSeconds,
+    p_limit: limit
+  })
+  if (error) {
+    console.error('Rate limit error:', error)
+    return { allowed: false, error: 'Rate limiter unavailable' }
+  }
+  const row = Array.isArray(data) ? data[0] : data
+  return {
+    allowed: !!row?.allowed,
+    count: row?.current_count ?? 0,
+    windowBucket: row?.window_bucket_out ?? row?.window_bucket ?? null,
+  }
 }
 
 function cleanPhoneNumber(phone: string): string {
@@ -85,11 +117,18 @@ serve(async (req) => {
   }
 
   try {
-    const { phoneNumber, userId }: SendVerificationRequest = await req.json()
+    const { phoneNumber, userId, signupSessionId }: SendVerificationRequest = await req.json()
     
-    if (!phoneNumber || !userId) {
+    const missing: string[] = []
+    if (!phoneNumber) missing.push('phoneNumber')
+    if (!signupSessionId) missing.push('signupSessionId')
+    if (missing.length > 0) {
       return new Response(
-        JSON.stringify({ error: 'Phone number and user ID are required' }),
+        JSON.stringify({
+          error: 'Missing required fields',
+          missing,
+          hasUserId: !!userId,
+        }),
         { 
           status: 400, 
           headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
@@ -104,6 +143,68 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
+
+    // Only trust userId when the caller is authenticated as that user.
+    // These functions can be called anonymously (verify_jwt=false), so we must not accept arbitrary user IDs.
+    const authHeader = req.headers.get('Authorization') ?? ''
+    const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+    let authedUserId: string | null = null
+    if (bearer) {
+      try {
+        const { data: authData, error: authError } = await supabase.auth.getUser(bearer)
+        authedUserId = !authError && authData?.user?.id ? authData.user.id : null
+      } catch {
+        authedUserId = null
+      }
+    }
+    if (userId && authedUserId && userId !== authedUserId) {
+      return new Response(
+        JSON.stringify({ error: 'User mismatch' }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+    const effectiveUserId = authedUserId
+
+    // Rate limits (defaults)
+    const clientIp = getClientIp(req) || 'unknown'
+    const environment = Deno.env.get('ENVIRONMENT') || 'production'
+    const rateChecks = [
+      { name: 'ip_10min', key: `ip:${clientIp}`, windowSeconds: 600, limit: 5 },
+      { name: 'phone_10min', key: `phone:${cleanedPhone}`, windowSeconds: 600, limit: 3 },
+      { name: 'signup_10min', key: `signup:${signupSessionId}`, windowSeconds: 600, limit: 5 },
+    ]
+    if (environment !== 'development') {
+      rateChecks.splice(2, 0, { name: 'phone_day', key: `phone:${cleanedPhone}:day`, windowSeconds: 86400, limit: 5 })
+    }
+    const rateResults = await Promise.all(
+      rateChecks.map(async (rule) => {
+        const res = await enforceRateLimit(supabase, rule.key, rule.windowSeconds, rule.limit)
+        return { ...rule, ...res }
+      })
+    )
+    const blocked = rateResults.find((r) => !r.allowed)
+    if (blocked) {
+      const errorMessage =
+        blocked.name === 'phone_day'
+          ? 'Too many requests. Please wait and try again after 24 hours.'
+          : 'Too many requests. Please wait and try again.'
+      return new Response(
+        JSON.stringify({
+          error: errorMessage,
+          limit: {
+            name: blocked.name,
+            key: blocked.key,
+            windowSeconds: blocked.windowSeconds,
+            limit: blocked.limit,
+            count: blocked.count ?? null,
+            windowBucket: blocked.windowBucket ?? null,
+          },
+          clientIp,
+          serverTime: new Date().toISOString(),
+        }),
+        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
 
     // Send verification via Twilio
     const twilioUrl = `https://verify.twilio.com/v2/Services/${twilioVerifyServiceSid}/Verifications`
@@ -124,13 +225,26 @@ serve(async (req) => {
     })
 
     if (!twilioResponse.ok) {
-      const error = await twilioResponse.text()
-      console.error('Twilio error:', error)
+      const errorText = await twilioResponse.text()
+      let errorJson: any = null
+      try {
+        errorJson = JSON.parse(errorText)
+      } catch {
+        errorJson = null
+      }
+      const twilioError =
+        errorJson?.message || errorJson?.error || errorText || 'Unknown Twilio error'
+      const twilioCode = errorJson?.code || errorJson?.status
+      console.error('Twilio error:', twilioCode, twilioError)
       return new Response(
-        JSON.stringify({ error: 'Failed to send verification code' }),
-        { 
-          status: 500, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        JSON.stringify({
+          error: 'Failed to send verification code',
+          twilioError,
+          twilioCode,
+        }),
+        {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         }
       )
     }
@@ -144,13 +258,16 @@ serve(async (req) => {
     const { error: dbError } = await supabase
       .from('phone_verifications')
       .insert({
-        user_id: userId,
+        signup_session_id: signupSessionId,
+        user_id: effectiveUserId ?? null,
         phone_number: cleanedPhone,
         verification_sid: twilioData.sid,
         confidence_score: confidenceScore,
         carrier_name: twilioData.lookup?.carrier?.name,
         carrier_type: twilioData.lookup?.carrier?.type,
-        status: 'pending'
+        status: 'pending',
+        request_ip: clientIp,
+        request_user_agent: req.headers.get('user-agent')
       })
 
     if (dbError) {
@@ -169,7 +286,6 @@ serve(async (req) => {
         success: true,
         verificationSid: twilioData.sid,
         phoneNumber: cleanedPhone,
-        confidenceScore,
         carrierInfo: twilioData.lookup?.carrier
       }),
       { 

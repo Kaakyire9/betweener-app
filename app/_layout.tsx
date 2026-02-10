@@ -1,62 +1,237 @@
+import { LinearGradient } from "expo-linear-gradient";
+import * as Linking from "expo-linking";
+import { Slot, useRouter } from "expo-router";
+import * as SplashScreen from "expo-splash-screen";
+import { useEffect, useRef, useState } from "react";
+import { Animated, Easing, StyleSheet, Text, View } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import * as Notifications from "expo-notifications";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
+import { Colors } from "@/constants/theme";
+import { useColorScheme } from "@/hooks/use-color-scheme";
+
 import { useAppFonts } from "@/constants/fonts";
 import { AuthProvider } from "@/lib/auth-context";
-import * as Linking from "expo-linking";
-import { Slot } from "expo-router";
-import { useEffect } from "react";
-import { ActivityIndicator, View } from "react-native";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
+import InAppToasts from "@/components/InAppToasts";
+
+// Keep native splash visible until we decide
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function RootLayout() {
   const fontsLoaded = useAppFonts();
+  const router = useRouter();
 
+  const colorScheme = useColorScheme();
+
+  const [showSplash, setShowSplash] = useState(false);
+  const [allowRender, setAllowRender] = useState(false);
+
+  // Logo animations
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+  const logoScale = useRef(new Animated.Value(0.92)).current;
+
+  // Text animations
+  const textOpacity = useRef(new Animated.Value(0)).current;
+  const textTranslate = useRef(new Animated.Value(8)).current;
+
+  // Glow effect
+  const glowOpacity = useRef(new Animated.Value(0)).current;
+  const glowScale = useRef(new Animated.Value(0.9)).current;
+
+  // Handle deep links
   useEffect(() => {
-    // Configure Linking for deep links
-    const prefix = Linking.createURL('/');
-    console.log('App URL prefix:', prefix);
+    Linking.createURL("/");
 
-    // Handle initial URL when app is opened from a link
+    const hasAuthPayload = (url: string) =>
+      url.includes("access_token=") ||
+      url.includes("refresh_token=") ||
+      url.includes("code=") ||
+      url.includes("token_hash=");
+
     Linking.getInitialURL().then((url) => {
       if (url) {
-        console.log('Initial URL received:', url);
-        if (url.includes('auth/callback') || url.includes('#access_token')) {
-          console.log('Auth callback detected in initial URL');
+        if (hasAuthPayload(url)) {
+          AsyncStorage.setItem("last_deep_link_url", url).catch(() => {});
         }
       }
     });
 
-    // Handle URLs when app is running
-    const subscription = Linking.addEventListener('url', async ({ url }) => {
-      console.log('Deep link received while app running:', url);
-      if (url.includes('auth/callback') || url.includes('#access_token')) {
-        console.log('Auth callback detected in running app');
-        try {
-          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-          await AsyncStorage.setItem('last_deep_link_url', url);
-          console.log('Stored deep link URL for callback processing');
-        } catch (error) {
-          console.log('Failed to store deep link URL:', error);
-        }
+    const subscription = Linking.addEventListener("url", ({ url }) => {
+      if (hasAuthPayload(url)) {
+        AsyncStorage.setItem("last_deep_link_url", url).catch(() => {});
       }
     });
 
-    return () => subscription?.remove();
+    return () => subscription.remove();
   }, []);
 
-  if (!fontsLoaded) {
-    return (
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-          <ActivityIndicator size="large" color="#FF6B6B" />
-        </View>
-      </GestureHandlerRootView>
-    );
-  }
+  useEffect(() => {
+    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data as Record<string, any> | undefined;
+      const type = data?.type;
+      if (type === 'message' || type === 'message_reaction') {
+        const chatId = data?.profile_id || data?.reactor_id || data?.user_id;
+        if (chatId) {
+          router.push({
+            pathname: "/chat/[id]",
+            params: {
+              id: String(chatId),
+              userName: data?.name ? String(data.name) : '',
+              userAvatar: data?.avatar_url ? String(data.avatar_url) : '',
+            },
+          });
+          return;
+        }
+      }
+
+      const profileId = data?.profile_id || data?.profileId;
+      if (profileId) {
+        router.push({ pathname: "/profile-view", params: { profileId: String(profileId) } });
+      }
+    });
+
+    return () => subscription.remove();
+  }, [router]);
+
+  // Always release native splash even if fonts hang.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setAllowRender(true);
+      SplashScreen.hideAsync().catch(() => {});
+    }, 1200);
+
+    if (fontsLoaded) {
+      setAllowRender(true);
+      SplashScreen.hideAsync().catch(() => {});
+    }
+
+    return () => clearTimeout(timer);
+  }, [fontsLoaded]);
+
+  if (!allowRender) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AuthProvider>
-        <Slot />
+        <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
+          <Slot />
+          <InAppToasts />
+
+          {showSplash && (
+            <View style={styles.splashOverlay}>
+              {/* Classic luxury background */}
+              <LinearGradient
+                colors={["#070A12", "#0B1220", "#0A1020", "#070A12"]}
+                start={{ x: 0.2, y: 0 }}
+                end={{ x: 0.8, y: 1 }}
+                style={StyleSheet.absoluteFill}
+              />
+
+              {/* Vignette */}
+              <View style={styles.vignette} pointerEvents="none" />
+
+              {/* Glow */}
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.glow,
+                  {
+                    opacity: glowOpacity,
+                    transform: [{ scale: glowScale }],
+                  },
+                ]}
+              >
+                <LinearGradient
+                  colors={[
+                    "rgba(236,72,153,0.55)",
+                    "rgba(99,102,241,0.18)",
+                    "rgba(0,0,0,0)",
+                  ]}
+                  start={{ x: 0.2, y: 0.15 }}
+                  end={{ x: 0.85, y: 0.9 }}
+                  style={StyleSheet.absoluteFill}
+                />
+              </Animated.View>
+
+              {/* Logo + Name */}
+              <View style={styles.center}>
+                <Animated.Image
+                  source={require("../assets/images/splash-icon.png")}
+                  resizeMode="contain"
+                  style={[
+                    styles.logo,
+                    {
+                      opacity: logoOpacity,
+                      transform: [{ scale: logoScale }],
+                    },
+                  ]}
+                />
+
+                <Animated.View
+                  style={{
+                    opacity: textOpacity,
+                    transform: [{ translateY: textTranslate }],
+                    alignItems: "center",
+                  }}
+                >
+                  <Text style={styles.name}>Betweener</Text>
+                  <View style={styles.underline} />
+                </Animated.View>
+              </View>
+            </View>
+          )}
+        </View>
       </AuthProvider>
     </GestureHandlerRootView>
   );
 }
+
+const styles = StyleSheet.create({
+  splashOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 9999,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  center: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+
+  logo: {
+    width: 120,
+    height: 120,
+    marginBottom: 18,
+  },
+
+  name: {
+    fontSize: 34,
+    fontWeight: "800",
+    letterSpacing: 0.7,
+    color: "rgba(255,255,255,0.92)",
+  },
+
+  underline: {
+    marginTop: 10,
+    width: 64,
+    height: 3,
+    borderRadius: 999,
+    backgroundColor: "rgba(236,72,153,0.7)",
+  },
+
+  glow: {
+    position: "absolute",
+    width: 280,
+    height: 280,
+    borderRadius: 280,
+    overflow: "hidden",
+  },
+
+  vignette: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.18)",
+  },
+});

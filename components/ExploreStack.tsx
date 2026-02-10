@@ -1,17 +1,17 @@
 // ExploreStack.tsx
 import type { Match } from "@/types/match";
 import * as Haptics from "expo-haptics";
-import { forwardRef, useEffect, useImperativeHandle, useMemo } from "react";
+import { forwardRef, useEffect, useImperativeHandle } from "react";
 import { Dimensions, StyleSheet, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
-  Extrapolate,
-  interpolate,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-  withTiming,
+    Extrapolate,
+    interpolate,
+    runOnJS,
+    useAnimatedStyle,
+    useSharedValue,
+    withSpring,
+    withTiming,
 } from "react-native-reanimated";
 import ExploreCard from "./ExploreCard";
 
@@ -35,27 +35,7 @@ const EXIT_DISTANCE = SCREEN_WIDTH * 1.2;
 
 const ExploreStack = forwardRef<ExploreStackHandle, Props>(
   ({ matches, currentIndex, setCurrentIndex, recordSwipe, onProfileTap }, ref) => {
-    // debug fallback match so UI is inspectable in dev when matches === []
-    const debugMatch: Match = useMemo(
-      () => ({
-        id: "__debug",
-        name: "Demo",
-        age: 30,
-        tagline: "Demo profile",
-        bio: "Debug profile for layout",
-        location: "",
-        tribe: "",
-        religion: "",
-        interests: [],
-        avatar_url: "",
-        distance: "",
-        lastActive: "",
-        isActiveNow: false,
-      }),
-      []
-    );
-
-    const list = matches && matches.length > 0 ? matches : [debugMatch];
+    const list = matches && matches.length > 0 ? matches : [];
 
     // Shared values for active card
     const translateX = useSharedValue(0);
@@ -113,7 +93,7 @@ const ExploreStack = forwardRef<ExploreStackHandle, Props>(
     // JS callback executed after swipe completes (runs on JS thread)
     const completeSwipe = (dir: "left" | "right" | "superlike") => {
       const current = list[currentIndex];
-      if (current && current.id !== "__debug") {
+      if (current) {
         if (dir === "superlike") recordSwipe(current.id, "superlike", currentIndex);
         else recordSwipe(current.id, dir === "right" ? "like" : "dislike", currentIndex);
       }

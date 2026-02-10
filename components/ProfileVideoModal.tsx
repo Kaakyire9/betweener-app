@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Animated, Dimensions, Modal, PanResponder, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { VideoView, useVideoPlayer } from 'expo-video';
 
 type Props = {
   visible: boolean;
@@ -9,31 +10,36 @@ type Props = {
   onClose: () => void;
 };
 
+const ModalVideoPlayer = ({ uri, shouldPlay }: { uri: string; shouldPlay: boolean }) => {
+  const player = useVideoPlayer(uri, (p) => {
+    p.loop = true;
+    p.muted = false;
+    if (shouldPlay) {
+      try { p.play(); } catch {}
+    }
+  });
+
+  useEffect(() => {
+    if (shouldPlay) {
+      try { player.play(); } catch {}
+    } else {
+      try { player.pause(); } catch {}
+    }
+  }, [player, shouldPlay]);
+
+  return <VideoView style={styles.video} player={player} contentFit="cover" nativeControls={false} />;
+};
+
 export default function ProfileVideoModal({ visible, videoUrl, onClose }: Props) {
   const screenH = Dimensions.get('window').height;
   const translateY = useRef(new Animated.Value(0)).current;
   const opacity = useRef(new Animated.Value(1)).current;
-  const [VideoComponent, setVideoComponent] = useState<any | null>(null);
-  const videoRef = useRef<any|null>(null);
-
-  useEffect(() => {
-    let mounted = true;
-    try {
-      // dynamic require so bundler doesn't break when expo-av isn't available
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const mod = require('expo-av');
-      if (mounted) setVideoComponent(mod.Video || mod.Video || mod);
-    } catch (e) {
-      // expo-av not available; we'll show a fallback message
-    }
-    return () => { mounted = false; };
-  }, []);
 
   useEffect(() => {
     if (visible) {
       Animated.timing(translateY, { toValue: 0, duration: 220, useNativeDriver: true }).start();
       Animated.timing(opacity, { toValue: 1, duration: 220, useNativeDriver: true }).start();
-      // autoplay handled via ref when VideoComponent mounts
+      // autoplay handled by `shouldPlay` on Video
     } else {
       Animated.timing(opacity, { toValue: 0, duration: 180, useNativeDriver: true }).start();
       Animated.timing(translateY, { toValue: screenH, duration: 180, useNativeDriver: true }).start();
@@ -74,13 +80,6 @@ export default function ProfileVideoModal({ visible, videoUrl, onClose }: Props)
     })
   ).current;
 
-  useEffect(() => {
-    // autoplay when component (Video) becomes available and visible
-    if (VideoComponent && visible && videoRef.current && typeof videoRef.current.playAsync === 'function') {
-      try { void videoRef.current.playAsync(); } catch {}
-    }
-  }, [VideoComponent, visible]);
-
   return (
     <Modal animationType="fade" visible={visible} transparent onRequestClose={closeWithAnimation}>
       <BlurViewSafe intensity={80} tint="dark" style={styles.backdrop} />
@@ -96,17 +95,8 @@ export default function ProfileVideoModal({ visible, videoUrl, onClose }: Props)
             </TouchableOpacity>
           </View>
 
-          {VideoComponent && videoUrl ? (
-            // @ts-ignore - dynamic Video component
-            <VideoComponent
-              ref={(r: any) => { videoRef.current = r; }}
-              source={{ uri: videoUrl }}
-              style={styles.video}
-              resizeMode="cover"
-              shouldPlay
-              isLooping
-              useNativeControls={false}
-            />
+          {videoUrl ? (
+            <ModalVideoPlayer uri={videoUrl} shouldPlay={visible} />
           ) : (
             <View style={styles.fallback}>
               <Text style={styles.fallbackText}>Video unavailable in this environment</Text>
