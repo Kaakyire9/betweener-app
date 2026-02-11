@@ -327,9 +327,6 @@ function buildSections(profile: UserProfile): PremiumSection[] {
       body: (() => {
         const text = [
         profile.lookingFor ? profile.lookingFor : null,
-        typeof profile.willingLongDistance === 'boolean'
-          ? `Willing long distance: ${profile.willingLongDistance ? 'Yes' : 'No'}`
-          : null,
         profile.hasChildren ? `Has children: ${profile.hasChildren}` : null,
         profile.wantsChildren ? `Wants children: ${profile.wantsChildren}` : null,
       ]
@@ -357,9 +354,6 @@ function buildAutoSectionsIfNeeded(profile: UserProfile, existing: PremiumSectio
 
   const intentions = [
     profile.lookingFor ? `Looking for: ${profile.lookingFor}` : null,
-    typeof profile.willingLongDistance === 'boolean'
-      ? `Long distance: ${profile.willingLongDistance ? 'Open to it' : 'Prefer local'}`
-      : null,
     profile.hasChildren ? `Has children: ${profile.hasChildren}` : null,
     profile.wantsChildren ? `Wants children: ${profile.wantsChildren}` : null,
   ].filter(Boolean);

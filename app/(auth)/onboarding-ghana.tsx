@@ -365,11 +365,9 @@ export default function Onboarding() {
       }
       
       const profileData = {
-        id: user.id,
-        user_id: user.id,
         full_name: form.fullName,
         age: Number(form.age),
-        gender: form.gender.toUpperCase(),
+        gender: form.gender.toUpperCase() as any,
         bio: form.bio,
         occupation:
           form.occupation === "Other" && customOccupation.trim()
@@ -377,7 +375,7 @@ export default function Onboarding() {
             : form.occupation,
         region: form.region,
         tribe: form.tribe,
-        religion: form.religion.toUpperCase(),
+        religion: form.religion.toUpperCase() as any,
         avatar_url: imageUrl,
         phone_number: phoneNumber,
         phone_verified: true,
@@ -1379,16 +1377,6 @@ const styles = StyleSheet.create({
     color: '#445160',
     textAlign: 'center',
     marginTop: 2,
-  },
-  signOutButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(254,242,242,0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(239,68,68,0.35)',
   },
 
   // Content
