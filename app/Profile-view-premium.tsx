@@ -211,8 +211,6 @@ function parseFallbackProfile(rawParam?: string | string[]): UserProfile | null 
         languages: Array.isArray(parsed.languages_spoken) ? parsed.languages_spoken : undefined,
         currentCountry: parsed.current_country,
         currentCountryCode: parsed.current_country_code,
-        diasporaStatus: parsed.diaspora_status,
-        willingLongDistance: parsed.willing_long_distance,
         exerciseFrequency: parsed.exercise_frequency,
         smoking: parsed.smoking,
         drinking: parsed.drinking,

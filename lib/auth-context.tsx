@@ -52,8 +52,6 @@ type Profile = {
   languages_spoken?: string[];
   // DIASPORA fields
   current_country?: string;
-  diaspora_status?: 'LOCAL' | 'DIASPORA' | 'VISITING';
-  willing_long_distance?: boolean;
   verification_level?: number;
   years_in_diaspora?: number;
   last_ghana_visit?: string;
@@ -675,11 +673,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!user) return { error: new Error('No user found') };
 
     try {
+      // Phase-2 schema dropped some legacy columns; defensively strip them to avoid
+      // PostgREST "schema cache" errors if any older UI still sends them.
+      const safeUpdates: Record<string, any> = { ...(updates as any) };
+      delete safeUpdates.diaspora_status;
+      delete safeUpdates.willing_long_distance;
+
       // Use upsert for profile creation/updates to handle both scenarios
       const { error } = await supabase
         .from('profiles')
         .upsert({
-          ...updates,
+          ...safeUpdates,
           user_id: user.id,
           updated_at: new Date().toISOString(),
         }, {

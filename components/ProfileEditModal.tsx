@@ -358,7 +358,6 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     pets: '',
     languages_spoken: [] as string[],
     // DIASPORA fields (read-only status, editable details only)
-    willing_long_distance: false,
     years_in_diaspora: 0,
     last_ghana_visit: '',
     future_ghana_plans: '',
@@ -409,7 +408,6 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         pets: (profile as any).pets || '',
         languages_spoken: filteredLanguages,
         // DIASPORA fields (preserve existing, don't override status)
-        willing_long_distance: (profile as any).willing_long_distance || false,
         years_in_diaspora: (profile as any).years_in_diaspora || 0,
         last_ghana_visit: (profile as any).last_ghana_visit || '',
         future_ghana_plans: (profile as any).future_ghana_plans || '',
@@ -997,7 +995,6 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       }
       
       // DIASPORA fields (enabled after migration)
-      updateData.willing_long_distance = formData.willing_long_distance;
       if (formData.years_in_diaspora > 0) {
         updateData.years_in_diaspora = formData.years_in_diaspora;
       }

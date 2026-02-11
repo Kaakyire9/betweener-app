@@ -377,8 +377,6 @@ export default function Onboarding() {
         min_age_interest: Number(form.minAgeInterest),
         max_age_interest: Number(form.maxAgeInterest),
         current_country: form.currentCountry,
-        diaspora_status: "LOCAL" as const,
-        willing_long_distance: false,
         years_in_diaspora: 0,
         profile_completed: true,
       };

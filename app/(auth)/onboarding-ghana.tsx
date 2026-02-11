@@ -132,7 +132,6 @@ export default function Onboarding() {
     interests: [] as string[],
     minAgeInterest: "18",
     maxAgeInterest: "35",
-    willingLongDistance: false,
   });
 
   const [image, setImage] = useState<string | null>(null);
@@ -385,8 +384,6 @@ export default function Onboarding() {
         min_age_interest: Number(form.minAgeInterest),
         max_age_interest: Number(form.maxAgeInterest),
         current_country: "Ghana, Africa",
-        diaspora_status: "LOCAL" as const,
-        willing_long_distance: form.willingLongDistance,
         years_in_diaspora: 0,
         profile_completed: true,
       };
