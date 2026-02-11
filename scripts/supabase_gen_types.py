@@ -35,6 +35,23 @@ def run_cmd(project_id: str) -> str:
     return res.stdout.replace("\r\n", "\n")
 
 
+def read_text_any_encoding(path: Path) -> str:
+    """
+    Read a text file that might have been created by PowerShell redirection
+    (often UTF-16 with BOM on Windows), and normalize to a Python str.
+    """
+    raw = path.read_bytes()
+
+    # BOM detection
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw.decode("utf-8-sig")
+    if raw.startswith(b"\xff\xfe") or raw.startswith(b"\xfe\xff"):
+        # utf-16 (endianness inferred from BOM)
+        return raw.decode("utf-16")
+
+    return raw.decode("utf-8")
+
+
 def write_file(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="\n") as f:
@@ -58,7 +75,7 @@ def main() -> int:
         sys.stderr.write(f"Missing {OUT_FILE.as_posix()}. Run: npm run supabase:types\n")
         return 1
 
-    existing = OUT_FILE.read_text(encoding="utf-8").replace("\r\n", "\n")
+    existing = read_text_any_encoding(OUT_FILE).replace("\r\n", "\n")
     if existing != generated:
         sys.stderr.write(
             "\n".join(
@@ -81,4 +98,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
