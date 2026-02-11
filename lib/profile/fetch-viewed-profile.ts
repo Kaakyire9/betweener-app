@@ -17,7 +17,7 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
   const { viewedProfileId, fallbackDistanceLabel, fallbackDistanceKm } = options;
 
   const selectFull =
-    'id, user_id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, religion, personality_type, height, looking_for, love_language, languages_spoken, current_country, current_country_code, diaspora_status, willing_long_distance, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, verification_level';
+    'id, user_id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, religion, personality_type, height, looking_for, love_language, languages_spoken, current_country, current_country_code, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, verification_level';
   const selectMinimal =
     'id, user_id, full_name, age, region, city, location, avatar_url, bio, tribe, religion, personality_type, love_language, is_active, online, verification_level, current_country_code';
 
@@ -103,8 +103,6 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
     languages: Array.isArray((data as any).languages_spoken) ? (data as any).languages_spoken : undefined,
     currentCountry: data.current_country || undefined,
     currentCountryCode: data.current_country_code || undefined,
-    diasporaStatus: data.diaspora_status || undefined,
-    willingLongDistance: typeof data.willing_long_distance === 'boolean' ? data.willing_long_distance : undefined,
     exerciseFrequency: data.exercise_frequency || undefined,
     smoking: data.smoking || undefined,
     drinking: data.drinking || undefined,

@@ -1970,51 +1970,12 @@ export default function ProfileScreen() {
               </View>
             )}
 
-            {/* Diaspora Status with Verification */}
-            {Boolean((profile as any)?.diaspora_status) && (profile as any).diaspora_status !== 'LOCAL' && (
-              <View style={styles.detailRow}>
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons 
-                    name={(profile as any).diaspora_status === 'DIASPORA' ? 'airplane' : 'calendar-clock'} 
-                    size={16} 
-                    color={theme.tint} 
-                  />
-                  <Text style={[styles.detailText, { color: theme.text }]}>
-                    {(profile as any).diaspora_status === 'DIASPORA' ? '🌍 Ghanaian abroad' : '✈️ Visiting Ghana'}
-                  </Text>
-                  {!verificationLoading && (
-                    <VerificationBadge 
-                      level={(profile as any)?.verification_level || 0}
-                      size="small"
-                      onPress={() => setIsVerificationModalVisible(true)}
-                      style={{ marginLeft: 8 }}
-                      rejectionStatus={verificationStatus?.hasRejection ? {
-                        isRejected: true,
-                        rejectionReason: verificationStatus.rejectionReason || undefined,
-                        canResubmit: verificationStatus.canResubmit || true,
-                      } : undefined}
-                    />
-                  )}
-                </View>
-              </View>
-            )}
-
             {/* Years in Diaspora */}
             {typeof (profile as any)?.years_in_diaspora === 'number' && (profile as any).years_in_diaspora > 0 && (
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="calendar" size={16} color={theme.tint} />
                   <Text style={[styles.detailText, { color: theme.text }]}>{profile?.years_in_diaspora ? `${profile.years_in_diaspora} years abroad` : "New diaspora member"}</Text>
-                </View>
-              </View>
-            )}
-
-            {/* Long Distance Preference */}
-            {Boolean((profile as any)?.willing_long_distance) && (
-              <View style={styles.detailRow}>
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="earth" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>Open to long-distance connections</Text>
                 </View>
               </View>
             )}
@@ -3631,4 +3592,3 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
-

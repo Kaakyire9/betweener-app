@@ -215,8 +215,6 @@ function parseFallbackProfile(rawParam?: string | string[]): UserProfile | null 
         languages: Array.isArray(parsed.languages_spoken) ? parsed.languages_spoken : undefined,
         currentCountry: parsed.current_country,
         currentCountryCode: parsed.current_country_code,
-        diasporaStatus: parsed.diaspora_status,
-        willingLongDistance: parsed.willing_long_distance,
         exerciseFrequency: parsed.exercise_frequency,
         smoking: parsed.smoking,
         drinking: parsed.drinking,
@@ -329,9 +327,6 @@ function buildSections(profile: UserProfile): PremiumSection[] {
       body: (() => {
         const text = [
         profile.lookingFor ? profile.lookingFor : null,
-        typeof profile.willingLongDistance === 'boolean'
-          ? `Willing long distance: ${profile.willingLongDistance ? 'Yes' : 'No'}`
-          : null,
         profile.hasChildren ? `Has children: ${profile.hasChildren}` : null,
         profile.wantsChildren ? `Wants children: ${profile.wantsChildren}` : null,
       ]
@@ -359,9 +354,6 @@ function buildAutoSectionsIfNeeded(profile: UserProfile, existing: PremiumSectio
 
   const intentions = [
     profile.lookingFor ? `Looking for: ${profile.lookingFor}` : null,
-    typeof profile.willingLongDistance === 'boolean'
-      ? `Long distance: ${profile.willingLongDistance ? 'Open to it' : 'Prefer local'}`
-      : null,
     profile.hasChildren ? `Has children: ${profile.hasChildren}` : null,
     profile.wantsChildren ? `Wants children: ${profile.wantsChildren}` : null,
   ].filter(Boolean);

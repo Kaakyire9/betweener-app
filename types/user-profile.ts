@@ -30,8 +30,6 @@ export type UserProfile = {
   languages?: string[];
   currentCountry?: string;
   currentCountryCode?: string;
-  diasporaStatus?: string;
-  willingLongDistance?: boolean;
   exerciseFrequency?: string;
   smoking?: string;
   drinking?: string;

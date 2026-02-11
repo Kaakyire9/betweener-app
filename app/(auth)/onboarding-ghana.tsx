@@ -132,7 +132,6 @@ export default function Onboarding() {
     interests: [] as string[],
     minAgeInterest: "18",
     maxAgeInterest: "35",
-    willingLongDistance: false,
   });
 
   const [image, setImage] = useState<string | null>(null);
@@ -366,11 +365,9 @@ export default function Onboarding() {
       }
       
       const profileData = {
-        id: user.id,
-        user_id: user.id,
         full_name: form.fullName,
         age: Number(form.age),
-        gender: form.gender.toUpperCase(),
+        gender: form.gender.toUpperCase() as any,
         bio: form.bio,
         occupation:
           form.occupation === "Other" && customOccupation.trim()
@@ -378,15 +375,13 @@ export default function Onboarding() {
             : form.occupation,
         region: form.region,
         tribe: form.tribe,
-        religion: form.religion.toUpperCase(),
+        religion: form.religion.toUpperCase() as any,
         avatar_url: imageUrl,
         phone_number: phoneNumber,
         phone_verified: true,
         min_age_interest: Number(form.minAgeInterest),
         max_age_interest: Number(form.maxAgeInterest),
         current_country: "Ghana, Africa",
-        diaspora_status: "LOCAL" as const,
-        willing_long_distance: form.willingLongDistance,
         years_in_diaspora: 0,
         profile_completed: true,
       };
@@ -1382,16 +1377,6 @@ const styles = StyleSheet.create({
     color: '#445160',
     textAlign: 'center',
     marginTop: 2,
-  },
-  signOutButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(254,242,242,0.9)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(239,68,68,0.35)',
   },
 
   // Content

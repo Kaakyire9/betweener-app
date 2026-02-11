@@ -358,11 +358,9 @@ export default function Onboarding() {
       }
       
       const profileData = {
-        id: user.id,
-        user_id: user.id,
         full_name: form.fullName,
         age: Number(form.age),
-        gender: form.gender.toUpperCase(),
+        gender: form.gender.toUpperCase() as any,
         bio: form.bio,
         occupation:
           form.occupation === "Other" && customOccupation.trim()
@@ -370,15 +368,13 @@ export default function Onboarding() {
             : form.occupation,
         region: form.region,
         tribe: form.tribe,
-        religion: form.religion.toUpperCase(),
+        religion: form.religion.toUpperCase() as any,
         avatar_url: imageUrl,
         phone_number: phoneNumber,
         phone_verified: true,
         min_age_interest: Number(form.minAgeInterest),
         max_age_interest: Number(form.maxAgeInterest),
         current_country: form.currentCountry,
-        diaspora_status: "LOCAL" as const,
-        willing_long_distance: false,
         years_in_diaspora: 0,
         profile_completed: true,
       };

@@ -6,63 +6,16 @@ import { Session, User } from '@supabase/supabase-js';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { Database } from '@/supabase/types/database';
 
-type Profile = {
-  id: string;
-  user_id: string;
-  full_name: string;
-  age: number;
-  gender: string;
-  bio: string;
-  region: string;
-  tribe: string;
-  religion: string;
-  avatar_url: string | null;
-  location?: string | null;
-  latitude?: number | null;
-  longitude?: number | null;
-  location_precision?: string | null;
-  location_updated_at?: string | null;
-  superlikes_left?: number | null;
-  min_age_interest: number;
-  max_age_interest: number;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-  // Photo upload and profile editing fields
-  occupation?: string;
-  education?: string;
-  height?: string;
-  looking_for?: string;
-  photos?: string[];
-  // HIGH PRIORITY lifestyle fields
-  exercise_frequency?: string;
-  smoking?: string;
-  drinking?: string;
-  // HIGH PRIORITY family fields
-  has_children?: string;
-  wants_children?: string;
-  // HIGH PRIORITY personality fields
-  personality_type?: string;
-  love_language?: string;
-  // HIGH PRIORITY living situation fields
-  living_situation?: string;
-  pets?: string;
-  // HIGH PRIORITY languages field
-  languages_spoken?: string[];
-  // DIASPORA fields
-  current_country?: string;
-  diaspora_status?: 'LOCAL' | 'DIASPORA' | 'VISITING';
-  willing_long_distance?: boolean;
-  verification_level?: number;
-  years_in_diaspora?: number;
-  last_ghana_visit?: string;
-  future_ghana_plans?: string;
-  public_key?: string | null;
-  phone_verified?: boolean;
-  phone_number?: string | null;
-  profile_completed?: boolean;
-};
+type Profile = Database['public']['Tables']['profiles']['Row'];
+
+// Only allow writing actual DB columns (compile-time enforced). Also prevent callers
+// from setting identity/system columns; those are controlled in auth-context.
+type ProfileUpdateInput = Omit<
+  Database['public']['Tables']['profiles']['Update'],
+  'id' | 'user_id' | 'created_at' | 'updated_at'
+>;
 
 type AuthContextType = {
   // Auth State
@@ -88,7 +41,7 @@ type AuthContextType = {
   refreshPhoneState: () => Promise<boolean>;
   
   // Profile Actions
-  updateProfile: (updates: Partial<Profile>) => Promise<{ error: Error | null }>;
+  updateProfile: (updates: ProfileUpdateInput) => Promise<{ error: Error | null }>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -671,7 +624,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const updateProfile = async (updates: Partial<Profile>) => {
+  const updateProfile = async (updates: ProfileUpdateInput) => {
     if (!user) return { error: new Error('No user found') };
 
     try {
