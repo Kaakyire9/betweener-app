@@ -1,6 +1,7 @@
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/lib/auth-context";
+import { haptics } from "@/lib/haptics";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -20,6 +21,8 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import Notice from "@/components/ui/Notice";
+import { ChatListSkeleton } from "@/components/ui/Skeleton";
 
 // Chat conversation type
 type ConversationType = {
@@ -101,6 +104,7 @@ export default function ChatScreen() {
   
   const [conversations, setConversations] = useState<ConversationType[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'pinned'>('all');
@@ -234,6 +238,7 @@ export default function ChatScreen() {
       if (error) {
         console.log('[chat] messages fetch error', error);
         setConversations([]);
+        setLoadError(error.message || "Failed to load chats");
         return;
       }
 
@@ -286,6 +291,7 @@ export default function ChatScreen() {
       }
       if (otherUserIds.length === 0) {
         setConversations([]);
+        setLoadError(null);
         return;
       }
 
@@ -297,6 +303,7 @@ export default function ChatScreen() {
       if (profilesError) {
         console.log('[chat] profiles fetch error', profilesError);
         setConversations([]);
+        setLoadError(profilesError.message || "Failed to load chats");
         return;
       }
 
@@ -374,6 +381,7 @@ export default function ChatScreen() {
 
       const hydrated = await applyChatPrefs(nextConversations, serverPrefs);
       setConversations(hydrated);
+      setLoadError(null);
     } finally {
       setIsLoading(false);
     }
@@ -780,6 +788,7 @@ export default function ChatScreen() {
           pressed && styles.conversationItemPressed,
         ]}
         onPress={() => {
+          void haptics.tap();
           void markAsRead(item.id);
           openConversation(item);
         }}
@@ -965,8 +974,20 @@ export default function ChatScreen() {
   return (
     <SafeAreaView style={styles.container}>
       {renderHeader()}
-      
-      {filteredConversations.length === 0 ? (
+
+      {loadError && conversations.length === 0 ? (
+        <Notice
+          title="Couldn't load chats"
+          message="Check your connection and try again."
+          actionLabel="Retry"
+          onAction={() => void fetchConversations()}
+          icon="cloud-alert"
+        />
+      ) : null}
+
+      {isLoading && conversations.length === 0 ? (
+        <ChatListSkeleton />
+      ) : filteredConversations.length === 0 ? (
         renderEmptyState()
       ) : (
         <FlatList
@@ -1338,4 +1359,3 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       elevation: 8,
     },
   });
-

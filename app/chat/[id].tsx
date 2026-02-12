@@ -4913,6 +4913,7 @@ export default function ConversationScreen() {
     }
     const trimmed = inputText.trim();
     if (!trimmed || !user?.id || !conversationId) return;
+    Haptics.selectionAsync().catch(() => {});
     const nextType: MessageType['type'] = 'text';
     const tempId = `temp-${Date.now()}`;
     const optimistic: MessageType = {
@@ -11946,6 +11947,5 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: Colors.light.background,
     },
   });
-
 
 

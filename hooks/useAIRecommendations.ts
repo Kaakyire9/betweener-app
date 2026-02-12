@@ -95,6 +95,8 @@ export default function useAIRecommendations(
   // Start empty; prefer server-sourced profiles. Mocks are only a fallback
   // when the server cannot be reached.
   const [matches, setMatches] = useState<Match[]>([]);
+  const [lastError, setLastError] = useState<Error | null>(null);
+  const [lastFetchedAt, setLastFetchedAt] = useState<number | null>(null);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [lastMutualMatch, setLastMutualMatch] = useState<Match | null>(null);
   const [swipeHistory, setSwipeHistory] = useState<Array<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }>>([]);
@@ -873,6 +875,8 @@ export default function useAIRecommendations(
           });
           const withSigned = await resolveProfileVideos(mapped);
           setMatches(filterDiscoverable(withSigned));
+          setLastError(null);
+          setLastFetchedAt(Date.now());
           if (typeof __DEV__ !== 'undefined' && __DEV__) {
             console.log('[useAIRecommendations] fetched matches from server', { count: mapped.length, sample: mapped.slice(0, 3) });
           }
@@ -883,9 +887,12 @@ export default function useAIRecommendations(
         // returned zero rows, leave `matches` empty so the UI shows the empty state.
         if (error) {
           console.log('[useAIRecommendations] profiles query error (falling back to mocks)', error);
+          setLastError(error as any);
         } else if (Array.isArray(data) && data.length === 0) {
           if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] profiles query returned 0 rows - leaving matches empty');
           setMatches([]);
+          setLastError(null);
+          setLastFetchedAt(Date.now());
           return;
         }
       } else {
@@ -897,12 +904,14 @@ export default function useAIRecommendations(
     } catch (e) {
       console.log('[useAIRecommendations] fetch error', e);
       setMatches([]);
+      setLastError(e as any);
       return;
     }
     // If we reached here it means a server fetch was attempted and failed
     // (or returned no profiles). Leave matches empty to avoid mock data.
     console.log('[useAIRecommendations] leaving matches empty after fetch failure');
     setMatches([]);
+    setLastError((prev) => prev ?? new Error('fetch_failed'));
   }, [userId, mode, activeWindowMinutes, resolvedDistanceUnit, getStoredDistanceUnit]);
 
     // Fetch matches on mount and when userId changes
@@ -984,5 +993,17 @@ export default function useAIRecommendations(
     }
   }, []);
 
-  return { matches, recordSwipe, swipeHistory, undoLastSwipe, refreshMatches, smartCount, lastMutualMatch, triggerMutualMatch, fetchProfileDetails } as const;
+  return {
+    matches,
+    recordSwipe,
+    swipeHistory,
+    undoLastSwipe,
+    refreshMatches,
+    smartCount,
+    lastMutualMatch,
+    triggerMutualMatch,
+    fetchProfileDetails,
+    lastError,
+    lastFetchedAt,
+  } as const;
 }

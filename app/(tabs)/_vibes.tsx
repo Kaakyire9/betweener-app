@@ -11,6 +11,7 @@ import { requestAndSavePreciseLocation, saveManualCityLocation } from "@/hooks/u
 import { useMoments, type MomentUser } from '@/hooks/useMoments';
 import useVibesFeed from "@/hooks/useVibesFeed";
 import { useAuth } from "@/lib/auth-context";
+import { haptics } from "@/lib/haptics";
 import { recordProfileSignal } from '@/lib/profile-signals';
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -29,6 +30,9 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import VibesAllMomentsModal from "@/components/vibes/VibesAllMomentsModal";
 import VibesMomentsStrip from "@/components/vibes/VibesMomentsStrip";
+import Notice from "@/components/ui/Notice";
+import { ExploreStackSkeleton } from "@/components/ui/Skeleton";
+import { isLikelyNetworkError } from "@/lib/network";
 
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
@@ -99,6 +103,8 @@ export default function ExploreScreen() {
     undoLastSwipe,
     refresh: refreshMatches,
     refreshing: refreshingMatches,
+    loading: loadingMatches,
+    error: matchesError,
     smartCount,
     lastMutualMatch,
     fetchProfileDetails,
@@ -113,6 +119,7 @@ export default function ExploreScreen() {
   });
 
   const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
+  const [offlineNotice, setOfflineNotice] = useState<string | null>(null);
   const [momentViewerVisible, setMomentViewerVisible] = useState(false);
   const [momentCreateVisible, setMomentCreateVisible] = useState(false);
   const [momentStartUserId, setMomentStartUserId] = useState<string | null>(null);
@@ -124,8 +131,28 @@ export default function ExploreScreen() {
   useEffect(() => {
     if (lastMutualMatch) {
       setCelebrationMatch(lastMutualMatch);
+      void haptics.success();
     }
   }, [lastMutualMatch]);
+
+  useEffect(() => {
+    if (!matchesError) {
+      setOfflineNotice(null);
+      return;
+    }
+    // Conservative: only show the offline-style notice when the feed is empty,
+    // so it doesn't get in the way of swiping when data is already present.
+    if (matchList.length === 0) {
+      if (isLikelyNetworkError(matchesError)) {
+        const msg = String((matchesError as any)?.message || matchesError);
+        setOfflineNotice(msg);
+      } else {
+        setOfflineNotice(null);
+      }
+    } else {
+      setOfflineNotice(null);
+    }
+  }, [matchList.length, matchesError]);
 
   const resolvedDistanceUnit = useMemo(
     () => (distanceUnit === 'auto' ? resolveAutoUnit() : distanceUnit),
@@ -770,10 +797,24 @@ export default function ExploreScreen() {
             />
           ) : null}
 
+          {offlineNotice ? (
+            <Notice
+              title="Couldn't load new profiles"
+              message="Check your connection and try again."
+              actionLabel="Retry"
+              onAction={() => {
+                setOfflineNotice(null);
+                handleRefreshVibes();
+              }}
+              icon="cloud-alert"
+            />
+          ) : null}
 
           {/* CARD STACK */}
           <View style={styles.stackWrapper}>
-            {!exhausted ? (
+            {loadingMatches ? (
+              <ExploreStackSkeleton />
+            ) : !exhausted ? (
               <ExploreStack
                 ref={stackRef}
                 matches={matchList}

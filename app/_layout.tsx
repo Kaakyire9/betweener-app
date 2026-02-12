@@ -3,7 +3,7 @@ import * as Linking from "expo-linking";
 import { Slot, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useRef, useState } from "react";
-import { Animated, Easing, StyleSheet, Text, View } from "react-native";
+import { Animated, Button, Easing, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import * as Notifications from "expo-notifications";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -14,7 +14,7 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAppFonts } from "@/constants/fonts";
 import { AuthProvider } from "@/lib/auth-context";
 import InAppToasts from "@/components/InAppToasts";
-import { initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
+import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
 
 // Keep native splash visible until we decide
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -121,6 +121,28 @@ function RootLayout() {
         <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
           <Slot />
           <InAppToasts />
+
+          {/* TEMP (DEV): Sentry wizard test button. Remove after you confirm events arrive. */}
+          {typeof __DEV__ !== "undefined" && __DEV__ ? (
+            <View pointerEvents="box-none" style={styles.sentryTestWrap}>
+              <View style={styles.sentryTestButton}>
+                <Button
+                  title="Try!"
+                  onPress={async () => {
+                    try {
+                      console.log("[sentry-test] hasDsn", !!process.env.EXPO_PUBLIC_SENTRY_DSN);
+                      captureException(new Error("First error"));
+                      const Sentry = require("@sentry/react-native");
+                      await Sentry.flush(2000);
+                      console.log("[sentry-test] flushed");
+                    } catch (e) {
+                      console.log("[sentry-test] failed", e);
+                    }
+                  }}
+                />
+              </View>
+            </View>
+          ) : null}
 
           {showSplash && (
             <View style={styles.splashOverlay}>
@@ -237,6 +259,17 @@ const styles = StyleSheet.create({
   vignette: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.18)",
+  },
+
+  sentryTestWrap: {
+    position: "absolute",
+    right: 12,
+    bottom: 24,
+    zIndex: 10001,
+  },
+
+  sentryTestButton: {
+    opacity: 0.9,
   },
 });
 

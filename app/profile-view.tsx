@@ -15,6 +15,7 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import type { ViewToken } from '@shopify/flash-list';
 import { FlashList } from '@shopify/flash-list';
 import IntentRequestSheet from '@/components/IntentRequestSheet';
+import { ProfileHeroSkeleton } from '@/components/ui/Skeleton';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { VideoView, useVideoPlayer } from 'expo-video';
@@ -1438,9 +1439,7 @@ export default function ProfileViewPremiumV2Screen() {
       />
 
       {isLoading ? (
-        <View style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
-          <Text style={{ color: theme.textMuted }}>Loading...</Text>
-        </View>
+        <ProfileHeroSkeleton />
       ) : (
         <View style={stylesStatic.heroDetailsWrap}>
           <View

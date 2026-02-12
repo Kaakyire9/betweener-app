@@ -86,6 +86,8 @@ export default function useVibesFeed({
     smartCount,
     lastMutualMatch,
     fetchProfileDetails,
+    lastError,
+    lastFetchedAt,
   } = useAIRecommendations(userId ?? undefined, {
     mode,
     activeWindowMinutes,
@@ -244,6 +246,8 @@ export default function useVibesFeed({
     refreshing,
     refreshRemaining: Math.max(0, 3 - refreshCount),
     loading: !hasLoadedRef.current && filteredProfiles.length === 0,
+    error: lastError,
+    lastFetchedAt,
     fetchNextBatch: refresh,
     recordSwipe,
     undoLastSwipe,
