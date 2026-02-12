@@ -7,6 +7,7 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Database } from '@/supabase/types/database';
+import { setSentryUser } from '@/lib/telemetry/sentry';
 
 type Profile = Database['public']['Tables']['profiles']['Row'];
 
@@ -242,6 +243,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const isAuthenticated = !!session && !!user;
   const hasProfile = !!profile && profile.profile_completed === true;
   const isEmailVerified = !!user?.email_confirmed_at;
+
+  // Attach user id to crash/error reports (no PII beyond user id).
+  useEffect(() => {
+    setSentryUser(user?.id ?? null);
+  }, [user?.id]);
 
   // Initialize auth state
   const getAccessToken = async () => {

@@ -14,11 +14,15 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAppFonts } from "@/constants/fonts";
 import { AuthProvider } from "@/lib/auth-context";
 import InAppToasts from "@/components/InAppToasts";
+import { initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
 
 // Keep native splash visible until we decide
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
-export default function RootLayout() {
+// Initialize telemetry as early as possible (safe no-op if DSN isn't set).
+initSentry();
+
+function RootLayout() {
   const fontsLoaded = useAppFonts();
   const router = useRouter();
 
@@ -235,3 +239,5 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.18)",
   },
 });
+
+export default wrapWithSentry(RootLayout);

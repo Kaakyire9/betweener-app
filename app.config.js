@@ -17,6 +17,9 @@ module.exports = ({ config }) => {
       '@react-native-community/datetimepicker',
       'expo-audio',
       'expo-apple-authentication',
+      // Sentry build-time integration (sourcemaps, release tracking).
+      // Configure auth in CI/EAS via env vars (SENTRY_AUTH_TOKEN, SENTRY_ORG, SENTRY_PROJECT).
+      '@sentry/react-native',
     ],
     ios: {
       ...config.ios,
