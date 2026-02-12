@@ -59,7 +59,7 @@ export default function WelcomeScreen() {
 
         <View style={styles.footer}>
           <Text style={styles.legal}>
-            By tapping "Create account" or "Sign in", you agree to our{" "}
+            {"By tapping \"Create account\" or \"Sign in\", you agree to our "}
             <Text style={styles.legalLink}>Terms</Text>. Learn how we process
             your data in our <Text style={styles.legalLink}>Privacy Policy</Text>{" "}
             and <Text style={styles.legalLink}>Cookies Policy</Text>.

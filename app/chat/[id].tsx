@@ -743,19 +743,11 @@ const MessageRowItem = memo(
     onOpenViewOnce,
     viewOnceViewedByMe,
     viewOnceViewedByPeer,
-    highlightQuery,
-    onHighlightPress,
-    now,
-  }: MessageRowItemProps) => {
-    if (item.type === 'system' || item.isSystem) {
-      return (
-        <View style={styles.systemRow}>
-          <View style={styles.systemBubble}>
-            <Text style={styles.systemText}>{item.text}</Text>
-          </View>
-        </View>
-      );
-    }
+      highlightQuery,
+      onHighlightPress,
+      now,
+    }: MessageRowItemProps) => {
+    const isSystemRow = item.type === 'system' || item.isSystem;
     const focusPulse = useRef(new Animated.Value(0)).current;
     const accent = isMyMessage ? Colors.light.background : theme.tint;
     const focusPulseStyle = useMemo(() => ({
@@ -1057,6 +1049,16 @@ const MessageRowItem = memo(
       });
       return <Text style={baseStyle}>{nodes}</Text>;
     }, [highlightQuery, isMyMessage, item.deletedForAll, item.text, styles]);
+
+    if (isSystemRow) {
+      return (
+        <View style={styles.systemRow}>
+          <View style={styles.systemBubble}>
+            <Text style={styles.systemText}>{item.text}</Text>
+          </View>
+        </View>
+      );
+    }
 
     return (
       <View style={styles.messageContainer}>
@@ -1732,6 +1734,8 @@ const MessageRowItem = memo(
     prev.videoSize?.height === next.videoSize?.height &&
     prev.now === next.now
 );
+
+MessageRowItem.displayName = "MessageRowItem";
 
 export default function ConversationScreen() {
   const { user, profile } = useAuth();
@@ -11942,7 +11946,6 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: Colors.light.background,
     },
   });
-
 
 
 

@@ -123,21 +123,14 @@ const ExploreStack = forwardRef<ExploreStackHandle, Props>(
       } as any;
     }, []);
 
-    // stacked style generator (non-active cards)
-    const stackedStyle = (i: number) =>
-      useAnimatedStyle(() => {
-        const diff = i - currentIndex;
-        if (diff <= 0) {
-          return { transform: [{ translateY: 0 }, { scale: 1 }], opacity: 1 } as any;
-        }
-        const ty = diff * 12;
-        const s = 1 - Math.min(diff * 0.04, 0.12);
-        const op = 1 - Math.min(diff * 0.08, 0.6);
-        return {
-          transform: [{ translateY: withTiming(ty, { duration: 300 }) }, { scale: withTiming(s, { duration: 300 }) }],
-          opacity: withTiming(op, { duration: 300 }),
-        } as any;
-      }, [currentIndex, i]);
+    const stackedStyle = (i: number) => {
+      const diff = i - currentIndex;
+      if (diff <= 0) return { transform: [{ translateY: 0 }, { scale: 1 }], opacity: 1 } as any;
+      const ty = diff * 12;
+      const s = 1 - Math.min(diff * 0.04, 0.12);
+      const op = 1 - Math.min(diff * 0.08, 0.6);
+      return { transform: [{ translateY: ty }, { scale: s }], opacity: op } as any;
+    };
 
     // Pan gesture via GestureDetector
     const pan = Gesture.Pan()
@@ -205,6 +198,8 @@ const ExploreStack = forwardRef<ExploreStackHandle, Props>(
     );
   }
 );
+
+ExploreStack.displayName = "ExploreStack";
 
 export default ExploreStack;
 

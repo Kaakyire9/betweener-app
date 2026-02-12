@@ -115,6 +115,8 @@ const InboxItemCard = memo((props: InboxItemCardProps) => {
   );
 });
 
+InboxItemCard.displayName = "InboxItemCard";
+
 export default InboxItemCard;
 
 const createStyles = (theme: typeof Colors.light, isDark: boolean) =>

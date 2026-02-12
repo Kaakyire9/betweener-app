@@ -271,56 +271,10 @@ export default function ExploreScreen() {
   };
 
   const floatingLayout = getFloatingCardLayout(windowWidth);
-  // Guarded entrance animation: use Reanimated worklets when available,
-  // otherwise fallback to RN Animated (already implemented above).
-  let ReanimatedModule: any = null;
-  let AnimatedRe: any = null;
-  let canUseReanimated = false;
-  try {
-    // dynamic require so bundlers don't fail in environments without the native runtime
-    // @ts-ignore
-    ReanimatedModule = require("react-native-reanimated");
-    // prefer default export if present
-    AnimatedRe = ReanimatedModule.default || ReanimatedModule;
-    canUseReanimated = !!(
-      ReanimatedModule &&
-      typeof ReanimatedModule.useSharedValue === "function" &&
-      typeof ReanimatedModule.useAnimatedStyle === "function" &&
-      typeof ReanimatedModule.withTiming === "function"
-    );
-  } catch {}
-
-  // fallback Animated values so the existing Animated.View path works
   const fallbackEntranceTranslate = useRef(new Animated.Value(12)).current;
   const fallbackEntranceOpacity = useRef(new Animated.Value(0)).current;
 
-  // Reanimated shared values and animated style (only created when available)
-  const rTranslate = canUseReanimated
-    ? ReanimatedModule.useSharedValue(12)
-    : null;
-  const rOpacity = canUseReanimated
-    ? ReanimatedModule.useSharedValue(0)
-    : null;
-
-  const rStyle = canUseReanimated
-    ? ReanimatedModule.useAnimatedStyle(() => ({
-        opacity: rOpacity.value,
-        transform: [{ translateY: rTranslate.value }],
-      }))
-    : null;
-
   useEffect(() => {
-    if (canUseReanimated && rTranslate && rOpacity) {
-      try {
-        rTranslate.value = ReanimatedModule.withTiming(0, { duration: 420 });
-        rOpacity.value = ReanimatedModule.withTiming(1, { duration: 360 });
-        fallbackEntranceTranslate.setValue(0);
-        fallbackEntranceOpacity.setValue(1);
-      } catch {}
-      return;
-    }
-
-    // Fallback RN Animated path (existing behavior)
     Animated.parallel([
       Animated.timing(fallbackEntranceTranslate, {
         toValue: 0,
@@ -335,10 +289,7 @@ export default function ExploreScreen() {
         useNativeDriver: true,
       }),
     ]).start();
-  }, []);
-
-  // animated wrapper component for Reanimated if available
-  const AnimatedReView = canUseReanimated ? (AnimatedRe && (AnimatedRe.View || AnimatedRe)) : null;
+  }, [fallbackEntranceOpacity, fallbackEntranceTranslate]);
 
   const distanceChipOptions = useMemo(() => {
     const base = [5, 10, 25, 50, 100];
@@ -538,55 +489,6 @@ export default function ExploreScreen() {
   const exhausted = currentIndex >= matchList.length;
 
   function NoMoreProfiles() {
-    if (canUseReanimated && ReanimatedModule && AnimatedReView) {
-      const noMoreTranslate = ReanimatedModule.useSharedValue(18);
-      const noMoreOpacity = ReanimatedModule.useSharedValue(0);
-
-      useEffect(() => {
-        try {
-          noMoreTranslate.value = ReanimatedModule.withTiming(0, { duration: 420 });
-          noMoreOpacity.value = ReanimatedModule.withTiming(1, { duration: 360 });
-        } catch {}
-      }, []);
-
-      const noMoreStyle = ReanimatedModule.useAnimatedStyle(() => ({
-        opacity: noMoreOpacity.value,
-        transform: [{ translateY: noMoreTranslate.value }],
-      }));
-
-      return (
-        // @ts-ignore - conditional AnimatedReView
-        <AnimatedReView style={noMoreStyle}>
-          <View style={styles.emptyStateContainer}>
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>No new profiles right now</Text>
-              <Text style={styles.emptySubtitle}>Check back later or refresh for a new set.</Text>
-              <View style={styles.emptyActions}>
-                <TouchableOpacity
-                  style={[styles.primaryButton]}
-                  onPress={() => {
-                    void refreshMatches();
-                    setCurrentIndex(0);
-                  }}
-                >
-                  <Text style={styles.primaryButtonText}>Refresh Vibes</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.ghostButton}
-                  onPress={() => {
-                    setActiveTab('nearby');
-                  }}
-                >
-                  <Text style={styles.ghostButtonText}>Browse Nearby</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </AnimatedReView>
-      );
-    }
-
-    // fallback Animated entrance
     const noMoreTranslate = useRef(new Animated.Value(18)).current;
     const noMoreOpacity = useRef(new Animated.Value(0)).current;
 
@@ -595,13 +497,13 @@ export default function ExploreScreen() {
         Animated.timing(noMoreTranslate, { toValue: 0, duration: 420, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
         Animated.timing(noMoreOpacity, { toValue: 1, duration: 360, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
       ]).start();
-    }, []);
+    }, [noMoreOpacity, noMoreTranslate]);
 
     return (
       <Animated.View style={[{ transform: [{ translateY: noMoreTranslate }], opacity: noMoreOpacity }, styles.emptyStateContainer]}>
         <View style={styles.emptyCard}>
-              <Text style={styles.emptyTitle}>No new profiles right now</Text>
-              <Text style={styles.emptySubtitle}>Check back later or refresh for a new set.</Text>
+          <Text style={styles.emptyTitle}>No new profiles right now</Text>
+          <Text style={styles.emptySubtitle}>Check back later or refresh for a new set.</Text>
           <View style={styles.emptyActions}>
             <TouchableOpacity
               style={[styles.primaryButton]}

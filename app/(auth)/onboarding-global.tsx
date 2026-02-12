@@ -1054,7 +1054,7 @@ export default function Onboarding() {
               <Text style={styles.requiredBadgeText}>Required</Text>
             </View>
           </View>
-          <Text style={styles.inputHint}>Select what you're passionate about</Text>
+          <Text style={styles.inputHint}>{"Select what you're passionate about"}</Text>
           <View style={styles.interestsGrid}>
             {INTERESTS.map((interest) => (
               <TouchableOpacity

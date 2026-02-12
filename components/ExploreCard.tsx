@@ -7,22 +7,7 @@ import type { Match } from "@/types/match";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AccessibilityInfo, Animated, Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-
-// guarded dynamic require for Reanimated to keep compatibility with Expo Go
-let ReanimatedModule: any = null;
-let canUseReanimated = false;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  ReanimatedModule = require('react-native-reanimated');
-  canUseReanimated = !!(
-    ReanimatedModule &&
-    typeof ReanimatedModule.useSharedValue === 'function' &&
-    typeof ReanimatedModule.useAnimatedStyle === 'function' &&
-    typeof ReanimatedModule.withTiming === 'function'
-  );
-} catch (e) {}
-// helper to access the animated View component (supports default export shape)
-const ReanimatedAnimated: any = ReanimatedModule ? (ReanimatedModule.default || ReanimatedModule) : null;
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const isDistanceLabel = (label?: string) => {
   if (!label) return false;
@@ -54,15 +39,6 @@ const withAlpha = (hex: string, alpha: number) => {
   const b = bigint & 255;
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
 };
-// safe-area detection (optional, measured if available)
-let useSafeAreaInsetsHook: any = null;
-let hasSafeAreaHook = false;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const safe = require('react-native-safe-area-context');
-  useSafeAreaInsetsHook = safe && safe.useSafeAreaInsets;
-  hasSafeAreaHook = typeof useSafeAreaInsetsHook === 'function';
-} catch (e) {}
 
 export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress }: { match: Match; onPress?: (id: string) => void; isPreviewing?: boolean; onPlayPress?: (id: string) => void; }) {
   const colorScheme = useColorScheme();
@@ -131,18 +107,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     }
   } catch (e) {}
 
-  // animated values for badges (Reanimated when available, Animated fallback otherwise)
-  const verifiedScale = canUseReanimated ? ReanimatedModule.useSharedValue(0.85) : null;
-  const verifiedOpacity = canUseReanimated ? ReanimatedModule.useSharedValue(0) : null;
-  const activeScale = canUseReanimated ? ReanimatedModule.useSharedValue(0.85) : null;
-  const activeOpacity = canUseReanimated ? ReanimatedModule.useSharedValue(0) : null;
-
-  // AI pill animation values
-  const pillScale = canUseReanimated ? ReanimatedModule.useSharedValue(0.85) : null;
-  const pillOpacity = canUseReanimated ? ReanimatedModule.useSharedValue(0) : null;
-
-  // preview glow pulse (Reanimated) + reduced-motion preference
-  const previewPulse = canUseReanimated ? ReanimatedModule.useSharedValue(0) : null;
+  // Reduced-motion preference + small, native Animated transitions (no Reanimated hooks).
   const [reduceMotion, setReduceMotion] = useState(false);
   useEffect(() => {
     let mounted = true;
@@ -152,26 +117,13 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     return () => { mounted = false; };
   }, []);
 
-  const previewGlowAnimatedStyle = (canUseReanimated && previewPulse) ? ReanimatedModule.useAnimatedStyle(() => {
-    const s = 1 + (previewPulse.value || 0) * 0.06;
-    const o = 1 - (previewPulse.value || 0) * 0.18;
-    return { transform: [{ scale: s }], opacity: o } as any;
-  }) : undefined;
-
   // measured widths for symmetric spacing
   const [leftBadgeWidth, setLeftBadgeWidth] = useState(0);
   const [rightBadgeWidth, setRightBadgeWidth] = useState(0);
   const MIN_SLOT = 44;
 
-  // safe area insets (if hook available) — call unconditionally when present
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  const insets: { left?: number; right?: number } = hasSafeAreaHook ? (useSafeAreaInsetsHook() as any) : { left: 0, right: 0 };
-
-  const slotWidth = Math.max((leftBadgeWidth || 0) + (insets.left || 0), (rightBadgeWidth || 0) + (insets.right || 0), MIN_SLOT);
-
-  // Reanimated shared value for animated slot width
-  const slotWidthSV = canUseReanimated ? ReanimatedModule.useSharedValue(slotWidth) : null;
-  const slotAnimatedStyle = canUseReanimated && slotWidthSV ? ReanimatedModule.useAnimatedStyle(() => ({ minWidth: slotWidthSV.value })) : undefined;
+  const insets = useSafeAreaInsets();
+  const slotWidth = Math.max(leftBadgeWidth + insets.left, rightBadgeWidth + insets.right, MIN_SLOT);
 
   // fallback Animated values
   const verifiedAnim = useRef(new Animated.Value(0)).current;
@@ -181,48 +133,34 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
   const pillAnim = useRef(new Animated.Value(0)).current;
   const pillTranslate = useRef(new Animated.Value(6)).current;
   const introPulse = useRef(new Animated.Value(0)).current;
+  const previewGlowAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (badgeVariant) {
-      if (canUseReanimated && verifiedScale && verifiedOpacity) {
-        try {
-          verifiedScale.value = ReanimatedModule.withTiming(1, { duration: 300 });
-          verifiedOpacity.value = ReanimatedModule.withTiming(1, { duration: 300 });
-        } catch (e) {}
-      } else {
-        Animated.parallel([
-          Animated.timing(verifiedAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
-          Animated.timing(verifiedTranslate, { toValue: 0, duration: 300, useNativeDriver: true }),
-        ]).start();
-      }
+      Animated.parallel([
+        Animated.timing(verifiedAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
+        Animated.timing(verifiedTranslate, { toValue: 0, duration: 300, useNativeDriver: true }),
+      ]).start();
+    } else {
+      verifiedAnim.setValue(0);
+      verifiedTranslate.setValue(6);
     }
 
     if (isOnlineNow || isActiveNow || recentlyActive) {
-      if (canUseReanimated && activeScale && activeOpacity) {
-        try {
-          activeScale.value = ReanimatedModule.withTiming(1, { duration: 300 });
-          activeOpacity.value = ReanimatedModule.withTiming(1, { duration: 300 });
-        } catch (e) {}
-      } else {
-        Animated.parallel([
-          Animated.timing(activeAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
-          Animated.timing(activeTranslate, { toValue: 0, duration: 300, useNativeDriver: true }),
-        ]).start();
-      }
+      Animated.parallel([
+        Animated.timing(activeAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
+        Animated.timing(activeTranslate, { toValue: 0, duration: 300, useNativeDriver: true }),
+      ]).start();
+    } else {
+      activeAnim.setValue(0);
+      activeTranslate.setValue(6);
     }
 
     // animate AI pill entrance on mount / when score changes
-    if (canUseReanimated && pillScale && pillOpacity) {
-      try {
-        pillScale.value = ReanimatedModule.withTiming(1, { duration: 300 });
-        pillOpacity.value = ReanimatedModule.withTiming(1, { duration: 300 });
-      } catch (e) {}
-    } else {
-      Animated.parallel([
-        Animated.timing(pillAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
-        Animated.timing(pillTranslate, { toValue: 0, duration: 300, useNativeDriver: true }),
-      ]).start();
-    }
+    Animated.parallel([
+      Animated.timing(pillAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
+      Animated.timing(pillTranslate, { toValue: 0, duration: 300, useNativeDriver: true }),
+    ]).start();
   }, [badgeVariant, isOnlineNow, isActiveNow, recentlyActive, lastActiveValue]);
 
   useEffect(() => {
@@ -268,45 +206,34 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     return chips.slice(0, 3);
   }, [match.interests, (match as any).personalityTags, (match as any).looking_for, (match as any).lookingFor, (match as any).love_language, (match as any).loveLanguage]);
 
-  // drive the preview pulse when isPreviewing changes
-  useEffect(() => {
-    if (!canUseReanimated || !previewPulse) return;
-    try {
-      if (isPreviewing) {
-        // gentle repeating pulse
-        previewPulse.value = ReanimatedModule.withRepeat(ReanimatedModule.withTiming(1, { duration: 900 }), -1, true);
-      } else {
-        previewPulse.value = ReanimatedModule.withTiming(0, { duration: 240 });
-      }
-    } catch (e) {}
-  }, [isPreviewing, previewPulse]);
+  const previewGlowStyle = {
+    transform: [
+      {
+        scale: previewGlowAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] }),
+      },
+    ],
+    opacity: previewGlowAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.82] }),
+  };
 
-  // animate slot width whenever measured badge widths or safe-area insets change
   useEffect(() => {
-    const target = Math.max((leftBadgeWidth || 0) + (insets.left || 0), (rightBadgeWidth || 0) + (insets.right || 0), MIN_SLOT);
-    if (canUseReanimated && slotWidthSV) {
-      try {
-        slotWidthSV.value = ReanimatedModule.withTiming(target, { duration: 250 });
-      } catch (e) {}
+    if (!isPreviewing || reduceMotion) {
+      previewGlowAnim.stopAnimation();
+      previewGlowAnim.setValue(0);
+      return;
     }
-    // when Reanimated isn't available, the inline style uses `slotWidth` directly
-  }, [leftBadgeWidth, rightBadgeWidth, insets.left, insets.right]);
 
-  // animated styles
-  const verifiedAnimatedStyle = canUseReanimated && verifiedScale && verifiedOpacity ? ReanimatedModule.useAnimatedStyle(() => ({
-    transform: [{ scale: verifiedScale.value }, { translateY: verifiedScale.value ? 0 : 6 }],
-    opacity: verifiedOpacity.value,
-  })) : undefined;
-
-  const activeAnimatedStyle = canUseReanimated && activeScale && activeOpacity ? ReanimatedModule.useAnimatedStyle(() => ({
-    transform: [{ scale: activeScale.value }, { translateY: activeScale.value ? 0 : 6 }],
-    opacity: activeOpacity.value,
-  })) : undefined;
-
-  const pillAnimatedStyle = canUseReanimated && pillScale && pillOpacity ? ReanimatedModule.useAnimatedStyle(() => ({
-    transform: [{ scale: pillScale.value }, { translateY: pillScale.value ? 0 : 6 }],
-    opacity: pillOpacity.value,
-  })) : undefined;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(previewGlowAnim, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(previewGlowAnim, { toValue: 0, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => {
+      loop.stop();
+      previewGlowAnim.setValue(0);
+    };
+  }, [isPreviewing, reduceMotion, previewGlowAnim]);
 
   return (
     <View style={styles.card}>
@@ -315,9 +242,8 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
 
         {/* subtle full-card glow while previewing (modal playing) */}
         {isPreviewing ? (
-          (canUseReanimated && ReanimatedAnimated && !reduceMotion && previewGlowAnimatedStyle) ? (
-            // @ts-ignore - animated preview glow using Reanimated when available
-            <ReanimatedAnimated.View style={[styles.previewGlow, previewGlowAnimatedStyle]} pointerEvents="none" />
+          !reduceMotion ? (
+            <Animated.View style={[styles.previewGlow, previewGlowStyle]} pointerEvents="none" />
           ) : (
             <View pointerEvents="none" style={styles.previewGlow} />
           )
@@ -340,96 +266,39 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
 
         {/* Top-row: left = Verified, center = AI pill, right = Active */}
         <View style={styles.topRow} pointerEvents="box-none">
-          {canUseReanimated && ReanimatedAnimated && slotAnimatedStyle ? (
-            <ReanimatedAnimated.View style={[styles.leftSlot, slotAnimatedStyle]} pointerEvents="none">
-              {badgeVariant ? (
-                // @ts-ignore
-                <ReanimatedAnimated.View
-                  style={[styles.badgeWrapper, verifiedAnimatedStyle]}
-                  pointerEvents="none"
-                  onLayout={(e: any) => {
-                    try {
-                      setLeftBadgeWidth(e.nativeEvent.layout.width || 0);
-                    } catch {}
-                  }}
-                >
-                  {badgeVariant === 'id' ? (
-                    <LinearGradientSafe colors={['#F6D58A', '#D3A33C']} start={[0, 0]} end={[1, 1]} style={styles.idBadge}>
-                      <MaterialCommunityIcons name="shield-check" size={14} color="#2b1b00" />
-                    </LinearGradientSafe>
-                  ) : (
-                    <View style={styles.phoneBadge}>
-                      <MaterialCommunityIcons name="phone-check" size={14} color={theme.tint} />
-                    </View>
-                  )}
-                </ReanimatedAnimated.View>
-              ) : null}
-            </ReanimatedAnimated.View>
-          ) : (
-            <View style={[styles.leftSlot, { minWidth: slotWidth }]} pointerEvents="none">
-              {badgeVariant ? (
-                canUseReanimated && verifiedAnimatedStyle && ReanimatedAnimated && ReanimatedAnimated.View ? (
-                  // @ts-ignore
-                  <ReanimatedAnimated.View
-                    style={[styles.badgeWrapper, verifiedAnimatedStyle]}
-                    pointerEvents="none"
-                    onLayout={(e: any) => {
-                      try {
-                        setLeftBadgeWidth(e.nativeEvent.layout.width || 0);
-                      } catch {}
-                    }}
+          <View style={[styles.leftSlot, { minWidth: slotWidth }]} pointerEvents="none">
+            {badgeVariant ? (
+              <Animated.View
+                style={[styles.badgeWrapper, { transform: [{ translateY: verifiedTranslate }], opacity: verifiedAnim }]}
+                pointerEvents="none"
+                onLayout={(e: any) => {
+                  try {
+                    setLeftBadgeWidth(e.nativeEvent.layout.width || 0);
+                  } catch {}
+                }}
+              >
+                {badgeVariant === "id" ? (
+                  <LinearGradientSafe
+                    colors={["#F6D58A", "#D3A33C"]}
+                    start={[0, 0]}
+                    end={[1, 1]}
+                    style={styles.idBadge}
                   >
-                    {badgeVariant === 'id' ? (
-                      <LinearGradientSafe colors={['#F6D58A', '#D3A33C']} start={[0, 0]} end={[1, 1]} style={styles.idBadge}>
-                        <MaterialCommunityIcons name="shield-check" size={14} color="#2b1b00" />
-                      </LinearGradientSafe>
-                    ) : (
-                      <View style={styles.phoneBadge}>
-                        <MaterialCommunityIcons name="phone-check" size={14} color={theme.tint} />
-                      </View>
-                    )}
-                  </ReanimatedAnimated.View>
+                    <MaterialCommunityIcons name="shield-check" size={14} color="#2b1b00" />
+                  </LinearGradientSafe>
                 ) : (
-                  <Animated.View
-                    style={[styles.badgeWrapper, { transform: [{ translateY: verifiedTranslate }], opacity: verifiedAnim }]}
-                    pointerEvents="none"
-                    onLayout={(e: any) => {
-                      try {
-                        setLeftBadgeWidth(e.nativeEvent.layout.width || 0);
-                      } catch {}
-                    }}
-                  >
-                    {badgeVariant === 'id' ? (
-                      <LinearGradientSafe colors={['#F6D58A', '#D3A33C']} start={[0, 0]} end={[1, 1]} style={styles.idBadge}>
-                        <MaterialCommunityIcons name="shield-check" size={14} color="#2b1b00" />
-                      </LinearGradientSafe>
-                    ) : (
-                      <View style={styles.phoneBadge}>
-                        <MaterialCommunityIcons name="phone-check" size={14} color={theme.tint} />
-                      </View>
-                    )}
-                  </Animated.View>
-                )
-              ) : null}
-            </View>
-          )}
+                  <View style={styles.phoneBadge}>
+                    <MaterialCommunityIcons name="phone-check" size={14} color={theme.tint} />
+                  </View>
+                )}
+              </Animated.View>
+            ) : null}
+          </View>
 
           <View style={styles.centerSlot} pointerEvents="none">
             {(() => {
               const score = typeof (match as any).compatibility === 'number' ? Math.round((match as any).compatibility) : null;
               if (typeof score !== 'number') return null;
-
-              if (canUseReanimated && pillAnimatedStyle && ReanimatedAnimated && ReanimatedAnimated.View) {
-                // @ts-ignore
-                return (
-                  // @ts-ignore
-                  <ReanimatedAnimated.View style={pillAnimatedStyle} pointerEvents="none">
-                    <LinearGradientSafe colors={[theme.secondary, theme.tint]} start={[0, 0]} end={[1, 1]} style={styles.aiPillInline}>
-                      <Text style={styles.aiPillText}>{`${score}% Vibe`}</Text>
-                    </LinearGradientSafe>
-                  </ReanimatedAnimated.View>
-                );
-              }
 
               return (
                 <Animated.View style={{ transform: [{ translateY: pillTranslate }], opacity: pillAnim }} pointerEvents="none">
@@ -441,34 +310,28 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
             })()}
           </View>
 
-          {canUseReanimated && ReanimatedAnimated && slotAnimatedStyle ? (
-            <ReanimatedAnimated.View style={[styles.rightSlot, slotAnimatedStyle]} pointerEvents="none">
-              {(isOnlineNow || isActiveNow || recentlyActive) ? (
-                // @ts-ignore
-                <ReanimatedAnimated.View style={[styles.activeInline, (isOnlineNow || isActiveNow) ? styles.activeNowBg : styles.recentlyActiveBg, activeAnimatedStyle]} pointerEvents="none" onLayout={(e: any) => { try { setRightBadgeWidth(e.nativeEvent.layout.width || 0); } catch {} }}>
-                  <View style={styles.activeDotSmall} />
-                  <Text style={styles.activeTopText}>{isOnlineNow ? 'Online' : isActiveNow ? 'Active Now' : 'Recently Active'}</Text>
-                </ReanimatedAnimated.View>
-              ) : null}
-            </ReanimatedAnimated.View>
-          ) : (
-            <View style={[styles.rightSlot, { minWidth: slotWidth }]} pointerEvents="none">
-              {(isOnlineNow || isActiveNow || recentlyActive) ? (
-                canUseReanimated && activeAnimatedStyle && ReanimatedAnimated && ReanimatedAnimated.View ? (
-                  // @ts-ignore
-                  <ReanimatedAnimated.View style={[styles.activeInline, (isOnlineNow || isActiveNow) ? styles.activeNowBg : styles.recentlyActiveBg, activeAnimatedStyle]} pointerEvents="none" onLayout={(e: any) => { try { setRightBadgeWidth(e.nativeEvent.layout.width || 0); } catch {} }}>
-                    <View style={styles.activeDotSmall} />
-                    <Text style={styles.activeTopText}>{isOnlineNow ? 'Online' : isActiveNow ? 'Active Now' : 'Recently Active'}</Text>
-                  </ReanimatedAnimated.View>
-                ) : (
-                  <Animated.View style={[styles.activeInline, (isOnlineNow || isActiveNow) ? styles.activeNowBg : styles.recentlyActiveBg, { transform: [{ translateY: activeTranslate }], opacity: activeAnim }]} pointerEvents="none" onLayout={(e: any) => { try { setRightBadgeWidth(e.nativeEvent.layout.width || 0); } catch {} }}>
-                    <View style={styles.activeDotSmall} />
-                    <Text style={styles.activeTopText}>{isOnlineNow ? 'Online' : isActiveNow ? 'Active Now' : 'Recently Active'}</Text>
-                  </Animated.View>
-                )
-              ) : null}
-            </View>
-          )}
+          <View style={[styles.rightSlot, { minWidth: slotWidth }]} pointerEvents="none">
+            {isOnlineNow || isActiveNow || recentlyActive ? (
+              <Animated.View
+                style={[
+                  styles.activeInline,
+                  isOnlineNow || isActiveNow ? styles.activeNowBg : styles.recentlyActiveBg,
+                  { transform: [{ translateY: activeTranslate }], opacity: activeAnim },
+                ]}
+                pointerEvents="none"
+                onLayout={(e: any) => {
+                  try {
+                    setRightBadgeWidth(e.nativeEvent.layout.width || 0);
+                  } catch {}
+                }}
+              >
+                <View style={styles.activeDotSmall} />
+                <Text style={styles.activeTopText}>
+                  {isOnlineNow ? "Online" : isActiveNow ? "Active Now" : "Recently Active"}
+                </Text>
+              </Animated.View>
+            ) : null}
+          </View>
         </View>
 
         <LinearGradientSafe colors={gradientColors} style={styles.gradient} />
