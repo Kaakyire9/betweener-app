@@ -17,6 +17,7 @@ export const initSentry = () => {
     dsn,
     enabled: true,
     debug: false,
+    enableLogs: true,
     environment: process.env.EXPO_PUBLIC_ENVIRONMENT || (isDev ? "development" : "production"),
     release,
 

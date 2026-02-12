@@ -6,15 +6,18 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "scheme": "betweenerapp",
-    "platforms": ["ios", "android"],
+    "platforms": [
+      "ios",
+      "android"
+    ],
     "userInterfaceStyle": "automatic",
-
     "icon": "./assets/images/ios-icon-1024.png",
-
     "ios": {
       "bundleIdentifier": "com.aduboffour.betweener",
       "icon": "./assets/images/ios-icon-1024.png",
-      "associatedDomains": ["applinks:getbetweener.com"],
+      "associatedDomains": [
+        "applinks:getbetweener.com"
+      ],
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSLocationWhenInUseUsageDescription": "Betweener uses your location to show you nearby matches and improve discovery. You can change this anytime in Settings.",
@@ -25,16 +28,19 @@
         "CFBundleURLTypes": [
           {
             "CFBundleURLName": "com.aduboffour.betweener",
-            "CFBundleURLSchemes": ["betweenerapp"]
+            "CFBundleURLSchemes": [
+              "betweenerapp"
+            ]
           }
         ],
-        "LSApplicationQueriesSchemes": ["betweenerapp"],
+        "LSApplicationQueriesSchemes": [
+          "betweenerapp"
+        ],
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": false
         }
       }
     },
-
     "android": {
       "package": "com.aduboffour.betweener",
       "googleServicesFile": "./google-services.json",
@@ -46,25 +52,47 @@
       "intentFilters": [
         {
           "action": "VIEW",
-          "data": [{ "scheme": "betweenerapp" }],
-          "category": ["BROWSABLE", "DEFAULT"],
+          "data": [
+            {
+              "scheme": "betweenerapp"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ],
           "autoVerify": true
         },
         {
           "action": "VIEW",
-          "data": [{ "scheme": "betweenerapp", "host": "auth" }],
-          "category": ["BROWSABLE", "DEFAULT"],
+          "data": [
+            {
+              "scheme": "betweenerapp",
+              "host": "auth"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ],
           "autoVerify": true
         },
         {
           "action": "VIEW",
-          "data": [{ "scheme": "https", "host": "getbetweener.com" }],
-          "category": ["BROWSABLE", "DEFAULT"],
+          "data": [
+            {
+              "scheme": "https",
+              "host": "getbetweener.com"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ],
           "autoVerify": true
         }
       ]
     },
-
     "plugins": [
       [
         "expo-splash-screen",
@@ -86,9 +114,16 @@
       ],
       "expo-font",
       "expo-web-browser",
-      "expo-video"
+      "expo-video",
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://sentry.io/",
+          "project": "betweener",
+          "organization": "nyansapa-ltd"
+        }
+      ]
     ],
-
     "extra": {
       "eas": {
         "projectId": "7de6cdc4-8616-446f-99de-82764af3a7e6"
