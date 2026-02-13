@@ -130,11 +130,36 @@ function RootLayout() {
                   title="Try!"
                   onPress={async () => {
                     try {
-                      console.log("[sentry-test] hasDsn", !!process.env.EXPO_PUBLIC_SENTRY_DSN);
-                      captureException(new Error("First error"));
+                      const dsn = process.env.EXPO_PUBLIC_SENTRY_DSN ?? "";
+                      const dsnHost = dsn.includes("@") ? dsn.split("@")[1]?.split("/")[0] ?? null : null;
+                      const dsnProjectId = dsn.split("/").pop() ?? null;
+                      const env =
+                        process.env.EXPO_PUBLIC_ENVIRONMENT ||
+                        (typeof __DEV__ !== "undefined" && __DEV__ ? "development" : "production");
+
+                      console.log("[sentry-test] dsn", {
+                        hasDsn: !!dsn,
+                        dsnHost,
+                        dsnProjectId,
+                        env,
+                      });
+
                       const Sentry = require("@sentry/react-native");
-                      await Sentry.flush(2000);
-                      console.log("[sentry-test] flushed");
+                      const eventId =
+                        typeof Sentry.captureException === "function"
+                          ? Sentry.captureException(new Error(`Sentry test event ${Date.now()}`))
+                          : null;
+
+                      console.log("[sentry-test] captured", {
+                        eventId,
+                        lastEventId: typeof Sentry.lastEventId === "function" ? Sentry.lastEventId() : null,
+                      });
+
+                      const flushed = typeof Sentry.flush === "function" ? await Sentry.flush(8000) : null;
+                      console.log("[sentry-test] flush", { flushed });
+
+                      // Keep using our wrapper too (PII-safe) to ensure the app path is exercised.
+                      captureException(new Error("Sentry test via wrapper"), { env });
                     } catch (e) {
                       console.log("[sentry-test] failed", e);
                     }
