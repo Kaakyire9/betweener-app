@@ -16,8 +16,11 @@ export const initSentry = () => {
   Sentry.init({
     dsn,
     enabled: true,
-    debug: false,
+    // Enable SDK diagnostics in dev to help troubleshoot transport/rejection issues.
+    debug: isDev,
     enableLogs: true,
+    // Keep default PII off; we explicitly set user id only elsewhere.
+    sendDefaultPii: false,
     environment: process.env.EXPO_PUBLIC_ENVIRONMENT || (isDev ? "development" : "production"),
     release,
 
@@ -38,8 +41,28 @@ export const initSentry = () => {
 
     beforeSend(event) {
       try {
-        // Redact common fields. Keep the event shape intact.
-        const safe = redact(event) as any;
+        // IMPORTANT: Avoid deep "shape-changing" redaction here; it can produce payloads Sentry rejects.
+        // Keep this conservative and do most scrubbing at the breadcrumb layer.
+        const safe: any = { ...event };
+
+        // Keep only a stable user id (no email/ip).
+        if (safe.user) {
+          safe.user = safe.user?.id ? { id: String(safe.user.id) } : null;
+        }
+
+        // Redact common sensitive keys if we ever attach them (extra/context), but do NOT touch stacktraces.
+        if (safe.extra) safe.extra = redact(safe.extra) as Record<string, unknown>;
+        if (safe.contexts) safe.contexts = redact(safe.contexts) as Record<string, unknown>;
+
+        if (isDev) {
+          // Helpful debug without leaking payload contents.
+          console.log("[sentry] beforeSend", {
+            eventId: safe.event_id ?? null,
+            env: safe.environment ?? null,
+            release: safe.release ?? null,
+          });
+        }
+
         return safe;
       } catch {
         return event;
