@@ -69,6 +69,59 @@ export const initSentry = () => {
       }
     },
   });
+
+  // DEV diagnostics: wrap transport to log response codes from ingest.
+  // This helps when events are "captured + flushed" but never appear in Sentry UI/API.
+  if (isDev) {
+    try {
+      const g = globalThis as any;
+      if (!g.__sentryTransportWrappedOnce) {
+        g.__sentryTransportWrappedOnce = true;
+
+        const client = typeof (Sentry as any).getClient === "function" ? (Sentry as any).getClient() : null;
+        const transport = client && typeof client.getTransport === "function" ? client.getTransport() : null;
+        const origSend = transport?.send?.bind(transport);
+
+        console.log("[sentry] init", {
+          hasClient: !!client,
+          hasTransport: !!transport,
+          transportName: transport?.constructor?.name ?? typeof transport,
+        });
+
+        if (typeof origSend === "function") {
+          transport.send = async (envelope: any) => {
+            const types = Array.isArray(envelope?.[1])
+              ? envelope[1].map((it: any) => it?.[0]?.type).filter(Boolean)
+              : [];
+            console.log("[sentry] send", { itemTypes: types });
+            const res = await origSend(envelope);
+            // `res` may include `statusCode` on fetch transport; native transport can't expose it.
+            console.log("[sentry] res", res);
+            return res;
+          };
+        }
+      }
+
+      // Optional: auto-fire one test event per app start in dev (can be disabled by env).
+      const g2 = globalThis as any;
+      const autoTestDisabled = process.env.EXPO_PUBLIC_SENTRY_AUTOTEST === "0";
+      if (!autoTestDisabled && !g2.__sentryAutoTestFired) {
+        g2.__sentryAutoTestFired = true;
+        setTimeout(async () => {
+          try {
+            const id = (Sentry as any).captureException?.(new Error(`Sentry autotest ${Date.now()}`));
+            console.log("[sentry] autotest captured", { id });
+            const ok = await (Sentry as any).flush?.(8000);
+            console.log("[sentry] autotest flush", { ok });
+          } catch (e) {
+            console.log("[sentry] autotest failed", e);
+          }
+        }, 1500);
+      }
+    } catch (e) {
+      console.log("[sentry] wrap transport failed", e);
+    }
+  }
 };
 
 export const setSentryUser = (userId: string | null) => {

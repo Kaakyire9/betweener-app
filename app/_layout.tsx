@@ -145,6 +145,41 @@ function RootLayout() {
                       });
 
                       const Sentry = require("@sentry/react-native");
+
+                      // Wrap transport in DEV so we can see response codes from the ingest endpoint.
+                      // This helps debug "captured + flushed but not in dashboard" cases.
+                      const client = typeof Sentry.getClient === "function" ? Sentry.getClient() : null;
+                      const transport =
+                        client && typeof client.getTransport === "function" ? client.getTransport() : null;
+
+                      console.log("[sentry-test] client", {
+                        hasClient: !!client,
+                        transportName: transport?.constructor?.name ?? typeof transport,
+                        hasTransport: !!transport,
+                      });
+
+                      if (transport && !globalThis.__sentryTransportWrapped) {
+                        globalThis.__sentryTransportWrapped = true;
+
+                        const origSend = transport.send?.bind(transport);
+                        if (typeof origSend === "function") {
+                          transport.send = async (envelope: any) => {
+                            try {
+                              const types = Array.isArray(envelope?.[1])
+                                ? envelope[1].map((it: any) => it?.[0]?.type).filter(Boolean)
+                                : [];
+                              console.log("[sentry-test] transport.send", { itemTypes: types });
+                              const res = await origSend(envelope);
+                              console.log("[sentry-test] transport.res", res);
+                              return res;
+                            } catch (e) {
+                              console.log("[sentry-test] transport.err", e);
+                              throw e;
+                            }
+                          };
+                        }
+                      }
+
                       const eventId =
                         typeof Sentry.captureException === "function"
                           ? Sentry.captureException(new Error(`Sentry test event ${Date.now()}`))
