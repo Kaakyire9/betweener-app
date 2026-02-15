@@ -14,7 +14,7 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAppFonts } from "@/constants/fonts";
 import { AuthProvider } from "@/lib/auth-context";
 import InAppToasts from "@/components/InAppToasts";
-import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
+import { initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
 
 // Keep native splash visible until we decide
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -121,88 +121,6 @@ function RootLayout() {
         <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
           <Slot />
           <InAppToasts />
-
-          {/* TEMP (DEV): Sentry wizard test button. Remove after you confirm events arrive. */}
-          {typeof __DEV__ !== "undefined" && __DEV__ ? (
-            <View pointerEvents="box-none" style={styles.sentryTestWrap}>
-              <View style={styles.sentryTestButton}>
-                <Button
-                  title="Try!"
-                  onPress={async () => {
-                    try {
-                      const dsn = process.env.EXPO_PUBLIC_SENTRY_DSN ?? "";
-                      const dsnHost = dsn.includes("@") ? dsn.split("@")[1]?.split("/")[0] ?? null : null;
-                      const dsnProjectId = dsn.split("/").pop() ?? null;
-                      const env =
-                        process.env.EXPO_PUBLIC_ENVIRONMENT ||
-                        (typeof __DEV__ !== "undefined" && __DEV__ ? "development" : "production");
-
-                      console.log("[sentry-test] dsn", {
-                        hasDsn: !!dsn,
-                        dsnHost,
-                        dsnProjectId,
-                        env,
-                      });
-
-                      const Sentry = require("@sentry/react-native");
-
-                      // Wrap transport in DEV so we can see response codes from the ingest endpoint.
-                      // This helps debug "captured + flushed but not in dashboard" cases.
-                      const client = typeof Sentry.getClient === "function" ? Sentry.getClient() : null;
-                      const transport =
-                        client && typeof client.getTransport === "function" ? client.getTransport() : null;
-
-                      console.log("[sentry-test] client", {
-                        hasClient: !!client,
-                        transportName: transport?.constructor?.name ?? typeof transport,
-                        hasTransport: !!transport,
-                      });
-
-                      if (transport && !globalThis.__sentryTransportWrapped) {
-                        globalThis.__sentryTransportWrapped = true;
-
-                        const origSend = transport.send?.bind(transport);
-                        if (typeof origSend === "function") {
-                          transport.send = async (envelope: any) => {
-                            try {
-                              const types = Array.isArray(envelope?.[1])
-                                ? envelope[1].map((it: any) => it?.[0]?.type).filter(Boolean)
-                                : [];
-                              console.log("[sentry-test] transport.send", { itemTypes: types });
-                              const res = await origSend(envelope);
-                              console.log("[sentry-test] transport.res", res);
-                              return res;
-                            } catch (e) {
-                              console.log("[sentry-test] transport.err", e);
-                              throw e;
-                            }
-                          };
-                        }
-                      }
-
-                      const eventId =
-                        typeof Sentry.captureException === "function"
-                          ? Sentry.captureException(new Error(`Sentry test event ${Date.now()}`))
-                          : null;
-
-                      console.log("[sentry-test] captured", {
-                        eventId,
-                        lastEventId: typeof Sentry.lastEventId === "function" ? Sentry.lastEventId() : null,
-                      });
-
-                      const flushed = typeof Sentry.flush === "function" ? await Sentry.flush(8000) : null;
-                      console.log("[sentry-test] flush", { flushed });
-
-                      // Keep using our wrapper too (PII-safe) to ensure the app path is exercised.
-                      captureException(new Error("Sentry test via wrapper"), { env });
-                    } catch (e) {
-                      console.log("[sentry-test] failed", e);
-                    }
-                  }}
-                />
-              </View>
-            </View>
-          ) : null}
 
           {showSplash && (
             <View style={styles.splashOverlay}>
@@ -321,16 +239,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.18)",
   },
 
-  sentryTestWrap: {
-    position: "absolute",
-    right: 12,
-    bottom: 24,
-    zIndex: 10001,
-  },
-
-  sentryTestButton: {
-    opacity: 0.9,
-  },
 });
 
 export default wrapWithSentry(RootLayout);

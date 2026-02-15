@@ -3,6 +3,8 @@ import * as Sentry from "@sentry/react-native";
 import { redact } from "@/lib/telemetry/redact";
 
 const isDev = typeof __DEV__ !== "undefined" && __DEV__;
+const sentryDebug = isDev && process.env.EXPO_PUBLIC_SENTRY_DEBUG === "1";
+const sentryAutotest = isDev && process.env.EXPO_PUBLIC_SENTRY_AUTOTEST === "1";
 
 export const initSentry = () => {
   const dsn = process.env.EXPO_PUBLIC_SENTRY_DSN;
@@ -16,8 +18,8 @@ export const initSentry = () => {
   Sentry.init({
     dsn,
     enabled: true,
-    // Enable SDK diagnostics in dev to help troubleshoot transport/rejection issues.
-    debug: isDev,
+    // Enable SDK diagnostics only when explicitly requested.
+    debug: sentryDebug,
     enableLogs: true,
     // Keep default PII off; we explicitly set user id only elsewhere.
     sendDefaultPii: false,
@@ -54,7 +56,7 @@ export const initSentry = () => {
         if (safe.extra) safe.extra = redact(safe.extra) as Record<string, unknown>;
         if (safe.contexts) safe.contexts = redact(safe.contexts) as Record<string, unknown>;
 
-        if (isDev) {
+        if (sentryDebug) {
           // Helpful debug without leaking payload contents.
           console.log("[sentry] beforeSend", {
             eventId: safe.event_id ?? null,
@@ -72,7 +74,7 @@ export const initSentry = () => {
 
   // DEV diagnostics: wrap transport to log response codes from ingest.
   // This helps when events are "captured + flushed" but never appear in Sentry UI/API.
-  if (isDev) {
+  if (sentryDebug) {
     try {
       const g = globalThis as any;
       if (!g.__sentryTransportWrappedOnce) {
@@ -102,10 +104,9 @@ export const initSentry = () => {
         }
       }
 
-      // Optional: auto-fire one test event per app start in dev (can be disabled by env).
+      // Optional: auto-fire one test event per app start in dev (explicit opt-in).
       const g2 = globalThis as any;
-      const autoTestDisabled = process.env.EXPO_PUBLIC_SENTRY_AUTOTEST === "0";
-      if (!autoTestDisabled && !g2.__sentryAutoTestFired) {
+      if (sentryAutotest && !g2.__sentryAutoTestFired) {
         g2.__sentryAutoTestFired = true;
         setTimeout(async () => {
           try {
