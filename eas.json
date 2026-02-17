@@ -31,6 +31,17 @@
         }
       }
     },
+    "playInternal": {
+      "distribution": "store",
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_ENVIRONMENT": "preview",
+        "EXPO_USE_POD_REPO_UPDATE": "1"
+      }
+    },
     "production": {
       "autoIncrement": true,
       "env": {
@@ -43,6 +54,7 @@
     }
   },
   "submit": {
+    "playInternal": {},
     "production": {}
   }
 }
