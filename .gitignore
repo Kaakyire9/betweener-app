@@ -47,6 +47,8 @@ app-example
 
 # firebase
 google-services.json
+google-play-service-account*.json
+*service-account*.json
 
 # temp/backup files
 *.tmp
