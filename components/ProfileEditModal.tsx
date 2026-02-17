@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -756,7 +757,9 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       mediaTypes: ['videos'],
       videoMaxDuration: 30,
       allowsEditing: true,
-      quality: 1,
+      // Best-effort compression on iOS. Android behavior depends on the picker app.
+      videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
+      videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
     });
 
     if (!result.canceled && result.assets[0]) {
@@ -775,7 +778,8 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       mediaTypes: ['videos'],
       videoMaxDuration: 30,
       allowsEditing: true,
-      quality: 1,
+      videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
+      videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
     });
 
     if (!result.canceled && result.assets[0]) {
@@ -807,6 +811,25 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       if (!user?.id) {
         Alert.alert('Error', 'User not authenticated');
         return;
+      }
+
+      // Supabase Storage buckets can enforce a max object size; preflight locally to avoid long uploads.
+      // 30s @ 720p H264 should fit comfortably under this in most cases.
+      const MAX_PROFILE_VIDEO_BYTES = 25 * 1024 * 1024; // 25MB
+      try {
+        const info = await FileSystem.getInfoAsync(uri);
+        const size =
+          info.exists && typeof (info as any).size === 'number' ? Number((info as any).size) : null;
+        if (size != null && size > MAX_PROFILE_VIDEO_BYTES) {
+          const mb = (size / (1024 * 1024)).toFixed(1);
+          Alert.alert(
+            'Video too large',
+            `Your video is ${mb}MB. Please trim it shorter or record in lower quality and try again.`
+          );
+          return;
+        }
+      } catch {
+        // If we can't read size (platform URI quirks), proceed and let the upload error surface.
       }
 
       const fileExtension = uri.split('.').pop()?.toLowerCase() || 'mp4';
