@@ -99,14 +99,32 @@ serve(async (req) => {
 
     // Get latest verified phone for this user
     console.log("[auth-bootstrap] query verified phone");
-    const { data: verifiedRows } = await admin
-      .from("phone_verifications")
-      .select("phone_number,status,is_verified,verified_at,updated_at")
-      .eq("user_id", user.id)
-      .or("status.eq.verified,is_verified.eq.true")
-      .order("verified_at", { ascending: false, nullsFirst: false })
-      .order("updated_at", { ascending: false })
-      .limit(1);
+    let verifiedRows: any[] | null = null;
+    try {
+      const res = await admin
+        .from("phone_verifications")
+        .select("phone_number,status,is_verified,verified_at,updated_at")
+        .eq("user_id", user.id)
+        .or("status.eq.verified,is_verified.eq.true")
+        .order("verified_at", { ascending: false, nullsFirst: false })
+        .order("updated_at", { ascending: false })
+        .limit(1);
+      verifiedRows = res.data ?? null;
+      if (res.error && res.error.code === "42703") {
+        // Older schema: retry without is_verified.
+        const res2 = await admin
+          .from("phone_verifications")
+          .select("phone_number,status,verified_at,updated_at")
+          .eq("user_id", user.id)
+          .eq("status", "verified")
+          .order("verified_at", { ascending: false, nullsFirst: false })
+          .order("updated_at", { ascending: false })
+          .limit(1);
+        verifiedRows = res2.data ?? null;
+      }
+    } catch {
+      verifiedRows = null;
+    }
 
     const verifiedRow = Array.isArray(verifiedRows) ? verifiedRows[0] : null;
     const verifiedPhone = verifiedRow?.phone_number ?? null;

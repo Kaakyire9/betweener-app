@@ -1,5 +1,9 @@
 -- Sync verified phone status into profiles (source of truth)
 
+-- Guard: earlier migrations didn't always include is_verified; ensure it's present before triggers reference it.
+alter table public.phone_verifications
+  add column if not exists is_verified boolean not null default false;
+
 create or replace function public.phone_verifications_set_verified_flag()
 returns trigger
 language plpgsql

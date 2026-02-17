@@ -134,18 +134,20 @@ export class PhoneVerificationService {
   static cleanPhoneNumber(phoneNumber: string): string {
     // Remove all non-digit characters
     const cleaned = phoneNumber.replace(/\D/g, '');
-    
+
+    // Ghana: if the UI already prepended +233 but the user included a local trunk "0"
+    // (e.g. +233024xxxxxxx), remove the 0 to form a valid E.164 (+23324xxxxxxx).
+    if (cleaned.startsWith('2330') && cleaned.length >= 12) {
+      return `+233${cleaned.substring(4)}`;
+    }
+
     // Handle Ghana numbers (starting with 0)
     if (cleaned.startsWith('0') && cleaned.length === 10) {
       return `+233${cleaned.substring(1)}`;
     }
     
-    // Add + if missing for international numbers
-    if (!cleaned.startsWith('+')) {
-      return `+${cleaned}`;
-    }
-    
-    return cleaned;
+    // Add + for international numbers (we intentionally strip '+' above)
+    return `+${cleaned}`;
   }
 
   /**
@@ -247,6 +249,17 @@ export class PhoneVerificationService {
         let errorMessage = data.error || 'Failed to send verification code';
         const twilioMessage = String(data.twilioError || '').toLowerCase();
         const twilioCode = String(data.twilioCode || '').toLowerCase();
+
+        // More helpful messaging for common Twilio failures.
+        if (
+          twilioMessage.includes('permission to send') ||
+          twilioMessage.includes('geo') ||
+          twilioMessage.includes('region') ||
+          twilioCode.includes('21408')
+        ) {
+          errorMessage =
+            'SMS to this country is currently blocked on our provider. Please try again later or contact support.';
+        }
         if (
           twilioMessage.includes('invalid') ||
           twilioMessage.includes('not a valid') ||

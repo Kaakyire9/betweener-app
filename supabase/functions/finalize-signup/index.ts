@@ -58,14 +58,58 @@ serve(async (req) => {
       })
     }
 
-    if (!verification?.phone_number) {
+    // Premium resiliency: if phone_verifications couldn't be stored (or was interrupted),
+    // verify-phone still updates signup_events when approval happens. Use that as a fallback
+    // to avoid dead-ends during onboarding.
+    let verifiedPhone: string | null = verification?.phone_number ?? null
+    let normalizedScore = Math.max(0, Math.min(1, (verification?.confidence_score ?? 0) / 100))
+    const nowIso = new Date().toISOString()
+
+    if (!verifiedPhone) {
+      const { data: signupEvent, error: signupEventError } = await supabase
+        .from('signup_events')
+        .select('phone_number, phone_verified')
+        .eq('signup_session_id', signupSessionId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (signupEventError) {
+        console.log('Signup event fetch error', signupEventError)
+      }
+
+      if (signupEvent?.phone_verified === true && signupEvent?.phone_number) {
+        verifiedPhone = signupEvent.phone_number
+        normalizedScore = 0 // unknown when phone_verifications was not persisted
+
+        // Best-effort: write an audit record so future status checks can find it.
+        try {
+          await supabase
+            .from('phone_verifications')
+            .insert({
+              signup_session_id: signupSessionId,
+              user_id: user.id,
+              phone_number: verifiedPhone,
+              status: 'verified',
+              is_verified: true,
+              verified_at: nowIso,
+              attempts: 1,
+              confidence_score: 0,
+              request_ip: 'finalize-signup',
+              request_user_agent: 'finalize-signup',
+            })
+        } catch (e) {
+          console.log('Phone verification audit insert error', e)
+        }
+      }
+    }
+
+    if (!verifiedPhone) {
       return new Response(JSON.stringify({ error: 'No verified phone found' }), {
         status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
-
-    const normalizedScore = Math.max(0, Math.min(1, (verification.confidence_score ?? 0) / 100))
 
     // Ensure a minimal profile row exists (Phase-2 allows progressive completion).
     const { error: ensureProfileError } = await supabase
@@ -106,7 +150,7 @@ serve(async (req) => {
       .upsert(
         {
           user_id: user.id,
-          phone_number: verification.phone_number,
+          phone_number: verifiedPhone,
           phone_verified: true,
           phone_verification_score: normalizedScore,
           verification_level: nextLevel,
@@ -131,7 +175,7 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ success: true, phone_number: verification.phone_number }),
+      JSON.stringify({ success: true, phone_number: verifiedPhone }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   } catch (error) {

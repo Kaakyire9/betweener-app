@@ -187,7 +187,7 @@ serve(async (req) => {
 
     const approved = twilioData.status === 'approved'
     const nowIso = new Date().toISOString()
-    const updateData: any = {
+    const updateDataBase: any = {
       status: approved ? 'verified' : 'failed',
       verified_at: approved ? nowIso : null,
       attempts,
@@ -196,14 +196,31 @@ serve(async (req) => {
       ...(approved && effectiveUserId ? { user_id: effectiveUserId } : {}),
     }
 
+    // Prefer setting is_verified explicitly (some deployments rely on it), but gracefully fall back
+    // for older schemas where the column might not exist yet.
+    const updateDataPreferred: any = { ...updateDataBase, is_verified: approved }
+
     // Update all rows for this signup session + phone number (idempotent).
     // We intentionally do NOT constrain by status='pending' because some flows can retry
     // after a partial success; we still want to bind user_id and touch verified_at.
-    const { error: updateError } = await supabase
+    let { error: updateError } = await supabase
       .from('phone_verifications')
-      .update(updateData)
+      .update(updateDataPreferred)
       .eq('signup_session_id', signupSessionId)
       .eq('phone_number', phoneNumber)
+
+    if (
+      updateError &&
+      (updateError.code === '42703' || String(updateError.message || '').toLowerCase().includes('is_verified'))
+    ) {
+      // Retry without is_verified when the schema hasn't been migrated yet.
+      const retry = await supabase
+        .from('phone_verifications')
+        .update(updateDataBase)
+        .eq('signup_session_id', signupSessionId)
+        .eq('phone_number', phoneNumber)
+      updateError = retry.error
+    }
 
     if (updateError) {
       console.error('Database update error:', updateError)
@@ -218,14 +235,20 @@ serve(async (req) => {
 
     // If verification successful, update signup session metadata and (if possible) profile flags.
     if (approved) {
+      // Upsert so we never end up in a "verified but no signup_events row" state.
       const { error: signupError } = await supabase
         .from('signup_events')
-        .update({
-          phone_number: phoneNumber,
-          phone_verified: true,
-          phone_verification_score: confidenceScore
-        })
-        .eq('signup_session_id', signupSessionId)
+        .upsert(
+          {
+            signup_session_id: signupSessionId,
+            user_id: effectiveUserId ?? null,
+            phone_number: phoneNumber,
+            phone_verified: true,
+            phone_verification_score: confidenceScore,
+            updated_at: nowIso,
+          },
+          { onConflict: 'signup_session_id' }
+        )
 
       if (signupError) {
         console.error('Signup event update error:', signupError)

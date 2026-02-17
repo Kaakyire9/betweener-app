@@ -56,11 +56,116 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
   const [verificationSid, setVerificationSid] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const countryOptions = useMemo(() => countryData, []);
+  const knownCallingCodes = useMemo(() => {
+    // Extract unique calling codes (digits only) and sort longest-first for prefix matching.
+    const set = new Set<string>();
+    for (const item of countryOptions as any[]) {
+      const d = String(item?.dial || '').replace(/[^\d]/g, '');
+      if (d) set.add(d);
+    }
+    return Array.from(set).sort((a, b) => b.length - a.length);
+  }, [countryOptions]);
+
+  const dialDigits = selectedCountry.dial.replace(/[^\d]/g, '');
+
+  const promptCountryMismatch = async (args: {
+    enteredDigits: string;
+    enteredCallingCode: string;
+    inferredCountryLabel?: string;
+    inferredDial?: string;
+  }): Promise<'switch' | 'use' | 'edit'> => {
+    const inferredLabel = args.inferredCountryLabel || `+${args.enteredCallingCode}`;
+    const inferredDial = args.inferredDial || `+${args.enteredCallingCode}`;
+
+    const title = 'Check your country code';
+    const message =
+      `Your number looks like ${inferredLabel} (${inferredDial}), ` +
+      `but you selected ${selectedCountry.label} (${selectedCountry.dial}).\n\n` +
+      `Switch the country code to match?`;
+
+    return await new Promise((resolve) => {
+      Alert.alert(title, message, [
+        { text: 'Edit', style: 'cancel', onPress: () => resolve('edit') },
+        { text: `Use ${inferredDial}`, onPress: () => resolve('use') },
+        { text: 'Switch', style: 'default', onPress: () => resolve('switch') },
+      ]);
+    });
+  };
+
+  const maybeResolveInternationalOverride = async (): Promise<{
+    e164: string | null;
+    cancelled: boolean;
+  }> => {
+    // If user typed a full international number (e.g. 44756...) while the selected dial is different,
+    // prompt to switch instead of silently constructing a wrong E.164 number.
+    const enteredDigits = String(phoneNumber || '').replace(/[^\d]/g, '');
+    if (!enteredDigits) return { e164: null, cancelled: false };
+    if (enteredDigits.startsWith('0')) return { e164: null, cancelled: false }; // local national format
+    if (enteredDigits.length < 11) return { e164: null, cancelled: false }; // too short to be full intl
+
+    const enteredCallingCode = knownCallingCodes.find((cc) => enteredDigits.startsWith(cc));
+    if (!enteredCallingCode) return { e164: null, cancelled: false };
+    if (dialDigits && enteredCallingCode === dialDigits) return { e164: null, cancelled: false }; // matches selection
+
+    const inferred = (countryOptions as any[]).find(
+      (c) => String(c?.dial || '').replace(/[^\d]/g, '') === enteredCallingCode
+    );
+
+    const action = await promptCountryMismatch({
+      enteredDigits,
+      enteredCallingCode,
+      inferredCountryLabel: inferred?.label,
+      inferredDial: inferred?.dial,
+    });
+
+    if (action === 'edit') return { e164: null, cancelled: true };
+
+    const e164 = `+${enteredDigits}`;
+
+    if (action === 'switch' && inferred?.dial) {
+      // Make UI consistent with what we're about to send/store.
+      setSelectedCountry({ label: inferred.label, dial: inferred.dial });
+      setPhoneNumber(enteredDigits.slice(enteredCallingCode.length));
+    }
+
+    return { e164, cancelled: false };
+  };
+
+  const buildE164 = (dial: string, input: string) => {
+    // Users sometimes paste full international numbers into the local field (e.g. +447... or 447...).
+    // Build a sane E.164 number either way, without duplicating the country code.
+    let digits = String(input || '').replace(/[^\d]/g, '');
+
+    // Convert 00-prefix to international (e.g. 0044... -> 44...)
+    if (digits.startsWith('00')) digits = digits.slice(2);
+
+    const dialDigits = String(dial || '').replace(/[^\d]/g, '');
+    const keepLeadingZero = dial === '+39'; // Italy exception
+
+    // If the user already included the country code, don't prefix it again.
+    if (dialDigits && digits.startsWith(dialDigits)) {
+      return `+${digits}`;
+    }
+
+    // Heuristic: if the user entered a full international number (country calling code + national number),
+    // trust it even if it doesn't match the currently selected dial code. This prevents cases like:
+    // selected "+233" but user types "44756...." (UK number) which previously became "+23344756....".
+    if (!digits.startsWith('0') && digits.length >= 11) {
+      const matched = knownCallingCodes.find((cc) => digits.startsWith(cc));
+      if (matched) return `+${digits}`;
+    }
+
+    // Otherwise treat it as a national number: strip trunk 0 for most countries.
+    if (!keepLeadingZero && digits.startsWith('0')) digits = digits.slice(1);
+
+    return `${dial}${digits}`;
+  };
+
   useEffect(() => {
     setSelectedCountry({ label: countryLabel, dial: dialCode });
   }, [countryLabel, dialCode]);
 
-  const countryOptions = useMemo(() => countryData, []);
   const topCountryCodes = useMemo(() => ['GB', 'US', 'CA', 'GH', 'NG'], []);
   const topCountries = useMemo(
     () => countryOptions.filter((item) => topCountryCodes.includes(item.code)),
@@ -110,7 +215,12 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
 
     setLoading(true);
     try {
-      const fullNumber = `${selectedCountry.dial}${phoneNumber}`;
+      const override = await maybeResolveInternationalOverride();
+      if (override.cancelled) {
+        setLoading(false);
+        return;
+      }
+      const fullNumber = override.e164 ?? buildE164(selectedCountry.dial, phoneNumber);
       const accessToken = session?.access_token ?? null;
       const result = await PhoneVerificationService.sendVerificationCode(
         fullNumber,
@@ -160,7 +270,7 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
 
     setLoading(true);
     try {
-      const fullNumber = `${selectedCountry.dial}${phoneNumber}`;
+      const fullNumber = buildE164(selectedCountry.dial, phoneNumber);
       const accessToken = session?.access_token ?? null;
       const result = await PhoneVerificationService.verifyCode(
         fullNumber,
@@ -241,6 +351,11 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
               By entering your number, you agree to receive texts about your account, including
               verification codes and important updates.
             </Text>
+            {selectedCountry.dial === '+233' ? (
+              <Text style={[styles.noticeText, { color: theme.textMuted }]}>
+                Tip (Ghana): enter your number without the leading 0 (e.g. 246666647).
+              </Text>
+            ) : null}
             <View style={styles.helperRow}>
               <Ionicons name="information-circle-outline" size={14} color={theme.accent} />
               <Text style={[styles.helperText, { color: theme.accent }]}>
