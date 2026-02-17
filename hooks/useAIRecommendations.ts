@@ -545,13 +545,14 @@ export default function useAIRecommendations(
         religion?: string | null;
         wantsChildren?: string | null;
         smoking?: string | null;
+        gender?: string | null;
       } | null = null;
       let userCoords: { latitude?: number; longitude?: number } | null = null;
       if (supabase && userId) {
         try {
           const { data: myProfile, error: myErr } = await supabase
             .from('profiles')
-            .select('latitude, longitude, looking_for, love_language, personality_type, religion, wants_children, smoking')
+            .select('latitude, longitude, looking_for, love_language, personality_type, religion, wants_children, smoking, gender')
             .eq('id', userId)
             .limit(1)
             .single();
@@ -565,6 +566,7 @@ export default function useAIRecommendations(
               religion: myProfile.religion ?? null,
               wantsChildren: myProfile.wants_children ?? null,
               smoking: myProfile.smoking ?? null,
+              gender: (myProfile as any).gender ?? null,
             };
           }
         } catch (e) {
@@ -750,16 +752,25 @@ export default function useAIRecommendations(
         let data: any[] | null = null;
         let error: any = null;
         let usedMinimal = false;
+        const viewerGender = (viewerCompat as any)?.gender ? String((viewerCompat as any).gender) : null;
+        const targetGender =
+          viewerGender === 'MALE' ? 'FEMALE' : viewerGender === 'FEMALE' ? 'MALE' : null;
 
         try {
-          const res = await supabase
+          let query = supabase
             .from('profiles')
             .select(extendedSelect)
             .neq('id', userId)
             .eq('profile_completed', true)
             .eq('discoverable_in_vibes', true)
             .eq('matchmaking_mode', false)
-            .limit(20);
+
+          // Best-effort fallback filter: keep the client consistent with the RPCs.
+          if (targetGender) {
+            query = query.eq('gender', targetGender as any);
+          }
+
+          const res = await query.limit(20);
           // @ts-ignore
           data = res.data;
           // @ts-ignore
@@ -772,14 +783,19 @@ export default function useAIRecommendations(
         if (error && (error.code === '42703' || String(error.message).includes('does not exist'))) {
           if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] extended select failed, retrying with minimalSelect', { error });
           try {
-            const res2 = await supabase
+            let query2 = supabase
               .from('profiles')
               .select(minimalSelect)
               .neq('id', userId)
               .eq('profile_completed', true)
               .eq('discoverable_in_vibes', true)
               .eq('matchmaking_mode', false)
-              .limit(20);
+
+            if (targetGender) {
+              query2 = query2.eq('gender', targetGender as any);
+            }
+
+            const res2 = await query2.limit(20);
             // @ts-ignore
             data = res2.data;
             // @ts-ignore
