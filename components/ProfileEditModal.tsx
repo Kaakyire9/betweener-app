@@ -8,6 +8,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useEffect, useMemo, useState } from 'react';
+import { Video as VideoCompressor, getRealPath } from 'react-native-compressor';
 import {
     ActivityIndicator,
     Alert,
@@ -15,6 +16,7 @@ import {
     FlatList,
     Image,
     Modal,
+    Platform,
     ScrollView,
     StyleSheet,
     Text,
@@ -33,6 +35,8 @@ const MAX_PROFILE_VIDEO_DURATION_MS = 30_000;
 // Keep this aligned with the Supabase Storage bucket max object size for `profile-videos`.
 // We preflight locally to avoid long uploads that will fail server-side.
 const MAX_PROFILE_VIDEO_BYTES = 25 * 1024 * 1024; // 25MB
+const COMPRESS_TARGET_MAX_SIZE = 720; // 720p-ish (max height portrait / max width landscape)
+const COMPRESS_WHEN_OVER_BYTES = 10 * 1024 * 1024; // 10MB (premium "fast upload" threshold)
 
 const DISTANCE_UNIT_OPTIONS: { value: DistanceUnit; label: string; subtitle?: string }[] = [
   { value: 'auto', label: 'Auto', subtitle: 'Recommended' },
@@ -889,7 +893,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         return;
       }
 
-      const uri = asset.uri;
+      let uri = asset.uri;
 
       // Enforce 30s max (library pickers may ignore `videoMaxDuration`).
       if (typeof asset.duration === 'number' && asset.duration > MAX_PROFILE_VIDEO_DURATION_MS) {
@@ -905,8 +909,18 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         return;
       }
 
+      // Normalize Android content:// URIs into a real path when possible.
+      // (Some native compressors require file:// paths.)
+      try {
+        if (Platform.OS === 'android' && uri.startsWith('content://')) {
+          const resolved = await getRealPath(uri, 'video');
+          if (typeof resolved === 'string' && resolved.length > 0) uri = resolved;
+        }
+      } catch {}
+
       // Supabase Storage buckets can enforce a max object size; preflight locally to avoid long uploads.
       // Even if trimming works, some devices still produce huge files (e.g. 4K HDR).
+      let originalSizeBytes: number | null = null;
       try {
         const sizeFromPicker = typeof asset.fileSize === 'number' ? asset.fileSize : null;
         const info = sizeFromPicker == null ? await FileSystem.getInfoAsync(uri) : null;
@@ -916,6 +930,56 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
             : info && (info as any).exists && typeof (info as any).size === 'number'
               ? Number((info as any).size)
               : null;
+        originalSizeBytes = size;
+      } catch {
+        // If we can't read size (platform URI quirks), proceed and let the upload error surface.
+      }
+
+      // Premium: compress on-device when needed (especially Android) and show progress.
+      // Note: react-native-compressor requires a dev-client / EAS build (not Expo Go).
+      let uploadUri = uri;
+      const shouldTryCompression =
+        Platform.OS === 'android' &&
+        (originalSizeBytes == null ||
+          originalSizeBytes > COMPRESS_WHEN_OVER_BYTES ||
+          originalSizeBytes > MAX_PROFILE_VIDEO_BYTES);
+
+      if (shouldTryCompression) {
+        setVideoUploadStage('Compressing video...');
+        setVideoUploadProgress(0);
+        try {
+          const compressed = await VideoCompressor.compress(
+            uri,
+            {
+              compressionMethod: 'auto',
+              maxSize: COMPRESS_TARGET_MAX_SIZE,
+              // If originalSizeBytes is null, this still allows compression.
+              // Unit is MB per library docs.
+              minimumFileSizeForCompress: 0,
+            },
+            (progress) => {
+              if (typeof progress === 'number') {
+                setVideoUploadProgress(Math.max(0, Math.min(1, progress)));
+              }
+            }
+          );
+
+          if (typeof compressed === 'string' && compressed.length > 0) {
+            uploadUri = compressed;
+          }
+        } catch (compressError) {
+          console.warn('Video compression failed, falling back to original.', compressError);
+          uploadUri = uri;
+        }
+      }
+
+      // Final size gate (after optional compression).
+      try {
+        const info = await FileSystem.getInfoAsync(uploadUri);
+        const size =
+          info && (info as any).exists && typeof (info as any).size === 'number'
+            ? Number((info as any).size)
+            : null;
         if (size != null && size > MAX_PROFILE_VIDEO_BYTES) {
           const mb = (size / (1024 * 1024)).toFixed(1);
           Alert.alert(
@@ -928,23 +992,29 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
           );
           return;
         }
-      } catch {
-        // If we can't read size (platform URI quirks), proceed and let the upload error surface.
-      }
+      } catch {}
 
       const nameHint = asset.fileName || uri.split('/').pop() || '';
       const extMatch = nameHint.match(/\.([a-z0-9]+)$/i);
-      const fileExtension = (extMatch?.[1] || '').toLowerCase() || (asset.mimeType?.includes('quicktime') ? 'mov' : 'mp4');
+      const fileExtension =
+        (uploadUri.toLowerCase().includes('.mp4') && 'mp4') ||
+        (uploadUri.toLowerCase().includes('.mov') && 'mov') ||
+        (extMatch?.[1] || '').toLowerCase() ||
+        (asset.mimeType?.includes('quicktime') ? 'mov' : 'mp4');
       const timestamp = Date.now();
       const fileName = `profile-video-${timestamp}.${fileExtension}`;
       const filePath = `${user.id}/${fileName}`;
-      const contentType = asset.mimeType || (fileExtension === 'mov' ? 'video/quicktime' : 'video/mp4');
+      const contentType =
+        fileExtension === 'mov'
+          ? 'video/quicktime'
+          : 'video/mp4';
 
       setVideoUploadStage('Uploading video...');
+      setVideoUploadProgress(0);
       await uploadToSupabaseStorageWithProgress({
         bucket: 'profile-videos',
         filePath,
-        fileUri: uri,
+        fileUri: uploadUri,
         contentType,
         onProgress: setVideoUploadProgress,
       });
