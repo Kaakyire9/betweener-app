@@ -50,6 +50,8 @@ const PHONE_VERIFIED_CACHE_KEY_PREFIX = "phone_verified_cache_v1:";
 const PHONE_VERIFIED_CACHE_TTL_MS = 60_000;
 const PROFILE_DIAG_TIMEOUT_MS = 8000;
 const PROFILE_CACHE_TTL_MS = 60_000;
+const RESUME_REFRESH_THROTTLE_MS = 10_000;
+const RESUME_REFRESH_TIMEOUT_MS = 6_000;
 
 const getPhoneVerifiedCacheKey = (userId: string) =>
   `${PHONE_VERIFIED_CACHE_KEY_PREFIX}${userId}`;
@@ -235,6 +237,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [phoneVerified, setPhoneVerified] = useState(false);
   const presenceUpdateAtRef = useRef(0);
+  const resumeRefreshAtRef = useRef(0);
   const phoneRefreshInFlightRef = useRef(false);
   const profileCacheRef = useRef<{ userId: string; profile: Profile | null; fetchedAt: number } | null>(null);
   const accessTokenRef = useRef<string | null>(null);
@@ -531,6 +534,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const refreshSessionOnResume = async () => {
+    if (!user?.id) return;
+    const now = Date.now();
+    if (now - resumeRefreshAtRef.current < RESUME_REFRESH_THROTTLE_MS) return;
+    resumeRefreshAtRef.current = now;
+
+    try {
+      const { data, error } = await Promise.race([
+        supabase.auth.refreshSession(),
+        new Promise<{
+          data: { session: Session | null };
+          error: Error | null;
+        }>((resolve) => setTimeout(() => resolve({ data: { session: null }, error: null }), RESUME_REFRESH_TIMEOUT_MS)),
+      ]);
+
+      if (error) {
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] refreshSessionOnResume: refresh error", error);
+        }
+        return;
+      }
+
+      if (data?.session) {
+        accessTokenRef.current = data.session.access_token ?? null;
+        setSession(data.session);
+        setUser(data.session.user ?? null);
+      }
+
+      // Rehydrate critical app state to avoid "stuck" screens after background/network changes.
+      await Promise.race([refreshProfile(), new Promise<void>((resolve) => setTimeout(resolve, 2500))]);
+      await Promise.race([refreshPhoneState(), new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2500))]);
+    } catch (error) {
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[auth] refreshSessionOnResume: exception", error);
+      }
+    }
+  };
+
   useEffect(() => {
     if (!user?.id) return;
     let mounted = true;
@@ -539,8 +580,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     setOnline();
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') setOnline();
-      else setOffline();
+      if (state === 'active') {
+        setOnline();
+        // Fire-and-forget: don't block UI thread on resume.
+        void refreshSessionOnResume();
+      } else {
+        setOffline();
+      }
     });
 
     return () => {
