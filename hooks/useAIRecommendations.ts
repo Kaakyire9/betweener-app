@@ -502,8 +502,11 @@ export default function useAIRecommendations(
     return list.filter((m) => {
       const helper = !!(m as any).matchmaking_mode;
       const discoverable = (m as any).discoverable_in_vibes;
+      const completed = (m as any).profile_completed;
       if (helper) return false;
       if (discoverable === false) return false;
+      // If the field exists, require completion. (RPCs should already enforce this server-side.)
+      if (typeof completed !== 'undefined' && completed !== true) return false;
       return true;
     });
   }, []);
@@ -740,16 +743,23 @@ export default function useAIRecommendations(
         // due to missing columns (Postgres error 42703), retry with a
         // minimal safe column list to avoid falling back to mocks.
         const extendedSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
         const minimalSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
 
         let data: any[] | null = null;
         let error: any = null;
         let usedMinimal = false;
 
         try {
-          const res = await supabase.from('profiles').select(extendedSelect).neq('id', userId).limit(20);
+          const res = await supabase
+            .from('profiles')
+            .select(extendedSelect)
+            .neq('id', userId)
+            .eq('profile_completed', true)
+            .eq('discoverable_in_vibes', true)
+            .eq('matchmaking_mode', false)
+            .limit(20);
           // @ts-ignore
           data = res.data;
           // @ts-ignore
@@ -762,7 +772,14 @@ export default function useAIRecommendations(
         if (error && (error.code === '42703' || String(error.message).includes('does not exist'))) {
           if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] extended select failed, retrying with minimalSelect', { error });
           try {
-            const res2 = await supabase.from('profiles').select(minimalSelect).neq('id', userId).limit(20);
+            const res2 = await supabase
+              .from('profiles')
+              .select(minimalSelect)
+              .neq('id', userId)
+              .eq('profile_completed', true)
+              .eq('discoverable_in_vibes', true)
+              .eq('matchmaking_mode', false)
+              .limit(20);
             // @ts-ignore
             data = res2.data;
             // @ts-ignore
@@ -871,6 +888,7 @@ export default function useAIRecommendations(
               location_precision: p.location_precision,
               matchmaking_mode: (p as any).matchmaking_mode ?? false,
               discoverable_in_vibes: (p as any).discoverable_in_vibes ?? true,
+              profile_completed: (p as any).profile_completed,
             } as Match);
           });
           const withSigned = await resolveProfileVideos(mapped);
