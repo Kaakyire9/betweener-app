@@ -12,7 +12,7 @@ import {
     TouchableOpacity,
     View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -36,6 +36,7 @@ export default function PhotoGallery({
   onRemovePhoto 
 }: PhotoGalleryProps) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const insets = useSafeAreaInsets();
 
   const handlePhotoPress = (index: number) => {
     setSelectedIndex(index);
@@ -134,14 +135,18 @@ export default function PhotoGallery({
         animationType="fade"
         presentationStyle="overFullScreen"
         statusBarTranslucent
+        onRequestClose={() => setSelectedIndex(null)}
       >
         <View style={styles.modalContainer}>
-          <SafeAreaView style={styles.modalContent}>
+          {/* SafeAreaView inside Modal can be inconsistent across devices; use explicit insets. */}
+          <View style={[styles.modalContent, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
             {/* Header */}
             <View style={styles.modalHeader}>
               <TouchableOpacity
                 style={styles.closeButton}
                 onPress={() => setSelectedIndex(null)}
+                hitSlop={{ top: 16, right: 16, bottom: 16, left: 16 }}
+                activeOpacity={0.85}
               >
                 <MaterialCommunityIcons name="close" size={24} color="#fff" />
               </TouchableOpacity>
@@ -154,6 +159,8 @@ export default function PhotoGallery({
                 <TouchableOpacity
                   style={styles.deleteButton}
                   onPress={() => handleRemovePhoto(selectedIndex)}
+                  hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
+                  activeOpacity={0.85}
                 >
                   <MaterialCommunityIcons name="delete" size={24} color="#fff" />
                 </TouchableOpacity>
@@ -220,7 +227,7 @@ export default function PhotoGallery({
                 ))}
               </ScrollView>
             )}
-          </SafeAreaView>
+          </View>
         </View>
       </Modal>
     </View>
