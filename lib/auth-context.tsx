@@ -10,6 +10,7 @@ import type { Database } from '@/supabase/types/database';
 import { setSentryUser } from '@/lib/telemetry/sentry';
 
 type Profile = Database['public']['Tables']['profiles']['Row'];
+type FetchProfileOptions = { force?: boolean };
 
 // Only allow writing actual DB columns (compile-time enforced). Also prevent callers
 // from setting identity/system columns; those are controlled in auth-context.
@@ -334,13 +335,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // Fetch user profile
-  const fetchProfile = async (userId: string) => {
+  const fetchProfile = async (userId: string, options?: FetchProfileOptions) => {
     try {
       if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.log("[auth] fetchProfile: start", { userId });
       }
       const cached = profileCacheRef.current;
-      if (cached && cached.userId === userId && Date.now() - cached.fetchedAt < PROFILE_CACHE_TTL_MS) {
+      if (
+        !options?.force &&
+        cached &&
+        cached.userId === userId &&
+        Date.now() - cached.fetchedAt < PROFILE_CACHE_TTL_MS
+      ) {
         if (typeof __DEV__ !== "undefined" && __DEV__) {
           console.log("[auth] fetchProfile: cache hit");
         }
@@ -379,7 +385,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshProfile = async () => {
     if (user) {
-      await fetchProfile(user.id);
+      // refreshProfile is called when the UI needs the latest server state (post-save,
+      // app resume, pull-to-refresh). Bypass the short profile cache to avoid stale UI.
+      await fetchProfile(user.id, { force: true });
     }
   };
 

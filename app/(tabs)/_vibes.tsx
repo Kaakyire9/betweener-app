@@ -385,7 +385,7 @@ export default function ExploreScreen() {
 
   const hasPreciseCoords = profile?.latitude != null && profile?.longitude != null;
   const hasCityOnly = !!profile?.location && profile?.location_precision === 'CITY';
-  const needsLocationPrompt = !hasPreciseCoords;
+  const needsLocationPrompt = !hasPreciseCoords && !hasCityOnly;
 
   useEffect(() => {
     if (typeof profile?.superlikes_left === 'number') {
