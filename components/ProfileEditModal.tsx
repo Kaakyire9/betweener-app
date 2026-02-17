@@ -5,8 +5,10 @@ import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useEffect, useMemo, useState } from 'react';
+import { Video as VideoCompressor, getRealPath } from 'react-native-compressor';
 import {
     ActivityIndicator,
     Alert,
@@ -14,6 +16,7 @@ import {
     FlatList,
     Image,
     Modal,
+    Platform,
     ScrollView,
     StyleSheet,
     Text,
@@ -27,6 +30,13 @@ const DISTANCE_UNIT_KEY = 'distance_unit';
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
+
+const MAX_PROFILE_VIDEO_DURATION_MS = 30_000;
+// Keep this aligned with the Supabase Storage bucket max object size for `profile-videos`.
+// We preflight locally to avoid long uploads that will fail server-side.
+const MAX_PROFILE_VIDEO_BYTES = 25 * 1024 * 1024; // 25MB
+const COMPRESS_TARGET_MAX_SIZE = 720; // 720p-ish (max height portrait / max width landscape)
+const COMPRESS_WHEN_OVER_BYTES = 10 * 1024 * 1024; // 10MB (premium "fast upload" threshold)
 
 const DISTANCE_UNIT_OPTIONS: { value: DistanceUnit; label: string; subtitle?: string }[] = [
   { value: 'auto', label: 'Auto', subtitle: 'Recommended' },
@@ -272,6 +282,8 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [videoUploading, setVideoUploading] = useState(false);
+  const [videoUploadStage, setVideoUploadStage] = useState<string | null>(null);
+  const [videoUploadProgress, setVideoUploadProgress] = useState<number | null>(null);
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
   
   // Original dropdown states
@@ -756,11 +768,13 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       mediaTypes: ['videos'],
       videoMaxDuration: 30,
       allowsEditing: true,
-      quality: 1,
+      // Best-effort compression on iOS. Android behavior depends on the picker app.
+      videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
+      videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
     });
 
     if (!result.canceled && result.assets[0]) {
-      await handleVideoUpload(result.assets[0].uri);
+      await handleVideoUpload(result.assets[0]);
     }
   };
 
@@ -775,11 +789,12 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       mediaTypes: ['videos'],
       videoMaxDuration: 30,
       allowsEditing: true,
-      quality: 1,
+      videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
+      videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
     });
 
     if (!result.canceled && result.assets[0]) {
-      await handleVideoUpload(result.assets[0].uri);
+      await handleVideoUpload(result.assets[0]);
     }
   };
 
@@ -787,11 +802,11 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     try {
       Alert.alert(
         'Select Video',
-        'Choose how you want to add a profile video',
+        'Choose how you want to add a profile video (max 30s)',
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Camera', onPress: () => void openVideoCamera() },
-          { text: 'Library', onPress: () => void openVideoLibrary() },
+          { text: 'Record 30s (Recommended)', onPress: () => void openVideoCamera() },
+          { text: 'Choose from library', onPress: () => void openVideoLibrary() },
         ]
       );
     } catch (error) {
@@ -800,36 +815,209 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     }
   };
 
-  const handleVideoUpload = async (uri: string) => {
+  const encodeStoragePath = (path: string) =>
+    path
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/');
+
+  const uploadToSupabaseStorageWithProgress = async (params: {
+    bucket: string;
+    filePath: string;
+    fileUri: string;
+    contentType: string;
+    onProgress: (value: number | null) => void;
+  }) => {
+    const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+    const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error('Supabase env vars missing (EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY)');
+    }
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) {
+      throw new Error('Not authenticated');
+    }
+
+    const url = `${supabaseUrl}/storage/v1/object/${params.bucket}/${encodeStoragePath(params.filePath)}?upsert=false`;
+
+    const task = FileSystem.createUploadTask(
+      url,
+      params.fileUri,
+      {
+        httpMethod: 'POST',
+        uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+        headers: {
+          'Content-Type': params.contentType,
+          Authorization: `Bearer ${accessToken}`,
+          apikey: supabaseAnonKey,
+          'x-upsert': 'false',
+        },
+      },
+      (progress) => {
+        const expected = progress.totalBytesExpectedToSend;
+        const sent = progress.totalBytesSent;
+        if (typeof expected === 'number' && expected > 0) {
+          params.onProgress(Math.max(0, Math.min(1, sent / expected)));
+        } else {
+          params.onProgress(null);
+        }
+      }
+    );
+
+    const result = await task.uploadAsync();
+    if (!result) {
+      throw new Error('Upload failed (no response)');
+    }
+
+    if (result.status < 200 || result.status >= 300) {
+      // Supabase Storage errors are usually JSON: { message, ... }
+      let message = result.body || `Upload failed (HTTP ${result.status})`;
+      try {
+        const parsed = JSON.parse(result.body || '{}');
+        if (parsed?.message) message = String(parsed.message);
+      } catch {}
+      throw new Error(message);
+    }
+  };
+
+  const handleVideoUpload = async (asset: ImagePicker.ImagePickerAsset) => {
     try {
       setVideoUploading(true);
+      setVideoUploadProgress(null);
+      setVideoUploadStage('Preparing video...');
 
       if (!user?.id) {
         Alert.alert('Error', 'User not authenticated');
         return;
       }
 
-      const fileExtension = uri.split('.').pop()?.toLowerCase() || 'mp4';
+      let uri = asset.uri;
+
+      // Enforce 30s max (library pickers may ignore `videoMaxDuration`).
+      if (typeof asset.duration === 'number' && asset.duration > MAX_PROFILE_VIDEO_DURATION_MS) {
+        const seconds = Math.round(asset.duration / 1000);
+        Alert.alert(
+          'Video too long',
+          `Your video is ${seconds}s. Please trim it to 30 seconds or less and try again.`,
+          [
+            { text: 'OK' },
+            { text: 'Record 30s (Recommended)', onPress: () => void openVideoCamera() },
+          ]
+        );
+        return;
+      }
+
+      // Normalize Android content:// URIs into a real path when possible.
+      // (Some native compressors require file:// paths.)
+      try {
+        if (Platform.OS === 'android' && uri.startsWith('content://')) {
+          const resolved = await getRealPath(uri, 'video');
+          if (typeof resolved === 'string' && resolved.length > 0) uri = resolved;
+        }
+      } catch {}
+
+      // Supabase Storage buckets can enforce a max object size; preflight locally to avoid long uploads.
+      // Even if trimming works, some devices still produce huge files (e.g. 4K HDR).
+      let originalSizeBytes: number | null = null;
+      try {
+        const sizeFromPicker = typeof asset.fileSize === 'number' ? asset.fileSize : null;
+        const info = sizeFromPicker == null ? await FileSystem.getInfoAsync(uri) : null;
+        const size =
+          sizeFromPicker != null
+            ? sizeFromPicker
+            : info && (info as any).exists && typeof (info as any).size === 'number'
+              ? Number((info as any).size)
+              : null;
+        originalSizeBytes = size;
+      } catch {
+        // If we can't read size (platform URI quirks), proceed and let the upload error surface.
+      }
+
+      // Premium: compress on-device when needed (especially Android) and show progress.
+      // Note: react-native-compressor requires a dev-client / EAS build (not Expo Go).
+      let uploadUri = uri;
+      const shouldTryCompression =
+        Platform.OS === 'android' &&
+        (originalSizeBytes == null ||
+          originalSizeBytes > COMPRESS_WHEN_OVER_BYTES ||
+          originalSizeBytes > MAX_PROFILE_VIDEO_BYTES);
+
+      if (shouldTryCompression) {
+        setVideoUploadStage('Compressing video...');
+        setVideoUploadProgress(0);
+        try {
+          const compressed = await VideoCompressor.compress(
+            uri,
+            {
+              compressionMethod: 'auto',
+              maxSize: COMPRESS_TARGET_MAX_SIZE,
+              // If originalSizeBytes is null, this still allows compression.
+              // Unit is MB per library docs.
+              minimumFileSizeForCompress: 0,
+            },
+            (progress) => {
+              if (typeof progress === 'number') {
+                setVideoUploadProgress(Math.max(0, Math.min(1, progress)));
+              }
+            }
+          );
+
+          if (typeof compressed === 'string' && compressed.length > 0) {
+            uploadUri = compressed;
+          }
+        } catch (compressError) {
+          console.warn('Video compression failed, falling back to original.', compressError);
+          uploadUri = uri;
+        }
+      }
+
+      // Final size gate (after optional compression).
+      try {
+        const info = await FileSystem.getInfoAsync(uploadUri);
+        const size =
+          info && (info as any).exists && typeof (info as any).size === 'number'
+            ? Number((info as any).size)
+            : null;
+        if (size != null && size > MAX_PROFILE_VIDEO_BYTES) {
+          const mb = (size / (1024 * 1024)).toFixed(1);
+          Alert.alert(
+            'Video too large',
+            `Your video is ${mb}MB. Please trim it shorter or record in lower quality and try again.`,
+            [
+              { text: 'Choose Again' },
+              { text: 'Record 30s (Recommended)', onPress: () => void openVideoCamera() },
+            ]
+          );
+          return;
+        }
+      } catch {}
+
+      const nameHint = asset.fileName || uri.split('/').pop() || '';
+      const extMatch = nameHint.match(/\.([a-z0-9]+)$/i);
+      const fileExtension =
+        (uploadUri.toLowerCase().includes('.mp4') && 'mp4') ||
+        (uploadUri.toLowerCase().includes('.mov') && 'mov') ||
+        (extMatch?.[1] || '').toLowerCase() ||
+        (asset.mimeType?.includes('quicktime') ? 'mov' : 'mp4');
       const timestamp = Date.now();
       const fileName = `profile-video-${timestamp}.${fileExtension}`;
       const filePath = `${user.id}/${fileName}`;
-      const contentType = fileExtension === 'mov' ? 'video/quicktime' : 'video/mp4';
+      const contentType =
+        fileExtension === 'mov'
+          ? 'video/quicktime'
+          : 'video/mp4';
 
-      const response = await fetch(uri);
-      const blob = await response.arrayBuffer();
-      const uint8Array = new Uint8Array(blob);
-
-      const { error } = await supabase.storage
-        .from('profile-videos')
-        .upload(filePath, uint8Array, {
-          contentType,
-          upsert: false,
-        });
-
-      if (error) {
-        console.error('Video upload error details:', error);
-        throw error;
-      }
+      setVideoUploadStage('Uploading video...');
+      setVideoUploadProgress(0);
+      await uploadToSupabaseStorageWithProgress({
+        bucket: 'profile-videos',
+        filePath,
+        fileUri: uploadUri,
+        contentType,
+        onProgress: setVideoUploadProgress,
+      });
 
       const previousPath = formData.profile_video;
       setFormData(prev => ({
@@ -852,6 +1040,8 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       Alert.alert('Error', `Upload failed: ${errorMessage}`);
     } finally {
       setVideoUploading(false);
+      setVideoUploadStage(null);
+      setVideoUploadProgress(null);
     }
   };
 
@@ -2042,7 +2232,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
             </View>
 
             <Text style={styles.photoHint}>
-              Add a short intro video (max 30s). This appears on your Explore card.
+              Add a short intro video (max 30s). We optimize it when possible to upload faster.
             </Text>
 
             {formData.profile_video ? (
@@ -2143,7 +2333,13 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
             <View style={styles.uploadingContainer}>
               <ActivityIndicator size="large" color={theme.tint} />
               <Text style={styles.uploadingText}>
-                {videoUploading ? 'Uploading video...' : 'Uploading photo...'}
+                {videoUploading
+                  ? `${videoUploadStage || 'Uploading video...'}${
+                      typeof videoUploadProgress === 'number'
+                        ? ` ${Math.round(videoUploadProgress * 100)}%`
+                        : ''
+                    }`
+                  : 'Uploading photo...'}
               </Text>
             </View>
           </View>

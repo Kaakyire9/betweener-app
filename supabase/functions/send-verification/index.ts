@@ -68,18 +68,20 @@ const enforceRateLimit = async (
 function cleanPhoneNumber(phone: string): string {
   // Remove all non-digit characters
   const cleaned = phone.replace(/\D/g, '')
+
+  // Ghana: if the caller already prepended +233 and the local number included trunk "0"
+  // (e.g. +233024xxxxxxx), remove the 0 to form valid E.164 (+23324xxxxxxx).
+  if (cleaned.startsWith('2330') && cleaned.length >= 12) {
+    return `+233${cleaned.substring(4)}`
+  }
   
   // Handle Ghana numbers
   if (cleaned.startsWith('0') && cleaned.length === 10) {
     return `+233${cleaned.substring(1)}`
   }
   
-  // Add + if missing
-  if (!cleaned.startsWith('+')) {
-    return `+${cleaned}`
-  }
-  
-  return cleaned
+  // Add + (we intentionally strip '+' above)
+  return `+${cleaned}`
 }
 
 function calculatePhoneScore(phoneNumber: string, carrierInfo?: TwilioCarrierInfo): number {
@@ -272,11 +274,19 @@ serve(async (req) => {
 
     if (dbError) {
       console.error('Database error:', dbError)
+      // Twilio already sent the SMS. Treat storage as best-effort so the user can still verify.
+      // Finalization can still succeed via signup_events (verify-phone updates it on approval).
       return new Response(
-        JSON.stringify({ error: 'Failed to store verification' }),
-        { 
-          status: 500, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        JSON.stringify({
+          success: true,
+          stored: false,
+          verificationSid: twilioData.sid,
+          phoneNumber: cleanedPhone,
+          carrierInfo: twilioData.lookup?.carrier,
+        }),
+        {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         }
       )
     }
@@ -284,6 +294,7 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
+        stored: true,
         verificationSid: twilioData.sid,
         phoneNumber: cleanedPhone,
         carrierInfo: twilioData.lookup?.carrier

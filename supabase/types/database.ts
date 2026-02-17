@@ -2425,7 +2425,84 @@ export type Database = {
           verified: boolean
         }[]
       }
+      get_recs_active_scored: {
+        Args: { p_user_id: string; p_window_minutes?: number }
+        Returns: {
+          age: number
+          ai_score: number
+          avatar_url: string
+          bio: string
+          full_name: string
+          id: string
+          is_active: boolean
+          last_active: string
+          latitude: number
+          location: string
+          longitude: number
+          online: boolean
+          personality_type: string
+          profile_video: string
+          region: string
+          religion: string
+          tribe: string
+          user_id: string
+          verification_level: number
+          verified: boolean
+        }[]
+      }
+      get_recs_for_you_scored: {
+        Args: { p_limit?: number; p_user_id: string }
+        Returns: {
+          age: number
+          ai_score: number
+          avatar_url: string
+          bio: string
+          distance_km: number
+          full_name: string
+          id: string
+          is_active: boolean
+          last_active: string
+          latitude: number
+          location: string
+          longitude: number
+          online: boolean
+          personality_type: string
+          profile_video: string
+          region: string
+          religion: string
+          tribe: string
+          user_id: string
+          verification_level: number
+          verified: boolean
+        }[]
+      }
       get_recs_nearby: {
+        Args: { p_limit?: number; p_user_id: string }
+        Returns: {
+          age: number
+          ai_score: number
+          avatar_url: string
+          bio: string
+          distance_km: number
+          full_name: string
+          id: string
+          is_active: boolean
+          last_active: string
+          latitude: number
+          location: string
+          longitude: number
+          online: boolean
+          personality_type: string
+          profile_video: string
+          region: string
+          religion: string
+          tribe: string
+          user_id: string
+          verification_level: number
+          verified: boolean
+        }[]
+      }
+      get_recs_nearby_scored: {
         Args: { p_limit?: number; p_user_id: string }
         Returns: {
           age: number

@@ -1716,13 +1716,18 @@ function PhotoLightboxModal({
         <Animated.View style={[StyleSheet.absoluteFillObject, backdropStyle]} />
 
         <Animated.View style={[stylesStatic.lightboxSafe, contentStyle]} {...panResponder.panHandlers}>
-          <SafeAreaView style={{ flex: 1 }}>
+          {/* SafeAreaView inside Modal can be flaky across devices; use explicit insets. */}
+          <View style={{ flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom }}>
             <View style={stylesStatic.lightboxHeader}>
-              <Pressable onPress={onClose} hitSlop={12} style={stylesStatic.lightboxCloseBtn}>
-                <MaterialCommunityIcons name="close" size={26} color={theme.text} />
+              <Pressable
+                onPress={onClose}
+                hitSlop={14}
+                style={[stylesStatic.lightboxCloseBtn, { backgroundColor: 'rgba(255,255,255,0.10)' }]}
+              >
+                <MaterialCommunityIcons name="close" size={26} color="#fff" />
               </Pressable>
 
-              <Text style={[stylesStatic.lightboxCounter, { color: theme.text }]}>
+              <Text style={[stylesStatic.lightboxCounter, { color: '#fff' }]}>
                 {items.length ? `${Math.max(0, Math.min(items.length - 1, index)) + 1} of ${items.length}` : ''}
               </Text>
 
@@ -1740,7 +1745,7 @@ function PhotoLightboxModal({
                       style={[
                         stylesStatic.lightboxStorySegment,
                         {
-                          backgroundColor: done || active ? theme.text : 'rgba(255,255,255,0.22)',
+                          backgroundColor: done || active ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.22)',
                           opacity: active ? 1 : done ? 0.85 : 0.6,
                         },
                       ]}
@@ -1836,7 +1841,7 @@ function PhotoLightboxModal({
                 />
               </View>
             </GestureDetector>
-          </SafeAreaView>
+          </View>
         </Animated.View>
       </View>
     </Modal>
