@@ -6,6 +6,7 @@ import { haptics } from "@/lib/haptics";
 import { isLikelyNetworkError } from "@/lib/network";
 import { clearSignupSession, finalizeSignupPhoneVerification, getSignupPhoneState } from "@/lib/signup-tracking";
 import { supabase } from "@/lib/supabase";
+import { logger } from "@/lib/telemetry/logger";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { LinearGradient } from "expo-linear-gradient";
@@ -143,6 +144,8 @@ export default function Onboarding() {
   const [message, setMessage] = useState("");
   const [profileCreated, setProfileCreated] = useState(false);
   const [saveNetworkError, setSaveNetworkError] = useState<string | null>(null);
+  const [submitDebugId, setSubmitDebugId] = useState<string | null>(null);
+  const submitAttemptRef = useRef(0);
 
   // Animation values
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -243,12 +246,47 @@ export default function Onboarding() {
       }
     }
 
+    const attempt = ++submitAttemptRef.current;
+    const debugId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`.toUpperCase();
+    setSubmitDebugId(debugId);
+
     setLoading(true);
     setMessage("");
     setSaveNetworkError(null);
 
+    let watchdog: ReturnType<typeof setTimeout> | null = null;
+
     try {
-      const signupPhoneState = await getSignupPhoneState();
+      logger.info("[onboarding] submit start", {
+        debugId,
+        attempt,
+        step: ONBOARDING_STEPS[currentStep]?.id ?? currentStep,
+        platform: Platform.OS,
+        hasUser: !!user?.id,
+        hasImage: !!image,
+      });
+
+      const withTimeout = async <T,>(label: string, promise: PromiseLike<T>, ms: number): Promise<T> => {
+        const start = Date.now();
+        const result = await Promise.race([
+          Promise.resolve(promise),
+          new Promise<T>((_, reject) =>
+            setTimeout(() => reject(new Error(`${label}_timeout_${ms}ms`)), ms)
+          ),
+        ]);
+        logger.debug("[onboarding] step ok", { debugId, attempt, label, ms: Date.now() - start });
+        return result;
+      };
+
+      watchdog = setTimeout(() => {
+        if (submitAttemptRef.current !== attempt) return;
+        logger.warn("[onboarding] submit watchdog timeout", { debugId, attempt });
+        setSaveNetworkError("This is taking longer than expected. Please check your connection and tap Retry.");
+        setMessage("");
+        setLoading(false);
+      }, 25_000);
+
+      const signupPhoneState = await withTimeout("signup_phone_state", getSignupPhoneState(), 4000);
       const isPhoneVerified = phoneVerified || signupPhoneState.verified;
       let phoneNumber: string | null = signupPhoneState.phoneNumber ?? null;
 
@@ -291,12 +329,16 @@ export default function Onboarding() {
       }
 
       const { data: existingPhoneProfile, error: phoneLookupError } = phoneNumber
-        ? await supabase
-            .from("profiles")
-            .select("user_id")
-            .eq("phone_number", phoneNumber)
-            .is("deleted_at", null)
-            .maybeSingle()
+        ? await withTimeout(
+            "phone_lookup",
+            supabase
+              .from("profiles")
+              .select("user_id")
+              .eq("phone_number", phoneNumber)
+              .is("deleted_at", null)
+              .maybeSingle(),
+            8000
+          )
         : { data: null, error: null };
 
       if (
@@ -330,15 +372,17 @@ export default function Onboarding() {
         const fileName = `${user.id}/${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
 
         // Read file as array buffer for React Native
-        const response = await fetch(image);
-        const arrayBuffer = await response.arrayBuffer();
+        const response = await withTimeout("image_fetch", fetch(image), 8000);
+        const arrayBuffer = await withTimeout("image_arraybuffer", response.arrayBuffer(), 8000);
         const fileBody = new Uint8Array(arrayBuffer);
 
-        const { error: uploadError } = await supabase.storage
-          .from("profiles")
-          .upload(fileName, fileBody, {
+        const { error: uploadError } = await withTimeout(
+          "image_upload",
+          supabase.storage.from("profiles").upload(fileName, fileBody, {
             contentType: `image/${fileExt}`,
-          });
+          }),
+          20_000
+        );
 
         if (uploadError) {
           throw new Error(`Image upload failed: ${uploadError.message}`);
@@ -391,7 +435,7 @@ export default function Onboarding() {
         profile_completed: true,
       };
 
-      const { error: updateError } = await updateProfile(profileData);
+      const { error: updateError } = await withTimeout("profile_upsert", updateProfile(profileData), 20_000);
 
       if (updateError) {
         if ("code" in updateError && updateError.code === "23505") {
@@ -406,23 +450,32 @@ export default function Onboarding() {
         throw new Error(`Profile creation failed: ${updateError.message}`);
       }
 
-      await finalizeSignupPhoneVerification();
-      await clearSignupSession();
+      await withTimeout("finalize_signup_verification", finalizeSignupPhoneVerification(), 6000);
+      await withTimeout("clear_signup_session", clearSignupSession(), 4000);
       void haptics.success();
 
       setMessage("Profile created successfully! Welcome to Betweener! 🎉");
       
       setProfileCreated(true);
       
-      // Force refresh the auth context to ensure profile state is updated
-      setTimeout(async () => {
-        await refreshProfile();
-
-        // Wait a bit longer to ensure database is fully updated
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        router.dismissAll();
-        router.replace("/(tabs)/vibes");
-      }, 2000);
+      // Best-effort refresh so the auth guard doesn't bounce us back into onboarding.
+      // Never block navigation indefinitely.
+      setTimeout(() => {
+        void (async () => {
+          try {
+            await Promise.race([refreshProfile(), new Promise<void>((resolve) => setTimeout(resolve, 2500))]);
+          } catch (e) {
+            logger.warn("[onboarding] refreshProfile failed", { debugId, attempt, error: String((e as any)?.message || e) });
+          } finally {
+            try {
+              router.dismissAll();
+              router.replace("/(tabs)/vibes");
+            } catch (e) {
+              logger.error("[onboarding] navigation failed", e, { debugId, attempt });
+            }
+          }
+        })();
+      }, 600);
     } catch (error: any) {
       if (isLikelyNetworkError(error)) {
         setSaveNetworkError("We couldn't save your profile. Check your connection and try again.");
@@ -430,7 +483,14 @@ export default function Onboarding() {
       } else {
         setMessage(error?.message || "An error occurred");
       }
+      logger.error("[onboarding] submit failed", error, {
+        debugId,
+        attempt,
+        step: ONBOARDING_STEPS[currentStep]?.id ?? currentStep,
+        likelyNetwork: isLikelyNetworkError(error),
+      });
     } finally {
+      if (watchdog) clearTimeout(watchdog);
       setLoading(false);
     }
   };
@@ -1174,6 +1234,9 @@ export default function Onboarding() {
             actionLabel={loading ? "Saving..." : "Retry"}
             onAction={loading ? undefined : handleSubmit}
           />
+        ) : null}
+        {(saveNetworkError || message) && submitDebugId ? (
+          <Text style={styles.debugText}>Debug ID: {submitDebugId}</Text>
         ) : null}
         {message && <Text style={styles.messageText}>{message}</Text>}
       </View>
@@ -1953,6 +2016,13 @@ const styles = StyleSheet.create({
     color: BRAND_LILAC,
     textAlign: 'center',
     marginTop: 16,
+  },
+  debugText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_400Regular',
+    color: 'rgba(15,23,42,0.55)',
+    textAlign: 'center',
+    marginTop: 10,
   },
 
   // Diaspora Location Styles
