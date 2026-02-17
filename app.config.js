@@ -17,6 +17,9 @@ module.exports = ({ config }) => {
       '@react-native-community/datetimepicker',
       'expo-audio',
       'expo-apple-authentication',
+      // Note: Sentry is configured via the Expo config plugin in app.json:
+      // ["@sentry/react-native/expo", { organization, project }]
+      // Avoid adding '@sentry/react-native' here to prevent duplicate/competing config plugins.
     ],
     ios: {
       ...config.ios,

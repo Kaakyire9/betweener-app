@@ -1,5 +1,6 @@
 import { useAuth } from '@/lib/auth-context';
 import { PhoneVerificationService } from '@/lib/phone-verification';
+import { logger } from '@/lib/telemetry/logger';
 import { Colors, Fonts } from '@/constants/theme';
 import countryData from '@/data/countries.json';
 import { Ionicons } from '@expo/vector-icons';
@@ -117,9 +118,12 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
         signupSessionId ?? null,
         accessToken
       );
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.log('[phone-ui] sendVerificationCode result', result);
-      }
+      logger.debug('[phone-ui] sendVerificationCode result', {
+        success: result.success,
+        hasSid: !!result.verificationSid,
+        message: result.message,
+        error: result.error,
+      });
       
       if (result.success && result.verificationSid) {
         setVerificationSid(result.verificationSid);
@@ -165,9 +169,13 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
         signupSessionId ?? null,
         accessToken
       );
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.log('[phone-ui] verifyCode result', result);
-      }
+      logger.debug('[phone-ui] verifyCode result', {
+        success: result.success,
+        verified: result.verified,
+        confidenceScore: result.confidenceScore,
+        message: result.message,
+        error: result.error,
+      });
       
       if (result.success && result.verified) {
         Alert.alert('Success', 'Phone number verified successfully!');

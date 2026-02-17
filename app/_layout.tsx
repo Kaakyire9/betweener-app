@@ -3,7 +3,7 @@ import * as Linking from "expo-linking";
 import { Slot, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useRef, useState } from "react";
-import { Animated, Easing, StyleSheet, Text, View } from "react-native";
+import { Animated, Button, Easing, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import * as Notifications from "expo-notifications";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -14,11 +14,15 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAppFonts } from "@/constants/fonts";
 import { AuthProvider } from "@/lib/auth-context";
 import InAppToasts from "@/components/InAppToasts";
+import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
 
 // Keep native splash visible until we decide
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
-export default function RootLayout() {
+// Initialize telemetry as early as possible (safe no-op if DSN isn't set).
+initSentry();
+
+function RootLayout() {
   const fontsLoaded = useAppFonts();
   const router = useRouter();
 
@@ -41,57 +45,88 @@ export default function RootLayout() {
 
   // Handle deep links
   useEffect(() => {
-    Linking.createURL("/");
+    // Be defensive: any uncaught exception during startup can crash a release build (TestFlight)
+    // before we can render a fallback UI.
+    try {
+      const hasAuthPayload = (url: string) =>
+        url.includes("access_token=") ||
+        url.includes("refresh_token=") ||
+        url.includes("code=") ||
+        url.includes("token_hash=");
 
-    const hasAuthPayload = (url: string) =>
-      url.includes("access_token=") ||
-      url.includes("refresh_token=") ||
-      url.includes("code=") ||
-      url.includes("token_hash=");
+      Linking.getInitialURL()
+        .then((url) => {
+          if (url && hasAuthPayload(url)) {
+            AsyncStorage.setItem("last_deep_link_url", url).catch(() => {});
+          }
+        })
+        .catch((e) => captureException(e, { where: "Linking.getInitialURL" }));
 
-    Linking.getInitialURL().then((url) => {
-      if (url) {
-        if (hasAuthPayload(url)) {
-          AsyncStorage.setItem("last_deep_link_url", url).catch(() => {});
+      const subscription = Linking.addEventListener("url", ({ url }) => {
+        try {
+          if (url && hasAuthPayload(url)) {
+            AsyncStorage.setItem("last_deep_link_url", url).catch(() => {});
+          }
+        } catch (e) {
+          captureException(e, { where: "Linking.urlListener" });
         }
-      }
-    });
+      });
 
-    const subscription = Linking.addEventListener("url", ({ url }) => {
-      if (hasAuthPayload(url)) {
-        AsyncStorage.setItem("last_deep_link_url", url).catch(() => {});
-      }
-    });
-
-    return () => subscription.remove();
+      return () => {
+        try {
+          subscription.remove();
+        } catch (e) {
+          captureException(e, { where: "Linking.subscription.remove" });
+        }
+      };
+    } catch (e) {
+      captureException(e, { where: "Linking.useEffect" });
+      return;
+    }
   }, []);
 
   useEffect(() => {
-    const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      const data = response.notification.request.content.data as Record<string, any> | undefined;
-      const type = data?.type;
-      if (type === 'message' || type === 'message_reaction') {
-        const chatId = data?.profile_id || data?.reactor_id || data?.user_id;
-        if (chatId) {
-          router.push({
-            pathname: "/chat/[id]",
-            params: {
-              id: String(chatId),
-              userName: data?.name ? String(data.name) : '',
-              userAvatar: data?.avatar_url ? String(data.avatar_url) : '',
-            },
-          });
-          return;
+    // Same reasoning as deep links: don't let a notification handler crash a release build.
+    try {
+      const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+        try {
+          const data = response.notification.request.content.data as Record<string, any> | undefined;
+          const type = data?.type;
+          if (type === "message" || type === "message_reaction") {
+            const chatId = data?.profile_id || data?.reactor_id || data?.user_id;
+            if (chatId) {
+              router.push({
+                pathname: "/chat/[id]",
+                params: {
+                  id: String(chatId),
+                  userName: data?.name ? String(data.name) : "",
+                  userAvatar: data?.avatar_url ? String(data.avatar_url) : "",
+                },
+              });
+              return;
+            }
+          }
+
+          const profileId = data?.profile_id || data?.profileId;
+          if (profileId) {
+            router.push({ pathname: "/profile-view", params: { profileId: String(profileId) } });
+          }
+        } catch (e) {
+          captureException(e, { where: "Notifications.responseListener" });
         }
-      }
+      });
 
-      const profileId = data?.profile_id || data?.profileId;
-      if (profileId) {
-        router.push({ pathname: "/profile-view", params: { profileId: String(profileId) } });
-      }
-    });
-
-    return () => subscription.remove();
+      return () => {
+        try {
+          subscription.remove();
+        } catch (e) {
+          captureException(e, { where: "Notifications.subscription.remove" });
+        }
+      };
+    } catch (e) {
+      captureException(e, { where: "Notifications.useEffect" });
+      return;
+    }
   }, [router]);
 
   // Always release native splash even if fonts hang.
@@ -234,4 +269,7 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.18)",
   },
+
 });
+
+export default wrapWithSentry(RootLayout);

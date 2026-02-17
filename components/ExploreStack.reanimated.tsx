@@ -308,6 +308,8 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
   }
 );
 
+ExploreStackReanimated.displayName = "ExploreStackReanimated";
+
 export default ExploreStackReanimated;
 
 const styles = StyleSheet.create({

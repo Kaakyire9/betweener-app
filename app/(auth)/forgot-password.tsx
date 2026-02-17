@@ -1,4 +1,4 @@
-﻿import { supabase } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
 import { useRouter } from "expo-router";
 import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
@@ -52,7 +52,7 @@ export default function ForgotPasswordScreen() {
 
         <Text style={styles.title}>Forgot Password</Text>
         <Text style={styles.subtitle}>
-          Enter the email on your account and we'll send a private reset link.
+          {"Enter the email on your account and we'll send a private reset link."}
         </Text>
 
         <View style={[styles.inputShell, focused && styles.inputShellActive]}>
@@ -234,4 +234,3 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
 });
-

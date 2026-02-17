@@ -1865,7 +1865,7 @@ export default function ProfileScreen() {
                 </Text>
               ) : (
                 <Text style={[styles.progressHelper, { color: theme.textMuted }]}>
-                  You're all set.
+                  {"You're all set."}
                 </Text>
               )}
               {profileCompletion.percent < 100 && !(profile as any)?.profile_video ? (

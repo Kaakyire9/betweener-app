@@ -18,6 +18,7 @@ import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { logger } from "@/lib/telemetry/logger";
 
 export default function VerifyPhoneScreen() {
   const router = useRouter();
@@ -213,9 +214,9 @@ export default function VerifyPhoneScreen() {
                 await setSignupPhoneVerified(true);
                 const state = await getSignupPhoneState();
                 const localPhone = state.phoneNumber ?? verifiedPhoneNumber ?? null;
-                if (typeof __DEV__ !== "undefined" && __DEV__) {
-                  console.log("[verify-phone] onVerificationComplete: localPhone", { localPhone });
-                }
+                logger.debug("[verify-phone] onVerificationComplete: localPhone", {
+                  hasLocalPhone: !!localPhone,
+                });
 
                 if (!localPhone) {
                   Alert.alert(

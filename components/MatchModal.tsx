@@ -86,7 +86,7 @@ export default function MatchModal({
       <View style={styles.centerWrap} pointerEvents="box-none">
         <Animated.View style={[styles.card, { transform: [{ scale }], opacity }] as any}>
           <Image source={{ uri: match.avatar_url }} style={styles.avatar} />
-          <Text style={styles.title}>It's a Match!</Text>
+          <Text style={styles.title}>{"It's a Match!"}</Text>
           <Text style={styles.subtitle}>{`${match.name}, ${match.age}`}</Text>
 
           <View style={styles.actionsRow}>

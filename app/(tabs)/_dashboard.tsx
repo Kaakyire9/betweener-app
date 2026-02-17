@@ -959,7 +959,7 @@ export default function DashboardScreen() {
       </View>
       <View style={styles.streakHighlight}>
         <Text style={styles.streakText}>
-          ?? You've messaged {(recentPeople[0]?.name || 'a match')} {conversationStreak} days in a row!
+          {"You've messaged "}{(recentPeople[0]?.name || "a match")} {conversationStreak}{" days in a row!"}
         </Text>
       </View>
     </View>

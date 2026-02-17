@@ -1,6 +1,9 @@
 import { useAppFonts } from "@/constants/fonts";
 import { Colors } from "@/constants/theme";
+import Notice from "@/components/ui/Notice";
 import { useAuth } from "@/lib/auth-context";
+import { haptics } from "@/lib/haptics";
+import { isLikelyNetworkError } from "@/lib/network";
 import { clearSignupSession, finalizeSignupPhoneVerification, getSignupPhoneState } from "@/lib/signup-tracking";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -139,6 +142,7 @@ export default function Onboarding() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [profileCreated, setProfileCreated] = useState(false);
+  const [saveNetworkError, setSaveNetworkError] = useState<string | null>(null);
 
   // Animation values
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -241,6 +245,7 @@ export default function Onboarding() {
 
     setLoading(true);
     setMessage("");
+    setSaveNetworkError(null);
 
     try {
       const signupPhoneState = await getSignupPhoneState();
@@ -403,6 +408,7 @@ export default function Onboarding() {
 
       await finalizeSignupPhoneVerification();
       await clearSignupSession();
+      void haptics.success();
 
       setMessage("Profile created successfully! Welcome to Betweener! 🎉");
       
@@ -418,7 +424,12 @@ export default function Onboarding() {
         router.replace("/(tabs)/vibes");
       }, 2000);
     } catch (error: any) {
-      setMessage(error.message || "An error occurred");
+      if (isLikelyNetworkError(error)) {
+        setSaveNetworkError("We couldn't save your profile. Check your connection and try again.");
+        setMessage("");
+      } else {
+        setMessage(error?.message || "An error occurred");
+      }
     } finally {
       setLoading(false);
     }
@@ -1064,7 +1075,7 @@ export default function Onboarding() {
               <Text style={styles.requiredBadgeText}>Required</Text>
             </View>
           </View>
-          <Text style={styles.inputHint}>Select what you're passionate about</Text>
+          <Text style={styles.inputHint}>{"Select what you're passionate about"}</Text>
           <View style={styles.interestsGrid}>
             {INTERESTS.map((interest) => (
               <TouchableOpacity
@@ -1156,6 +1167,14 @@ export default function Onboarding() {
         <Text style={styles.completeSubtitle}>
           Review your information and create your profile to start your journey.
         </Text>
+        {saveNetworkError ? (
+          <Notice
+            title="No connection"
+            message={saveNetworkError}
+            actionLabel={loading ? "Saving..." : "Retry"}
+            onAction={loading ? undefined : handleSubmit}
+          />
+        ) : null}
         {message && <Text style={styles.messageText}>{message}</Text>}
       </View>
     </Animated.View>
