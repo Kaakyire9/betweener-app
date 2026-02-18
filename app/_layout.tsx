@@ -15,6 +15,7 @@ import { useAppFonts } from "@/constants/fonts";
 import { AuthProvider } from "@/lib/auth-context";
 import InAppToasts from "@/components/InAppToasts";
 import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
+import { SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
 
 // Keep native splash visible until we decide
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -153,6 +154,14 @@ function RootLayout() {
           <Slot />
           <InAppToasts />
 
+          {!SUPABASE_IS_CONFIGURED && (
+            <View style={styles.envBanner} pointerEvents="none">
+              <Text style={styles.envBannerText}>
+                Backend configuration missing (Supabase). Reinstall this build or contact support.
+              </Text>
+            </View>
+          )}
+
           {showSplash && (
             <View style={styles.splashOverlay}>
               {/* Classic luxury background */}
@@ -268,6 +277,24 @@ const styles = StyleSheet.create({
   vignette: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.18)",
+  },
+
+  envBanner: {
+    position: "absolute",
+    left: 12,
+    right: 12,
+    bottom: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: "rgba(220,38,38,0.92)",
+  },
+
+  envBannerText: {
+    color: "white",
+    fontSize: 12,
+    fontWeight: "700",
+    textAlign: "center",
   },
 
 });
