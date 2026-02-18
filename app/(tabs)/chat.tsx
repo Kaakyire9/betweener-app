@@ -2,7 +2,8 @@ import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
-import { supabase } from "@/lib/supabase";
+import { getSupabaseNetEvents, supabase } from "@/lib/supabase";
+import { captureMessage } from "@/lib/telemetry/sentry";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect } from "@react-navigation/native";
@@ -105,6 +106,7 @@ export default function ChatScreen() {
   const [conversations, setConversations] = useState<ConversationType[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const lastWatchdogLogAtRef = useRef(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'pinned'>('all');
@@ -386,6 +388,27 @@ export default function ChatScreen() {
       setIsLoading(false);
     }
   }, [applyChatPrefs, user?.id]);
+
+  // Guardrail: avoid "skeleton forever" if a request stalls or state never resolves.
+  useEffect(() => {
+    if (!isLoading || conversations.length > 0 || loadError) return;
+    const t = setTimeout(() => {
+      if (!isLoading || conversations.length > 0 || loadError) return;
+      setLoadError("timeout");
+      setIsLoading(false);
+
+      const now = Date.now();
+      if (now - lastWatchdogLogAtRef.current > 60_000) {
+        lastWatchdogLogAtRef.current = now;
+        captureMessage("[chat] loading timeout (skeleton watchdog)", {
+          hasUserId: !!user?.id,
+          conversations: conversations.length,
+          net: getSupabaseNetEvents(),
+        });
+      }
+    }, 12_000);
+    return () => clearTimeout(t);
+  }, [conversations.length, isLoading, loadError, user?.id]);
 
   useFocusEffect(
     useCallback(() => {

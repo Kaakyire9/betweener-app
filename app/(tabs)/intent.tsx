@@ -316,18 +316,21 @@ export default function IntentScreen() {
     let cancelled = false;
     const loadSuggested = async () => {
       setSuggestedLoading(true);
-      const { data, error } = await supabase.rpc('rpc_get_suggested_moves', {
-        p_profile_id: currentProfileId,
-        p_limit: 6,
-      });
-      if (cancelled) return;
-      if (error) {
-        console.log('[intent] suggested moves error', error);
-      } else {
-        setSuggestedMoves((data as SuggestedMove[]) || []);
+      try {
+        const { data, error } = await supabase.rpc('rpc_get_suggested_moves', {
+          p_profile_id: currentProfileId,
+          p_limit: 6,
+        });
+        if (cancelled) return;
+        if (error) {
+          console.log('[intent] suggested moves error', error);
+        } else {
+          setSuggestedMoves((data as SuggestedMove[]) || []);
+        }
+        suggestedLoadedRef.current = true;
+      } finally {
+        if (!cancelled) setSuggestedLoading(false);
       }
-      setSuggestedLoading(false);
-      suggestedLoadedRef.current = true;
     };
     void loadSuggested();
     return () => {

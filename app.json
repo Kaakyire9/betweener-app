@@ -4,6 +4,15 @@
     "owner": "kaakyire9",
     "slug": "betweener",
     "version": "1.0.0",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "enabled": true,
+      "checkAutomatically": "ON_ERROR_RECOVERY",
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/7de6cdc4-8616-446f-99de-82764af3a7e6"
+    },
     "orientation": "portrait",
     "scheme": "betweenerapp",
     "platforms": [

@@ -276,18 +276,63 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (typeof __DEV__ !== "undefined" && __DEV__) {
-        console.log("[auth] initial session", {
-          hasSession: !!session,
-          hasUser: !!session?.user,
-        });
+    let cancelled = false;
+    const initAuth = async () => {
+      try {
+        const { data, error } = await Promise.race([
+          supabase.auth.getSession(),
+          new Promise<{
+            data: { session: null };
+            error: Error;
+          }>((resolve) =>
+            setTimeout(() => resolve({ data: { session: null }, error: new Error("initial_session_timeout") }), 2500)
+          ),
+        ]);
+
+        if (cancelled) return;
+        if (error && typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] initial getSession error", error);
+        }
+
+        const initialSession = data?.session ?? null;
+        accessTokenRef.current = initialSession?.access_token ?? null;
+        setSession(initialSession);
+        setUser(initialSession?.user ?? null);
+
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] initial session", {
+            hasSession: !!initialSession,
+            hasUser: !!initialSession?.user,
+          });
+        }
+
+        if (initialSession?.user) {
+          // Warm profile state on cold launch so screens don't wait on a later auth event.
+          void ensureProfileExists(initialSession.user.id);
+          const initialProfile = await fetchProfile(initialSession.user.id);
+          if (!cancelled && initialProfile?.phone_verified === true) {
+            setPhoneVerified(true);
+          }
+        } else {
+          setProfile(null);
+          setPhoneVerified(false);
+        }
+      } catch (error) {
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] initial auth bootstrap error", error);
+        }
+        if (cancelled) return;
+        accessTokenRef.current = null;
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+        setPhoneVerified(false);
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
-      setSession(session);
-      setUser(session?.user ?? null);
-      setIsLoading(false);
-    });
+    };
+
+    void initAuth();
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -329,11 +374,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } else {
           accessTokenRef.current = null;
           setProfile(null);
+          setPhoneVerified(false);
         }
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
   }, []);
 
   // Fetch user profile
@@ -589,6 +638,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const setOffline = () => mounted && void updatePresence(false);
 
     setOnline();
+    // Cold start with a persisted session won't emit an AppState transition.
+    // Refresh once here so stale access tokens are renewed after relaunch.
+    void refreshSessionOnResume();
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         setOnline();

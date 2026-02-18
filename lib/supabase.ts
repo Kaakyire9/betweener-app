@@ -16,6 +16,21 @@ const LOG_THROTTLE_MS = 60_000;
 let lastLogAt = 0;
 let lastLogKey = '';
 
+// In-memory ring buffer of recent Supabase HTTP activity.
+// Helps debug "loading forever" states in production without logging PII.
+type SupabaseNetEvent = {
+  at: number;
+  method: string;
+  path: string;
+  status: number;
+  ms: number;
+};
+
+const NET_EVENTS_MAX = 30;
+const netEvents: SupabaseNetEvent[] = [];
+
+export const getSupabaseNetEvents = (): SupabaseNetEvent[] => netEvents.slice();
+
 const safeUrlPath = (input: RequestInfo | URL) => {
   try {
     const urlStr =
@@ -51,6 +66,18 @@ const makeSyntheticResponse = (message: string, code: string) => {
   });
 };
 
+const recordNetEvent = (method: string, path: string, status: number, ms: number) => {
+  try {
+    if (!path) return;
+    netEvents.push({ at: Date.now(), method, path, status, ms });
+    if (netEvents.length > NET_EVENTS_MAX) {
+      netEvents.splice(0, netEvents.length - NET_EVENTS_MAX);
+    }
+  } catch {
+    // ignore net event recording errors
+  }
+};
+
 const looksLikeSignalUnsupported = (message: string) => {
   const m = message.toLowerCase();
   // Different RN/iOS stacks surface different errors when `signal` isn't supported.
@@ -61,6 +88,9 @@ const looksLikeSignalUnsupported = (message: string) => {
 };
 
 const fetchWithRaceTimeout: typeof fetch = async (input, init) => {
+  const start = Date.now();
+  const path = safeUrlPath(input);
+  const method = String((init as any)?.method || 'GET').toUpperCase();
   try {
     const res = (await Promise.race([
       fetch(input, init as any),
@@ -68,15 +98,15 @@ const fetchWithRaceTimeout: typeof fetch = async (input, init) => {
         setTimeout(() => resolve(makeSyntheticResponse('timeout', 'network_timeout')), SUPABASE_FETCH_TIMEOUT_MS)
       ),
     ])) as Response;
+    recordNetEvent(method, path, res.status, Date.now() - start);
     if (res.status >= 400) {
-      const path = safeUrlPath(input);
       logFetchIssueOnce(`http_${res.status}`, { path, via: 'race' });
     }
     return res;
   } catch (error) {
     const message = String((error as any)?.message || error || 'fetch_failed');
-    const path = safeUrlPath(input);
     logFetchIssueOnce('exception', { path, via: 'race', message });
+    recordNetEvent(method, path, 599, Date.now() - start);
     return makeSyntheticResponse(message, 'network_error');
   }
 };
@@ -87,6 +117,9 @@ const fetchWithRaceTimeout: typeof fetch = async (input, init) => {
 // Important: some RN builds/devices don't support `signal` yet. In that case, we
 // fall back to a Promise.race timeout (cannot abort the underlying request).
 const fetchWithTimeout: typeof fetch = async (input, init) => {
+  const start = Date.now();
+  const path = safeUrlPath(input);
+  const method = String((init as any)?.method || 'GET').toUpperCase();
   const hasAbortController = typeof AbortController !== 'undefined';
   if (!hasAbortController) {
     return fetchWithRaceTimeout(input, init);
@@ -142,8 +175,9 @@ const fetchWithTimeout: typeof fetch = async (input, init) => {
 
     const res = await Promise.race([fetchPromise, timeoutPromise]);
 
+    recordNetEvent(method, path, res.status, Date.now() - start);
+
     if (res.status >= 400) {
-      const path = safeUrlPath(input);
       logFetchIssueOnce(`http_${res.status}`, { path, via: timedOut ? 'timeout' : 'abort' });
     }
 

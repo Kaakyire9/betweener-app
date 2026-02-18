@@ -1,7 +1,8 @@
 import useAIRecommendations from '@/hooks/useAIRecommendations';
 import type { Match } from '@/types/match';
-import { supabase } from '@/lib/supabase';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { getSupabaseNetEvents, supabase } from '@/lib/supabase';
+import { captureMessage } from '@/lib/telemetry/sentry';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export type VibesSegment = 'forYou' | 'nearby' | 'activeNow';
 
@@ -74,6 +75,8 @@ export default function useVibesFeed({
   const [refreshCount, setRefreshCount] = useState(0);
   const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
   const [swipedTodayIds, setSwipedTodayIds] = useState<Set<string>>(new Set());
+  const [watchdogError, setWatchdogError] = useState<Error | null>(null);
+  const lastWatchdogLogAtRef = useRef(0);
 
   const mode = segment === 'activeNow' ? 'active' : segment === 'nearby' ? 'nearby' : 'forYou';
 
@@ -148,6 +151,38 @@ export default function useVibesFeed({
   // If the server returns 0 rows (valid when there are no eligible profiles yet),
   // we still want to stop showing the skeleton.
   const hasFetchedOnce = lastFetchedAt != null || lastError != null;
+
+  // Guardrail: if we ever get stuck in "loading" without a result or error,
+  // stop showing an infinite skeleton and report minimal diagnostics to Sentry.
+  useEffect(() => {
+    setWatchdogError(null);
+    if (!userId) return;
+    if (hasFetchedOnce) return;
+
+    const t = setTimeout(() => {
+      // Re-check at fire time; avoid stale closures.
+      if (!userId) return;
+      if (lastFetchedAt != null || lastError != null) return;
+
+      const err = new Error('vibes_feed_timeout');
+      setWatchdogError(err);
+
+      const now = Date.now();
+      if (now - lastWatchdogLogAtRef.current > 60_000) {
+        lastWatchdogLogAtRef.current = now;
+        captureMessage('[vibes] feed timeout (skeleton watchdog)', {
+          segment,
+          mode,
+          hasUserId: !!userId,
+          lastFetchedAt,
+          lastError: lastError ? String((lastError as any).message || lastError) : null,
+          net: getSupabaseNetEvents(),
+        });
+      }
+    }, 12_000);
+
+    return () => clearTimeout(t);
+  }, [hasFetchedOnce, lastError, lastFetchedAt, mode, segment, userId]);
 
   const applyFilters = useCallback((next: Partial<VibesFilters>) => {
     setFilters((prev) => ({ ...prev, ...next }));
@@ -245,8 +280,8 @@ export default function useVibesFeed({
     refreshing,
     refreshRemaining: Math.max(0, 3 - refreshCount),
     // Avoid "skeleton forever": "loaded" can mean "loaded 0 items".
-    loading: !!userId && !hasFetchedOnce && filteredProfiles.length === 0 && !lastError,
-    error: lastError,
+    loading: !!userId && !hasFetchedOnce && filteredProfiles.length === 0 && !lastError && !watchdogError,
+    error: lastError ?? watchdogError,
     lastFetchedAt,
     fetchNextBatch: refresh,
     recordSwipe,
