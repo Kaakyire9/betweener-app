@@ -93,7 +93,8 @@ const fetchWithTimeout: typeof fetch = async (input, init) => {
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), SUPABASE_FETCH_TIMEOUT_MS);
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
 
   // If the caller already provided a signal, abort our controller when theirs aborts.
   const callerSignal = (init as any)?.signal as AbortSignal | undefined;
@@ -102,33 +103,53 @@ const fetchWithTimeout: typeof fetch = async (input, init) => {
   try {
     if (callerSignal) {
       if (callerSignal.aborted) controller.abort();
-      else callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+      else if (typeof (callerSignal as any).addEventListener === 'function') {
+        callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+      }
     }
 
-    try {
-      const res = await fetch(input, { ...(init || {}), signal: controller.signal } as any);
-      if (res.status >= 400) {
-        const path = safeUrlPath(input);
-        logFetchIssueOnce(`http_${res.status}`, { path, via: 'abort' });
-      }
-      return res;
-    } catch (error) {
-      const message = String((error as any)?.message || error || 'fetch_failed');
+    const timeoutPromise = new Promise<Response>((resolve) => {
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        try {
+          controller.abort();
+        } catch {
+          // ignore abort errors; the race still resolves
+        }
+        resolve(makeSyntheticResponse('timeout', 'network_timeout'));
+      }, SUPABASE_FETCH_TIMEOUT_MS);
+    });
 
-      // If this RN runtime doesn't support `signal`, retry once without it.
-      if (looksLikeSignalUnsupported(message)) {
-        const path = safeUrlPath(input);
-        logFetchIssueOnce('signal_unsupported', { path, message });
-        return fetchWithRaceTimeout(input, init);
-      }
+    const fetchPromise = (async (): Promise<Response> => {
+      try {
+        return await fetch(input, { ...(init || {}), signal: controller.signal } as any);
+      } catch (error) {
+        const message = String((error as any)?.message || error || 'fetch_failed');
 
-      // Otherwise convert to a synthetic response so callers get `{ error }`.
+        // If this RN runtime doesn't support `signal`, retry once without it.
+        if (looksLikeSignalUnsupported(message)) {
+          const path = safeUrlPath(input);
+          logFetchIssueOnce('signal_unsupported', { path, message });
+          return fetchWithRaceTimeout(input, init);
+        }
+
+        // Otherwise convert to a synthetic response so callers get `{ error }`.
+        const path = safeUrlPath(input);
+        logFetchIssueOnce('exception', { path, via: 'abort', message });
+        return makeSyntheticResponse(message, 'network_error');
+      }
+    })();
+
+    const res = await Promise.race([fetchPromise, timeoutPromise]);
+
+    if (res.status >= 400) {
       const path = safeUrlPath(input);
-      logFetchIssueOnce('exception', { path, via: 'abort', message });
-      return makeSyntheticResponse(message, 'network_error');
+      logFetchIssueOnce(`http_${res.status}`, { path, via: timedOut ? 'timeout' : 'abort' });
     }
+
+    return res;
   } finally {
-    clearTimeout(timeout);
+    if (timeoutId) clearTimeout(timeoutId);
     if (callerSignal) {
       try {
         callerSignal.removeEventListener('abort', onCallerAbort as any);

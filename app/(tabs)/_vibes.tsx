@@ -33,6 +33,7 @@ import VibesMomentsStrip from "@/components/vibes/VibesMomentsStrip";
 import Notice from "@/components/ui/Notice";
 import { ExploreStackSkeleton } from "@/components/ui/Skeleton";
 import { isLikelyNetworkError } from "@/lib/network";
+import { logger } from "@/lib/telemetry/logger";
 
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
@@ -120,6 +121,7 @@ export default function ExploreScreen() {
 
   const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
   const [offlineNotice, setOfflineNotice] = useState<string | null>(null);
+  const lastFeedErrorAtRef = useRef(0);
   const [momentViewerVisible, setMomentViewerVisible] = useState(false);
   const [momentCreateVisible, setMomentCreateVisible] = useState(false);
   const [momentStartUserId, setMomentStartUserId] = useState<string | null>(null);
@@ -140,18 +142,24 @@ export default function ExploreScreen() {
       setOfflineNotice(null);
       return;
     }
-    // Conservative: only show the offline-style notice when the feed is empty,
-    // so it doesn't get in the way of swiping when data is already present.
+    // Only show a blocking notice when the feed is empty, so it doesn't get in the way
+    // of swiping when data is already present.
     if (matchList.length === 0) {
-      if (isLikelyNetworkError(matchesError)) {
-        const msg = String((matchesError as any)?.message || matchesError);
-        setOfflineNotice(msg);
-      } else {
-        setOfflineNotice(null);
+      const now = Date.now();
+      if (now - lastFeedErrorAtRef.current > 60_000) {
+        lastFeedErrorAtRef.current = now;
+        logger.error("[vibes] feed_error", matchesError, {
+          segment: vibesSegment,
+          isLikelyNetwork: isLikelyNetworkError(matchesError),
+          hasUserId: !!profile?.id,
+        });
       }
-    } else {
-      setOfflineNotice(null);
+
+      // Keep tester UX generic; detailed error goes to Sentry.
+      setOfflineNotice("Check your connection and try again.");
+      return;
     }
+    setOfflineNotice(null);
   }, [matchList.length, matchesError]);
 
   const resolvedDistanceUnit = useMemo(
@@ -799,8 +807,8 @@ export default function ExploreScreen() {
 
           {offlineNotice ? (
             <Notice
-              title="Couldn't load new profiles"
-              message="Check your connection and try again."
+              title="Couldn't load profiles"
+              message={offlineNotice}
               actionLabel="Retry"
               onAction={() => {
                 setOfflineNotice(null);

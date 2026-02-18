@@ -304,7 +304,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(session?.user ?? null);
         
         if (session?.user) {
-          await ensureProfileExists(session.user.id);
+          // Don't block auth state changes on a network write; profile fetching already
+          // has its own "ensure then retry" logic.
+          void ensureProfileExists(session.user.id);
           const profileData = await fetchProfile(session.user.id);
           const metadata = await consumeSignupMetadata();
           await updateSignupEventForUser(session.user.id, metadata);

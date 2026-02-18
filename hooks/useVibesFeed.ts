@@ -245,7 +245,9 @@ export default function useVibesFeed({
     refresh,
     refreshing,
     refreshRemaining: Math.max(0, 3 - refreshCount),
-    loading: !hasLoadedRef.current && filteredProfiles.length === 0,
+    // Avoid "skeleton forever" when we already know we hit an error or the user/profile
+    // context isn't ready yet.
+    loading: !!userId && !hasLoadedRef.current && filteredProfiles.length === 0 && !lastError,
     error: lastError,
     lastFetchedAt,
     fetchNextBatch: refresh,

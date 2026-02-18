@@ -10,6 +10,7 @@ import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
 import { recordProfileSignal } from '@/lib/profile-signals';
 import { supabase } from '@/lib/supabase';
+import { logger } from '@/lib/telemetry/logger';
 import type { UserProfile } from '@/types/user-profile';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import type { ViewToken } from '@shopify/flash-list';
@@ -2574,7 +2575,8 @@ function FloatingActions({
     });
     setGiftSending(false);
     if (error) {
-      Alert.alert('Unable to send gift', error.message);
+      logger.error('[profile-view] send_gift_failed', error);
+      Alert.alert('Unable to send gift', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
       return;
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
@@ -2594,7 +2596,8 @@ function FloatingActions({
     });
     setNoteSending(false);
     if (error) {
-      Alert.alert('Unable to send note', error.message);
+      logger.error('[profile-view] send_note_failed', error);
+      Alert.alert('Unable to send note', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
       return;
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
@@ -2612,7 +2615,8 @@ function FloatingActions({
     });
     setBoostSending(false);
     if (error) {
-      Alert.alert('Unable to boost', error.message);
+      logger.error('[profile-view] send_boost_failed', error);
+      Alert.alert('Unable to boost', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
       return;
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
@@ -2659,7 +2663,8 @@ function FloatingActions({
       );
     setLikeSending(false);
     if (error) {
-      Alert.alert('Unable to like', error.message);
+      logger.error('[profile-view] send_like_failed', error);
+      Alert.alert('Unable to like', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
       return;
     }
     setLiked(true);

@@ -2,6 +2,7 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
+import { logger } from '@/lib/telemetry/logger';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -206,7 +207,8 @@ export default function CircleDetailScreen() {
         p_role: role,
       });
       if (error) {
-        Alert.alert('Update failed', error.message);
+        logger.error('[circles] set_role_failed', error, { circleId });
+        Alert.alert('Update failed', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
         return;
       }
       await loadCircle();
@@ -229,7 +231,8 @@ export default function CircleDetailScreen() {
               p_profile_id: currentProfileId,
             });
             if (error) {
-              Alert.alert('Remove failed', error.message);
+              logger.error('[circles] remove_member_failed', error, { circleId });
+              Alert.alert('Remove failed', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
               return;
             }
             await loadCircle();
@@ -273,7 +276,8 @@ export default function CircleDetailScreen() {
       .eq('id', circleId)
       .eq('created_by_profile_id', currentProfileId);
     if (error) {
-      Alert.alert('Update failed', error.message);
+      logger.error('[circles] update_name_failed', error, { circleId });
+      Alert.alert('Update failed', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
       return;
     }
     setEditingName(false);
@@ -310,7 +314,8 @@ export default function CircleDetailScreen() {
           upsert: true,
         });
       if (uploadError) {
-        Alert.alert('Upload failed', uploadError.message);
+        logger.error('[circles] upload_image_failed', uploadError, { circleId });
+        Alert.alert('Upload failed', (typeof __DEV__ !== 'undefined' && __DEV__) ? uploadError.message : 'Please try again.');
         return;
       }
       const { error: updateError } = await supabase
@@ -323,7 +328,8 @@ export default function CircleDetailScreen() {
         .eq('id', circleId)
         .eq('created_by_profile_id', currentProfileId);
       if (updateError) {
-        Alert.alert('Update failed', updateError.message);
+        logger.error('[circles] update_image_path_failed', updateError, { circleId });
+        Alert.alert('Update failed', (typeof __DEV__ !== 'undefined' && __DEV__) ? updateError.message : 'Please try again.');
         return;
       }
       await loadCircle();
@@ -527,7 +533,8 @@ export default function CircleDetailScreen() {
                       .eq('id', circleId)
                       .eq('created_by_profile_id', currentProfileId);
                     if (error) {
-                      Alert.alert('Delete failed', error.message);
+                      logger.error('[circles] delete_circle_failed', error, { circleId });
+                      Alert.alert('Delete failed', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
                       return;
                     }
                     router.replace({ pathname: '/(tabs)/explore' });
