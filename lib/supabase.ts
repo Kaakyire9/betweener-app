@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
+import { captureMessage } from '@/lib/telemetry/sentry';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -10,6 +11,36 @@ const SUPABASE_FETCH_TIMEOUT_MS =
   typeof __DEV__ !== 'undefined' && __DEV__ ? 15_000 : 30_000;
 
 export const SUPABASE_IS_CONFIGURED = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+
+const LOG_THROTTLE_MS = 60_000;
+let lastLogAt = 0;
+let lastLogKey = '';
+
+const safeUrlPath = (input: RequestInfo | URL) => {
+  try {
+    const urlStr =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : (input as any)?.url
+            ? String((input as any).url)
+            : '';
+    if (!urlStr) return '';
+    const u = new URL(urlStr);
+    return `${u.host}${u.pathname}`;
+  } catch {
+    return '';
+  }
+};
+
+const logFetchIssueOnce = (key: string, context: Record<string, unknown>) => {
+  const now = Date.now();
+  if (key === lastLogKey && now - lastLogAt < LOG_THROTTLE_MS) return;
+  lastLogKey = key;
+  lastLogAt = now;
+  captureMessage(`[supabase] ${key}`, context);
+};
 
 const makeSyntheticResponse = (message: string, code: string) => {
   // Return a synthetic response so supabase-js returns `{ error }` instead of throwing.
@@ -37,9 +68,15 @@ const fetchWithRaceTimeout: typeof fetch = async (input, init) => {
         setTimeout(() => resolve(makeSyntheticResponse('timeout', 'network_timeout')), SUPABASE_FETCH_TIMEOUT_MS)
       ),
     ])) as Response;
+    if (res.status >= 400) {
+      const path = safeUrlPath(input);
+      logFetchIssueOnce(`http_${res.status}`, { path, via: 'race' });
+    }
     return res;
   } catch (error) {
     const message = String((error as any)?.message || error || 'fetch_failed');
+    const path = safeUrlPath(input);
+    logFetchIssueOnce('exception', { path, via: 'race', message });
     return makeSyntheticResponse(message, 'network_error');
   }
 };
@@ -69,16 +106,25 @@ const fetchWithTimeout: typeof fetch = async (input, init) => {
     }
 
     try {
-      return await fetch(input, { ...(init || {}), signal: controller.signal } as any);
+      const res = await fetch(input, { ...(init || {}), signal: controller.signal } as any);
+      if (res.status >= 400) {
+        const path = safeUrlPath(input);
+        logFetchIssueOnce(`http_${res.status}`, { path, via: 'abort' });
+      }
+      return res;
     } catch (error) {
       const message = String((error as any)?.message || error || 'fetch_failed');
 
       // If this RN runtime doesn't support `signal`, retry once without it.
       if (looksLikeSignalUnsupported(message)) {
+        const path = safeUrlPath(input);
+        logFetchIssueOnce('signal_unsupported', { path, message });
         return fetchWithRaceTimeout(input, init);
       }
 
       // Otherwise convert to a synthetic response so callers get `{ error }`.
+      const path = safeUrlPath(input);
+      logFetchIssueOnce('exception', { path, via: 'abort', message });
       return makeSyntheticResponse(message, 'network_error');
     }
   } finally {
