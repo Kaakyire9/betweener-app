@@ -513,13 +513,14 @@ export default function ProfileScreen() {
         if (otherIds.length > 0) {
           const { data: profilesData, error: profilesError } = await supabase
             .from('profiles')
-            .select('id,compatibility')
+            // `compatibility` column does not exist in current schema; use `ai_score` as a proxy.
+            .select('id,ai_score')
             .in('id', otherIds);
           if (profilesError || !profilesData) {
             setMatchQuality(null);
           } else {
             const scores = (profilesData as any[])
-              .map((p) => (typeof p?.compatibility === 'number' ? p.compatibility : null))
+              .map((p) => (typeof p?.ai_score === 'number' ? p.ai_score : null))
               .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
             if (scores.length > 0) {
               const avg = scores.reduce((sum, v) => sum + v, 0) / scores.length;
