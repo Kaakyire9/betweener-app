@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { readCache, writeCache } from '@/lib/persisted-cache';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 export type IntentRequestType = 'connect' | 'date_request' | 'like_with_note' | 'circle_intro';
@@ -27,6 +28,21 @@ const isExpired = (req: IntentRequest) => {
 export const useIntentRequests = (userId?: string | null) => {
   const [items, setItems] = useState<IntentRequest[]>([]);
   const [loading, setLoading] = useState(false);
+  const cacheKey = userId ? `cache:intent_requests:v1:${userId}` : null;
+
+  // Cached-first: hydrate last known list quickly, then refresh in background.
+  useEffect(() => {
+    if (!cacheKey) return;
+    let cancelled = false;
+    (async () => {
+      const cached = await readCache<IntentRequest[]>(cacheKey, 10 * 60_000);
+      if (cancelled || !cached || !Array.isArray(cached)) return;
+      setItems((prev) => (prev.length === 0 ? cached : prev));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [cacheKey]);
 
   const refresh = useCallback(async () => {
     if (!userId) {
@@ -35,18 +51,26 @@ export const useIntentRequests = (userId?: string | null) => {
     }
     setLoading(true);
     try {
-      await supabase.rpc('rpc_mark_expired_intent_requests');
-      const { data } = await supabase
+      // Best-effort cleanup; don't fail the screen if this errors.
+      try {
+        await supabase.rpc('rpc_mark_expired_intent_requests');
+      } catch {}
+
+      const { data, error } = await supabase
         .from('intent_requests')
         .select('*')
         .or(`recipient_id.eq.${userId},actor_id.eq.${userId}`)
         .order('created_at', { ascending: false })
         .limit(200);
-      setItems((data || []) as IntentRequest[]);
+
+      if (error) return;
+      const next = (data || []) as IntentRequest[];
+      setItems(next);
+      if (cacheKey) void writeCache(cacheKey, next);
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [cacheKey, userId]);
 
   useEffect(() => {
     void refresh();

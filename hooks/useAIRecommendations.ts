@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { Match } from '@/types/match';
 import { computeCompatibilityPercent } from '@/lib/compat/compatibility-score';
+import { readCache, writeCache } from '@/lib/persisted-cache';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DeviceEventEmitter, Linking } from 'react-native';
@@ -110,6 +111,48 @@ export default function useAIRecommendations(
     () => (effectiveDistanceUnit === 'auto' ? resolveAutoUnit() : effectiveDistanceUnit),
     [effectiveDistanceUnit]
   );
+
+  const cacheKey = useMemo(() => {
+    if (!userId) return null;
+    const win = mode === 'active' ? String(activeWindowMinutes) : '-';
+    return `cache:ai_recs:v1:${userId}:${mode}:${win}`;
+  }, [activeWindowMinutes, mode, userId]);
+  const cacheLoadedKeyRef = useRef<string | null>(null);
+  const cacheWriteInFlightRef = useRef(false);
+
+  const persistMatchesCache = useCallback(
+    async (next: Match[]) => {
+      if (!cacheKey) return;
+      if (cacheWriteInFlightRef.current) return;
+      cacheWriteInFlightRef.current = true;
+      try {
+        await writeCache(cacheKey, { fetchedAt: Date.now(), matches: next });
+      } finally {
+        cacheWriteInFlightRef.current = false;
+      }
+    },
+    [cacheKey],
+  );
+
+  // Cached-first: hydrate from last good payload quickly, then refresh in background.
+  useEffect(() => {
+    if (!cacheKey) return;
+    if (cacheLoadedKeyRef.current === cacheKey) return;
+    cacheLoadedKeyRef.current = cacheKey;
+
+    let cancelled = false;
+    (async () => {
+      const cached = await readCache<{ fetchedAt: number; matches: Match[] }>(cacheKey, 6 * 60_000);
+      if (cancelled || !cached || !Array.isArray(cached.matches)) return;
+      setMatches((prev) => (prev.length === 0 ? cached.matches : prev));
+      setLastError(null);
+      setLastFetchedAt((prev) => prev ?? cached.fetchedAt ?? Date.now());
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cacheKey]);
 
   const getStoredDistanceUnit = useCallback(async (): Promise<DistanceUnit> => {
     try {
@@ -242,7 +285,11 @@ export default function useAIRecommendations(
       if (!head) return prev;
       return [...prev, { id, action, index, match: head }];
     });
-    setMatches((prev: Match[]) => prev.slice(1));
+    setMatches((prev: Match[]) => {
+      const next = prev.slice(1);
+      void persistMatchesCache(next);
+      return next;
+    });
     // Persist the swipe to Supabase if configured and we have a userId
     (async () => {
       try {
@@ -284,7 +331,7 @@ export default function useAIRecommendations(
         // ignore and keep local mock behavior
       }
     })();
-  }, [matches]);
+  }, [matches, persistMatchesCache, userId]);
 
   // Expose a deterministic trigger for QA and debug: can be called to force the celebration modal
   const triggerMutualMatch = useCallback((matchId: string) => {
@@ -488,10 +535,12 @@ export default function useAIRecommendations(
     setMatches((prev) => {
       if (prev.length === 0) return [lastEntry!.match];
       const withoutLast = prev.slice(0, -1);
-      return [lastEntry!.match, ...withoutLast];
+      const next = [lastEntry!.match, ...withoutLast];
+      void persistMatchesCache(next);
+      return next;
     });
     return { match: lastEntry.match, index: lastEntry.index };
-  }, []);
+  }, [persistMatchesCache]);
 
   const smartCount = useMemo(() => {
     // pretend some are AI-curated
@@ -646,9 +695,11 @@ export default function useAIRecommendations(
               } as Match);
               });
               const withSigned = await resolveProfileVideos(mapped);
-              setMatches(filterDiscoverable(withSigned));
+              const filtered = filterDiscoverable(withSigned);
+              setMatches(filtered);
               setLastError(null);
               setLastFetchedAt(Date.now());
+              void persistMatchesCache(filtered);
             if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] nearby rpc result', { count: mapped.length });
             return;
           }
@@ -692,9 +743,11 @@ export default function useAIRecommendations(
               } as Match);
               });
               const withSigned = await resolveProfileVideos(mapped);
-              setMatches(filterDiscoverable(withSigned));
+              const filtered = filterDiscoverable(withSigned);
+              setMatches(filtered);
               setLastError(null);
               setLastFetchedAt(Date.now());
+              void persistMatchesCache(filtered);
               if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] active rpc result', { count: mapped.length });
               return;
             }
@@ -736,9 +789,11 @@ export default function useAIRecommendations(
             } as Match);
             });
             const withSigned = await resolveProfileVideos(mapped);
-            setMatches(filterDiscoverable(withSigned));
+            const filtered = filterDiscoverable(withSigned);
+            setMatches(filtered);
             setLastError(null);
             setLastFetchedAt(Date.now());
+            void persistMatchesCache(filtered);
             if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] forYou scored rpc result', { count: mapped.length });
             return;
           }
@@ -914,9 +969,11 @@ export default function useAIRecommendations(
             } as Match);
           });
           const withSigned = await resolveProfileVideos(mapped);
-          setMatches(filterDiscoverable(withSigned));
+          const filtered = filterDiscoverable(withSigned);
+          setMatches(filtered);
           setLastError(null);
           setLastFetchedAt(Date.now());
+          void persistMatchesCache(filtered);
           if (typeof __DEV__ !== 'undefined' && __DEV__) {
             console.log('[useAIRecommendations] fetched matches from server', { count: mapped.length, sample: mapped.slice(0, 3) });
           }
@@ -933,6 +990,7 @@ export default function useAIRecommendations(
           setMatches([]);
           setLastError(null);
           setLastFetchedAt(Date.now());
+          void persistMatchesCache([]);
           return;
         }
       } else {
@@ -943,16 +1001,16 @@ export default function useAIRecommendations(
       }
     } catch (e) {
       console.log('[useAIRecommendations] fetch error', e);
-      setMatches([]);
       setLastError(e as any);
+      setLastFetchedAt((prev) => prev ?? Date.now());
       return;
     }
     // If we reached here it means a server fetch was attempted and failed
-    // (or returned no profiles). Leave matches empty to avoid mock data.
-    console.log('[useAIRecommendations] leaving matches empty after fetch failure');
-    setMatches([]);
+    // (or returned no profiles). Keep any cached/previous matches visible.
+    console.log('[useAIRecommendations] fetch failed (keeping existing matches if any)');
     setLastError((prev) => prev ?? new Error('fetch_failed'));
-  }, [userId, mode, activeWindowMinutes, resolvedDistanceUnit, getStoredDistanceUnit]);
+    setLastFetchedAt((prev) => prev ?? Date.now());
+  }, [userId, mode, activeWindowMinutes, resolvedDistanceUnit, getStoredDistanceUnit, persistMatchesCache]);
 
     // Fetch matches on mount and when userId changes
     useEffect(() => {

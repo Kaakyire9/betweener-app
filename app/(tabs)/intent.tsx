@@ -4,6 +4,7 @@ import { useIntentRequests, type IntentRequest } from '@/hooks/useIntentRequests
 import { useAuth } from '@/lib/auth-context';
 import { computeCompatibilityPercent } from '@/lib/compat/compatibility-score';
 import { computeFirstReplyHours, computeInterestOverlapRatio, computeMatchScorePercent } from '@/lib/match/match-score';
+import { readCache, writeCache } from '@/lib/persisted-cache';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -123,6 +124,11 @@ export default function IntentScreen() {
   const [suggestedMoves, setSuggestedMoves] = useState<SuggestedMove[]>([]);
   const [suggestedLoading, setSuggestedLoading] = useState(false);
   const suggestedLoadedRef = useRef(false);
+  const suggestedCacheKey = useMemo(
+    () => (currentProfileId ? `cache:suggested_moves:v1:${currentProfileId}` : null),
+    [currentProfileId],
+  );
+  const suggestedCacheLoadedKeyRef = useRef<string | null>(null);
   const [intentSheetOpen, setIntentSheetOpen] = useState(false);
   const [intentTarget, setIntentTarget] = useState<{ id: string; name?: string | null } | null>(null);
 
@@ -325,7 +331,9 @@ export default function IntentScreen() {
         if (error) {
           console.log('[intent] suggested moves error', error);
         } else {
-          setSuggestedMoves((data as SuggestedMove[]) || []);
+          const next = ((data as SuggestedMove[]) || []);
+          setSuggestedMoves(next);
+          if (suggestedCacheKey) void writeCache(suggestedCacheKey, next);
         }
         suggestedLoadedRef.current = true;
       } finally {
@@ -336,7 +344,25 @@ export default function IntentScreen() {
     return () => {
       cancelled = true;
     };
-  }, [currentProfileId, loading]);
+  }, [currentProfileId, loading, suggestedCacheKey]);
+
+  // Cached-first: show last suggested moves immediately, then refresh in background.
+  useEffect(() => {
+    if (!suggestedCacheKey) return;
+    if (suggestedCacheLoadedKeyRef.current === suggestedCacheKey) return;
+    suggestedCacheLoadedKeyRef.current = suggestedCacheKey;
+
+    let cancelled = false;
+    (async () => {
+      const cached = await readCache<SuggestedMove[]>(suggestedCacheKey, 10 * 60_000);
+      if (cancelled || !cached || !Array.isArray(cached)) return;
+      setSuggestedMoves((prev) => (prev.length === 0 ? cached : prev));
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [suggestedCacheKey]);
 
   const openChat = useCallback((peerId?: string | null, name?: string, avatar?: string | null) => {
     if (!peerId) return;

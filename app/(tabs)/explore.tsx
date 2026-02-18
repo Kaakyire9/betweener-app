@@ -1,13 +1,15 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
+import { readCache, writeCache } from '@/lib/persisted-cache';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Image, Modal, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Notice from '@/components/ui/Notice';
 
 type Circle = {
   id: string;
@@ -28,6 +30,12 @@ type CircleMembership = {
   circles?: Circle | null;
 };
 
+type CirclesCache = {
+  myCircles: CircleMembership[];
+  discoverCircles: Circle[];
+  circleImageUrls: Record<string, string>;
+};
+
 const normalizeCircle = (input: Circle | Circle[] | null | undefined): Circle | null => {
   if (!input) return null;
   return Array.isArray(input) ? (input[0] ?? null) : input;
@@ -45,8 +53,14 @@ export default function CirclesScreen() {
   const [myCircles, setMyCircles] = useState<CircleMembership[]>([]);
   const [discoverCircles, setDiscoverCircles] = useState<Circle[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [circleImageUrls, setCircleImageUrls] = useState<Record<string, string>>({});
+  const circlesCacheKey = useMemo(
+    () => (currentProfileId ? `cache:circles:v1:${currentProfileId}` : null),
+    [currentProfileId],
+  );
+  const circlesCacheLoadedKeyRef = useRef<string | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
@@ -82,14 +96,58 @@ export default function CirclesScreen() {
     };
   }, [profile?.id, user?.id]);
 
+  // Cached-first: hydrate circles quickly, then refresh in background.
+  useEffect(() => {
+    if (!circlesCacheKey) return;
+    if (circlesCacheLoadedKeyRef.current === circlesCacheKey) return;
+    circlesCacheLoadedKeyRef.current = circlesCacheKey;
+
+    let cancelled = false;
+    (async () => {
+      const cached = await readCache<CirclesCache>(circlesCacheKey, 10 * 60_000);
+      if (cancelled || !cached) return;
+      if (Array.isArray(cached.myCircles) && cached.myCircles.length > 0) {
+        setMyCircles((prev) => (prev.length === 0 ? cached.myCircles : prev));
+      }
+      if (Array.isArray(cached.discoverCircles) && cached.discoverCircles.length > 0) {
+        setDiscoverCircles((prev) => (prev.length === 0 ? cached.discoverCircles : prev));
+      }
+      if (cached.circleImageUrls && Object.keys(cached.circleImageUrls).length > 0) {
+        setCircleImageUrls((prev) => (Object.keys(prev).length === 0 ? cached.circleImageUrls : prev));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [circlesCacheKey]);
+
+  const refreshCircleImageUrls = useCallback(async (circles: Circle[]) => {
+    if (!circles || circles.length === 0) return {};
+    const imagePairs = await Promise.all(
+      circles.map(async (circle) => {
+        if (!circle.image_path) return [circle.id, null] as const;
+        const { data } = await supabase.storage.from('circle-images').createSignedUrl(circle.image_path, 3600);
+        return [circle.id, data?.signedUrl ?? null] as const;
+      }),
+    );
+    const nextMap: Record<string, string> = {};
+    imagePairs.forEach(([id, url]) => {
+      if (url) nextMap[id] = url;
+    });
+    return nextMap;
+  }, []);
+
   const loadCircles = useCallback(async () => {
     if (!currentProfileId) return;
     setLoading(true);
+    setLoadError(null);
     try {
-      const { data: membershipRows } = await supabase
+      const { data: membershipRows, error: membershipError } = await supabase
         .from('circle_members')
         .select('id,circle_id,role,status,circles (id,name,description,visibility,category,created_by_profile_id,image_path,image_updated_at)')
         .eq('profile_id', currentProfileId);
+      if (membershipError) throw membershipError;
 
       const memberships: CircleMembership[] = (membershipRows || []).map((row: any) => ({
         id: String(row.id),
@@ -100,12 +158,13 @@ export default function CirclesScreen() {
       }));
       setMyCircles(memberships);
 
-      const { data: circlesRows } = await supabase
+      const { data: circlesRows, error: circlesError } = await supabase
         .from('circles')
         .select('id,name,description,visibility,category,created_by_profile_id,image_path,image_updated_at')
         .eq('visibility', 'public')
         .order('created_at', { ascending: false })
         .limit(24);
+      if (circlesError) throw circlesError;
 
       const joinedIds = new Set(memberships.map((m) => String(m.circle_id)));
       const filtered = (circlesRows || []).filter((c) => !joinedIds.has(String(c.id)));
@@ -115,24 +174,38 @@ export default function CirclesScreen() {
         ...memberships.map((m) => m.circles).filter(Boolean) as Circle[],
         ...(filtered as Circle[]),
       ];
-      const imagePairs = await Promise.all(
-        allCircles.map(async (circle) => {
-          if (!circle.image_path) return [circle.id, null] as const;
-          const { data } = await supabase.storage
-            .from('circle-images')
-            .createSignedUrl(circle.image_path, 3600);
-          return [circle.id, data?.signedUrl ?? null] as const;
-        }),
-      );
-      const nextMap: Record<string, string> = {};
-      imagePairs.forEach(([id, url]) => {
-        if (url) nextMap[id] = url;
-      });
-      setCircleImageUrls(nextMap);
+
+      // Persist the list immediately; don't block on signed URL generation.
+      if (circlesCacheKey) {
+        void writeCache(circlesCacheKey, {
+          myCircles: memberships,
+          discoverCircles: filtered as Circle[],
+          circleImageUrls: {},
+        });
+      }
+
+      void (async () => {
+        try {
+          const nextMap = await refreshCircleImageUrls(allCircles);
+          setCircleImageUrls(nextMap);
+          if (circlesCacheKey) {
+            void writeCache(circlesCacheKey, {
+              myCircles: memberships,
+              discoverCircles: filtered as Circle[],
+              circleImageUrls: nextMap,
+            });
+          }
+        } catch {
+          // ignore image URL errors
+        }
+      })();
+    } catch (e) {
+      // Keep whatever we have (cache/previous state) and surface a retry CTA.
+      setLoadError('Could not load circles. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
-  }, [currentProfileId]);
+  }, [circlesCacheKey, currentProfileId, refreshCircleImageUrls]);
 
   useFocusEffect(
     useCallback(() => {
@@ -215,6 +288,16 @@ export default function CirclesScreen() {
           <Text style={styles.createButtonText}>Create</Text>
         </TouchableOpacity>
       </View>
+
+      {loadError && myCircles.length === 0 && discoverCircles.length === 0 ? (
+        <Notice
+          title="Couldn't load circles"
+          message={loadError}
+          actionLabel="Retry"
+          onAction={() => void loadCircles()}
+          icon="cloud-alert"
+        />
+      ) : null}
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>My circles</Text>

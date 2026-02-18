@@ -4,6 +4,7 @@ import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
 import { getSupabaseNetEvents, supabase } from "@/lib/supabase";
 import { captureMessage } from "@/lib/telemetry/sentry";
+import { readCache, writeCache } from "@/lib/persisted-cache";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { useFocusEffect } from "@react-navigation/native";
@@ -71,8 +72,69 @@ type MessageRow = {
 };
 
 const CHAT_PREFS_STORAGE_KEY = 'chat_header_prefs_v1';
+const CHAT_LIST_CACHE_TTL_MS = 10 * 60_000;
 const BLOCKED_AVATAR_SOURCE = require('../../assets/images/circle-logo.png');
 const STICKER_TEXT_PREFIX = 'sticker::';
+
+type CachedConversation = Omit<ConversationType, "matchedUser" | "lastMessage" | "matchedAt"> & {
+  matchedUser: Omit<ConversationType["matchedUser"], "lastSeen"> & { lastSeen: string };
+  lastMessage: Omit<ConversationType["lastMessage"], "timestamp" | "reactionPreview"> & {
+    timestamp: string;
+    reactionPreview?: Omit<NonNullable<ConversationType["lastMessage"]["reactionPreview"]>, "createdAt"> & { createdAt: string };
+  };
+  matchedAt: string;
+};
+
+const serializeConversations = (list: ConversationType[]): CachedConversation[] => {
+  return (list || []).map((c) => ({
+    ...c,
+    matchedUser: {
+      ...c.matchedUser,
+      lastSeen: c.matchedUser.lastSeen instanceof Date ? c.matchedUser.lastSeen.toISOString() : new Date().toISOString(),
+    },
+    lastMessage: {
+      ...c.lastMessage,
+      timestamp: c.lastMessage.timestamp instanceof Date ? c.lastMessage.timestamp.toISOString() : new Date().toISOString(),
+      reactionPreview: c.lastMessage.reactionPreview
+        ? {
+            ...c.lastMessage.reactionPreview,
+            createdAt:
+              c.lastMessage.reactionPreview.createdAt instanceof Date
+                ? c.lastMessage.reactionPreview.createdAt.toISOString()
+                : new Date().toISOString(),
+          }
+        : undefined,
+    },
+    matchedAt: c.matchedAt instanceof Date ? c.matchedAt.toISOString() : new Date().toISOString(),
+  }));
+};
+
+const deserializeConversations = (raw: unknown): ConversationType[] => {
+  if (!Array.isArray(raw)) return [];
+  return (raw as any[]).map((c) => {
+    const matchedUser = c?.matchedUser || {};
+    const lastMessage = c?.lastMessage || {};
+    const reaction = lastMessage?.reactionPreview || undefined;
+    return {
+      ...c,
+      matchedUser: {
+        ...matchedUser,
+        lastSeen: matchedUser?.lastSeen ? new Date(matchedUser.lastSeen) : new Date(),
+      },
+      lastMessage: {
+        ...lastMessage,
+        timestamp: lastMessage?.timestamp ? new Date(lastMessage.timestamp) : new Date(),
+        reactionPreview: reaction
+          ? {
+              ...reaction,
+              createdAt: reaction?.createdAt ? new Date(reaction.createdAt) : new Date(),
+            }
+          : undefined,
+      },
+      matchedAt: c?.matchedAt ? new Date(c.matchedAt) : new Date(),
+    } as ConversationType;
+  });
+};
 
 const withAlpha = (hex: string, alpha: number) => {
   const normalized = hex.replace('#', '');
@@ -113,8 +175,35 @@ export default function ChatScreen() {
   const [presenceOnline, setPresenceOnline] = useState<Record<string, boolean>>({});
   const [presenceLastSeen, setPresenceLastSeen] = useState<Record<string, Date>>({});
   const [typingStatus, setTypingStatus] = useState<Record<string, boolean>>({});
+
+  const chatCacheKey = useMemo(
+    () => (user?.id ? `cache:chat_list:v1:${user.id}` : null),
+    [user?.id],
+  );
+  const chatCacheLoadedKeyRef = useRef<string | null>(null);
   
   const searchAnimation = useRef(new Animated.Value(0)).current;
+
+  // Cached-first: hydrate the last conversation list quickly, then refresh in background.
+  useEffect(() => {
+    if (!chatCacheKey) return;
+    if (chatCacheLoadedKeyRef.current === chatCacheKey) return;
+    chatCacheLoadedKeyRef.current = chatCacheKey;
+
+    let cancelled = false;
+    (async () => {
+      const cached = await readCache<CachedConversation[]>(chatCacheKey, CHAT_LIST_CACHE_TTL_MS);
+      if (cancelled || !cached) return;
+      const hydrated = deserializeConversations(cached);
+      if (hydrated.length > 0) {
+        setConversations((prev) => (prev.length === 0 ? hydrated : prev));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [chatCacheKey]);
 
   useEffect(() => {
     if (showSearch) {
@@ -239,7 +328,6 @@ export default function ChatScreen() {
 
       if (error) {
         console.log('[chat] messages fetch error', error);
-        setConversations([]);
         setLoadError(error.message || "Failed to load chats");
         return;
       }
@@ -294,6 +382,7 @@ export default function ChatScreen() {
       if (otherUserIds.length === 0) {
         setConversations([]);
         setLoadError(null);
+        if (chatCacheKey) void writeCache(chatCacheKey, serializeConversations([]));
         return;
       }
 
@@ -304,7 +393,6 @@ export default function ChatScreen() {
 
       if (profilesError) {
         console.log('[chat] profiles fetch error', profilesError);
-        setConversations([]);
         setLoadError(profilesError.message || "Failed to load chats");
         return;
       }
@@ -384,10 +472,11 @@ export default function ChatScreen() {
       const hydrated = await applyChatPrefs(nextConversations, serverPrefs);
       setConversations(hydrated);
       setLoadError(null);
+      if (chatCacheKey) void writeCache(chatCacheKey, serializeConversations(hydrated));
     } finally {
       setIsLoading(false);
     }
-  }, [applyChatPrefs, user?.id]);
+  }, [applyChatPrefs, chatCacheKey, user?.id]);
 
   // Guardrail: avoid "skeleton forever" if a request stalls or state never resolves.
   useEffect(() => {

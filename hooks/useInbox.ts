@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase";
+import { readCache, writeCache } from "@/lib/persisted-cache";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 export type InboxType =
@@ -41,6 +42,21 @@ const sortInboxItems = (list: InboxItem[]) =>
 export const useInbox = (userId?: string | null) => {
   const [items, setItems] = useState<InboxItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const cacheKey = userId ? `cache:inbox:v1:${userId}` : null;
+
+  // Cached-first: show last items immediately, then refresh in background.
+  useEffect(() => {
+    if (!cacheKey) return;
+    let cancelled = false;
+    (async () => {
+      const cached = await readCache<InboxItem[]>(cacheKey, 10 * 60_000);
+      if (cancelled || !cached || !Array.isArray(cached)) return;
+      setItems((prev) => (prev.length === 0 ? cached : prev));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [cacheKey]);
 
   const fetchInbox = useCallback(async () => {
     if (!userId) {
@@ -49,18 +65,21 @@ export const useInbox = (userId?: string | null) => {
     }
     setLoading(true);
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("inbox_items")
         .select("*")
         .eq("user_id", userId)
         .order("created_at", { ascending: false })
         .limit(200);
+      if (error) return;
       const normalized = (data || []) as InboxItem[];
-      setItems(sortInboxItems(normalized));
+      const sorted = sortInboxItems(normalized);
+      setItems(sorted);
+      if (cacheKey) void writeCache(cacheKey, sorted);
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [cacheKey, userId]);
 
   useEffect(() => {
     void fetchInbox();

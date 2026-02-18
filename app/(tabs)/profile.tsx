@@ -8,6 +8,7 @@ import { Colors } from "@/constants/theme";
 import { useColorScheme, useColorSchemePreference } from "@/hooks/use-color-scheme";
 import { useVerificationStatus } from "@/hooks/use-verification-status";
 import { useAuth } from "@/lib/auth-context";
+import { readCache, writeCache } from "@/lib/persisted-cache";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -261,6 +262,25 @@ export default function ProfileScreen() {
   const [userInterests, setUserInterests] = useState<string[]>([]);
   const [loadingInterests, setLoadingInterests] = useState(false);
   const [userPhotos, setUserPhotos] = useState<string[]>([]);
+
+  const cacheProfileId = profile?.id ?? user?.id ?? null;
+  const promptsCacheKey = useMemo(
+    () => (cacheProfileId ? `cache:profile_prompts:v1:${cacheProfileId}` : null),
+    [cacheProfileId],
+  );
+  const interestsCacheKey = useMemo(
+    () => (cacheProfileId ? `cache:profile_interests:v1:${cacheProfileId}` : null),
+    [cacheProfileId],
+  );
+  const photosCacheKey = useMemo(
+    () => (cacheProfileId ? `cache:profile_photos:v1:${cacheProfileId}` : null),
+    [cacheProfileId],
+  );
+  const cacheLoadedRef = useRef<{ prompts: boolean; interests: boolean; photos: boolean }>({
+    prompts: false,
+    interests: false,
+    photos: false,
+  });
   const [isVerificationModalVisible, setIsVerificationModalVisible] = useState(false);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [notificationPrefs, setNotificationPrefs] = useState<NotificationPrefs>({
@@ -370,6 +390,54 @@ export default function ProfileScreen() {
     }
   };
 
+  const applyPromptAnswers = useCallback(
+    (rows: Array<{ id: string; prompt_key: string; prompt_title: string | null; answer: string; created_at: string }>) => {
+      setPromptAnswers(rows);
+      setSelectedPrompts((prev) => {
+        const nextSelected: Record<string, number> = { ...prev };
+        rows.forEach((row) => {
+          const prompt = PROFILE_PROMPTS.find((p) => p.id === row.prompt_key);
+          if (!prompt) return;
+          const idx = prompt.responses.findIndex((r) => r === row.answer);
+          if (idx >= 0) nextSelected[row.prompt_key] = idx;
+        });
+        return nextSelected;
+      });
+    },
+    [],
+  );
+
+  // Cached-first hydration for profile sub-data (prompts/interests/photos).
+  useEffect(() => {
+    if (promptsCacheKey && !cacheLoadedRef.current.prompts) {
+      cacheLoadedRef.current.prompts = true;
+      void (async () => {
+        const cached = await readCache<typeof promptAnswers>(promptsCacheKey, 30 * 60_000);
+        if (cached && Array.isArray(cached) && cached.length > 0 && promptAnswers.length === 0) {
+          applyPromptAnswers(cached as any);
+        }
+      })();
+    }
+    if (interestsCacheKey && !cacheLoadedRef.current.interests) {
+      cacheLoadedRef.current.interests = true;
+      void (async () => {
+        const cached = await readCache<string[]>(interestsCacheKey, 30 * 60_000);
+        if (cached && Array.isArray(cached) && cached.length > 0) {
+          setUserInterests((prev) => (prev.length === 0 ? cached : prev));
+        }
+      })();
+    }
+    if (photosCacheKey && !cacheLoadedRef.current.photos) {
+      cacheLoadedRef.current.photos = true;
+      void (async () => {
+        const cached = await readCache<string[]>(photosCacheKey, 30 * 60_000);
+        if (cached && Array.isArray(cached) && cached.length > 0) {
+          setUserPhotos((prev) => (prev.length === 0 ? cached : prev));
+        }
+      })();
+    }
+  }, [applyPromptAnswers, interestsCacheKey, photosCacheKey, promptsCacheKey, promptAnswers.length]);
+
   const loadPromptAnswers = useCallback(async () => {
     if (!profile?.id) {
       setPromptAnswers([]);
@@ -395,25 +463,17 @@ export default function ProfileScreen() {
         answer: string;
         created_at: string;
       }>;
-      setPromptAnswers(rows);
-      setSelectedPrompts((prev) => {
-        const nextSelected: Record<string, number> = { ...prev };
-        rows.forEach((row) => {
-          const prompt = PROFILE_PROMPTS.find((p) => p.id === row.prompt_key);
-          if (!prompt) return;
-          const idx = prompt.responses.findIndex((r) => r === row.answer);
-          if (idx >= 0) nextSelected[row.prompt_key] = idx;
-        });
-        return nextSelected;
-      });
+      applyPromptAnswers(rows);
+      if (promptsCacheKey) void writeCache(promptsCacheKey, rows);
     } finally {
       setPromptsLoading(false);
     }
-  }, [profile?.id]);
+  }, [applyPromptAnswers, profile?.id, promptsCacheKey]);
 
   // Fetch user interests from profile_interests table
   const fetchUserInterests = async () => {
-    if (!user?.id) return;
+    const pid = profile?.id ?? user?.id ?? null;
+    if (!pid) return;
     
     try {
       setLoadingInterests(true);
@@ -424,12 +484,13 @@ export default function ProfileScreen() {
             name
           )
         `)
-        .eq('profile_id', user.id);
+        .eq('profile_id', pid);
       
-      if (error) throw error;
+      if (error) return;
       
       const interests = data?.map(item => (item as any).interests.name) || [];
       setUserInterests(interests);
+      if (interestsCacheKey) void writeCache(interestsCacheKey, interests);
     } catch (error) {
       console.error('Error fetching user interests:', error);
     } finally {
@@ -446,6 +507,7 @@ export default function ProfileScreen() {
       const profilePhotos = (profile as any)?.photos || [];
       if (profilePhotos.length > 0) {
         setUserPhotos(profilePhotos);
+        if (photosCacheKey) void writeCache(photosCacheKey, profilePhotos);
         return;
       }
 
@@ -474,6 +536,7 @@ export default function ProfileScreen() {
           });
         
         setUserPhotos(photoUrls);
+        if (photosCacheKey) void writeCache(photosCacheKey, photoUrls);
       }
     } catch (error) {
       console.error('Error loading photos:', error);

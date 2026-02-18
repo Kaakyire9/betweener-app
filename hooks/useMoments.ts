@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { readCache, writeCache } from '@/lib/persisted-cache';
 
 export type MomentType = 'video' | 'photo' | 'text';
 export type MomentVisibility = 'public' | 'matches' | 'vibe_check_approved' | 'private';
@@ -45,6 +46,26 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
   const [moments, setMoments] = useState<Moment[]>([]);
   const [profilesById, setProfilesById] = useState<Record<string, MomentProfile>>({});
   const [loading, setLoading] = useState(false);
+  const cacheKey = currentUserId ? `cache:moments:v1:${currentUserId}` : null;
+
+  // Cached-first: hydrate last known moments quickly, then refresh in background.
+  useEffect(() => {
+    if (!cacheKey) return;
+    let cancelled = false;
+    (async () => {
+      const cached = await readCache<{ moments: Moment[]; profilesById: Record<string, MomentProfile> }>(cacheKey, 5 * 60_000);
+      if (cancelled || !cached) return;
+      if (Array.isArray(cached.moments) && cached.moments.length > 0) {
+        setMoments((prev) => (prev.length === 0 ? cached.moments : prev));
+      }
+      if (cached.profilesById && Object.keys(cached.profilesById).length > 0) {
+        setProfilesById((prev) => (Object.keys(prev).length === 0 ? cached.profilesById : prev));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [cacheKey]);
 
   const refresh = useCallback(async () => {
     if (!currentUserId) return;
@@ -59,7 +80,6 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
 
       if (error || !data) {
         console.log('[useMoments] fetch error', error);
-        setMoments([]);
         return;
       }
 
@@ -92,10 +112,14 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
         };
       });
       setProfilesById(nextProfiles);
+
+      if (cacheKey) {
+        void writeCache(cacheKey, { moments: cleaned, profilesById: nextProfiles });
+      }
     } finally {
       setLoading(false);
     }
-  }, [currentUserId]);
+  }, [cacheKey, currentUserId]);
 
   useEffect(() => {
     void refresh();
