@@ -647,6 +647,8 @@ export default function useAIRecommendations(
               });
               const withSigned = await resolveProfileVideos(mapped);
               setMatches(filterDiscoverable(withSigned));
+              setLastError(null);
+              setLastFetchedAt(Date.now());
             if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] nearby rpc result', { count: mapped.length });
             return;
           }
@@ -691,6 +693,8 @@ export default function useAIRecommendations(
               });
               const withSigned = await resolveProfileVideos(mapped);
               setMatches(filterDiscoverable(withSigned));
+              setLastError(null);
+              setLastFetchedAt(Date.now());
               if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] active rpc result', { count: mapped.length });
               return;
             }
@@ -733,6 +737,8 @@ export default function useAIRecommendations(
             });
             const withSigned = await resolveProfileVideos(mapped);
             setMatches(filterDiscoverable(withSigned));
+            setLastError(null);
+            setLastFetchedAt(Date.now());
             if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] forYou scored rpc result', { count: mapped.length });
             return;
           }

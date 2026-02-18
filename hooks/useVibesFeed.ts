@@ -1,7 +1,7 @@
 import useAIRecommendations from '@/hooks/useAIRecommendations';
 import type { Match } from '@/types/match';
 import { supabase } from '@/lib/supabase';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 export type VibesSegment = 'forYou' | 'nearby' | 'activeNow';
 
@@ -74,7 +74,6 @@ export default function useVibesFeed({
   const [refreshCount, setRefreshCount] = useState(0);
   const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
   const [swipedTodayIds, setSwipedTodayIds] = useState<Set<string>>(new Set());
-  const hasLoadedRef = useRef(false);
 
   const mode = segment === 'activeNow' ? 'active' : segment === 'nearby' ? 'nearby' : 'forYou';
 
@@ -146,9 +145,9 @@ export default function useVibesFeed({
     };
   }, [userId, refreshCount]);
 
-  useEffect(() => {
-    if (matches.length > 0) hasLoadedRef.current = true;
-  }, [matches.length]);
+  // If the server returns 0 rows (valid when there are no eligible profiles yet),
+  // we still want to stop showing the skeleton.
+  const hasFetchedOnce = lastFetchedAt != null || lastError != null;
 
   const applyFilters = useCallback((next: Partial<VibesFilters>) => {
     setFilters((prev) => ({ ...prev, ...next }));
@@ -245,9 +244,8 @@ export default function useVibesFeed({
     refresh,
     refreshing,
     refreshRemaining: Math.max(0, 3 - refreshCount),
-    // Avoid "skeleton forever" when we already know we hit an error or the user/profile
-    // context isn't ready yet.
-    loading: !!userId && !hasLoadedRef.current && filteredProfiles.length === 0 && !lastError,
+    // Avoid "skeleton forever": "loaded" can mean "loaded 0 items".
+    loading: !!userId && !hasFetchedOnce && filteredProfiles.length === 0 && !lastError,
     error: lastError,
     lastFetchedAt,
     fetchNextBatch: refresh,
