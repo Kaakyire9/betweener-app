@@ -1,7 +1,7 @@
 import { getOrCreateDeviceKeypair } from '@/lib/e2ee';
 import { registerPushToken } from '@/lib/notifications/push';
 import { clearSignupSession, consumeSignupMetadata, finalizeSignupPhoneVerification, getSignupPhoneState, updateSignupEventForUser } from '@/lib/signup-tracking';
-import { supabase } from '@/lib/supabase';
+import { initSupabaseAuthLifecycle, supabase } from '@/lib/supabase';
 import { Session, User } from '@supabase/supabase-js';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
@@ -247,6 +247,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const isAuthenticated = !!session && !!user;
   const hasProfile = !!profile && profile.profile_completed === true;
   const isEmailVerified = !!user?.email_confirmed_at;
+
+  // Ensure Supabase token refresh is correctly managed across iOS background/foreground.
+  useEffect(() => {
+    const cleanup = initSupabaseAuthLifecycle();
+    return cleanup;
+  }, []);
 
   // Attach user id to crash/error reports (no PII beyond user id).
   useEffect(() => {
