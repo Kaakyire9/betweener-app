@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase';
 import { Match } from '@/types/match';
 import { computeCompatibilityPercent } from '@/lib/compat/compatibility-score';
 import { readCache, writeCache } from '@/lib/persisted-cache';
+import { addBreadcrumb } from '@/lib/telemetry/sentry';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DeviceEventEmitter, Linking } from 'react-native';
@@ -564,28 +565,159 @@ export default function useAIRecommendations(
     try {
       const storedUnit = await getStoredDistanceUnit();
       const unitForFormat: DistanceUnit = storedUnit === 'auto' ? resolveAutoUnit() : storedUnit;
-      console.log('[useAIRecommendations] fetchMatchesFromServer starting', { userId });
-      const resolveProfileVideos = async (list: Match[]) => {
-        if (!Array.isArray(list) || list.length === 0) return list;
-        const signedByPath: Record<string, string> = {};
-        await Promise.all(
-          list.map(async (m) => {
-            const raw = (m as any).profileVideo;
-            if (!raw || typeof raw !== 'string' || raw.startsWith('http')) return;
-            if (signedByPath[raw]) return;
-            const signed = await signProfileVideoUrl(raw);
-            if (signed) signedByPath[raw] = signed;
-          }),
-        );
-        if (Object.keys(signedByPath).length === 0) return list;
-        return list.map((m) => {
-          const raw = (m as any).profileVideo;
-          if (raw && signedByPath[raw]) {
-            return { ...m, profileVideo: signedByPath[raw] } as Match;
+      const fetchId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      addBreadcrumb('[recs] fetch_start', {
+        fetchId,
+        mode,
+        hasUserId: !!userId,
+      });
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log('[useAIRecommendations] fetchMatchesFromServer starting', { userId, fetchId, mode });
+      }
+
+      // Fast path: hit the scored RPCs first. Avoid prefetching extra viewer data
+      // (profile/interests) on cold start/resume, because those extra queries can hang
+      // and prevent the feed RPC from ever being attempted.
+      if (supabase && userId) {
+        const rpc = async (fn: string, args: Record<string, unknown>) => {
+          const startedAt = Date.now();
+          addBreadcrumb('[recs] rpc_start', { fetchId, mode, fn });
+          try {
+            const res = await supabase.rpc(fn as any, args as any);
+            const ms = Date.now() - startedAt;
+            addBreadcrumb('[recs] rpc_end', {
+              fetchId,
+              mode,
+              fn,
+              ms,
+              ok: !res.error,
+              status: (res as any)?.status ?? null,
+              rows: Array.isArray((res as any)?.data) ? (res as any).data.length : null,
+              errorCode: (res as any)?.error?.code ?? null,
+            });
+            return res as any;
+          } catch (e) {
+            const ms = Date.now() - startedAt;
+            addBreadcrumb('[recs] rpc_throw', {
+              fetchId,
+              mode,
+              fn,
+              ms,
+              message: String((e as any)?.message || e || 'rpc_throw'),
+            });
+            throw e;
           }
-          return m;
-        });
-      };
+        };
+
+        const toNum = (v: unknown): number | undefined => {
+          if (typeof v === 'number') return v;
+          if (typeof v === 'string') {
+            const n = Number(v);
+            return Number.isFinite(n) ? n : undefined;
+          }
+          return undefined;
+        };
+
+        const mapRpcRow = (p: any, includeDistanceKm: boolean): Match => {
+          const interestsArr = Array.isArray(p?.interests) ? p.interests : [];
+          const aiScore = toNum(p?.ai_score) ?? toNum(p?.compatibility);
+          const distanceKm = includeDistanceKm ? toNum(p?.distance_km) : undefined;
+
+          return ({
+            id: p.id,
+            name: p.full_name || p.user_id || String(p.id),
+            age: p.age,
+            tagline: p.bio || '',
+            interests: interestsArr,
+            avatar_url: p.avatar_url || undefined,
+            distance: includeDistanceKm
+              ? formatDistance(distanceKm, p.location || p.region, unitForFormat)
+              : (p.location || p.region || ''),
+            distanceKm: distanceKm,
+            isActiveNow: isActiveNowFromLastActive(!!p.online, p.last_active ?? null),
+            lastActive: p.last_active ?? null,
+            verified: typeof p.verified === 'boolean'
+              ? p.verified
+              : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
+            verification_level: typeof p.verification_level === 'number' ? p.verification_level : undefined,
+            personalityTags: Array.isArray((p as any).personality_tags)
+              ? (p as any).personality_tags
+              : ((p as any).personality_type ? [(p as any).personality_type] : []),
+            compatibility: typeof aiScore === 'number' ? aiScore : undefined,
+            profileVideo: (p as any).profile_video || undefined,
+            location: p.location || undefined,
+            tribe: p.tribe,
+            religion: p.religion,
+            region: p.region,
+            current_country: (p as any).current_country,
+            current_country_code: (p as any).current_country_code,
+            location_precision: (p as any).location_precision,
+          } as Match);
+        };
+
+        if (mode === 'nearby') {
+          try {
+            const args = { p_user_id: userId, p_limit: 20 };
+            const scored = await rpc('get_recs_nearby_scored', args);
+            const { data, error } = !scored.error ? scored : await rpc('get_recs_nearby', args);
+            if (!error && Array.isArray(data)) {
+              const mapped = data.map((p: any) => mapRpcRow(p, true));
+              const filtered = filterDiscoverable(mapped);
+              setMatches(filtered);
+              setLastError(null);
+              setLastFetchedAt(Date.now());
+              void persistMatchesCache(filtered);
+              if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] nearby rpc result', { count: mapped.length });
+              addBreadcrumb('[recs] fetch_ok', { fetchId, mode, rows: mapped.length });
+              return;
+            }
+          } catch (e) {
+            console.log('[useAIRecommendations] nearby rpc error', e);
+          }
+        }
+
+        if (mode === 'active') {
+          try {
+            const args = { p_user_id: userId, p_window_minutes: activeWindowMinutes };
+            const scored = await rpc('get_recs_active_scored', args);
+            const { data, error } = !scored.error ? scored : await rpc('get_recs_active', args);
+            if (!error && Array.isArray(data)) {
+              const mapped = data.map((p: any) => mapRpcRow(p, false));
+              const filtered = filterDiscoverable(mapped);
+              setMatches(filtered);
+              setLastError(null);
+              setLastFetchedAt(Date.now());
+              void persistMatchesCache(filtered);
+              if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] active rpc result', { count: mapped.length });
+              addBreadcrumb('[recs] fetch_ok', { fetchId, mode, rows: mapped.length });
+              return;
+            }
+          } catch (e) {
+            console.log('[useAIRecommendations] active rpc error', e);
+          }
+        }
+
+        // Default: for-you feed
+        try {
+          const args = { p_user_id: userId, p_limit: 20 };
+          const scored = await rpc('get_recs_for_you_scored', args);
+          const { data, error } = !scored.error ? scored : await rpc('get_recs_for_you', args);
+          if (!error && Array.isArray(data)) {
+            const mapped = data.map((p: any) => mapRpcRow(p, true));
+            const filtered = filterDiscoverable(mapped);
+            setMatches(filtered);
+            setLastError(null);
+            setLastFetchedAt(Date.now());
+            void persistMatchesCache(filtered);
+            if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] forYou rpc result', { count: mapped.length });
+            addBreadcrumb('[recs] fetch_ok', { fetchId, mode, rows: mapped.length });
+            return;
+          }
+        } catch (e) {
+          console.log('[useAIRecommendations] forYou rpc error', e);
+        }
+      }
+
       let viewerCompat: {
         interests?: string[];
         lookingFor?: string | null;
@@ -658,149 +790,9 @@ export default function useAIRecommendations(
         if (typeof computed === 'number') return computed;
         return typeof p?.compatibility === 'number' ? p.compatibility : null;
       };
-      // If Supabase is configured and we have a user id, fetch profiles
+
+      // Scored RPCs failed; fall back to legacy table queries.
       if (supabase && userId) {
-        // Nearby mode: server-side distance sort via RPC
-        if (mode === 'nearby') {
-          try {
-            const scored = await supabase.rpc('get_recs_nearby_scored', { p_user_id: userId, p_limit: 20 });
-            const { data, error } = !scored.error ? scored : await supabase.rpc('get_recs_nearby', { p_user_id: userId, p_limit: 20 });
-            if (!error && Array.isArray(data)) {
-              const mapped: Match[] = data.map((p: any) => {
-                const interestsArr = Array.isArray(p.interests) ? p.interests : [];
-                const compatibility = computeCompatibility(p, interestsArr);
-                return ({
-                id: p.id,
-                name: p.full_name || p.user_id || String(p.id),
-                age: p.age,
-                tagline: p.bio || '',
-                interests: interestsArr,
-                avatar_url: p.avatar_url || undefined,
-                distance: formatDistance(p.distance_km, p.location || p.region, unitForFormat),
-                distanceKm: typeof p.distance_km === 'number' ? p.distance_km : undefined,
-                isActiveNow: isActiveNowFromLastActive(!!p.online, p.last_active ?? null),
-                lastActive: p.last_active ?? null,
-                verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
-                verification_level: typeof p.verification_level === 'number' ? p.verification_level : undefined,
-                personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
-                compatibility: typeof compatibility === 'number' ? compatibility : undefined,
-                profileVideo: (p as any).profile_video || undefined,
-                location: p.location || undefined,
-                tribe: p.tribe,
-                religion: p.religion,
-                region: p.region,
-                current_country: (p as any).current_country,
-                current_country_code: (p as any).current_country_code,
-                location_precision: (p as any).location_precision,
-              } as Match);
-              });
-              const withSigned = await resolveProfileVideos(mapped);
-              const filtered = filterDiscoverable(withSigned);
-              setMatches(filtered);
-              setLastError(null);
-              setLastFetchedAt(Date.now());
-              void persistMatchesCache(filtered);
-            if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] nearby rpc result', { count: mapped.length });
-            return;
-          }
-        } catch (e) {
-          console.log('[useAIRecommendations] nearby rpc error', e);
-        }
-        }
-
-        // Active mode: server-side active filter via RPC
-        if (mode === 'active') {
-          try {
-            const scored = await supabase.rpc('get_recs_active_scored', { p_user_id: userId, p_window_minutes: activeWindowMinutes });
-            const { data, error } = !scored.error ? scored : await supabase.rpc('get_recs_active', { p_user_id: userId, p_window_minutes: activeWindowMinutes });
-            if (!error && Array.isArray(data)) {
-              const mapped: Match[] = data.map((p: any) => {
-                const interestsArr = Array.isArray(p.interests) ? p.interests : [];
-                const compatibility = computeCompatibility(p, interestsArr);
-                return ({
-                id: p.id,
-                name: p.full_name || p.user_id || String(p.id),
-                age: p.age,
-                tagline: p.bio || '',
-                interests: interestsArr,
-                avatar_url: p.avatar_url || undefined,
-                distance: p.location || p.region || '',
-                distanceKm: undefined,
-                isActiveNow: isActiveNowFromLastActive(!!p.online, p.last_active ?? null),
-                lastActive: p.last_active ?? null,
-                verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
-                verification_level: typeof p.verification_level === 'number' ? p.verification_level : undefined,
-                personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
-                compatibility: typeof compatibility === 'number' ? compatibility : undefined,
-                profileVideo: (p as any).profile_video || undefined,
-                location: p.location || undefined,
-                tribe: p.tribe,
-                religion: p.religion,
-                region: p.region,
-                current_country: (p as any).current_country,
-                current_country_code: (p as any).current_country_code,
-                location_precision: (p as any).location_precision,
-              } as Match);
-              });
-              const withSigned = await resolveProfileVideos(mapped);
-              const filtered = filterDiscoverable(withSigned);
-              setMatches(filtered);
-              setLastError(null);
-              setLastFetchedAt(Date.now());
-              void persistMatchesCache(filtered);
-              if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] active rpc result', { count: mapped.length });
-              return;
-            }
-          } catch (e) {
-            console.log('[useAIRecommendations] active rpc error', e);
-          }
-        }
-
-        // For-you mode: prefer scored RPC (per-viewer compatibility)
-        try {
-          const { data, error } = await supabase.rpc('get_recs_for_you_scored', { p_user_id: userId, p_limit: 20 });
-          if (!error && Array.isArray(data)) {
-            const mapped: Match[] = data.map((p: any) => {
-              const interestsArr = Array.isArray(p.interests) ? p.interests : [];
-              const compatibility = computeCompatibility(p, interestsArr);
-              return ({
-              id: p.id,
-              name: p.full_name || p.user_id || String(p.id),
-              age: p.age,
-              tagline: p.bio || '',
-              interests: interestsArr,
-              avatar_url: p.avatar_url || undefined,
-              distance: formatDistance(p.distance_km, p.location || p.region, unitForFormat),
-              distanceKm: typeof p.distance_km === 'number' ? p.distance_km : undefined,
-              isActiveNow: isActiveNowFromLastActive(!!p.online, p.last_active ?? null),
-              lastActive: p.last_active ?? null,
-              verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
-              verification_level: typeof p.verification_level === 'number' ? p.verification_level : undefined,
-              personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
-              compatibility: typeof compatibility === 'number' ? compatibility : undefined,
-              profileVideo: (p as any).profile_video || undefined,
-              location: p.location || undefined,
-              tribe: p.tribe,
-              religion: p.religion,
-              region: p.region,
-              current_country: (p as any).current_country,
-              current_country_code: (p as any).current_country_code,
-              location_precision: (p as any).location_precision,
-            } as Match);
-            });
-            const withSigned = await resolveProfileVideos(mapped);
-            const filtered = filterDiscoverable(withSigned);
-            setMatches(filtered);
-            setLastError(null);
-            setLastFetchedAt(Date.now());
-            void persistMatchesCache(filtered);
-            if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] forYou scored rpc result', { count: mapped.length });
-            return;
-          }
-        } catch (e) {
-          // fall through to legacy query
-        }
-
         // The `profiles` table may vary across environments. Try an
         // extended select first (includes optional fields). If it fails
         // due to missing columns (Postgres error 42703), retry with a
@@ -968,8 +960,7 @@ export default function useAIRecommendations(
               profile_completed: (p as any).profile_completed,
             } as Match);
           });
-          const withSigned = await resolveProfileVideos(mapped);
-          const filtered = filterDiscoverable(withSigned);
+          const filtered = filterDiscoverable(mapped);
           setMatches(filtered);
           setLastError(null);
           setLastFetchedAt(Date.now());

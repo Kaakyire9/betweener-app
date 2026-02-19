@@ -1,20 +1,43 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 import { captureMessage } from '@/lib/telemetry/sentry';
+import { AppState } from 'react-native';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 
+const IS_DEV = typeof __DEV__ !== 'undefined' && __DEV__;
+const EXPO_ENV = String(process.env.EXPO_PUBLIC_ENVIRONMENT || '').toLowerCase();
+const IS_PROD = EXPO_ENV === 'production' || (!IS_DEV && EXPO_ENV !== 'development');
+
 // Give release builds a bit more time on slower mobile networks, while still
 // protecting against the "fetch hangs forever after resume" issue.
 const SUPABASE_FETCH_TIMEOUT_MS =
-  typeof __DEV__ !== 'undefined' && __DEV__ ? 15_000 : 30_000;
+  IS_DEV ? 15_000 : 30_000;
 
 export const SUPABASE_IS_CONFIGURED = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
+export const getSupabaseConfigStatus = () => {
+  const urlPresent = Boolean(SUPABASE_URL);
+  const keyPresent = Boolean(SUPABASE_ANON_KEY);
+  return {
+    configured: urlPresent && keyPresent,
+    urlPresent,
+    keyPresent,
+  } as const;
+};
+
+// Log missing config once in production so testers don't silently spin forever.
+if (IS_PROD && !SUPABASE_IS_CONFIGURED) {
+  try {
+    captureMessage('[supabase] missing_config', getSupabaseConfigStatus());
+  } catch {
+    // best-effort only
+  }
+}
+
 const LOG_THROTTLE_MS = 60_000;
-let lastLogAt = 0;
-let lastLogKey = '';
+const logLastAtByKey = new Map<string, number>();
 
 // In-memory ring buffer of recent Supabase HTTP activity.
 // Helps debug "loading forever" states in production without logging PII.
@@ -30,6 +53,11 @@ const NET_EVENTS_MAX = 30;
 const netEvents: SupabaseNetEvent[] = [];
 
 export const getSupabaseNetEvents = (): SupabaseNetEvent[] => netEvents.slice();
+
+export const supabaseDebug = {
+  getSupabaseNetEvents,
+  getSupabaseConfigStatus,
+};
 
 const safeUrlPath = (input: RequestInfo | URL) => {
   try {
@@ -49,20 +77,28 @@ const safeUrlPath = (input: RequestInfo | URL) => {
   }
 };
 
-const logFetchIssueOnce = (key: string, context: Record<string, unknown>) => {
+const logFetchIssueThrottled = (key: string, context: Record<string, unknown>, throttleKey?: string) => {
   const now = Date.now();
-  if (key === lastLogKey && now - lastLogAt < LOG_THROTTLE_MS) return;
-  lastLogKey = key;
-  lastLogAt = now;
+  const tk = throttleKey || key;
+  const lastAt = logLastAtByKey.get(tk) || 0;
+  if (now - lastAt < LOG_THROTTLE_MS) return;
+  logLastAtByKey.set(tk, now);
   captureMessage(`[supabase] ${key}`, context);
 };
+
+const SYNTHETIC_HEADER = 'x-betweener-synthetic';
+const SYNTHETIC_CODE_HEADER = 'x-betweener-synthetic-code';
 
 const makeSyntheticResponse = (message: string, code: string) => {
   // Return a synthetic response so supabase-js returns `{ error }` instead of throwing.
   // 599 is a common "network connect timeout" sentinel in some stacks.
   return new Response(JSON.stringify({ message, code }), {
     status: 599,
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      [SYNTHETIC_HEADER]: '1',
+      [SYNTHETIC_CODE_HEADER]: code,
+    },
   });
 };
 
@@ -87,10 +123,62 @@ const looksLikeSignalUnsupported = (message: string) => {
   );
 };
 
+let lastAuthFailureAt = 0;
+let lastAuthFailureStatus: 401 | 403 | null = null;
+
+const recordAuthFailure = (status: 401 | 403) => {
+  lastAuthFailureAt = Date.now();
+  lastAuthFailureStatus = status;
+};
+
+const getSyntheticCode = (res: Response) => {
+  try {
+    return res.headers.get(SYNTHETIC_CODE_HEADER) || null;
+  } catch {
+    return null;
+  }
+};
+
+const logResponseIssue = (method: string, path: string, status: number, ms: number, via: string, res?: Response) => {
+  // Avoid log spam: throttle by path+status+key.
+  const baseThrottleKey = `${path}|${status}`;
+
+  if (status === 401 || status === 403) {
+    recordAuthFailure(status);
+    logFetchIssueThrottled(`auth_${status}`, { path, status, ms, via, method, message: 'auth_invalid_or_expired' }, `auth_${status}|${baseThrottleKey}`);
+    return;
+  }
+
+  if (status === 599) {
+    const code = res ? getSyntheticCode(res) : null;
+    if (code === 'missing_config') {
+      logFetchIssueThrottled('missing_config', { path, status, ms, via, method }, `missing_config|${baseThrottleKey}`);
+      return;
+    }
+    if (code === 'network_timeout') {
+      logFetchIssueThrottled('network_timeout', { path, status, ms, via, method }, `network_timeout|${baseThrottleKey}`);
+      return;
+    }
+    logFetchIssueThrottled('network_error', { path, status, ms, via, method, code }, `network_error|${baseThrottleKey}`);
+    return;
+  }
+
+  if (status >= 400) {
+    logFetchIssueThrottled(`http_${status}`, { path, status, ms, via, method }, `http_${status}|${baseThrottleKey}`);
+  }
+};
+
 const fetchWithRaceTimeout: typeof fetch = async (input, init) => {
   const start = Date.now();
   const path = safeUrlPath(input);
   const method = String((init as any)?.method || 'GET').toUpperCase();
+  if (!SUPABASE_IS_CONFIGURED) {
+    const res = makeSyntheticResponse('missing_config', 'missing_config');
+    const ms = Date.now() - start;
+    recordNetEvent(method, path, res.status, ms);
+    logResponseIssue(method, path, res.status, ms, 'missing_config', res);
+    return res;
+  }
   try {
     const res = (await Promise.race([
       fetch(input, init as any),
@@ -98,16 +186,18 @@ const fetchWithRaceTimeout: typeof fetch = async (input, init) => {
         setTimeout(() => resolve(makeSyntheticResponse('timeout', 'network_timeout')), SUPABASE_FETCH_TIMEOUT_MS)
       ),
     ])) as Response;
-    recordNetEvent(method, path, res.status, Date.now() - start);
-    if (res.status >= 400) {
-      logFetchIssueOnce(`http_${res.status}`, { path, via: 'race' });
-    }
+    const ms = Date.now() - start;
+    recordNetEvent(method, path, res.status, ms);
+    logResponseIssue(method, path, res.status, ms, 'race', res);
     return res;
   } catch (error) {
+    const ms = Date.now() - start;
     const message = String((error as any)?.message || error || 'fetch_failed');
-    logFetchIssueOnce('exception', { path, via: 'race', message });
-    recordNetEvent(method, path, 599, Date.now() - start);
-    return makeSyntheticResponse(message, 'network_error');
+    logFetchIssueThrottled('exception', { path, via: 'race', method, message }, `exception|${path}`);
+    recordNetEvent(method, path, 599, ms);
+    const res = makeSyntheticResponse(message, 'network_error');
+    logResponseIssue(method, path, 599, ms, 'race_exception', res);
+    return res;
   }
 };
 
@@ -120,6 +210,13 @@ const fetchWithTimeout: typeof fetch = async (input, init) => {
   const start = Date.now();
   const path = safeUrlPath(input);
   const method = String((init as any)?.method || 'GET').toUpperCase();
+  if (!SUPABASE_IS_CONFIGURED) {
+    const res = makeSyntheticResponse('missing_config', 'missing_config');
+    const ms = Date.now() - start;
+    recordNetEvent(method, path, res.status, ms);
+    logResponseIssue(method, path, res.status, ms, 'missing_config', res);
+    return res;
+  }
   const hasAbortController = typeof AbortController !== 'undefined';
   if (!hasAbortController) {
     return fetchWithRaceTimeout(input, init);
@@ -162,24 +259,22 @@ const fetchWithTimeout: typeof fetch = async (input, init) => {
         // If this RN runtime doesn't support `signal`, retry once without it.
         if (looksLikeSignalUnsupported(message)) {
           const path = safeUrlPath(input);
-          logFetchIssueOnce('signal_unsupported', { path, message });
+          logFetchIssueThrottled('signal_unsupported', { path, message }, `signal_unsupported|${path}`);
           return fetchWithRaceTimeout(input, init);
         }
 
         // Otherwise convert to a synthetic response so callers get `{ error }`.
         const path = safeUrlPath(input);
-        logFetchIssueOnce('exception', { path, via: 'abort', message });
+        logFetchIssueThrottled('exception', { path, via: 'abort', method, message }, `exception|${path}`);
         return makeSyntheticResponse(message, 'network_error');
       }
     })();
 
     const res = await Promise.race([fetchPromise, timeoutPromise]);
 
-    recordNetEvent(method, path, res.status, Date.now() - start);
-
-    if (res.status >= 400) {
-      logFetchIssueOnce(`http_${res.status}`, { path, via: timedOut ? 'timeout' : 'abort' });
-    }
+    const ms = Date.now() - start;
+    recordNetEvent(method, path, res.status, ms);
+    logResponseIssue(method, path, res.status, ms, timedOut ? 'timeout' : 'abort', res);
 
     return res;
   } finally {
@@ -192,9 +287,135 @@ const fetchWithTimeout: typeof fetch = async (input, init) => {
   }
 };
 
+// React Native doesn't keep a browser tab open with a constantly running JS event loop.
+// Apps are backgrounded/suspended, and "auto refresh" must be explicitly managed
+// across AppState transitions so stale JWTs don't persist after resume/cold start.
+let authLifecycleRefCount = 0;
+let authLifecycleCleanup: (() => void) | null = null;
+
+export const initSupabaseAuthLifecycle = () => {
+  authLifecycleRefCount += 1;
+
+  const release = () => {
+    authLifecycleRefCount = Math.max(0, authLifecycleRefCount - 1);
+    if (authLifecycleRefCount === 0 && authLifecycleCleanup) {
+      const fn = authLifecycleCleanup;
+      authLifecycleCleanup = null;
+      try {
+        fn();
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+  };
+
+  if (authLifecycleCleanup) {
+    return release;
+  }
+
+  const start = () => {
+    try {
+      // Safe to call multiple times.
+      (supabase as any).auth?.startAutoRefresh?.();
+    } catch {}
+  };
+
+  const stop = () => {
+    try {
+      (supabase as any).auth?.stopAutoRefresh?.();
+    } catch {}
+  };
+
+  start();
+
+  const sub = AppState.addEventListener('change', (state) => {
+    if (state === 'active') start();
+    else stop();
+  });
+
+  authLifecycleCleanup = () => {
+    try {
+      stop();
+    } catch {}
+    try {
+      // RN returns { remove() } subscription.
+      (sub as any)?.remove?.();
+    } catch {}
+  };
+
+  return release;
+};
+
+const REFRESH_TIMEOUT_MS = 8_000;
+const REFRESH_COOLDOWN_MS = 60_000;
+const EXPIRY_SOON_SECONDS = 90;
+const AUTH_FAILURE_GRACE_MS = 5 * 60_000;
+
+let refreshInFlight: Promise<'refreshed' | 'failed'> | null = null;
+let lastRefreshAttemptAt = 0;
+
+const withTimeout = async <T,>(p: Promise<T>, timeoutMs: number): Promise<T> => {
+  return await Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
+  ]);
+};
+
+export async function ensureFreshSession(): Promise<'ok' | 'no_session' | 'refreshed' | 'failed'> {
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) {
+      // getSession is local, but treat an error as a failure state.
+      return 'failed';
+    }
+
+    const session = data?.session ?? null;
+    if (!session) return 'no_session';
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const expiresAt = typeof (session as any).expires_at === 'number' ? (session as any).expires_at : null;
+    const expiresSoon = typeof expiresAt === 'number' ? (expiresAt - nowSec) <= EXPIRY_SOON_SECONDS : false;
+    const recent401 = lastAuthFailureStatus === 401 && (Date.now() - lastAuthFailureAt) <= AUTH_FAILURE_GRACE_MS;
+
+    if (!expiresSoon && !recent401) return 'ok';
+
+    if (refreshInFlight) {
+      const r = await refreshInFlight;
+      return r === 'refreshed' ? 'refreshed' : 'failed';
+    }
+
+    const now = Date.now();
+    if (now - lastRefreshAttemptAt < REFRESH_COOLDOWN_MS) {
+      // Avoid refresh storms; caller can retry later or rely on autoRefresh.
+      return 'failed';
+    }
+    lastRefreshAttemptAt = now;
+
+    refreshInFlight = (async () => {
+      try {
+        const res: any = await withTimeout(supabase.auth.refreshSession(), REFRESH_TIMEOUT_MS);
+        if (res?.error) return 'failed';
+        return res?.data?.session ? 'refreshed' : 'failed';
+      } catch {
+        return 'failed';
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
+
+    const out = await refreshInFlight;
+    return out === 'refreshed' ? 'refreshed' : 'failed';
+  } catch {
+    return 'failed';
+  }
+}
+
 // Keep this client untyped for now to avoid forcing a full, repo-wide type migration.
 // We still use generated DB types at API boundaries (e.g. updateProfile) for safety.
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+const SUPABASE_URL_FOR_CLIENT = SUPABASE_URL || 'https://example.invalid';
+const SUPABASE_ANON_KEY_FOR_CLIENT = SUPABASE_ANON_KEY || 'missing-config';
+
+export const supabase = createClient(SUPABASE_URL_FOR_CLIENT, SUPABASE_ANON_KEY_FOR_CLIENT, {
   auth: {
     storage: AsyncStorage,
     autoRefreshToken: true,
