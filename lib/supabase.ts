@@ -15,6 +15,13 @@ const IS_PROD = EXPO_ENV === 'production' || (!IS_DEV && EXPO_ENV !== 'developme
 const SUPABASE_FETCH_TIMEOUT_MS =
   IS_DEV ? 15_000 : 30_000;
 
+// Extra safety: supabase-js can hang *before* network fetch is invoked (most often
+// due to storage reads during auth/session initialization). Wrap high-level client
+// calls like `supabase.rpc(...)` with a deterministic timeout so the UI never waits
+// forever even when `fetchWithTimeout` can't help.
+const SUPABASE_CALL_TIMEOUT_MS =
+  IS_DEV ? 12_000 : 10_000;
+
 export const SUPABASE_IS_CONFIGURED = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
 export const getSupabaseConfigStatus = () => {
@@ -102,6 +109,11 @@ const makeSyntheticResponse = (message: string, code: string) => {
   });
 };
 
+// We also use a synthetic "client timeout" status for operations that time out
+// *before* the HTTP layer. This makes it obvious in logs when the call never
+// reached Supabase (and thus won't appear in Supabase gateway logs).
+const CLIENT_TIMEOUT_STATUS = 598;
+
 const recordNetEvent = (method: string, path: string, status: number, ms: number) => {
   try {
     if (!path) return;
@@ -112,6 +124,96 @@ const recordNetEvent = (method: string, path: string, status: number, ms: number
   } catch {
     // ignore net event recording errors
   }
+};
+
+const safeStorageKey = (key: string) => {
+  try {
+    // Avoid logging full keys; keep a short prefix for diagnostics only.
+    const k = String(key || '');
+    return k.length <= 24 ? k : `${k.slice(0, 24)}...`;
+  } catch {
+    return 'unknown';
+  }
+};
+
+// AsyncStorage can occasionally hang on iOS after backgrounding/OS upgrades.
+// Supabase auth reads from storage on many code paths; if storage hangs,
+// supabase-js calls can hang *without ever reaching fetch()*.
+const AUTH_STORAGE_TIMEOUT_MS = IS_DEV ? 2500 : 1800;
+
+const storageWithTimeout = {
+  async getItem(key: string) {
+    try {
+      let didTimeout = false;
+      const value = await Promise.race([
+        AsyncStorage.getItem(key),
+        new Promise<string | null>((resolve) =>
+          setTimeout(() => {
+            didTimeout = true;
+            resolve(null);
+          }, AUTH_STORAGE_TIMEOUT_MS),
+        ),
+      ]);
+      if (didTimeout) {
+        logFetchIssueThrottled(
+          'storage_timeout',
+          { op: 'getItem', key: safeStorageKey(key), timeoutMs: AUTH_STORAGE_TIMEOUT_MS },
+          `storage_timeout|getItem|${safeStorageKey(key)}`,
+        );
+      }
+      return value as any;
+    } catch (e) {
+      return null;
+    }
+  },
+
+  async setItem(key: string, value: string) {
+    try {
+      let didTimeout = false;
+      await Promise.race([
+        AsyncStorage.setItem(key, value),
+        new Promise<void>((resolve) =>
+          setTimeout(() => {
+            didTimeout = true;
+            resolve();
+          }, AUTH_STORAGE_TIMEOUT_MS),
+        ),
+      ]);
+      if (didTimeout) {
+        logFetchIssueThrottled(
+          'storage_timeout',
+          { op: 'setItem', key: safeStorageKey(key), timeoutMs: AUTH_STORAGE_TIMEOUT_MS },
+          `storage_timeout|setItem|${safeStorageKey(key)}`,
+        );
+      }
+    } catch {
+      // best-effort only
+    }
+  },
+
+  async removeItem(key: string) {
+    try {
+      let didTimeout = false;
+      await Promise.race([
+        AsyncStorage.removeItem(key),
+        new Promise<void>((resolve) =>
+          setTimeout(() => {
+            didTimeout = true;
+            resolve();
+          }, AUTH_STORAGE_TIMEOUT_MS),
+        ),
+      ]);
+      if (didTimeout) {
+        logFetchIssueThrottled(
+          'storage_timeout',
+          { op: 'removeItem', key: safeStorageKey(key), timeoutMs: AUTH_STORAGE_TIMEOUT_MS },
+          `storage_timeout|removeItem|${safeStorageKey(key)}`,
+        );
+      }
+    } catch {
+      // best-effort only
+    }
+  },
 };
 
 const looksLikeSignalUnsupported = (message: string) => {
@@ -166,6 +268,20 @@ const logResponseIssue = (method: string, path: string, status: number, ms: numb
   if (status >= 400) {
     logFetchIssueThrottled(`http_${status}`, { path, status, ms, via, method }, `http_${status}|${baseThrottleKey}`);
   }
+};
+
+const makeClientTimeoutRpcResult = () => {
+  return {
+    data: null,
+    error: {
+      message: 'client_timeout',
+      code: 'client_timeout',
+      details: null,
+      hint: null,
+    },
+    status: CLIENT_TIMEOUT_STATUS,
+    count: null,
+  } as any;
 };
 
 const fetchWithRaceTimeout: typeof fetch = async (input, init) => {
@@ -417,7 +533,7 @@ const SUPABASE_ANON_KEY_FOR_CLIENT = SUPABASE_ANON_KEY || 'missing-config';
 
 export const supabase = createClient(SUPABASE_URL_FOR_CLIENT, SUPABASE_ANON_KEY_FOR_CLIENT, {
   auth: {
-    storage: AsyncStorage,
+    storage: storageWithTimeout as any,
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false, // Keep false for React Native
@@ -426,3 +542,45 @@ export const supabase = createClient(SUPABASE_URL_FOR_CLIENT, SUPABASE_ANON_KEY_
     fetch: fetchWithTimeout,
   },
 });
+
+// Wrap `supabase.rpc` to protect against "pre-fetch" hangs (e.g. stuck storage/session reads).
+// This keeps the app deterministic: either you get a response, a normal error, or a client_timeout.
+try {
+  const origRpc = (supabase as any).rpc?.bind(supabase);
+  if (typeof origRpc === 'function') {
+    (supabase as any).rpc = async (fn: string, args?: Record<string, unknown>, options?: Record<string, unknown>) => {
+      const start = Date.now();
+      const pseudoPath = `rpc/${String(fn)}`;
+      let timedOut = false;
+
+      const res = await Promise.race([
+        origRpc(fn as any, args as any, options as any),
+        new Promise<any>((resolve) =>
+          setTimeout(() => {
+            timedOut = true;
+            resolve(makeClientTimeoutRpcResult());
+          }, SUPABASE_CALL_TIMEOUT_MS)
+        ),
+      ]);
+
+      const ms = Date.now() - start;
+      const status = typeof (res as any)?.status === 'number'
+        ? (res as any).status
+        : ((res as any)?.error ? CLIENT_TIMEOUT_STATUS : 200);
+
+      recordNetEvent('RPC', pseudoPath, status, ms);
+
+      if (timedOut) {
+        logFetchIssueThrottled(
+          'client_timeout',
+          { fn: String(fn), ms, message: 'pre_fetch_or_client_hang', storageTimeoutMs: AUTH_STORAGE_TIMEOUT_MS },
+          `client_timeout|${pseudoPath}`,
+        );
+      }
+
+      return res;
+    };
+  }
+} catch (e) {
+  // best-effort only
+}

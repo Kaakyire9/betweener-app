@@ -1,5 +1,6 @@
 import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { VerificationBadge } from '@/components/VerificationBadge';
+import Notice from '@/components/ui/Notice';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
@@ -424,6 +425,8 @@ export default function ProfileViewPremiumV2Screen() {
   } | null>(null);
   const [heroVideoUrl, setHeroVideoUrl] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
+  const [fetchWatchdogError, setFetchWatchdogError] = useState<Error | null>(null);
+  const [fetchRetryNonce, setFetchRetryNonce] = useState(0);
   const [matchAccepted, setMatchAccepted] = useState(false);
   const [matchPercent, setMatchPercent] = useState<number | null>(null);
   const [myInterests, setMyInterests] = useState<string[]>([]);
@@ -437,16 +440,28 @@ export default function ProfileViewPremiumV2Screen() {
         return;
       }
       setFetching(true);
+      setFetchWatchdogError(null);
+      const watchdog = setTimeout(() => {
+        if (!mounted) return;
+        // If this ever triggers, it means we got stuck before the network layer (common culprit: auth/storage).
+        setFetchWatchdogError(new Error('profile_view_timeout'));
+        setFetching(false);
+        logger.warn('[profile-view-premium] fetch timeout', { profileId });
+      }, 12_000);
       try {
         const mapped = await fetchViewedProfile({
           viewedProfileId: profileId,
           fallbackDistanceLabel: fallbackProfile?.distance,
           fallbackDistanceKm: fallbackProfile?.distanceKm,
         });
-        if (mounted) setFetchedProfile(mapped);
+        if (mounted) {
+          setFetchedProfile(mapped);
+          setFetchWatchdogError(null);
+        }
       } catch {
         if (mounted) setFetchedProfile(null);
       } finally {
+        clearTimeout(watchdog);
         if (mounted) setFetching(false);
       }
     };
@@ -454,7 +469,7 @@ export default function ProfileViewPremiumV2Screen() {
     return () => {
       mounted = false;
     };
-  }, [profileId, fallbackProfile?.distance, fallbackProfile?.distanceKm]);
+  }, [profileId, fallbackProfile?.distance, fallbackProfile?.distanceKm, fetchRetryNonce]);
 
   const resolvedProfile: UserProfile = useMemo(() => {
     if (fetchedProfile) return fetchedProfile;
@@ -661,7 +676,7 @@ export default function ProfileViewPremiumV2Screen() {
     return { ...adapted, sections };
   }, [resolvedProfile]);
 
-  const isLoading = fetching && !fetchedProfile && !fallbackProfile;
+  const isLoading = fetching && !fetchedProfile && !fallbackProfile && !fetchWatchdogError;
   const locationLine = useMemo(() => buildLocationLine(resolvedProfile), [resolvedProfile]);
   const hasIntro = !!(resolvedProfile.profileVideo || resolvedProfile.profileVideoPath);
   const compatibilityPercent = useMemo(() => {
@@ -1219,7 +1234,17 @@ export default function ProfileViewPremiumV2Screen() {
         }}
       />
 
-      {isLoading ? (
+      {fetchWatchdogError && !fetchedProfile && !fallbackProfile ? (
+        <View style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
+          <Notice
+            title="Couldn't load profile"
+            message="Check your connection and try again."
+            actionLabel="Retry"
+            onAction={() => setFetchRetryNonce((n) => n + 1)}
+            icon="cloud-alert"
+          />
+        </View>
+      ) : isLoading ? (
         <View style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
           <Text style={{ color: theme.textMuted }}>Loading...</Text>
         </View>
