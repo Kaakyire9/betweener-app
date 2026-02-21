@@ -638,18 +638,27 @@ const VideoPreview = ({ url, size, styles, onSize }: VideoPreviewProps) => {
       onSize(width, height);
     };
 
-    const trackSub = player.addListener('videoTrackChange', ({ videoTrack }) => {
+    const trackSub =
+      (player as any).addListener?.('videoTrackChange', ({ videoTrack }: any) => {
       handleSize(videoTrack?.size?.width, videoTrack?.size?.height);
-    });
+      }) ??
+      (player as any).addEventListener?.('videoTrackChange', ({ videoTrack }: any) => {
+        handleSize(videoTrack?.size?.width, videoTrack?.size?.height);
+      });
 
-    const sourceSub = player.addListener('sourceLoad', ({ availableVideoTracks }) => {
+    const sourceSub =
+      (player as any).addListener?.('sourceLoad', ({ availableVideoTracks }: any) => {
       const track = availableVideoTracks?.[0];
       handleSize(track?.size?.width, track?.size?.height);
-    });
+      }) ??
+      (player as any).addEventListener?.('sourceLoad', ({ availableVideoTracks }: any) => {
+        const track = availableVideoTracks?.[0];
+        handleSize(track?.size?.width, track?.size?.height);
+      });
 
     return () => {
-      trackSub.remove();
-      sourceSub.remove();
+      try { trackSub?.remove?.(); } catch {}
+      try { sourceSub?.remove?.(); } catch {}
     };
   }, [player, size, onSize, url]);
 
@@ -1750,6 +1759,7 @@ export default function ConversationScreen() {
   const conversationId = params.id as string;
   const userName = params.userName as string;
   const userAvatar = params.userAvatar as string;
+  const prefillParam = typeof (params as any)?.prefill === 'string' ? String((params as any).prefill) : '';
   const initialOnline = params.isOnline === 'true';
   const lastSeenParam = params.lastSeen;
   const initialLastSeen =
@@ -1789,7 +1799,15 @@ export default function ConversationScreen() {
   const [pendingIntentRequest, setPendingIntentRequest] = useState<IntentRequestSummary | null>(null);
   const [pendingIntentLoading, setPendingIntentLoading] = useState(false);
   const [inputText, setInputText] = useState('');
+  const prefillConsumedRef = useRef(false);
   const [isTyping, setIsTyping] = useState(false);
+
+  useEffect(() => {
+    if (prefillConsumedRef.current) return;
+    if (!prefillParam) return;
+    setInputText((prev) => (prev ? prev : prefillParam));
+    prefillConsumedRef.current = true;
+  }, [prefillParam]);
   const [showReactions, setShowReactions] = useState<string | null>(null);
   const [messageActionsVisible, setMessageActionsVisible] = useState(false);
   const [actionMessageId, setActionMessageId] = useState<string | null>(null);
@@ -5428,7 +5446,7 @@ export default function ConversationScreen() {
       const player = createAudioPlayer({ uri: data.signedUrl }, { updateInterval: 200 });
       voiceSoundRef.current = player;
       setPlayingVoiceId(messageId);
-      player.addListener('playbackStatusUpdate', (status) => {
+      (player as any).addListener?.('playbackStatusUpdate', (status: any) => {
         if (!status.isLoaded) {
           return;
         }
@@ -11947,5 +11965,3 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: Colors.light.background,
     },
   });
-
-

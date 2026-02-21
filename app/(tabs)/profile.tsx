@@ -302,6 +302,7 @@ export default function ProfileScreen() {
     quiet_hours_tz: 'UTC',
   });
   const [notificationPrefsLoaded, setNotificationPrefsLoaded] = useState(false);
+  const [likesCount, setLikesCount] = useState(0);
   const [matchesCount, setMatchesCount] = useState(0);
   const [chatsCount, setChatsCount] = useState(0);
   const [matchQuality, setMatchQuality] = useState<number | null>(null);
@@ -545,10 +546,35 @@ export default function ProfileScreen() {
 
   const fetchProfileStats = useCallback(async () => {
     if (!profile?.id || !user?.id) {
+      setLikesCount(0);
       setMatchesCount(0);
       setChatsCount(0);
       setMatchQuality(null);
       return;
+    }
+
+    try {
+      // Likes are stored as incoming intent requests (keyed by profiles.id).
+      const { data: intents, error: intentsError } = await supabase
+        .from('intent_requests')
+        .select('id,type,status,expires_at')
+        .eq('recipient_id', profile.id)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
+        .limit(300);
+
+      if (intentsError || !intents) {
+        setLikesCount(0);
+      } else {
+        const now = Date.now();
+        const actionable = (intents as any[]).filter((row) => {
+          const ts = typeof row?.expires_at === 'string' ? Date.parse(row.expires_at) : NaN;
+          return Number.isNaN(ts) ? true : ts >= now;
+        });
+        setLikesCount(actionable.filter((row) => row?.type === 'like_with_note').length);
+      }
+    } catch {
+      setLikesCount(0);
     }
 
     try {
@@ -2172,28 +2198,45 @@ export default function ProfileScreen() {
                 style={styles.statsHighlightLine}
               />
             </View>
-            <View style={styles.statItem}>
-              <Text style={[styles.statNumber, { color: theme.text }]}>
-                {matchesCount}
-              </Text>
+            <TouchableOpacity
+              style={styles.statItem}
+              activeOpacity={0.85}
+              onPress={() => router.push('/(tabs)/intent?type=like_with_note')}
+            >
+              <Text style={[styles.statNumber, { color: theme.text }]}>{likesCount}</Text>
+              <Text style={[styles.statLabel, { color: theme.textMuted }]}>Likes</Text>
+            </TouchableOpacity>
+            <View style={[styles.statDivider, { backgroundColor: theme.outline }]} />
+            <TouchableOpacity
+              style={styles.statItem}
+              activeOpacity={0.85}
+              onPress={() => router.push('/(tabs)/chat?focus=matches')}
+            >
+              <Text style={[styles.statNumber, { color: theme.text }]}>{matchesCount}</Text>
               <Text style={[styles.statLabel, { color: theme.textMuted }]}>Matches</Text>
-            </View>
+            </TouchableOpacity>
             <View style={[styles.statDivider, { backgroundColor: theme.outline }]} />
-            <View style={styles.statItem}>
-              <Text style={[styles.statNumber, { color: theme.text }]}>
-                {chatsCount}
-              </Text>
+            <TouchableOpacity
+              style={styles.statItem}
+              activeOpacity={0.85}
+              onPress={() => router.push('/(tabs)/chat')}
+            >
+              <Text style={[styles.statNumber, { color: theme.text }]}>{chatsCount}</Text>
               <Text style={[styles.statLabel, { color: theme.textMuted }]}>Chats</Text>
-            </View>
+            </TouchableOpacity>
             <View style={[styles.statDivider, { backgroundColor: theme.outline }]} />
-            <View style={styles.statItem}>
+            <TouchableOpacity
+              style={styles.statItem}
+              activeOpacity={0.85}
+              onPress={() => router.push('/(tabs)/intent')}
+            >
               <Text style={[styles.statNumber, { color: theme.text }]}>
-                {typeof matchQuality === 'number' ? `${matchQuality}%` : '—'}
+                {typeof matchQuality === 'number' ? `${matchQuality}%` : '--'}
               </Text>
-              <Text style={[styles.statLabel, { color: theme.textMuted }]}>Match Quality</Text>
-            </View>
+              <Text style={[styles.statLabel, { color: theme.textMuted }]}>Quality</Text>
+            </TouchableOpacity>
             <Text style={[styles.statsHint, { color: theme.textMuted }]}>
-              Based on mutual intent alignment
+              Tap a tile to jump in
             </Text>
           </View>
         )}

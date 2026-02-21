@@ -4,22 +4,80 @@ import { HapticTab } from '@/components/haptic-tab';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useIntentRequests } from '@/hooks/useIntentRequests';
+import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
 import { Tabs } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MessageCircle, Sparkles, Target, User, Users } from 'lucide-react-native';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { supabase } from '@/lib/supabase';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
-  const { user } = useAuth();
-  const { badgeCount } = useIntentRequests(user?.id ?? null);
-  
-  // Mock notification counts - in a real app, these would come from your state management
-  const [unreadMessages, setUnreadMessages] = useState(3);
-  const [newMatches, setNewMatches] = useState(2);
+  const { user, profile } = useAuth();
+  const { profileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
+  const { badgeCount } = useIntentRequests(profileId);
+
+  const [unreadChats, setUnreadChats] = useState(0);
+
+  const computeUnreadChats = useMemo(() => {
+    return async (pid: string) => {
+      try {
+        // Count distinct senders with unread messages (best-effort; keep query light).
+        const { data, error } = await supabase
+          .from('messages')
+          .select('sender_id,is_read')
+          .eq('receiver_id', pid)
+          .eq('is_read', false)
+          .order('created_at', { ascending: false })
+          .limit(250);
+
+        if (error || !data) {
+          setUnreadChats(0);
+          return;
+        }
+
+        const senders = new Set<string>();
+        (data as any[]).forEach((row) => {
+          if (row?.sender_id) senders.add(String(row.sender_id));
+        });
+        setUnreadChats(senders.size);
+      } catch {
+        setUnreadChats(0);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const myUserId = user?.id ?? null;
+    if (!myUserId) {
+      setUnreadChats(0);
+      return;
+    }
+
+    void computeUnreadChats(myUserId);
+
+    // Refresh the badge when a new message arrives for this user.
+    const channel = supabase
+      .channel(`badge:unread:${myUserId}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${myUserId}` },
+        () => void computeUnreadChats(myUserId),
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'messages', filter: `receiver_id=eq.${myUserId}` },
+        () => void computeUnreadChats(myUserId),
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [computeUnreadChats, user?.id]);
   
   // Badge component for tab notifications
   const TabBadge = ({ count }: { count: number }) => {
@@ -77,7 +135,6 @@ export default function TabLayout() {
               <View style={{ position: 'relative' }}>
                 <Users size={26} color={color} />
                 {/* <IconSymbol size={28} name="magnifyingglass" color={color} /> */}
-                <TabBadge count={newMatches} />
               </View>
             ),
           }}
@@ -96,7 +153,7 @@ export default function TabLayout() {
               <View style={{ position: 'relative' }}>
                 <MessageCircle size={26} color={color} />
                 {/* <IconSymbol size={28} name="message.fill" color={color} /> */}
-                <TabBadge count={unreadMessages} />
+                <TabBadge count={unreadChats} />
               </View>
             ),
           }}

@@ -27,6 +27,7 @@ yarn-debug.*
 yarn-error.*
 .npm-cache/
 .npm-cache*/
+supabase/.temp/
 
 # macOS
 .DS_Store

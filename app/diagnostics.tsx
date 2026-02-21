@@ -86,7 +86,8 @@ export default function DiagnosticsScreen() {
         (Constants as any).expoConfig?.extra?.eas?.projectId ||
         (Constants as any).expoConfig?.extra?.projectId ||
         null;
-      setPushStatus(`perm=${perms.status} projectId=${projectId ? 'ok' : 'missing'}`);
+      const permStatus = (perms as any)?.status ?? ((perms as any)?.granted ? 'granted' : 'denied');
+      setPushStatus(`perm=${String(permStatus)} projectId=${projectId ? 'ok' : 'missing'}`);
 
       await registerPushToken(user.id);
       setPushStatus((prev) => `${prev} | register invoked`);

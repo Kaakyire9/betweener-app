@@ -22,7 +22,7 @@ module.exports = ({ config }) => {
         'expo-notification-service-extension-plugin',
         {
           mode: apnsMode,
-          iosNseFilePath: './assets/NotificationService.m',
+          iosNSEFilePath: './assets/NotificationService.m',
         },
       ],
       ...(config.plugins ?? []),

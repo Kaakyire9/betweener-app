@@ -1,6 +1,7 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useIntentRequests, type IntentRequest } from '@/hooks/useIntentRequests';
+import { useIntentRequests, type IntentRequest, type IntentRequestType } from '@/hooks/useIntentRequests';
+import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
 import { computeCompatibilityPercent } from '@/lib/compat/compatibility-score';
 import { computeFirstReplyHours, computeInterestOverlapRatio, computeMatchScorePercent } from '@/lib/match/match-score';
@@ -8,7 +9,7 @@ import { readCache, writeCache } from '@/lib/persisted-cache';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Image, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -16,6 +17,7 @@ import IntentRequestSheet from '@/components/IntentRequestSheet';
 
 type Direction = 'incoming' | 'sent';
 type Filter = 'action' | 'all' | 'accepted' | 'passed';
+type TypeFilter = 'all' | IntentRequestType;
 
 type ProfileSnippet = {
   id: string;
@@ -69,6 +71,47 @@ const expiresIn = (iso?: string | null) => {
   return `${hours}h`;
 };
 
+const hoursUntil = (iso?: string | null) => {
+  if (!iso) return null;
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return null;
+  return (ts - Date.now()) / 3600000;
+};
+
+const buildQuickReplyText = (opts: {
+  name: string;
+  itemType: IntentRequest['type'];
+  note?: string | null;
+  sharedInterests?: string[];
+  location?: string | null;
+}) => {
+  const name = (opts.name || 'there').split(' ')[0];
+  const shared = Array.isArray(opts.sharedInterests) ? opts.sharedInterests.filter(Boolean) : [];
+
+  if (opts.itemType === 'date_request') {
+    return `Hey ${name}! That sounds nice. When works for you?`;
+  }
+
+  if (opts.itemType === 'circle_intro') {
+    if (shared[0]) return `Hey ${name}! I saw you in the circle. What's your vibe around ${shared[0]}?`;
+    return `Hey ${name}! I saw you in the circle. What brought you here?`;
+  }
+
+  if (opts.itemType === 'like_with_note' && opts.note && opts.note.trim()) {
+    return `Hey ${name}! Thanks for the note - ${opts.note.trim()}`;
+  }
+
+  if (shared[0]) {
+    return `Hey ${name}! We both like ${shared[0]} - what's your favorite thing about it?`;
+  }
+
+  if (opts.location) {
+    return `Hey ${name}! How's ${opts.location} treating you?`;
+  }
+
+  return `Hey ${name}! Nice to meet you - what are you looking for here?`;
+};
+
 const isExpired = (item: IntentRequest) => {
   if (item.status !== 'pending') return false;
   const ts = Date.parse(item.expires_at);
@@ -107,15 +150,18 @@ const typeIcon = (type: IntentRequest['type']) => {
 
 export default function IntentScreen() {
   const { user, profile } = useAuth();
+  const { profileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
+  const params = useLocalSearchParams<{ type?: string }>();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
 
-  const currentProfileId = profile?.id ?? user?.id ?? null;
+  const currentProfileId = profileId;
   const { incoming, sent, loading, refresh } = useIntentRequests(currentProfileId);
   const [direction, setDirection] = useState<Direction>('incoming');
   const [filter, setFilter] = useState<Filter>('action');
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [profiles, setProfiles] = useState<Record<string, ProfileSnippet>>({});
   const [myInterests, setMyInterests] = useState<string[]>([]);
   const [interestsByProfile, setInterestsByProfile] = useState<Record<string, string[]>>({});
@@ -154,6 +200,22 @@ export default function IntentScreen() {
       void refresh();
     }, [refresh]),
   );
+
+  useEffect(() => {
+    // Allow other screens to deep-link into a specific intent type.
+    // Example: `router.push('/(tabs)/intent?type=like_with_note')`
+    const raw = params?.type;
+    if (typeof raw !== 'string' || raw.length === 0) return;
+    const normalized = raw.trim();
+    const allowed: TypeFilter[] = ['all', 'connect', 'date_request', 'like_with_note', 'circle_intro'];
+    if ((allowed as string[]).includes(normalized)) {
+      setTypeFilter(normalized as TypeFilter);
+      return;
+    }
+    if (normalized === 'likes') setTypeFilter('like_with_note');
+    if (normalized === 'dates') setTypeFilter('date_request');
+    if (normalized === 'circles') setTypeFilter('circle_intro');
+  }, [params?.type]);
 
   const relevantIds = useMemo(() => {
     const list = direction === 'incoming' ? incoming : sent;
@@ -303,6 +365,7 @@ export default function IntentScreen() {
     const list = direction === 'incoming' ? incoming : sent;
     if (direction === 'sent' && filter === 'action') return [];
     return list.filter((item) => {
+      if (typeFilter !== 'all' && item.type !== typeFilter) return false;
       if (filter === 'action') {
         return item.status === 'pending' && !isExpired(item);
       }
@@ -310,7 +373,27 @@ export default function IntentScreen() {
       if (filter === 'passed') return item.status === 'passed';
       return true;
     });
-  }, [direction, filter, incoming, sent]);
+  }, [direction, filter, incoming, sent, typeFilter]);
+
+  const sortedFiltered = useMemo(() => {
+    const list = [...filtered];
+    // Premium feel: "actionable" inbox prioritizes what will expire soonest.
+    if (direction === 'incoming' && filter === 'action') {
+      list.sort((a, b) => {
+        const ha = hoursUntil(a.expires_at);
+        const hb = hoursUntil(b.expires_at);
+        const aKey = typeof ha === 'number' ? ha : Number.POSITIVE_INFINITY;
+        const bKey = typeof hb === 'number' ? hb : Number.POSITIVE_INFINITY;
+        if (aKey !== bKey) return aKey - bKey;
+        return Date.parse(b.created_at) - Date.parse(a.created_at);
+      });
+      return list;
+    }
+
+    // Otherwise keep "newest first" as a reasonable default.
+    list.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+    return list;
+  }, [direction, filter, filtered]);
 
   const hasPendingIncoming = useMemo(
     () => incoming.some((item) => item.status === 'pending' && !isExpired(item)),
@@ -364,11 +447,11 @@ export default function IntentScreen() {
     };
   }, [suggestedCacheKey]);
 
-  const openChat = useCallback((peerId?: string | null, name?: string, avatar?: string | null) => {
+  const openChat = useCallback((peerId?: string | null, name?: string, avatar?: string | null, prefill?: string | null) => {
     if (!peerId) return;
     router.push({
       pathname: '/chat/[id]',
-      params: { id: peerId, userName: name ?? '', userAvatar: avatar ?? '' },
+      params: { id: peerId, userName: name ?? '', userAvatar: avatar ?? '', prefill: prefill ?? '' },
     });
   }, []);
 
@@ -421,10 +504,19 @@ export default function IntentScreen() {
       }
       await ensureMatch(item.actor_id, item.recipient_id);
       const actor = profiles[item.actor_id];
-      openChat(item.actor_id, actor?.full_name || 'Request', actor?.avatar_url || null);
+      const peerInterests = Array.isArray(interestsByProfile[item.actor_id]) ? interestsByProfile[item.actor_id] : [];
+      const shared = myInterests.length ? peerInterests.filter((i) => myInterests.includes(i)).slice(0, 2) : [];
+      const reply = buildQuickReplyText({
+        name: actor?.full_name || 'Someone',
+        itemType: item.type,
+        note: item.message ?? null,
+        sharedInterests: shared,
+        location: actor?.city || actor?.region || actor?.location || null,
+      });
+      openChat(item.actor_id, actor?.full_name || 'Request', actor?.avatar_url || null, reply);
       await refresh();
     },
-    [ensureMatch, openChat, profiles, refresh, user],
+    [ensureMatch, interestsByProfile, myInterests, openChat, profiles, refresh, user],
   );
 
   const passRequest = useCallback(async (item: IntentRequest) => {
@@ -488,6 +580,15 @@ export default function IntentScreen() {
       const previewPhotos = photos.slice(0, 3);
       const timeLabel = timeAgo(item.created_at);
       const expiry = item.status === 'pending' && !isExpired(item) ? expiresIn(item.expires_at) : null;
+      const hoursLeft = item.status === 'pending' && !isExpired(item) ? hoursUntil(item.expires_at) : null;
+      const urgent = typeof hoursLeft === 'number' ? hoursLeft <= 6 : false;
+      const quickReply = buildQuickReplyText({
+        name,
+        itemType: item.type,
+        note: item.message ?? null,
+        sharedInterests,
+        location: location || null,
+      });
 
       return (
         <View style={styles.card}>
@@ -519,7 +620,12 @@ export default function IntentScreen() {
                   </View>
                 ) : null}
                 <Text style={styles.timeLabel}>{timeLabel}</Text>
-                {expiry ? <Text style={styles.expiryLabel}>{`Expires in ${expiry}`}</Text> : null}
+                {expiry ? (
+                  <View style={[styles.expiryPill, urgent && styles.expiryPillUrgent]}>
+                    <MaterialCommunityIcons name={urgent ? 'timer-alert-outline' : 'timer-outline'} size={12} color={urgent ? '#ef4444' : theme.accent} />
+                    <Text style={[styles.expiryLabel, urgent && styles.expiryLabelUrgent]}>{`Expires in ${expiry}`}</Text>
+                  </View>
+                ) : null}
               </View>
             </View>
             <View style={styles.statusPill}>
@@ -563,8 +669,8 @@ export default function IntentScreen() {
                 <TouchableOpacity style={styles.secondaryButton} onPress={() => passRequest(item)}>
                   <Text style={styles.secondaryText}>Pass</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.ghostButton} onPress={() => openChat(peerId, name, peer?.avatar_url)}>
-                  <Text style={styles.ghostText}>Reply</Text>
+                <TouchableOpacity style={styles.ghostButton} onPress={() => openChat(peerId, name, peer?.avatar_url, quickReply)}>
+                  <Text style={styles.ghostText}>Quick reply</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.profileButton}
@@ -690,12 +796,24 @@ export default function IntentScreen() {
 
   const shouldShowSuggested = direction === 'incoming' && suggestedMoves.length > 0;
 
+  const typePills = useMemo(
+    () =>
+      [
+        { key: 'all' as const, label: 'All', icon: 'layers-outline' },
+        { key: 'like_with_note' as const, label: 'Likes', icon: 'heart-outline' },
+        { key: 'connect' as const, label: 'Connect', icon: 'message-plus-outline' },
+        { key: 'date_request' as const, label: 'Dates', icon: 'calendar-heart' },
+        { key: 'circle_intro' as const, label: 'Circles', icon: 'account-group-outline' },
+      ] as const,
+    [],
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>Request</Text>
-          <Text style={styles.headerSubtitle}>Active asks from people ready to connect.</Text>
+          <Text style={styles.headerTitle}>Intent</Text>
+          <Text style={styles.headerSubtitle}>Likes, requests, and introductions.</Text>
         </View>
       </View>
 
@@ -714,6 +832,26 @@ export default function IntentScreen() {
         </Pressable>
       </View>
 
+      <View style={styles.typeRow}>
+        {typePills.map((pill) => {
+          const active = pill.key === typeFilter;
+          return (
+            <Pressable
+              key={pill.key}
+              style={[styles.typePill, active && styles.typePillActive]}
+              onPress={() => setTypeFilter(pill.key)}
+            >
+              <MaterialCommunityIcons
+                name={pill.icon as any}
+                size={16}
+                color={active ? Colors.light.background : theme.textMuted}
+              />
+              <Text style={[styles.typeText, active && styles.typeTextActive]}>{pill.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
       <View style={styles.filterRow}>
         {filters.map((pill) => {
           const active = pill.key === filter;
@@ -730,11 +868,12 @@ export default function IntentScreen() {
       </View>
 
       <FlatList
-        data={filtered}
+        data={sortedFiltered}
         keyExtractor={(item) => item.id}
         renderItem={renderItem}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={false}
+        extraData={sortedFiltered.length}
         ListFooterComponent={
           shouldShowSuggested ? (
             <View style={styles.suggestedSection}>
@@ -773,7 +912,7 @@ export default function IntentScreen() {
               </View>
               {!loading && direction === 'incoming' && !hasPendingIncoming && suggestedMoves.length === 0 && !suggestedLoading ? (
                 <View style={styles.emptyStateMuted}>
-                  <Text style={styles.emptyText}>Nothing yet — but you are early.</Text>
+                  <Text style={styles.emptyText}>Nothing yet -- but you are early.</Text>
                   <Text style={styles.emptyHint}>Post a Moment or explore Vibes to spark new requests.</Text>
                 </View>
               ) : null}
@@ -812,6 +951,21 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     togglePillActive: { backgroundColor: theme.tint, borderColor: theme.tint },
     toggleText: { fontSize: 12, color: theme.textMuted, fontWeight: '600' },
     toggleTextActive: { color: Colors.light.background },
+    typeRow: { flexDirection: 'row', paddingHorizontal: 18, gap: 10, marginTop: 12, flexWrap: 'wrap' },
+    typePill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.outline,
+      backgroundColor: theme.backgroundSubtle,
+    },
+    typePillActive: { backgroundColor: theme.tint, borderColor: theme.tint },
+    typeText: { fontSize: 12, color: theme.textMuted, fontWeight: '600' },
+    typeTextActive: { color: Colors.light.background },
     filterRow: { flexDirection: 'row', paddingHorizontal: 18, gap: 10, marginTop: 10 },
     filterPill: {
       paddingHorizontal: 12,
@@ -880,7 +1034,23 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     compatBadgeText: { fontSize: 11, color: theme.accent, fontWeight: '600' },
     timeLabel: { fontSize: 11, color: theme.textMuted },
-    expiryLabel: { fontSize: 11, color: theme.accent },
+    expiryPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.outline,
+      backgroundColor: isDark ? 'rgba(125, 91, 166, 0.10)' : 'rgba(125, 91, 166, 0.07)',
+    },
+    expiryPillUrgent: {
+      borderColor: 'rgba(239, 68, 68, 0.55)',
+      backgroundColor: isDark ? 'rgba(239, 68, 68, 0.12)' : 'rgba(239, 68, 68, 0.08)',
+    },
+    expiryLabel: { fontSize: 11, color: theme.accent, fontWeight: '600' },
+    expiryLabelUrgent: { color: '#ef4444' },
     statusPill: {
       paddingHorizontal: 8,
       paddingVertical: 4,

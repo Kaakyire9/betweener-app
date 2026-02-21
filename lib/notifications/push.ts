@@ -118,13 +118,14 @@ export const registerPushToken = async (userId: string) => {
 
   await initPushNotificationUX();
 
-  const { status: existingStatus } = await Notifications.getPermissionsAsync();
+  const existingPerms = await Notifications.getPermissionsAsync();
+  const existingStatus = (existingPerms as any)?.status ?? ((existingPerms as any)?.granted ? 'granted' : 'denied');
   let finalStatus = existingStatus;
   if (existingStatus !== 'granted') {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
+    const requestedPerms = await Notifications.requestPermissionsAsync();
+    finalStatus = (requestedPerms as any)?.status ?? ((requestedPerms as any)?.granted ? 'granted' : 'denied');
   }
-  if (finalStatus !== 'granted') {
+  if (String(finalStatus) !== 'granted') {
     console.log('[push] permission not granted');
     logOnce('permission_denied', { existingStatus, finalStatus });
     return;

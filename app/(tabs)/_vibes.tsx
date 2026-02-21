@@ -9,7 +9,7 @@ import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { requestAndSavePreciseLocation, saveManualCityLocation } from "@/hooks/useLocationPreference";
 import { useMoments, type MomentUser } from '@/hooks/useMoments';
-import useVibesFeed from "@/hooks/useVibesFeed";
+import useVibesFeed, { applyVibesFilters, type VibesFilters } from "@/hooks/useVibesFeed";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
 import { recordProfileSignal } from '@/lib/profile-signals';
@@ -25,7 +25,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { router } from 'expo-router';
 import { CircleOff, Gem, Sparkles, Target } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Animated, DeviceEventEmitter, Easing, FlatList, Image, KeyboardAvoidingView, Modal, Platform, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from "react-native";
+import { Alert, Animated, DeviceEventEmitter, Easing, FlatList, Image, KeyboardAvoidingView, Modal, PanResponder, Platform, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import VibesAllMomentsModal from "@/components/vibes/VibesAllMomentsModal";
@@ -38,6 +38,7 @@ import { logger } from "@/lib/telemetry/logger";
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
 const KM_PER_MILE = 1.60934;
+const VIBES_FILTERS_KEY = 'vibes_filters_v2';
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
 
@@ -97,9 +98,11 @@ export default function ExploreScreen() {
   >("recommended");
   const [activeWindowMinutes, setActiveWindowMinutes] = useState(15);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
+  const [viewerInterests, setViewerInterests] = useState<string[]>([]);
   const vibesSegment = activeTab === 'nearby' ? 'nearby' : activeTab === 'active' ? 'activeNow' : 'forYou';
   const {
     profiles: matchList,
+    poolProfiles,
     recordSwipe,
     undoLastSwipe,
     refresh: refreshMatches,
@@ -110,6 +113,7 @@ export default function ExploreScreen() {
     lastMutualMatch,
     fetchProfileDetails,
     applyFilters,
+    filters: appliedFilters,
     refreshRemaining,
   } = useVibesFeed({
     userId: profile?.id,
@@ -117,6 +121,7 @@ export default function ExploreScreen() {
     activeWindowMinutes,
     distanceUnit,
     momentUserIds: momentBoostIds,
+    viewerInterests,
   });
 
   const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
@@ -178,16 +183,72 @@ export default function ExploreScreen() {
   const [isSavingLocation, setIsSavingLocation] = useState(false);
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [verifiedOnly, setVerifiedOnly] = useState(false);
+  const [hasVideoOnly, setHasVideoOnly] = useState(false);
+  const [activeOnly, setActiveOnly] = useState(false);
   const [distanceFilterKm, setDistanceFilterKm] = useState<number | null>(null);
   const [minAge, setMinAge] = useState<number>(18);
   const [maxAge, setMaxAge] = useState<number>(60);
   const [religionFilter, setReligionFilter] = useState<string | null>(null);
+  const [minVibeScore, setMinVibeScore] = useState<number | null>(null);
+  const [minSharedInterests, setMinSharedInterests] = useState<number>(0);
   const [locationQuery, setLocationQuery] = useState<string>('');
   const prefetchedDetailsRef = useRef<Set<string>>(new Set());
   const prefetchInFlightRef = useRef<Set<string>>(new Set());
   const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRefreshTsRef = useRef<number>(0);
   const scrollY = useRef(new Animated.Value(0)).current;
+  const filtersStorageKey = useMemo(
+    () => (profile?.id ? `${VIBES_FILTERS_KEY}:${profile.id}` : null),
+    [profile?.id],
+  );
+  const filtersLoadedKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!filtersStorageKey) return;
+    if (filtersLoadedKeyRef.current === filtersStorageKey) return;
+    filtersLoadedKeyRef.current = filtersStorageKey;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(filtersStorageKey);
+        if (cancelled || !raw) return;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return;
+
+        // Keep it best-effort; any missing fields just fall back to defaults.
+        setVerifiedOnly(Boolean(parsed.verifiedOnly));
+        setHasVideoOnly(Boolean(parsed.hasVideoOnly));
+        setActiveOnly(Boolean(parsed.activeOnly));
+        setDistanceFilterKm(typeof parsed.distanceFilterKm === 'number' ? parsed.distanceFilterKm : null);
+        setMinAge(typeof parsed.minAge === 'number' ? parsed.minAge : 18);
+        setMaxAge(typeof parsed.maxAge === 'number' ? parsed.maxAge : 60);
+        setReligionFilter(typeof parsed.religionFilter === 'string' ? parsed.religionFilter : null);
+        setMinVibeScore(typeof parsed.minVibeScore === 'number' ? parsed.minVibeScore : null);
+        setMinSharedInterests(typeof parsed.minSharedInterests === 'number' ? parsed.minSharedInterests : 0);
+        setLocationQuery(typeof parsed.locationQuery === 'string' ? parsed.locationQuery : '');
+
+        applyFilters({
+          verifiedOnly: Boolean(parsed.verifiedOnly),
+          hasVideoOnly: Boolean(parsed.hasVideoOnly),
+          activeOnly: Boolean(parsed.activeOnly),
+          distanceFilterKm: typeof parsed.distanceFilterKm === 'number' ? parsed.distanceFilterKm : null,
+          minAge: typeof parsed.minAge === 'number' ? parsed.minAge : 18,
+          maxAge: typeof parsed.maxAge === 'number' ? parsed.maxAge : 60,
+          religionFilter: typeof parsed.religionFilter === 'string' ? parsed.religionFilter : null,
+          minVibeScore: typeof parsed.minVibeScore === 'number' ? parsed.minVibeScore : null,
+          minSharedInterests: typeof parsed.minSharedInterests === 'number' ? parsed.minSharedInterests : 0,
+          locationQuery: typeof parsed.locationQuery === 'string' ? parsed.locationQuery : '',
+        });
+      } catch {
+        // ignore
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyFilters, filtersStorageKey]);
 
   const queueRefreshMatches = useCallback(() => {
     if (refreshDebounceRef.current) {
@@ -251,6 +312,36 @@ export default function ExploreScreen() {
     refreshMatches();
     refreshMoments();
   }, [refreshMatches, refreshMoments]);
+
+  useEffect(() => {
+    if (!profile?.id) {
+      setViewerInterests([]);
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profile_interests')
+          .select('interests(name)')
+          .eq('profile_id', profile.id);
+        if (cancelled || error) return;
+        const names: string[] = [];
+        (data || []).forEach((row: any) => {
+          const n = row?.interests?.name;
+          if (typeof n === 'string' && n.trim()) names.push(n.trim());
+        });
+        setViewerInterests(names);
+      } catch {
+        if (!cancelled) setViewerInterests([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.id]);
 
   const stackRef = useRef<ExploreStackHandle | null>(null);
   const buttonScale = useRef(new Animated.Value(1)).current;
@@ -454,31 +545,280 @@ export default function ExploreScreen() {
 
   const openManualLocationModal = useCallback(() => {
     setLocationError(null);
-    setFiltersVisible(false);
-    setTimeout(() => {
-      setManualLocationModalVisible(true);
-    }, 150);
-  }, []);
+    setManualLocation(profile?.location || "");
+    setManualCountryCode(profileCountryCode || manualCountryCode || "");
+    setManualLocationModalVisible(true);
+  }, [manualCountryCode, profile?.location, profileCountryCode]);
 
   const handleApplyFilters = () => {
     setFiltersVisible(false);
-    applyFilters({
+    const next = {
       verifiedOnly,
+      hasVideoOnly,
+      activeOnly,
       distanceFilterKm,
       minAge,
       maxAge,
       religionFilter,
+      minVibeScore,
+      minSharedInterests,
       locationQuery,
-    });
-    void refreshMatches();
+    };
+    applyFilters(next);
     setCurrentIndex(0);
+
+    // Persist for a "premium" feel (your preferences stick).
+    if (filtersStorageKey) {
+      AsyncStorage.setItem(filtersStorageKey, JSON.stringify(next)).catch(() => {});
+    }
   };
+
+  const syncFilterDraftFromApplied = useCallback(() => {
+    const base = appliedFilters ?? {
+      verifiedOnly: false,
+      hasVideoOnly: false,
+      activeOnly: false,
+      distanceFilterKm: null,
+      minAge: 18,
+      maxAge: 60,
+      religionFilter: null,
+      minVibeScore: null,
+      minSharedInterests: 0,
+      locationQuery: '',
+    };
+
+    setVerifiedOnly(Boolean(base.verifiedOnly));
+    setHasVideoOnly(Boolean(base.hasVideoOnly));
+    setActiveOnly(Boolean(base.activeOnly));
+    setDistanceFilterKm(base.distanceFilterKm ?? null);
+    setMinAge(typeof base.minAge === 'number' ? base.minAge : 18);
+    setMaxAge(typeof base.maxAge === 'number' ? base.maxAge : 60);
+    setReligionFilter(typeof base.religionFilter === 'string' ? base.religionFilter : null);
+    setMinVibeScore(typeof base.minVibeScore === 'number' ? base.minVibeScore : null);
+    setMinSharedInterests(typeof base.minSharedInterests === 'number' ? base.minSharedInterests : 0);
+    setLocationQuery(typeof base.locationQuery === 'string' ? base.locationQuery : '');
+  }, [appliedFilters]);
+
+  useEffect(() => {
+    if (filtersVisible) {
+      // Premium UX: treat the modal controls as "draft" until Apply is pressed.
+      syncFilterDraftFromApplied();
+    }
+  }, [filtersVisible, syncFilterDraftFromApplied]);
+
+  const resetAllFilters = useCallback(() => {
+    setVerifiedOnly(false);
+    setHasVideoOnly(false);
+    setActiveOnly(false);
+    setDistanceFilterKm(null);
+    setMinAge(18);
+    setMaxAge(60);
+    setReligionFilter(null);
+    setMinVibeScore(null);
+    setMinSharedInterests(0);
+    setLocationQuery('');
+
+    applyFilters({
+      verifiedOnly: false,
+      hasVideoOnly: false,
+      activeOnly: false,
+      distanceFilterKm: null,
+      minAge: 18,
+      maxAge: 60,
+      religionFilter: null,
+      minVibeScore: null,
+      minSharedInterests: 0,
+      locationQuery: '',
+    });
+
+    if (filtersStorageKey) {
+      AsyncStorage.removeItem(filtersStorageKey).catch(() => {});
+    }
+  }, [applyFilters, filtersStorageKey]);
+
+  const formatDistanceLabel = useCallback(
+    (km: number) => {
+      if (resolvedDistanceUnit === 'mi') {
+        const mi = km / KM_PER_MILE;
+        return `${Math.round(mi)} mi`;
+      }
+      return `${Math.round(km)} km`;
+    },
+    [resolvedDistanceUnit],
+  );
+
+  const activeFilterChips = useMemo(() => {
+    const chips: Array<{ key: string; label: string; onClear: () => void }> = [];
+    if (verifiedOnly) chips.push({ key: 'verified', label: 'Verified', onClear: () => setVerifiedOnly(false) });
+    if (hasVideoOnly) chips.push({ key: 'video', label: 'Video', onClear: () => setHasVideoOnly(false) });
+    if (activeOnly) chips.push({ key: 'active', label: 'Active', onClear: () => setActiveOnly(false) });
+    if (minVibeScore != null) chips.push({ key: 'vibe', label: `Vibe ${minVibeScore}%+`, onClear: () => setMinVibeScore(null) });
+    if (minSharedInterests > 0) chips.push({ key: 'shared', label: `${minSharedInterests}+ shared`, onClear: () => setMinSharedInterests(0) });
+    if (distanceFilterKm != null) chips.push({ key: 'distance', label: `<= ${formatDistanceLabel(distanceFilterKm)}`, onClear: () => setDistanceFilterKm(null) });
+    if (minAge !== 18 || maxAge !== 60) chips.push({ key: 'age', label: `${minAge}-${maxAge}`, onClear: () => { setMinAge(18); setMaxAge(60); } });
+    if (religionFilter) chips.push({ key: 'religion', label: String(religionFilter), onClear: () => setReligionFilter(null) });
+    if (locationQuery.trim()) chips.push({ key: 'loc', label: `City: ${locationQuery.trim()}`, onClear: () => setLocationQuery('') });
+    return chips;
+  }, [
+    activeOnly,
+    distanceFilterKm,
+    formatDistanceLabel,
+    hasVideoOnly,
+    locationQuery,
+    maxAge,
+    minAge,
+    minSharedInterests,
+    minVibeScore,
+    religionFilter,
+    verifiedOnly,
+  ]);
+
+  const draftFiltersForPreview = useMemo<VibesFilters>(
+    () => ({
+      verifiedOnly,
+      hasVideoOnly,
+      activeOnly,
+      distanceFilterKm,
+      minAge,
+      maxAge,
+      religionFilter,
+      minVibeScore,
+      minSharedInterests,
+      locationQuery,
+    }),
+    [
+      activeOnly,
+      distanceFilterKm,
+      hasVideoOnly,
+      locationQuery,
+      maxAge,
+      minAge,
+      minSharedInterests,
+      minVibeScore,
+      religionFilter,
+      verifiedOnly,
+    ],
+  );
+
+  const draftPreviewCount = useMemo(() => {
+    if (!filtersVisible) return null;
+    try {
+      return applyVibesFilters(poolProfiles ?? [], draftFiltersForPreview, {
+        segment: vibesSegment,
+        momentUserIds: momentBoostIds,
+        viewerInterests,
+      }).length;
+    } catch {
+      return null;
+    }
+  }, [draftFiltersForPreview, filtersVisible, momentBoostIds, poolProfiles, vibesSegment, viewerInterests]);
+
+  const appliedFilterCount = useMemo(() => {
+    if (!appliedFilters) return 0;
+    let n = 0;
+    if (appliedFilters.verifiedOnly) n += 1;
+    if (appliedFilters.hasVideoOnly) n += 1;
+    if (appliedFilters.activeOnly) n += 1;
+    if (appliedFilters.minVibeScore != null) n += 1;
+    if ((appliedFilters.minSharedInterests || 0) > 0) n += 1;
+    if (appliedFilters.distanceFilterKm != null) n += 1;
+    if (appliedFilters.minAge !== 18 || appliedFilters.maxAge !== 60) n += 1;
+    if (appliedFilters.religionFilter) n += 1;
+    if (appliedFilters.locationQuery && appliedFilters.locationQuery.trim()) n += 1;
+    return n;
+  }, [appliedFilters]);
+
+  const commitFilters = useCallback(
+    (patch: Partial<{
+      verifiedOnly: boolean;
+      hasVideoOnly: boolean;
+      activeOnly: boolean;
+      distanceFilterKm: number | null;
+      minAge: number;
+      maxAge: number;
+      religionFilter: string | null;
+      minVibeScore: number | null;
+      minSharedInterests: number;
+      locationQuery: string;
+    }>) => {
+      const base = appliedFilters ?? {
+        verifiedOnly,
+        hasVideoOnly,
+        activeOnly,
+        distanceFilterKm,
+        minAge,
+        maxAge,
+        religionFilter,
+        minVibeScore,
+        minSharedInterests,
+        locationQuery,
+      };
+      const next = { ...base, ...patch };
+
+      setVerifiedOnly(Boolean(next.verifiedOnly));
+      setHasVideoOnly(Boolean(next.hasVideoOnly));
+      setActiveOnly(Boolean(next.activeOnly));
+      setDistanceFilterKm(next.distanceFilterKm ?? null);
+      setMinAge(typeof next.minAge === 'number' ? next.minAge : 18);
+      setMaxAge(typeof next.maxAge === 'number' ? next.maxAge : 60);
+      setReligionFilter(typeof next.religionFilter === 'string' ? next.religionFilter : null);
+      setMinVibeScore(typeof next.minVibeScore === 'number' ? next.minVibeScore : null);
+      setMinSharedInterests(typeof next.minSharedInterests === 'number' ? next.minSharedInterests : 0);
+      setLocationQuery(typeof next.locationQuery === 'string' ? next.locationQuery : '');
+
+      applyFilters(next);
+      setCurrentIndex(0);
+      if (filtersStorageKey) {
+        AsyncStorage.setItem(filtersStorageKey, JSON.stringify(next)).catch(() => {});
+      }
+    },
+    [
+      activeOnly,
+      appliedFilters,
+      applyFilters,
+      distanceFilterKm,
+      filtersStorageKey,
+      hasVideoOnly,
+      locationQuery,
+      maxAge,
+      minAge,
+      minSharedInterests,
+      minVibeScore,
+      religionFilter,
+      verifiedOnly,
+    ],
+  );
+
+  const appliedFilterChips = useMemo(() => {
+    if (!appliedFilters) return [];
+    const chips: Array<{ key: string; label: string; onClear: () => void }> = [];
+
+    if (appliedFilters.verifiedOnly) chips.push({ key: 'verified', label: 'Verified', onClear: () => commitFilters({ verifiedOnly: false }) });
+    if (appliedFilters.hasVideoOnly) chips.push({ key: 'video', label: 'Video', onClear: () => commitFilters({ hasVideoOnly: false }) });
+    if (appliedFilters.activeOnly) chips.push({ key: 'active', label: 'Active', onClear: () => commitFilters({ activeOnly: false }) });
+    if (appliedFilters.minVibeScore != null) chips.push({ key: 'vibe', label: `Vibe ${appliedFilters.minVibeScore}%+`, onClear: () => commitFilters({ minVibeScore: null }) });
+    if ((appliedFilters.minSharedInterests || 0) > 0) chips.push({ key: 'shared', label: `${appliedFilters.minSharedInterests}+ shared`, onClear: () => commitFilters({ minSharedInterests: 0 }) });
+    if (appliedFilters.distanceFilterKm != null) chips.push({ key: 'distance', label: `<= ${formatDistanceLabel(appliedFilters.distanceFilterKm)}`, onClear: () => commitFilters({ distanceFilterKm: null }) });
+    if (appliedFilters.minAge !== 18 || appliedFilters.maxAge !== 60) chips.push({ key: 'age', label: `${appliedFilters.minAge}-${appliedFilters.maxAge}`, onClear: () => commitFilters({ minAge: 18, maxAge: 60 }) });
+    if (appliedFilters.religionFilter) chips.push({ key: 'religion', label: String(appliedFilters.religionFilter), onClear: () => commitFilters({ religionFilter: null }) });
+    if (appliedFilters.locationQuery && appliedFilters.locationQuery.trim()) {
+      chips.push({ key: 'loc', label: `City: ${appliedFilters.locationQuery.trim()}`, onClear: () => commitFilters({ locationQuery: '' }) });
+    }
+
+    return chips;
+  }, [appliedFilters, commitFilters, formatDistanceLabel]);
 
   const setAgeValue = (val: string, type: 'min' | 'max') => {
     const num = Number(val.replace(/[^0-9]/g, ''));
     if (Number.isNaN(num)) return;
-    if (type === 'min') setMinAge(num);
-    else setMaxAge(num);
+    const clamped = Math.max(18, Math.min(99, num));
+    if (type === 'min') {
+      setMinAge(clamped);
+      if (clamped > maxAge) setMaxAge(clamped);
+    } else {
+      setMaxAge(clamped);
+      if (clamped < minAge) setMinAge(clamped);
+    }
   };
 
   // Reset index if data changes
@@ -488,7 +828,9 @@ export default function ExploreScreen() {
 
   // Prefetch optional fields for the next N cards to improve perceived speed
   useEffect(() => {
-    const N = 2;
+    const wantsMoreDetails =
+      Boolean(appliedFilters?.hasVideoOnly) || (appliedFilters?.minSharedInterests || 0) > 0;
+    const N = wantsMoreDetails ? 10 : 2;
     let mounted = true;
     (async () => {
       try {
@@ -519,7 +861,7 @@ export default function ExploreScreen() {
       }
     })();
     return () => { mounted = false; };
-  }, [currentIndex, matchList, fetchProfileDetails]);
+  }, [appliedFilters?.hasVideoOnly, appliedFilters?.minSharedInterests, currentIndex, fetchProfileDetails, matchList]);
 
   const exhausted = currentIndex >= matchList.length;
 
@@ -734,6 +1076,7 @@ export default function ExploreScreen() {
           total={matchList.length}
           smartCount={smartCount}
           onPressFilter={() => setFiltersVisible(true)}
+          filterCount={appliedFilterCount}
           rightAccessory={(
             <TouchableOpacity
               style={styles.headerRefreshButton}
@@ -744,6 +1087,42 @@ export default function ExploreScreen() {
             </TouchableOpacity>
           )}
         />
+
+        {appliedFilterChips.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.appliedFiltersBar}
+          >
+            {appliedFilterChips.map((chip) => (
+              <TouchableOpacity
+                key={chip.key}
+                style={styles.appliedFilterChip}
+                onPress={chip.onClear}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.appliedFilterChipText}>{chip.label}</Text>
+                <MaterialCommunityIcons name="close" size={14} color={theme.textMuted} />
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity
+              style={styles.appliedFilterChipEdit}
+              onPress={() => setFiltersVisible(true)}
+              activeOpacity={0.85}
+            >
+              <MaterialCommunityIcons name="tune-vertical" size={14} color={theme.tint} />
+              <Text style={styles.appliedFilterChipEditText}>Edit</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.appliedFilterChipEdit}
+              onPress={resetAllFilters}
+              activeOpacity={0.85}
+            >
+              <MaterialCommunityIcons name="refresh" size={14} color={theme.tint} />
+              <Text style={styles.appliedFilterChipEditText}>Clear</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        ) : null}
 
         <Animated.ScrollView
           onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
@@ -967,7 +1346,10 @@ export default function ExploreScreen() {
           visible={filtersVisible}
           transparent
           animationType="slide"
-          onRequestClose={() => setFiltersVisible(false)}
+          onRequestClose={() => {
+            syncFilterDraftFromApplied();
+            setFiltersVisible(false);
+          }}
         >
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -975,9 +1357,70 @@ export default function ExploreScreen() {
           >
             <View style={styles.modalBackdrop}>
               <View style={styles.modalCard}>
-                <Text style={styles.modalTitle}>Filters</Text>
+                <View style={styles.modalTitleRow}>
+                  <Text style={styles.modalTitle}>Filters</Text>
+                  <TouchableOpacity style={styles.modalResetButton} onPress={resetAllFilters} activeOpacity={0.85}>
+                    <Text style={styles.modalResetText}>Reset</Text>
+                  </TouchableOpacity>
+                </View>
                 <Text style={styles.modalSubtitle}>Refine your vibes.</Text>
                 <ScrollView showsVerticalScrollIndicator={false}>
+                  {activeFilterChips.length > 0 ? (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.activeFiltersRow}>
+                      {activeFilterChips.map((chip) => (
+                        <TouchableOpacity
+                          key={chip.key}
+                          style={styles.activeFilterChip}
+                          onPress={chip.onClear}
+                          activeOpacity={0.85}
+                        >
+                          <Text style={styles.activeFilterChipText}>{chip.label}</Text>
+                          <MaterialCommunityIcons name="close" size={14} color={theme.textMuted} />
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  ) : (
+                    <Text style={styles.activeFiltersEmpty}>No filters applied.</Text>
+                  )}
+
+                  <View style={styles.filterSection}>
+                    <Text style={styles.filterLabel}>Premium presets</Text>
+                    <Text style={styles.filterHint}>One tap to set a mood.</Text>
+                    <View style={styles.filterChipsRowWrap}>
+                      <TouchableOpacity
+                        style={[styles.filterChip, minVibeScore === 70 && minSharedInterests === 2 && styles.filterChipActive]}
+                        onPress={() => {
+                          setMinVibeScore(70);
+                          setMinSharedInterests(2);
+                        }}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={[styles.filterChipText, minVibeScore === 70 && minSharedInterests === 2 && styles.filterChipTextActive]}>High Vibe</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.filterChip, verifiedOnly && styles.filterChipActive]}
+                        onPress={() => setVerifiedOnly(true)}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={[styles.filterChipText, verifiedOnly && styles.filterChipTextActive]}>Verified</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.filterChip, hasVideoOnly && styles.filterChipActive]}
+                        onPress={() => setHasVideoOnly(true)}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={[styles.filterChipText, hasVideoOnly && styles.filterChipTextActive]}>Video</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.filterChip, activeOnly && styles.filterChipActive]}
+                        onPress={() => setActiveOnly(true)}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={[styles.filterChipText, activeOnly && styles.filterChipTextActive]}>Active</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
                   <View style={styles.filterSection}>
                     <Text style={styles.filterLabel}>Show only verified</Text>
                     <TouchableOpacity
@@ -991,14 +1434,100 @@ export default function ExploreScreen() {
                   </View>
 
                   <View style={styles.filterSection}>
+                    <Text style={styles.filterLabel}>Intro video</Text>
+                    <Text style={styles.filterHint}>Show profiles that have a video.</Text>
+                    <TouchableOpacity
+                      style={[styles.filterToggle, hasVideoOnly && styles.filterToggleActive]}
+                      onPress={() => setHasVideoOnly((v) => !v)}
+                      activeOpacity={0.85}
+                    >
+                      <View style={[styles.filterToggleKnob, hasVideoOnly && styles.filterToggleKnobActive]} />
+                      <Text style={[styles.filterToggleText, hasVideoOnly && styles.filterToggleTextActive]}>{hasVideoOnly ? 'On' : 'Off'}</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.filterSection}>
+                    <Text style={styles.filterLabel}>Active recently</Text>
+                    <Text style={styles.filterHint}>Prioritize people who are online or recently active.</Text>
+                    <TouchableOpacity
+                      style={[styles.filterToggle, activeOnly && styles.filterToggleActive]}
+                      onPress={() => setActiveOnly((v) => !v)}
+                      activeOpacity={0.85}
+                    >
+                      <View style={[styles.filterToggleKnob, activeOnly && styles.filterToggleKnobActive]} />
+                      <Text style={[styles.filterToggleText, activeOnly && styles.filterToggleTextActive]}>{activeOnly ? 'On' : 'Off'}</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.filterSection}>
+                    <Text style={styles.filterLabel}>Vibe level</Text>
+                    <Text style={styles.filterHint}>Minimum compatibility score.</Text>
+                    <View style={styles.filterChipsRowWrap}>
+                      {[50, 60, 70, 80].map((score) => (
+                        <TouchableOpacity
+                          key={`vibe-${score}`}
+                          style={[styles.filterChip, minVibeScore === score && styles.filterChipActive]}
+                          onPress={() => setMinVibeScore(score)}
+                          activeOpacity={0.85}
+                        >
+                          <Text style={[styles.filterChipText, minVibeScore === score && styles.filterChipTextActive]}>{`${score}%+`}</Text>
+                        </TouchableOpacity>
+                      ))}
+                      <TouchableOpacity
+                        style={[styles.filterChip, minVibeScore == null && styles.filterChipActive]}
+                        onPress={() => setMinVibeScore(null)}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={[styles.filterChipText, minVibeScore == null && styles.filterChipTextActive]}>Any</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  <View style={styles.filterSection}>
+                    <Text style={styles.filterLabel}>Shared interests</Text>
+                    <Text style={styles.filterHint}>
+                      {viewerInterests.length > 0 ? 'Match on common interests.' : 'Add interests in your profile to use this.'}
+                    </Text>
+                    <View style={styles.filterChipsRowWrap}>
+                      {[1, 2, 3].map((n) => (
+                        <TouchableOpacity
+                          key={`shared-${n}`}
+                          style={[styles.filterChip, minSharedInterests === n && styles.filterChipActive]}
+                          onPress={() => setMinSharedInterests(n)}
+                          activeOpacity={0.85}
+                          disabled={viewerInterests.length === 0}
+                        >
+                          <Text style={[styles.filterChipText, minSharedInterests === n && styles.filterChipTextActive]}>{`${n}+`}</Text>
+                        </TouchableOpacity>
+                      ))}
+                      <TouchableOpacity
+                        style={[styles.filterChip, minSharedInterests === 0 && styles.filterChipActive]}
+                        onPress={() => setMinSharedInterests(0)}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={[styles.filterChipText, minSharedInterests === 0 && styles.filterChipTextActive]}>Any</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  <View style={styles.filterSection}>
                     <Text style={styles.filterLabel}>Distance</Text>
-                    <Text style={styles.filterHint}>Nearby tab only</Text>
+                    <Text style={styles.filterHint}>{activeTab === 'nearby' ? 'Nearby tab only' : 'Switch to Nearby to use distance'}</Text>
                     <View style={styles.filterChipsRow}>
                       {distanceChipOptions.map((option) => (
                         <TouchableOpacity
                           key={option.label}
-                          style={[styles.filterChip, distanceFilterKm === option.km && styles.filterChipActive]}
-                          onPress={() => setDistanceFilterKm(option.km)}
+                          style={[
+                            styles.filterChip,
+                            distanceFilterKm === option.km && styles.filterChipActive,
+                            activeTab !== 'nearby' && styles.filterChipDisabled,
+                          ]}
+                          onPress={() => {
+                            if (activeTab !== 'nearby') return;
+                            setDistanceFilterKm(option.km);
+                          }}
+                          activeOpacity={0.85}
+                          disabled={activeTab !== 'nearby'}
                         >
                           <Text style={[styles.filterChipText, distanceFilterKm === option.km && styles.filterChipTextActive]}>
                             {option.label}
@@ -1006,8 +1535,17 @@ export default function ExploreScreen() {
                         </TouchableOpacity>
                       ))}
                       <TouchableOpacity
-                        style={[styles.filterChip, distanceFilterKm == null && styles.filterChipActive]}
-                        onPress={() => setDistanceFilterKm(null)}
+                        style={[
+                          styles.filterChip,
+                          distanceFilterKm == null && styles.filterChipActive,
+                          activeTab !== 'nearby' && styles.filterChipDisabled,
+                        ]}
+                        onPress={() => {
+                          if (activeTab !== 'nearby') return;
+                          setDistanceFilterKm(null);
+                        }}
+                        activeOpacity={0.85}
+                        disabled={activeTab !== 'nearby'}
                       >
                         <Text style={[styles.filterChipText, distanceFilterKm == null && styles.filterChipTextActive]}>Any</Text>
                       </TouchableOpacity>
@@ -1016,25 +1554,57 @@ export default function ExploreScreen() {
 
                   <View style={styles.filterSection}>
                     <Text style={styles.filterLabel}>Age range</Text>
-                    <View style={styles.filterInputsRow}>
-                      <View style={[styles.filterInputWrapper, { marginRight: 8 }]}>
-                        <Text style={styles.filterHint}>Min</Text>
-                        <TextInput
-                          style={styles.filterInput}
-                          keyboardType="numeric"
-                          value={String(minAge)}
-                          onChangeText={(t) => setAgeValue(t, 'min')}
-                        />
+                    <View style={styles.ageTopRow}>
+                      <View style={styles.ageRangePill}>
+                        <Text style={styles.ageRangeText}>{minAge} - {maxAge}</Text>
                       </View>
-                      <View style={styles.filterInputWrapper}>
-                        <Text style={styles.filterHint}>Max</Text>
-                        <TextInput
-                          style={styles.filterInput}
-                          keyboardType="numeric"
-                          value={String(maxAge)}
-                          onChangeText={(t) => setAgeValue(t, 'max')}
-                        />
-                      </View>
+                      <TouchableOpacity
+                        style={[styles.filterChip, styles.ageAnyChip]}
+                        onPress={() => {
+                          setMinAge(18);
+                          setMaxAge(60);
+                        }}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={styles.filterChipText}>Any</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <PremiumRangeSlider
+                      min={18}
+                      max={99}
+                      step={1}
+                      valueMin={minAge}
+                      valueMax={maxAge}
+                      onChange={(nextMin, nextMax) => {
+                        setMinAge(nextMin);
+                        setMaxAge(nextMax);
+                      }}
+                      theme={theme}
+                      isDark={isDark}
+                    />
+                    <View style={styles.filterChipsRowWrap}>
+                      {[
+                        { label: '18-25', min: 18, max: 25 },
+                        { label: '26-35', min: 26, max: 35 },
+                        { label: '36-45', min: 36, max: 45 },
+                        { label: '46+', min: 46, max: 99 },
+                      ].map((p) => {
+                        const active = minAge === p.min && maxAge === p.max;
+                        return (
+                          <TouchableOpacity
+                            key={p.label}
+                            style={[styles.filterChip, active && styles.filterChipActive]}
+                            onPress={() => {
+                              setMinAge(p.min);
+                              setMaxAge(p.max);
+                            }}
+                            activeOpacity={0.85}
+                          >
+                            <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{p.label}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
                     </View>
                   </View>
 
@@ -1108,15 +1678,105 @@ export default function ExploreScreen() {
                     />
                   </View>
 
+                  <View style={styles.modalPreviewRow}>
+                    <Text style={styles.modalPreviewText}>
+                      Preview: {draftPreviewCount ?? 0} result{(draftPreviewCount ?? 0) === 1 ? '' : 's'}
+                      {poolProfiles?.length ? ` (from ${poolProfiles.length} loaded)` : ''}
+                    </Text>
+                  </View>
+
                   <View style={styles.modalActions}>
-                    <TouchableOpacity style={[styles.locationButton, styles.locationGhost, { flex: 1 }]} onPress={() => setFiltersVisible(false)}>
+                    <TouchableOpacity
+                      style={[styles.locationButton, styles.locationGhost, { flex: 1 }]}
+                      onPress={() => {
+                        syncFilterDraftFromApplied();
+                        setFiltersVisible(false);
+                      }}
+                    >
                       <Text style={styles.locationGhostText}>Close</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={[styles.locationButton, styles.locationPrimary, { flex: 1 }]} onPress={handleApplyFilters}>
-                      <Text style={styles.locationPrimaryText}>Apply</Text>
+                      <Text style={styles.locationPrimaryText}>
+                        Apply{draftPreviewCount != null ? ` (${draftPreviewCount})` : ''}
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 </ScrollView>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </Modal>
+
+        {/* Manual city entry should not kick users out of Filters (premium UX). */}
+        <Modal
+          visible={manualLocationModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setManualLocationModalVisible(false)}
+        >
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+            <View style={styles.modalBackdrop}>
+              <View style={styles.modalCard}>
+                <View style={styles.modalTitleRow}>
+                  <Text style={styles.modalTitle}>Set your city</Text>
+                  <TouchableOpacity
+                    style={styles.modalResetButton}
+                    onPress={() => setManualLocationModalVisible(false)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.modalResetText}>Close</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.modalSubtitle}>City-only keeps your location private (no GPS required).</Text>
+
+                <Text style={styles.modalLabel}>Country</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.countryChips}>
+                  {COUNTRY_OPTIONS.map((c) => {
+                    const active = manualCountryCode === c.code;
+                    return (
+                      <TouchableOpacity
+                        key={c.code}
+                        style={[styles.countryChip, active && styles.countryChipActive]}
+                        onPress={() => setManualCountryCode(c.code)}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={[styles.countryChipText, active && styles.countryChipTextActive]}>{c.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+
+                <Text style={styles.modalLabel}>City</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  placeholder="e.g., Accra"
+                  placeholderTextColor={theme.textMuted}
+                  value={manualLocation}
+                  onChangeText={setManualLocation}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                />
+
+                {locationError ? <Text style={styles.locationError}>{locationError}</Text> : null}
+
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={[styles.locationButton, styles.locationGhost, { flex: 1 }]}
+                    onPress={() => setManualLocationModalVisible(false)}
+                    activeOpacity={0.85}
+                    disabled={isSavingLocation}
+                  >
+                    <Text style={styles.locationGhostText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.locationButton, styles.locationPrimary, { flex: 1 }]}
+                    onPress={handleSaveManualLocation}
+                    activeOpacity={0.85}
+                    disabled={isSavingLocation}
+                  >
+                    <Text style={styles.locationPrimaryText}>{isSavingLocation ? 'Saving...' : 'Save'}</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
           </KeyboardAvoidingView>
@@ -1191,6 +1851,203 @@ export default function ExploreScreen() {
         />
       </SafeAreaView>
     </GestureHandlerRootView>
+  );
+}
+
+function PremiumRangeSlider({
+  min,
+  max,
+  step = 1,
+  valueMin,
+  valueMax,
+  onChange,
+  theme,
+  isDark,
+}: {
+  min: number;
+  max: number;
+  step?: number;
+  valueMin: number;
+  valueMax: number;
+  onChange: (nextMin: number, nextMax: number) => void;
+  theme: typeof Colors.light;
+  isDark: boolean;
+}) {
+  const [trackWidth, setTrackWidth] = useState(0);
+  const trackWidthRef = useRef(0);
+  const boundsRef = useRef({ min, max });
+  const stepRef = useRef(step);
+  const valuesRef = useRef({ valueMin, valueMax });
+  const startRef = useRef({ valueMin, valueMax });
+  const onChangeRef = useRef(onChange);
+
+  useEffect(() => {
+    trackWidthRef.current = trackWidth;
+  }, [trackWidth]);
+
+  useEffect(() => {
+    boundsRef.current = { min, max };
+  }, [min, max]);
+
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
+
+  useEffect(() => {
+    valuesRef.current = { valueMin, valueMax };
+  }, [valueMin, valueMax]);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+  const snap = (v: number) => {
+    const { min: bMin, max: bMax } = boundsRef.current;
+    const s = Math.max(1, Math.floor(stepRef.current || 1));
+    const steps = Math.round((v - bMin) / s);
+    return clamp(bMin + steps * s, bMin, bMax);
+  };
+
+  const snapClamp = (v: number, lo: number, hi: number) => clamp(snap(v), lo, hi);
+
+  const minPan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        startRef.current = { ...valuesRef.current };
+      },
+      onPanResponderMove: (_evt, gesture) => {
+        const w = trackWidthRef.current;
+        const { min: bMin, max: bMax } = boundsRef.current;
+        if (!w || bMax <= bMin) return;
+        const pxPerValue = w / (bMax - bMin);
+        const delta = gesture.dx / pxPerValue;
+        const nextMin = startRef.current.valueMin + delta;
+        const maxAllowed = valuesRef.current.valueMax;
+        onChangeRef.current(snapClamp(nextMin, bMin, maxAllowed), maxAllowed);
+      },
+    }),
+  ).current;
+
+  const maxPan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        startRef.current = { ...valuesRef.current };
+      },
+      onPanResponderMove: (_evt, gesture) => {
+        const w = trackWidthRef.current;
+        const { min: bMin, max: bMax } = boundsRef.current;
+        if (!w || bMax <= bMin) return;
+        const pxPerValue = w / (bMax - bMin);
+        const delta = gesture.dx / pxPerValue;
+        const nextMax = startRef.current.valueMax + delta;
+        const minAllowed = valuesRef.current.valueMin;
+        onChangeRef.current(minAllowed, snapClamp(nextMax, minAllowed, bMax));
+      },
+    }),
+  ).current;
+
+  const range = Math.max(1, max - min);
+  const minPos = trackWidth > 0 ? ((valueMin - min) / range) * trackWidth : 0;
+  const maxPos = trackWidth > 0 ? ((valueMax - min) / range) * trackWidth : 0;
+  const clampedMinPos = clamp(minPos, 0, trackWidth);
+  const clampedMaxPos = clamp(maxPos, 0, trackWidth);
+
+  const thumbSize = 28;
+  const trackH = 6;
+  const trackBg = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)';
+  const activeBg = theme.tint;
+  const thumbBg = isDark ? '#0b1220' : '#fff';
+  const thumbBorder = isDark ? 'rgba(255,255,255,0.16)' : 'rgba(15,23,42,0.10)';
+
+  return (
+    <View style={{ marginTop: 10 }}>
+      <View
+        style={{ paddingHorizontal: thumbSize / 2, paddingVertical: 8 }}
+        onLayout={(e) => {
+          const w = e.nativeEvent.layout.width - thumbSize; // remove padding on both sides
+          setTrackWidth(Math.max(0, Math.round(w)));
+        }}
+      >
+        <View style={{ height: Math.max(thumbSize, 34), justifyContent: 'center' }}>
+          <View
+            style={{
+              height: trackH,
+              borderRadius: 999,
+              backgroundColor: trackBg,
+              width: trackWidth,
+              alignSelf: 'center',
+            }}
+          />
+          <View
+            style={{
+              position: 'absolute',
+              left: thumbSize / 2 + Math.min(clampedMinPos, clampedMaxPos),
+              width: Math.max(0, Math.abs(clampedMaxPos - clampedMinPos)),
+              height: trackH,
+              borderRadius: 999,
+              backgroundColor: activeBg,
+            }}
+          />
+
+          <View
+            {...minPan.panHandlers}
+            style={{
+              position: 'absolute',
+              left: thumbSize / 2 + clampedMinPos - thumbSize / 2,
+              width: thumbSize,
+              height: thumbSize,
+              borderRadius: thumbSize / 2,
+              backgroundColor: thumbBg,
+              borderWidth: 1,
+              borderColor: thumbBorder,
+              alignItems: 'center',
+              justifyContent: 'center',
+              shadowColor: '#000',
+              shadowOpacity: isDark ? 0.25 : 0.12,
+              shadowRadius: 10,
+              shadowOffset: { width: 0, height: 6 },
+              elevation: 6,
+            }}
+          >
+            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: activeBg, opacity: 0.9 }} />
+          </View>
+
+          <View
+            {...maxPan.panHandlers}
+            style={{
+              position: 'absolute',
+              left: thumbSize / 2 + clampedMaxPos - thumbSize / 2,
+              width: thumbSize,
+              height: thumbSize,
+              borderRadius: thumbSize / 2,
+              backgroundColor: thumbBg,
+              borderWidth: 1,
+              borderColor: thumbBorder,
+              alignItems: 'center',
+              justifyContent: 'center',
+              shadowColor: '#000',
+              shadowOpacity: isDark ? 0.25 : 0.12,
+              shadowRadius: 10,
+              shadowOffset: { width: 0, height: 6 },
+              elevation: 6,
+            }}
+          >
+            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: activeBg, opacity: 0.9 }} />
+          </View>
+        </View>
+
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 }}>
+          <Text style={{ fontSize: 12, fontWeight: '700', color: theme.textMuted }}>{min}</Text>
+          <Text style={{ fontSize: 12, fontWeight: '700', color: theme.textMuted }}>{max}+</Text>
+        </View>
+      </View>
+    </View>
   );
 }
 
@@ -1536,8 +2393,32 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       borderWidth: 1,
       borderColor: cardBorder,
     },
+    modalTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     modalTitle: { fontSize: 18, fontWeight: '700', color: theme.text, marginBottom: 6 },
+    modalResetButton: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: outline,
+      backgroundColor: chipBg,
+    },
+    modalResetText: { fontSize: 12, fontWeight: '800', color: theme.text },
     modalSubtitle: { fontSize: 13, color: theme.textMuted, marginBottom: 14 },
+    activeFiltersRow: { paddingBottom: 4, gap: 8, paddingRight: 6 },
+    activeFilterChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: outline,
+      backgroundColor: ghostBg,
+    },
+    activeFilterChipText: { fontSize: 12, fontWeight: '700', color: theme.text },
+    activeFiltersEmpty: { fontSize: 12, color: theme.textMuted, marginTop: -6, marginBottom: 6 },
     modalInput: {
       borderWidth: 1,
       borderColor: outline,
@@ -1562,6 +2443,8 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     countryChipActive: { backgroundColor: chipActiveBg, borderColor: theme.tint },
     countryChipText: { fontSize: 13, fontWeight: '600', color: theme.text },
     countryChipTextActive: { color: theme.tint },
+    modalPreviewRow: { marginTop: 14, paddingHorizontal: 2 },
+    modalPreviewText: { fontSize: 12, fontWeight: '700', color: theme.textMuted, textAlign: 'center' },
     modalActions: { flexDirection: 'row', marginTop: 16 },
     filterSection: { marginTop: 12, marginBottom: 10 },
     filterLabel: { fontSize: 14, fontWeight: '700', color: theme.text },
@@ -1570,6 +2453,7 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     filterChipsRowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 },
     filterChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: outline, marginRight: 8, backgroundColor: chipBg },
     filterChipActive: { backgroundColor: theme.tint, borderColor: theme.tint },
+    filterChipDisabled: { opacity: 0.5 },
     filterChipText: { fontWeight: '700', color: theme.text },
     filterChipTextActive: { color: '#fff' },
     filterToggle: { marginTop: 8, padding: 10, borderRadius: 12, borderWidth: 1, borderColor: outline, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: chipBg },
@@ -1581,6 +2465,10 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     filterInputsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
     filterInputWrapper: { flex: 1 },
     filterInput: { borderWidth: 1, borderColor: outline, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontWeight: '700', color: theme.text, backgroundColor: isDark ? '#0b1220' : '#fff', marginTop: 4 },
+    ageTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
+    ageRangePill: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: outline, backgroundColor: pillBg },
+    ageRangeText: { fontSize: 13, fontWeight: '800', color: theme.text },
+    ageAnyChip: { marginRight: 0 },
     headerRefreshButton: {
       width: 34,
       height: 34,
@@ -1591,5 +2479,35 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       justifyContent: 'center',
       backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f8fafc',
     },
+    appliedFiltersBar: {
+      paddingHorizontal: 16,
+      paddingTop: 8,
+      paddingBottom: 2,
+      gap: 8,
+    },
+    appliedFilterChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: outline,
+      backgroundColor: ghostBg,
+    },
+    appliedFilterChipText: { fontSize: 12, fontWeight: '700', color: theme.text },
+    appliedFilterChipEdit: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: outline,
+      backgroundColor: chipBg,
+    },
+    appliedFilterChipEditText: { fontSize: 12, fontWeight: '800', color: theme.text },
   });
 }

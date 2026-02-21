@@ -128,6 +128,12 @@ function RootLayout() {
             }
           }
 
+          const route = typeof data?.route === "string" ? String(data.route) : "";
+          if (route && route.startsWith("/")) {
+            router.push(route);
+            return;
+          }
+
           const profileId = data?.profile_id || data?.profileId;
           if (profileId) {
             router.push({ pathname: "/profile-view", params: { profileId: String(profileId) } });

@@ -17,6 +17,7 @@ export default function ExploreHeader({
   total,
   smartCount,
   onPressFilter,
+  filterCount,
   rightAccessory,
 }: {
   title?: string;
@@ -28,6 +29,7 @@ export default function ExploreHeader({
   total: number;
   smartCount?: number;
   onPressFilter?: () => void;
+  filterCount?: number;
   rightAccessory?: ReactNode;
 }) {
   const colorScheme = useColorScheme();
@@ -47,6 +49,11 @@ export default function ExploreHeader({
           {onPressFilter ? (
             <TouchableOpacity style={styles.filterButton} onPress={onPressFilter} activeOpacity={0.85}>
               <MaterialCommunityIcons name="filter-variant" size={20} color={theme.tint} />
+              {filterCount && filterCount > 0 ? (
+                <View style={styles.filterBadge} pointerEvents="none">
+                  <Text style={styles.filterBadgeText}>{filterCount > 9 ? "9+" : String(filterCount)}</Text>
+                </View>
+              ) : null}
             </TouchableOpacity>
           ) : null}
         </View>
@@ -96,6 +103,26 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       shadowRadius: 10,
       shadowOffset: { width: 0, height: 6 },
       elevation: 6,
+    },
+    filterBadge: {
+      position: "absolute",
+      top: -6,
+      right: -6,
+      minWidth: 18,
+      height: 18,
+      borderRadius: 9,
+      paddingHorizontal: 5,
+      backgroundColor: theme.accent,
+      borderWidth: 2,
+      borderColor: surface,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    filterBadgeText: {
+      fontSize: 10,
+      fontWeight: "800",
+      color: "#fff",
+      lineHeight: 12,
     },
     tabContainer: { flexDirection: "row", backgroundColor: subtle, borderRadius: 12, padding: 5, marginTop: 6 },
     tab: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingVertical: 9, paddingHorizontal: 8, borderRadius: 8 },

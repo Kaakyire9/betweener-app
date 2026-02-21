@@ -1,5 +1,6 @@
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { useResolvedProfileId } from "@/hooks/useResolvedProfileId";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
 import { getSupabaseNetEvents, supabase } from "@/lib/supabase";
@@ -69,6 +70,15 @@ type MessageRow = {
   deleted_for_all?: boolean | null;
   message_type?: ConversationType['lastMessage']['type'] | null;
   is_view_once?: boolean | null;
+};
+
+type NewMatch = {
+  userId: string; // auth.users.id (used by messages + chat route)
+  profileId: string; // profiles.id (used by matches + profile-view)
+  name: string;
+  avatar_url: string | null;
+  age?: number | null;
+  location?: string | null;
 };
 
 const CHAT_PREFS_STORAGE_KEY = 'chat_header_prefs_v1';
@@ -159,13 +169,16 @@ const parseStickerPreview = (text: string) => {
 };
 
 export default function ChatScreen() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
+  const { profileId: currentProfileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   
   const [conversations, setConversations] = useState<ConversationType[]>([]);
+  const [newMatches, setNewMatches] = useState<NewMatch[]>([]);
+  const [newMatchesLoading, setNewMatchesLoading] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const lastWatchdogLogAtRef = useRef(0);
@@ -315,6 +328,89 @@ export default function ChatScreen() {
     });
   }, []);
 
+  const fetchNewMatches = useCallback(
+    async (messagedPeerUserIds?: Set<string>) => {
+      if (!user?.id || !currentProfileId) {
+        setNewMatches([]);
+        return;
+      }
+
+      setNewMatchesLoading(true);
+      try {
+        const { data: matches, error } = await supabase
+          .from('matches')
+          .select('id,user1_id,user2_id,status,updated_at')
+          .eq('status', 'ACCEPTED')
+          .or(`user1_id.eq.${currentProfileId},user2_id.eq.${currentProfileId}`)
+          .order('updated_at', { ascending: false })
+          .limit(60);
+
+        if (error || !matches) {
+          setNewMatches([]);
+          return;
+        }
+
+        const otherProfileIds = Array.from(
+          new Set(
+            (matches as any[])
+              .map((m) => (m.user1_id === currentProfileId ? m.user2_id : m.user1_id))
+              .filter((v: any) => typeof v === 'string' && v.length > 0),
+          ),
+        );
+
+        if (otherProfileIds.length === 0) {
+          setNewMatches([]);
+          return;
+        }
+
+        const { data: peerProfiles, error: peerProfilesError } = await supabase
+          .from('profiles')
+          .select('id,user_id,full_name,avatar_url,age,location,city,region')
+          .in('id', otherProfileIds.slice(0, 24));
+
+        if (peerProfilesError || !peerProfiles) {
+          setNewMatches([]);
+          return;
+        }
+
+        const messaged = messagedPeerUserIds ?? new Set(conversations.map((c) => c.id));
+        const next: NewMatch[] = [];
+
+        (peerProfiles as any[]).forEach((p) => {
+          if (!p?.id || !p?.user_id) return;
+          const peerUserId = String(p.user_id);
+          if (messaged.has(peerUserId)) return;
+
+          const loc =
+            (typeof p.location === 'string' && p.location) ||
+            (typeof p.city === 'string' && p.city) ||
+            (typeof p.region === 'string' && p.region) ||
+            null;
+
+          next.push({
+            userId: peerUserId,
+            profileId: String(p.id),
+            name: String(p.full_name || 'New match'),
+            avatar_url: p.avatar_url ?? null,
+            age: typeof p.age === 'number' ? p.age : null,
+            location: loc,
+          });
+        });
+
+        // Keep a stable, recent ordering based on the matches query (best-effort).
+        const order = new Map(otherProfileIds.map((id, idx) => [id, idx]));
+        next.sort((a, b) => (order.get(a.profileId) ?? 0) - (order.get(b.profileId) ?? 0));
+
+        setNewMatches(next.slice(0, 18));
+      } catch {
+        setNewMatches([]);
+      } finally {
+        setNewMatchesLoading(false);
+      }
+    },
+    [conversations, currentProfileId, user?.id],
+  );
+
   const fetchConversations = useCallback(async () => {
     if (!user?.id) return;
     setIsLoading(true);
@@ -383,6 +479,8 @@ export default function ChatScreen() {
         setConversations([]);
         setLoadError(null);
         if (chatCacheKey) void writeCache(chatCacheKey, serializeConversations([]));
+        // Still load matches, even if there are no prior chats.
+        void fetchNewMatches(new Set());
         return;
       }
 
@@ -473,10 +571,13 @@ export default function ChatScreen() {
       setConversations(hydrated);
       setLoadError(null);
       if (chatCacheKey) void writeCache(chatCacheKey, serializeConversations(hydrated));
+
+      // New matches are accepted matches without any message history yet.
+      void fetchNewMatches(new Set(otherUserIds));
     } finally {
       setIsLoading(false);
     }
-  }, [applyChatPrefs, chatCacheKey, user?.id]);
+  }, [applyChatPrefs, chatCacheKey, fetchNewMatches, user?.id]);
 
   // Guardrail: avoid "skeleton forever" if a request stalls or state never resolves.
   useEffect(() => {
@@ -502,7 +603,8 @@ export default function ChatScreen() {
   useFocusEffect(
     useCallback(() => {
       void fetchConversations();
-    }, [fetchConversations])
+      void fetchNewMatches();
+    }, [fetchConversations, fetchNewMatches])
   );
 
   useEffect(() => {
@@ -798,6 +900,18 @@ export default function ChatScreen() {
     });
   };
 
+  const openNewMatch = (match: NewMatch) => {
+    setNewMatches((prev) => prev.filter((m) => m.userId !== match.userId));
+    router.push({
+      pathname: '/chat/[id]',
+      params: {
+        id: match.userId,
+        userName: match.name,
+        userAvatar: match.avatar_url ?? '',
+      },
+    });
+  };
+
   const togglePin = (conversationId: string) => {
     const current = conversations.find((conv) => conv.id === conversationId);
     const nextPinned = !Boolean(current?.isPinned);
@@ -996,13 +1110,60 @@ export default function ChatScreen() {
       </Text>
       <TouchableOpacity 
         style={styles.exploreButton}
-        onPress={() => router.push('/(tabs)/explore')}
+        onPress={() => router.push('/(tabs)/vibes')}
       >
         <MaterialCommunityIcons name="compass" size={20} color={Colors.light.background} />
-        <Text style={styles.exploreButtonText}>Explore Matches</Text>
+        <Text style={styles.exploreButtonText}>Explore Vibes</Text>
       </TouchableOpacity>
     </View>
   );
+
+  const renderNewMatches = () => {
+    if (newMatches.length === 0 && !newMatchesLoading) return null;
+
+    return (
+      <View style={styles.newMatchesSection}>
+        <View style={styles.newMatchesTitleRow}>
+          <Text style={styles.newMatchesTitle}>New matches</Text>
+          <Text style={styles.newMatchesSubtitle}>
+            {newMatchesLoading ? 'Loading...' : `${newMatches.length} ready to chat`}
+          </Text>
+        </View>
+
+        {newMatches.length === 0 ? null : (
+          <FlatList
+            data={newMatches}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            keyExtractor={(item) => item.userId}
+            contentContainerStyle={styles.newMatchesList}
+            renderItem={({ item }) => (
+              <Pressable
+                onPress={() => openNewMatch(item)}
+                style={({ pressed }) => [{ opacity: pressed ? 0.85 : 1 }, styles.newMatchCard]}
+              >
+                {item.avatar_url ? (
+                  <Image source={{ uri: item.avatar_url }} style={styles.newMatchAvatar} />
+                ) : (
+                  <View style={[styles.newMatchAvatar, styles.avatarFallback]}>
+                    <Text style={styles.avatarFallbackText}>{(item.name || '?')[0]?.toUpperCase()}</Text>
+                  </View>
+                )}
+                <Text numberOfLines={1} style={styles.newMatchName}>
+                  {item.name}
+                </Text>
+                {item.location ? (
+                  <Text numberOfLines={1} style={styles.newMatchMeta}>
+                    {item.location}
+                  </Text>
+                ) : null}
+              </Pressable>
+            )}
+          />
+        )}
+      </View>
+    );
+  };
 
   const renderHeader = () => (
     <View style={styles.header}>
@@ -1084,24 +1245,29 @@ export default function ChatScreen() {
   );
 
   const showBlockingError = Boolean(loadError && conversations.length === 0);
+  const showEmptyState = filteredConversations.length === 0 && !showBlockingError && newMatches.length === 0;
 
   return (
     <SafeAreaView style={styles.container}>
       {renderHeader()}
+      {renderNewMatches()}
 
       {showBlockingError ? (
         <Notice
           title="Couldn't load chats"
           message="Check your connection and try again."
           actionLabel="Retry"
-          onAction={() => void fetchConversations()}
+          onAction={() => {
+            void fetchConversations();
+            void fetchNewMatches();
+          }}
           icon="cloud-alert"
         />
       ) : null}
 
-      {isLoading && conversations.length === 0 ? (
+      {isLoading && conversations.length === 0 && newMatches.length === 0 ? (
         <ChatListSkeleton />
-      ) : filteredConversations.length === 0 && !showBlockingError ? (
+      ) : showEmptyState ? (
         renderEmptyState()
       ) : (
         <FlatList
@@ -1113,6 +1279,7 @@ export default function ChatScreen() {
           refreshing={isLoading}
           onRefresh={() => {
             void fetchConversations();
+            void fetchNewMatches();
           }}
         />
       )}
@@ -1120,7 +1287,7 @@ export default function ChatScreen() {
       {/* Floating Action Button */}
       <TouchableOpacity 
         style={styles.fab}
-        onPress={() => router.push('/(tabs)/explore')}
+        onPress={() => router.push('/(tabs)/vibes')}
       >
         <MaterialCommunityIcons name="plus" size={24} color={Colors.light.background} />
       </TouchableOpacity>
@@ -1172,6 +1339,61 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       alignItems: 'center',
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.12),
+    },
+
+    // New matches strip
+    newMatchesSection: {
+      paddingTop: 14,
+      paddingBottom: 10,
+      paddingHorizontal: 20,
+    },
+    newMatchesTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      justifyContent: 'space-between',
+      marginBottom: 10,
+    },
+    newMatchesTitle: {
+      fontSize: 16,
+      fontFamily: 'Manrope_700Bold',
+      color: theme.text,
+    },
+    newMatchesSubtitle: {
+      fontSize: 12,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+    },
+    newMatchesList: {
+      paddingRight: 8,
+      gap: 12,
+    },
+    newMatchCard: {
+      width: 86,
+      alignItems: 'center',
+    },
+    newMatchAvatar: {
+      width: 62,
+      height: 62,
+      borderRadius: 31,
+      marginBottom: 8,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+      backgroundColor: theme.backgroundSubtle,
+    },
+    newMatchName: {
+      fontSize: 12,
+      fontFamily: 'Manrope_700Bold',
+      color: theme.text,
+      maxWidth: 82,
+      textAlign: 'center',
+    },
+    newMatchMeta: {
+      marginTop: 2,
+      fontSize: 11,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      maxWidth: 82,
+      textAlign: 'center',
     },
 
     // Search
