@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system';
 import { supabase } from '@/lib/supabase';
 
 type MomentType = 'video' | 'photo' | 'text';
@@ -36,7 +36,7 @@ const getContentType = (type: 'video' | 'photo', ext: string) => {
 };
 
 const readFileAsUint8Array = async (uri: string) => {
-  const base64 = await FileSystem.readAsStringAsync(uri, { encoding: 'base64' });
+  const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
   const byteCharacters = atob(base64);
   const byteNumbers = new Array(byteCharacters.length);
   for (let i = 0; i < byteCharacters.length; i++) {

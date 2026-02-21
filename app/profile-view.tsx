@@ -1111,7 +1111,7 @@ export default function ProfileViewPremiumV2Screen() {
   );
 
   const onViewableItemsChanged = useCallback(
-    ({ viewableItems }: { viewableItems: Array<ViewToken<PremiumImage>> }) => {
+    ({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
       if (!viewableItems || viewableItems.length === 0) return;
 
       // Prefer highest visible percent when available.
@@ -1147,7 +1147,7 @@ export default function ProfileViewPremiumV2Screen() {
       const maxIndex = Math.max(...indices);
       const approxCenter = (minIndex + maxIndex) / 2;
 
-      let best: ViewToken<PremiumImage> | null = null;
+      let best: ViewToken | null = null;
       let bestScore = Number.POSITIVE_INFINITY;
 
       for (const token of viewableItems) {
@@ -1199,7 +1199,7 @@ export default function ProfileViewPremiumV2Screen() {
   );
 
   const onRightViewableItemsChangedForStory = useCallback(
-    ({ viewableItems }: { viewableItems: Array<ViewToken<PremiumSection>> }) => {
+    ({ viewableItems }: { viewableItems: Array<ViewToken> }) => {
       if (!viewableItems || viewableItems.length === 0) return;
       // Pick the most visible item when available.
       let best: { tag: ProfileImageTag; percent: number } | null = null;

@@ -21,7 +21,7 @@ import type { AudioRecorder } from "expo-audio";
 import { BlurView } from "expo-blur";
 import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system/legacy";
+import * as FileSystem from "expo-file-system";
 import * as Haptics from 'expo-haptics';
 import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
@@ -109,8 +109,7 @@ const MAP_STYLE_DARK = [
   { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#142020' }] },
   { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0B1414' }] },
 ];
-// Use new mediaTypes array form (MediaTypeOptions is deprecated)
-const getPickerMediaTypesAll = (): ImagePicker.MediaType[] => ['images', 'videos'];
+const getPickerMediaTypesAll = (): ImagePicker.MediaTypeOptions => ImagePicker.MediaTypeOptions.All;
 
 // Message type definition
 type MessageType = {
@@ -1143,7 +1142,7 @@ const MessageRowItem = memo(
             {isFocused ? (
               <Animated.View
                 pointerEvents="none"
-                style={[styles.messageFocusSpotlight, focusPulseStyle]}
+                style={[styles.messageFocusSpotlight, focusPulseStyle] as any}
               >
                 <BlurView
                   intensity={18}
@@ -10915,7 +10914,10 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     videoOverlay: {
       position: 'absolute',
-      inset: 0,
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: 'rgba(0,0,0,0.18)',

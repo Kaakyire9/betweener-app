@@ -622,7 +622,7 @@ export default function IntentScreen() {
                 <Text style={styles.timeLabel}>{timeLabel}</Text>
                 {expiry ? (
                   <View style={[styles.expiryPill, urgent && styles.expiryPillUrgent]}>
-                    <MaterialCommunityIcons name={urgent ? 'timer-alert-outline' : 'timer-outline'} size={12} color={urgent ? '#ef4444' : theme.accent} />
+                    <MaterialCommunityIcons name={urgent ? 'timer-off-outline' : 'timer-outline'} size={12} color={urgent ? '#ef4444' : theme.accent} />
                     <Text style={[styles.expiryLabel, urgent && styles.expiryLabelUrgent]}>{`Expires in ${expiry}`}</Text>
                   </View>
                 ) : null}

@@ -7,8 +7,7 @@ import { captureMessage } from '@/lib/telemetry/sentry';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowBanner: false,
-    shouldShowList: false,
+    shouldShowAlert: false,
     shouldPlaySound: false,
     shouldSetBadge: true,
   }),

@@ -20,7 +20,6 @@ export const initSentry = () => {
     enabled: true,
     // Enable SDK diagnostics only when explicitly requested.
     debug: sentryDebug,
-    enableLogs: true,
     // Keep default PII off; we explicitly set user id only elsewhere.
     sendDefaultPii: false,
     environment: process.env.EXPO_PUBLIC_ENVIRONMENT || (isDev ? "development" : "production"),

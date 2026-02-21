@@ -1,4 +1,4 @@
-import * as FileSystem from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system';
 import { supabase } from '@/lib/supabase';
 
 export interface SimpleUploadResult {
@@ -29,7 +29,7 @@ export async function uploadImageSimple(
 
     // Read file as base64
     const base64 = await FileSystem.readAsStringAsync(uri, {
-      encoding: 'base64',
+      encoding: FileSystem.EncodingType.Base64,
     });
 
     // Convert base64 to blob-like object for Supabase

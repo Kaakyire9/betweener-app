@@ -103,9 +103,6 @@ export default function TabLayout() {
             backgroundColor: Colors[colorScheme ?? 'light'].background,
             borderTopColor: Colors[colorScheme ?? 'light'].outline,
           },
-          sceneStyle: {
-            backgroundColor: Colors[colorScheme ?? 'light'].background,
-          },
           headerShown: false,
           tabBarButton: HapticTab,
         }}>

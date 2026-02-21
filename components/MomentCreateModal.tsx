@@ -6,8 +6,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { useMemo, useState } from 'react';
 import { Alert, Modal, Pressable, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
 
-const getPickerMediaTypeImages = (): ImagePicker.MediaType[] => ['images'];
-const getPickerMediaTypeVideos = (): ImagePicker.MediaType[] => ['videos'];
+const pickerMediaTypeImages = ImagePicker.MediaTypeOptions.Images;
+const pickerMediaTypeVideos = ImagePicker.MediaTypeOptions.Videos;
 
 type Props = {
   visible: boolean;
@@ -46,7 +46,7 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: getPickerMediaTypeImages(),
+      mediaTypes: pickerMediaTypeImages,
       quality: 0.9,
     });
     if (result.canceled || !result.assets?.[0]?.uri) return;
@@ -71,7 +71,7 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: getPickerMediaTypeVideos(),
+      mediaTypes: pickerMediaTypeVideos,
       videoMaxDuration: 15,
     });
     if (result.canceled || !result.assets?.[0]?.uri) return;

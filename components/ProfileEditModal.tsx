@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useEffect, useMemo, useState } from 'react';
 import { Video as VideoCompressor, getRealPath } from 'react-native-compressor';
@@ -664,7 +664,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       }
 
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: 'images',
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: isAvatar ? [1, 1] : [3, 4],
         quality: 0.8,
@@ -682,7 +682,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const openGallery = async (isAvatar: boolean) => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: 'images',
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: isAvatar ? [1, 1] : [3, 4],
         quality: 0.8,
@@ -765,7 +765,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['videos'],
+      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
       videoMaxDuration: 30,
       allowsEditing: true,
       // Best-effort compression on iOS. Android behavior depends on the picker app.
@@ -786,7 +786,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     }
 
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['videos'],
+      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
       videoMaxDuration: 30,
       allowsEditing: true,
       videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
