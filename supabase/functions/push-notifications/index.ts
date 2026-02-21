@@ -13,6 +13,21 @@ type PushRequest = {
   data?: Record<string, unknown>
 }
 
+const asString = (v: unknown): string | null => {
+  if (typeof v === 'string') return v
+  return null
+}
+
+// Use the Expo Push Service "richContent.image" field when available.
+// Android renders this out of the box; iOS requires a Notification Service Extension
+// (still safe to send without the extension - iOS will just ignore the image).
+const getRichImageUrl = (data?: Record<string, unknown>): string | null => {
+  if (!data) return null
+  const avatar = asString((data as any).avatar_url) || asString((data as any).avatarUrl)
+  if (avatar && /^https?:\/\//i.test(avatar)) return avatar
+  return null
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -65,14 +80,38 @@ serve(async (req) => {
       count: tokens?.length ?? 0,
     })
 
-    const expoMessages = (tokens || []).map((row) => ({
-      to: row.token,
-      sound: 'default',
-      title: payload.title,
-      body: payload.body,
-      channelId: 'default',
-      data: payload.data || {},
-    }))
+    const data = { ...(payload.data || {}) }
+    const type = asString((data as any).type) || 'generic'
+    const richImageUrl = getRichImageUrl(data)
+    if (richImageUrl && !(data as any).image) {
+      // Make the URL available to the iOS Notification Service Extension.
+      ;(data as any).image = richImageUrl
+    }
+
+    const expoMessages = (tokens || []).map((row) => {
+      const msg: Record<string, unknown> = {
+        to: row.token,
+        sound: 'default',
+        title: payload.title,
+        body: payload.body,
+        // Make messages feel more "chat-like" on Android by using a dedicated channel.
+        channelId: type === 'message' ? 'messages' : 'default',
+        data,
+      }
+
+      // Rich push: image preview + better UX on Android.
+      // On iOS this requires a Notification Service Extension to actually display the image.
+      if (richImageUrl) {
+        msg.richContent = { image: richImageUrl }
+        msg.mutableContent = true
+      }
+
+      // Category IDs enable interactive notifications (actions). Safe to include even if
+      // the app has not registered the category yet.
+      msg.categoryId = `bt_${type}`
+
+      return msg
+    })
 
     if (!expoMessages.length) {
       return new Response(JSON.stringify({ ok: true, sent: 0 }), {

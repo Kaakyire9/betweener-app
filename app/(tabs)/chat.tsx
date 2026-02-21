@@ -1083,11 +1083,13 @@ export default function ChatScreen() {
     </View>
   );
 
+  const showBlockingError = Boolean(loadError && conversations.length === 0);
+
   return (
     <SafeAreaView style={styles.container}>
       {renderHeader()}
 
-      {loadError && conversations.length === 0 ? (
+      {showBlockingError ? (
         <Notice
           title="Couldn't load chats"
           message="Check your connection and try again."
@@ -1099,7 +1101,7 @@ export default function ChatScreen() {
 
       {isLoading && conversations.length === 0 ? (
         <ChatListSkeleton />
-      ) : filteredConversations.length === 0 ? (
+      ) : filteredConversations.length === 0 && !showBlockingError ? (
         renderEmptyState()
       ) : (
         <FlatList

@@ -16,6 +16,7 @@ import { AuthProvider } from "@/lib/auth-context";
 import InAppToasts from "@/components/InAppToasts";
 import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
 import { SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
+import { initPushNotificationUX } from "@/lib/notifications/push";
 
 // Keep native splash visible until we decide
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -87,12 +88,31 @@ function RootLayout() {
   }, []);
 
   useEffect(() => {
+    try {
+      // Make sure channels/categories exist before any push arrives (esp. Android channels).
+      initPushNotificationUX().catch(() => {});
+    } catch (e) {
+      captureException(e, { where: "initPushNotificationUX" });
+    }
+  }, []);
+
+  useEffect(() => {
     // Same reasoning as deep links: don't let a notification handler crash a release build.
     try {
       const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
         try {
+          const action = response.actionIdentifier;
           const data = response.notification.request.content.data as Record<string, any> | undefined;
           const type = data?.type;
+
+          // Category actions: treat OPEN_* the same as a normal tap.
+          const isDefaultTap = action === Notifications.DEFAULT_ACTION_IDENTIFIER;
+          const isOpenAction = action === "OPEN_CHAT" || action === "OPEN_PROFILE";
+          if (!isDefaultTap && !isOpenAction) {
+            // Unknown action; ignore safely.
+            return;
+          }
+
           if (type === "message" || type === "message_reaction") {
             const chatId = data?.profile_id || data?.reactor_id || data?.user_id;
             if (chatId) {

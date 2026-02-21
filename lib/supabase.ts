@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createClient } from '@supabase/supabase-js';
-import { captureMessage } from '@/lib/telemetry/sentry';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { AppState } from 'react-native';
+import { captureMessage } from '@/lib/telemetry/sentry';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -12,15 +12,11 @@ const IS_PROD = EXPO_ENV === 'production' || (!IS_DEV && EXPO_ENV !== 'developme
 
 // Give release builds a bit more time on slower mobile networks, while still
 // protecting against the "fetch hangs forever after resume" issue.
-const SUPABASE_FETCH_TIMEOUT_MS =
-  IS_DEV ? 15_000 : 30_000;
+const SUPABASE_FETCH_TIMEOUT_MS = IS_DEV ? 15_000 : 30_000;
 
-// Extra safety: supabase-js can hang *before* network fetch is invoked (most often
-// due to storage reads during auth/session initialization). Wrap high-level client
-// calls like `supabase.rpc(...)` with a deterministic timeout so the UI never waits
-// forever even when `fetchWithTimeout` can't help.
-const SUPABASE_CALL_TIMEOUT_MS =
-  IS_DEV ? 12_000 : 10_000;
+// Extra safety: protect against rare hangs that occur *before* fetch is invoked.
+// (Historically observed around auth/session plumbing on some iOS builds.)
+const SUPABASE_CALL_TIMEOUT_MS = IS_DEV ? 12_000 : 10_000;
 
 export const SUPABASE_IS_CONFIGURED = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
@@ -46,17 +42,21 @@ if (IS_PROD && !SUPABASE_IS_CONFIGURED) {
 const LOG_THROTTLE_MS = 60_000;
 const logLastAtByKey = new Map<string, number>();
 
-// In-memory ring buffer of recent Supabase HTTP activity.
-// Helps debug "loading forever" states in production without logging PII.
+// In-memory ring buffer of recent Supabase activity.
+// Helps debug "loading forever" states without logging PII.
 type SupabaseNetEvent = {
   at: number;
   method: string;
   path: string;
   status: number;
   ms: number;
+  // Synthetic error code when status=599 (e.g. missing_config, network_timeout).
+  code?: string | null;
+  // Rough source of the result (timeout/abort/race/etc) for debugging.
+  via?: string;
 };
 
-const NET_EVENTS_MAX = 30;
+const NET_EVENTS_MAX = 40;
 const netEvents: SupabaseNetEvent[] = [];
 
 export const getSupabaseNetEvents = (): SupabaseNetEvent[] => netEvents.slice();
@@ -109,15 +109,20 @@ const makeSyntheticResponse = (message: string, code: string) => {
   });
 };
 
-// We also use a synthetic "client timeout" status for operations that time out
-// *before* the HTTP layer. This makes it obvious in logs when the call never
-// reached Supabase (and thus won't appear in Supabase gateway logs).
+// Synthetic "client timeout" for operations that time out *before* the HTTP layer.
+// This helps distinguish "never reached Supabase" vs "Supabase returned an HTTP error".
 const CLIENT_TIMEOUT_STATUS = 598;
 
-const recordNetEvent = (method: string, path: string, status: number, ms: number) => {
+const recordNetEvent = (
+  method: string,
+  path: string,
+  status: number,
+  ms: number,
+  extra?: { code?: string | null; via?: string },
+) => {
   try {
     if (!path) return;
-    netEvents.push({ at: Date.now(), method, path, status, ms });
+    netEvents.push({ at: Date.now(), method, path, status, ms, ...extra });
     if (netEvents.length > NET_EVENTS_MAX) {
       netEvents.splice(0, netEvents.length - NET_EVENTS_MAX);
     }
@@ -126,9 +131,12 @@ const recordNetEvent = (method: string, path: string, status: number, ms: number
   }
 };
 
+// -----------------------------
+// AsyncStorage wrapper (timeout)
+// -----------------------------
+
 const safeStorageKey = (key: string) => {
   try {
-    // Avoid logging full keys; keep a short prefix for diagnostics only.
     const k = String(key || '');
     return k.length <= 24 ? k : `${k.slice(0, 24)}...`;
   } catch {
@@ -162,7 +170,7 @@ const storageWithTimeout = {
         );
       }
       return value as any;
-    } catch (e) {
+    } catch {
       return null;
     }
   },
@@ -216,9 +224,12 @@ const storageWithTimeout = {
   },
 };
 
+// -----------------------------
+// Fetch wrapper (timeout + logs)
+// -----------------------------
+
 const looksLikeSignalUnsupported = (message: string) => {
   const m = message.toLowerCase();
-  // Different RN/iOS stacks surface different errors when `signal` isn't supported.
   return (
     (m.includes('signal') || m.includes('abortcontroller') || m.includes('abort')) &&
     (m.includes('not supported') || m.includes('unsupported') || m.includes('invalid'))
@@ -242,12 +253,15 @@ const getSyntheticCode = (res: Response) => {
 };
 
 const logResponseIssue = (method: string, path: string, status: number, ms: number, via: string, res?: Response) => {
-  // Avoid log spam: throttle by path+status+key.
   const baseThrottleKey = `${path}|${status}`;
 
   if (status === 401 || status === 403) {
     recordAuthFailure(status);
-    logFetchIssueThrottled(`auth_${status}`, { path, status, ms, via, method, message: 'auth_invalid_or_expired' }, `auth_${status}|${baseThrottleKey}`);
+    logFetchIssueThrottled(
+      `auth_${status}`,
+      { path, status, ms, via, method, message: 'auth_invalid_or_expired' },
+      `auth_${status}|${baseThrottleKey}`,
+    );
     return;
   }
 
@@ -270,48 +284,38 @@ const logResponseIssue = (method: string, path: string, status: number, ms: numb
   }
 };
 
-const makeClientTimeoutRpcResult = () => {
-  return {
-    data: null,
-    error: {
-      message: 'client_timeout',
-      code: 'client_timeout',
-      details: null,
-      hint: null,
-    },
-    status: CLIENT_TIMEOUT_STATUS,
-    count: null,
-  } as any;
-};
-
 const fetchWithRaceTimeout: typeof fetch = async (input, init) => {
   const start = Date.now();
   const path = safeUrlPath(input);
   const method = String((init as any)?.method || 'GET').toUpperCase();
+
   if (!SUPABASE_IS_CONFIGURED) {
     const res = makeSyntheticResponse('missing_config', 'missing_config');
     const ms = Date.now() - start;
-    recordNetEvent(method, path, res.status, ms);
+    recordNetEvent(method, path, res.status, ms, { code: 'missing_config', via: 'missing_config' });
     logResponseIssue(method, path, res.status, ms, 'missing_config', res);
     return res;
   }
+
   try {
     const res = (await Promise.race([
       fetch(input, init as any),
       new Promise<Response>((resolve) =>
-        setTimeout(() => resolve(makeSyntheticResponse('timeout', 'network_timeout')), SUPABASE_FETCH_TIMEOUT_MS)
+        setTimeout(() => resolve(makeSyntheticResponse('timeout', 'network_timeout')), SUPABASE_FETCH_TIMEOUT_MS),
       ),
     ])) as Response;
+
     const ms = Date.now() - start;
-    recordNetEvent(method, path, res.status, ms);
+    const code = res.status === 599 ? getSyntheticCode(res) : null;
+    recordNetEvent(method, path, res.status, ms, { code, via: 'race' });
     logResponseIssue(method, path, res.status, ms, 'race', res);
     return res;
   } catch (error) {
     const ms = Date.now() - start;
     const message = String((error as any)?.message || error || 'fetch_failed');
     logFetchIssueThrottled('exception', { path, via: 'race', method, message }, `exception|${path}`);
-    recordNetEvent(method, path, 599, ms);
     const res = makeSyntheticResponse(message, 'network_error');
+    recordNetEvent(method, path, 599, ms, { code: 'network_error', via: 'race_exception' });
     logResponseIssue(method, path, 599, ms, 'race_exception', res);
     return res;
   }
@@ -326,13 +330,15 @@ const fetchWithTimeout: typeof fetch = async (input, init) => {
   const start = Date.now();
   const path = safeUrlPath(input);
   const method = String((init as any)?.method || 'GET').toUpperCase();
+
   if (!SUPABASE_IS_CONFIGURED) {
     const res = makeSyntheticResponse('missing_config', 'missing_config');
     const ms = Date.now() - start;
-    recordNetEvent(method, path, res.status, ms);
+    recordNetEvent(method, path, res.status, ms, { code: 'missing_config', via: 'missing_config' });
     logResponseIssue(method, path, res.status, ms, 'missing_config', res);
     return res;
   }
+
   const hasAbortController = typeof AbortController !== 'undefined';
   if (!hasAbortController) {
     return fetchWithRaceTimeout(input, init);
@@ -342,7 +348,6 @@ const fetchWithTimeout: typeof fetch = async (input, init) => {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   let timedOut = false;
 
-  // If the caller already provided a signal, abort our controller when theirs aborts.
   const callerSignal = (init as any)?.signal as AbortSignal | undefined;
   const onCallerAbort = () => controller.abort();
 
@@ -360,7 +365,7 @@ const fetchWithTimeout: typeof fetch = async (input, init) => {
         try {
           controller.abort();
         } catch {
-          // ignore abort errors; the race still resolves
+          // ignore abort errors
         }
         resolve(makeSyntheticResponse('timeout', 'network_timeout'));
       }, SUPABASE_FETCH_TIMEOUT_MS);
@@ -374,13 +379,10 @@ const fetchWithTimeout: typeof fetch = async (input, init) => {
 
         // If this RN runtime doesn't support `signal`, retry once without it.
         if (looksLikeSignalUnsupported(message)) {
-          const path = safeUrlPath(input);
           logFetchIssueThrottled('signal_unsupported', { path, message }, `signal_unsupported|${path}`);
           return fetchWithRaceTimeout(input, init);
         }
 
-        // Otherwise convert to a synthetic response so callers get `{ error }`.
-        const path = safeUrlPath(input);
         logFetchIssueThrottled('exception', { path, via: 'abort', method, message }, `exception|${path}`);
         return makeSyntheticResponse(message, 'network_error');
       }
@@ -389,23 +391,240 @@ const fetchWithTimeout: typeof fetch = async (input, init) => {
     const res = await Promise.race([fetchPromise, timeoutPromise]);
 
     const ms = Date.now() - start;
-    recordNetEvent(method, path, res.status, ms);
+    const via = timedOut ? 'timeout' : 'abort';
+    const code = res.status === 599 ? getSyntheticCode(res) : null;
+    recordNetEvent(method, path, res.status, ms, { code, via });
     logResponseIssue(method, path, res.status, ms, timedOut ? 'timeout' : 'abort', res);
-
     return res;
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
     if (callerSignal) {
       try {
         callerSignal.removeEventListener('abort', onCallerAbort as any);
-      } catch {}
+      } catch {
+        // ignore
+      }
     }
   }
 };
 
-// React Native doesn't keep a browser tab open with a constantly running JS event loop.
-// Apps are backgrounded/suspended, and "auto refresh" must be explicitly managed
-// across AppState transitions so stale JWTs don't persist after resume/cold start.
+// Exported for the few places we still do direct `fetch()` to Supabase endpoints
+// (e.g. edge functions) and want the same timeout + synthetic-response behavior.
+export const supabaseFetch: typeof fetch = fetchWithTimeout;
+
+// -----------------------------
+// Connectivity probe (case 2)
+// -----------------------------
+
+let lastConnectivityProbeAt = 0;
+const CONNECTIVITY_PROBE_COOLDOWN_MS = 60_000;
+
+// When we detect a client_timeout (often pre-fetch hangs), run a cheap probe using the
+// same fetch wrapper. This helps distinguish "backend unreachable" vs "specific call hung".
+const probeSupabaseConnectivity = async (reason: string) => {
+  if (!SUPABASE_IS_CONFIGURED) return;
+  const now = Date.now();
+  if (now - lastConnectivityProbeAt < CONNECTIVITY_PROBE_COOLDOWN_MS) return;
+  lastConnectivityProbeAt = now;
+
+  try {
+    const url = `${SUPABASE_URL}/rest/v1/profiles?select=id&limit=1`;
+    const start = Date.now();
+    const res = await fetchWithTimeout(url, {
+      method: 'GET',
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+    } as any);
+
+    logFetchIssueThrottled(
+      'connectivity_probe',
+      { reason, status: res.status, ms: Date.now() - start },
+      `connectivity_probe|${reason}|${res.status}`,
+    );
+  } catch {
+    // best-effort only
+  }
+};
+
+// -----------------------------
+// Clients: auth + data
+// -----------------------------
+
+// Keep this client untyped for now to avoid forcing a full, repo-wide type migration.
+const SUPABASE_URL_FOR_CLIENT = SUPABASE_URL || 'https://example.invalid';
+const SUPABASE_ANON_KEY_FOR_CLIENT = SUPABASE_ANON_KEY || 'missing-config';
+
+let cachedAccessToken: string | null = null;
+let cachedAccessTokenAt = 0;
+
+const setCachedAccessToken = (token: string | null) => {
+  cachedAccessToken = token;
+  cachedAccessTokenAt = Date.now();
+};
+
+let supabaseAuth: any;
+let supabaseData: any;
+
+const syncRealtimeAuth = (token: string | null) => {
+  // Realtime auth isn't automatically wired up when we split auth/data clients.
+  // Without this, postgres_changes subscriptions can connect "anon" and silently
+  // stop delivering in-app notification events in release builds.
+  try {
+    if (!supabaseData?.realtime?.setAuth) return;
+    if (token) void supabaseData.realtime.setAuth(token);
+    else void supabaseData.realtime.setAuth();
+  } catch {
+    // best-effort only
+  }
+};
+
+const getDataAccessToken = async (): Promise<string | null> => {
+  // Fast path: reuse the last known token from auth events.
+  if (cachedAccessToken) return cachedAccessToken;
+
+  // If auth isn't ready yet, fall back to null (supabase-js will use anon key).
+  if (!supabaseAuth?.auth) return null;
+
+  // Avoid long stalls here - this path is hit on data requests.
+  try {
+    const { data } = await Promise.race([
+      supabaseAuth.auth.getSession(),
+      new Promise<{ data: { session: null } }>((resolve) => setTimeout(() => resolve({ data: { session: null } }), 1200)),
+    ]);
+    const token = data?.session?.access_token ?? null;
+    if (token) {
+      setCachedAccessToken(token);
+      syncRealtimeAuth(token);
+    }
+    return token;
+  } catch {
+    return null;
+  }
+};
+
+// Auth-capable client (used only for supabase.auth.* and session refresh).
+supabaseAuth = createClient(SUPABASE_URL_FOR_CLIENT, SUPABASE_ANON_KEY_FOR_CLIENT, {
+  auth: {
+    storage: storageWithTimeout as any,
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: false,
+  },
+  global: {
+    fetch: fetchWithTimeout,
+  },
+});
+
+// Data client (used for rest/rpc/storage/realtime).
+// Critical: uses `accessToken` option so data calls do NOT depend on supabase.auth.getSession()
+// for every request. This avoids a class of "pre-network" hangs on some iOS builds.
+supabaseData = createClient(SUPABASE_URL_FOR_CLIENT, SUPABASE_ANON_KEY_FOR_CLIENT, {
+  accessToken: getDataAccessToken,
+  global: {
+    fetch: fetchWithTimeout,
+  },
+});
+
+// Keep our token cache up to date (TOKEN_REFRESHED events included).
+try {
+  supabaseAuth.auth.onAuthStateChange((_event: any, session: any) => {
+    const token = session?.access_token ?? null;
+    setCachedAccessToken(token);
+    syncRealtimeAuth(token);
+  });
+} catch {
+  // best-effort only
+}
+
+// Warm cached token once on module load.
+try {
+  void (async () => {
+    const token = await getDataAccessToken();
+    if (token) {
+      logFetchIssueThrottled('token_warm', { ok: true }, 'token_warm');
+    }
+  })();
+} catch {
+  // ignore
+}
+
+const makeClientTimeoutRpcResult = () => {
+  return {
+    data: null,
+    error: {
+      message: 'client_timeout',
+      code: 'client_timeout',
+      details: null,
+      hint: null,
+    },
+    status: CLIENT_TIMEOUT_STATUS,
+    count: null,
+  } as any;
+};
+
+// Wrap `rpc` to protect against "pre-fetch" hangs.
+try {
+  const origRpc = supabaseData.rpc?.bind(supabaseData);
+  if (typeof origRpc === 'function') {
+    supabaseData.rpc = async (fn: string, args?: Record<string, unknown>, options?: Record<string, unknown>) => {
+      const start = Date.now();
+      const pseudoPath = `rpc/${String(fn)}`;
+      let timedOut = false;
+
+      const res = await Promise.race([
+        origRpc(fn as any, args as any, options as any),
+        new Promise<any>((resolve) =>
+          setTimeout(() => {
+            timedOut = true;
+            resolve(makeClientTimeoutRpcResult());
+          }, SUPABASE_CALL_TIMEOUT_MS),
+        ),
+      ]);
+
+      const ms = Date.now() - start;
+      const status = typeof res?.status === 'number' ? res.status : (res?.error ? CLIENT_TIMEOUT_STATUS : 200);
+      recordNetEvent('RPC', pseudoPath, status, ms);
+
+      if (timedOut) {
+        logFetchIssueThrottled(
+          'client_timeout',
+          { fn: String(fn), ms, message: 'client_hang_or_fetch_stall', storageTimeoutMs: AUTH_STORAGE_TIMEOUT_MS },
+          `client_timeout|${pseudoPath}`,
+        );
+        void probeSupabaseConnectivity('rpc_client_timeout');
+      }
+
+      return res;
+    };
+  }
+} catch {
+  // best-effort only
+}
+
+// Public facade: keep existing import sites working.
+// - supabase.auth.* uses the auth client.
+// - everything else uses the data client (with accessToken override).
+const supabaseFacade = new Proxy({}, {
+  get(_target, prop: string) {
+    if (prop === 'auth') return supabaseAuth.auth;
+    const v = supabaseData[prop];
+    if (typeof v === 'function') return v.bind(supabaseData);
+    return v;
+  },
+});
+
+// Keep the client effectively untyped (`Database = any`) while preserving the
+// supabase-js return shapes (e.g. `{ data, error }`). We cast to the concrete
+// client type (not `ReturnType<typeof createClient>`) to avoid type-level
+// generics collapsing into `never` under moduleResolution=bundler.
+export const supabase = supabaseFacade as unknown as SupabaseClient<any>;
+
+// -----------------------------
+// Auth lifecycle (RN background)
+// -----------------------------
+
 let authLifecycleRefCount = 0;
 let authLifecycleCleanup: (() => void) | null = null;
 
@@ -413,33 +632,37 @@ export const initSupabaseAuthLifecycle = () => {
   authLifecycleRefCount += 1;
 
   const release = () => {
-    authLifecycleRefCount = Math.max(0, authLifecycleRefCount - 1);
-    if (authLifecycleRefCount === 0 && authLifecycleCleanup) {
-      const fn = authLifecycleCleanup;
+    authLifecycleRefCount -= 1;
+    if (authLifecycleRefCount > 0) return;
+    authLifecycleRefCount = 0;
+
+    if (authLifecycleCleanup) {
+      const cleanup = authLifecycleCleanup;
       authLifecycleCleanup = null;
       try {
-        fn();
+        cleanup();
       } catch {
-        // ignore cleanup errors
+        // ignore
       }
     }
   };
 
-  if (authLifecycleCleanup) {
-    return release;
-  }
+  if (authLifecycleCleanup) return release;
 
   const start = () => {
     try {
-      // Safe to call multiple times.
-      (supabase as any).auth?.startAutoRefresh?.();
-    } catch {}
+      supabaseAuth.auth?.startAutoRefresh?.();
+    } catch {
+      // ignore
+    }
   };
 
   const stop = () => {
     try {
-      (supabase as any).auth?.stopAutoRefresh?.();
-    } catch {}
+      supabaseAuth.auth?.stopAutoRefresh?.();
+    } catch {
+      // ignore
+    }
   };
 
   start();
@@ -454,13 +677,16 @@ export const initSupabaseAuthLifecycle = () => {
       stop();
     } catch {}
     try {
-      // RN returns { remove() } subscription.
       (sub as any)?.remove?.();
     } catch {}
   };
 
   return release;
 };
+
+// -----------------------------
+// Session sanity check helper
+// -----------------------------
 
 const REFRESH_TIMEOUT_MS = 8_000;
 const REFRESH_COOLDOWN_MS = 60_000;
@@ -479,14 +705,20 @@ const withTimeout = async <T,>(p: Promise<T>, timeoutMs: number): Promise<T> => 
 
 export async function ensureFreshSession(): Promise<'ok' | 'no_session' | 'refreshed' | 'failed'> {
   try {
-    const { data, error } = await supabase.auth.getSession();
-    if (error) {
-      // getSession is local, but treat an error as a failure state.
-      return 'failed';
-    }
+    const { data, error } = await supabaseAuth.auth.getSession();
+    if (error) return 'failed';
 
     const session = data?.session ?? null;
     if (!session) return 'no_session';
+
+    // Always keep the shared token cache hot so RPC/realtime do not fall back to anon.
+    try {
+      const token = (session as any)?.access_token ?? null;
+      if (token) {
+        setCachedAccessToken(token);
+        syncRealtimeAuth(token);
+      }
+    } catch {}
 
     const nowSec = Math.floor(Date.now() / 1000);
     const expiresAt = typeof (session as any).expires_at === 'number' ? (session as any).expires_at : null;
@@ -501,17 +733,18 @@ export async function ensureFreshSession(): Promise<'ok' | 'no_session' | 'refre
     }
 
     const now = Date.now();
-    if (now - lastRefreshAttemptAt < REFRESH_COOLDOWN_MS) {
-      // Avoid refresh storms; caller can retry later or rely on autoRefresh.
-      return 'failed';
-    }
+    if (now - lastRefreshAttemptAt < REFRESH_COOLDOWN_MS) return 'failed';
     lastRefreshAttemptAt = now;
 
     refreshInFlight = (async () => {
       try {
-        const res: any = await withTimeout(supabase.auth.refreshSession(), REFRESH_TIMEOUT_MS);
+        const res: any = await withTimeout(supabaseAuth.auth.refreshSession(), REFRESH_TIMEOUT_MS);
         if (res?.error) return 'failed';
-        return res?.data?.session ? 'refreshed' : 'failed';
+        const ok = Boolean(res?.data?.session);
+        if (ok) {
+          setCachedAccessToken(res.data.session.access_token ?? null);
+        }
+        return ok ? 'refreshed' : 'failed';
       } catch {
         return 'failed';
       } finally {
@@ -524,63 +757,4 @@ export async function ensureFreshSession(): Promise<'ok' | 'no_session' | 'refre
   } catch {
     return 'failed';
   }
-}
-
-// Keep this client untyped for now to avoid forcing a full, repo-wide type migration.
-// We still use generated DB types at API boundaries (e.g. updateProfile) for safety.
-const SUPABASE_URL_FOR_CLIENT = SUPABASE_URL || 'https://example.invalid';
-const SUPABASE_ANON_KEY_FOR_CLIENT = SUPABASE_ANON_KEY || 'missing-config';
-
-export const supabase = createClient(SUPABASE_URL_FOR_CLIENT, SUPABASE_ANON_KEY_FOR_CLIENT, {
-  auth: {
-    storage: storageWithTimeout as any,
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: false, // Keep false for React Native
-  },
-  global: {
-    fetch: fetchWithTimeout,
-  },
-});
-
-// Wrap `supabase.rpc` to protect against "pre-fetch" hangs (e.g. stuck storage/session reads).
-// This keeps the app deterministic: either you get a response, a normal error, or a client_timeout.
-try {
-  const origRpc = (supabase as any).rpc?.bind(supabase);
-  if (typeof origRpc === 'function') {
-    (supabase as any).rpc = async (fn: string, args?: Record<string, unknown>, options?: Record<string, unknown>) => {
-      const start = Date.now();
-      const pseudoPath = `rpc/${String(fn)}`;
-      let timedOut = false;
-
-      const res = await Promise.race([
-        origRpc(fn as any, args as any, options as any),
-        new Promise<any>((resolve) =>
-          setTimeout(() => {
-            timedOut = true;
-            resolve(makeClientTimeoutRpcResult());
-          }, SUPABASE_CALL_TIMEOUT_MS)
-        ),
-      ]);
-
-      const ms = Date.now() - start;
-      const status = typeof (res as any)?.status === 'number'
-        ? (res as any).status
-        : ((res as any)?.error ? CLIENT_TIMEOUT_STATUS : 200);
-
-      recordNetEvent('RPC', pseudoPath, status, ms);
-
-      if (timedOut) {
-        logFetchIssueThrottled(
-          'client_timeout',
-          { fn: String(fn), ms, message: 'pre_fetch_or_client_hang', storageTimeoutMs: AUTH_STORAGE_TIMEOUT_MS },
-          `client_timeout|${pseudoPath}`,
-        );
-      }
-
-      return res;
-    };
-  }
-} catch (e) {
-  // best-effort only
 }

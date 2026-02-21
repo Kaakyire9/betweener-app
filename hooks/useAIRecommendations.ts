@@ -579,6 +579,21 @@ export default function useAIRecommendations(
       // (profile/interests) on cold start/resume, because those extra queries can hang
       // and prevent the feed RPC from ever being attempted.
       if (supabase && userId) {
+        const noteRpcFailure = (err: any, fn: string) => {
+          // Important: mark that a fetch attempt happened so the UI can exit skeleton/loading
+          // deterministically and show a retry/error state.
+          setLastError(err as any);
+          setLastFetchedAt(Date.now());
+          addBreadcrumb('[recs] fetch_fail', {
+            fetchId,
+            mode,
+            fn,
+            errorCode: (err as any)?.code ?? null,
+            status: (err as any)?.status ?? null,
+            message: String((err as any)?.message || err || 'rpc_failed'),
+          });
+        };
+
         const rpc = async (fn: string, args: Record<string, unknown>) => {
           const startedAt = Date.now();
           addBreadcrumb('[recs] rpc_start', { fetchId, mode, fn });
@@ -659,7 +674,16 @@ export default function useAIRecommendations(
           try {
             const args = { p_user_id: userId, p_limit: 20 };
             const scored = await rpc('get_recs_nearby_scored', args);
+            if (scored?.error?.code === 'client_timeout') {
+              noteRpcFailure(scored.error, 'get_recs_nearby_scored');
+              return;
+            }
             const { data, error } = !scored.error ? scored : await rpc('get_recs_nearby', args);
+            if (error) {
+              noteRpcFailure(error, scored.error ? 'get_recs_nearby' : 'get_recs_nearby_scored');
+              if ((error as any)?.code === 'client_timeout') return;
+              // Keep going; the legacy (non-RPC) path may still succeed.
+            }
             if (!error && Array.isArray(data)) {
               const mapped = data.map((p: any) => mapRpcRow(p, true));
               const filtered = filterDiscoverable(mapped);
@@ -673,14 +697,23 @@ export default function useAIRecommendations(
             }
           } catch (e) {
             console.log('[useAIRecommendations] nearby rpc error', e);
+            noteRpcFailure(e as any, 'get_recs_nearby_scored');
+            // Fall through to the legacy table-query path below.
           }
-        }
-
-        if (mode === 'active') {
+        } else if (mode === 'active') {
           try {
             const args = { p_user_id: userId, p_window_minutes: activeWindowMinutes };
             const scored = await rpc('get_recs_active_scored', args);
+            if (scored?.error?.code === 'client_timeout') {
+              noteRpcFailure(scored.error, 'get_recs_active_scored');
+              return;
+            }
             const { data, error } = !scored.error ? scored : await rpc('get_recs_active', args);
+            if (error) {
+              noteRpcFailure(error, scored.error ? 'get_recs_active' : 'get_recs_active_scored');
+              if ((error as any)?.code === 'client_timeout') return;
+              // Keep going; the legacy (non-RPC) path may still succeed.
+            }
             if (!error && Array.isArray(data)) {
               const mapped = data.map((p: any) => mapRpcRow(p, false));
               const filtered = filterDiscoverable(mapped);
@@ -694,27 +727,40 @@ export default function useAIRecommendations(
             }
           } catch (e) {
             console.log('[useAIRecommendations] active rpc error', e);
+            noteRpcFailure(e as any, 'get_recs_active_scored');
+            // Fall through to the legacy table-query path below.
           }
-        }
-
-        // Default: for-you feed
-        try {
-          const args = { p_user_id: userId, p_limit: 20 };
-          const scored = await rpc('get_recs_for_you_scored', args);
-          const { data, error } = !scored.error ? scored : await rpc('get_recs_for_you', args);
-          if (!error && Array.isArray(data)) {
-            const mapped = data.map((p: any) => mapRpcRow(p, true));
-            const filtered = filterDiscoverable(mapped);
-            setMatches(filtered);
-            setLastError(null);
-            setLastFetchedAt(Date.now());
-            void persistMatchesCache(filtered);
-            if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] forYou rpc result', { count: mapped.length });
-            addBreadcrumb('[recs] fetch_ok', { fetchId, mode, rows: mapped.length });
-            return;
+        } else {
+          // Default: for-you feed
+          try {
+            const args = { p_user_id: userId, p_limit: 20 };
+            const scored = await rpc('get_recs_for_you_scored', args);
+            if (scored?.error?.code === 'client_timeout') {
+              noteRpcFailure(scored.error, 'get_recs_for_you_scored');
+              return;
+            }
+            const { data, error } = !scored.error ? scored : await rpc('get_recs_for_you', args);
+            if (error) {
+              noteRpcFailure(error, scored.error ? 'get_recs_for_you' : 'get_recs_for_you_scored');
+              if ((error as any)?.code === 'client_timeout') return;
+              // Keep going; the legacy (non-RPC) path may still succeed.
+            }
+            if (!error && Array.isArray(data)) {
+              const mapped = data.map((p: any) => mapRpcRow(p, true));
+              const filtered = filterDiscoverable(mapped);
+              setMatches(filtered);
+              setLastError(null);
+              setLastFetchedAt(Date.now());
+              void persistMatchesCache(filtered);
+              if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] forYou rpc result', { count: mapped.length });
+              addBreadcrumb('[recs] fetch_ok', { fetchId, mode, rows: mapped.length });
+              return;
+            }
+          } catch (e) {
+            console.log('[useAIRecommendations] forYou rpc error', e);
+            noteRpcFailure(e as any, 'get_recs_for_you_scored');
+            // Fall through to the legacy table-query path below.
           }
-        } catch (e) {
-          console.log('[useAIRecommendations] forYou rpc error', e);
         }
       }
 

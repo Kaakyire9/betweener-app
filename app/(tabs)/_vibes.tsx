@@ -806,22 +806,36 @@ export default function ExploreScreen() {
           ) : null}
 
           {offlineNotice ? (
-            <Notice
-              title="Couldn't load profiles"
-              message={offlineNotice}
-              actionLabel="Retry"
-              onAction={() => {
-                setOfflineNotice(null);
-                handleRefreshVibes();
-              }}
-              icon="cloud-alert"
-            />
+            <View>
+              <Notice
+                title="Couldn't load profiles"
+                message={offlineNotice}
+                actionLabel="Retry"
+                onAction={() => {
+                  setOfflineNotice(null);
+                  handleRefreshVibes();
+                }}
+                icon="cloud-alert"
+              />
+              {(typeof __DEV__ !== 'undefined' && __DEV__) || user?.id === 'f2e418eb-2535-4671-9588-6f2aa0ae0a36' ? (
+                <TouchableOpacity
+                  style={{ alignSelf: 'flex-start', marginTop: 8, paddingHorizontal: 4, paddingVertical: 4 }}
+                  onPress={() => router.push('/diagnostics')}
+                >
+                  <Text style={{ color: '#0b6b69', fontWeight: '700' }}>Open Diagnostics</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
           ) : null}
 
           {/* CARD STACK */}
           <View style={styles.stackWrapper}>
             {loadingMatches ? (
               <ExploreStackSkeleton />
+            ) : offlineNotice && matchList.length === 0 ? (
+              // If we failed to load, don't show the "no more profiles" empty state.
+              // The blocking Notice above already provides Retry.
+              <View />
             ) : !exhausted ? (
               <ExploreStack
                 ref={stackRef}

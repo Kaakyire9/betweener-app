@@ -1,7 +1,7 @@
 import { getOrCreateDeviceKeypair } from '@/lib/e2ee';
 import { registerPushToken } from '@/lib/notifications/push';
 import { clearSignupSession, consumeSignupMetadata, finalizeSignupPhoneVerification, getSignupPhoneState, updateSignupEventForUser } from '@/lib/signup-tracking';
-import { initSupabaseAuthLifecycle, supabase } from '@/lib/supabase';
+import { ensureFreshSession, initSupabaseAuthLifecycle, supabase } from '@/lib/supabase';
 import { Session, User } from '@supabase/supabase-js';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
@@ -606,20 +606,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     resumeRefreshAtRef.current = now;
 
     try {
-      const { data, error } = await Promise.race([
-        supabase.auth.refreshSession(),
-        new Promise<{
-          data: { session: Session | null };
-          error: Error | null;
-        }>((resolve) => setTimeout(() => resolve({ data: { session: null }, error: null }), RESUME_REFRESH_TIMEOUT_MS)),
+      const status = await Promise.race([
+        ensureFreshSession(),
+        new Promise<'failed'>((resolve) => setTimeout(() => resolve('failed'), RESUME_REFRESH_TIMEOUT_MS)),
       ]);
 
-      if (error) {
-        if (typeof __DEV__ !== "undefined" && __DEV__) {
-          console.log("[auth] refreshSessionOnResume: refresh error", error);
-        }
-        return;
-      }
+      if (status === 'failed' || status === 'no_session') return;
+
+      // Pull the latest session snapshot so downstream requests have a current token.
+      const { data } = await Promise.race([
+        supabase.auth.getSession(),
+        new Promise<{ data: { session: null } }>((resolve) => setTimeout(() => resolve({ data: { session: null } }), 1500)),
+      ]);
 
       if (data?.session) {
         accessTokenRef.current = data.session.access_token ?? null;

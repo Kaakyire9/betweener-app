@@ -9,9 +9,22 @@ module.exports = ({ config }) => {
     process.env.GOOGLE_MAPS_IOS_API_KEY ||
     process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ||
     process.env.GOOGLE_MAPS_API_KEY;
+
+  // EAS "development" builds typically use a development provisioning profile (APNS sandbox).
+  // TestFlight / Ad Hoc / App Store builds use production APNS.
+  const apnsMode =
+    process.env.EXPO_PUBLIC_ENVIRONMENT === 'development' ? 'development' : 'production';
   return {
     ...config,
     plugins: [
+      // Keep this plugin first so the NSE target is present before other iOS plugins run.
+      [
+        'expo-notification-service-extension-plugin',
+        {
+          mode: apnsMode,
+          iosNseFilePath: './assets/NotificationService.m',
+        },
+      ],
       ...(config.plugins ?? []),
       'expo-secure-store',
       '@react-native-community/datetimepicker',
