@@ -1,5 +1,4 @@
 import { useAuth } from "@/lib/auth-context";
-import { Colors } from "@/constants/theme";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";

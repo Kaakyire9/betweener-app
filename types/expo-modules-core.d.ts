@@ -5,7 +5,7 @@ declare module 'expo-modules-core' {
   export type EventSubscription = Subscription;
 
   // Back-compat exports referenced by some Expo modules' TS sources.
-  export class NativeModule<TEvents = any> {}
+  export class NativeModule<_TEvents = any> {}
   export function requireOptionalNativeModule<T = any>(name: string): T | null;
   export class UnavailabilityError extends Error {
     constructor(moduleName: string, propertyName: string);

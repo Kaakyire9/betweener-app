@@ -8,8 +8,7 @@ import { computeFirstReplyHours, computeInterestOverlapRatio, computeMatchScoreP
 import { readCache, writeCache } from '@/lib/persisted-cache';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Image, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -320,7 +319,7 @@ export default function IntentScreen() {
 
   const pendingMatchPairs = useMemo(() => {
     if (!user?.id || !currentProfileId) return [];
-    const pairs: Array<{ key: string; peerUserId: string }> = [];
+    const pairs: { key: string; peerUserId: string }[] = [];
     acceptedItems.forEach((item) => {
       const peerProfileId = item.actor_id === currentProfileId ? item.recipient_id : item.actor_id;
       const peer = profiles[peerProfileId];

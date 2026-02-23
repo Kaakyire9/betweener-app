@@ -1,9 +1,9 @@
 // @ts-nocheck
 import React from 'react';
+import ExploreCard from '@/components/ExploreCard';
 // require at runtime to avoid TypeScript resolution of testing library types in this environment
 // @ts-ignore
 const { render } = require('@testing-library/react-native');
-import ExploreCard from '@/components/ExploreCard';
 
 describe('ExploreCard personality pills', () => {
   it('renders up to 3 personality pills when personalityTags exist', () => {

@@ -8,8 +8,7 @@ import { captureMessage } from "@/lib/telemetry/sentry";
 import { readCache, writeCache } from "@/lib/persisted-cache";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { useFocusEffect } from "@react-navigation/native";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -779,21 +778,6 @@ export default function ChatScreen() {
       day: 'numeric',
       year: sameYear ? undefined : '2-digit',
     });
-  };
-
-  const formatLastSeen = (date: Date) => {
-    const now = new Date();
-    const diffInHours = (now.getTime() - date.getTime()) / (1000 * 60 * 60);
-
-    if (diffInHours < 1) {
-      const diffInMinutes = Math.floor(diffInHours * 60);
-      return diffInMinutes < 1 ? 'just now' : `${diffInMinutes}m ago`;
-    } else if (diffInHours < 24) {
-      return `${Math.floor(diffInHours)}h ago`;
-    } else {
-      const diffInDays = Math.floor(diffInHours / 24);
-      return diffInDays === 1 ? '1d ago' : `${diffInDays}d ago`;
-    }
   };
 
   const getRowPreviewText = (row?: MessageRow | null) => {

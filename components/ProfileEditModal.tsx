@@ -198,22 +198,6 @@ const GLOBAL_LANGUAGES_OPTIONS = [
   "Other",
 ];
 
-// DIASPORA: Country options (focusing on major Ghanaian diaspora locations)
-const COUNTRY_OPTIONS = [
-  "Ghana", "United States", "United Kingdom", "Canada", "Germany", "Netherlands", 
-  "Italy", "Australia", "South Africa", "Nigeria", "Ivory Coast", "Burkina Faso", 
-  "France", "Spain", "Belgium", "Sweden", "Norway", "Dubai", "Other"
-];
-
-const DIASPORA_STATUS_OPTIONS = [
-  "LOCAL", "DIASPORA", "VISITING"
-];
-
-const FUTURE_GHANA_PLANS_OPTIONS = [
-  "Planning to return permanently", "Visit annually", "Visit occasionally", 
-  "Uncertain about return", "Staying abroad permanently", "Other"
-];
-
 const withAlpha = (hex: string | undefined | null, alpha: number) => {
   if (!hex) {
     return `rgba(0,0,0,${Math.max(0, Math.min(1, alpha))})`;
@@ -306,9 +290,6 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const [showPetsPicker, setShowPetsPicker] = useState(false);
   const [showLanguagesPicker, setShowLanguagesPicker] = useState(false);
   
-  // DIASPORA picker visibility states (simplified)
-  const [showFutureGhanaPlansPicker, setShowFutureGhanaPlansPicker] = useState(false);
-  
   // Original custom input states
   const [customHeight, setCustomHeight] = useState('');
   const [customOccupation, setCustomOccupation] = useState('');
@@ -332,9 +313,6 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusTone, setStatusTone] = useState<'error' | 'success' | null>(null);
-  
-  // DIASPORA custom input states (simplified)
-  const [customFutureGhanaPlans, setCustomFutureGhanaPlans] = useState('');
   
   // Interests states
   const [availableInterests, setAvailableInterests] = useState<string[]>([]);
@@ -718,7 +696,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       const uint8Array = new Uint8Array(blob);
 
       // Upload using the Uint8Array which Supabase accepts
-      const { data, error } = await supabase.storage
+      const { error } = await supabase.storage
         .from('profile-photos')
         .upload(filePath, uint8Array, {
           contentType: `image/${fileExtension}`,

@@ -123,7 +123,7 @@ const fetchProfileViaRest = async (userId: string, accessToken?: string | null) 
       console.warn("[auth] fetchProfileViaRest: http error", { status: res.status, body: bodyText });
       return null;
     }
-    const data = (await res.json()) as Array<Profile>;
+    const data = (await res.json()) as Profile[];
     return data?.[0] ?? null;
   } catch (error) {
     console.warn("[auth] fetchProfileViaRest: fetch error", error);
@@ -162,7 +162,7 @@ const fetchProfilePhoneFlagsViaRest = async (
     ])) as Response;
 
     if (!res.ok) return null;
-    const data = (await res.json()) as Array<{ phone_verified?: boolean | null; phone_number?: string | null }>;
+    const data = (await res.json()) as { phone_verified?: boolean | null; phone_number?: string | null }[];
     return data?.[0] ?? null;
   } catch (error) {
     if (typeof __DEV__ !== "undefined" && __DEV__) {
@@ -213,12 +213,12 @@ const fetchVerifiedPhoneViaRest = async (
       ),
     ])) as Response;
     if (!res.ok) return null;
-    const data = (await res.json()) as Array<{
+    const data = (await res.json()) as {
       phone_number?: string | null;
       status?: string | null;
       is_verified?: boolean | null;
       verified_at?: string | null;
-    }>;
+    }[];
     return data?.[0] ?? null;
   } catch (error) {
     if (typeof __DEV__ !== "undefined" && __DEV__) {

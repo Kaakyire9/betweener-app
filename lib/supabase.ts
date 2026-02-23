@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { AppState } from 'react-native';
-import { captureMessage } from '@/lib/telemetry/sentry';
+import { addBreadcrumb, captureMessage } from '@/lib/telemetry/sentry';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -41,6 +41,8 @@ if (IS_PROD && !SUPABASE_IS_CONFIGURED) {
 
 const LOG_THROTTLE_MS = 60_000;
 const logLastAtByKey = new Map<string, number>();
+const APP_BOOT_AT = Date.now();
+const STARTUP_SUPPRESS_MS = 20_000;
 
 // In-memory ring buffer of recent Supabase activity.
 // Helps debug "loading forever" states without logging PII.
@@ -90,7 +92,37 @@ const logFetchIssueThrottled = (key: string, context: Record<string, unknown>, t
   const lastAt = logLastAtByKey.get(tk) || 0;
   if (now - lastAt < LOG_THROTTLE_MS) return;
   logLastAtByKey.set(tk, now);
-  captureMessage(`[supabase] ${key}`, context);
+
+  // Avoid turning routine telemetry into Sentry "issues". Keep those as breadcrumbs.
+  // Only capture messages for actionable failures that we want to alert on.
+  const shouldCapture =
+    key === 'missing_config' ||
+    key === 'network_timeout' ||
+    key === 'network_error' ||
+    key === 'client_timeout' ||
+    key === 'exception' ||
+    key === 'signal_unsupported' ||
+    key.startsWith('auth_') ||
+    (key.startsWith('http_') && (() => {
+      const n = Number(key.slice(5));
+      // 406 is common with PostgREST `.single()` and usually isn't a production incident.
+      if (n === 406) return false;
+      // Capture server errors + rate limiting; keep other 4xx as breadcrumbs.
+      return n >= 500 || n === 429;
+    })());
+
+  // Suppress early auth noise during bootstrap; we'll still have ring buffer data.
+  const withinStartup = now - APP_BOOT_AT <= STARTUP_SUPPRESS_MS;
+  if (withinStartup && key.startsWith('auth_')) {
+    addBreadcrumb(`[supabase] ${key}`, context);
+    return;
+  }
+
+  if (shouldCapture) {
+    captureMessage(`[supabase] ${key}`, context);
+  } else {
+    addBreadcrumb(`[supabase] ${key}`, context);
+  }
 };
 
 const SYNTHETIC_HEADER = 'x-betweener-synthetic';
@@ -255,6 +287,10 @@ const getSyntheticCode = (res: Response) => {
 const logResponseIssue = (method: string, path: string, status: number, ms: number, via: string, res?: Response) => {
   const baseThrottleKey = `${path}|${status}`;
 
+  // PostgREST returns 406 for `.single()` when no rows are found. Treat as non-actionable.
+  // Call sites should use `.maybeSingle()` when "no row" is expected.
+  if (status === 406) return;
+
   if (status === 401 || status === 403) {
     recordAuthFailure(status);
     logFetchIssueThrottled(
@@ -262,6 +298,14 @@ const logResponseIssue = (method: string, path: string, status: number, ms: numb
       { path, status, ms, via, method, message: 'auth_invalid_or_expired' },
       `auth_${status}|${baseThrottleKey}`,
     );
+
+    // Best-effort: when we see auth failures, try to refresh in the background.
+    // This is guarded by ensureFreshSession() cooldown/inFlight logic.
+    try {
+      void ensureFreshSession();
+    } catch {
+      // ignore
+    }
     return;
   }
 
@@ -457,11 +501,9 @@ const SUPABASE_URL_FOR_CLIENT = SUPABASE_URL || 'https://example.invalid';
 const SUPABASE_ANON_KEY_FOR_CLIENT = SUPABASE_ANON_KEY || 'missing-config';
 
 let cachedAccessToken: string | null = null;
-let cachedAccessTokenAt = 0;
 
 const setCachedAccessToken = (token: string | null) => {
   cachedAccessToken = token;
-  cachedAccessTokenAt = Date.now();
 };
 
 let supabaseAuth: any;
@@ -543,7 +585,8 @@ try {
   void (async () => {
     const token = await getDataAccessToken();
     if (token) {
-      logFetchIssueThrottled('token_warm', { ok: true }, 'token_warm');
+      // Breadcrumb only: useful when debugging auth/bootstrap order without creating Sentry issues.
+      addBreadcrumb('[supabase] token_warm', { ok: true });
     }
   })();
 } catch {

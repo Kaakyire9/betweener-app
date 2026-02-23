@@ -8,7 +8,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
   SectionList,
   KeyboardAvoidingView,
   Modal,
@@ -53,7 +52,7 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
   const [step, setStep] = useState<'phone' | 'code'>('phone');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
-  const [verificationSid, setVerificationSid] = useState('');
+  const [_verificationSid, setVerificationSid] = useState('');
   const [loading, setLoading] = useState(false);
 
   const countryOptions = useMemo(() => countryData, []);
@@ -245,7 +244,7 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
       } else {
         Alert.alert('Error', result.error || 'Failed to send verification code');
       }
-    } catch (error) {
+    } catch (_error) {
       Alert.alert('Error', 'Failed to send verification code');
     } finally {
       setLoading(false);
@@ -300,7 +299,7 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
         Alert.alert('Error', result.error || 'Invalid verification code');
         setVerificationCode('');
       }
-    } catch (error) {
+    } catch (_error) {
       Alert.alert('Error', 'Failed to verify code');
     } finally {
       setLoading(false);

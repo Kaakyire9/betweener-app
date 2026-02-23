@@ -35,7 +35,7 @@ type VibesMomentsStripProps = {
 
 export default function VibesMomentsStrip({
   users,
-  hasMyActiveMoment,
+  hasMyActiveMoment: _hasMyActiveMoment,
   showEmptyState,
   onPressMyMoment,
   onPressUserMoment,

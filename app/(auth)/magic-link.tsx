@@ -80,7 +80,7 @@ export default function MagicLinkScreen() {
       setTimeout(() => {
         router.replace("/(auth)/verify-email");
       }, 2000);
-    } catch (err: any) {
+    } catch (_err: any) {
       setError("An unexpected error occurred. Please try again.");
     } finally {
       setLoading(false);

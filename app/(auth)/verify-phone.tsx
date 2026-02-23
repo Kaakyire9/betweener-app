@@ -36,7 +36,7 @@ export default function VerifyPhoneScreen() {
   const nextRoute = typeof nextParam === "string" ? decodeURIComponent(nextParam) : null;
   const reasonParam = params.reason;
   const reason = typeof reasonParam === "string" ? reasonParam : null;
-  const [isPreparing, setIsPreparing] = useState(true);
+  const [_isPreparing, setIsPreparing] = useState(true);
   const [showVerification, setShowVerification] = useState(false);
   const [verifiedPhoneNumber, setVerifiedPhoneNumber] = useState<string | null>(null);
   const [signupSessionId, setSignupSessionId] = useState<string | null>(null);
@@ -80,7 +80,7 @@ export default function VerifyPhoneScreen() {
         await routeAfterVerified();
         return;
       }
-      const { verified } = await getSignupPhoneState();
+      const { verified: _verified } = await getSignupPhoneState();
       const sessionId = await getOrCreateSignupSessionId();
       const context = await captureSignupContext();
       if (!active) return;

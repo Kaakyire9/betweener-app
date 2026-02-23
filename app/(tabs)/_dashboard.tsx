@@ -8,10 +8,8 @@ import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-
-const { width } = Dimensions.get("window");
 
 const withAlpha = (hex: string, alpha: number) => {
   const normalized = hex.replace('#', '');
@@ -145,7 +143,7 @@ export default function DashboardScreen() {
     if (profilePhotosCount < 3) return "Add 1 more photo for +20% visibility";
     const bio = (liveProfile.bio || '').trim();
     if (bio.length < 40) return "Add a longer bio for better matches";
-    return "Looking good — keep it updated";
+    return "Looking good - keep it updated";
   }, [liveProfile, profilePhotosCount]);
 
   useEffect(() => {
@@ -698,7 +696,6 @@ export default function DashboardScreen() {
   const goToActivity = () => router.push("/(tabs)/activity");
   const goToChat = () => router.push("/(tabs)/chat");
   const goToProfile = () => router.push("/(tabs)/profile");
-  const goToMoments = () => router.push("/moments");
   const openProfileView = (profileId?: string | null) => {
     if (!profileId) return;
     router.push({ pathname: '/profile-view', params: { profileId: String(profileId) } });
@@ -1618,4 +1615,5 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       height: 20,
     },
   });
+
 

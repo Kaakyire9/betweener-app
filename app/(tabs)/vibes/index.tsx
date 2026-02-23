@@ -1,1 +1,1 @@
-﻿export { default } from "../_vibes";
+export { default } from "../_vibes";

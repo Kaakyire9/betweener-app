@@ -1,4 +1,3 @@
-import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { LinearGradient } from "expo-linear-gradient";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -13,7 +12,6 @@ type Props = {
 
 export function SkeletonBlock({ height, width = "100%", radius = 16, style }: Props) {
   const scheme = useColorScheme();
-  const theme = Colors[scheme ?? "light"];
   const isDark = (scheme ?? "light") === "dark";
 
   const base = isDark ? "rgba(255,255,255,0.08)" : "rgba(15,23,42,0.08)";

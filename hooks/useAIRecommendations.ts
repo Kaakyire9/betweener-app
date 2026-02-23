@@ -101,7 +101,7 @@ export default function useAIRecommendations(
   const [lastFetchedAt, setLastFetchedAt] = useState<number | null>(null);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [lastMutualMatch, setLastMutualMatch] = useState<Match | null>(null);
-  const [swipeHistory, setSwipeHistory] = useState<Array<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }>>([]);
+  const [swipeHistory, setSwipeHistory] = useState<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }[]>([]);
   const mountedRef = useRef(true);
   const presencePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mode = opts?.mode ?? 'forYou';
@@ -328,7 +328,7 @@ export default function useAIRecommendations(
             }
           }
         }
-      } catch (e) {
+      } catch (_e) {
         // ignore and keep local mock behavior
       }
     })();
@@ -346,7 +346,7 @@ export default function useAIRecommendations(
         }, 10_000);
         return true;
       }
-    } catch (e) {}
+    } catch (_e) {}
     return false;
   }, [matches]);
 
@@ -385,8 +385,8 @@ export default function useAIRecommendations(
           if (statusErr) {
             console.log('[matches realtime] status update error', statusErr);
           }
-        } catch (e) {
-          console.log('[matches realtime] status update threw', e);
+        } catch (_e) {
+          console.log('[matches realtime] status update threw', _e);
         }
 
         // fetch the other profile with minimal fields
@@ -438,7 +438,7 @@ export default function useAIRecommendations(
               matchedInterests = matchedInterests.concat(arr);
             }
           }
-        } catch (e) {}
+        } catch (_e) {}
 
         const matched: Match = {
           id: profileData.id,
@@ -465,8 +465,8 @@ export default function useAIRecommendations(
         setTimeout(() => {
           if (mountedRef.current) setLastMutualMatch(null);
         }, 10_000);
-      } catch (e) {
-        console.log('[matches realtime] handler threw', e);
+      } catch (_e) {
+        console.log('[matches realtime] handler threw', _e);
       }
     };
 
@@ -499,7 +499,7 @@ export default function useAIRecommendations(
             }
           }
         }
-      } catch (e) {}
+      } catch (_e) {}
     };
 
     // handle initial URL if app was launched via deep link
@@ -796,7 +796,7 @@ export default function useAIRecommendations(
               gender: (myProfile as any).gender ?? null,
             };
           }
-        } catch (e) {
+        } catch (_e) {
           userCoords = null;
         }
       }
@@ -817,7 +817,7 @@ export default function useAIRecommendations(
             }
             viewerCompat.interests = names;
           }
-        } catch (e) {
+        } catch (_e) {
           // ignore interest errors
         }
       }
@@ -874,8 +874,8 @@ export default function useAIRecommendations(
           data = res.data;
           // @ts-ignore
           error = res.error;
-        } catch (e) {
-          error = e;
+        } catch (_e) {
+          error = _e as any;
         }
 
         // If we got a missing-column error, retry with minimalSelect
@@ -900,8 +900,8 @@ export default function useAIRecommendations(
             // @ts-ignore
             error = res2.error;
             usedMinimal = true;
-          } catch (e) {
-            error = e;
+          } catch (_e) {
+            error = _e as any;
           }
         }
 
@@ -915,7 +915,7 @@ export default function useAIRecommendations(
               usedMinimal,
             });
           }
-        } catch (e) {}
+        } catch (_e) {}
 
         if (!error && Array.isArray(data) && data.length > 0) {
           // Also fetch profile interests in bulk to populate the UI tags
@@ -942,7 +942,7 @@ export default function useAIRecommendations(
             if (typeof __DEV__ !== 'undefined' && __DEV__) {
               console.log('[useAIRecommendations] profile_interests result', { count: Object.keys(interestsMap).length, interestsMap });
             }
-          } catch (e) {
+          } catch (_e) {
             // ignore profile interests errors
           }
 
@@ -968,7 +968,7 @@ export default function useAIRecommendations(
                 const km = haversineKm(userCoords.latitude!, userCoords.longitude!, Number(p.latitude), Number(p.longitude));
                 distanceStr = formatDistance(km, p.location || p.region, unitForFormat);
                 distanceKm = km;
-              } catch (e) {
+              } catch (_e) {
                 distanceStr = p.location || p.region || '';
               }
             } else if (p.location || p.region) {
@@ -1065,7 +1065,7 @@ export default function useAIRecommendations(
     if (!profileId || !supabase) return null;
     try {
       // fetch optional profile fields
-      const { data: profileData, error: pErr } = await supabase
+      const { data: profileData } = await supabase
         .from('profiles')
               .select('id, profile_video, latitude, longitude, region, tribe, religion, current_country, current_country_code, location_precision, personality_type, online, is_active, last_active, verification_level')
         .eq('id', profileId)
@@ -1090,7 +1090,7 @@ export default function useAIRecommendations(
             interestsArr = interestsArr.concat(arr);
           }
         }
-      } catch (e) {}
+      } catch (_e) {}
 
       const signedProfileVideo = profileData?.profile_video
         ? await signProfileVideoUrl(profileData.profile_video)
@@ -1123,7 +1123,7 @@ export default function useAIRecommendations(
       });
 
       return merged;
-    } catch (e) {
+    } catch (_e) {
       return null;
     }
   }, []);

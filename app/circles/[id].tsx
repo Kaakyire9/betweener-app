@@ -63,7 +63,7 @@ export default function CircleDetailScreen() {
   const [membership, setMembership] = useState<MemberRow | null>(null);
   const [loading, setLoading] = useState(false);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [imageUploading, setImageUploading] = useState(false);
+  const [_imageUploading, setImageUploading] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState('');
 
@@ -103,7 +103,7 @@ export default function CircleDetailScreen() {
     if (!circleId) return;
     setLoading(true);
     try {
-      const { data: circleRow, error: circleErr } = await supabase
+      const { data: circleRow, error: _circleErr } = await supabase
         .from('circles')
         .select('id,name,description,visibility,category,created_by_profile_id,image_path,image_updated_at')
         .eq('id', circleId)
@@ -111,7 +111,7 @@ export default function CircleDetailScreen() {
       setCircle((circleRow as Circle) || null);
 
       if (currentProfileId) {
-        const { data: myMembership, error: memberErr } = await supabase
+        const { data: myMembership, error: _memberErr } = await supabase
           .from('circle_members')
           .select('id,role,status,is_visible,profile_id')
           .eq('circle_id', circleId)
@@ -122,7 +122,7 @@ export default function CircleDetailScreen() {
         setMembership(null);
       }
 
-      const { data: memberRows, error: membersErr } = await supabase
+      const { data: memberRows, error: _membersErr } = await supabase
         .from('circle_members')
         .select('id,role,status,is_visible,profile_id,profiles (id,full_name,avatar_url,age,location,city,region)')
         .eq('circle_id', circleId);
@@ -564,7 +564,7 @@ export default function CircleDetailScreen() {
   );
 }
 
-const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
+const createStyles = (theme: typeof Colors.light, _isDark: boolean) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: theme.background, paddingHorizontal: 18 },
     header: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 10, paddingBottom: 6 },

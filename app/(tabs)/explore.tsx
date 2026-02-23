@@ -4,8 +4,7 @@ import { useAuth } from '@/lib/auth-context';
 import { readCache, writeCache } from '@/lib/persisted-cache';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Image, Modal, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -199,7 +198,7 @@ export default function CirclesScreen() {
           // ignore image URL errors
         }
       })();
-    } catch (e) {
+    } catch (_e) {
       // Keep whatever we have (cache/previous state) and surface a retry CTA.
       setLoadError('Could not load circles. Check your connection and try again.');
     } finally {

@@ -8,7 +8,6 @@ import { computeFirstReplyHours, computeInterestOverlapRatio, computeMatchScoreP
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
 import {
   AudioPlayer,
   createAudioPlayer,
@@ -27,7 +26,7 @@ import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Location from "expo-location";
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { VideoView, useVideoPlayer } from "expo-video";
 import type { ComponentProps, ReactNode } from "react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -61,7 +60,6 @@ import { encodeBase64 } from "tweetnacl-util";
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const ATTACHMENT_SHEET_HEIGHT = 300;
-const LOCATION_SHEET_HEIGHT = 360;
 const CHAT_MEDIA_BUCKET = 'chat-media';
 const LOCATION_TEXT_PREFIX = '\u{1F4CD}';
 const LOCATION_LIVE_PREFIX = 'LIVE:';
@@ -912,7 +910,6 @@ const MessageRowItem = memo(
       : viewOnceViewedByMe
       ? 'Viewed'
       : mediaLabel;
-    const viewOnceSubtitle = '';
 
     const locationRemaining = useMemo(() => {
       if (item.type !== 'location' || !item.location?.live) return null;
@@ -1782,11 +1779,6 @@ export default function ConversationScreen() {
     return (peer?.moments.length ?? 0) > 0;
   }, [conversationId, momentUsers]);
 
-  const peerMomentUser = useMemo(
-    () => momentUsersWithContent.find((entry) => entry.userId === conversationId) ?? null,
-    [conversationId, momentUsersWithContent]
-  );
-  
   const [messages, setMessages] = useState<MessageType[]>([]);
   const [peerOnline, setPeerOnline] = useState(initialOnline);
   const [peerLastSeen, setPeerLastSeen] = useState<Date | null>(initialLastSeen);
@@ -1796,7 +1788,7 @@ export default function ConversationScreen() {
   const [matchAccepted, setMatchAccepted] = useState(false);
   const [matchPercent, setMatchPercent] = useState<number | null>(null);
   const [pendingIntentRequest, setPendingIntentRequest] = useState<IntentRequestSummary | null>(null);
-  const [pendingIntentLoading, setPendingIntentLoading] = useState(false);
+  const [_pendingIntentLoading, setPendingIntentLoading] = useState(false);
   const [inputText, setInputText] = useState('');
   const prefillConsumedRef = useRef(false);
   const [isTyping, setIsTyping] = useState(false);
@@ -1822,7 +1814,6 @@ export default function ConversationScreen() {
   const [isUploadingVoice, setIsUploadingVoice] = useState(false);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [showImagePicker, setShowImagePicker] = useState(false);
-  const [inputBarHeight, setInputBarHeight] = useState(0);
   const [replyingTo, setReplyingTo] = useState<MessageType | null>(null);
   const [editingMessage, setEditingMessage] = useState<MessageType | null>(null);
   const [viewOnceMode, setViewOnceMode] = useState(false);
@@ -2416,7 +2407,7 @@ export default function ConversationScreen() {
       setBlockStatus(null);
       return;
     }
-    const rows = (data || []) as Array<{ blocker_id: string; blocked_id: string }>;
+    const rows = (data || []) as { blocker_id: string; blocked_id: string }[];
     if (rows.length === 0) {
       setBlockStatus(null);
       return;
@@ -4456,7 +4447,7 @@ export default function ConversationScreen() {
 
     const syncPeerPresence = () => {
       const state = presenceChannel.presenceState();
-      const peer = (state as any)[conversationId] as Array<{ typing?: boolean }> | undefined;
+      const peer = (state as any)[conversationId] as { typing?: boolean }[] | undefined;
       setPeerOnline(Boolean(peer && peer.length > 0));
       setIsTyping(Boolean(peer?.some((p) => p.typing)));
     };
@@ -4788,7 +4779,7 @@ export default function ConversationScreen() {
 
   const linkItems = useMemo(() => {
     const urlRegex = /(https?:\/\/[^\s]+)/gi;
-    const items: Array<{ id: string; url: string; timestamp: Date; snippet: string }> = [];
+    const items: { id: string; url: string; timestamp: Date; snippet: string }[] = [];
     messages.forEach((msg) => {
       if (msg.deletedForAll || msg.type !== 'text' || !msg.text) return;
       const matches = msg.text.match(urlRegex);
@@ -5502,7 +5493,7 @@ export default function ConversationScreen() {
           await sendVideoAttachment({ videoUrl: publicUrl });
         }
       }
-    } catch (error) {
+    } catch (_error) {
       Alert.alert('Attachment', 'Unable to upload this file.');
     }
   }, [closeAttachmentSheet, sendEncryptedMediaAttachment, sendImageAttachment, sendVideoAttachment, uploadChatMedia, viewOnceMode]);
@@ -5548,7 +5539,7 @@ export default function ConversationScreen() {
           await sendVideoAttachment({ videoUrl: publicUrl });
         }
       }
-    } catch (error) {
+    } catch (_error) {
       Alert.alert('Attachment', 'Unable to upload this file.');
     }
   }, [closeAttachmentSheet, sendEncryptedMediaAttachment, sendImageAttachment, sendVideoAttachment, uploadChatMedia, viewOnceMode]);
@@ -5567,7 +5558,7 @@ export default function ConversationScreen() {
       const typeLabel = getFileTypeLabel(contentType, fileName);
       const labelParts = [fileName, sizeLabel, typeLabel].filter(Boolean);
       await sendAttachmentText(`${DOCUMENT_TEXT_PREFIX} ${labelParts.join(' | ')}\n${publicUrl}`);
-    } catch (error) {
+    } catch (_error) {
       Alert.alert('Attachment', 'Unable to upload this file.');
     }
   }, [closeAttachmentSheet, sendAttachmentText, uploadChatMedia]);
@@ -5741,13 +5732,6 @@ export default function ConversationScreen() {
       setViewOnceDecrypting(false);
     }
   }, [ensureOwnKeypair, fetchPeerPublicKey, user?.id]);
-
-  const openMessageActions = useCallback((message: MessageType) => {
-    setActionMessageId(message.id);
-    setMessageActionsVisible(true);
-    setShowReactions(null);
-    Haptics.selectionAsync().catch(() => {});
-  }, []);
 
   const triggerActionHaptic = useCallback((style: Haptics.ImpactFeedbackStyle) => {
     Haptics.impactAsync(style).catch(() => {});
@@ -6034,7 +6018,7 @@ export default function ConversationScreen() {
   }, [setImageViewerUrl, setVideoViewerUrl]);
 
   const onViewableItemsChanged = useCallback(
-    ({ viewableItems }: { viewableItems: Array<{ item: MessageType }> }) => {
+    ({ viewableItems }: { viewableItems: { item: MessageType }[] }) => {
       viewableItems.forEach(({ item }) => {
         if (item.senderId !== (user?.id || '') && item.status !== 'read') {
           markAsRead(item.id);
@@ -6249,18 +6233,6 @@ export default function ConversationScreen() {
       await fetchMessages();
     }
   }, [closeMessageActions, fetchMessages, user?.id]);
-
-  const confirmDeleteForEveryone = useCallback((message: MessageType) => {
-    closeMessageActions();
-    Alert.alert(
-      'Delete for everyone?',
-      'This message will be replaced with \"Message deleted\" for both of you.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => deleteMessageForEveryone(message) },
-      ]
-    );
-  }, [closeMessageActions, deleteMessageForEveryone]);
 
   const pinMessage = useCallback(async (message: MessageType) => {
     if (!user?.id || !conversationId) return;

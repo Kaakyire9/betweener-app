@@ -50,7 +50,7 @@ export default function VerifyEmailScreen() {
       
       // Also check if user exists and is verified (for cases where deep link failed)
       if (userEmail) {
-        const { data: { user }, error } = await supabase.auth.getUser();
+        const { data: { user } } = await supabase.auth.getUser();
         if (user && user.email_confirmed_at) {
           setVerifiedAndRedirect();
         }
@@ -176,7 +176,7 @@ export default function VerifyEmailScreen() {
       } else {
         setMessage("Verification email sent! Please check your inbox.");
       }
-    } catch (err) {
+    } catch (_err) {
       setError("Failed to resend email");
     } finally {
       setLoading(false);
@@ -195,7 +195,7 @@ export default function VerifyEmailScreen() {
       } else {
         setMessage("Still waiting for verification. Please check your email.");
       }
-    } catch (err) {
+    } catch (_err) {
       setError("Failed to check verification");
     } finally {
       setLoading(false);

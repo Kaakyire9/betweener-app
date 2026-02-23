@@ -29,7 +29,7 @@ export const computeInterestOverlapRatio = (a: string[], b: string[]) => {
 };
 
 export const computeFirstReplyHours = (
-  rows: Array<{ sender_id: string; created_at: string }>,
+  rows: { sender_id: string; created_at: string }[],
   userId: string,
   peerId: string,
 ) => {

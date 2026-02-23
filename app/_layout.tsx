@@ -3,7 +3,7 @@ import * as Linking from "expo-linking";
 import { Slot, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useRef, useState } from "react";
-import { Animated, Button, Easing, StyleSheet, Text, View } from "react-native";
+import { Animated, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import * as Notifications from "expo-notifications";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -30,7 +30,7 @@ function RootLayout() {
 
   const colorScheme = useColorScheme();
 
-  const [showSplash, setShowSplash] = useState(false);
+  const [showSplash, _setShowSplash] = useState(false);
   const [allowRender, setAllowRender] = useState(false);
 
   // Logo animations

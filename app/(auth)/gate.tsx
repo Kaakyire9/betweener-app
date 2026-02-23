@@ -272,7 +272,7 @@ export default function AuthGateScreen() {
         }
 
         guardRoute("/(tabs)/vibes", true);
-      } catch (error) {
+      } catch (_error) {
         if (active && !routedRef.current) {
           routedRef.current = true;
           router.replace("/(auth)/welcome");

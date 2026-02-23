@@ -62,7 +62,7 @@ export default function SignupScreen() {
       setTimeout(() => {
         router.replace("/(auth)/verify-email");
       }, 1500);
-    } catch (err: any) {
+    } catch (_err: any) {
       setError("An unexpected error occurred. Please try again.");
     }
   };

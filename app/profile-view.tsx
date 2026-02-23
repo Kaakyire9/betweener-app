@@ -39,7 +39,7 @@ import Animated, {
     withTiming,
     type SharedValue,
 } from 'react-native-reanimated';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -95,7 +95,6 @@ const BIO_MEANINGFUL_MIN_CHARS = 40;
 const BIO_MIN_PUBLIC_CHARS = 20;
 const LOOKING_FOR_MEANINGFUL_MIN_CHARS = 10;
 const INTERESTS_MEANINGFUL_MIN_COUNT = 3;
-const PROFILE_COMPLETION_MIN_INTERESTS = 3;
 
 function formatHeaderTitle(name: string, age: number) {
   if (!name) return '';
@@ -835,7 +834,6 @@ export default function ProfileViewPremiumV2Screen() {
 
 
   const isTextOnlyStory = !hasGalleryImages && meaningfulText && (hasAvatarOnly || !!resolvedProfile.profilePicture);
-  const isImagesOnly = hasGalleryImages && !meaningfulText;
 
   // --- Soft Sync state ---
   // Stored on UI thread to avoid re-rendering the whole right list.
@@ -1111,7 +1109,7 @@ export default function ProfileViewPremiumV2Screen() {
   );
 
   const onViewableItemsChanged = useCallback(
-    ({ viewableItems }: { viewableItems: Array<ViewToken<PremiumImage>> }) => {
+    ({ viewableItems }: { viewableItems: ViewToken<PremiumImage>[] }) => {
       if (!viewableItems || viewableItems.length === 0) return;
 
       // Prefer highest visible percent when available.
@@ -1199,7 +1197,7 @@ export default function ProfileViewPremiumV2Screen() {
   );
 
   const onRightViewableItemsChangedForStory = useCallback(
-    ({ viewableItems }: { viewableItems: Array<ViewToken<PremiumSection>> }) => {
+    ({ viewableItems }: { viewableItems: ViewToken<PremiumSection>[] }) => {
       if (!viewableItems || viewableItems.length === 0) return;
       // Pick the most visible item when available.
       let best: { tag: ProfileImageTag; percent: number } | null = null;
@@ -1217,26 +1215,6 @@ export default function ProfileViewPremiumV2Screen() {
       if (best && best.percent >= 60) setActiveTagSafely(best.tag);
     },
     [setActiveTagSafely],
-  );
-
-  const renderImageItem = useCallback(
-    ({ item }: { item: PremiumImage }) => {
-      const hasVideoTile = !!heroVideoUrl;
-      const isIntroActive = activeTagJs === 'intro';
-      const isActive = item.isVideo
-        ? isIntroActive
-        : item.tag === activeTagJs && !(hasVideoTile && item.tag === 'intro');
-      return (
-        <ImageCard
-          theme={theme}
-          item={item}
-          isActive={isActive}
-          height={IMAGE_ITEM_HEIGHT}
-          isVideo={item.isVideo}
-        />
-      );
-    },
-    [activeTagJs, heroVideoUrl, theme],
   );
 
   const onImageTap = useCallback(
@@ -1663,17 +1641,17 @@ const Header = memo(function Header({
   theme,
   profile,
   title,
-  locationLine,
+  locationLine: _locationLine,
   heroOverrideUri,
   heroOverrideType,
   heroVideoUrl,
   heroScrollY,
   isDark,
-  matchBadgeValue,
-  matchBadgeLabel,
+  matchBadgeValue: _matchBadgeValue,
+  matchBadgeLabel: _matchBadgeLabel,
   onHeroPress,
   onHeroDoubleTap,
-  onBack,
+  onBack: _onBack,
   onClose,
 }: {
   theme: typeof Colors.light;
@@ -1697,10 +1675,6 @@ const Header = memo(function Header({
     (Array.isArray(profile.photos) && profile.photos.find(Boolean)) ||
     profile.profilePicture ||
     '';
-  const isOnlineNow = !!(profile as any).online;
-  const isActiveNow = profile.isActiveNow || !!(profile as any).is_active;
-  const showPresence = isOnlineNow || isActiveNow;
-  const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
   const showHeroVideo =
     heroOverrideType === 'video'
       ? true
@@ -1865,7 +1839,7 @@ const Header = memo(function Header({
 });
 
 function PhotoLightboxModal({
-  theme,
+  theme: _theme,
   open,
   items,
   startIndex,
@@ -2539,7 +2513,7 @@ function FloatingActions({
   currentUserId,
   viewerProfileId,
   isOwnProfile,
-  onOpenRequest,
+  onOpenRequest: _onOpenRequest,
 }: {
   theme: typeof Colors.light;
   profileId: string;
@@ -2881,7 +2855,7 @@ function FloatingActions({
 }
 
 function Fab({
-  theme,
+  theme: _theme,
   label,
   icon,
   colors,

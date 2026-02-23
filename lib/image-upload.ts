@@ -24,9 +24,9 @@ export async function uploadImage({
   uri,
   bucket = 'profile-photos',
   folder,
-  compress = true,
-  maxWidth = 1080,
-  maxHeight = 1080,
+  compress: _compress = true,
+  maxWidth: _maxWidth = 1080,
+  maxHeight: _maxHeight = 1080,
 }: UploadImageOptions): Promise<UploadResult> {
   try {
     // Get file extension from URI
@@ -47,7 +47,7 @@ export async function uploadImage({
     };
 
     // Upload to Supabase Storage using the file object
-    const { data, error } = await supabase.storage
+    const { error } = await supabase.storage
       .from(bucket)
       .upload(filePath, file as any, {
         contentType: `image/${fileExtension}`,

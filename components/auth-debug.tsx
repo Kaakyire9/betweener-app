@@ -4,18 +4,18 @@ import { useState } from 'react';
 import { Alert, Text, TouchableOpacity, View } from 'react-native';
 
 export function AuthDebugPanel() {
-  const { user, session, isAuthenticated, isEmailVerified } = useAuth();
+  const { user, isAuthenticated, isEmailVerified } = useAuth();
   const [debugInfo, setDebugInfo] = useState('');
 
   const testAuth = async () => {
     try {
       // Test 1: Check auth context
       // Test 2: Check direct Supabase session
-      const { data: { session }, error } = await supabase.auth.getSession();
+      const { data: { session: directSession }, error: sessionError } = await supabase.auth.getSession();
       // Test 3: Check direct user
       const { data: { user: directUser }, error: userError } = await supabase.auth.getUser();
       // Test 4: Try a simple database query
-      const { data: testData, error: dbError } = await supabase
+      const { error: dbError } = await supabase
         .from('profiles')
         .select('count')
         .limit(1);
@@ -25,8 +25,10 @@ Context User: ${user?.id || 'None'}
 Context Email: ${user?.email || 'None'}
 Is Authenticated: ${isAuthenticated}
 Is Email Verified: ${isEmailVerified}
-Direct Session: ${session?.user?.id || 'None'}
+Direct Session: ${directSession?.user?.id || 'None'}
 Direct User: ${directUser?.id || 'None'}
+Session Error: ${sessionError?.message || 'None'}
+User Error: ${userError?.message || 'None'}
 DB Error: ${dbError?.message || 'None'}
       `;
       

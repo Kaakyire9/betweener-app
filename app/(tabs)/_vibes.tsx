@@ -21,11 +21,10 @@ import * as Haptics from "expo-haptics";
 import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe, { isLinearGradientAvailable } from "@/components/NativeWrappers/LinearGradientSafe";
 import IntentRequestSheet from "@/components/IntentRequestSheet";
-import { useFocusEffect } from "@react-navigation/native";
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { CircleOff, Gem, Sparkles, Target } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Animated, DeviceEventEmitter, Easing, FlatList, Image, KeyboardAvoidingView, Modal, PanResponder, Platform, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from "react-native";
+import { Alert, Animated, DeviceEventEmitter, Easing, KeyboardAvoidingView, Modal, PanResponder, Platform, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import VibesAllMomentsModal from "@/components/vibes/VibesAllMomentsModal";
@@ -74,7 +73,6 @@ const resolveAutoUnit = (): 'km' | 'mi' => {
 
 export default function ExploreScreen() {
   const insets = useSafeAreaInsets();
-  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
@@ -96,7 +94,7 @@ export default function ExploreScreen() {
   const [activeTab, setActiveTab] = useState<
     "recommended" | "nearby" | "active"
   >("recommended");
-  const [activeWindowMinutes, setActiveWindowMinutes] = useState(15);
+  const [activeWindowMinutes, _setActiveWindowMinutes] = useState(15);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [viewerInterests, setViewerInterests] = useState<string[]>([]);
   const vibesSegment = activeTab === 'nearby' ? 'nearby' : activeTab === 'active' ? 'activeNow' : 'forYou';
@@ -114,7 +112,7 @@ export default function ExploreScreen() {
     fetchProfileDetails,
     applyFilters,
     filters: appliedFilters,
-    refreshRemaining,
+    refreshRemaining: _refreshRemaining,
   } = useVibesFeed({
     userId: profile?.id,
     segment: vibesSegment,
@@ -352,51 +350,6 @@ export default function ExploreScreen() {
     new Animated.Value(0),
     new Animated.Value(0),
   ]).current;
-  // tweak this value to move the floating action card further down (positive = more downward nudge)
-  const ACTION_BOTTOM_NUDGE = 40; // previously effectively 24
-
-  // Responsive floating action card layout helper
-  const getFloatingCardLayout = (w: number) => {
-    // Small phones
-    if (w < 480) {
-      return {
-        width: Math.min(Math.max(260, w - 48), 380),
-        borderRadius: 36,
-        paddingHorizontal: 14,
-        paddingVertical: 8,
-      };
-    }
-
-    // Large phones / small tablets
-    if (w < 768) {
-      return {
-        width: Math.min(Math.max(300, w - 64), 520),
-        borderRadius: 40,
-        paddingHorizontal: 18,
-        paddingVertical: 10,
-      };
-    }
-
-    // Medium tablets
-    if (w < 1000) {
-      return {
-        width: Math.min(720, w - 128),
-        borderRadius: 48,
-        paddingHorizontal: 22,
-        paddingVertical: 12,
-      };
-    }
-
-    // Large tablets / desktop widths
-    return {
-      width: Math.min(960, Math.round(w * 0.6)),
-      borderRadius: 56,
-      paddingHorizontal: 28,
-      paddingVertical: 14,
-    };
-  };
-
-  const floatingLayout = getFloatingCardLayout(windowWidth);
   const fallbackEntranceTranslate = useRef(new Animated.Value(12)).current;
   const fallbackEntranceOpacity = useRef(new Animated.Value(0)).current;
 
@@ -648,7 +601,7 @@ export default function ExploreScreen() {
   );
 
   const activeFilterChips = useMemo(() => {
-    const chips: Array<{ key: string; label: string; onClear: () => void }> = [];
+    const chips: { key: string; label: string; onClear: () => void }[] = [];
     if (verifiedOnly) chips.push({ key: 'verified', label: 'Verified', onClear: () => setVerifiedOnly(false) });
     if (hasVideoOnly) chips.push({ key: 'video', label: 'Video', onClear: () => setHasVideoOnly(false) });
     if (activeOnly) chips.push({ key: 'active', label: 'Active', onClear: () => setActiveOnly(false) });
@@ -791,7 +744,7 @@ export default function ExploreScreen() {
 
   const appliedFilterChips = useMemo(() => {
     if (!appliedFilters) return [];
-    const chips: Array<{ key: string; label: string; onClear: () => void }> = [];
+    const chips: { key: string; label: string; onClear: () => void }[] = [];
 
     if (appliedFilters.verifiedOnly) chips.push({ key: 'verified', label: 'Verified', onClear: () => commitFilters({ verifiedOnly: false }) });
     if (appliedFilters.hasVideoOnly) chips.push({ key: 'video', label: 'Video', onClear: () => commitFilters({ hasVideoOnly: false }) });
@@ -807,19 +760,6 @@ export default function ExploreScreen() {
 
     return chips;
   }, [appliedFilters, commitFilters, formatDistanceLabel]);
-
-  const setAgeValue = (val: string, type: 'min' | 'max') => {
-    const num = Number(val.replace(/[^0-9]/g, ''));
-    if (Number.isNaN(num)) return;
-    const clamped = Math.max(18, Math.min(99, num));
-    if (type === 'min') {
-      setMinAge(clamped);
-      if (clamped > maxAge) setMaxAge(clamped);
-    } else {
-      setMaxAge(clamped);
-      if (clamped < minAge) setMinAge(clamped);
-    }
-  };
 
   // Reset index if data changes
   useEffect(() => {
@@ -856,7 +796,7 @@ export default function ExploreScreen() {
           }
           if (!mounted) break;
         }
-      } catch (e) {
+      } catch (_e) {
         // ignore prefetch errors
       }
     })();
@@ -1019,7 +959,7 @@ export default function ExploreScreen() {
           } else {
             setSuperlikesLeft((s) => Math.max(0, s - 1));
           }
-        } catch (e) {
+        } catch (_e) {
           setSuperlikesLeft((s) => Math.max(0, s - 1));
         }
       } else {
@@ -1827,8 +1767,7 @@ export default function ExploreScreen() {
             try {
               // use expo-router's router to open the chat conversation screen
               // use matched id as conversation id for QA/testing
-              // eslint-disable-next-line @typescript-eslint/no-var-requires
-              const { router } = require('expo-router');
+               
               if (m?.id) {
                 router.push({ pathname: '/chat/[id]', params: { id: String(m.id), userName: m.name, userAvatar: m.avatar_url, isOnline: String(!!m.isActiveNow) } });
               } else {

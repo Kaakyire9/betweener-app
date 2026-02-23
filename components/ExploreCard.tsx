@@ -84,7 +84,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
         isActiveNow: diffMs <= ACTIVE_NOW_MS,
         recentlyActive: diffMs > ACTIVE_NOW_MS && diffMs <= RECENTLY_ACTIVE_MS,
       };
-    } catch (e) {
+    } catch (_e) {
       return { isActiveNow: false, recentlyActive: false };
     }
   })();
@@ -95,7 +95,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
       // avoid heavy serialization in prod; stringify small arrays for clarity
       const interestsSample = Array.isArray((match as any).interests) ? (match as any).interests : (match as any).interests;
       const personalitySample = Array.isArray((match as any).personalityTags) ? (match as any).personalityTags : (match as any).personalityTags;
-      // eslint-disable-next-line no-console
+       
       console.log('[ExploreCard] debug', {
         id: match.id,
         name: match.name,
@@ -105,7 +105,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
         profileVideo: (match as any).profileVideo,
       });
     }
-  } catch (e) {}
+  } catch (_e) {}
 
   // Reduced-motion preference + small, native Animated transitions (no Reanimated hooks).
   const [reduceMotion, setReduceMotion] = useState(false);
@@ -113,7 +113,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     let mounted = true;
     try {
       AccessibilityInfo.isReduceMotionEnabled().then((v) => { if (mounted) setReduceMotion(!!v); }).catch(() => {});
-    } catch (e) {}
+    } catch (_e) {}
     return () => { mounted = false; };
   }, []);
 

@@ -16,7 +16,6 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
-  Dimensions,
   Image,
   ImageBackground,
   Modal,
@@ -36,7 +35,6 @@ import { LinearGradient } from "expo-linear-gradient";
 import { VideoView, useVideoPlayer } from "expo-video";
 import * as Haptics from "expo-haptics";
 
-const { width: screenWidth } = Dimensions.get('window');
 const DISTANCE_UNIT_KEY = 'distance_unit';
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
@@ -186,7 +184,7 @@ const computeProfileCompletion = (
   const hasHeight = !!(profile.height || '').trim();
   const hasPrompts = promptCount > 0;
 
-  const checks: Array<{ label: string; ok: boolean }> = [
+  const checks: { label: string; ok: boolean }[] = [
     { label: 'Add your name', ok: hasName },
     { label: 'Add your age', ok: hasAge },
     { label: 'Add your gender', ok: hasGender },
@@ -209,6 +207,7 @@ const computeProfileCompletion = (
     { label: 'Add your interests', ok: hasInterests },
     { label: 'Add at least 2 photos', ok: hasPhotos },
     { label: 'Add a profile photo', ok: hasAvatar },
+    { label: 'Add a profile video', ok: hasVideo },
     { label: 'Add your height', ok: hasHeight },
     { label: 'Answer a prompt', ok: hasPrompts },
   ];
@@ -227,22 +226,21 @@ export default function ProfileScreen() {
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = colorScheme === 'dark';
   const params = useLocalSearchParams();
-  const { status: verificationStatus, refreshStatus } = useVerificationStatus(profile?.id);
+  const { refreshStatus } = useVerificationStatus(profile?.id);
   const { preference: themePreference, setPreference: setThemePreference } = useColorSchemePreference();
-  const verificationLoading = verificationStatus?.loading ?? false;
   
   const [selectedPrompts, setSelectedPrompts] = useState<Record<string, number>>({
     two_truths_lie: 0,
     week_goal: 1,
     vibe_song: 2
   });
-  const [promptAnswers, setPromptAnswers] = useState<Array<{
+  const [promptAnswers, setPromptAnswers] = useState<{
     id: string;
     prompt_key: string;
     prompt_title: string | null;
     answer: string;
     created_at: string;
-  }>>([]);
+  }[]>([]);
   const [promptsLoading, setPromptsLoading] = useState(false);
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [customPromptTitle, setCustomPromptTitle] = useState('');
@@ -392,7 +390,7 @@ export default function ProfileScreen() {
   };
 
   const applyPromptAnswers = useCallback(
-    (rows: Array<{ id: string; prompt_key: string; prompt_title: string | null; answer: string; created_at: string }>) => {
+    (rows: { id: string; prompt_key: string; prompt_title: string | null; answer: string; created_at: string }[]) => {
       setPromptAnswers(rows);
       setSelectedPrompts((prev) => {
         const nextSelected: Record<string, number> = { ...prev };
@@ -457,13 +455,13 @@ export default function ProfileScreen() {
         console.log('[profile] prompt fetch error', error);
         return;
       }
-      const rows = (data || []) as Array<{
+      const rows = (data || []) as {
         id: string;
         prompt_key: string;
         prompt_title: string | null;
         answer: string;
         created_at: string;
-      }>;
+      }[];
       applyPromptAnswers(rows);
       if (promptsCacheKey) void writeCache(promptsCacheKey, rows);
     } finally {
@@ -2555,7 +2553,7 @@ export default function ProfileScreen() {
         <ProfileEditModal
           visible={showEditModal}
           onClose={() => setShowEditModal(false)}
-          onSave={async (updatedProfile) => {
+          onSave={async () => {
             // Force refresh the profile to ensure UI is updated
             setRefreshing(true);
             try {
@@ -2581,7 +2579,7 @@ export default function ProfileScreen() {
             refreshStatus();
           }}
           profile={profile}
-          onVerificationUpdate={(level) => {
+          onVerificationUpdate={() => {
             // Refresh profile to show updated verification level
             refreshProfile();
             refreshStatus();

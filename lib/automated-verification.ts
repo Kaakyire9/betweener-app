@@ -292,7 +292,7 @@ export class AutomatedVerificationService {
   /**
    * Mock OCR implementation for development and testing
    */
-  private static async performMockOCR(documentUrl: string): Promise<{
+  private static async performMockOCR(_documentUrl: string): Promise<{
     extractedData: {
       name?: string;
       country?: string;
@@ -365,7 +365,7 @@ export class AutomatedVerificationService {
    */
   private static async detectFraud(
     ocrResult: any, 
-    documentUrl?: string
+    _documentUrl?: string
   ): Promise<{
     isFraudulent: boolean;
     trustScore: number;
@@ -443,7 +443,7 @@ export class AutomatedVerificationService {
   /**
    * Store verification certificate on blockchain or distributed ledger
    */
-  private static async storeOnBlockchain(certificate: any): Promise<string> {
+  private static async storeOnBlockchain(_certificate: any): Promise<string> {
     try {
       // In production, this would integrate with blockchain networks
       // - Ethereum smart contracts

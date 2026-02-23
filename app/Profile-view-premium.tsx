@@ -36,7 +36,7 @@ import Animated, {
     withTiming,
     type SharedValue,
 } from 'react-native-reanimated';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -730,7 +730,6 @@ export default function ProfileViewPremiumV2Screen() {
   );
 
   const isTextOnlyStory = !hasGalleryImages && meaningfulText && (hasAvatarOnly || !!resolvedProfile.profilePicture);
-  const isImagesOnly = hasGalleryImages && !meaningfulText;
 
   // --- Soft Sync state ---
   // Stored on UI thread to avoid re-rendering the whole right list.
@@ -927,7 +926,7 @@ export default function ProfileViewPremiumV2Screen() {
   );
 
   const onViewableItemsChanged = useCallback(
-    ({ viewableItems }: { viewableItems: Array<ViewToken<PremiumImage>> }) => {
+    ({ viewableItems }: { viewableItems: ViewToken<PremiumImage>[] }) => {
       if (!viewableItems || viewableItems.length === 0) return;
 
       // Prefer highest visible percent when available.
@@ -1015,7 +1014,7 @@ export default function ProfileViewPremiumV2Screen() {
   );
 
   const onRightViewableItemsChangedForStory = useCallback(
-    ({ viewableItems }: { viewableItems: Array<ViewToken<PremiumSection>> }) => {
+    ({ viewableItems }: { viewableItems: ViewToken<PremiumSection>[] }) => {
       if (!viewableItems || viewableItems.length === 0) return;
       // Pick the most visible item when available.
       let best: { tag: ProfileImageTag; percent: number } | null = null;
@@ -1033,13 +1032,6 @@ export default function ProfileViewPremiumV2Screen() {
       if (best && best.percent >= 60) setActiveTagSafely(best.tag);
     },
     [setActiveTagSafely],
-  );
-
-  const renderImageItem = useCallback(
-    ({ item }: { item: PremiumImage }) => (
-      <ImageCard theme={theme} item={item} isActive={item.tag === activeTagJs} height={IMAGE_ITEM_HEIGHT} />
-    ),
-    [activeTagJs, theme],
   );
 
   const onImageTap = useCallback(
@@ -1564,7 +1556,7 @@ function Header({
 }
 
 function PhotoLightboxModal({
-  theme,
+  theme: _theme,
   open,
   items,
   startIndex,
@@ -2480,7 +2472,7 @@ function FloatingActions({
 }
 
 function Fab({
-  theme,
+  theme: _theme,
   label,
   icon,
   colors,

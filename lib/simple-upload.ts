@@ -41,7 +41,7 @@ export async function uploadImageSimple(
     const byteArray = new Uint8Array(byteNumbers);
 
     // Upload to Supabase
-    const { data, error } = await supabase.storage
+    const { error } = await supabase.storage
       .from(bucket)
       .upload(filePath, byteArray, {
         contentType: `image/${fileExtension}`,
