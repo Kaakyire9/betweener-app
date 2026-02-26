@@ -187,6 +187,7 @@ export default function ChatScreen() {
   const [presenceOnline, setPresenceOnline] = useState<Record<string, boolean>>({});
   const [presenceLastSeen, setPresenceLastSeen] = useState<Record<string, Date>>({});
   const [typingStatus, setTypingStatus] = useState<Record<string, boolean>>({});
+  const messagedPeerUserIdsRef = useRef<Set<string>>(new Set());
 
   const chatCacheKey = useMemo(
     () => (user?.id ? `cache:chat_list:v1:${user.id}` : null),
@@ -216,6 +217,12 @@ export default function ChatScreen() {
       cancelled = true;
     };
   }, [chatCacheKey]);
+
+  useEffect(() => {
+    // Keep an up-to-date set of peers we already have message history with.
+    // This prevents "New matches" from flickering/loading in a loop due to callback deps.
+    messagedPeerUserIdsRef.current = new Set(conversations.map((c) => c.id));
+  }, [conversations]);
 
   useEffect(() => {
     if (showSearch) {
@@ -372,7 +379,7 @@ export default function ChatScreen() {
           return;
         }
 
-        const messaged = messagedPeerUserIds ?? new Set(conversations.map((c) => c.id));
+        const messaged = messagedPeerUserIds ?? messagedPeerUserIdsRef.current ?? new Set();
         const next: NewMatch[] = [];
 
         (peerProfiles as any[]).forEach((p) => {
@@ -407,7 +414,7 @@ export default function ChatScreen() {
         setNewMatchesLoading(false);
       }
     },
-    [conversations, currentProfileId, user?.id],
+    [currentProfileId, user?.id],
   );
 
   const fetchConversations = useCallback(async () => {
@@ -602,8 +609,7 @@ export default function ChatScreen() {
   useFocusEffect(
     useCallback(() => {
       void fetchConversations();
-      void fetchNewMatches();
-    }, [fetchConversations, fetchNewMatches])
+    }, [fetchConversations])
   );
 
   useEffect(() => {

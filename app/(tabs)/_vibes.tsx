@@ -180,6 +180,11 @@ export default function ExploreScreen() {
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isSavingLocation, setIsSavingLocation] = useState(false);
   const [filtersVisible, setFiltersVisible] = useState(false);
+  // Some platforms behave inconsistently when stacking multiple RN <Modal />s.
+  // If the user opens manual city entry from within the Filters modal, we close Filters first,
+  // show the manual modal, then optionally reopen Filters afterward (keeping draft state).
+  const reopenFiltersAfterManualLocationRef = useRef(false);
+  const suppressDraftSyncOnNextFiltersOpenRef = useRef(false);
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [hasVideoOnly, setHasVideoOnly] = useState(false);
   const [activeOnly, setActiveOnly] = useState(false);
@@ -476,6 +481,30 @@ export default function ExploreScreen() {
     setIsSavingLocation(false);
   };
 
+  const closeManualLocationModal = useCallback(() => {
+    setManualLocationModalVisible(false);
+    if (reopenFiltersAfterManualLocationRef.current) {
+      reopenFiltersAfterManualLocationRef.current = false;
+      // Let the first modal dismiss cleanly before re-opening Filters.
+      setTimeout(() => setFiltersVisible(true), 250);
+    }
+  }, []);
+
+  const openManualLocationModal = useCallback(() => {
+    setLocationError(null);
+    setManualLocation(profile?.location || "");
+    setManualCountryCode(profileCountryCode || manualCountryCode || "");
+    setManualLocationModalVisible(true);
+  }, [manualCountryCode, profile?.location, profileCountryCode]);
+
+  const openManualLocationModalFromFilters = useCallback(() => {
+    // Preserve current draft values on reopen by skipping the "sync from applied" step once.
+    suppressDraftSyncOnNextFiltersOpenRef.current = true;
+    reopenFiltersAfterManualLocationRef.current = true;
+    setFiltersVisible(false);
+    setTimeout(() => openManualLocationModal(), 250);
+  }, [openManualLocationModal]);
+
   const handleSaveManualLocation = async () => {
     if (!profile?.id) return;
     setIsSavingLocation(true);
@@ -489,19 +518,12 @@ export default function ExploreScreen() {
     if (!res.ok) {
       setLocationError('error' in res ? res.error : 'Unable to save location');
     } else {
-      setManualLocationModalVisible(false);
+      closeManualLocationModal();
       await refreshProfile();
       await refreshMatches();
     }
     setIsSavingLocation(false);
   };
-
-  const openManualLocationModal = useCallback(() => {
-    setLocationError(null);
-    setManualLocation(profile?.location || "");
-    setManualCountryCode(profileCountryCode || manualCountryCode || "");
-    setManualLocationModalVisible(true);
-  }, [manualCountryCode, profile?.location, profileCountryCode]);
 
   const handleApplyFilters = () => {
     setFiltersVisible(false);
@@ -555,6 +577,10 @@ export default function ExploreScreen() {
   useEffect(() => {
     if (filtersVisible) {
       // Premium UX: treat the modal controls as "draft" until Apply is pressed.
+      if (suppressDraftSyncOnNextFiltersOpenRef.current) {
+        suppressDraftSyncOnNextFiltersOpenRef.current = false;
+        return;
+      }
       syncFilterDraftFromApplied();
     }
   }, [filtersVisible, syncFilterDraftFromApplied]);
@@ -1594,7 +1620,7 @@ export default function ExploreScreen() {
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={[styles.locationButton, styles.locationGhost]}
-                        onPress={openManualLocationModal}
+                        onPress={openManualLocationModalFromFilters}
                         disabled={isSavingLocation}
                       >
                         <Text style={styles.locationGhostText}>
@@ -1652,7 +1678,7 @@ export default function ExploreScreen() {
           visible={manualLocationModalVisible}
           transparent
           animationType="fade"
-          onRequestClose={() => setManualLocationModalVisible(false)}
+          onRequestClose={closeManualLocationModal}
         >
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
             <View style={styles.modalBackdrop}>
@@ -1661,7 +1687,7 @@ export default function ExploreScreen() {
                   <Text style={styles.modalTitle}>Set your city</Text>
                   <TouchableOpacity
                     style={styles.modalResetButton}
-                    onPress={() => setManualLocationModalVisible(false)}
+                    onPress={closeManualLocationModal}
                     activeOpacity={0.85}
                   >
                     <Text style={styles.modalResetText}>Close</Text>
@@ -1702,7 +1728,7 @@ export default function ExploreScreen() {
                 <View style={styles.modalActions}>
                   <TouchableOpacity
                     style={[styles.locationButton, styles.locationGhost, { flex: 1 }]}
-                    onPress={() => setManualLocationModalVisible(false)}
+                    onPress={closeManualLocationModal}
                     activeOpacity={0.85}
                     disabled={isSavingLocation}
                   >

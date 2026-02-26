@@ -307,6 +307,25 @@ export default function useAIRecommendations(
           console.log('[recordSwipe] failed to upsert swipe', insertErr);
         }
 
+        // Keep the Intent "Likes" tab in sync with swipes.
+        // We model a swipe-like as a lightweight intent_request of type `like_with_note` so it shows up
+        // in Incoming/Sent and can be accepted/passed using the existing intent flow.
+        if (action === 'like' || action === 'superlike') {
+          const { error: intentErr } = await supabase.rpc('rpc_create_intent_request', {
+            p_recipient_id: id,
+            p_type: 'like_with_note',
+            p_message: action === 'superlike' ? 'Superliked you.' : null,
+            p_metadata: {
+              source: 'swipe',
+              swipe_action: action,
+            },
+          });
+          if (intentErr) {
+            // Best-effort: swipes should still function even if the Intent mirror fails.
+            console.log('[recordSwipe] failed to create like intent', intentErr);
+          }
+        }
+
         // If this was a 'like', check whether the target already liked us -> mutual match
         if (action === 'like') {
             const { data: reciprocal, error: rErr } = await supabase

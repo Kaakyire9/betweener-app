@@ -809,8 +809,9 @@ export default function ProfileViewPremiumV2Screen() {
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const isOwnProfile = useMemo(
-    () => Boolean(currentUserId && profileId && currentUserId === profileId),
-    [currentUserId, profileId],
+    // Profiles are keyed by profiles.id (not auth.uid()), so compare against the viewer's profile id.
+    () => Boolean(currentProfile?.id && profileId && currentProfile.id === profileId),
+    [currentProfile?.id, profileId],
   );
 
   useEffect(() => {
@@ -2625,14 +2626,15 @@ function FloatingActions({
   useEffect(() => {
     let cancelled = false;
     const loadLikeState = async () => {
-      if (!currentUserId || !profileId || isOwnProfile) {
+      // Swipes are keyed by profile ids (swiper_id/target_id). Use the viewer's profile id.
+      if (!viewerProfileId || !profileId || isOwnProfile) {
         setLiked(false);
         return;
       }
       const { data } = await supabase
         .from('swipes')
         .select('action')
-        .eq('swiper_id', currentUserId)
+        .eq('swiper_id', viewerProfileId)
         .eq('target_id', profileId)
         .in('action', ['LIKE', 'SUPERLIKE'])
         .limit(1);
@@ -2643,17 +2645,18 @@ function FloatingActions({
     return () => {
       cancelled = true;
     };
-  }, [currentUserId, isOwnProfile, profileId]);
+  }, [isOwnProfile, profileId, viewerProfileId]);
 
   const sendLike = async () => {
-    if (!currentUserId || !profileId || isOwnProfile || likeSending) return;
+    // Swipes are keyed by profile ids (swiper_id/target_id). Use the viewer's profile id.
+    if (!viewerProfileId || !profileId || isOwnProfile || likeSending) return;
     setLikeSending(true);
     const { error } = await supabase
       .from('swipes')
       .upsert(
         [
           {
-            swiper_id: currentUserId,
+            swiper_id: viewerProfileId,
             target_id: profileId,
             action: 'LIKE',
           },
@@ -2666,6 +2669,27 @@ function FloatingActions({
       Alert.alert('Unable to like', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
       return;
     }
+
+    // Mirror likes into Intent requests so they show up in the Intent -> Likes feed.
+    try {
+      const { error: intentErr } = await supabase.rpc('rpc_create_intent_request', {
+        p_recipient_id: profileId,
+        p_type: 'like_with_note',
+        p_message: null,
+        p_metadata: { source: 'profile_view', swipe_action: 'like' },
+      });
+      if (intentErr) {
+        logger.warn('[profile-view] create_like_intent_failed', {
+          message: intentErr.message,
+          code: (intentErr as any).code ?? null,
+          details: (intentErr as any).details ?? null,
+        });
+      }
+    } catch (e) {
+      // Best-effort only.
+      logger.warn('[profile-view] create_like_intent_throw', { message: String((e as any)?.message || e || 'unknown') });
+    }
+
     setLiked(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
     if (viewerProfileId) {

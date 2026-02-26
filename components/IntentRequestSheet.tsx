@@ -2,6 +2,7 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
@@ -12,6 +13,8 @@ type IntentRequestSheetProps = {
   onClose: () => void;
   recipientId?: string | null;
   recipientName?: string | null;
+  defaultType?: IntentRequestType;
+  prefillMessage?: string | null;
   metadata?: Record<string, unknown>;
   onSent?: (requestId: string | null) => void;
 };
@@ -28,6 +31,8 @@ export default function IntentRequestSheet({
   onClose,
   recipientId,
   recipientName,
+  defaultType,
+  prefillMessage,
   metadata,
   onSent,
 }: IntentRequestSheetProps) {
@@ -40,6 +45,7 @@ export default function IntentRequestSheet({
   const [suggestedPlace, setSuggestedPlace] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const allowCircle = metadata?.source === 'circles';
+  const isSuggested = metadata?.source === 'intent_suggested';
   const options = useMemo(
     () => (allowCircle ? optionLabels : optionLabels.filter((opt) => opt.type !== 'circle_intro')),
     [allowCircle],
@@ -47,11 +53,16 @@ export default function IntentRequestSheet({
 
   useEffect(() => {
     if (visible) {
-      setSelectedType('connect');
-      setMessage('');
+      setSelectedType(defaultType ?? 'connect');
+      setMessage(typeof prefillMessage === 'string' ? prefillMessage : '');
       setSuggestedPlace('');
     }
-  }, [visible]);
+  }, [defaultType, prefillMessage, visible]);
+
+  const suggested = useMemo(() => {
+    const raw = typeof prefillMessage === 'string' ? prefillMessage.trim() : '';
+    return raw.length ? raw : null;
+  }, [prefillMessage]);
 
   const handleSubmit = async () => {
     if (!recipientId) {
@@ -60,6 +71,7 @@ export default function IntentRequestSheet({
     }
     setSubmitting(true);
     try {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       const { data, error } = await supabase.rpc('rpc_create_intent_request', {
         p_recipient_id: recipientId,
         p_type: selectedType,
@@ -70,13 +82,26 @@ export default function IntentRequestSheet({
       });
       if (error) throw error;
       if (data) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         Alert.alert('Request sent', `Your request to ${recipientName || 'connect'} is on the way.`);
         onSent?.(data as string);
         onClose();
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Please try again.';
-      Alert.alert('Request failed', msg);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      // Supabase errors are often plain objects (not Error instances).
+      const supaMessage =
+        err && typeof err === 'object' && 'message' in err && typeof (err as any).message === 'string'
+          ? (err as any).message
+          : null;
+      const supaDetails =
+        err && typeof err === 'object' && 'details' in err && typeof (err as any).details === 'string'
+          ? (err as any).details
+          : null;
+      const msg = err instanceof Error ? err.message : supaMessage || 'Please try again.';
+      Alert.alert('Request failed', supaDetails ? `${msg}\n\n${supaDetails}` : msg);
+      // Surface the full object for debugging/telemetry.
+      console.error('[intent] rpc_create_intent_request failed', err);
     } finally {
       setSubmitting(false);
     }
@@ -98,19 +123,25 @@ export default function IntentRequestSheet({
               contentContainerStyle={styles.sheetContent}
             >
               <View style={styles.header}>
-                <Text style={styles.title}>Send Request</Text>
+                <Text style={styles.title}>{isSuggested ? 'Send intent' : 'Send request'}</Text>
                 <TouchableOpacity onPress={onClose} activeOpacity={0.85} style={styles.closeButton}>
                   <MaterialCommunityIcons name="close" size={18} color={theme.text} />
                 </TouchableOpacity>
               </View>
-              <Text style={styles.subtitle}>Choose how you want to connect.</Text>
+              <Text style={styles.subtitle}>
+                {recipientName ? `To ${recipientName}. ` : ''}
+                Choose how you want to connect.
+              </Text>
 
               <View style={styles.options}>
                 {options.map((opt) => (
                   <TouchableOpacity
                     key={opt.type}
                     style={[styles.optionRow, selectedType === opt.type && styles.optionRowActive]}
-                    onPress={() => setSelectedType(opt.type)}
+                    onPress={() => {
+                      void Haptics.selectionAsync();
+                      setSelectedType(opt.type);
+                    }}
                     activeOpacity={0.85}
                   >
                     <View style={[styles.optionIcon, selectedType === opt.type && styles.optionIconActive]}>
@@ -126,6 +157,38 @@ export default function IntentRequestSheet({
 
               <View style={styles.inputBlock}>
                 <Text style={styles.inputLabel}>Message (optional)</Text>
+                {suggested ? (
+                  <View style={styles.suggestedRow}>
+                    <View style={styles.suggestedLeft}>
+                      <MaterialCommunityIcons name="star-four-points" size={14} color={theme.tint} />
+                      <Text style={styles.suggestedLabel}>Suggested opener</Text>
+                    </View>
+                    <View style={styles.suggestedActions}>
+                      <TouchableOpacity
+                        style={styles.suggestedAction}
+                        onPress={() => {
+                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          setMessage(suggested);
+                        }}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={styles.suggestedActionText}>Use</Text>
+                      </TouchableOpacity>
+                      {message.trim().length ? (
+                        <TouchableOpacity
+                          style={styles.suggestedAction}
+                          onPress={() => {
+                            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            setMessage('');
+                          }}
+                          activeOpacity={0.85}
+                        >
+                          <Text style={styles.suggestedActionText}>Clear</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  </View>
+                ) : null}
                 <TextInput
                   value={message}
                   onChangeText={setMessage}
@@ -226,6 +289,25 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     optionSubtitle: { fontSize: 12, color: theme.textMuted, marginTop: 2 },
     inputBlock: { marginTop: 14 },
     inputLabel: { fontSize: 12, fontWeight: '700', color: theme.text, marginBottom: 6 },
+    suggestedRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      marginBottom: 8,
+    },
+    suggestedLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    suggestedLabel: { fontSize: 12, color: theme.textMuted, fontWeight: '700' },
+    suggestedActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    suggestedAction: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.outline,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : theme.backgroundSubtle,
+    },
+    suggestedActionText: { color: theme.tint, fontWeight: '700', fontSize: 12 },
     input: {
       borderWidth: 1,
       borderColor: theme.outline,

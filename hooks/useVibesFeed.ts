@@ -138,7 +138,9 @@ export function applyVibesFilters(
     out = out.filter((m) => String((m as any).religion || '').toLowerCase() === needle);
   }
   if (filters.locationQuery.trim()) {
-    const q = filters.locationQuery.trim().toLowerCase();
+    // Users often type "City, Country" (e.g. "Accra, Ghana"). Our cards typically store just the city/region.
+    // Treat the first segment as the primary needle so the filter behaves as expected.
+    const q = filters.locationQuery.trim().split(',')[0]!.trim().toLowerCase();
     out = out.filter((m) => {
       const loc = String((m as any).location || (m as any).region || '').toLowerCase();
       return loc.includes(q);
