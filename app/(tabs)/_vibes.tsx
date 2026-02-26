@@ -29,6 +29,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import VibesAllMomentsModal from "@/components/vibes/VibesAllMomentsModal";
 import VibesMomentsStrip from "@/components/vibes/VibesMomentsStrip";
+import VibesIntroModal from "@/components/vibes/VibesIntroModal";
 import Notice from "@/components/ui/Notice";
 import { ExploreStackSkeleton } from "@/components/ui/Skeleton";
 import { isLikelyNetworkError } from "@/lib/network";
@@ -38,6 +39,7 @@ const DISTANCE_UNIT_KEY = 'distance_unit';
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
 const KM_PER_MILE = 1.60934;
 const VIBES_FILTERS_KEY = 'vibes_filters_v2';
+const VIBES_INTRO_SEEN_KEY = 'vibes_intro_seen_v1';
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
 
@@ -180,6 +182,7 @@ export default function ExploreScreen() {
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isSavingLocation, setIsSavingLocation] = useState(false);
   const [filtersVisible, setFiltersVisible] = useState(false);
+  const [introVisible, setIntroVisible] = useState(false);
   // Some platforms behave inconsistently when stacking multiple RN <Modal />s.
   // If the user opens manual city entry from within the Filters modal, we close Filters first,
   // show the manual modal, then optionally reopen Filters afterward (keeping draft state).
@@ -205,6 +208,17 @@ export default function ExploreScreen() {
     [profile?.id],
   );
   const filtersLoadedKeyRef = useRef<string | null>(null);
+  const introStorageKey = useMemo(
+    () => (profile?.id ? `${VIBES_INTRO_SEEN_KEY}:${profile.id}` : user?.id ? `${VIBES_INTRO_SEEN_KEY}:auth:${user.id}` : null),
+    [profile?.id, user?.id],
+  );
+
+  const closeIntro = useCallback(async () => {
+    try {
+      if (introStorageKey) await AsyncStorage.setItem(introStorageKey, '1');
+    } catch {}
+    setIntroVisible(false);
+  }, [introStorageKey]);
 
   useEffect(() => {
     if (!filtersStorageKey) return;
@@ -264,6 +278,27 @@ export default function ExploreScreen() {
       }
     }, 150);
   }, [refreshMatches]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!introStorageKey) return;
+      let cancelled = false;
+      (async () => {
+        try {
+          const seen = await AsyncStorage.getItem(introStorageKey);
+          if (cancelled || seen) return;
+          // Avoid showing on a cold focus while other modals might still be presenting.
+          setTimeout(() => {
+            if (cancelled) return;
+            setIntroVisible(true);
+          }, 650);
+        } catch {}
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [introStorageKey]),
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -1044,15 +1079,26 @@ export default function ExploreScreen() {
           onPressFilter={() => setFiltersVisible(true)}
           filterCount={appliedFilterCount}
           rightAccessory={(
-            <TouchableOpacity
-              style={styles.headerRefreshButton}
-              onPress={handleRefreshVibes}
-              activeOpacity={0.85}
-            >
-              <MaterialCommunityIcons name="refresh" size={18} color={theme.tint} />
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity
+                style={styles.headerRefreshButton}
+                onPress={() => setIntroVisible(true)}
+                activeOpacity={0.85}
+              >
+                <MaterialCommunityIcons name="help-circle-outline" size={18} color={theme.tint} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.headerRefreshButton}
+                onPress={handleRefreshVibes}
+                activeOpacity={0.85}
+              >
+                <MaterialCommunityIcons name="refresh" size={18} color={theme.tint} />
+              </TouchableOpacity>
+            </View>
           )}
         />
+
+        <VibesIntroModal visible={introVisible} onClose={closeIntro} />
 
         {appliedFilterChips.length > 0 ? (
           <ScrollView
@@ -1280,7 +1326,7 @@ export default function ExploreScreen() {
               {renderSuperlikeBadge()}
               <LinearGradientSafe
                 colors={[theme.accent, theme.backgroundSubtle]}
-                style={[styles.superlikeButton, !isLinearGradientAvailable && styles.superlikeFallback]}
+                style={[styles.superlikeButton, !isLinearGradientAvailable() && styles.superlikeFallback]}
               >
                 <TouchableOpacity
                   style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}

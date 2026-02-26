@@ -7,7 +7,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { VideoView, useVideoPlayer } from 'expo-video';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Video as VideoCompressor, getRealPath } from 'react-native-compressor';
 import {
     ActivityIndicator,
@@ -246,7 +246,7 @@ const InlineVideoPreview = ({ uri, shouldPlay, styles }: { uri: string; shouldPl
 };
 
 export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEditModalProps) {
-  const { user, profile, updateProfile } = useAuth();
+  const { user, profile, updateProfile, refreshProfile } = useAuth();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
@@ -269,6 +269,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const [videoUploadStage, setVideoUploadStage] = useState<string | null>(null);
   const [videoUploadProgress, setVideoUploadProgress] = useState<number | null>(null);
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
+  const [visibilitySaving, setVisibilitySaving] = useState(false);
   
   // Original dropdown states
   const [showHeightPicker, setShowHeightPicker] = useState(false);
@@ -361,8 +362,16 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   }, [formData?.languages_spoken, selectedLanguages]);
 
   // Load current profile data when modal opens
+  const hydratedFromProfileRef = useRef(false);
   useEffect(() => {
-    if (visible && profile) {
+    if (!visible) {
+      hydratedFromProfileRef.current = false;
+      return;
+    }
+
+    // Only hydrate once per open so background refreshes don't clobber in-progress edits.
+    if (visible && profile && !hydratedFromProfileRef.current) {
+      hydratedFromProfileRef.current = true;
       setStatusMessage(null);
       setStatusTone(null);
       const normalizedLanguages = normalizeLanguages(
@@ -405,24 +414,27 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       // Set selected languages for multi-select
       setSelectedLanguages(filteredLanguages);
     }
-    
-    // Load available interests and user's current interests when modal opens
-    if (visible) {
-      fetchAvailableInterests();
-      fetchUserInterests();
-      const loadDistanceUnit = async () => {
-        try {
-          const stored = await AsyncStorage.getItem(DISTANCE_UNIT_KEY);
-          if (stored === 'auto' || stored === 'km' || stored === 'mi') {
-            setDistanceUnit(stored);
-          } else {
-            setDistanceUnit('auto');
-          }
-        } catch {}
-      };
-      void loadDistanceUnit();
-    }
   }, [visible, profile]);
+
+  // One-time side loads per open (avoid clobbering edits if profile refreshes while modal is open).
+  useEffect(() => {
+    if (!visible) return;
+
+    fetchAvailableInterests();
+    fetchUserInterests();
+
+    const loadDistanceUnit = async () => {
+      try {
+        const stored = await AsyncStorage.getItem(DISTANCE_UNIT_KEY);
+        if (stored === 'auto' || stored === 'km' || stored === 'mi') {
+          setDistanceUnit(stored);
+        } else {
+          setDistanceUnit('auto');
+        }
+      } catch {}
+    };
+    void loadDistanceUnit();
+  }, [visible]);
 
   useEffect(() => {
     let mounted = true;
@@ -461,9 +473,103 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     }));
   };
 
+  const resolveProfileId = async (): Promise<string | null> => {
+    const pid = (profile as any)?.id as string | undefined;
+    if (pid) return pid;
+    if (!user?.id) return null;
+
+    // Fallback for edge cases where the auth context hasn't loaded profile yet.
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (error) return null;
+    return (data as any)?.id ?? null;
+  };
+
+  const persistDiscoverableInVibes = async (next: boolean) => {
+    setVisibilitySaving(true);
+    try {
+      const pid = await resolveProfileId();
+      if (!pid) throw new Error('Profile not loaded');
+      console.log('[ProfileEditModal] persistDiscoverableInVibes:start', { pid, next });
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({ discoverable_in_vibes: next })
+        .eq('id', pid)
+        .select('id, discoverable_in_vibes, profile_completed, matchmaking_mode')
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) throw new Error('No profile row updated (RLS or id mismatch)');
+      console.log('[ProfileEditModal] persistDiscoverableInVibes:ok', data);
+
+      // Ensure the UI reflects server-side triggers (profile_completed guard, matchmaking_mode, etc).
+      await refreshProfile();
+    } catch (e) {
+      console.error('Failed to persist discoverable_in_vibes', e);
+      // Revert optimistic UI if the server refused the change.
+      setFormData((prev) => ({ ...prev, discoverable_in_vibes: !next }));
+    } finally {
+      setVisibilitySaving(false);
+    }
+  };
+
+  const persistMatchmakingMode = async (next: boolean) => {
+    setVisibilitySaving(true);
+    try {
+      const pid = await resolveProfileId();
+      if (!pid) throw new Error('Profile not loaded');
+
+      // Preserve current UX: enabling matchmaking hides you; disabling shows you.
+      const nextDiscoverable = next ? false : true;
+
+      console.log('[ProfileEditModal] persistMatchmakingMode:start', {
+        pid,
+        next,
+        nextDiscoverable,
+      });
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({
+          matchmaking_mode: next,
+          discoverable_in_vibes: nextDiscoverable,
+        })
+        .eq('id', pid)
+        .select('id, matchmaking_mode, discoverable_in_vibes, profile_completed')
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data) throw new Error('No profile row updated (RLS or id mismatch)');
+
+      console.log('[ProfileEditModal] persistMatchmakingMode:ok', data);
+
+      setFormData((prev) => ({
+        ...prev,
+        matchmaking_mode: Boolean((data as any).matchmaking_mode),
+        discoverable_in_vibes: Boolean((data as any).discoverable_in_vibes),
+      }));
+
+      await refreshProfile();
+    } catch (e) {
+      console.error('Failed to persist matchmaking_mode', e);
+      // Revert optimistic UI if the server refused the change.
+      setFormData((prev) => ({
+        ...prev,
+        matchmaking_mode: !next,
+        discoverable_in_vibes: next ? true : false,
+      }));
+    } finally {
+      setVisibilitySaving(false);
+    }
+  };
+
   // Load user's current interests from profile_interests table
   const fetchUserInterests = async () => {
-    if (!user?.id) return;
+    const pid = await resolveProfileId();
+    if (!pid) return;
     
     try {
       const { data, error } = await supabase
@@ -473,7 +579,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
             name
           )
         `)
-        .eq('profile_id', user.id);
+        .eq('profile_id', pid);
       
       if (error) throw error;
       
@@ -486,14 +592,15 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
 
   // Save user interests to profile_interests table
   const saveUserInterests = async (interests: string[]) => {
-    if (!user?.id) return;
+    const pid = await resolveProfileId();
+    if (!pid) return;
     
     try {
       // First, delete existing interests for this user
       await supabase
         .from('profile_interests')
         .delete()
-        .eq('profile_id', user.id);
+        .eq('profile_id', pid);
       
       // Then insert new interests
       if (interests.length > 0) {
@@ -507,7 +614,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         
         // Insert profile_interests relationships
         const profileInterests = interestData?.map(interest => ({
-          profile_id: user.id,
+          profile_id: pid,
           interest_id: interest.id
         })) || [];
         
@@ -1085,8 +1192,6 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         avatar_url: formData.avatar_url,
         photos: formData.photos,
         profile_video: formData.profile_video && formData.profile_video.trim() ? formData.profile_video.trim() : null,
-        matchmaking_mode: Boolean(formData.matchmaking_mode),
-        discoverable_in_vibes: Boolean(formData.discoverable_in_vibes),
         // Preserve existing required fields to avoid null constraint violations
         gender: profile?.gender || 'OTHER',
         age: profile?.age || 18,
@@ -1202,9 +1307,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       }
 
       // Save interests separately through profile_interests table
-      if (selectedInterests.length > 0) {
-        await saveUserInterests(selectedInterests);
-      }
+      await saveUserInterests(selectedInterests);
 
       Alert.alert('Success', 'Profile updated successfully!');
       onSave(updateData);
@@ -1655,28 +1758,31 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                 </Text>
               </View>
               <TouchableOpacity
-                onPress={() =>
-                  setFormData((prev) => {
-                    const next = !prev.matchmaking_mode;
-                    return {
-                      ...prev,
-                      matchmaking_mode: next,
-                      discoverable_in_vibes: next ? false : true,
-                    };
-                  })
-                }
+                disabled={visibilitySaving}
+                onPress={() => {
+                  const next = !formData.matchmaking_mode;
+                  const nextDiscoverable = next ? false : true;
+                  setFormData((prev) => ({
+                    ...prev,
+                    matchmaking_mode: next,
+                    discoverable_in_vibes: nextDiscoverable,
+                  }));
+                  void persistMatchmakingMode(next);
+                }}
                 style={[
                   styles.togglePill,
                   formData.matchmaking_mode ? styles.togglePillActive : null,
+                  visibilitySaving ? styles.togglePillDisabled : null,
                 ]}
               >
                 <Text
                   style={[
                     styles.toggleText,
                     formData.matchmaking_mode ? styles.toggleTextActive : null,
+                    visibilitySaving ? styles.toggleTextDisabled : null,
                   ]}
                 >
-                  {formData.matchmaking_mode ? 'On' : 'Off'}
+                  {visibilitySaving ? 'Saving...' : formData.matchmaking_mode ? 'On' : 'Off'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -1689,28 +1795,29 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                 </Text>
               </View>
               <TouchableOpacity
-                disabled={formData.matchmaking_mode}
-                onPress={() =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    discoverable_in_vibes: !prev.discoverable_in_vibes,
-                  }))
-                }
+                disabled={formData.matchmaking_mode || visibilitySaving}
+                onPress={() => {
+                  const next = !formData.discoverable_in_vibes;
+                  setFormData((prev) => ({ ...prev, discoverable_in_vibes: next }));
+                  void persistDiscoverableInVibes(next);
+                }}
                 style={[
                   styles.togglePill,
                   formData.discoverable_in_vibes ? styles.togglePillActive : null,
-                  formData.matchmaking_mode ? styles.togglePillDisabled : null,
+                  (formData.matchmaking_mode || visibilitySaving) ? styles.togglePillDisabled : null,
                 ]}
               >
                 <Text
                   style={[
                     styles.toggleText,
                     formData.discoverable_in_vibes ? styles.toggleTextActive : null,
-                    formData.matchmaking_mode ? styles.toggleTextDisabled : null,
+                    (formData.matchmaking_mode || visibilitySaving) ? styles.toggleTextDisabled : null,
                   ]}
                 >
                   {formData.matchmaking_mode
                     ? 'Hidden'
+                    : visibilitySaving
+                      ? 'Saving...'
                     : formData.discoverable_in_vibes
                       ? 'On'
                       : 'Off'}

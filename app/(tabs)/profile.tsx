@@ -471,7 +471,7 @@ export default function ProfileScreen() {
 
   // Fetch user interests from profile_interests table
   const fetchUserInterests = async () => {
-    const pid = profile?.id ?? user?.id ?? null;
+    const pid = profile?.id ?? null;
     if (!pid) return;
     
     try {

@@ -27,12 +27,13 @@ function hasNativeLinearGradient(): boolean {
   }
   return false;
 }
-const _isLinearGradientAvailable = hasNativeLinearGradient();
 
-export const isLinearGradientAvailable = _isLinearGradientAvailable;
+// Evaluate at call-time so we don't get a false-negative during module init
+// (UIManager may not be ready yet on some RN/Expo setups).
+export const isLinearGradientAvailable = (): boolean => hasNativeLinearGradient();
 
 export default function LinearGradientSafe(props: ViewProps & { colors?: string[]; start?: [number, number]; end?: [number, number] }) {
-  if (!_isLinearGradientAvailable) {
+  if (!isLinearGradientAvailable()) {
     return <View {...props} />;
   }
 

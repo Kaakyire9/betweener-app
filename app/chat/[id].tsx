@@ -1,4 +1,5 @@
 import MomentViewer from "@/components/MomentViewer";
+import ChatSafetyModal from "@/components/chat/ChatSafetyModal";
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useMoments } from "@/hooks/useMoments";
@@ -82,6 +83,7 @@ const BLOCKED_BY_ME = 'blocked_by_me';
 const BLOCKED_BY_THEM = 'blocked_me';
 const HEADER_HINT_STORAGE_KEY = 'chat_header_longpress_hint_v1';
 const CHAT_PREFS_STORAGE_KEY = 'chat_header_prefs_v1';
+const CHAT_SAFETY_SEEN_KEY = 'chat_safety_seen_v1';
 const MESSAGE_SELECT_FIELDS = 'id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,edited_at,reply_to_message_id,is_view_once,encrypted_media,encrypted_media_path,encrypted_key_sender,encrypted_key_receiver,encrypted_key_nonce,encrypted_media_nonce,encrypted_media_alg,encrypted_media_mime,encrypted_media_size';
 const MAP_STYLE_LIGHT = [
   { elementType: 'geometry', stylers: [{ color: '#F3E5D8' }] },
@@ -1752,7 +1754,10 @@ export default function ConversationScreen() {
   const hasPlacesKey = Boolean(GOOGLE_MAPS_WEB_API_KEY);
   
   // Get conversation data from params
-  const conversationId = params.id as string;
+  const routeId = params.id as string;
+  const [peerUserId, setPeerUserId] = useState<string>(routeId);
+  const [peerProfileId, setPeerProfileId] = useState<string>(routeId);
+  const [peerResolved, setPeerResolved] = useState(false);
   const userName = params.userName as string;
   const userAvatar = params.userAvatar as string;
   const prefillParam = typeof (params as any)?.prefill === 'string' ? String((params as any).prefill) : '';
@@ -1768,6 +1773,62 @@ export default function ConversationScreen() {
       : null,
   });
 
+  // Resolve peer ids: many entry points pass profile.id, but chat tables use auth.users ids.
+  // Keep both in state so we can query messages by user id and still open profile-view by profile id.
+  useEffect(() => {
+    setPeerUserId(routeId);
+    setPeerProfileId(routeId);
+    setPeerResolved(false);
+  }, [routeId]);
+
+  useEffect(() => {
+    if (!routeId) return;
+    let cancelled = false;
+    const t = setTimeout(() => {
+      // If we couldn't resolve (profile row missing or slow network), assume routeId is an auth user id.
+      if (!cancelled) setPeerResolved(true);
+    }, 900);
+    (async () => {
+      try {
+        // 1) routeId is a profile id
+        const byProfile = await supabase
+          .from('profiles')
+          .select('id,user_id')
+          .eq('id', routeId)
+          .maybeSingle();
+        if (!cancelled && byProfile.data?.user_id) {
+          setPeerProfileId(String((byProfile.data as any).id));
+          setPeerUserId(String((byProfile.data as any).user_id));
+          setPeerResolved(true);
+          clearTimeout(t);
+          return;
+        }
+
+        // 2) routeId is an auth user id
+        const byUser = await supabase
+          .from('profiles')
+          .select('id,user_id')
+          .eq('user_id', routeId)
+          .maybeSingle();
+        if (!cancelled && byUser.data?.user_id) {
+          setPeerProfileId(String((byUser.data as any).id));
+          setPeerUserId(String((byUser.data as any).user_id));
+          setPeerResolved(true);
+          clearTimeout(t);
+        }
+      } catch (_e) {
+        // best-effort; fall back to routeId
+      }
+    })();
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [routeId]);
+
+  // For historical readability, most of this screen uses `conversationId` for the peer auth user id.
+  const conversationId = peerUserId;
+
   const momentUsersWithContent = useMemo(
     () => momentUsers.filter((entry) => entry.moments.length > 0),
     [momentUsers]
@@ -1780,6 +1841,8 @@ export default function ConversationScreen() {
   }, [conversationId, momentUsers]);
 
   const [messages, setMessages] = useState<MessageType[]>([]);
+  const [messagesLoaded, setMessagesLoaded] = useState(false);
+  const [chatSafetyVisible, setChatSafetyVisible] = useState(false);
   const [peerOnline, setPeerOnline] = useState(initialOnline);
   const [peerLastSeen, setPeerLastSeen] = useState<Date | null>(initialLastSeen);
   const [peerProfile, setPeerProfile] = useState<{ id: string; user_id: string; verification_level?: number | null } | null>(null);
@@ -1792,6 +1855,15 @@ export default function ConversationScreen() {
   const [inputText, setInputText] = useState('');
   const prefillConsumedRef = useRef(false);
   const [isTyping, setIsTyping] = useState(false);
+  const chatSafetyStorageKey = useMemo(
+    () => (user?.id ? `${CHAT_SAFETY_SEEN_KEY}:${user.id}` : null),
+    [user?.id],
+  );
+
+  useEffect(() => {
+    // When switching threads, allow the safety prompt to re-evaluate (but it will still be deduped via AsyncStorage).
+    setMessagesLoaded(false);
+  }, [routeId]);
 
   useEffect(() => {
     if (prefillConsumedRef.current) return;
@@ -2565,7 +2637,7 @@ export default function ConversationScreen() {
   }, [hiddenMessageIds]);
 
   useEffect(() => {
-    if (!chatPrefsLoaded || !conversationId) return;
+    if (!peerResolved || !chatPrefsLoaded || !conversationId) return;
     const persistPrefs = async () => {
       try {
         const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
@@ -2596,7 +2668,7 @@ export default function ConversationScreen() {
       }
     };
     void persistPrefs();
-  }, [chatPrefsLoaded, conversationId, isChatMuted, isChatPinned, user?.id]);
+  }, [peerResolved, chatPrefsLoaded, conversationId, isChatMuted, isChatPinned, user?.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -4077,6 +4149,7 @@ export default function ConversationScreen() {
     if (error) {
       console.log('[chat] fetch messages error', error);
       setMessages([]);
+      setMessagesLoaded(true);
       return;
     }
 
@@ -4090,6 +4163,7 @@ export default function ConversationScreen() {
     const combined = [...ordered, ...systemRows].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
     const linked = linkReplies(combined);
     setMessages(linked);
+    setMessagesLoaded(true);
     void syncMessageReactions(linked.map((msg) => msg.id).filter((id) => !id.startsWith('system:')));
     const viewOnceIds = linked.filter((msg) => msg.isViewOnce).map((msg) => msg.id);
     void syncViewOnceStatus(viewOnceIds);
@@ -4110,6 +4184,35 @@ export default function ConversationScreen() {
       .eq('sender_id', conversationId)
       .eq('is_read', false);
   }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, syncMessageReactions, syncViewOnceStatus, user?.id]);
+
+  useEffect(() => {
+    if (!messagesLoaded) return;
+    if (!chatSafetyStorageKey) return;
+    if (chatSafetyVisible) return;
+
+    // Only prompt when the thread has no real user messages yet (system messages don't count as a conversation).
+    const hasUserMessages = messages.some((m) => m.type !== 'system' && !String(m.id).startsWith('system:'));
+    if (hasUserMessages) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const seen = await AsyncStorage.getItem(chatSafetyStorageKey);
+        if (cancelled || seen) return;
+        setChatSafetyVisible(true);
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [chatSafetyStorageKey, chatSafetyVisible, messages, messagesLoaded]);
+
+  const dismissChatSafety = useCallback(() => {
+    setChatSafetyVisible(false);
+    if (chatSafetyStorageKey) {
+      AsyncStorage.setItem(chatSafetyStorageKey, '1').catch(() => {});
+    }
+  }, [chatSafetyStorageKey]);
 
   const loadEarlier = useCallback(async () => {
     if (!user?.id || !conversationId || loadingEarlier || !oldestTimestamp) return;
@@ -4915,6 +5018,10 @@ export default function ConversationScreen() {
       await submitEditMessage();
       return;
     }
+    if (!peerResolved) {
+      Alert.alert('Loading chat', 'One moment - we are setting up this conversation.');
+      return;
+    }
     if (isChatBlocked) {
       Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
       return;
@@ -4988,7 +5095,7 @@ export default function ConversationScreen() {
       Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
       return;
     }
-    if (!user?.id || !conversationId) return;
+    if (!peerResolved || !user?.id || !conversationId) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const tempId = `temp-sticker-${Date.now()}`;
     setMessages((prev) => [
@@ -5043,7 +5150,7 @@ export default function ConversationScreen() {
         )
       )
     );
-  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
+  }, [peerResolved, conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
 
   const addReaction = useCallback(async (messageId: string, emoji: string) => {
     if (!user?.id) return;
@@ -6119,12 +6226,12 @@ export default function ConversationScreen() {
   }, []);
 
   const handleViewProfile = useCallback(() => {
-    if (!conversationId) return;
+    if (!peerProfileId) return;
     router.push({
       pathname: '/profile-view',
-      params: { profileId: conversationId },
+      params: { profileId: peerProfileId },
     });
-  }, [conversationId]);
+  }, [peerProfileId]);
 
   const dismissHeaderHint = useCallback(() => {
     headerHintDismissedRef.current = true;
@@ -6873,6 +6980,7 @@ export default function ConversationScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <ChatSafetyModal visible={chatSafetyVisible} onGotIt={dismissChatSafety} />
       <View style={styles.reconnectToastHost} pointerEvents="none">
         <Animated.View
           style={[
