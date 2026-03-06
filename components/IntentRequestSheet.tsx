@@ -1,5 +1,6 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -40,6 +41,8 @@ export default function IntentRequestSheet({
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const { profile } = useAuth();
+  const myProfileId = profile?.id ? String(profile.id) : null;
   const [selectedType, setSelectedType] = useState<IntentRequestType>('connect');
   const [message, setMessage] = useState('');
   const [suggestedPlace, setSuggestedPlace] = useState('');
@@ -69,9 +72,36 @@ export default function IntentRequestSheet({
       Alert.alert('Request', 'Select a profile to send a request.');
       return;
     }
+    if (!myProfileId) {
+      Alert.alert('Request', 'Please finish setting up your profile and try again.');
+      return;
+    }
     setSubmitting(true);
     try {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+      // Premium guardrail: only 1 pending request per pair (any direction/type).
+      // We still enforce this server-side, but checking here prevents confusing "success" states and double-taps.
+      const { data: pendingBetween, error: pendingErr } = await supabase
+        .from('intent_requests')
+        .select('id,actor_id,recipient_id,type,expires_at,status')
+        .eq('status', 'pending')
+        .gt('expires_at', new Date().toISOString())
+        .or(
+          `and(actor_id.eq.${myProfileId},recipient_id.eq.${recipientId}),and(actor_id.eq.${recipientId},recipient_id.eq.${myProfileId})`,
+        )
+        .limit(1);
+      if (pendingErr) throw pendingErr;
+      if (Array.isArray(pendingBetween) && pendingBetween.length > 0) {
+        const existing = pendingBetween[0] as any;
+        const incoming = String(existing?.actor_id) === String(recipientId);
+        const msg = incoming
+          ? `You already have a request from ${recipientName || 'this person'}. Open Intent to respond.`
+          : `You've already placed a request to ${recipientName || 'this person'}. Please wait for their response.`;
+        Alert.alert('Request pending', msg);
+        return;
+      }
+
       const { data, error } = await supabase.rpc('rpc_create_intent_request', {
         p_recipient_id: recipientId,
         p_type: selectedType,
@@ -99,7 +129,16 @@ export default function IntentRequestSheet({
           ? (err as any).details
           : null;
       const msg = err instanceof Error ? err.message : supaMessage || 'Please try again.';
-      Alert.alert('Request failed', supaDetails ? `${msg}\n\n${supaDetails}` : msg);
+      // Friendly UX for common guardrail errors.
+      const friendly =
+        msg && /already have a request from them|open intent to respond/i.test(msg)
+          ? `You already have a request from ${recipientName || 'this person'}. Open Intent to respond.`
+          : msg && /already sent|already placed|request pending/i.test(msg)
+            ? `You've already placed a request to ${recipientName || 'this person'}. Please wait for their response.`
+            : msg && /already matched/i.test(msg)
+              ? 'You are already matched. Continue the conversation in chat.'
+              : null;
+      Alert.alert('Request failed', friendly ?? (supaDetails ? `${msg}\n\n${supaDetails}` : msg));
       // Surface the full object for debugging/telemetry.
       console.error('[intent] rpc_create_intent_request failed', err);
     } finally {

@@ -216,7 +216,7 @@ type IntentRequestSummary = {
   type: 'connect' | 'date_request' | 'like_with_note' | 'circle_intro';
   message?: string | null;
   expires_at: string;
-  status: 'pending' | 'accepted' | 'passed' | 'expired' | 'cancelled';
+  status: 'pending' | 'accepted' | 'passed' | 'expired' | 'cancelled' | 'matched';
 };
 
 type MessageEditRow = {

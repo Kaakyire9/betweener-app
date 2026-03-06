@@ -3,8 +3,9 @@ import * as Linking from "expo-linking";
 import { Slot, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useRef, useState } from "react";
-import { Animated, StyleSheet, Text, View } from "react-native";
+import { Animated, Easing, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { SafeAreaView } from "react-native-safe-area-context";
 import * as Notifications from "expo-notifications";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -30,20 +31,30 @@ function RootLayout() {
 
   const colorScheme = useColorScheme();
 
-  const [showSplash, _setShowSplash] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
   const [allowRender, setAllowRender] = useState(false);
 
+  const splashOpacity = useRef(new Animated.Value(1)).current;
+  const splashShift = useRef(new Animated.Value(0)).current;
+  const ambienceOpacity = useRef(new Animated.Value(0)).current;
+
   // Logo animations
-  const logoOpacity = useRef(new Animated.Value(0)).current;
-  const logoScale = useRef(new Animated.Value(0.92)).current;
+  const logoScale = useRef(new Animated.Value(0.94)).current;
+  const logoFloat = useRef(new Animated.Value(0)).current;
+  const frameOpacity = useRef(new Animated.Value(0)).current;
 
   // Text animations
   const textOpacity = useRef(new Animated.Value(0)).current;
-  const textTranslate = useRef(new Animated.Value(8)).current;
+  const textTranslate = useRef(new Animated.Value(22)).current;
 
-  // Glow effect
+  // Glow and accent effects
   const glowOpacity = useRef(new Animated.Value(0)).current;
-  const glowScale = useRef(new Animated.Value(0.9)).current;
+  const glowScale = useRef(new Animated.Value(0.76)).current;
+  const shimmerTranslate = useRef(new Animated.Value(-240)).current;
+  const footerOpacity = useRef(new Animated.Value(0)).current;
+  const footerTranslate = useRef(new Animated.Value(18)).current;
+  const footerLineScale = useRef(new Animated.Value(0.3)).current;
+  const orbDrift = useRef(new Animated.Value(0)).current;
 
   // Handle deep links
   useEffect(() => {
@@ -99,11 +110,11 @@ function RootLayout() {
   useEffect(() => {
     // Same reasoning as deep links: don't let a notification handler crash a release build.
     try {
-      const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      const handleResponse = (response: Notifications.NotificationResponse) => {
         try {
           const action = response.actionIdentifier;
           const data = response.notification.request.content.data as Record<string, any> | undefined;
-          const type = data?.type;
+          const pushType = data?.type;
 
           // Category actions: treat OPEN_* the same as a normal tap.
           const isDefaultTap = action === Notifications.DEFAULT_ACTION_IDENTIFIER;
@@ -113,7 +124,7 @@ function RootLayout() {
             return;
           }
 
-          if (type === "message" || type === "message_reaction") {
+          if (pushType === "message" || pushType === "message_reaction") {
             const chatId = data?.profile_id || data?.reactor_id || data?.user_id;
             if (chatId) {
               router.push({
@@ -126,6 +137,21 @@ function RootLayout() {
               });
               return;
             }
+          }
+
+          // Intent reminders: route to the Intent inbox (actionable view) so users can accept/pass quickly.
+          if (pushType === "intent_expiring_soon" || pushType === "intent_last_chance") {
+            const requestId = data?.request_id || data?.requestId;
+            const requestType = data?.request_type || data?.requestType;
+            router.push({
+              pathname: "/(tabs)/intent",
+              params: {
+                requestId: requestId ? String(requestId) : "",
+                // Reuse the existing `?type=` deep-link behavior in IntentScreen.
+                type: requestType ? String(requestType) : "",
+              },
+            });
+            return;
           }
 
           const route = typeof data?.route === "string" ? String(data.route) : "";
@@ -141,7 +167,16 @@ function RootLayout() {
         } catch (e) {
           captureException(e, { where: "Notifications.responseListener" });
         }
-      });
+      };
+
+      // Handle taps that launched the app from a terminated state.
+      Notifications.getLastNotificationResponseAsync()
+        .then((initial) => {
+          if (initial) handleResponse(initial);
+        })
+        .catch((e) => captureException(e, { where: "Notifications.getLastNotificationResponseAsync" }));
+
+      const subscription = Notifications.addNotificationResponseReceivedListener(handleResponse);
 
       return () => {
         try {
@@ -171,7 +206,210 @@ function RootLayout() {
     return () => clearTimeout(timer);
   }, [fontsLoaded]);
 
+  useEffect(() => {
+    if (!allowRender || !showSplash) return;
+
+    const entrance = Animated.parallel([
+      Animated.timing(ambienceOpacity, {
+        toValue: 1,
+        duration: 720,
+        delay: 120,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(frameOpacity, {
+        toValue: 1,
+        duration: 700,
+        delay: 140,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(glowOpacity, {
+        toValue: 1,
+        duration: 900,
+        delay: 180,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(glowScale, {
+        toValue: 1,
+        duration: 1100,
+        delay: 140,
+        easing: Easing.out(Easing.exp),
+        useNativeDriver: true,
+      }),
+      Animated.spring(logoScale, {
+        toValue: 1,
+        friction: 8,
+        tension: 44,
+        useNativeDriver: true,
+      }),
+      Animated.timing(textOpacity, {
+        toValue: 1,
+        duration: 680,
+        delay: 420,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(textTranslate, {
+        toValue: 0,
+        duration: 680,
+        delay: 420,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(footerOpacity, {
+        toValue: 1,
+        duration: 620,
+        delay: 760,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(footerTranslate, {
+        toValue: 0,
+        duration: 620,
+        delay: 760,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(footerLineScale, {
+        toValue: 1,
+        duration: 720,
+        delay: 620,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]);
+
+    const floatLoop = Animated.loop(
+      Animated.sequence([
+        Animated.parallel([
+          Animated.timing(logoFloat, {
+            toValue: 1,
+            duration: 2200,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+          Animated.timing(glowScale, {
+            toValue: 1.08,
+            duration: 2200,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.parallel([
+          Animated.timing(logoFloat, {
+            toValue: 0,
+            duration: 2200,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+          Animated.timing(glowScale, {
+            toValue: 1,
+            duration: 2200,
+            easing: Easing.inOut(Easing.sin),
+            useNativeDriver: true,
+          }),
+        ]),
+      ])
+    );
+
+    const orbLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(orbDrift, {
+          toValue: 1,
+          duration: 3600,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+        Animated.timing(orbDrift, {
+          toValue: 0,
+          duration: 3600,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+
+    const shimmerLoop = Animated.loop(
+      Animated.timing(shimmerTranslate, {
+        toValue: 240,
+        duration: 1700,
+        delay: 620,
+        easing: Easing.inOut(Easing.quad),
+        useNativeDriver: true,
+      })
+    );
+
+    entrance.start();
+    floatLoop.start();
+    orbLoop.start();
+    shimmerLoop.start();
+
+    const exitTimer = setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(splashOpacity, {
+          toValue: 0,
+          duration: 480,
+          easing: Easing.inOut(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(splashShift, {
+          toValue: -12,
+          duration: 480,
+          easing: Easing.inOut(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start(({ finished }) => {
+        if (finished) {
+          setShowSplash(false);
+        }
+      });
+    }, 3400);
+
+    return () => {
+      clearTimeout(exitTimer);
+      entrance.stop();
+      floatLoop.stop();
+      orbLoop.stop();
+      shimmerLoop.stop();
+    };
+  }, [
+    ambienceOpacity,
+    frameOpacity,
+    allowRender,
+    footerLineScale,
+    footerOpacity,
+    footerTranslate,
+    glowOpacity,
+    glowScale,
+    logoFloat,
+    logoScale,
+    orbDrift,
+    shimmerTranslate,
+    showSplash,
+    splashOpacity,
+    splashShift,
+    textOpacity,
+    textTranslate,
+  ]);
+
   if (!allowRender) return null;
+
+  const logoLift = logoFloat.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -10],
+  });
+
+  const orbLift = orbDrift.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -18],
+  });
+
+  const orbDrop = orbDrift.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 16],
+  });
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -190,65 +428,176 @@ function RootLayout() {
 
           {showSplash && (
             <View style={styles.splashOverlay}>
-              {/* Classic luxury background */}
-              <LinearGradient
-                colors={["#070A12", "#0B1220", "#0A1020", "#070A12"]}
-                start={{ x: 0.2, y: 0 }}
-                end={{ x: 0.8, y: 1 }}
-                style={StyleSheet.absoluteFill}
-              />
-
-              {/* Vignette */}
-              <View style={styles.vignette} pointerEvents="none" />
-
-              {/* Glow */}
               <Animated.View
-                pointerEvents="none"
                 style={[
-                  styles.glow,
+                  styles.splashScene,
                   {
-                    opacity: glowOpacity,
-                    transform: [{ scale: glowScale }],
+                    opacity: splashOpacity,
+                    transform: [{ translateY: splashShift }],
                   },
                 ]}
               >
                 <LinearGradient
-                  colors={[
-                    "rgba(236,72,153,0.55)",
-                    "rgba(99,102,241,0.18)",
-                    "rgba(0,0,0,0)",
-                  ]}
-                  start={{ x: 0.2, y: 0.15 }}
-                  end={{ x: 0.85, y: 0.9 }}
+                  colors={["#03060F", "#09111F", "#101A2E", "#05070D"]}
+                  start={{ x: 0.08, y: 0 }}
+                  end={{ x: 0.92, y: 1 }}
                   style={StyleSheet.absoluteFill}
                 />
-              </Animated.View>
-
-              {/* Logo + Name */}
-              <View style={styles.center}>
-                <Animated.Image
-                  source={require("../assets/images/splash-icon.png")}
-                  resizeMode="contain"
+                <Animated.View
+                  pointerEvents="none"
                   style={[
-                    styles.logo,
+                    styles.orbPrimary,
                     {
-                      opacity: logoOpacity,
-                      transform: [{ scale: logoScale }],
+                      opacity: ambienceOpacity,
+                      transform: [{ translateY: orbLift }],
                     },
                   ]}
-                />
-
-                <Animated.View
-                  style={{
-                    opacity: textOpacity,
-                    transform: [{ translateY: textTranslate }],
-                    alignItems: "center",
-                  }}
                 >
-                  <Text style={styles.name}>Betweener</Text>
-                  <View style={styles.underline} />
+                  <LinearGradient
+                    colors={["rgba(46,196,182,0.34)", "rgba(46,196,182,0)"]}
+                    start={{ x: 0.3, y: 0.2 }}
+                    end={{ x: 0.8, y: 0.95 }}
+                    style={StyleSheet.absoluteFill}
+                  />
                 </Animated.View>
-              </View>
+                <Animated.View
+                  pointerEvents="none"
+                  style={[
+                    styles.orbSecondary,
+                    {
+                      opacity: ambienceOpacity,
+                      transform: [{ translateY: orbDrop }],
+                    },
+                  ]}
+                >
+                  <LinearGradient
+                    colors={["rgba(124,58,237,0.24)", "rgba(251,191,36,0)"]}
+                    start={{ x: 0.15, y: 0.15 }}
+                    end={{ x: 0.9, y: 0.85 }}
+                    style={StyleSheet.absoluteFill}
+                  />
+                </Animated.View>
+                <View style={styles.vignette} pointerEvents="none" />
+
+                <SafeAreaView style={styles.splashShell}>
+                  <View style={styles.heroSpacer} />
+
+                  <View style={styles.center}>
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        styles.glow,
+                        {
+                          opacity: glowOpacity,
+                          transform: [{ scale: glowScale }],
+                        },
+                      ]}
+                    >
+                      <LinearGradient
+                        colors={[
+                          "rgba(46,196,182,0.34)",
+                          "rgba(124,58,237,0.26)",
+                          "rgba(251,191,36,0.08)",
+                          "rgba(0,0,0,0)",
+                        ]}
+                        start={{ x: 0.18, y: 0.16 }}
+                        end={{ x: 0.86, y: 0.9 }}
+                        style={StyleSheet.absoluteFill}
+                      />
+                    </Animated.View>
+
+                    <View style={styles.logoStage}>
+                      <Animated.View
+                        pointerEvents="none"
+                        style={[
+                          styles.logoFrame,
+                          {
+                            opacity: frameOpacity,
+                            transform: [{ scale: logoScale }, { translateY: logoLift }],
+                          },
+                        ]}
+                      >
+                        <LinearGradient
+                          colors={["rgba(255,255,255,0.14)", "rgba(255,255,255,0.05)"]}
+                          start={{ x: 0.15, y: 0 }}
+                          end={{ x: 0.85, y: 1 }}
+                          style={StyleSheet.absoluteFill}
+                        />
+                      </Animated.View>
+                      <Animated.Image
+                        source={require("../assets/images/foreground-icon.png")}
+                        resizeMode="contain"
+                        style={[
+                          styles.logo,
+                          {
+                            transform: [{ translateY: logoLift }],
+                          },
+                        ]}
+                      />
+                      <Animated.View
+                        pointerEvents="none"
+                        style={[
+                          styles.shimmer,
+                          {
+                            opacity: frameOpacity,
+                            transform: [{ translateX: shimmerTranslate }, { rotate: "18deg" }],
+                          },
+                        ]}
+                      >
+                        <LinearGradient
+                          colors={["rgba(255,255,255,0)", "rgba(255,255,255,0.28)", "rgba(255,255,255,0)"]}
+                          start={{ x: 0, y: 0.5 }}
+                          end={{ x: 1, y: 0.5 }}
+                          style={StyleSheet.absoluteFill}
+                        />
+                      </Animated.View>
+                    </View>
+
+                    <Animated.View
+                      style={[
+                        styles.brandLockup,
+                        {
+                          opacity: textOpacity,
+                          transform: [{ translateY: textTranslate }],
+                        },
+                      ]}
+                    >
+                      <Text style={styles.nameShadow}>Betweener</Text>
+                      <Text style={styles.name}>Betweener</Text>
+                      <View style={styles.underlineWrap}>
+                        <Animated.View
+                          style={[
+                            styles.underline,
+                            {
+                              transform: [{ scaleX: footerLineScale }],
+                            },
+                          ]}
+                        />
+                      </View>
+                    </Animated.View>
+                  </View>
+
+                  <Animated.View
+                    style={[
+                      styles.footer,
+                      {
+                        opacity: footerOpacity,
+                        transform: [{ translateY: footerTranslate }],
+                      },
+                    ]}
+                  >
+                    <Animated.View
+                      style={[
+                        styles.footerLine,
+                        {
+                          transform: [{ scaleX: footerLineScale }],
+                        },
+                      ]}
+                    />
+                    <Text style={styles.footerText}>Nyansapa Ltd, UK</Text>
+                  </Animated.View>
+                </SafeAreaView>
+              </Animated.View>
             </View>
           )}
         </View>
@@ -261,48 +610,153 @@ const styles = StyleSheet.create({
   splashOverlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 9999,
-    justifyContent: "center",
-    alignItems: "center",
+  },
+
+  splashScene: {
+    flex: 1,
+  },
+
+  splashShell: {
+    flex: 1,
+    paddingHorizontal: 28,
+    paddingTop: 18,
+    paddingBottom: 22,
+  },
+
+  heroSpacer: {
+    height: 24,
   },
 
   center: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 24,
-  },
-
-  logo: {
-    width: 120,
-    height: 120,
-    marginBottom: 18,
-  },
-
-  name: {
-    fontSize: 34,
-    fontWeight: "800",
-    letterSpacing: 0.7,
-    color: "rgba(255,255,255,0.92)",
-  },
-
-  underline: {
-    marginTop: 10,
-    width: 64,
-    height: 3,
-    borderRadius: 999,
-    backgroundColor: "rgba(236,72,153,0.7)",
   },
 
   glow: {
     position: "absolute",
+    width: 360,
+    height: 360,
+    borderRadius: 360,
+    overflow: "hidden",
+  },
+
+  vignette: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.22)",
+  },
+
+  orbPrimary: {
+    position: "absolute",
+    top: -80,
+    left: -56,
     width: 280,
     height: 280,
     borderRadius: 280,
     overflow: "hidden",
   },
 
-  vignette: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.18)",
+  orbSecondary: {
+    position: "absolute",
+    right: -42,
+    bottom: 180,
+    width: 260,
+    height: 260,
+    borderRadius: 260,
+    overflow: "hidden",
+  },
+
+  logoStage: {
+    width: 220,
+    height: 220,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+
+  logoFrame: {
+    position: "absolute",
+    width: 212,
+    height: 212,
+    borderRadius: 38,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "rgba(11,18,33,0.52)",
+    shadowColor: "#2EC4B6",
+    shadowOpacity: 0.18,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 10,
+  },
+
+  shimmer: {
+    position: "absolute",
+    top: 4,
+    bottom: 4,
+    width: 110,
+  },
+
+  logo: {
+    width: 176,
+    height: 176,
+  },
+
+  brandLockup: {
+    marginTop: 24,
+    alignItems: "center",
+  },
+
+  nameShadow: {
+    position: "absolute",
+    top: 4,
+    color: "rgba(46,196,182,0.2)",
+    fontSize: 46,
+    fontFamily: "PlayfairDisplay_700Bold",
+    letterSpacing: 1.2,
+  },
+
+  name: {
+    color: "#F7F5EF",
+    fontSize: 46,
+    fontFamily: "PlayfairDisplay_700Bold",
+    letterSpacing: 1.2,
+  },
+
+  underlineWrap: {
+    marginTop: 16,
+    width: 132,
+    alignItems: "center",
+  },
+
+  underline: {
+    width: "100%",
+    height: 3,
+    borderRadius: 999,
+    backgroundColor: "#E7C78D",
+  },
+
+  footer: {
+    alignItems: "center",
+    justifyContent: "flex-end",
+    paddingBottom: 4,
+  },
+
+  footerLine: {
+    width: 96,
+    height: 1,
+    borderRadius: 999,
+    backgroundColor: "rgba(231,199,141,0.7)",
+    marginBottom: 12,
+  },
+
+  footerText: {
+    color: "rgba(255,255,255,0.72)",
+    fontSize: 12,
+    fontFamily: "Manrope_600SemiBold",
+    letterSpacing: 2.2,
+    textTransform: "uppercase",
   },
 
   envBanner: {

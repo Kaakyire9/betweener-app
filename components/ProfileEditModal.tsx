@@ -749,7 +749,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       }
 
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: 'images',
         allowsEditing: true,
         aspect: isAvatar ? [1, 1] : [3, 4],
         quality: 0.8,
@@ -767,7 +767,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const openGallery = async (isAvatar: boolean) => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: 'images',
         allowsEditing: true,
         aspect: isAvatar ? [1, 1] : [3, 4],
         quality: 0.8,
@@ -850,7 +850,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      mediaTypes: 'videos',
       videoMaxDuration: 30,
       allowsEditing: true,
       // Best-effort compression on iOS. Android behavior depends on the picker app.
@@ -871,7 +871,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     }
 
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      mediaTypes: 'videos',
       videoMaxDuration: 30,
       allowsEditing: true,
       videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,

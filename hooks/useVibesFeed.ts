@@ -178,6 +178,8 @@ export default function useVibesFeed({
   const [refreshCount, setRefreshCount] = useState(0);
   const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
   const [swipedTodayIds, setSwipedTodayIds] = useState<Set<string>>(new Set());
+  const [pendingIntentPeerIds, setPendingIntentPeerIds] = useState<Set<string>>(new Set());
+  const [acceptedMatchPeerIds, setAcceptedMatchPeerIds] = useState<Set<string>>(new Set());
   const [watchdogError, setWatchdogError] = useState<Error | null>(null);
   const lastWatchdogLogAtRef = useRef(0);
 
@@ -246,6 +248,68 @@ export default function useVibesFeed({
       }
     };
     void fetchSwipesToday();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, refreshCount]);
+
+  // Remove from the discovery deck any profile with a pending intent interaction
+  // (incoming or outgoing), or an already-accepted match.
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+
+    const fetchIntentPeers = async () => {
+      try {
+        const nowIso = new Date().toISOString();
+        const { data, error } = await supabase
+          .from('intent_requests')
+          .select('actor_id,recipient_id,expires_at,status')
+          .eq('status', 'pending')
+          .gte('expires_at', nowIso)
+          .or(`actor_id.eq.${userId},recipient_id.eq.${userId}`);
+        if (error || !data || cancelled) return;
+
+        const next = new Set<string>();
+        (data as any[]).forEach((row) => {
+          const actor = row?.actor_id ? String(row.actor_id) : null;
+          const recipient = row?.recipient_id ? String(row.recipient_id) : null;
+          if (!actor || !recipient) return;
+          const other = actor === String(userId) ? recipient : actor;
+          if (other) next.add(other);
+        });
+        setPendingIntentPeerIds(next);
+      } catch {
+        // ignore
+      }
+    };
+
+    const fetchAcceptedMatchPeers = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('matches')
+          .select('user1_id,user2_id,status')
+          .in('status', ['PENDING', 'ACCEPTED'])
+          .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
+        if (error || !data || cancelled) return;
+
+        const next = new Set<string>();
+        (data as any[]).forEach((row) => {
+          const a = row?.user1_id ? String(row.user1_id) : null;
+          const b = row?.user2_id ? String(row.user2_id) : null;
+          if (!a || !b) return;
+          const other = a === String(userId) ? b : a;
+          if (other) next.add(other);
+        });
+        setAcceptedMatchPeerIds(next);
+      } catch {
+        // ignore
+      }
+    };
+
+    void fetchIntentPeers();
+    void fetchAcceptedMatchPeers();
+
     return () => {
       cancelled = true;
     };
@@ -326,9 +390,15 @@ export default function useVibesFeed({
     if (swipedTodayIds.size > 0) {
       list = list.filter((m) => !swipedTodayIds.has(String(m.id)));
     }
+    if (pendingIntentPeerIds.size > 0) {
+      list = list.filter((m) => !pendingIntentPeerIds.has(String(m.id)));
+    }
+    if (acceptedMatchPeerIds.size > 0) {
+      list = list.filter((m) => !acceptedMatchPeerIds.has(String(m.id)));
+    }
 
     return list;
-  }, [matches, blockedIds, swipedTodayIds]);
+  }, [matches, blockedIds, swipedTodayIds, pendingIntentPeerIds, acceptedMatchPeerIds]);
 
   const filteredProfiles = useMemo(() => {
     return applyVibesFilters(poolProfiles, filters, { segment, momentUserIds, viewerInterests });

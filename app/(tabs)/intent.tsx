@@ -281,14 +281,28 @@ const isExpired = (item: IntentRequest) => {
   return Number.isNaN(ts) ? false : ts < Date.now();
 };
 
-const typeLabel = (type: IntentRequest['type']) => {
-  switch (type) {
+const typeLabel = (item: Pick<IntentRequest, 'type' | 'message' | 'metadata'>) => {
+  switch (item.type) {
     case 'connect':
       return 'Connect';
     case 'date_request':
       return 'Date';
-    case 'like_with_note':
-      return 'Note';
+    case 'like_with_note': {
+      const meta = (item.metadata || {}) as any;
+      const swipeActionRaw = meta?.swipe_action ?? meta?.swipeAction ?? null;
+      const swipeAction = swipeActionRaw ? String(swipeActionRaw).toUpperCase() : null;
+      const isSwipeLike = meta?.source && String(meta.source).toLowerCase().includes('swipe');
+      const hasUserNote =
+        typeof item.message === 'string' &&
+        item.message.trim().length > 0 &&
+        !isSwipeLike &&
+        // our swipe mirror sometimes uses a canned message; don't treat that as a "note"
+        !/^superliked you\.?$/i.test(item.message.trim());
+
+      if (swipeAction === 'SUPERLIKE') return 'Superlike';
+      // "like_with_note" represents plain likes (from swipes) too.
+      return hasUserNote ? 'Note' : 'Like';
+    }
     case 'circle_intro':
       return 'Circle';
     default:
@@ -296,14 +310,26 @@ const typeLabel = (type: IntentRequest['type']) => {
   }
 };
 
-const typeIcon = (type: IntentRequest['type']) => {
-  switch (type) {
+const typeIcon = (item: Pick<IntentRequest, 'type' | 'message' | 'metadata'>) => {
+  switch (item.type) {
     case 'connect':
       return 'message-plus-outline';
     case 'date_request':
       return 'calendar-heart';
-    case 'like_with_note':
-      return 'text-box-plus-outline';
+    case 'like_with_note': {
+      const meta = (item.metadata || {}) as any;
+      const swipeActionRaw = meta?.swipe_action ?? meta?.swipeAction ?? null;
+      const swipeAction = swipeActionRaw ? String(swipeActionRaw).toUpperCase() : null;
+      const isSwipeLike = meta?.source && String(meta.source).toLowerCase().includes('swipe');
+      const hasUserNote =
+        typeof item.message === 'string' &&
+        item.message.trim().length > 0 &&
+        !isSwipeLike &&
+        !/^superliked you\.?$/i.test(item.message.trim());
+
+      if (swipeAction === 'SUPERLIKE') return 'star-four-points';
+      return hasUserNote ? 'text-box-plus-outline' : 'heart-outline';
+    }
     case 'circle_intro':
       return 'account-group-outline';
     default:
@@ -488,7 +514,13 @@ const chipBaseStyles = StyleSheet.create({
 export default function IntentScreen() {
   const { user, profile } = useAuth();
   const { profileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
-  const params = useLocalSearchParams<{ type?: string }>();
+  const params = useLocalSearchParams<{
+    type?: string;
+    requestId?: string;
+    request_id?: string;
+    requestType?: string;
+    request_type?: string;
+  }>();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
@@ -500,6 +532,9 @@ export default function IntentScreen() {
   const [direction, setDirection] = useState<Direction>('incoming');
   const [filter, setFilter] = useState<Filter>('action');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
+  const listRef = useRef<FlatList<IntentRequest> | null>(null);
+  const [deepLinkRequestId, setDeepLinkRequestId] = useState<string | null>(null);
+  const deepLinkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [profiles, setProfiles] = useState<Record<string, ProfileSnippet>>({});
   const [myInterests, setMyInterests] = useState<string[]>([]);
   const [interestsByProfile, setInterestsByProfile] = useState<Record<string, string[]>>({});
@@ -567,6 +602,29 @@ export default function IntentScreen() {
     if (normalized === 'dates') setTypeFilter('date_request');
     if (normalized === 'circles') setTypeFilter('circle_intro');
   }, [params?.type]);
+
+  useEffect(() => {
+    // Push reminders deep-link here with a request id so we can open the actionable inbox.
+    const rawId =
+      (typeof params?.requestId === 'string' ? params.requestId : null) ??
+      (typeof params?.request_id === 'string' ? params.request_id : null);
+    if (!rawId) return;
+
+    const id = rawId.trim();
+    if (!id) return;
+
+    setDirection('incoming');
+    setFilter('action');
+    setDeepLinkRequestId(id);
+
+    if (deepLinkTimerRef.current) clearTimeout(deepLinkTimerRef.current);
+    deepLinkTimerRef.current = setTimeout(() => setDeepLinkRequestId(null), 4500);
+
+    return () => {
+      if (deepLinkTimerRef.current) clearTimeout(deepLinkTimerRef.current);
+      deepLinkTimerRef.current = null;
+    };
+  }, [params?.requestId, params?.request_id]);
 
   const relevantIds = useMemo(() => {
     const list = direction === 'incoming' ? incoming : sent;
@@ -721,7 +779,7 @@ export default function IntentScreen() {
         return item.status === 'pending' && !isExpired(item);
       }
       if (filter === 'accepted') return item.status === 'accepted';
-      if (filter === 'passed') return item.status === 'passed';
+      if (filter === 'passed') return item.status === 'passed' || item.status === 'matched';
       return true;
     });
   }, [direction, filter, incoming, sent, typeFilter]);
@@ -745,6 +803,38 @@ export default function IntentScreen() {
     list.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
     return list;
   }, [direction, filter, filtered]);
+
+  const onScrollToIndexFailed = useCallback((info: { index: number; averageItemLength: number }) => {
+    // Best-effort fallback: approximate offset and try again after layout settles.
+    listRef.current?.scrollToOffset({
+      offset: Math.max(0, info.averageItemLength * info.index),
+      animated: true,
+    });
+    setTimeout(() => {
+      try {
+        listRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.2 });
+      } catch {
+        // ignore
+      }
+    }, 120);
+  }, []);
+
+  useEffect(() => {
+    if (!deepLinkRequestId) return;
+    if (direction !== 'incoming') return;
+
+    const idx = sortedFiltered.findIndex((item) => item.id === deepLinkRequestId);
+    if (idx < 0) return;
+
+    const t = setTimeout(() => {
+      try {
+        listRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.2 });
+      } catch {
+        // ignore (onScrollToIndexFailed handles most cases)
+      }
+    }, 60);
+    return () => clearTimeout(t);
+  }, [deepLinkRequestId, direction, sortedFiltered]);
 
   const hasPendingIncoming = useMemo(
     () => incoming.some((item) => item.status === 'pending' && !isExpired(item)),
@@ -984,7 +1074,14 @@ export default function IntentScreen() {
       const pendingExpired = item.status === 'pending' && isExpired(item);
       const actionable = item.status === 'pending' && !isExpired(item);
       const canMessage = item.status === 'accepted';
-      const canResend = !isIncoming && item.status !== 'pending' && item.status !== 'accepted';
+      const autoClosedByMatch =
+        (item.status === 'matched' ||
+          (item.status === 'passed' &&
+            (String(((item.metadata || {}) as any)?.auto_closed_by || '').toLowerCase() === 'match' ||
+              Boolean(((item.metadata || {}) as any)?.match_id)))) ||
+        false;
+      const canResend = !isIncoming && item.status !== 'pending' && item.status !== 'accepted' && !autoClosedByMatch;
+      const canOpenChat = !actionable && (canMessage || autoClosedByMatch);
       const statusLabel =
         pendingExpired
           ? 'Expired'
@@ -992,6 +1089,8 @@ export default function IntentScreen() {
             ? (isIncoming ? 'New' : 'Sent')
             : item.status === 'accepted'
               ? 'Accepted'
+              : autoClosedByMatch
+                ? 'Matched'
               : item.status;
       const statusTone =
         item.status === 'accepted'
@@ -1004,9 +1103,11 @@ export default function IntentScreen() {
               ? 'warn'
               : item.status === 'cancelled'
                 ? 'muted'
-                : item.status === 'passed'
-                  ? 'muted'
-                  : 'muted';
+                : autoClosedByMatch
+                  ? 'info'
+                  : item.status === 'passed'
+                    ? 'muted'
+                    : 'muted';
 
       const highlightIncoming = isIncoming && actionable;
       const sameGoals =
@@ -1029,6 +1130,7 @@ export default function IntentScreen() {
               styles.card,
               highlightIncoming && styles.cardIncoming,
               highlightIncoming && urgent && styles.cardIncomingUrgent,
+              deepLinkRequestId && item.id === deepLinkRequestId && styles.cardDeepLinked,
             ]}
             entering={
               reduceMotion
@@ -1055,8 +1157,8 @@ export default function IntentScreen() {
               <Text style={styles.meta}>{location || 'Location hidden'}</Text>
               <View style={styles.badgeRow}>
                 <View style={styles.typeBadge}>
-                  <MaterialCommunityIcons name={typeIcon(item.type)} size={12} color={theme.tint} />
-                  <Text style={styles.typeBadgeText}>{typeLabel(item.type)}</Text>
+                  <MaterialCommunityIcons name={typeIcon(item)} size={12} color={theme.tint} />
+                  <Text style={styles.typeBadgeText}>{typeLabel(item)}</Text>
                 </View>
                 {typeof matchPct === 'number' ? (
                   <View style={styles.compatBadge}>
@@ -1119,6 +1221,13 @@ export default function IntentScreen() {
               <Text style={styles.replyHintText} numberOfLines={1}>
                 {quickReply}
               </Text>
+            </View>
+          ) : null}
+
+          {autoClosedByMatch ? (
+            <View style={styles.matchedHintRow}>
+              <MaterialCommunityIcons name="chat-outline" size={14} color={theme.tint} />
+              <Text style={styles.matchedHintText}>You matched—continue in chat.</Text>
             </View>
           ) : null}
 
@@ -1212,15 +1321,15 @@ export default function IntentScreen() {
               </>
             ) : null}
 
-            {canMessage ? (
+            {canOpenChat ? (
               <>
                 <AnimatedPressable
                   reduceMotion={reduceMotion}
                   onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-                  onPress={() => openChat(peerId, name, peer?.avatar_url)}
+                  onPress={() => openChat(peerId, name, peer?.avatar_url, autoClosedByMatch ? quickReply : null)}
                   style={[styles.primaryButton, styles.actionWide]}
                 >
-                  <Text style={styles.primaryText}>Message</Text>
+                  <Text style={styles.primaryText}>{canMessage ? 'Message' : 'Open chat'}</Text>
                 </AnimatedPressable>
                 <AnimatedPressable
                   reduceMotion={reduceMotion}
@@ -1261,6 +1370,7 @@ export default function IntentScreen() {
     [
       acceptRequest,
       cancelRequest,
+      deepLinkRequestId,
       direction,
       interestsByProfile,
       matchKeyFor,
@@ -1690,12 +1800,14 @@ export default function IntentScreen() {
           }
         >
           <FlatList
+            ref={listRef as any}
             data={sortedFiltered}
             keyExtractor={(item) => item.id}
             renderItem={renderItem}
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
             extraData={sortedFiltered.length}
+            onScrollToIndexFailed={onScrollToIndexFailed as any}
             ListHeaderComponent={
               direction === 'incoming' ? (
                 sortedFiltered.length > 0 ? (
@@ -2078,6 +2190,11 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     cardIncomingUrgent: {
       borderColor: isDark ? 'rgba(239, 68, 68, 0.45)' : 'rgba(239, 68, 68, 0.30)',
     },
+    cardDeepLinked: {
+      borderColor: isDark ? 'rgba(168, 85, 247, 0.55)' : 'rgba(124, 58, 237, 0.40)',
+      shadowOpacity: isDark ? 0.34 : 0.14,
+      elevation: 6,
+    },
     rowTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     avatarImage: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.backgroundSubtle },
     avatarFallback: {
@@ -2176,6 +2293,19 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     replyHintRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 },
     replyHintLabel: { fontSize: 11, fontWeight: '800', color: theme.textMuted },
     replyHintText: { flex: 1, fontSize: 12, fontWeight: '700', color: theme.text },
+    matchedHintRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginTop: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(14, 116, 144, 0.35)' : 'rgba(14, 116, 144, 0.25)',
+      backgroundColor: isDark ? 'rgba(14, 116, 144, 0.14)' : 'rgba(14, 116, 144, 0.08)',
+    },
+    matchedHintText: { flex: 1, fontSize: 12, fontWeight: '800', color: theme.tint },
     whyRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
     whyChip: {
       paddingHorizontal: 8,

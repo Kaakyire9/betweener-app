@@ -1827,6 +1827,10 @@ export default function ExploreScreen() {
             recipientId={intentTarget?.id}
             recipientName={intentTarget?.name ?? null}
             metadata={{ source: 'vibes' }}
+            onSent={() => {
+              // Sending an intent should advance the deck just like a swipe.
+              setCurrentIndex((i) => i + 1);
+            }}
           />
           {/* Match celebration modal */}
         <MatchModal

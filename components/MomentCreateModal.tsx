@@ -6,8 +6,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { useMemo, useState } from 'react';
 import { Alert, Modal, Pressable, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
 
-const pickerMediaTypeImages = ImagePicker.MediaTypeOptions.Images;
-const pickerMediaTypeVideos = ImagePicker.MediaTypeOptions.Videos;
+const pickerMediaTypeImages: ImagePicker.MediaType = 'images';
+const pickerMediaTypeVideos: ImagePicker.MediaType = 'videos';
 
 type Props = {
   visible: boolean;

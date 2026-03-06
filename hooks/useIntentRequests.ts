@@ -3,7 +3,7 @@ import { readCache, writeCache } from '@/lib/persisted-cache';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 export type IntentRequestType = 'connect' | 'date_request' | 'like_with_note' | 'circle_intro';
-export type IntentRequestStatus = 'pending' | 'accepted' | 'passed' | 'expired' | 'cancelled';
+export type IntentRequestStatus = 'pending' | 'accepted' | 'passed' | 'expired' | 'cancelled' | 'matched';
 
 export type IntentRequest = {
   id: string;

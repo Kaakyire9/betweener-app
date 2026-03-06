@@ -2107,11 +2107,11 @@ function PhotoLightboxModal({
 
                             {chips.length ? (
                               <View style={stylesStatic.lightboxInterestsRow}>
-                                {chips.map((name) => {
+                                {chips.map((name, idx) => {
                                   const emoji = getInterestEmoji(name);
                                   return (
                                     <View
-                                      key={name}
+                                      key={`${name}-${idx}`}
                                       style={[
                                         stylesStatic.lightboxInterestPill,
                                         { borderColor: Colors.dark.outline, backgroundColor: Colors.dark.backgroundSubtle },
