@@ -1,6 +1,7 @@
 import { useAuth } from '@/lib/auth-context';
+import { canAccessInternalTools } from '@/lib/internal-tools';
 import { ensureFreshSession, getSupabaseNetEvents, getSupabaseConfigStatus, supabase } from '@/lib/supabase';
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,6 +26,7 @@ const formatAt = (at: number) => {
 };
 
 export default function DiagnosticsScreen() {
+  const internalToolsEnabled = canAccessInternalTools();
   const { user, session } = useAuth();
   const [health, setHealth] = useState<HealthResult | null>(null);
   const [running, setRunning] = useState(false);
@@ -95,6 +97,10 @@ export default function DiagnosticsScreen() {
       setPushStatus(`error: ${String((e as any)?.message || e || 'push_check_failed')}`);
     }
   }, [user?.id]);
+
+  if (!internalToolsEnabled) {
+    return <Redirect href="/(tabs)/vibes" />;
+  }
 
   return (
     <SafeAreaView style={styles.container}>

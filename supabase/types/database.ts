@@ -1413,6 +1413,66 @@ export type Database = {
         }
         Relationships: []
       }
+      revenuecat_webhook_events: {
+        Row: {
+          aliases: string[]
+          app_user_id: string | null
+          created_at: string
+          environment: string | null
+          event_id: string
+          event_timestamp_ms: number | null
+          event_type: string
+          id: string
+          last_error: string | null
+          original_app_user_id: string | null
+          payload: Json
+          processed_at: string | null
+          processing_status: string
+          synced_user_ids: string[]
+          transferred_from: string[]
+          transferred_to: string[]
+          updated_at: string
+        }
+        Insert: {
+          aliases?: string[]
+          app_user_id?: string | null
+          created_at?: string
+          environment?: string | null
+          event_id: string
+          event_timestamp_ms?: number | null
+          event_type: string
+          id?: string
+          last_error?: string | null
+          original_app_user_id?: string | null
+          payload: Json
+          processed_at?: string | null
+          processing_status?: string
+          synced_user_ids?: string[]
+          transferred_from?: string[]
+          transferred_to?: string[]
+          updated_at?: string
+        }
+        Update: {
+          aliases?: string[]
+          app_user_id?: string | null
+          created_at?: string
+          environment?: string | null
+          event_id?: string
+          event_timestamp_ms?: number | null
+          event_type?: string
+          id?: string
+          last_error?: string | null
+          original_app_user_id?: string | null
+          payload?: Json
+          processed_at?: string | null
+          processing_status?: string
+          synced_user_ids?: string[]
+          transferred_from?: string[]
+          transferred_to?: string[]
+          updated_at?: string
+        }
+        Relationships: []
+      }
       reports: {
         Row: {
           created_at: string
@@ -1604,26 +1664,44 @@ export type Database = {
       subscriptions: {
         Row: {
           ends_at: string
+          external_customer_id: string | null
+          external_entitlement: string | null
+          external_environment: string | null
+          external_product_id: string | null
           id: string
           is_active: boolean
+          source: string
           started_at: string
           type: Database["public"]["Enums"]["subscription_type"]
+          updated_at: string
           user_id: string
         }
         Insert: {
           ends_at: string
+          external_customer_id?: string | null
+          external_entitlement?: string | null
+          external_environment?: string | null
+          external_product_id?: string | null
           id?: string
           is_active?: boolean
+          source?: string
           started_at?: string
           type: Database["public"]["Enums"]["subscription_type"]
+          updated_at?: string
           user_id: string
         }
         Update: {
           ends_at?: string
+          external_customer_id?: string | null
+          external_entitlement?: string | null
+          external_environment?: string | null
+          external_product_id?: string | null
           id?: string
           is_active?: boolean
+          source?: string
           started_at?: string
           type?: Database["public"]["Enums"]["subscription_type"]
+          updated_at?: string
           user_id?: string
         }
         Relationships: []
@@ -2217,6 +2295,10 @@ export type Database = {
           travel_mode: string
         }[]
       }
+      get_active_subscription_plan: {
+        Args: { p_user_id?: string }
+        Returns: Database["public"]["Enums"]["subscription_type"]
+      }
       disablelongtransactions: { Args: never; Returns: string }
       dropgeometrycolumn:
         | {
@@ -2581,6 +2663,7 @@ export type Database = {
       postgis_version: { Args: never; Returns: string }
       postgis_wagyu_version: { Args: never; Returns: string }
       reset_daily_superlikes: { Args: never; Returns: undefined }
+      rpc_create_profile_boost: { Args: never; Returns: Json }
       rpc_approve_circle_member: {
         Args: { p_circle_id: string; p_member_id: string; p_profile_id: string }
         Returns: boolean
@@ -2615,6 +2698,7 @@ export type Database = {
         Returns: string
       }
       rpc_get_phone_verification_status: { Args: never; Returns: Json }
+      rpc_get_my_premium_state: { Args: never; Returns: Json }
       rpc_get_suggested_moves: {
         Args: { p_limit?: number; p_profile_id: string }
         Returns: {

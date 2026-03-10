@@ -1899,7 +1899,7 @@ export default function IntentScreen() {
                 </Animated.View>
               ) : (
                 <View style={styles.suggestedMetaRow}>
-                  <Text style={styles.emptyHint}>No suggestions yet.</Text>
+                  <Text style={styles.emptyHint}>Fresh suggestions are on the way.</Text>
                   <TouchableOpacity style={styles.ghostButton} onPress={retrySuggested}>
                     <Text style={styles.ghostText}>Refresh</Text>
                   </TouchableOpacity>
@@ -1981,7 +1981,7 @@ export default function IntentScreen() {
                   </Animated.View>
                 ) : (
                   <View style={styles.suggestedMetaRow}>
-                    <Text style={styles.emptyHint}>No suggestions yet.</Text>
+                    <Text style={styles.emptyHint}>Fresh suggestions are on the way.</Text>
                     <TouchableOpacity style={styles.ghostButton} onPress={retrySuggested}>
                       <Text style={styles.ghostText}>Refresh</Text>
                     </TouchableOpacity>
@@ -2017,10 +2017,27 @@ export default function IntentScreen() {
                 style={styles.emptyState}
               >
                 <Animated.View style={emptyBreathStyle}>
+                  <View style={styles.emptyBadge}>
+                    <Text style={styles.emptyBadgeText}>
+                      {direction === 'incoming' ? 'Intent inbox' : 'Sent energy'}
+                    </Text>
+                  </View>
                   <Text style={styles.emptyText}>{emptyCopy}</Text>
                   {filter === 'action' && direction === 'incoming' && !hasPendingIncoming ? (
                     <Text style={styles.emptyHint}>Make the first move.</Text>
                   ) : null}
+                  <View style={styles.emptyHighlights}>
+                    <View style={styles.emptyHighlightCard}>
+                      <MaterialCommunityIcons name="message-draw" size={18} color={theme.tint} />
+                      <Text style={styles.emptyHighlightTitle}>Intent works best with clarity</Text>
+                      <Text style={styles.emptyHighlightBody}>A short note or direct request feels stronger than passive waiting.</Text>
+                    </View>
+                    <View style={styles.emptyHighlightCard}>
+                      <MaterialCommunityIcons name="star-four-points" size={18} color={theme.accent} />
+                      <Text style={styles.emptyHighlightTitle}>Premium momentum</Text>
+                      <Text style={styles.emptyHighlightBody}>Likes, Moments, and profile prompts give people better reasons to respond.</Text>
+                    </View>
+                  </View>
                   <View style={styles.emptyActions}>
                     <TouchableOpacity style={styles.ghostButton} onPress={() => router.push('/(tabs)/vibes')}>
                       <Text style={styles.ghostText}>Go to Vibes</Text>
@@ -2372,8 +2389,51 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     profileText: { color: theme.tint, fontWeight: '700' },
     emptyState: { marginTop: 20, gap: 12, alignItems: 'center' },
+    emptyBadge: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(0,160,160,0.35)' : 'rgba(0,160,160,0.18)',
+      backgroundColor: isDark ? 'rgba(0,160,160,0.12)' : 'rgba(0,160,160,0.08)',
+    },
+    emptyBadgeText: {
+      fontSize: 11,
+      color: theme.tint,
+      fontWeight: '800',
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
+    },
     emptyText: { fontSize: 13, color: theme.textMuted, textAlign: 'center' },
     emptyHint: { fontSize: 12, color: theme.textMuted, textAlign: 'center' },
+    emptyHighlights: {
+      width: '100%',
+      gap: 10,
+      marginTop: 4,
+    },
+    emptyHighlightCard: {
+      width: '100%',
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.outline,
+      backgroundColor: theme.backgroundSubtle,
+      paddingHorizontal: 14,
+      paddingVertical: 14,
+      alignItems: 'flex-start',
+    },
+    emptyHighlightTitle: {
+      marginTop: 8,
+      fontSize: 14,
+      fontWeight: '800',
+      color: theme.text,
+    },
+    emptyHighlightBody: {
+      marginTop: 4,
+      fontSize: 12,
+      lineHeight: 18,
+      color: theme.textMuted,
+      fontWeight: '600',
+    },
     emptyActions: { flexDirection: 'row', gap: 10 },
     emptyStateMuted: { marginTop: 12, gap: 6, alignItems: 'center' },
     skeletonWrap: { paddingHorizontal: 18, paddingTop: 18, gap: 12 },

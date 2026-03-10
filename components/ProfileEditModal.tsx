@@ -1,6 +1,7 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
+import { getProfileInitials, hasProfileImage } from '@/lib/profile-placeholders';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -360,6 +361,11 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         : selectedLanguages;
     return normalizeLanguages(base);
   }, [formData?.languages_spoken, selectedLanguages]);
+  const avatarInitials = useMemo(
+    () => getProfileInitials(formData.full_name || profile?.full_name || user?.email || null),
+    [formData.full_name, profile?.full_name, user?.email],
+  );
+  const hasAvatarImage = hasProfileImage(formData.avatar_url);
 
   // Load current profile data when modal opens
   const hydratedFromProfileRef = useRef(false);
@@ -1381,12 +1387,19 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
               <Text style={styles.sectionTitle}>Profile Photo</Text>
             </View>
             <View style={styles.avatarContainer}>
-              <Image
-                source={{
-                  uri: formData.avatar_url || 'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=400&h=600&fit=crop&crop=face'
-                }}
-                style={styles.avatar}
-              />
+              {hasAvatarImage ? (
+                <Image
+                  source={{
+                    uri: formData.avatar_url,
+                  }}
+                  style={styles.avatar}
+                />
+              ) : (
+                <View style={styles.avatarPlaceholder}>
+                  <Text style={styles.avatarPlaceholderInitials}>{avatarInitials}</Text>
+                  <Text style={styles.avatarPlaceholderCaption}>Add a clear photo to build trust faster</Text>
+                </View>
+              )}
               <TouchableOpacity
                 style={styles.editAvatarButton}
                 onPress={() => pickImage(true)}
@@ -2874,6 +2887,36 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderRadius: 50,
       borderWidth: 3,
       borderColor: withAlpha(theme.text, isDark ? 0.25 : 0.12),
+    },
+    avatarPlaceholder: {
+      width: 112,
+      height: 112,
+      borderRadius: 56,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 14,
+      shadowColor: theme.tint,
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: isDark ? 0.28 : 0.16,
+      shadowRadius: 18,
+      elevation: 8,
+    },
+    avatarPlaceholderInitials: {
+      fontSize: 30,
+      fontFamily: 'PlayfairDisplay_700Bold',
+      color: theme.text,
+      letterSpacing: 1.2,
+    },
+    avatarPlaceholderCaption: {
+      marginTop: 4,
+      fontSize: 10,
+      lineHeight: 13,
+      textAlign: 'center',
+      color: theme.textMuted,
+      fontFamily: 'Manrope_500Medium',
     },
     editAvatarButton: {
       position: 'absolute',

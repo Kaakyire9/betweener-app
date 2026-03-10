@@ -419,6 +419,107 @@ export default function ActivityHistoryScreen() {
     { key: "messages", label: "Messages", icon: "message-outline" },
   ];
 
+  const emptyState = useMemo(() => {
+    switch (filter) {
+      case "notes":
+        return {
+          badge: "Notes inbox",
+          title: "No notes have landed yet",
+          body: "Profiles that feel complete, specific, and warm usually attract the strongest written openings.",
+          highlights: [
+            { icon: "text-box-check-outline", text: "A clear bio and good prompts make it easier for someone to write first." },
+            { icon: "account-heart-outline", text: "Refreshing your photos and interests can invite better conversation starters." },
+          ],
+        };
+      case "gifts":
+        return {
+          badge: "Gift history",
+          title: "No gifts in your timeline yet",
+          body: "Gifts usually follow momentum. Keep your profile vivid enough that someone wants to leave a memorable signal.",
+          highlights: [
+            { icon: "gift-outline", text: "Moments and expressive prompts give admirers more reasons to act." },
+            { icon: "star-four-points-outline", text: "Premium profiles create stronger intent and stronger follow-through." },
+          ],
+        };
+      case "likes":
+        return {
+          badge: "Interest signals",
+          title: "No likes or superlikes yet",
+          body: "This part of your history fills fastest when your first photo, headline, and profile energy are doing real work.",
+          highlights: [
+            { icon: "heart-outline", text: "Lead with a photo that feels confident, recent, and unmistakably you." },
+            { icon: "refresh", text: "A fresh profile edit can reset attention and improve incoming interest." },
+          ],
+        };
+      case "matches":
+        return {
+          badge: "Match timeline",
+          title: "No matches have been recorded yet",
+          body: "A strong match loop starts with better discovery, not just more swipes. Precision usually beats volume.",
+          highlights: [
+            { icon: "cards-heart-outline", text: "Spend more time on profiles that already show alignment and effort." },
+            { icon: "message-outline", text: "When a match comes in, the first reply matters more than the first like." },
+          ],
+        };
+      case "reactions":
+        return {
+          badge: "Reactions",
+          title: "No reactions have shown up yet",
+          body: "Photo and message reactions rise when your profile carries more texture and your chats feel easy to respond to.",
+          highlights: [
+            { icon: "emoticon-outline", text: "Moments, captions, and playful details create better reasons to react." },
+            { icon: "image-outline", text: "A richer gallery gives people something specific to notice." },
+          ],
+        };
+      case "messages":
+        return {
+          badge: "Message flow",
+          title: "No incoming messages in history yet",
+          body: "Conversation starts when discovery and trust work together. This timeline will feel fuller as those pieces tighten.",
+          highlights: [
+            { icon: "message-outline", text: "A premium profile lowers hesitation and makes the first message easier." },
+            { icon: "shield-check-outline", text: "Trust signals like verification and profile completion reduce friction." },
+          ],
+        };
+      default:
+        return {
+          badge: "Quiet timeline",
+          title: "Your activity history is still quiet",
+          body: "This timeline becomes more useful as your profile, Moments, and conversations build momentum together.",
+          highlights: [
+            { icon: "account-star-outline", text: "Polished profiles usually create better likes, messages, and introductions." },
+            { icon: "calendar-heart", text: "Consistent activity keeps you visible and gives people more to respond to." },
+          ],
+        };
+    }
+  }, [filter]);
+
+  const renderEmptyTimeline = () => (
+    <View style={styles.emptyCard}>
+      <View style={styles.emptyBadge}>
+        <Text style={styles.emptyBadgeText}>{emptyState.badge}</Text>
+      </View>
+      <Text style={styles.emptyTitle}>{emptyState.title}</Text>
+      <Text style={styles.emptyText}>{emptyState.body}</Text>
+      <View style={styles.emptyHighlights}>
+        {emptyState.highlights.map((item) => (
+          <View key={item.text} style={styles.emptyHighlightRow}>
+            <MaterialCommunityIcons name={item.icon as any} size={16} color={theme.tint} />
+            <Text style={styles.emptyHighlightText}>{item.text}</Text>
+          </View>
+        ))}
+      </View>
+      <View style={styles.emptyActions}>
+        <Pressable style={styles.emptyPrimary} onPress={() => router.push("/(tabs)/vibes")}>
+          <Text style={styles.emptyPrimaryText}>Open Vibes</Text>
+        </Pressable>
+        <Pressable style={styles.emptySecondary} onPress={() => router.push("/moments")}>
+          <Text style={styles.emptySecondaryText}>View Moments</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+
   return (
     <View style={styles.container}>
       <LinearGradient
@@ -473,7 +574,7 @@ export default function ActivityHistoryScreen() {
             {loading ? (
               <Text style={styles.emptyText}>Loading history...</Text>
             ) : filteredItems.length === 0 ? (
-              <Text style={styles.emptyText}>No history yet.</Text>
+              renderEmptyTimeline()
             ) : (
               filteredItems.map((item) => (
                 <Pressable key={item.id} style={styles.activityRow} onPress={() => openActivityTarget(item)}>
@@ -668,7 +769,80 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     emptyText: {
       color: theme.textMuted,
       fontSize: 13,
+      lineHeight: 20,
+    },
+    emptyCard: {
+      borderRadius: 18,
+      padding: 16,
+      gap: 10,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.34 : 0.82),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+    },
+    emptyBadge: {
+      alignSelf: "flex-start",
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.46 : 0.9),
+    },
+    emptyBadgeText: {
+      fontSize: 10,
+      fontWeight: "700",
+      letterSpacing: 0.3,
+      color: theme.textMuted,
+    },
+    emptyTitle: {
+      fontSize: 19,
+      lineHeight: 24,
+      color: theme.text,
+      fontFamily: "PlayfairDisplay_700Bold",
+    },
+    emptyHighlights: {
+      gap: 8,
+    },
+    emptyHighlightRow: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 8,
+    },
+    emptyHighlightText: {
+      flex: 1,
+      color: theme.textMuted,
+      fontSize: 12,
       lineHeight: 18,
+    },
+    emptyActions: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 10,
+      marginTop: 2,
+    },
+    emptyPrimary: {
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+      borderRadius: 999,
+      backgroundColor: theme.tint,
+    },
+    emptyPrimaryText: {
+      color: Colors.light.background,
+      fontSize: 12,
+      fontWeight: "700",
+    },
+    emptySecondary: {
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.3 : 0.7),
+    },
+    emptySecondaryText: {
+      color: theme.text,
+      fontSize: 12,
+      fontWeight: "600",
     },
     activityRow: {
       flexDirection: "row",

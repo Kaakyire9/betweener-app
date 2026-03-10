@@ -8,7 +8,9 @@ import { Colors } from "@/constants/theme";
 import { useColorScheme, useColorSchemePreference } from "@/hooks/use-color-scheme";
 import { useVerificationStatus } from "@/hooks/use-verification-status";
 import { useAuth } from "@/lib/auth-context";
+import { canAccessAdminTools } from "@/lib/internal-tools";
 import { readCache, writeCache } from "@/lib/persisted-cache";
+import { getProfileInitials, getProfilePlaceholderPalette, hasProfileImage } from "@/lib/profile-placeholders";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -95,6 +97,12 @@ const SETTINGS_MENU_ITEMS = [
     title: 'Dating Preferences',
     icon: 'heart',
     color: Colors.light.tint
+  },
+  {
+    id: 'premium',
+    title: 'Premium Plans',
+    icon: 'crown-outline',
+    color: '#D4A017'
   },
   {
     id: 'help',
@@ -314,6 +322,7 @@ export default function ProfileScreen() {
   const prevProgressRef = useRef(profileCompletion.percent);
   const [rewardText, setRewardText] = useState<string | null>(null);
   const [progressTrackWidth, setProgressTrackWidth] = useState(0);
+  const canSeeAdminTools = canAccessAdminTools(user?.email ?? null);
 
   const progressSubtitle = useMemo(() => {
     if (profileCompletion.percent >= 100) return "Your profile feels complete";
@@ -918,6 +927,7 @@ export default function ProfileScreen() {
     if (itemId === 'logout') {
       handleSignOut();
     } else if (itemId === 'admin') {
+      if (!canSeeAdminTools) return;
       router.push('/admin');
     } else if (itemId === 'email') {
       setEmailMessage('');
@@ -926,6 +936,12 @@ export default function ProfileScreen() {
       setShowEmailModal(true);
     } else if (itemId === 'notifications') {
       setShowNotificationsModal(true);
+    } else if (itemId === 'privacy') {
+      router.push('/trust-center');
+    } else if (itemId === 'help') {
+      router.push('/support-center');
+    } else if (itemId === 'premium') {
+      router.push('/premium-plans');
     } else {
       // Handle other settings navigation
       console.log(`Navigate to ${itemId}`);
@@ -1025,11 +1041,11 @@ export default function ProfileScreen() {
   const heroImageUri =
     userPhotos[0]
     || profile?.avatar_url
-    || 'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=600&h=900&fit=crop&crop=face';
+    || '';
   const avatarImageUri =
     profile?.avatar_url
     || userPhotos[0]
-    || 'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=600&h=900&fit=crop&crop=face';
+    || '';
   const heroVideoSource =
     (profile as any)?.profile_video
     || (profile as any)?.profileVideo
@@ -1042,6 +1058,10 @@ export default function ProfileScreen() {
     profile?.full_name
     || (profile as any)?.name
     || 'Your Name';
+  const profileInitials = getProfileInitials(displayName, 'B');
+  const placeholderPalette = getProfilePlaceholderPalette(user?.id || profile?.id || displayName);
+  const hasHeroImage = hasProfileImage(heroImageUri);
+  const hasAvatarImage = hasProfileImage(avatarImageUri);
   const displayAge = profile?.age ? String(profile.age) : '';
   const rawBio = (profile?.bio || '').trim();
   const defaultHookLines = [
@@ -1084,6 +1104,17 @@ export default function ProfileScreen() {
   const showPresence = isOnlineNow || isActiveNow;
   const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
   const aboutMeText = rawBio || 'Add a few lines about you.';
+  const trustHighlights = useMemo(() => {
+    const highlights: string[] = [];
+    if (verificationLevel >= 2) highlights.push('ID verified');
+    else if (verificationLevel >= 1) highlights.push('Phone verified');
+    if ((profile as any)?.phone_verified && verificationLevel < 1) highlights.push('Phone confirmed');
+    if (profileCompletion.percent >= 80) highlights.push(`Profile ${profileCompletion.percent}% complete`);
+    if ((profile as any)?.profile_video) highlights.push('Intro video ready');
+    else if (promptAnswers.length > 0) highlights.push('Prompts answered');
+    return highlights.slice(0, 3);
+  }, [profile, profileCompletion.percent, promptAnswers.length, verificationLevel]);
+  const hasGalleryMedia = userPhotos.length > 0 || !!heroVideoSource;
   const promptHighlights = useMemo(
     () =>
       promptAnswers
@@ -1367,13 +1398,8 @@ export default function ProfileScreen() {
               <View style={[styles.dropdownDivider, { backgroundColor: theme.outline }]} />
             </View>
 
-            {SETTINGS_MENU_ITEMS.filter(item => {
-              // Hide admin option for regular users (you can add admin check here)
-              if (item.adminOnly) {
-                // Add your admin check logic here, for now showing to everyone
-                // return user?.email === 'admin@betweener.com' || user?.email?.includes('admin');
-                return true; // Show to everyone for testing
-              }
+            {SETTINGS_MENU_ITEMS.filter((item) => {
+              if (item.adminOnly) return canSeeAdminTools;
               return true;
             }).map((item) => {
               if (item.type === 'divider') {
@@ -1758,52 +1784,102 @@ export default function ProfileScreen() {
                 </View>
               </View>
             ) : (
-              <ImageBackground
-                source={{ uri: heroImageUri }}
-                style={styles.heroImage}
-                imageStyle={styles.heroImageStyle}
-              >
-                <View style={styles.heroTint} />
-                <LinearGradient
-                  colors={["rgba(0,0,0,0.35)", "transparent"]}
-                  style={styles.heroTopGradient}
-                />
-                <LinearGradient
-                  colors={["transparent", "rgba(0,0,0,0.55)"]}
-                  style={styles.heroBottomGradient}
-                />
-                <View style={styles.heroVignette} pointerEvents="none" />
-                <View style={styles.heroInnerStroke} pointerEvents="none" />
-                <View style={styles.heroGrain} pointerEvents="none" />
-                <View style={styles.heroTopRow}>
-                  <View
-                    style={[
-                      styles.heroPill,
-                      {
-                        backgroundColor: isDark ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.8)",
-                        borderColor: theme.outline,
-                      },
-                    ]}
-                  >
-                    <MaterialCommunityIcons name="star-four-points" size={12} color={theme.tint} />
-                    <Text style={[styles.heroPillText, { color: theme.text }]}>Profile</Text>
-                  </View>
-                  {!isPreviewMode && (
-                    <TouchableOpacity
+              hasHeroImage ? (
+                <ImageBackground
+                  source={{ uri: heroImageUri }}
+                  style={styles.heroImage}
+                  imageStyle={styles.heroImageStyle}
+                >
+                  <View style={styles.heroTint} />
+                  <LinearGradient
+                    colors={["rgba(0,0,0,0.35)", "transparent"]}
+                    style={styles.heroTopGradient}
+                  />
+                  <LinearGradient
+                    colors={["transparent", "rgba(0,0,0,0.55)"]}
+                    style={styles.heroBottomGradient}
+                  />
+                  <View style={styles.heroVignette} pointerEvents="none" />
+                  <View style={styles.heroInnerStroke} pointerEvents="none" />
+                  <View style={styles.heroGrain} pointerEvents="none" />
+                  <View style={styles.heroTopRow}>
+                    <View
                       style={[
-                        styles.heroEditButton,
+                        styles.heroPill,
                         {
-                          backgroundColor: isDark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.9)",
+                          backgroundColor: isDark ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.8)",
                           borderColor: theme.outline,
                         },
                       ]}
-                      onPress={() => setShowEditModal(true)}
                     >
-                      <MaterialCommunityIcons name="pencil" size={16} color={theme.text} />
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </ImageBackground>
+                      <MaterialCommunityIcons name="star-four-points" size={12} color={theme.tint} />
+                      <Text style={[styles.heroPillText, { color: theme.text }]}>Profile</Text>
+                    </View>
+                    {!isPreviewMode && (
+                      <TouchableOpacity
+                        style={[
+                          styles.heroEditButton,
+                          {
+                            backgroundColor: isDark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.9)",
+                            borderColor: theme.outline,
+                          },
+                        ]}
+                        onPress={() => setShowEditModal(true)}
+                      >
+                        <MaterialCommunityIcons name="pencil" size={16} color={theme.text} />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </ImageBackground>
+              ) : (
+                <LinearGradient
+                  colors={[placeholderPalette.start, placeholderPalette.end]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.heroImage}
+                >
+                  <View style={styles.heroTint} />
+                  <View style={styles.heroVignette} pointerEvents="none" />
+                  <View style={styles.heroInnerStroke} pointerEvents="none" />
+                  <View style={styles.heroGrain} pointerEvents="none" />
+                  <View style={styles.heroTopRow}>
+                    <View
+                      style={[
+                        styles.heroPill,
+                        {
+                          backgroundColor: "rgba(255,255,255,0.14)",
+                          borderColor: "rgba(255,255,255,0.24)",
+                        },
+                      ]}
+                    >
+                      <MaterialCommunityIcons name="star-four-points" size={12} color="#fff" />
+                      <Text style={[styles.heroPillText, { color: '#fff' }]}>Profile</Text>
+                    </View>
+                    {!isPreviewMode && (
+                      <TouchableOpacity
+                        style={[
+                          styles.heroEditButton,
+                          {
+                            backgroundColor: "rgba(255,255,255,0.14)",
+                            borderColor: "rgba(255,255,255,0.24)",
+                          },
+                        ]}
+                        onPress={() => setShowEditModal(true)}
+                      >
+                        <MaterialCommunityIcons name="pencil" size={16} color="#fff" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <View style={styles.heroPlaceholderContent}>
+                    <Text style={styles.heroPlaceholderEyebrow}>Premium presence starts here</Text>
+                    <Text style={styles.heroPlaceholderInitials}>{profileInitials}</Text>
+                    <Text style={styles.heroPlaceholderTitle}>Add a portrait that feels like you</Text>
+                    <Text style={styles.heroPlaceholderSubtitle}>
+                      Strong first photos lift trust, reply rates, and overall profile quality.
+                    </Text>
+                  </View>
+                </LinearGradient>
+              )
             )}
           </View>
 
@@ -1816,10 +1892,21 @@ export default function ProfileScreen() {
               style={styles.avatarRing}
             >
               <View style={[styles.avatarInner, { backgroundColor: theme.background }]}>
-                <Image
-                  source={{ uri: avatarImageUri }}
-                  style={[styles.avatar, { borderColor: theme.background }]}
-                />
+                {hasAvatarImage ? (
+                  <Image
+                    source={{ uri: avatarImageUri }}
+                    style={[styles.avatar, { borderColor: theme.background }]}
+                  />
+                ) : (
+                  <LinearGradient
+                    colors={[placeholderPalette.start, placeholderPalette.end]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={[styles.avatar, styles.avatarPlaceholder]}
+                  >
+                    <Text style={styles.avatarPlaceholderInitials}>{profileInitials}</Text>
+                  </LinearGradient>
+                )}
               </View>
             </LinearGradient>
             {!isPreviewMode && (
@@ -1861,6 +1948,24 @@ export default function ProfileScreen() {
               {locationDisplay}
             </Text>
           </View>
+
+          {trustHighlights.length ? (
+            <View style={styles.trustHighlightsRow}>
+              {trustHighlights.map((item, index) => (
+                <View
+                  key={`${item}-${index}`}
+                  style={[
+                    styles.trustHighlightChip,
+                    { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+                  ]}
+                >
+                  <Text style={[styles.trustHighlightText, { color: theme.text }]}>
+                    {item}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
 
           <View
             style={[
@@ -2263,19 +2368,41 @@ export default function ProfileScreen() {
             )}
           </View>
           
-          <PhotoGallery
-            photos={userPhotos.length > 0 ? userPhotos : [
-              'https://images.unsplash.com/photo-1500003116-9aa12eeae7e2?w=300&h=400&fit=crop&crop=face',
-              'https://images.unsplash.com/photo-1501003211169-0a1dd7228f2d?w=300&h=400&fit=crop&crop=face',
-              'https://images.unsplash.com/photo-1502003119688-b3b9e7b2e1e8?w=300&h=400&fit=crop&crop=face'
-            ]}
-            introVideoUrl={heroVideoUrl}
-            introVideoThumbnail={heroVideoThumbnail || avatarImageUri}
-            onOpenVideo={() => setIntroVideoOpen(true)}
-            canEdit={!isPreviewMode}
-            onAddPhoto={() => setShowEditModal(true)}
-            onRemovePhoto={removePhoto}
-          />
+          {hasGalleryMedia ? (
+            <PhotoGallery
+              photos={userPhotos}
+              introVideoUrl={heroVideoUrl}
+              introVideoThumbnail={heroVideoThumbnail || avatarImageUri}
+              onOpenVideo={() => setIntroVideoOpen(true)}
+              canEdit={!isPreviewMode}
+              onAddPhoto={() => setShowEditModal(true)}
+              onRemovePhoto={removePhoto}
+            />
+          ) : (
+            <View
+              style={[
+                styles.emptyFeatureCard,
+                styles.galleryEmptyCard,
+                { backgroundColor: theme.background, borderColor: theme.outline },
+              ]}
+            >
+              <View style={[styles.emptyFeatureIconWrap, { backgroundColor: theme.backgroundSubtle }]}>
+                <MaterialCommunityIcons name="image-plus" size={22} color={theme.tint} />
+              </View>
+              <Text style={[styles.emptyFeatureTitle, { color: theme.text }]}>Your gallery is still quiet</Text>
+              <Text style={[styles.emptyFeatureSubtitle, { color: theme.textMuted }]}>
+                Add a few photos or an intro video so your profile feels complete, real, and easy to trust.
+              </Text>
+              {!isPreviewMode ? (
+                <TouchableOpacity
+                  style={[styles.emptyFeatureButton, { backgroundColor: theme.tint }]}
+                  onPress={() => setShowEditModal(true)}
+                >
+                  <Text style={styles.emptyFeatureButtonText}>Add media</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          )}
         </View>
 
         <ProfileVideoModal
@@ -2348,9 +2475,28 @@ export default function ProfileScreen() {
               ))}
             </View>
           ) : (
-            <Text style={[styles.promptEmptyText, { color: theme.textMuted }]}>
-              Add a prompt or two to share more about you.
-            </Text>
+            <View
+              style={[
+                styles.emptyFeatureCard,
+                { backgroundColor: theme.background, borderColor: theme.outline },
+              ]}
+            >
+              <View style={[styles.emptyFeatureIconWrap, { backgroundColor: theme.backgroundSubtle }]}>
+                <MaterialCommunityIcons name="comment-quote-outline" size={20} color={theme.tint} />
+              </View>
+              <Text style={[styles.emptyFeatureTitle, { color: theme.text }]}>Give people something to remember</Text>
+              <Text style={[styles.emptyFeatureSubtitle, { color: theme.textMuted }]}>
+                Prompts make your profile feel human. Add one good answer and the whole profile gets warmer.
+              </Text>
+              {!isPreviewMode ? (
+                <TouchableOpacity
+                  style={[styles.emptyFeatureButton, { backgroundColor: theme.tint }]}
+                  onPress={() => setShowPromptEditor(true)}
+                >
+                  <Text style={styles.emptyFeatureButtonText}>Add prompt</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
           )}
 
           {!isPreviewMode ? (
@@ -2496,7 +2642,28 @@ export default function ProfileScreen() {
                 </View>
               ))
             ) : (
-              <Text style={[styles.noInterestsText, { color: theme.textMuted }]}>No interests added yet. Tap Edit to add your interests!</Text>
+              <View
+                style={[
+                  styles.emptyFeatureCard,
+                  { backgroundColor: theme.background, borderColor: theme.outline },
+                ]}
+              >
+                <View style={[styles.emptyFeatureIconWrap, { backgroundColor: theme.backgroundSubtle }]}>
+                  <MaterialCommunityIcons name="star-four-points" size={20} color={theme.tint} />
+                </View>
+                <Text style={[styles.emptyFeatureTitle, { color: theme.text }]}>Interests help the right people stop scrolling</Text>
+                <Text style={[styles.emptyFeatureSubtitle, { color: theme.textMuted }]}>
+                  Add a few interests so your matches can spot shared energy faster.
+                </Text>
+                {!isPreviewMode ? (
+                  <TouchableOpacity
+                    style={[styles.emptyFeatureButton, { backgroundColor: theme.tint }]}
+                    onPress={() => setShowEditModal(true)}
+                  >
+                    <Text style={styles.emptyFeatureButtonText}>Add interests</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             )}
           </View>
         </View>
@@ -2784,6 +2951,41 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(255,255,255,0.02)',
   },
+  heroPlaceholderContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+  },
+  heroPlaceholderEyebrow: {
+    fontSize: 11,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    color: 'rgba(255,255,255,0.78)',
+    marginBottom: 10,
+  },
+  heroPlaceholderInitials: {
+    fontSize: 62,
+    fontFamily: 'PlayfairDisplay_700Bold',
+    letterSpacing: 2,
+    color: '#fff',
+  },
+  heroPlaceholderTitle: {
+    marginTop: 10,
+    fontSize: 22,
+    fontFamily: 'PlayfairDisplay_600SemiBold',
+    color: '#fff',
+    textAlign: 'center',
+  },
+  heroPlaceholderSubtitle: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 20,
+    fontFamily: 'Manrope_500Medium',
+    color: 'rgba(255,255,255,0.8)',
+    textAlign: 'center',
+  },
   heroTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2851,6 +3053,16 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 10,
   },
+  avatarPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarPlaceholderInitials: {
+    fontSize: 30,
+    fontFamily: 'PlayfairDisplay_700Bold',
+    color: '#fff',
+    letterSpacing: 1.4,
+  },
   editAvatarButton: {
     position: 'absolute',
     bottom: -2,
@@ -2901,6 +3113,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     marginTop: 8,
+  },
+  trustHighlightsRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  trustHighlightChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  trustHighlightText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 0.2,
   },
   locationText: {
     fontSize: 13,
@@ -3146,6 +3376,47 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope_500Medium',
     lineHeight: 21,
   },
+  emptyFeatureCard: {
+    marginTop: 12,
+    alignSelf: 'stretch',
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  emptyFeatureIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  emptyFeatureTitle: {
+    fontSize: 15,
+    fontFamily: 'Archivo_600SemiBold',
+    textAlign: 'center',
+  },
+  emptyFeatureSubtitle: {
+    marginTop: 6,
+    fontSize: 13,
+    lineHeight: 20,
+    fontFamily: 'Manrope_400Regular',
+    textAlign: 'center',
+  },
+  emptyFeatureButton: {
+    marginTop: 14,
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  emptyFeatureButtonText: {
+    color: '#fff',
+    fontSize: 13,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 0.2,
+  },
   promptEmptyText: {
     marginTop: 10,
     fontSize: 12,
@@ -3237,6 +3508,9 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope_400Regular',
     color: '#6b7280',
     marginTop: 8,
+  },
+  galleryEmptyCard: {
+    marginHorizontal: 20,
   },
   photoCard: {
     position: 'relative',

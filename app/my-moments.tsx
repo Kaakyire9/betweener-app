@@ -213,8 +213,26 @@ export default function MyMomentsScreen() {
         <Text style={styles.sectionTitle}>Recent uploads</Text>
         {emptyState ? (
           <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>No Moments yet</Text>
-            <Text style={styles.emptySubtitle}>Post a Moment to share a quick update.</Text>
+            <View style={styles.emptyBadge}>
+              <Text style={styles.emptyBadgeText}>24-hour spotlight</Text>
+            </View>
+            <Text style={styles.emptyTitle}>Your story has not gone live yet</Text>
+            <Text style={styles.emptySubtitle}>
+              Post a quick photo, video, or text Moment to stay visible and give people something fresh to react to.
+            </Text>
+            <View style={styles.emptyHighlights}>
+              <View style={styles.emptyHighlightRow}>
+                <MaterialCommunityIcons name="flash-outline" size={16} color={Colors.light.tint} />
+                <Text style={styles.emptyHighlightText}>Moments keep your profile feeling active.</Text>
+              </View>
+              <View style={styles.emptyHighlightRow}>
+                <MaterialCommunityIcons name="heart-outline" size={16} color="#ef4444" />
+                <Text style={styles.emptyHighlightText}>Simple updates create easier conversation starters.</Text>
+              </View>
+            </View>
+            <TouchableOpacity style={styles.emptyActionButton} onPress={() => setCreateVisible(true)}>
+              <Text style={styles.emptyActionText}>Post your first Moment</Text>
+            </TouchableOpacity>
           </View>
         ) : (
           moments.map((moment) => {
@@ -325,8 +343,37 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     marginBottom: 16,
   },
+  emptyBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(11,107,105,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(11,107,105,0.14)',
+    marginBottom: 12,
+  },
+  emptyBadgeText: {
+    color: Colors.light.tint,
+    fontSize: 11,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
   emptyTitle: { fontSize: 16, fontFamily: 'Archivo_700Bold', color: '#111827', marginBottom: 6 },
-  emptySubtitle: { color: '#6b7280', fontFamily: 'Manrope_500Medium' },
+  emptySubtitle: { color: '#6b7280', fontFamily: 'Manrope_500Medium', lineHeight: 20 },
+  emptyHighlights: { marginTop: 14, gap: 10 },
+  emptyHighlightRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  emptyHighlightText: { flex: 1, color: '#4b5563', fontFamily: 'Manrope_600SemiBold', fontSize: 12 },
+  emptyActionButton: {
+    marginTop: 16,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: Colors.light.tint,
+  },
+  emptyActionText: { color: '#fff', fontFamily: 'Manrope_700Bold', fontSize: 13 },
   momentRow: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -7,6 +7,7 @@ import { Image, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { Colors } from "@/constants/theme";
+import { TRUST_LINKS, openExternalUrl } from "@/lib/trust-links";
 
 export default function WelcomeScreen() {
   const router = useRouter();
@@ -60,9 +61,11 @@ export default function WelcomeScreen() {
         <View style={styles.footer}>
           <Text style={styles.legal}>
             {"By tapping \"Create account\" or \"Sign in\", you agree to our "}
-            <Text style={styles.legalLink}>Terms</Text>. Learn how we process
-            your data in our <Text style={styles.legalLink}>Privacy Policy</Text>{" "}
-            and <Text style={styles.legalLink}>Cookies Policy</Text>.
+            <Text style={styles.legalLink} onPress={() => void openExternalUrl(TRUST_LINKS.terms)}>Terms</Text>.
+            {" "}Learn how we process your data in our{" "}
+            <Text style={styles.legalLink} onPress={() => void openExternalUrl(TRUST_LINKS.privacy)}>Privacy Policy</Text>
+            {" "}and{" "}
+            <Text style={styles.legalLink} onPress={() => void openExternalUrl(TRUST_LINKS.cookies)}>Cookies Policy</Text>.
           </Text>
 
           <Pressable

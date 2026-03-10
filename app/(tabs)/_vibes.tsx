@@ -12,6 +12,7 @@ import { useMoments, type MomentUser } from '@/hooks/useMoments';
 import useVibesFeed, { applyVibesFilters, type VibesFilters } from "@/hooks/useVibesFeed";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
+import { canAccessInternalTools } from "@/lib/internal-tools";
 import { recordProfileSignal } from '@/lib/profile-signals';
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -869,6 +870,7 @@ export default function ExploreScreen() {
   function NoMoreProfiles() {
     const noMoreTranslate = useRef(new Animated.Value(18)).current;
     const noMoreOpacity = useRef(new Animated.Value(0)).current;
+    const filtersAreTight = appliedFilterCount > 0;
 
     useEffect(() => {
       Animated.parallel([
@@ -880,25 +882,44 @@ export default function ExploreScreen() {
     return (
       <Animated.View style={[{ transform: [{ translateY: noMoreTranslate }], opacity: noMoreOpacity }, styles.emptyStateContainer]}>
         <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>No new profiles right now</Text>
-          <Text style={styles.emptySubtitle}>Check back later or refresh for a new set.</Text>
+          {filtersAreTight ? (
+            <View style={styles.emptyBadge}>
+              <Text style={styles.emptyBadgeText}>{appliedFilterCount} active filters</Text>
+            </View>
+          ) : null}
+          <Text style={styles.emptyTitle}>
+            {filtersAreTight ? 'Your filters are narrowing the room' : 'No fresh profiles right now'}
+          </Text>
+          <Text style={styles.emptySubtitle}>
+            {filtersAreTight
+              ? 'Open things up a little and you will likely see more people worth considering.'
+              : 'You have reached the edge of this round. Refresh for a new set or browse nearby again.'}
+          </Text>
           <View style={styles.emptyActions}>
             <TouchableOpacity
               style={[styles.primaryButton]}
               onPress={() => {
-                void refreshMatches();
+                if (filtersAreTight) {
+                  resetAllFilters();
+                } else {
+                  void refreshMatches();
+                }
                 setCurrentIndex(0);
               }}
             >
-              <Text style={styles.primaryButtonText}>Refresh Vibes</Text>
+              <Text style={styles.primaryButtonText}>{filtersAreTight ? 'Clear filters' : 'Refresh Vibes'}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.ghostButton}
               onPress={() => {
-                setActiveTab('nearby');
+                if (filtersAreTight) {
+                  void refreshMatches();
+                } else {
+                  setActiveTab('nearby');
+                }
               }}
             >
-              <Text style={styles.ghostButtonText}>Browse Nearby</Text>
+              <Text style={styles.ghostButtonText}>{filtersAreTight ? 'Refresh anyway' : 'Browse Nearby'}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1208,7 +1229,7 @@ export default function ExploreScreen() {
                 }}
                 icon="cloud-alert"
               />
-              {(typeof __DEV__ !== 'undefined' && __DEV__) || user?.id === 'f2e418eb-2535-4671-9588-6f2aa0ae0a36' ? (
+              {canAccessInternalTools() ? (
                 <TouchableOpacity
                   style={{ alignSelf: 'flex-start', marginTop: 8, paddingHorizontal: 4, paddingVertical: 4 }}
                   onPress={() => router.push('/diagnostics')}
@@ -2368,6 +2389,21 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       elevation: 10,
       borderWidth: 1,
       borderColor: cardBorder,
+    },
+    emptyBadge: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(11,107,105,0.08)',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(11,107,105,0.12)',
+      marginBottom: 12,
+    },
+    emptyBadgeText: {
+      color: theme.text,
+      fontSize: 12,
+      fontWeight: '700',
+      letterSpacing: 0.2,
     },
     emptyTitle: { fontSize: 20, fontWeight: '800', color: theme.text, marginBottom: 6 },
     emptySubtitle: { fontSize: 14, color: theme.textMuted, textAlign: 'center', marginBottom: 16 },

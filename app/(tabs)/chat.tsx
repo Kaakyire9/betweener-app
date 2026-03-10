@@ -3,6 +3,7 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useResolvedProfileId } from "@/hooks/useResolvedProfileId";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
+import { getProfileInitials, getProfilePlaceholderPalette } from "@/lib/profile-placeholders";
 import { getSupabaseNetEvents, supabase } from "@/lib/supabase";
 import { captureMessage } from "@/lib/telemetry/sentry";
 import { readCache, writeCache } from "@/lib/persisted-cache";
@@ -976,11 +977,19 @@ export default function ChatScreen() {
     ) : item.matchedUser.avatar_url ? (
       <Image source={{ uri: item.matchedUser.avatar_url }} style={styles.conversationAvatar} />
     ) : (
-      <View style={[styles.conversationAvatar, styles.avatarFallback]}>
+      <LinearGradient
+        colors={[
+          getProfilePlaceholderPalette(item.matchedUser.id || item.matchedUser.name).start,
+          getProfilePlaceholderPalette(item.matchedUser.id || item.matchedUser.name).end,
+        ]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[styles.conversationAvatar, styles.avatarFallback]}
+      >
         <Text style={styles.avatarFallbackText}>
-          {(item.matchedUser.name || '?')[0]?.toUpperCase()}
+          {getProfileInitials(item.matchedUser.name)}
         </Text>
-      </View>
+      </LinearGradient>
     );
     const avatarContent = !isBlocked && isUnread ? (
       <LinearGradient
@@ -1089,15 +1098,30 @@ export default function ChatScreen() {
 
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
+      <View style={styles.emptyEyebrow}>
+        <Text style={styles.emptyEyebrowText}>Your private lounge</Text>
+      </View>
       <Image
         source={require('../../assets/images/no-chat-illus.png')}
         style={styles.emptyIllustration}
         resizeMode="contain"
       />
-      <Text style={styles.emptyStateTitle}>No conversations yet</Text>
+      <Text style={styles.emptyStateTitle}>No conversations yet, but the room is ready</Text>
       <Text style={styles.emptyStateText}>
-        Start matching with people to begin chatting!
+        Match with someone who feels aligned, then open with something specific enough to be memorable.
       </Text>
+      <View style={styles.emptyHighlights}>
+        <View style={styles.emptyHighlightCard}>
+          <MaterialCommunityIcons name="message-text-outline" size={18} color={theme.tint} />
+          <Text style={styles.emptyHighlightTitle}>Better first messages</Text>
+          <Text style={styles.emptyHighlightText}>Reference their vibe, not just their looks.</Text>
+        </View>
+        <View style={styles.emptyHighlightCard}>
+          <MaterialCommunityIcons name="star-four-points" size={18} color={theme.accent} />
+          <Text style={styles.emptyHighlightTitle}>Premium energy</Text>
+          <Text style={styles.emptyHighlightText}>Reply early when a strong match lands.</Text>
+        </View>
+      </View>
       <TouchableOpacity 
         style={styles.exploreButton}
         onPress={() => router.push('/(tabs)/vibes')}
@@ -1116,7 +1140,7 @@ export default function ChatScreen() {
         <View style={styles.newMatchesTitleRow}>
           <Text style={styles.newMatchesTitle}>New matches</Text>
           <Text style={styles.newMatchesSubtitle}>
-            {newMatchesLoading ? 'Loading...' : `${newMatches.length} ready to chat`}
+            {newMatchesLoading ? 'Loading...' : `${newMatches.length} waiting for the first hello`}
           </Text>
         </View>
 
@@ -1135,9 +1159,17 @@ export default function ChatScreen() {
                 {item.avatar_url ? (
                   <Image source={{ uri: item.avatar_url }} style={styles.newMatchAvatar} />
                 ) : (
-                  <View style={[styles.newMatchAvatar, styles.avatarFallback]}>
-                    <Text style={styles.avatarFallbackText}>{(item.name || '?')[0]?.toUpperCase()}</Text>
-                  </View>
+                  <LinearGradient
+                    colors={[
+                      getProfilePlaceholderPalette(item.profileId || item.name).start,
+                      getProfilePlaceholderPalette(item.profileId || item.name).end,
+                    ]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={[styles.newMatchAvatar, styles.avatarFallback]}
+                  >
+                    <Text style={styles.avatarFallbackText}>{getProfileInitials(item.name)}</Text>
+                  </LinearGradient>
                 )}
                 <Text numberOfLines={1} style={styles.newMatchName}>
                   {item.name}
@@ -1630,6 +1662,22 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       alignItems: 'center',
       paddingHorizontal: 40,
     },
+    emptyEyebrow: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.2 : 0.1),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.4 : 0.16),
+      marginBottom: 14,
+    },
+    emptyEyebrowText: {
+      fontSize: 11,
+      fontFamily: 'Manrope_700Bold',
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
+      color: theme.tint,
+    },
     emptyStateTitle: {
       fontSize: 20,
       fontFamily: 'Archivo_700Bold',
@@ -1644,6 +1692,33 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       textAlign: 'center',
       lineHeight: 24,
       marginBottom: 24,
+    },
+    emptyHighlights: {
+      width: '100%',
+      gap: 10,
+      marginBottom: 24,
+    },
+    emptyHighlightCard: {
+      borderRadius: 18,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+      alignItems: 'flex-start',
+    },
+    emptyHighlightTitle: {
+      marginTop: 8,
+      fontSize: 14,
+      fontFamily: 'Archivo_600SemiBold',
+      color: theme.text,
+    },
+    emptyHighlightText: {
+      marginTop: 4,
+      fontSize: 12,
+      lineHeight: 18,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
     },
     emptyIllustration: {
       width: 260,

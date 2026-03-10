@@ -275,6 +275,55 @@ export default function CirclesScreen() {
     router.push({ pathname: '/circles/[id]', params: { id: String(circleId) } });
   }, []);
 
+  const renderEmptyCirclesCard = useCallback(
+    ({
+      badge,
+      title,
+      body,
+      highlights,
+      primaryLabel,
+      onPrimary,
+      secondaryLabel,
+      onSecondary,
+    }: {
+      badge: string;
+      title: string;
+      body: string;
+      highlights: { icon: string; text: string }[];
+      primaryLabel: string;
+      onPrimary: () => void;
+      secondaryLabel?: string;
+      onSecondary?: () => void;
+    }) => (
+      <View style={styles.emptyCard}>
+        <View style={styles.emptyBadge}>
+          <Text style={styles.emptyBadgeText}>{badge}</Text>
+        </View>
+        <Text style={styles.emptyTitle}>{title}</Text>
+        <Text style={styles.emptyHint}>{body}</Text>
+        <View style={styles.emptyHighlights}>
+          {highlights.map((item) => (
+            <View key={item.text} style={styles.emptyHighlightRow}>
+              <MaterialCommunityIcons name={item.icon as any} size={16} color={theme.tint} />
+              <Text style={styles.emptyHighlightText}>{item.text}</Text>
+            </View>
+          ))}
+        </View>
+        <View style={styles.emptyActions}>
+          <TouchableOpacity style={styles.primaryButton} onPress={onPrimary}>
+            <Text style={styles.primaryText}>{primaryLabel}</Text>
+          </TouchableOpacity>
+          {secondaryLabel && onSecondary ? (
+            <TouchableOpacity style={styles.secondaryButton} onPress={onSecondary}>
+              <Text style={styles.secondaryText}>{secondaryLabel}</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </View>
+    ),
+    [styles, theme.tint],
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -301,10 +350,19 @@ export default function CirclesScreen() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>My circles</Text>
         {myCircles.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyText}>No circles yet.</Text>
-            <Text style={styles.emptyHint}>Create a trusted space or join one.</Text>
-          </View>
+          renderEmptyCirclesCard({
+            badge: 'Start your network',
+            title: 'No circles yet, but your people can start here',
+            body: 'Create a trusted room for introductions, or step into one that already matches your energy.',
+            highlights: [
+              { icon: 'shield-check-outline', text: 'Private circles feel curated, safer, and more intentional.' },
+              { icon: 'account-group-outline', text: 'A strong circle turns introductions into warmer conversations.' },
+            ],
+            primaryLabel: 'Create a circle',
+            onPrimary: () => setCreateOpen(true),
+            secondaryLabel: 'Refresh',
+            onSecondary: () => void loadCircles(),
+          })
         ) : (
           myCircles.map((membership) => {
             const circle = membership.circles;
@@ -345,10 +403,19 @@ export default function CirclesScreen() {
         {loading && discoverCircles.length === 0 ? (
           <Text style={styles.emptyText}>Loading circles...</Text>
         ) : discoverCircles.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyText}>No public circles right now.</Text>
-            <Text style={styles.emptyHint}>Start one to set the tone.</Text>
-          </View>
+          renderEmptyCirclesCard({
+            badge: 'Curated discovery',
+            title: 'No public circles are open right now',
+            body: 'That usually means this space is still early or your future circle has not been created yet.',
+            highlights: [
+              { icon: 'star-four-points-outline', text: 'Founding circles help shape the culture other members will feel.' },
+              { icon: 'refresh', text: 'Check back after a refresh as new communities can appear at any time.' },
+            ],
+            primaryLabel: 'Create one now',
+            onPrimary: () => setCreateOpen(true),
+            secondaryLabel: 'Refresh',
+            onSecondary: () => void loadCircles(),
+          })
         ) : (
           discoverCircles.map((circle) => (
             <View key={circle.id} style={styles.card}>
@@ -513,14 +580,53 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     secondaryText: { color: theme.text, fontWeight: '600', fontSize: 12 },
     emptyCard: {
       padding: 14,
-      borderRadius: 16,
+      borderRadius: 20,
       borderWidth: 1,
       borderColor: theme.outline,
       backgroundColor: theme.backgroundSubtle,
-      gap: 6,
+      gap: 10,
     },
-    emptyText: { fontSize: 12, color: theme.textMuted },
-    emptyHint: { fontSize: 11, color: theme.textMuted },
+    emptyBadge: {
+      alignSelf: 'flex-start',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.outline,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff',
+    },
+    emptyBadgeText: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: theme.textMuted,
+      letterSpacing: 0.3,
+    },
+    emptyTitle: {
+      fontSize: 17,
+      lineHeight: 22,
+      color: theme.text,
+      fontFamily: 'PlayfairDisplay_700Bold',
+    },
+    emptyText: { fontSize: 12, color: theme.textMuted, lineHeight: 20 },
+    emptyHint: { fontSize: 12, color: theme.textMuted, lineHeight: 20 },
+    emptyHighlights: { gap: 8 },
+    emptyHighlightRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 8,
+    },
+    emptyHighlightText: {
+      flex: 1,
+      fontSize: 12,
+      lineHeight: 18,
+      color: theme.textMuted,
+    },
+    emptyActions: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+      marginTop: 2,
+    },
     modalBackdrop: {
       flex: 1,
       backgroundColor: 'rgba(0,0,0,0.35)',

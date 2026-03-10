@@ -187,7 +187,25 @@ export default function MomentCommentsModal({ visible, momentId, onClose }: Prop
 
           <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
             {comments.length === 0 && !loading ? (
-              <Text style={styles.emptyText}>No comments yet.</Text>
+              <View style={styles.emptyCard}>
+                <View style={styles.emptyBadge}>
+                  <Text style={styles.emptyBadgeText}>Start the thread</Text>
+                </View>
+                <Text style={styles.emptyTitle}>No comments yet</Text>
+                <Text style={styles.emptyText}>
+                  Be the first to add something warm, specific, and worth replying to.
+                </Text>
+                <View style={styles.emptyHighlights}>
+                  <View style={styles.emptyHighlightRow}>
+                    <MaterialCommunityIcons name="message-text-outline" size={15} color="#f472b6" />
+                    <Text style={styles.emptyHighlightText}>Short, thoughtful comments usually get better responses.</Text>
+                  </View>
+                  <View style={styles.emptyHighlightRow}>
+                    <MaterialCommunityIcons name="heart-outline" size={15} color="#f472b6" />
+                    <Text style={styles.emptyHighlightText}>React to the moment itself instead of sending something generic.</Text>
+                  </View>
+                </View>
+              </View>
             ) : (
               comments.map((comment) => {
                 const profile = profiles[comment.user_id];
@@ -255,7 +273,39 @@ const styles = StyleSheet.create({
   closeButton: { width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', justifyContent: 'center' },
   list: { maxHeight: 280 },
   listContent: { paddingBottom: 12, gap: 12 },
-  emptyText: { color: '#9ca3af', fontFamily: 'Manrope_500Medium' },
+  emptyCard: {
+    borderRadius: 16,
+    padding: 14,
+    gap: 10,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  emptyBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  emptyBadgeText: {
+    color: '#cbd5e1',
+    fontSize: 10,
+    fontFamily: 'Archivo_700Bold',
+    letterSpacing: 0.3,
+  },
+  emptyTitle: {
+    color: '#fff',
+    fontSize: 18,
+    lineHeight: 22,
+    fontFamily: 'Archivo_700Bold',
+  },
+  emptyText: { color: '#9ca3af', fontFamily: 'Manrope_500Medium', lineHeight: 20 },
+  emptyHighlights: { gap: 8 },
+  emptyHighlightRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  emptyHighlightText: { flex: 1, color: '#cbd5e1', fontFamily: 'Manrope_500Medium', fontSize: 12, lineHeight: 18 },
   commentRow: { flexDirection: 'row', gap: 10 },
   commentAvatar: {
     width: 34,

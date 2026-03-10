@@ -270,7 +270,25 @@ export default function MomentsScreen() {
               style={styles.emptyIllustration}
               contentFit="contain"
             />
-            <Text style={styles.emptyText}>No moments yet. Post your first moment.</Text>
+            <View style={styles.emptyBadge}>
+              <Text style={styles.emptyBadgeText}>Stay visible</Text>
+            </View>
+            <Text style={styles.emptyTitle}>No moments yet, but the stage is ready</Text>
+            <Text style={styles.emptyText}>
+              Post something quick so people can read your mood, react, and start warmer conversations.
+            </Text>
+            <View style={styles.emptyHighlights}>
+              <View style={styles.emptyHighlightCard}>
+                <MaterialCommunityIcons name="message-outline" size={18} color={theme.tint} />
+                <Text style={styles.emptyHighlightTitle}>Low pressure</Text>
+                <Text style={styles.emptyHighlightBody}>A single photo or short note is enough to start.</Text>
+              </View>
+              <View style={styles.emptyHighlightCard}>
+                <MaterialCommunityIcons name="star-four-points" size={18} color={theme.accent} />
+                <Text style={styles.emptyHighlightTitle}>Higher warmth</Text>
+                <Text style={styles.emptyHighlightBody}>Fresh Moments make your profile feel active and real.</Text>
+              </View>
+            </View>
           </View>
         )}
 
@@ -424,25 +442,64 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.textMuted,
       fontFamily: 'Manrope_600SemiBold',
     },
-    emptyCard: {
-      padding: 18,
-      borderRadius: 18,
-      backgroundColor: theme.backgroundSubtle,
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
-      marginBottom: 16,
-    },
-    emptyTitle: { fontSize: 16, fontFamily: 'Archivo_700Bold', color: theme.text, marginBottom: 6 },
-    emptySubtitle: { color: theme.textMuted, fontFamily: 'Manrope_500Medium' },
     emptyState: {
       alignItems: 'center',
       justifyContent: 'center',
       paddingVertical: 16,
       gap: 10,
     },
+    emptyBadge: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.1),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.4 : 0.18),
+      marginTop: -8,
+    },
+    emptyBadgeText: {
+      color: theme.tint,
+      fontFamily: 'Manrope_700Bold',
+      fontSize: 11,
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
+    },
+    emptyTitle: {
+      color: theme.text,
+      fontFamily: 'Archivo_700Bold',
+      fontSize: 18,
+      textAlign: 'center',
+      marginTop: 2,
+    },
     emptyIllustration: {
       width: 280,
       height: 200,
+    },
+    emptyHighlights: {
+      width: '100%',
+      gap: 10,
+      marginTop: 6,
+    },
+    emptyHighlightCard: {
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      backgroundColor: theme.backgroundSubtle,
+      paddingHorizontal: 14,
+      paddingVertical: 14,
+    },
+    emptyHighlightTitle: {
+      marginTop: 8,
+      color: theme.text,
+      fontFamily: 'Archivo_600SemiBold',
+      fontSize: 14,
+    },
+    emptyHighlightBody: {
+      marginTop: 4,
+      color: theme.textMuted,
+      fontFamily: 'Manrope_500Medium',
+      fontSize: 12,
+      lineHeight: 18,
     },
     momentRow: {
       flexDirection: 'row',
@@ -489,7 +546,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.textMuted,
       fontFamily: 'Manrope_500Medium',
       textAlign: 'center',
-      marginTop: 20,
+      marginTop: 4,
+      lineHeight: 20,
     },
     footer: {
       textAlign: 'center',

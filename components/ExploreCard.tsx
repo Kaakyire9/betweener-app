@@ -3,6 +3,7 @@ import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { getProfileInitials, getProfilePlaceholderPalette, hasProfileImage } from "@/lib/profile-placeholders";
 import type { Match } from "@/types/match";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -44,7 +45,8 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
-  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const placeholderPalette = getProfilePlaceholderPalette(match.id || match.name);
+  const styles = useMemo(() => createStyles(theme, isDark, placeholderPalette), [placeholderPalette, theme, isDark]);
   const gradientColors = useMemo(
     () => (isDark ? ["rgba(0,0,0,0)", "rgba(0,0,0,0.7)"] : ["rgba(0,0,0,0)", "rgba(0,0,0,0.55)"] ),
     [isDark]
@@ -68,6 +70,8 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
       ? 1
       : 0;
   const badgeVariant = verificationLevel >= 2 ? 'id' : verificationLevel >= 1 ? 'phone' : null;
+  const hasAvatarImage = hasProfileImage(match.avatar_url);
+  const profileInitials = getProfileInitials(match.name);
 
   const isOnlineNow = !!(match as any).online;
   const lastActiveValue = match.lastActive || (match as any).last_active;
@@ -206,6 +210,17 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     return chips.slice(0, 3);
   }, [match.interests, (match as any).personalityTags, (match as any).looking_for, (match as any).lookingFor, (match as any).love_language, (match as any).loveLanguage]);
 
+  const trustSignals = useMemo(() => {
+    const signals: string[] = [];
+    if (verificationLevel >= 2) signals.push('ID verified');
+    else if (verificationLevel >= 1) signals.push('Phone verified');
+    if ((match as any).profileVideo) signals.push('Intro video');
+    if (((match.interests || []).filter(Boolean).length >= 3) || !!((match as any).bio || '').trim()) {
+      signals.push('Detailed profile');
+    }
+    return signals.slice(0, 3);
+  }, [match.interests, (match as any).bio, (match as any).profileVideo, verificationLevel]);
+
   const previewGlowStyle = {
     transform: [
       {
@@ -238,7 +253,23 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
   return (
     <View style={styles.card}>
       <TouchableOpacity style={styles.cardContent} activeOpacity={0.95} onPress={() => onPress?.(match.id)}>
-        <Image source={{ uri: match.avatar_url || "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&h=600&fit=crop&crop=face" }} style={styles.image} />
+        {hasAvatarImage ? (
+          <Image source={{ uri: match.avatar_url }} style={styles.image} />
+        ) : (
+          <LinearGradientSafe
+            colors={[placeholderPalette.start, placeholderPalette.end]}
+            start={[0, 0]}
+            end={[1, 1]}
+            style={styles.placeholderSurface}
+          >
+            <View style={styles.placeholderOrb} />
+            <View style={styles.placeholderContent}>
+              <Text style={styles.placeholderInitials}>{profileInitials}</Text>
+              <Text style={styles.placeholderTitle}>Profile loading in style</Text>
+              <Text style={styles.placeholderSubtitle}>Photos can wait. Presence still matters.</Text>
+            </View>
+          </LinearGradientSafe>
+        )}
 
         {/* subtle full-card glow while previewing (modal playing) */}
         {isPreviewing ? (
@@ -352,6 +383,16 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
             </View>
           ) : null}
 
+          {trustSignals.length ? (
+            <View style={styles.trustRow}>
+              {trustSignals.map((signal, idx) => (
+                <View key={`${signal}-${idx}`} style={styles.trustChip}>
+                  <Text style={styles.trustChipText}>{signal}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
           <View style={styles.alignmentRow}>
             <View style={styles.alignmentChips}>
               {alignmentChips.map((chip, idx) => (
@@ -408,7 +449,11 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
   );
 }
 
-const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
+const createStyles = (
+  theme: typeof Colors.light,
+  isDark: boolean,
+  placeholderPalette: ReturnType<typeof getProfilePlaceholderPalette>,
+) => {
   const surface = theme.background;
   const tagBg = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.18)';
   const personalityBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)';
@@ -420,6 +465,41 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
     card: { position: "absolute", width: "100%", height: "100%", borderRadius: 24, overflow: "hidden", backgroundColor: surface },
     cardContent: { flex: 1 },
     image: { width: "100%", height: "100%", resizeMode: "cover" },
+    placeholderSurface: { width: "100%", height: "100%", justifyContent: "center", alignItems: "center" },
+    placeholderOrb: {
+      position: 'absolute',
+      width: 220,
+      height: 220,
+      borderRadius: 110,
+      backgroundColor: 'rgba(255,255,255,0.08)',
+      shadowColor: '#fff',
+      shadowOpacity: 0.12,
+      shadowRadius: 36,
+      shadowOffset: { width: 0, height: 12 },
+      elevation: 10,
+    },
+    placeholderContent: { alignItems: 'center', paddingHorizontal: 28 },
+    placeholderInitials: {
+      fontSize: 54,
+      fontFamily: 'PlayfairDisplay_700Bold',
+      color: placeholderPalette.text,
+      letterSpacing: 1.5,
+    },
+    placeholderTitle: {
+      marginTop: 10,
+      fontSize: 18,
+      fontFamily: 'Archivo_700Bold',
+      color: '#fff',
+      textAlign: 'center',
+    },
+    placeholderSubtitle: {
+      marginTop: 6,
+      fontSize: 13,
+      fontFamily: 'Manrope_500Medium',
+      color: placeholderPalette.muted,
+      textAlign: 'center',
+      lineHeight: 19,
+    },
     gradient: { position: "absolute", left: 0, right: 0, bottom: 0, height: "50%" },
     info: { position: "absolute", left: 0, right: 0, bottom: 0, padding: 18, paddingBottom: 22 },
     nameRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
@@ -430,6 +510,21 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
     tagline: { color: "#fff", marginBottom: 12, fontSize: 15, fontFamily: 'Manrope_500Medium' },
     locationRow: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
     location: { color: "#fff", marginLeft: 6 },
+    trustRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
+    trustChip: {
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+      backgroundColor: 'rgba(255,255,255,0.12)',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(255,255,255,0.2)',
+    },
+    trustChipText: {
+      color: '#fff',
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: 0.2,
+    },
     alignmentRow: { marginBottom: 8 },
     alignmentChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
     alignmentChip: {

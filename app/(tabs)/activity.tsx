@@ -423,6 +423,38 @@ export default function ActivityScreen() {
     return "Nothing to show yet.";
   }, [filter]);
 
+  const renderEmptyState = () => (
+    <View style={styles.emptyCard}>
+      <View style={styles.emptyBadge}>
+        <Text style={styles.emptyBadgeText}>
+          {filter === "needs_action" ? "All clear" : "Quiet inbox"}
+        </Text>
+      </View>
+      <Text style={styles.emptyTitle}>
+        {filter === "needs_action" ? "Nothing is waiting on you right now" : "Your inbox is quiet for the moment"}
+      </Text>
+      <Text style={styles.emptyText}>{emptyCopy}</Text>
+      <View style={styles.emptyHighlights}>
+        <View style={styles.emptyHighlightRow}>
+          <MaterialCommunityIcons name="heart-outline" size={16} color={theme.tint} />
+          <Text style={styles.emptyHighlightText}>Likes, replies, gifts, and system updates will collect here.</Text>
+        </View>
+        <View style={styles.emptyHighlightRow}>
+          <MaterialCommunityIcons name="compass-outline" size={16} color={theme.accent} />
+          <Text style={styles.emptyHighlightText}>The fastest way to wake this up is Vibes, Moments, or Circles.</Text>
+        </View>
+      </View>
+      <View style={styles.emptyActions}>
+        <Pressable style={styles.emptyPrimary} onPress={() => router.push("/(tabs)/vibes")}>
+          <Text style={styles.emptyPrimaryText}>Open Vibes</Text>
+        </Pressable>
+        <Pressable style={styles.emptySecondary} onPress={() => router.push("/moments")}>
+          <Text style={styles.emptySecondaryText}>View Moments</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+
   return (
     <View style={styles.container}>
       <LinearGradient
@@ -482,7 +514,7 @@ export default function ActivityScreen() {
             loading ? (
               <Text style={styles.emptyText}>Loading inbox...</Text>
             ) : (
-              <Text style={styles.emptyText}>{emptyCopy}</Text>
+              renderEmptyState()
             )
           }
         />
@@ -626,5 +658,82 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       marginTop: 20,
       fontSize: 13,
       color: theme.textMuted,
+      lineHeight: 20,
+      textAlign: "center",
+    },
+    emptyCard: {
+      marginTop: 20,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      backgroundColor: theme.backgroundSubtle,
+      paddingHorizontal: 16,
+      paddingVertical: 16,
+      gap: 12,
+    },
+    emptyBadge: {
+      alignSelf: "flex-start",
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.1),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.4 : 0.18),
+    },
+    emptyBadgeText: {
+      fontSize: 11,
+      color: theme.tint,
+      fontWeight: "700",
+      letterSpacing: 0.8,
+      textTransform: "uppercase",
+    },
+    emptyTitle: {
+      fontSize: 18,
+      color: theme.text,
+      fontFamily: "Archivo_700Bold",
+    },
+    emptyHighlights: {
+      gap: 10,
+    },
+    emptyHighlightRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+    },
+    emptyHighlightText: {
+      flex: 1,
+      fontSize: 12,
+      color: theme.textMuted,
+      fontWeight: "600",
+      lineHeight: 18,
+    },
+    emptyActions: {
+      flexDirection: "row",
+      gap: 10,
+      marginTop: 4,
+    },
+    emptyPrimary: {
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderRadius: 999,
+      backgroundColor: theme.tint,
+    },
+    emptyPrimaryText: {
+      color: Colors.light.background,
+      fontWeight: "700",
+      fontSize: 12,
+    },
+    emptySecondary: {
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.outline,
+      backgroundColor: theme.background,
+    },
+    emptySecondaryText: {
+      color: theme.text,
+      fontWeight: "700",
+      fontSize: 12,
     },
   });

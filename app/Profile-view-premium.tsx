@@ -2,6 +2,7 @@ import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { VerificationBadge } from '@/components/VerificationBadge';
 import Notice from '@/components/ui/Notice';
 import { Colors } from '@/constants/theme';
+import { usePremiumState } from '@/hooks/use-premium-state';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
 import { computeCompatibilityPercent } from '@/lib/compat/compatibility-score';
@@ -9,9 +10,11 @@ import { computeFirstReplyHours, computeInterestOverlapRatio, computeMatchScoreP
 import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
+import { getProfileInitials, getProfilePlaceholderPalette } from '@/lib/profile-placeholders';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/telemetry/logger';
 import type { UserProfile } from '@/types/user-profile';
+import { getViewedProfilePremiumCopy, getViewedProfileTrustChips } from '@/lib/viewed-profile-premium';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import type { ViewToken } from '@shopify/flash-list';
 import { FlashList } from '@shopify/flash-list';
@@ -268,12 +271,7 @@ function buildSections(profile: UserProfile): PremiumSection[] {
     .filter(Boolean)
     .map(String);
 
-  const premiumCopy = {
-    aboutEmpty: "This section hasn't been filled yet - ask something thoughtful.",
-    lifestyleEmpty: 'Lifestyle details coming soon.',
-    promptsEmpty: 'Conversation starters coming soon.',
-    valuesEmpty: 'Intentions will appear here once shared.',
-  };
+  const premiumCopy = getViewedProfilePremiumCopy(profile.name);
 
   const sections: PremiumSection[] = [
     {
@@ -340,6 +338,7 @@ function buildSections(profile: UserProfile): PremiumSection[] {
 
 function buildAutoSectionsIfNeeded(profile: UserProfile, existing: PremiumSection[]): PremiumSection[] {
   if (existing.length > 0) return existing;
+  const premiumCopy = getViewedProfilePremiumCopy(profile.name);
 
   const basics = [
     profile.height ? `Height: ${profile.height}` : null,
@@ -369,26 +368,26 @@ function buildAutoSectionsIfNeeded(profile: UserProfile, existing: PremiumSectio
       id: 'auto-basics',
       tag: 'intro',
       title: 'Basics',
-      body: basics.length ? basics.join('\n') : 'Key details will appear here once added.',
+      body: basics.length ? basics.join('\n') : premiumCopy.basicsEmpty,
     },
     {
       id: 'auto-intentions',
       tag: 'values',
       title: 'Intentions',
-      body: intentions.length ? intentions.join('\n') : 'Intentions will appear here once shared.',
+      body: intentions.length ? intentions.join('\n') : premiumCopy.valuesEmpty,
       chips: interests.slice(0, 6),
     },
     {
       id: 'auto-lifestyle',
       tag: 'lifestyle',
       title: 'Lifestyle',
-      body: lifestyle.length ? lifestyle.join('\n') : 'Lifestyle details coming soon.',
+      body: lifestyle.length ? lifestyle.join('\n') : premiumCopy.lifestyleEmpty,
     },
     {
       id: 'auto-ask',
       tag: 'prompts',
       title: 'Ask Me Anything',
-      body: 'Start with something specific - a thoughtful question goes a long way.',
+      body: premiumCopy.askAnything,
     },
   ];
 
@@ -1355,10 +1354,13 @@ function Header({
     (Array.isArray(profile.photos) && profile.photos.find(Boolean)) ||
     profile.profilePicture ||
     '';
+  const placeholderPalette = getProfilePlaceholderPalette(profile.id || profile.name);
+  const profileInitials = getProfileInitials(profile.name);
   const isOnlineNow = !!(profile as any).online;
   const isActiveNow = profile.isActiveNow || !!(profile as any).is_active;
   const showPresence = isOnlineNow || isActiveNow;
   const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
+  const trustHighlights = getViewedProfileTrustChips(profile);
   const showHeroVideo = !!heroVideoUrl;
   const [heroMuted, setHeroMuted] = useState(true);
   const heroHeight = Math.max(280, Math.min(420, Math.round(screenHeight * 0.38)));
@@ -1449,7 +1451,20 @@ function Header({
             style={[stylesStatic.heroImage, heroImageStyle]}
             resizeMode="cover"
           />
-        ) : null}
+        ) : (
+          <LinearGradient
+            colors={[placeholderPalette.start, placeholderPalette.end]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={stylesStatic.heroImage}
+          >
+            <View style={stylesStatic.heroPlaceholderContent}>
+              <Text style={stylesStatic.heroPlaceholderEyebrow}>Premium presence</Text>
+              <Text style={stylesStatic.heroPlaceholderInitials}>{profileInitials}</Text>
+              <Text style={stylesStatic.heroPlaceholderText}>The story is still opening up here.</Text>
+            </View>
+          </LinearGradient>
+        )}
 
         <LinearGradient
           colors={['rgba(0,0,0,0.5)', 'transparent']}
@@ -1538,6 +1553,16 @@ function Header({
               <Text numberOfLines={1} style={stylesStatic.heroSubText}>
                 {locationLine}
               </Text>
+            </View>
+          ) : null}
+
+          {trustHighlights.length ? (
+            <View style={stylesStatic.heroTrustRow}>
+              {trustHighlights.map((chip, index) => (
+                <View key={`${chip}-${index}`} style={stylesStatic.heroTrustChip}>
+                  <Text style={stylesStatic.heroTrustChipText}>{chip}</Text>
+                </View>
+              ))}
             </View>
           ) : null}
 
@@ -2020,10 +2045,13 @@ const StoryHeader = memo(function StoryHeader({
   locationLine: string;
 }) {
   const avatarUri = profile.profilePicture || '';
+  const placeholderPalette = getProfilePlaceholderPalette(profile.id || profile.name);
+  const profileInitials = getProfileInitials(profile.name);
   const isOnlineNow = !!(profile as any).online;
   const isActiveNow = profile.isActiveNow || !!(profile as any).is_active;
   const showPresence = isOnlineNow || isActiveNow;
   const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
+  const trustHighlights = getViewedProfileTrustChips(profile);
   return (
     <View style={[stylesStatic.storyHeader, { backgroundColor: theme.background }]}>
       <View
@@ -2032,7 +2060,20 @@ const StoryHeader = memo(function StoryHeader({
           { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
         ]}
       >
-        {avatarUri ? <Image source={{ uri: avatarUri }} style={stylesStatic.storyAvatar} /> : null}
+        {avatarUri ? (
+          <Image source={{ uri: avatarUri }} style={stylesStatic.storyAvatar} />
+        ) : (
+          <LinearGradient
+            colors={[placeholderPalette.start, placeholderPalette.end]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={stylesStatic.storyAvatar}
+          >
+            <View style={stylesStatic.storyAvatarPlaceholder}>
+              <Text style={stylesStatic.storyAvatarInitials}>{profileInitials}</Text>
+            </View>
+          </LinearGradient>
+        )}
       </View>
 
       <View style={stylesStatic.storyTextCol}>
@@ -2065,6 +2106,22 @@ const StoryHeader = memo(function StoryHeader({
             <Text style={[stylesStatic.storySubText, { color: theme.textMuted }]} numberOfLines={1}>
               {locationLine}
             </Text>
+          </View>
+        ) : null}
+
+        {trustHighlights.length ? (
+          <View style={stylesStatic.trustRowCentered}>
+            {trustHighlights.map((chip, index) => (
+              <View
+                key={`${chip}-${index}`}
+                style={[
+                  stylesStatic.trustChip,
+                  { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
+                ]}
+              >
+                <Text style={[stylesStatic.trustChipText, { color: theme.textMuted }]}>{chip}</Text>
+              </View>
+            ))}
           </View>
         ) : null}
 
@@ -2213,6 +2270,7 @@ function FloatingActions({
   isOwnProfile: boolean;
 }) {
   const insets = useSafeAreaInsets();
+  const { hasAccess } = usePremiumState();
   const [giftOpen, setGiftOpen] = useState(false);
   const [selectedGift, setSelectedGift] = useState<string | null>(null);
   const [giftSending, setGiftSending] = useState(false);
@@ -2231,7 +2289,18 @@ function FloatingActions({
   );
 
   const canSendToProfile = Boolean(currentUserId && profileId && currentUserId !== profileId);
+  const canUseBoosts = hasAccess('SILVER');
   const noteLength = noteText.trim().length;
+  const openBoostUpsell = () => {
+    Alert.alert(
+      'Unlock boosts',
+      'Profile boosts are included with Silver and Gold. Upgrade to activate 30-minute visibility boosts.',
+      [
+        { text: 'Not now', style: 'cancel' },
+        { text: 'View plans', onPress: () => router.push('/premium-plans') },
+      ],
+    );
+  };
 
   const openNote = () => {
     if (!canSendToProfile) {
@@ -2294,20 +2363,34 @@ function FloatingActions({
 
   const sendBoost = async () => {
     if (!currentUserId) return;
+    if (!canUseBoosts) {
+      openBoostUpsell();
+      return;
+    }
     setBoostSending(true);
-    const endsAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-    const { error } = await supabase.from('profile_boosts').insert({
-      user_id: currentUserId,
-      ends_at: endsAt,
-    });
+    const { data, error } = await supabase.rpc('rpc_create_profile_boost');
     setBoostSending(false);
     if (error) {
       logger.error('[profile-view-premium] send_boost_failed', error);
+      if (String(error.message || '').toLowerCase().includes('premium subscription required')) {
+        openBoostUpsell();
+        return;
+      }
+      if (String(error.message || '').toLowerCase().includes('boost already active')) {
+        Alert.alert('Boost already live', 'Your current boost is still running. Check your premium plans screen for timing.');
+        return;
+      }
       Alert.alert('Unable to boost', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
       return;
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-    Alert.alert('Boost active', 'Your profile is boosted for 30 minutes.');
+    const endsAt = typeof data === 'object' && data && 'ends_at' in data ? (data.ends_at as string | null) : null;
+    Alert.alert(
+      'Boost active',
+      endsAt
+        ? `Your profile is boosted until ${new Date(endsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`
+        : 'Your profile is boosted for 30 minutes.',
+    );
   };
 
   return (
@@ -2328,7 +2411,7 @@ function FloatingActions({
         {isOwnProfile ? (
           <Fab
             theme={theme}
-            label={boostSending ? 'Boosting' : 'Boost'}
+            label={boostSending ? 'Boosting' : canUseBoosts ? 'Boost' : 'Unlock Boosts'}
             icon="rocket-launch-outline"
             colors={['#F6C453', '#C68B1E'] as const}
             onPress={sendBoost}
@@ -2561,6 +2644,34 @@ const stylesStatic = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
+  heroPlaceholderContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  heroPlaceholderEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    color: 'rgba(255,255,255,0.78)',
+    marginBottom: 10,
+  },
+  heroPlaceholderInitials: {
+    fontSize: 54,
+    fontWeight: '900',
+    letterSpacing: 2,
+    color: '#fff',
+  },
+  heroPlaceholderText: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.82)',
+    textAlign: 'center',
+  },
   heroTopGradient: {
     position: 'absolute',
     left: 0,
@@ -2710,6 +2821,26 @@ const stylesStatic = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: 'rgba(255,255,255,0.86)',
+  },
+  heroTrustRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  heroTrustChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.24)',
+  },
+  heroTrustChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+    color: '#fff',
   },
 
   activeBadgeHero: {
@@ -2910,6 +3041,17 @@ const stylesStatic = StyleSheet.create({
     width: 88,
     height: 88,
   },
+  storyAvatarPlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  storyAvatarInitials: {
+    fontSize: 28,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    color: '#fff',
+  },
   storyTextCol: {
     paddingHorizontal: 8,
   },
@@ -2935,6 +3077,13 @@ const stylesStatic = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  trustRowCentered: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'center',
+    marginTop: 10,
+  },
   storyChipsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -2959,6 +3108,17 @@ const stylesStatic = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 14,
     marginBottom: 12,
+  },
+  trustChip: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  trustChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   sectionHeader: {
     flexDirection: 'row',

@@ -30,7 +30,6 @@ const validateImageQuality = async (asset: any): Promise<{ valid: boolean; messa
 
 const calculateAutomatedScore = async (method: string, asset: any): Promise<{
   confidence: number;
-  autoApprove: boolean;
   reason: string;
 }> => {
   let confidence = 0.5; // Base confidence
@@ -39,10 +38,9 @@ const calculateAutomatedScore = async (method: string, asset: any): Promise<{
   // Method-specific scoring
   switch (method) {
     case 'social':
-      // Social media verification gets auto-approval for basic level
       confidence = 0.8;
-      reason = 'Social media verification auto-approved';
-      return { confidence, autoApprove: true, reason };
+      reason = 'Social media verification ready for review';
+      return { confidence, reason };
       
     case 'passport':
     case 'residence':
@@ -57,19 +55,13 @@ const calculateAutomatedScore = async (method: string, asset: any): Promise<{
       if (asset.fileSize && asset.fileSize > 1024 * 1024) {
         confidence += 0.1; // Good file size indicates quality
       }
-      
-      // Auto-approve if confidence is high enough
-      if (confidence >= 0.75) {
-        reason = `High quality document image (${(confidence * 100).toFixed(0)}% confidence)`;
-        return { confidence, autoApprove: true, reason };
-      } else {
-        reason = `Manual review required (${(confidence * 100).toFixed(0)}% confidence)`;
-        return { confidence, autoApprove: false, reason };
-      }
+
+      reason = `Manual review required (${(confidence * 100).toFixed(0)}% confidence)`;
+      return { confidence, reason };
       
     default:
       reason = 'Unknown verification method';
-      return { confidence: 0.3, autoApprove: false, reason };
+      return { confidence: 0.3, reason };
   }
 };
 
@@ -170,7 +162,8 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
 
       if (error) throw error;
 
-      // Create verification request with automated scoring
+      // Create verification request with automated scoring metadata.
+      // Approval always happens off-device; the app should never self-upgrade trust state.
       const autoScore = await calculateAutomatedScore(method, asset);
       
       // Insert verification request
@@ -182,43 +175,22 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
           verification_type: method,
           document_url: data.path,
           auto_verification_score: autoScore.confidence,
-          status: autoScore.autoApprove ? 'approved' : 'pending',
-          reviewer_notes: autoScore.autoApprove 
-            ? `Auto-approved: ${autoScore.reason}` 
-            : `Pending review: ${autoScore.reason}`,
+          status: 'pending',
+          reviewer_notes: `Pending review: ${autoScore.reason}`,
         });
 
       if (requestError) throw requestError;
-
-      // Update verification level based on auto-scoring
       const methodData = verificationMethods.find(m => m.id === method);
-      const newLevel = autoScore.autoApprove 
-        ? Math.max(profile.verification_level || 0, methodData?.level || 1)
-        : profile.verification_level || 0;
-      
-      if (autoScore.autoApprove) {
-        const { error: updateError } = await supabase
-          .from('profiles')
-          .update({ 
-            verification_level: newLevel,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', profile.id);
-
-        if (updateError) throw updateError;
-        onVerificationUpdate(newLevel);
-      }
 
       // Show appropriate message
       Alert.alert(
-        autoScore.autoApprove ? 'Verification Approved!' : 'Verification Submitted!',
-        autoScore.autoApprove 
-          ? `Your ${methodData?.title} verification was automatically approved!`
-          : `Your ${methodData?.title} verification is being reviewed. You'll be notified once approved.`
+        'Verification Submitted!',
+        `Your ${methodData?.title} verification is being reviewed. You'll be notified once approved.`
       );
       
       // Refresh verification status
       refreshStatus();
+      onVerificationUpdate(profile?.verification_level || 0);
       onClose();
 
     } catch (error) {

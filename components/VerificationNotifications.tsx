@@ -74,10 +74,9 @@ export const VerificationNotifications: React.FC = () => {
 
   const markAsNotified = async (notificationId: string) => {
     try {
-      const { error } = await supabase
-        .from('verification_requests')
-        .update({ user_notified: true })
-        .eq('id', notificationId);
+      const { error } = await supabase.rpc('rpc_ack_verification_request', {
+        p_request_id: notificationId,
+      });
 
       if (error) throw error;
 
