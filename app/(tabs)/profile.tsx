@@ -11,7 +11,14 @@ import { useAuth } from "@/lib/auth-context";
 import { canAccessAdminTools } from "@/lib/internal-tools";
 import { readCache, writeCache } from "@/lib/persisted-cache";
 import { getProfileInitials, getProfilePlaceholderPalette, hasProfileImage } from "@/lib/profile-placeholders";
+import {
+  DEFAULT_GUESS_REVEAL_POLICY,
+  normalizeGuessText,
+  sanitizeGuessOptions,
+  shuffleOptions,
+} from "@/lib/prompts/guess-prompts";
 import { supabase } from "@/lib/supabase";
+import type { GuessMode, ProfilePromptAnswer, PromptType } from "@/types/user-profile";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useLocalSearchParams } from "expo-router";
@@ -242,18 +249,20 @@ export default function ProfileScreen() {
     week_goal: 1,
     vibe_song: 2
   });
-  const [promptAnswers, setPromptAnswers] = useState<{
-    id: string;
-    prompt_key: string;
-    prompt_title: string | null;
-    answer: string;
-    created_at: string;
-  }[]>([]);
+  const [promptAnswers, setPromptAnswers] = useState<ProfilePromptAnswer[]>([]);
   const [promptsLoading, setPromptsLoading] = useState(false);
   const [showPromptEditor, setShowPromptEditor] = useState(false);
+  const [promptComposerMode, setPromptComposerMode] = useState<PromptType>('standard');
   const [customPromptTitle, setCustomPromptTitle] = useState('');
   const [customPromptAnswer, setCustomPromptAnswer] = useState('');
   const [customPromptSaving, setCustomPromptSaving] = useState(false);
+  const [guessPromptTitle, setGuessPromptTitle] = useState('');
+  const [guessPromptAnswer, setGuessPromptAnswer] = useState('');
+  const [guessPromptHint, setGuessPromptHint] = useState('');
+  const [guessPromptMode, setGuessPromptMode] = useState<GuessMode>('multiple_choice');
+  const [guessPromptOptions, setGuessPromptOptions] = useState(['', '', '']);
+  const [guessPromptSaving, setGuessPromptSaving] = useState(false);
+  const [deletingPromptId, setDeletingPromptId] = useState<string | null>(null);
   
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
@@ -268,10 +277,12 @@ export default function ProfileScreen() {
   const [userInterests, setUserInterests] = useState<string[]>([]);
   const [loadingInterests, setLoadingInterests] = useState(false);
   const [userPhotos, setUserPhotos] = useState<string[]>([]);
+  const scrollViewRef = useRef<ScrollView | null>(null);
+  const promptEditorYRef = useRef(0);
 
   const cacheProfileId = profile?.id ?? user?.id ?? null;
   const promptsCacheKey = useMemo(
-    () => (cacheProfileId ? `cache:profile_prompts:v1:${cacheProfileId}` : null),
+    () => (cacheProfileId ? `cache:profile_prompts:v2:${cacheProfileId}` : null),
     [cacheProfileId],
   );
   const interestsCacheKey = useMemo(
@@ -325,10 +336,10 @@ export default function ProfileScreen() {
   const canSeeAdminTools = canAccessAdminTools(user?.email ?? null);
 
   const progressSubtitle = useMemo(() => {
-    if (profileCompletion.percent >= 100) return "Your profile feels complete";
-    if (profileCompletion.percent >= 80) return "Almost there - looking good";
-    if (profileCompletion.percent >= 50) return "Your profile is taking shape";
-    return "Start shaping your presence";
+    if (profileCompletion.percent >= 100) return "Profile complete";
+    if (profileCompletion.percent >= 80) return "Strong presence";
+    if (profileCompletion.percent >= 50) return "Shaping your presence";
+    return "Start with your best details";
   }, [profileCompletion.percent]);
 
   const nextPrompt = useMemo(() => {
@@ -399,15 +410,15 @@ export default function ProfileScreen() {
   };
 
   const applyPromptAnswers = useCallback(
-    (rows: { id: string; prompt_key: string; prompt_title: string | null; answer: string; created_at: string }[]) => {
+    (rows: ProfilePromptAnswer[]) => {
       setPromptAnswers(rows);
       setSelectedPrompts((prev) => {
         const nextSelected: Record<string, number> = { ...prev };
         rows.forEach((row) => {
-          const prompt = PROFILE_PROMPTS.find((p) => p.id === row.prompt_key);
+          const prompt = PROFILE_PROMPTS.find((p) => p.id === row.promptKey);
           if (!prompt) return;
           const idx = prompt.responses.findIndex((r) => r === row.answer);
-          if (idx >= 0) nextSelected[row.prompt_key] = idx;
+          if (idx >= 0) nextSelected[row.promptKey || prompt.id] = idx;
         });
         return nextSelected;
       });
@@ -456,7 +467,7 @@ export default function ProfileScreen() {
     try {
       const { data, error } = await supabase
         .from('profile_prompts')
-        .select('id,prompt_key,prompt_title,answer,created_at')
+        .select('id,prompt_key,prompt_title,prompt_type,answer,guess_mode,guess_options,hint_text,normalized_answer,reveal_policy,created_at')
         .eq('profile_id', profile.id)
         .order('created_at', { ascending: false })
         .limit(10);
@@ -464,13 +475,21 @@ export default function ProfileScreen() {
         console.log('[profile] prompt fetch error', error);
         return;
       }
-      const rows = (data || []) as {
-        id: string;
-        prompt_key: string;
-        prompt_title: string | null;
-        answer: string;
-        created_at: string;
-      }[];
+      const rows = ((data || []) as any[]).map((row) => ({
+        id: row.id,
+        promptKey: row.prompt_key || undefined,
+        promptTitle: row.prompt_title || null,
+        answer: row.answer || '',
+        promptType: row.prompt_type || 'standard',
+        guessMode: row.guess_mode || null,
+        guessOptions: Array.isArray(row.guess_options)
+          ? row.guess_options.filter((item: unknown) => typeof item === 'string')
+          : null,
+        hintText: row.hint_text || null,
+        normalizedAnswer: row.normalized_answer || null,
+        revealPolicy: row.reveal_policy || DEFAULT_GUESS_REVEAL_POLICY,
+        createdAt: row.created_at || undefined,
+      })) as ProfilePromptAnswer[];
       applyPromptAnswers(rows);
       if (promptsCacheKey) void writeCache(promptsCacheKey, rows);
     } finally {
@@ -861,9 +880,109 @@ export default function ProfileScreen() {
     void loadPromptAnswers();
   };
 
+  const resetGuessPromptComposer = useCallback(() => {
+    setGuessPromptTitle('');
+    setGuessPromptAnswer('');
+    setGuessPromptHint('');
+    setGuessPromptMode('multiple_choice');
+    setGuessPromptOptions(['', '', '']);
+  }, []);
+
+  const saveGuessPrompt = async () => {
+    if (isPreviewMode || !profile?.id) return;
+    const title = guessPromptTitle.trim();
+    const answer = guessPromptAnswer.trim();
+    if (!title || !answer) return;
+
+    const options =
+      guessPromptMode === 'multiple_choice'
+        ? shuffleOptions(sanitizeGuessOptions(guessPromptOptions, answer))
+        : null;
+
+    if (guessPromptMode === 'multiple_choice' && (!options || options.length < 2)) return;
+
+    setGuessPromptSaving(true);
+    try {
+      const existingGuessIds = promptAnswers
+        .filter((row) => row.promptType === 'guess')
+        .map((row) => row.id)
+        .filter(Boolean);
+
+      if (existingGuessIds.length > 0) {
+        const { error: deleteError } = await supabase
+          .from('profile_prompts')
+          .delete()
+          .eq('profile_id', profile.id)
+          .in('id', existingGuessIds);
+        if (deleteError) {
+          console.log('[profile] guess prompt cleanup error', deleteError);
+          return;
+        }
+      }
+
+      const { error } = await supabase.from('profile_prompts').insert({
+        profile_id: profile.id,
+        prompt_key: 'guess',
+        prompt_title: title,
+        prompt_type: 'guess',
+        answer,
+        guess_mode: guessPromptMode,
+        guess_options: options,
+        hint_text: guessPromptHint.trim() || null,
+        normalized_answer: normalizeGuessText(answer),
+        reveal_policy: DEFAULT_GUESS_REVEAL_POLICY,
+      });
+
+      if (error) {
+        console.log('[profile] guess prompt insert error', error);
+        return;
+      }
+
+      resetGuessPromptComposer();
+      void loadPromptAnswers();
+    } finally {
+      setGuessPromptSaving(false);
+    }
+  };
+
+  const deletePrompt = useCallback(
+    async (promptRowId: string) => {
+      if (isPreviewMode || !profile?.id || !promptRowId) return;
+      setDeletingPromptId(promptRowId);
+      try {
+        const { error } = await supabase
+          .from('profile_prompts')
+          .delete()
+          .eq('profile_id', profile.id)
+          .eq('id', promptRowId);
+        if (error) {
+          console.log('[profile] prompt delete error', error);
+          return;
+        }
+        void loadPromptAnswers();
+      } finally {
+        setDeletingPromptId(null);
+      }
+    },
+    [isPreviewMode, loadPromptAnswers, profile?.id],
+  );
+
   const togglePreviewMode = () => {
     setIsPreviewMode(!isPreviewMode);
   };
+
+  const openPromptEditor = useCallback(() => {
+    if (isPreviewMode) return;
+    setShowPromptEditor(true);
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        scrollViewRef.current?.scrollTo({
+          y: Math.max(0, promptEditorYRef.current - 24),
+          animated: true,
+        });
+      }, 80);
+    });
+  }, [isPreviewMode]);
 
   const openFullPreview = () => {
     // Navigate to the full profile view screen in preview mode
@@ -1104,31 +1223,40 @@ export default function ProfileScreen() {
   const showPresence = isOnlineNow || isActiveNow;
   const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
   const aboutMeText = rawBio || 'Add a few lines about you.';
-  const trustHighlights = useMemo(() => {
-    const highlights: string[] = [];
-    if (verificationLevel >= 2) highlights.push('ID verified');
-    else if (verificationLevel >= 1) highlights.push('Phone verified');
-    if ((profile as any)?.phone_verified && verificationLevel < 1) highlights.push('Phone confirmed');
-    if (profileCompletion.percent >= 80) highlights.push(`Profile ${profileCompletion.percent}% complete`);
-    if ((profile as any)?.profile_video) highlights.push('Intro video ready');
-    else if (promptAnswers.length > 0) highlights.push('Prompts answered');
-    return highlights.slice(0, 3);
-  }, [profile, profileCompletion.percent, promptAnswers.length, verificationLevel]);
+  const showAboutCard = !!rawBio && rawBio !== displayBio;
+  const qualityLabel = useMemo(() => {
+    if (typeof matchQuality !== 'number') return 'Fresh';
+    if (matchQuality >= 75) return 'Strong';
+    if (matchQuality >= 55) return 'Warm';
+    if (matchQuality >= 35) return 'Building';
+    return 'Fresh';
+  }, [matchQuality]);
   const hasGalleryMedia = userPhotos.length > 0 || !!heroVideoSource;
   const promptHighlights = useMemo(
     () =>
       promptAnswers
         .map((row) => {
-          const prompt = PROFILE_PROMPTS.find((p) => p.id === row.prompt_key);
+          const prompt = PROFILE_PROMPTS.find((p) => p.id === row.promptKey);
+          const isGuess = row.promptType === 'guess';
           return {
             id: row.id,
-            title: row.prompt_title || prompt?.title || 'Prompt',
-            answer: row.answer,
+            title: row.promptTitle || prompt?.title || 'Prompt',
+            answer: isGuess ? `Answer: ${row.answer}` : row.answer,
+            eyebrow: isGuess ? 'Guess prompt' : 'Featured prompt',
+            meta:
+              isGuess && row.guessMode
+                ? row.guessMode === 'multiple_choice'
+                  ? 'Multiple choice'
+                  : 'Type your guess'
+                : null,
+            promptType: row.promptType || 'standard',
           };
         })
         .slice(0, 2),
     [promptAnswers],
   );
+  const featuredPrompt = promptHighlights[0] ?? null;
+  const extraPrompts = promptHighlights.slice(1);
 
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
@@ -1714,6 +1842,7 @@ export default function ProfileScreen() {
       )}
 
       <Animated.ScrollView
+        ref={scrollViewRef}
         style={[styles.scrollView, { backgroundColor: theme.background }]}
         showsVerticalScrollIndicator={false}
         onScroll={Animated.event(
@@ -1755,18 +1884,6 @@ export default function ProfileScreen() {
                 <View style={styles.heroInnerStroke} pointerEvents="none" />
                 <View style={styles.heroGrain} pointerEvents="none" />
                 <View style={styles.heroTopRow}>
-                  <View
-                    style={[
-                      styles.heroPill,
-                      {
-                        backgroundColor: isDark ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.8)",
-                        borderColor: theme.outline,
-                      },
-                    ]}
-                  >
-                    <MaterialCommunityIcons name="star-four-points" size={12} color={theme.tint} />
-                    <Text style={[styles.heroPillText, { color: theme.text }]}>Profile</Text>
-                  </View>
                   {!isPreviewMode && (
                     <TouchableOpacity
                       style={[
@@ -1803,18 +1920,6 @@ export default function ProfileScreen() {
                   <View style={styles.heroInnerStroke} pointerEvents="none" />
                   <View style={styles.heroGrain} pointerEvents="none" />
                   <View style={styles.heroTopRow}>
-                    <View
-                      style={[
-                        styles.heroPill,
-                        {
-                          backgroundColor: isDark ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.8)",
-                          borderColor: theme.outline,
-                        },
-                      ]}
-                    >
-                      <MaterialCommunityIcons name="star-four-points" size={12} color={theme.tint} />
-                      <Text style={[styles.heroPillText, { color: theme.text }]}>Profile</Text>
-                    </View>
                     {!isPreviewMode && (
                       <TouchableOpacity
                         style={[
@@ -1843,18 +1948,6 @@ export default function ProfileScreen() {
                   <View style={styles.heroInnerStroke} pointerEvents="none" />
                   <View style={styles.heroGrain} pointerEvents="none" />
                   <View style={styles.heroTopRow}>
-                    <View
-                      style={[
-                        styles.heroPill,
-                        {
-                          backgroundColor: "rgba(255,255,255,0.14)",
-                          borderColor: "rgba(255,255,255,0.24)",
-                        },
-                      ]}
-                    >
-                      <MaterialCommunityIcons name="star-four-points" size={12} color="#fff" />
-                      <Text style={[styles.heroPillText, { color: '#fff' }]}>Profile</Text>
-                    </View>
                     {!isPreviewMode && (
                       <TouchableOpacity
                         style={[
@@ -1949,24 +2042,6 @@ export default function ProfileScreen() {
             </Text>
           </View>
 
-          {trustHighlights.length ? (
-            <View style={styles.trustHighlightsRow}>
-              {trustHighlights.map((item, index) => (
-                <View
-                  key={`${item}-${index}`}
-                  style={[
-                    styles.trustHighlightChip,
-                    { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-                  ]}
-                >
-                  <Text style={[styles.trustHighlightText, { color: theme.text }]}>
-                    {item}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          ) : null}
-
           <View
             style={[
               styles.heroBioCard,
@@ -1977,15 +2052,6 @@ export default function ProfileScreen() {
               {displayBio}
             </Text>
           </View>
-          {useDefaultBio ? (
-            <View style={[styles.intentDivider, { backgroundColor: theme.outline }]} />
-          ) : null}
-          {useDefaultBio ? (
-            <Text style={[styles.intentLine, { color: theme.textMuted }]}>
-              Open to meaningful connection
-            </Text>
-          ) : null}
-
           {!isPreviewMode ? (
             <View
               style={[
@@ -2021,14 +2087,20 @@ export default function ProfileScreen() {
                   style={[
                     styles.progressFill,
                     {
-                      backgroundColor: theme.tint,
                       width: progressAnim.interpolate({
                         inputRange: [0, 100],
                         outputRange: ["0%", "100%"],
                       }),
                     },
                   ]}
-                />
+                >
+                  <LinearGradient
+                    colors={[theme.tint, theme.accent]}
+                    start={{ x: 0, y: 0.5 }}
+                    end={{ x: 1, y: 0.5 }}
+                    style={styles.progressFillGradient}
+                  />
+                </Animated.View>
                 {progressTrackWidth > 0 && !progressAnimatedOnceRef.current ? (
                   <Animated.View
                     pointerEvents="none"
@@ -2054,18 +2126,13 @@ export default function ProfileScreen() {
               </View>
               {profileCompletion.percent < 100 ? (
                 <Text style={[styles.progressHelper, { color: theme.textMuted }]}>
-                  Thoughtful details help you feel more understood.
+                  A few thoughtful details make the whole profile feel stronger.
                 </Text>
               ) : (
                 <Text style={[styles.progressHelper, { color: theme.textMuted }]}>
                   {"You're all set."}
                 </Text>
               )}
-              {profileCompletion.percent < 100 && !(profile as any)?.profile_video ? (
-                <Text style={[styles.progressHelper, { color: theme.textMuted }]}>
-                  Bonus: Add an intro video
-                </Text>
-              ) : null}
               {nextPrompt ? (
                 <TouchableOpacity
                   style={styles.progressHintRow}
@@ -2082,6 +2149,82 @@ export default function ProfileScreen() {
                   <MaterialCommunityIcons name="chevron-right" size={14} color={theme.textMuted} />
                 </TouchableOpacity>
               ) : null}
+            </View>
+          ) : null}
+
+          {featuredPrompt ? (
+            <View
+              style={[
+                styles.featuredPromptCard,
+                { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+              ]}
+            >
+              <View style={styles.featuredPromptHeader}>
+                <Text style={[styles.featuredPromptEyebrow, { color: theme.tint }]}>
+                  {featuredPrompt.eyebrow}
+                </Text>
+                {!isPreviewMode ? (
+                  <View style={styles.promptHeaderActions}>
+                    <TouchableOpacity
+                      style={[styles.promptActionButton, { borderColor: theme.outline }]}
+                      onPress={() => {
+                        setPromptComposerMode(featuredPrompt.promptType === 'guess' ? 'guess' : 'standard');
+                        openPromptEditor();
+                      }}
+                    >
+                      <MaterialCommunityIcons name="pencil" size={14} color={theme.tint} />
+                      <Text style={[styles.promptActionText, { color: theme.tint }]}>Edit</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.promptRemoveButton, { borderColor: theme.outline }]}
+                      onPress={() => void deletePrompt(featuredPrompt.id)}
+                      disabled={deletingPromptId === featuredPrompt.id}
+                    >
+                      <MaterialCommunityIcons name="trash-can-outline" size={14} color={theme.textMuted} />
+                      <Text style={[styles.promptRemoveText, { color: theme.textMuted }]}>
+                        {deletingPromptId === featuredPrompt.id ? 'Removing' : 'Remove'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+              </View>
+              <Text style={[styles.featuredPromptTitle, { color: theme.text }]}>
+                {featuredPrompt.title}
+              </Text>
+              {featuredPrompt.meta ? (
+                <Text style={[styles.promptMetaText, { color: theme.textMuted }]}>
+                  {featuredPrompt.meta}
+                </Text>
+              ) : null}
+              <Text style={[styles.featuredPromptAnswer, { color: theme.text }]}>
+                {featuredPrompt.answer}
+              </Text>
+            </View>
+          ) : !isPreviewMode && !promptsLoading ? (
+            <View
+              style={[
+                styles.featuredPromptCard,
+                { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+              ]}
+            >
+              <Text style={[styles.featuredPromptEyebrow, { color: theme.tint }]}>
+                Add your voice
+              </Text>
+              <Text style={[styles.featuredPromptTitle, { color: theme.text }]}>
+                One good prompt makes the profile memorable.
+              </Text>
+              <Text style={[styles.featuredPromptAnswer, { color: theme.textMuted }]}>
+                Share a thought, a value, or a line that feels unmistakably like you.
+              </Text>
+              <TouchableOpacity
+                style={[styles.inlinePromptCta, { backgroundColor: theme.tint }]}
+                onPress={() => {
+                  setPromptComposerMode('standard');
+                  openPromptEditor();
+                }}
+              >
+                <Text style={styles.inlinePromptCtaText}>Answer a prompt</Text>
+              </TouchableOpacity>
             </View>
           ) : null}
 
@@ -2275,13 +2418,6 @@ export default function ProfileScreen() {
             )}
           </View>
 
-          {/* Show compatibility score in preview mode */}
-          {isPreviewMode && (
-            <View style={styles.compatibilityContainer}>
-              <MaterialCommunityIcons name="heart" size={20} color={Colors.light.tint} />
-              <Text style={styles.compatibilityText}>85% Match</Text>
-            </View>
-          )}
         </View>
 
         {/* Quick Stats - Hidden in preview mode */}
@@ -2333,8 +2469,14 @@ export default function ProfileScreen() {
               activeOpacity={0.85}
               onPress={() => router.push('/(tabs)/intent')}
             >
-              <Text style={[styles.statNumber, { color: theme.text }]}>
-                {typeof matchQuality === 'number' ? `${matchQuality}%` : '--'}
+              <Text
+                style={[
+                  styles.statNumber,
+                  styles.statWord,
+                  { color: theme.text },
+                ]}
+              >
+                {qualityLabel}
               </Text>
               <Text style={[styles.statLabel, { color: theme.textMuted }]}>Quality</Text>
             </TouchableOpacity>
@@ -2411,202 +2553,394 @@ export default function ProfileScreen() {
           onClose={() => setIntroVideoOpen(false)}
         />
 
-        {/* About Me Section */}
-        <View
-          style={[
-            styles.section,
-            styles.sectionCard,
-            styles.cardShadowSoft,
-            { paddingTop: 5, backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-          ]}
-        >
-          <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>
-              About Me
-            </Text>
-            {!isPreviewMode && (
-              <TouchableOpacity 
-                style={[styles.editButton, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}
-                onPress={() => setShowEditModal(true)}
-              >
-                <MaterialCommunityIcons name="pencil" size={16} color={theme.tint} />
-                <Text style={[styles.editButtonText, { color: theme.tint }]}>Edit</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
+        {showAboutCard ? (
           <View
             style={[
-              styles.aboutCard,
-              { backgroundColor: theme.background, borderColor: theme.outline },
+              styles.section,
+              styles.sectionCard,
+              styles.cardShadowSoft,
+              { paddingTop: 5, backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
             ]}
           >
-            <Text
-              style={[
-                styles.aboutText,
-                { color: rawBio ? theme.text : theme.textMuted },
-              ]}
-            >
-              {aboutMeText}
-            </Text>
-          </View>
-
-          {promptsLoading ? (
-            <Text style={[styles.promptEmptyText, { color: theme.textMuted }]}>
-              Loading prompts...
-            </Text>
-          ) : promptHighlights.length ? (
-            <View style={styles.promptHighlights}>
-              {promptHighlights.map((prompt) => (
-                <View
-                  key={prompt.id}
-                  style={[
-                    styles.promptHighlightCard,
-                    { backgroundColor: theme.background, borderColor: theme.outline },
-                  ]}
-                >
-                  <Text style={[styles.promptHighlightTitle, { color: theme.textMuted }]}>
-                    {prompt.title}
-                  </Text>
-                  <Text style={[styles.promptHighlightAnswer, { color: theme.text }]}>
-                    {prompt.answer}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          ) : (
-            <View
-              style={[
-                styles.emptyFeatureCard,
-                { backgroundColor: theme.background, borderColor: theme.outline },
-              ]}
-            >
-              <View style={[styles.emptyFeatureIconWrap, { backgroundColor: theme.backgroundSubtle }]}>
-                <MaterialCommunityIcons name="comment-quote-outline" size={20} color={theme.tint} />
-              </View>
-              <Text style={[styles.emptyFeatureTitle, { color: theme.text }]}>Give people something to remember</Text>
-              <Text style={[styles.emptyFeatureSubtitle, { color: theme.textMuted }]}>
-                Prompts make your profile feel human. Add one good answer and the whole profile gets warmer.
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionTitle, { color: theme.text }]}>
+                About Me
               </Text>
-              {!isPreviewMode ? (
-                <TouchableOpacity
-                  style={[styles.emptyFeatureButton, { backgroundColor: theme.tint }]}
-                  onPress={() => setShowPromptEditor(true)}
+              {!isPreviewMode && (
+                <TouchableOpacity 
+                  style={[styles.editButton, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}
+                  onPress={() => setShowEditModal(true)}
                 >
-                  <Text style={styles.emptyFeatureButtonText}>Add prompt</Text>
+                  <MaterialCommunityIcons name="pencil" size={16} color={theme.tint} />
+                  <Text style={[styles.editButtonText, { color: theme.tint }]}>Edit</Text>
                 </TouchableOpacity>
-              ) : null}
+              )}
             </View>
-          )}
 
-          {!isPreviewMode ? (
-            <View style={styles.promptActionsRow}>
-              <TouchableOpacity
-                style={[styles.promptActionButton, { borderColor: theme.outline }]}
-                onPress={() => setShowPromptEditor((prev) => !prev)}
-              >
-                <MaterialCommunityIcons name="comment-quote-outline" size={16} color={theme.tint} />
-                <Text style={[styles.promptActionText, { color: theme.tint }]}>
-                  {showPromptEditor ? 'Hide prompts' : 'Add prompt'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-
-          {showPromptEditor ? (
-            <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+            {showAboutCard ? (
               <View
                 style={[
-                  styles.promptCard,
-                  styles.cardShadowSoft,
+                  styles.aboutCard,
                   { backgroundColor: theme.background, borderColor: theme.outline },
                 ]}
               >
-                <Text style={[styles.promptTitle, { color: theme.text }]}>
-                  Create your own
+                <Text
+                  style={[
+                    styles.aboutText,
+                    { color: rawBio ? theme.text : theme.textMuted },
+                  ]}
+                >
+                  {aboutMeText}
                 </Text>
-                <View style={styles.customPromptGroup}>
-                  <TextInput
-                    value={customPromptTitle}
-                    onChangeText={setCustomPromptTitle}
-                    placeholder="Write your question..."
-                    placeholderTextColor={theme.textMuted}
-                    style={[
-                      styles.customPromptInput,
-                      { color: theme.text, borderColor: theme.outline },
-                    ]}
-                  />
-                  <TextInput
-                    value={customPromptAnswer}
-                    onChangeText={setCustomPromptAnswer}
-                    placeholder="Your answer..."
-                    placeholderTextColor={theme.textMuted}
-                    style={[
-                      styles.customPromptInput,
-                      styles.customPromptAnswer,
-                      { color: theme.text, borderColor: theme.outline },
-                    ]}
-                    multiline
-                  />
-                  <TouchableOpacity
-                    onPress={saveCustomPrompt}
-                    disabled={!customPromptTitle.trim() || !customPromptAnswer.trim() || customPromptSaving}
-                    style={[
-                      styles.customPromptSave,
-                      {
-                        backgroundColor: customPromptTitle.trim() && customPromptAnswer.trim()
-                          ? theme.tint
-                          : theme.outline,
-                      },
-                    ]}
-                  >
-                    <Text style={styles.customPromptSaveText}>
-                      {customPromptSaving ? 'Saving...' : 'Save prompt'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
               </View>
-              {PROFILE_PROMPTS.map((prompt) => (
+            ) : null}
+
+          </View>
+        ) : null}
+
+        {(showPromptEditor || extraPrompts.length > 0 || (!featuredPrompt && !isPreviewMode) || promptsLoading) ? (
+          <View
+            style={[
+              styles.section,
+              styles.sectionCard,
+              styles.cardShadowSoft,
+              { paddingTop: 5, backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+            ]}
+            onLayout={(event) => {
+              promptEditorYRef.current = event.nativeEvent.layout.y;
+            }}
+          >
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionTitle, { color: theme.text }]}>Prompts</Text>
+              {!isPreviewMode ? (
+                <TouchableOpacity
+                  style={[styles.editButton, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}
+                  onPress={() => setShowPromptEditor((prev) => !prev)}
+                >
+                  <MaterialCommunityIcons name="comment-quote-outline" size={16} color={theme.tint} />
+                  <Text style={[styles.editButtonText, { color: theme.tint }]}>
+                    {showPromptEditor ? 'Hide' : 'Manage'}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            {showPromptEditor ? (
+              <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
                 <View
-                  key={prompt.id}
                   style={[
                     styles.promptCard,
                     styles.cardShadowSoft,
                     { backgroundColor: theme.background, borderColor: theme.outline },
                   ]}
                 >
-                  <Text style={[styles.promptTitle, { color: theme.text }]}>{prompt.title}</Text>
-                  <View style={styles.promptOptions}>
-                    {prompt.responses.map((response, index) => {
-                      const selected = selectedPrompts[prompt.id] === index;
-                      return (
+                  <Text style={[styles.promptTitle, { color: theme.text }]}>
+                    Add a prompt
+                  </Text>
+                  <View style={styles.promptComposerTabs}>
+                    <TouchableOpacity
+                      onPress={() => setPromptComposerMode('standard')}
+                      style={[
+                        styles.promptComposerTab,
+                        {
+                          backgroundColor:
+                            promptComposerMode === 'standard' ? theme.tint : theme.backgroundSubtle,
+                          borderColor: promptComposerMode === 'standard' ? theme.tint : theme.outline,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.promptComposerTabText,
+                          { color: promptComposerMode === 'standard' ? '#fff' : theme.textMuted },
+                        ]}
+                      >
+                        Standard
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setPromptComposerMode('guess')}
+                      style={[
+                        styles.promptComposerTab,
+                        {
+                          backgroundColor:
+                            promptComposerMode === 'guess' ? theme.tint : theme.backgroundSubtle,
+                          borderColor: promptComposerMode === 'guess' ? theme.tint : theme.outline,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.promptComposerTabText,
+                          { color: promptComposerMode === 'guess' ? '#fff' : theme.textMuted },
+                        ]}
+                      >
+                        Guess
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  {promptComposerMode === 'standard' ? (
+                    <View style={styles.customPromptGroup}>
+                      <TextInput
+                        value={customPromptTitle}
+                        onChangeText={setCustomPromptTitle}
+                        placeholder="Write your question..."
+                        placeholderTextColor={theme.textMuted}
+                        style={[
+                          styles.customPromptInput,
+                          { color: theme.text, borderColor: theme.outline },
+                        ]}
+                      />
+                      <TextInput
+                        value={customPromptAnswer}
+                        onChangeText={setCustomPromptAnswer}
+                        placeholder="Your answer..."
+                        placeholderTextColor={theme.textMuted}
+                        style={[
+                          styles.customPromptInput,
+                          styles.customPromptAnswer,
+                          { color: theme.text, borderColor: theme.outline },
+                        ]}
+                        multiline
+                      />
+                      <TouchableOpacity
+                        onPress={saveCustomPrompt}
+                        disabled={!customPromptTitle.trim() || !customPromptAnswer.trim() || customPromptSaving}
+                        style={[
+                          styles.customPromptSave,
+                          {
+                            backgroundColor: customPromptTitle.trim() && customPromptAnswer.trim()
+                              ? theme.tint
+                              : theme.outline,
+                          },
+                        ]}
+                      >
+                        <Text style={styles.customPromptSaveText}>
+                          {customPromptSaving ? 'Saving...' : 'Save prompt'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.customPromptGroup}>
+                      <Text style={[styles.promptHelperText, { color: theme.textMuted }]}>
+                        Hide the answer and turn one prompt into a playful opener.
+                      </Text>
+                      <TextInput
+                        value={guessPromptTitle}
+                        onChangeText={setGuessPromptTitle}
+                        placeholder="Ask something playful..."
+                        placeholderTextColor={theme.textMuted}
+                        style={[
+                          styles.customPromptInput,
+                          { color: theme.text, borderColor: theme.outline },
+                        ]}
+                      />
+                      <TextInput
+                        value={guessPromptAnswer}
+                        onChangeText={setGuessPromptAnswer}
+                        placeholder="Correct answer"
+                        placeholderTextColor={theme.textMuted}
+                        style={[
+                          styles.customPromptInput,
+                          { color: theme.text, borderColor: theme.outline },
+                        ]}
+                      />
+                      <View style={styles.promptComposerTabs}>
                         <TouchableOpacity
-                          key={index}
+                          onPress={() => setGuessPromptMode('multiple_choice')}
                           style={[
-                            styles.promptOption,
-                            { backgroundColor: theme.background, borderColor: theme.outline },
-                            selected && { backgroundColor: theme.tint, borderColor: theme.tint },
+                            styles.promptComposerTab,
+                            {
+                              backgroundColor:
+                                guessPromptMode === 'multiple_choice' ? theme.accent : theme.backgroundSubtle,
+                              borderColor:
+                                guessPromptMode === 'multiple_choice' ? theme.accent : theme.outline,
+                            },
                           ]}
-                          onPress={() => handlePromptSelect(prompt.id, index)}
                         >
                           <Text
                             style={[
-                              styles.promptOptionText,
-                              { color: theme.text },
-                              selected && styles.promptOptionTextSelected,
+                              styles.promptComposerTabText,
+                              { color: guessPromptMode === 'multiple_choice' ? '#fff' : theme.textMuted },
                             ]}
                           >
-                            {response}
+                            Multiple choice
                           </Text>
                         </TouchableOpacity>
-                      );
-                    })}
-                  </View>
+                        <TouchableOpacity
+                          onPress={() => setGuessPromptMode('free_text')}
+                          style={[
+                            styles.promptComposerTab,
+                            {
+                              backgroundColor: guessPromptMode === 'free_text' ? theme.accent : theme.backgroundSubtle,
+                              borderColor: guessPromptMode === 'free_text' ? theme.accent : theme.outline,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.promptComposerTabText,
+                              { color: guessPromptMode === 'free_text' ? '#fff' : theme.textMuted },
+                            ]}
+                          >
+                            Type a guess
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                      {guessPromptMode === 'multiple_choice' ? (
+                        <View style={styles.guessOptionsGroup}>
+                          {guessPromptOptions.map((value, index) => (
+                            <TextInput
+                              key={`guess-option-${index}`}
+                              value={value}
+                              onChangeText={(next) =>
+                                setGuessPromptOptions((prev) =>
+                                  prev.map((item, itemIndex) => (itemIndex === index ? next : item)),
+                                )
+                              }
+                              placeholder={`Wrong option ${index + 1}`}
+                              placeholderTextColor={theme.textMuted}
+                              style={[
+                                styles.customPromptInput,
+                                { color: theme.text, borderColor: theme.outline },
+                              ]}
+                            />
+                          ))}
+                        </View>
+                      ) : null}
+                      <TextInput
+                        value={guessPromptHint}
+                        onChangeText={setGuessPromptHint}
+                        placeholder="Optional hint"
+                        placeholderTextColor={theme.textMuted}
+                        style={[
+                          styles.customPromptInput,
+                          { color: theme.text, borderColor: theme.outline },
+                        ]}
+                      />
+                      <TouchableOpacity
+                        onPress={saveGuessPrompt}
+                        disabled={
+                          !guessPromptTitle.trim() ||
+                          !guessPromptAnswer.trim() ||
+                          guessPromptSaving ||
+                          (guessPromptMode === 'multiple_choice' &&
+                            sanitizeGuessOptions(guessPromptOptions, guessPromptAnswer).length < 2)
+                        }
+                        style={[
+                          styles.customPromptSave,
+                          {
+                            backgroundColor: guessPromptTitle.trim() && guessPromptAnswer.trim()
+                              ? theme.tint
+                              : theme.outline,
+                          },
+                        ]}
+                      >
+                        <Text style={styles.customPromptSaveText}>
+                          {guessPromptSaving ? 'Saving...' : 'Save guess prompt'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
-              ))}
-            </Animated.View>
-          ) : null}
-        </View>
+                {PROFILE_PROMPTS.map((prompt) => (
+                  <View
+                    key={prompt.id}
+                    style={[
+                      styles.promptCard,
+                      styles.cardShadowSoft,
+                      { backgroundColor: theme.background, borderColor: theme.outline },
+                    ]}
+                  >
+                    <Text style={[styles.promptTitle, { color: theme.text }]}>{prompt.title}</Text>
+                    <View style={styles.promptOptions}>
+                      {prompt.responses.map((response, index) => {
+                        const selected = selectedPrompts[prompt.id] === index;
+                        return (
+                          <TouchableOpacity
+                            key={index}
+                            style={[
+                              styles.promptOption,
+                              { backgroundColor: theme.background, borderColor: theme.outline },
+                              selected && { backgroundColor: theme.tint, borderColor: theme.tint },
+                            ]}
+                            onPress={() => handlePromptSelect(prompt.id, index)}
+                          >
+                            <Text
+                              style={[
+                                styles.promptOptionText,
+                                { color: theme.text },
+                                selected && styles.promptOptionTextSelected,
+                              ]}
+                            >
+                              {response}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                ))}
+              </Animated.View>
+            ) : promptsLoading ? (
+              <Text style={[styles.promptEmptyText, { color: theme.textMuted }]}>Loading prompts...</Text>
+            ) : extraPrompts.length ? (
+              <View style={styles.promptHighlights}>
+                {extraPrompts.map((prompt) => (
+                  <View
+                    key={prompt.id}
+                    style={[
+                      styles.promptHighlightCard,
+                      { backgroundColor: theme.background, borderColor: theme.outline },
+                    ]}
+                  >
+                    <View style={styles.promptHighlightTopRow}>
+                      <Text style={[styles.promptHighlightTitle, { color: theme.textMuted }]}>
+                        {prompt.title}
+                      </Text>
+                      {!isPreviewMode ? (
+                        <TouchableOpacity
+                          style={[styles.promptRemoveIconButton, { borderColor: theme.outline }]}
+                          onPress={() => void deletePrompt(prompt.id)}
+                          disabled={deletingPromptId === prompt.id}
+                        >
+                          <MaterialCommunityIcons
+                            name="trash-can-outline"
+                            size={14}
+                            color={theme.textMuted}
+                          />
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                    {prompt.meta ? (
+                      <Text style={[styles.promptMetaText, { color: theme.textMuted }]}>
+                        {prompt.meta}
+                      </Text>
+                    ) : null}
+                    <Text style={[styles.promptHighlightAnswer, { color: theme.text }]}>
+                      {prompt.answer}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ) : !featuredPrompt ? (
+              <View
+                style={[
+                  styles.emptyFeatureCard,
+                  { backgroundColor: theme.background, borderColor: theme.outline },
+                ]}
+              >
+                <View style={[styles.emptyFeatureIconWrap, { backgroundColor: theme.backgroundSubtle }]}>
+                  <MaterialCommunityIcons name="comment-quote-outline" size={20} color={theme.tint} />
+                </View>
+                <Text style={[styles.emptyFeatureTitle, { color: theme.text }]}>Give people something to remember</Text>
+                <Text style={[styles.emptyFeatureSubtitle, { color: theme.textMuted }]}>
+                  One thoughtful answer gives your profile warmth, voice, and much better recall.
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
 
         {/* Interests Section */}
         <View
@@ -2989,22 +3323,9 @@ const styles = StyleSheet.create({
   heroTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     paddingHorizontal: 16,
     paddingTop: 14,
-  },
-  heroPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  heroPillText: {
-    fontSize: 12,
-    fontFamily: 'Manrope_600SemiBold',
   },
   heroEditButton: {
     width: 34,
@@ -3015,36 +3336,36 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   heroAvatarWrap: {
-    marginTop: -48,
+    marginTop: -42,
     alignItems: 'center',
     justifyContent: 'center',
   },
   heroAvatarGlow: {
     position: 'absolute',
-    width: 126,
-    height: 126,
-    borderRadius: 63,
+    width: 116,
+    height: 116,
+    borderRadius: 58,
     backgroundColor: 'rgba(255,255,255,0.52)',
     shadowColor: '#a78bfa',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.24,
-    shadowRadius: 18,
-    elevation: 10,
+    shadowRadius: 16,
+    elevation: 8,
   },
   avatarRing: {
     padding: 3,
-    borderRadius: 48,
+    borderRadius: 45,
   },
   avatarInner: {
     padding: 2,
-    borderRadius: 44,
+    borderRadius: 41,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(255,255,255,0.9)',
   },
   avatar: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
+    width: 84,
+    height: 84,
+    borderRadius: 42,
     borderWidth: 2,
     borderColor: '#fff',
     shadowColor: '#000',
@@ -3112,25 +3433,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginTop: 8,
-  },
-  trustHighlightsRow: {
-    marginTop: 12,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  trustHighlightChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  trustHighlightText: {
-    fontSize: 12,
-    fontFamily: 'Manrope_600SemiBold',
-    letterSpacing: 0.2,
+    marginTop: 6,
   },
   locationText: {
     fontSize: 13,
@@ -3138,40 +3441,98 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
   heroBioCard: {
-    marginTop: 16,
-    borderRadius: 18,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
-  bio: {
-    fontSize: 14,
-    fontFamily: 'Manrope_400Regular',
-    color: '#374151',
-    textAlign: 'center',
-    lineHeight: 22,
-    letterSpacing: 0.2,
-  },
-  intentDivider: {
-    width: 36,
-    height: StyleSheet.hairlineWidth,
-    marginTop: 10,
-    borderRadius: 999,
-    opacity: 0.6,
-  },
-  intentLine: {
-    marginTop: 6,
-    fontSize: 12,
-    fontFamily: 'Manrope_500Medium',
-    letterSpacing: 0.2,
-    textAlign: 'center',
-  },
-  progressCard: {
     marginTop: 14,
     borderRadius: 18,
     borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+  },
+  bio: {
+    fontSize: 13,
+    fontFamily: 'Manrope_400Regular',
+    color: '#374151',
+    textAlign: 'center',
+    lineHeight: 20,
+    letterSpacing: 0.2,
+  },
+  featuredPromptCard: {
+    marginTop: 12,
+    width: '100%',
+    borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 14,
+  },
+  featuredPromptHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 8,
+  },
+  promptHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  featuredPromptEyebrow: {
+    fontSize: 11,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  featuredPromptTitle: {
+    fontSize: 17,
+    fontFamily: 'PlayfairDisplay_600SemiBold',
+    lineHeight: 22,
+  },
+  promptMetaText: {
+    marginTop: 6,
+    fontSize: 11.5,
+    fontFamily: 'Manrope_500Medium',
+    lineHeight: 16,
+    letterSpacing: 0.2,
+  },
+  featuredPromptAnswer: {
+    marginTop: 8,
+    fontSize: 14,
+    fontFamily: 'Manrope_500Medium',
+    lineHeight: 22,
+    letterSpacing: 0.15,
+  },
+  inlinePromptCta: {
+    alignSelf: 'flex-start',
+    marginTop: 14,
+    borderRadius: 999,
+    paddingHorizontal: 15,
+    paddingVertical: 9,
+  },
+  inlinePromptCtaText: {
+    color: '#fff',
+    fontSize: 13,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
+  promptRemoveButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  promptRemoveText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 0.2,
+  },
+  progressCard: {
+    marginTop: 12,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
     width: '100%',
   },
   progressTopRow: {
@@ -3193,21 +3554,29 @@ const styles = StyleSheet.create({
   progressPctWrap: {
     minWidth: 54,
     alignItems: 'flex-end',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.06)',
   },
   progressPct: {
-    fontSize: 16,
+    fontSize: 15,
     fontFamily: 'Archivo_700Bold',
     letterSpacing: 0.2,
   },
   progressTrack: {
-    marginTop: 10,
-    height: 8,
+    marginTop: 8,
+    height: 9,
     borderRadius: 999,
     overflow: 'hidden',
   },
   progressFill: {
-    height: 8,
+    height: 9,
     borderRadius: 999,
+    overflow: 'hidden',
+  },
+  progressFillGradient: {
+    flex: 1,
   },
   progressGlow: {
     position: 'absolute',
@@ -3218,38 +3587,22 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(183,153,255,0.45)',
   },
   progressHintRow: {
-    marginTop: 8,
+    marginTop: 7,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   },
   progressHelper: {
-    marginTop: 8,
-    fontSize: 12,
+    marginTop: 7,
+    fontSize: 11.5,
     fontFamily: 'Manrope_400Regular',
-    lineHeight: 16,
+    lineHeight: 15,
   },
   progressHint: {
     fontSize: 12,
     fontFamily: 'Manrope_500Medium',
     flexShrink: 1,
   },
-  compatibilityContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.light.tint + '15',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginTop: 16,
-    gap: 8,
-  },
-  compatibilityText: {
-    fontSize: 16,
-    fontFamily: 'PlayfairDisplay_600SemiBold',
-    color: Colors.light.tint,
-  },
-  
   // Stats
   statsContainer: {
     flexDirection: 'row',
@@ -3278,6 +3631,10 @@ const styles = StyleSheet.create({
     color: Colors.light.tint,
     marginBottom: 4,
     letterSpacing: 0.3,
+  },
+  statWord: {
+    fontSize: 18,
+    letterSpacing: 0.2,
   },
   statLabel: {
     fontSize: 10,
@@ -3365,16 +3722,30 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
+  promptHighlightTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 6,
+  },
   promptHighlightTitle: {
     fontSize: 12,
     fontFamily: 'Manrope_600SemiBold',
     letterSpacing: 0.4,
-    marginBottom: 6,
   },
   promptHighlightAnswer: {
     fontSize: 14,
     fontFamily: 'Manrope_500Medium',
     lineHeight: 21,
+  },
+  promptRemoveIconButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyFeatureCard: {
     marginTop: 12,
@@ -3425,6 +3796,32 @@ const styles = StyleSheet.create({
   },
   customPromptGroup: {
     marginTop: 8,
+    gap: 10,
+  },
+  promptComposerTabs: {
+    marginTop: 6,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  promptComposerTab: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  promptComposerTabText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 0.2,
+  },
+  promptHelperText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_400Regular',
+    lineHeight: 18,
+    letterSpacing: 0.2,
+  },
+  guessOptionsGroup: {
     gap: 10,
   },
   customPromptInput: {
@@ -3792,21 +4189,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     backgroundColor: 'transparent',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#e2e8f0',
     flexBasis: '48%',
     flexGrow: 1,
     shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
     elevation: 2,
   },
   detailText: {
-    fontSize: 13,
+    fontSize: 13.5,
     color: '#475569',
     fontFamily: 'Manrope_500Medium',
   },

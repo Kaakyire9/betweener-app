@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Dimensions, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 
 type IntentRequestType = 'connect' | 'date_request' | 'like_with_note' | 'circle_intro';
 
@@ -26,6 +26,8 @@ const optionLabels: { type: IntentRequestType; label: string; subtitle: string; 
   { type: 'like_with_note', label: 'Like with note', subtitle: 'Add a short note', icon: 'text-box-plus-outline' },
   { type: 'circle_intro', label: 'Circle intro', subtitle: 'Contextual connect', icon: 'account-group-outline' },
 ];
+
+const { height: screenHeight } = Dimensions.get('window');
 
 export default function IntentRequestSheet({
   visible,
@@ -147,23 +149,46 @@ export default function IntentRequestSheet({
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={() => {
+        Keyboard.dismiss();
+        onClose();
+      }}
+    >
       <View style={styles.backdrop}>
-        <Pressable style={styles.backdropPress} onPress={onClose} />
+        <Pressable
+          style={styles.backdropPress}
+          onPress={() => {
+            Keyboard.dismiss();
+            onClose();
+          }}
+        />
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 16 : 0}
-          style={{ width: '100%' }}
+          behavior="padding"
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 6}
+          style={{ width: '100%', justifyContent: 'flex-end' }}
         >
-          <View style={styles.sheet}>
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.sheetContent}
-            >
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={styles.sheet}>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.sheetContent}
+              >
               <View style={styles.header}>
                 <Text style={styles.title}>{isSuggested ? 'Send intent' : 'Send request'}</Text>
-                <TouchableOpacity onPress={onClose} activeOpacity={0.85} style={styles.closeButton}>
+                <TouchableOpacity
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    onClose();
+                  }}
+                  activeOpacity={0.85}
+                  style={styles.closeButton}
+                >
                   <MaterialCommunityIcons name="close" size={18} color={theme.text} />
                 </TouchableOpacity>
               </View>
@@ -259,8 +284,9 @@ export default function IntentRequestSheet({
               >
                 <Text style={styles.submitText}>{submitting ? 'Sending...' : 'Send request'}</Text>
               </TouchableOpacity>
-            </ScrollView>
-          </View>
+              </ScrollView>
+            </View>
+          </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
       </View>
     </Modal>
@@ -275,14 +301,15 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: theme.background,
       borderTopLeftRadius: 20,
       borderTopRightRadius: 20,
+      maxHeight: Math.round(screenHeight * 0.74),
       paddingHorizontal: 16,
-      paddingTop: 14,
-      paddingBottom: 20,
+      paddingTop: 12,
+      paddingBottom: Platform.OS === 'android' ? 10 : 16,
       borderWidth: 1,
       borderColor: theme.outline,
     },
     sheetContent: {
-      paddingBottom: 12,
+      paddingBottom: Platform.OS === 'android' ? 10 : 8,
     },
     header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     title: { fontSize: 18, fontWeight: '800', color: theme.text },

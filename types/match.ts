@@ -8,6 +8,7 @@ export type Match = {
   tribe?: string;
   religion?: string;
   interests: string[];
+  commonInterests?: string[];
   avatar_url?: string;
   distance?: string;
   distanceKm?: number;

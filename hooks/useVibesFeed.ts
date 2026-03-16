@@ -71,6 +71,23 @@ const isRecentlyActive = (lastActive?: string | null) => {
   }
 };
 
+const computeSharedInterests = (viewerInterests: string[] | undefined, matchInterests: string[] | undefined) => {
+  if (!Array.isArray(viewerInterests) || !viewerInterests.length) return [];
+  if (!Array.isArray(matchInterests) || !matchInterests.length) return [];
+  const viewerSet = new Set(
+    viewerInterests.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean),
+  );
+  const shared: string[] = [];
+  matchInterests.forEach((interest) => {
+    const normalized = String(interest || '').trim().toLowerCase();
+    if (!normalized || !viewerSet.has(normalized) || shared.some((item) => item.toLowerCase() === normalized)) {
+      return;
+    }
+    shared.push(interest);
+  });
+  return shared;
+};
+
 // Shared filter logic so the UI can show an accurate "preview count" while users tweak draft filters.
 export function applyVibesFilters(
   list: Match[],
@@ -382,7 +399,10 @@ export default function useVibesFeed({
   }, [matches, refreshing]);
 
   const poolProfiles = useMemo(() => {
-    let list = matches.slice();
+    let list = matches.slice().map((match) => ({
+      ...match,
+      commonInterests: computeSharedInterests(viewerInterests, (match as any).interests),
+    }));
 
     if (blockedIds.size > 0) {
       list = list.filter((m) => !blockedIds.has(String(m.id)));
@@ -398,7 +418,7 @@ export default function useVibesFeed({
     }
 
     return list;
-  }, [matches, blockedIds, swipedTodayIds, pendingIntentPeerIds, acceptedMatchPeerIds]);
+  }, [matches, blockedIds, swipedTodayIds, pendingIntentPeerIds, acceptedMatchPeerIds, viewerInterests]);
 
   const filteredProfiles = useMemo(() => {
     return applyVibesFilters(poolProfiles, filters, { segment, momentUserIds, viewerInterests });

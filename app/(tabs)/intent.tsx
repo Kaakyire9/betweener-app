@@ -283,8 +283,11 @@ const isExpired = (item: IntentRequest) => {
 
 const typeLabel = (item: Pick<IntentRequest, 'type' | 'message' | 'metadata'>) => {
   switch (item.type) {
-    case 'connect':
+    case 'connect': {
+      const meta = (item.metadata || {}) as any;
+      if (String(meta?.source || '').toLowerCase() === 'guess_prompt') return 'Prompt';
       return 'Connect';
+    }
     case 'date_request':
       return 'Date';
     case 'like_with_note': {
@@ -312,8 +315,11 @@ const typeLabel = (item: Pick<IntentRequest, 'type' | 'message' | 'metadata'>) =
 
 const typeIcon = (item: Pick<IntentRequest, 'type' | 'message' | 'metadata'>) => {
   switch (item.type) {
-    case 'connect':
+    case 'connect': {
+      const meta = (item.metadata || {}) as any;
+      if (String(meta?.source || '').toLowerCase() === 'guess_prompt') return 'comment-question-outline';
       return 'message-plus-outline';
+    }
     case 'date_request':
       return 'calendar-heart';
     case 'like_with_note': {
@@ -1047,6 +1053,10 @@ export default function IntentScreen() {
       const peerUserId = peer?.user_id;
       const matchKey = peerUserId && user?.id ? matchKeyFor(user.id, peerUserId) : null;
       const matchMetricsEntry = matchKey ? matchMetrics[matchKey] : undefined;
+      const meta = (item.metadata || {}) as any;
+      const guessPromptSource = String(meta?.source || '').toLowerCase() === 'guess_prompt';
+      const guessPromptCorrect = String(meta?.guess_outcome || '').toLowerCase() === 'correct';
+      const isGuessPromptIntent = item.type === 'connect' && guessPromptSource && guessPromptCorrect;
       const matchPct =
         item.status === 'accepted'
           ? computeMatchScorePercent({
@@ -1063,13 +1073,15 @@ export default function IntentScreen() {
       const hoursLeft = item.status === 'pending' && !isExpired(item) ? hoursUntil(item.expires_at) : null;
       const urgent = typeof hoursLeft === 'number' ? hoursLeft <= 6 : false;
       const lastChance = typeof hoursLeft === 'number' ? hoursLeft <= 0.5 : false;
-      const quickReply = buildQuickReplyText({
-        name,
-        itemType: item.type,
-        note: item.message ?? null,
-        sharedInterests,
-        location: location || null,
-      });
+      const quickReply = isGuessPromptIntent
+        ? `Nice guess${name ? `, ${name}` : ''}. What made you choose that answer?`
+        : buildQuickReplyText({
+            name,
+            itemType: item.type,
+            note: item.message ?? null,
+            sharedInterests,
+            location: location || null,
+          });
 
       const pendingExpired = item.status === 'pending' && isExpired(item);
       const actionable = item.status === 'pending' && !isExpired(item);
@@ -1122,6 +1134,13 @@ export default function IntentScreen() {
         sameGoals ? 'Same goals' : null,
         sameRegion ? 'Same region' : null,
       ].filter(Boolean).slice(0, 2) as string[];
+      const displayMessage = isGuessPromptIntent
+        ? isIncoming
+          ? `${name} got your prompt right and would like to know more about you.`
+          : `You got ${name}'s prompt right and asked to know more.`
+        : typeof item.message === 'string' && item.message.trim().length > 0
+          ? item.message.trim()
+          : null;
 
       return (
         <Animated.View>
@@ -1208,9 +1227,9 @@ export default function IntentScreen() {
             </View>
           </View>
 
-          {item.message ? (
+          {displayMessage ? (
             <Text style={styles.message} numberOfLines={2}>
-              {item.message}
+              {displayMessage}
             </Text>
           ) : null}
 

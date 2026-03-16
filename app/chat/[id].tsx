@@ -5,7 +5,7 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useMoments } from "@/hooks/useMoments";
 import { useAuth } from "@/lib/auth-context";
 import { decryptMediaBytes, encryptMediaBytes, getOrCreateDeviceKeypair } from "@/lib/e2ee";
-import { computeFirstReplyHours, computeInterestOverlapRatio, computeMatchScorePercent } from "@/lib/match/match-score";
+import { computeConversationSignalLabel, computeFirstReplyHours, computeInterestOverlapRatio } from "@/lib/match/match-score";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -1849,7 +1849,7 @@ export default function ConversationScreen() {
   const [peerInterests, setPeerInterests] = useState<string[]>([]);
   const [myInterests, setMyInterests] = useState<string[]>([]);
   const [matchAccepted, setMatchAccepted] = useState(false);
-  const [matchPercent, setMatchPercent] = useState<number | null>(null);
+  const [conversationSignal, setConversationSignal] = useState<string | null>(null);
   const [pendingIntentRequest, setPendingIntentRequest] = useState<IntentRequestSummary | null>(null);
   const [_pendingIntentLoading, setPendingIntentLoading] = useState(false);
   const [inputText, setInputText] = useState('');
@@ -2117,7 +2117,7 @@ export default function ConversationScreen() {
 
   useEffect(() => {
     if (!matchAccepted || !user?.id || !conversationId) {
-      setMatchPercent(null);
+      setConversationSignal(null);
       return;
     }
     let cancelled = false;
@@ -2137,13 +2137,16 @@ export default function ConversationScreen() {
       const interestOverlapRatio = computeInterestOverlapRatio(myInterests, peerInterests) ?? undefined;
       const bothVerified =
         (profile?.verification_level ?? 0) >= 1 && (peerProfile?.verification_level ?? 0) >= 1;
-      const score = computeMatchScorePercent({
+      const signal = computeConversationSignalLabel({
+        rows: messageRows as any,
+        userId: user.id,
+        peerId: conversationId,
         messageCount,
         firstReplyHours,
         bothVerified,
         interestOverlapRatio,
       });
-      setMatchPercent(score);
+      setConversationSignal(signal);
     };
     void fetchMatchScore();
     return () => {
@@ -7081,10 +7084,10 @@ export default function ConversationScreen() {
                 ? `Last seen ${formatLastSeen(peerLastSeen)}`
                 : 'Last seen recently'}
             </Text>
-            {matchAccepted && typeof matchPercent === 'number' ? (
+            {matchAccepted && conversationSignal ? (
               <View style={styles.headerMatchRow}>
                 <MaterialCommunityIcons name="heart" size={14} color={theme.tint} />
-                <Text style={styles.headerMatchText}>{`${matchPercent}% Match`}</Text>
+                <Text style={styles.headerMatchText}>{conversationSignal}</Text>
               </View>
             ) : null}
           </View>

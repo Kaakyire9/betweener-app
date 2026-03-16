@@ -41,6 +41,56 @@ const withAlpha = (hex: string, alpha: number) => {
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
 };
 
+const normalizeLabel = (value?: string | null) =>
+  String(value || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const COUNTRY_NAME_TO_CODE: Record<string, string> = {
+  england: 'GB',
+  scotland: 'GB',
+  wales: 'GB',
+  'united kingdom': 'GB',
+  uk: 'GB',
+  britain: 'GB',
+  'great britain': 'GB',
+  ghana: 'GH',
+  nigeria: 'NG',
+  'united states': 'US',
+  usa: 'US',
+  america: 'US',
+  canada: 'CA',
+  germany: 'DE',
+  france: 'FR',
+  italy: 'IT',
+  spain: 'ES',
+  netherlands: 'NL',
+  belgium: 'BE',
+  sweden: 'SE',
+  norway: 'NO',
+  ireland: 'IE',
+  australia: 'AU',
+  'south africa': 'ZA',
+  uae: 'AE',
+  'united arab emirates': 'AE',
+};
+
+const inferCountryCode = (...values: Array<string | null | undefined>) => {
+  for (const value of values) {
+    const normalized = normalizeLabel(value);
+    if (!normalized) continue;
+    if (normalized.length === 2 && /^[a-z]+$/i.test(normalized)) {
+      return normalized.toUpperCase();
+    }
+    if (COUNTRY_NAME_TO_CODE[normalized]) {
+      return COUNTRY_NAME_TO_CODE[normalized];
+    }
+  }
+  return '';
+};
+
 export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress }: { match: Match; onPress?: (id: string) => void; isPreviewing?: boolean; onPlayPress?: (id: string) => void; }) {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
@@ -59,10 +109,33 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     showDistance && locationLabel && distanceLabel !== locationLabel
       ? `${distanceLabel} \u00b7 ${locationLabel}`
       : distanceLabel || locationLabel;
-  const countryFlag = toFlagEmoji((match as any).current_country_code);
+  const resolvedCountryCode = inferCountryCode(
+    (match as any).current_country_code,
+    (match as any).current_country,
+    (match as any).current_country_name,
+    match.region,
+    match.location,
+  );
+  const countryFlag = toFlagEmoji(resolvedCountryCode);
   const locationDisplay = locationDisplayBase
     ? `${locationDisplayBase}${countryFlag ? ` ${countryFlag}` : ''}`
     : countryFlag;
+  const blockedLabels = useMemo(() => {
+    const values = new Set<string>();
+    const addValue = (value?: string | null) => {
+      const normalized = normalizeLabel(value);
+      if (normalized) values.add(normalized);
+    };
+
+    addValue(locationLabel);
+    addValue(getCityOnly(match.location || ''));
+    addValue(match.location);
+    addValue(match.region);
+    addValue((match as any).current_country);
+    addValue((match as any).current_country_name);
+
+    return values;
+  }, [locationLabel, match.location, match.region, (match as any).current_country, (match as any).current_country_name]);
   const verificationLevel =
     typeof (match as any).verification_level === 'number'
       ? (match as any).verification_level
@@ -191,35 +264,56 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     opacity: introPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 0.82] }),
   };
 
+  const vibePill = useMemo(() => {
+    const rawScore = typeof (match as any).compatibility === 'number' ? Math.round((match as any).compatibility) : null;
+    if (typeof rawScore !== 'number') return null;
+    if (rawScore >= 78) {
+      return {
+        label: 'Strong alignment',
+        colors: ['#25C4C0', theme.tint] as [string, string],
+      };
+    }
+    if (rawScore >= 56) {
+      return {
+        label: 'Shared vibe',
+        colors: [theme.secondary, theme.tint] as [string, string],
+      };
+    }
+    if (rawScore >= 38) {
+      return {
+        label: 'Aligned',
+        colors: [theme.accent, theme.tint] as [string, string],
+      };
+    }
+    return null;
+  }, [(match as any).compatibility, theme.accent, theme.secondary, theme.tint]);
+
   const alignmentChips = useMemo(() => {
     const chips: { label: string; tone: 'tint' | 'secondary' | 'accent' }[] = [];
-    const interests = Array.isArray(match.interests) ? match.interests : [];
+    const commonInterests = (Array.isArray((match as any).commonInterests) ? (match as any).commonInterests : []).filter(
+      (interest) => !blockedLabels.has(normalizeLabel(String(interest || '')))
+    );
+    const interests = (Array.isArray(match.interests) ? match.interests : []).filter(
+      (interest) => !blockedLabels.has(normalizeLabel(String(interest || '')))
+    );
     const personalities = Array.isArray((match as any).personalityTags) ? (match as any).personalityTags : [];
     const lookingFor = (match as any).looking_for || (match as any).lookingFor;
     const loveLanguage = (match as any).love_language || (match as any).loveLanguage;
 
     if (personalities[0]) chips.push({ label: personalities[0], tone: 'accent' });
-    if (interests[0]) chips.push({ label: interests[0], tone: 'secondary' });
+    if (commonInterests[0]) {
+      chips.push({
+        label: commonInterests.length > 1 ? `${commonInterests.length} shared interests` : `Shared: ${commonInterests[0]}`,
+        tone: 'secondary',
+      });
+    } else if (interests[0]) {
+      chips.push({ label: interests[0], tone: 'secondary' });
+    }
     if (lookingFor) chips.push({ label: `Intent: ${lookingFor}`, tone: 'tint' });
     if (loveLanguage && chips.length < 3) chips.push({ label: `Love language: ${loveLanguage}`, tone: 'tint' });
-    if (chips.length === 0) {
-      chips.push({ label: 'Shared values', tone: 'secondary' });
-      chips.push({ label: 'Similar goals', tone: 'accent' });
-    }
 
     return chips.slice(0, 3);
-  }, [match.interests, (match as any).personalityTags, (match as any).looking_for, (match as any).lookingFor, (match as any).love_language, (match as any).loveLanguage]);
-
-  const trustSignals = useMemo(() => {
-    const signals: string[] = [];
-    if (verificationLevel >= 2) signals.push('ID verified');
-    else if (verificationLevel >= 1) signals.push('Phone verified');
-    if ((match as any).profileVideo) signals.push('Intro video');
-    if (((match.interests || []).filter(Boolean).length >= 3) || !!((match as any).bio || '').trim()) {
-      signals.push('Detailed profile');
-    }
-    return signals.slice(0, 3);
-  }, [match.interests, (match as any).bio, (match as any).profileVideo, verificationLevel]);
+  }, [blockedLabels, match.interests, (match as any).commonInterests, (match as any).personalityTags, (match as any).looking_for, (match as any).lookingFor, (match as any).love_language, (match as any).loveLanguage]);
 
   const previewGlowStyle = {
     transform: [
@@ -316,10 +410,12 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
                     style={styles.idBadge}
                   >
                     <MaterialCommunityIcons name="shield-check" size={14} color="#2b1b00" />
+                    <Text style={styles.idBadgeText}>ID verified</Text>
                   </LinearGradientSafe>
                 ) : (
                   <View style={styles.phoneBadge}>
                     <MaterialCommunityIcons name="phone-check" size={14} color={theme.tint} />
+                    <Text style={styles.phoneBadgeText}>Phone verified</Text>
                   </View>
                 )}
               </Animated.View>
@@ -327,18 +423,13 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
           </View>
 
           <View style={styles.centerSlot} pointerEvents="none">
-            {(() => {
-              const score = typeof (match as any).compatibility === 'number' ? Math.round((match as any).compatibility) : null;
-              if (typeof score !== 'number') return null;
-
-              return (
-                <Animated.View style={{ transform: [{ translateY: pillTranslate }], opacity: pillAnim }} pointerEvents="none">
-                  <LinearGradientSafe colors={[theme.secondary, theme.tint]} start={[0, 0]} end={[1, 1]} style={styles.aiPillInline}>
-                    <Text style={styles.aiPillText}>{`${score}% Vibe`}</Text>
-                  </LinearGradientSafe>
-                </Animated.View>
-              );
-            })()}
+            {vibePill ? (
+              <Animated.View style={{ transform: [{ translateY: pillTranslate }], opacity: pillAnim }} pointerEvents="none">
+                <LinearGradientSafe colors={vibePill.colors} start={[0, 0]} end={[1, 1]} style={styles.aiPillInline}>
+                  <Text style={styles.aiPillText}>{vibePill.label}</Text>
+                </LinearGradientSafe>
+              </Animated.View>
+            ) : null}
           </View>
 
           <View style={[styles.rightSlot, { minWidth: slotWidth }]} pointerEvents="none">
@@ -358,7 +449,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
               >
                 <View style={styles.activeDotSmall} />
                 <Text style={styles.activeTopText}>
-                  {isOnlineNow ? "Online" : isActiveNow ? "Active Now" : "Recently Active"}
+                  {isOnlineNow ? "Online" : isActiveNow ? "Active now" : "Recently active"}
                 </Text>
               </Animated.View>
             ) : null}
@@ -383,66 +474,27 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
             </View>
           ) : null}
 
-          {trustSignals.length ? (
-            <View style={styles.trustRow}>
-              {trustSignals.map((signal, idx) => (
-                <View key={`${signal}-${idx}`} style={styles.trustChip}>
-                  <Text style={styles.trustChipText}>{signal}</Text>
-                </View>
-              ))}
+          {alignmentChips.length >= 2 || /shared/i.test(String(alignmentChips[0]?.label || '')) ? (
+            <View style={styles.alignmentRow}>
+              <View style={styles.alignmentChips}>
+                {alignmentChips.map((chip, idx) => (
+                  <View
+                    key={`${chip.label}-${idx}`}
+                    style={[
+                      styles.alignmentChip,
+                      chip.tone === 'tint'
+                        ? styles.alignmentChipTint
+                        : chip.tone === 'secondary'
+                          ? styles.alignmentChipSecondary
+                          : styles.alignmentChipAccent,
+                    ]}
+                  >
+                    <Text style={styles.alignmentChipText}>{chip.label}</Text>
+                  </View>
+                ))}
+              </View>
             </View>
           ) : null}
-
-          <View style={styles.alignmentRow}>
-            <View style={styles.alignmentChips}>
-              {alignmentChips.map((chip, idx) => (
-                <View
-                  key={`${chip.label}-${idx}`}
-                  style={[
-                    styles.alignmentChip,
-                    chip.tone === 'tint'
-                      ? styles.alignmentChipTint
-                      : chip.tone === 'secondary'
-                        ? styles.alignmentChipSecondary
-                        : styles.alignmentChipAccent,
-                  ]}
-                >
-                  <Text style={styles.alignmentChipText}>{chip.label}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-
-          <View style={styles.tags}>
-            {(() => {
-              const ICON_MAP: Record<string, string> = {
-                Travel: 'airplane-takeoff',      // more dynamic travel glyph
-                Music: 'music-note',             // single-note glyph
-                Business: 'briefcase',
-                Art: 'brush',                    // brush instead of palette
-                Fitness: 'run',                  // active runner glyph
-              };
-              const interests = Array.isArray(match.interests) ? match.interests : [];
-              const visible = interests.slice(0, 2);
-
-              return (
-                <>
-                  {visible.map((t, i) => {
-                    const iconName = ICON_MAP[t];
-                    return (
-                      <View key={i} style={styles.tag} accessible accessibilityLabel={t}>
-                        {iconName ? (
-                          <MaterialCommunityIcons name={iconName as any} size={14} color="#fff" />
-                        ) : (
-                          <Text style={styles.tagText}>{t}</Text>
-                        )}
-                      </View>
-                    );
-                  })}
-                </>
-              );
-            })()}
-          </View>
         </BlurViewSafe>
       </TouchableOpacity>
     </View>
@@ -455,14 +507,26 @@ const createStyles = (
   placeholderPalette: ReturnType<typeof getProfilePlaceholderPalette>,
 ) => {
   const surface = theme.background;
-  const tagBg = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.18)';
-  const personalityBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.02)';
-  const personalityBorder = isDark ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.14)';
   const previewGlowBg = withAlpha(theme.tint, 0.1);
   const activeNowBgColor = withAlpha(theme.secondary, isDark ? 0.9 : 0.95);
   const recentlyActiveBgColor = withAlpha(theme.accent, isDark ? 0.85 : 0.9);
+  const infoBg = isDark ? 'rgba(5,10,18,0.16)' : 'rgba(17,24,39,0.12)';
   return StyleSheet.create({
-    card: { position: "absolute", width: "100%", height: "100%", borderRadius: 24, overflow: "hidden", backgroundColor: surface },
+    card: {
+      position: "absolute",
+      width: "100%",
+      height: "100%",
+      borderRadius: 28,
+      overflow: "hidden",
+      backgroundColor: surface,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.05)',
+      shadowColor: '#000',
+      shadowOpacity: isDark ? 0.22 : 0.08,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 12,
+    },
     cardContent: { flex: 1 },
     image: { width: "100%", height: "100%", resizeMode: "cover" },
     placeholderSurface: { width: "100%", height: "100%", justifyContent: "center", alignItems: "center" },
@@ -500,46 +564,41 @@ const createStyles = (
       textAlign: 'center',
       lineHeight: 19,
     },
-    gradient: { position: "absolute", left: 0, right: 0, bottom: 0, height: "50%" },
-    info: { position: "absolute", left: 0, right: 0, bottom: 0, padding: 18, paddingBottom: 22 },
-    nameRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
-    name: { color: "#fff", fontSize: 28, flex: 1, fontFamily: 'PlayfairDisplay_700Bold' },
+    gradient: { position: "absolute", left: 0, right: 0, bottom: 0, height: "56%" },
+    info: {
+      position: "absolute",
+      left: 0,
+      right: 0,
+      bottom: 0,
+      padding: 18,
+      paddingTop: 22,
+      paddingBottom: 34,
+      backgroundColor: infoBg,
+      borderTopWidth: 1,
+      borderTopColor: 'rgba(255,255,255,0.14)',
+    },
+    nameRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
+    name: { color: "#fff", fontSize: 30, flex: 1, fontFamily: 'PlayfairDisplay_700Bold' },
     activeBadge: { flexDirection: "row", alignItems: "center", backgroundColor: activeNowBgColor, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
     activeDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#fff", marginRight: 6 },
     activeText: { color: "#fff", fontSize: 11 },
     tagline: { color: "#fff", marginBottom: 12, fontSize: 15, fontFamily: 'Manrope_500Medium' },
-    locationRow: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
-    location: { color: "#fff", marginLeft: 6 },
-    trustRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 10 },
-    trustChip: {
-      paddingHorizontal: 10,
-      paddingVertical: 5,
-      borderRadius: 999,
-      backgroundColor: 'rgba(255,255,255,0.12)',
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: 'rgba(255,255,255,0.2)',
-    },
-    trustChipText: {
-      color: '#fff',
-      fontSize: 11,
-      fontWeight: '700',
-      letterSpacing: 0.2,
-    },
-    alignmentRow: { marginBottom: 8 },
+    locationRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
+    location: { color: "#fff", marginLeft: 6, fontFamily: 'Manrope_600SemiBold' },
+    alignmentRow: { marginBottom: 2 },
     alignmentChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
     alignmentChip: {
-      paddingHorizontal: 10,
-      paddingVertical: 5,
+      paddingHorizontal: 11,
+      paddingVertical: 7,
       borderRadius: 999,
-      backgroundColor: withAlpha(theme.text, 0.18),
+      backgroundColor: withAlpha(theme.text, 0.16),
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(255,255,255,0.18)',
     },
     alignmentChipTint: { backgroundColor: withAlpha(theme.tint, 0.35) },
     alignmentChipSecondary: { backgroundColor: withAlpha(theme.secondary, 0.32) },
     alignmentChipAccent: { backgroundColor: withAlpha(theme.accent, 0.32) },
-    alignmentChipText: { color: '#fff', fontSize: 12, fontWeight: '600' },
-    tags: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 2 },
-    tag: { backgroundColor: tagBg, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, marginRight: 8, marginBottom: 6 },
-    tagText: { color: "#fff", fontSize: 12 },
+    alignmentChipText: { color: '#fff', fontSize: 12, fontWeight: '700' },
     verifiedBadge: {
       position: 'absolute',
       top: 12,
@@ -565,8 +624,8 @@ const createStyles = (
     },
     activeNowBg: { backgroundColor: activeNowBgColor },
     recentlyActiveBg: { backgroundColor: recentlyActiveBgColor },
-    activeDotSmall: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff', marginRight: 8 },
-    activeTopText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+    activeDotSmall: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff', marginRight: 6 },
+    activeTopText: { color: '#fff', fontSize: 9, fontWeight: '800' },
     aiPill: {
       position: 'absolute',
       top: 12,
@@ -580,8 +639,7 @@ const createStyles = (
       minWidth: 100,
       maxWidth: '70%',
     },
-    aiPillText: { color: '#fff', fontWeight: '800', textAlign: 'center' },
-    topRow: { position: 'absolute', top: 12, left: 12, right: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', zIndex: 40 },
+    topRow: { position: 'absolute', top: 14, left: 14, right: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', zIndex: 40 },
     leftSlot: { alignItems: 'flex-start' },
     centerSlot: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     rightSlot: { alignItems: 'flex-end' },
@@ -600,33 +658,55 @@ const createStyles = (
       shadowOffset: { width: 0, height: 6 },
       elevation: 6,
     },
+    idBadgeText: {
+      marginLeft: 6,
+      color: '#2b1b00',
+      fontSize: 11,
+      fontWeight: '800',
+    },
     phoneBadge: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 10,
-      paddingVertical: 6,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: withAlpha(theme.tint, 0.45),
-      backgroundColor: withAlpha(theme.tint, isDark ? 0.2 : 0.16),
+      borderColor: withAlpha(theme.tint, 0.22),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.10 : 0.09),
       shadowColor: theme.tint,
-      shadowOpacity: isDark ? 0.18 : 0.12,
-      shadowRadius: 10,
-      shadowOffset: { width: 0, height: 6 },
-      elevation: 4,
+      shadowOpacity: isDark ? 0.06 : 0.04,
+      shadowRadius: 6,
+      shadowOffset: { width: 0, height: 3 },
+      elevation: 2,
     },
-    activeInline: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 },
-    aiPillInline: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, minWidth: 100, maxWidth: '70%', alignItems: 'center' },
-    personalityRow: { flexDirection: 'row', marginBottom: 8, gap: 8 },
-    personalityPill: {
-      paddingHorizontal: 10,
-      paddingVertical: 6,
+    phoneBadgeText: {
+      marginLeft: 5,
+      color: '#fff',
+      fontSize: 9,
+      fontWeight: '800',
+    },
+    activeInline: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: personalityBorder,
-      backgroundColor: personalityBg,
+      borderColor: 'rgba(255,255,255,0.18)',
     },
-    personalityText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+    aiPillInline: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 999,
+      minWidth: 88,
+      maxWidth: '64%',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.18)',
+    },
+    aiPillText: { color: '#fff', fontSize: 9, fontWeight: '800', textAlign: 'center' },
     // video badge
     videoBadgeHit: {
       position: 'absolute',

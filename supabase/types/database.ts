@@ -1076,34 +1076,113 @@ export type Database = {
         Row: {
           answer: string
           created_at: string
+          guess_mode: string | null
+          guess_options: Json | null
+          hint_text: string | null
           id: string
+          normalized_answer: string | null
           profile_id: string
           prompt_key: string
+          prompt_type: string
           prompt_title: string | null
+          reveal_policy: string
           updated_at: string
         }
         Insert: {
           answer: string
           created_at?: string
+          guess_mode?: string | null
+          guess_options?: Json | null
+          hint_text?: string | null
           id?: string
+          normalized_answer?: string | null
           profile_id: string
           prompt_key: string
+          prompt_type?: string
           prompt_title?: string | null
+          reveal_policy?: string
           updated_at?: string
         }
         Update: {
           answer?: string
           created_at?: string
+          guess_mode?: string | null
+          guess_options?: Json | null
+          hint_text?: string | null
           id?: string
+          normalized_answer?: string | null
           profile_id?: string
           prompt_key?: string
+          prompt_type?: string
           prompt_title?: string | null
+          reveal_policy?: string
           updated_at?: string
         }
         Relationships: [
           {
             foreignKeyName: "profile_prompts_profile_id_fkey"
             columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profile_prompt_guesses: {
+        Row: {
+          attempts_count: number
+          created_at: string
+          guessed_value: string
+          id: string
+          is_correct: boolean
+          normalized_guess: string
+          profile_prompt_id: string
+          target_profile_id: string
+          updated_at: string
+          viewer_profile_id: string
+        }
+        Insert: {
+          attempts_count?: number
+          created_at?: string
+          guessed_value: string
+          id?: string
+          is_correct?: boolean
+          normalized_guess: string
+          profile_prompt_id: string
+          target_profile_id: string
+          updated_at?: string
+          viewer_profile_id: string
+        }
+        Update: {
+          attempts_count?: number
+          created_at?: string
+          guessed_value?: string
+          id?: string
+          is_correct?: boolean
+          normalized_guess?: string
+          profile_prompt_id?: string
+          target_profile_id?: string
+          updated_at?: string
+          viewer_profile_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_prompt_guesses_profile_prompt_id_fkey"
+            columns: ["profile_prompt_id"]
+            isOneToOne: false
+            referencedRelation: "profile_prompts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "profile_prompt_guesses_target_profile_id_fkey"
+            columns: ["target_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "profile_prompt_guesses_viewer_profile_id_fkey"
+            columns: ["viewer_profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -2299,6 +2378,24 @@ export type Database = {
         Args: { p_user_id?: string }
         Returns: Database["public"]["Enums"]["subscription_type"]
       }
+      get_viewed_profile_prompts: {
+        Args: { p_profile_id: string; p_viewer_profile_id?: string | null }
+        Returns: {
+          answer: string
+          created_at: string
+          guess_mode: string | null
+          guess_options: Json | null
+          hint_text: string | null
+          id: string
+          profile_id: string
+          prompt_key: string
+          prompt_title: string
+          prompt_type: string
+          reveal_policy: string
+          viewer_guess: string | null
+          viewer_guess_is_correct: boolean | null
+        }[]
+      }
       disablelongtransactions: { Args: never; Returns: string }
       dropgeometrycolumn:
         | {
@@ -2699,6 +2796,18 @@ export type Database = {
       }
       rpc_get_phone_verification_status: { Args: never; Returns: Json }
       rpc_get_my_premium_state: { Args: never; Returns: Json }
+      submit_profile_prompt_guess: {
+        Args: {
+          p_guess: string
+          p_prompt_id: string
+          p_viewer_profile_id: string
+        }
+        Returns: {
+          is_correct: boolean
+          revealed_answer: string
+          viewer_guess: string
+        }[]
+      }
       rpc_get_suggested_moves: {
         Args: { p_limit?: number; p_profile_id: string }
         Returns: {

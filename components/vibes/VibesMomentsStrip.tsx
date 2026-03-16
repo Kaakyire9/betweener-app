@@ -1,4 +1,5 @@
 import { Colors } from '@/constants/theme';
+import LinearGradientSafe from '@/components/NativeWrappers/LinearGradientSafe';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { MomentUser } from '@/hooks/useMoments';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -93,7 +94,10 @@ export default function VibesMomentsStrip({
     return (
       <View style={styles.collapsedRow}>
         <TouchableOpacity style={styles.collapsedInner} onPress={toggleCollapsed} activeOpacity={0.85}>
-          <Text style={styles.title}>Moments</Text>
+          <View>
+              <Text style={styles.eyebrow}>Community pulse</Text>
+              <Text style={styles.title}>Moments</Text>
+          </View>
           {momentCount > 0 ? (
             <View style={styles.countBadge}>
               <Text style={styles.countText}>{momentCount}</Text>
@@ -111,15 +115,28 @@ export default function VibesMomentsStrip({
 
   if (showEmptyState) {
     return (
-      <View style={styles.emptyRow}>
-        <TouchableOpacity style={styles.emptyIcon} onPress={onPressPostMoment} activeOpacity={0.85}>
-          <MaterialCommunityIcons name="star-four-points" size={18} color={theme.tint} />
-        </TouchableOpacity>
-        <Text style={styles.emptyText}>Post a Moment to start the vibe</Text>
-        <TouchableOpacity style={styles.postButton} onPress={onPressPostMoment} activeOpacity={0.85}>
-          <Text style={styles.postButtonText}>Post</Text>
-        </TouchableOpacity>
-      </View>
+      <LinearGradientSafe
+        colors={isDark ? ['rgba(20,36,35,0.96)', 'rgba(10,20,24,0.98)'] : ['#ffffff', '#f5fbfa']}
+        start={[0, 0]}
+        end={[1, 1]}
+        style={styles.emptyShell}
+      >
+        <View style={styles.emptyHeader}>
+          <View style={styles.emptyHeaderLeft}>
+            <View style={styles.emptyIcon}>
+              <MaterialCommunityIcons name="star-four-points" size={18} color={theme.secondary} />
+            </View>
+            <View style={styles.emptyCopyWrap}>
+              <Text style={styles.eyebrow}>Community pulse</Text>
+              <Text style={styles.emptyTitle}>Moments</Text>
+              <Text style={styles.emptyText}>Share a moment to warm up discovery.</Text>
+            </View>
+          </View>
+          <TouchableOpacity style={styles.postButton} onPress={onPressPostMoment} activeOpacity={0.85}>
+            <Text style={styles.postButtonText}>Share</Text>
+          </TouchableOpacity>
+        </View>
+      </LinearGradientSafe>
     );
   }
 
@@ -157,12 +174,20 @@ export default function VibesMomentsStrip({
   };
 
   return (
-    <View style={styles.strip}>
+    <LinearGradientSafe
+      colors={isDark ? ['rgba(20,36,35,0.96)', 'rgba(10,20,24,0.98)'] : ['#ffffff', '#f5fbfa']}
+      start={[0, 0]}
+      end={[1, 1]}
+      style={styles.strip}
+    >
       <View style={styles.stripHeader}>
-        <TouchableOpacity style={styles.stripTitleRow} onPress={toggleCollapsed} activeOpacity={0.85}>
-          <Text style={styles.title}>Moments</Text>
-          <MaterialCommunityIcons name="chevron-up" size={16} color={theme.text} style={{ marginLeft: 6 }} />
-        </TouchableOpacity>
+        <View>
+          <Text style={styles.eyebrow}>Community pulse</Text>
+          <TouchableOpacity style={styles.stripTitleRow} onPress={toggleCollapsed} activeOpacity={0.85}>
+            <Text style={styles.title}>Moments</Text>
+            <MaterialCommunityIcons name="chevron-up" size={16} color={theme.text} style={{ marginLeft: 6 }} />
+          </TouchableOpacity>
+        </View>
         <TouchableOpacity onPress={onPressSeeAll} activeOpacity={0.85} style={styles.seeAllPill}>
           <MaterialCommunityIcons name="send" size={14} color={theme.tint} style={{ marginRight: 6 }} />
           <Text style={styles.seeAllText}>See all</Text>
@@ -188,7 +213,7 @@ export default function VibesMomentsStrip({
           </TouchableOpacity>
         ) : null}
       </View>
-    </View>
+    </LinearGradientSafe>
   );
 }
 
@@ -196,33 +221,46 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
   const surface = theme.backgroundSubtle;
   const outline = theme.outline;
   const pillBg = isDark ? 'rgba(255,255,255,0.06)' : '#f8fafc';
+  const shellBorder = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)';
   return StyleSheet.create({
     strip: {
       marginHorizontal: 20,
-      marginTop: 8,
-      marginBottom: 6,
-      borderRadius: 18,
+      marginTop: 6,
+      marginBottom: 4,
+      borderRadius: 20,
       paddingHorizontal: 14,
-      paddingVertical: 10,
-      backgroundColor: surface,
+      paddingVertical: 6,
       borderWidth: 1,
-      borderColor: outline,
+      borderColor: shellBorder,
+      shadowColor: '#000',
+      shadowOpacity: isDark ? 0.18 : 0.06,
+      shadowRadius: 16,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 6,
     },
-    stripHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    stripHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
     stripTitleRow: { flexDirection: 'row', alignItems: 'center' },
-    title: { fontSize: 14, fontWeight: '800', color: theme.text },
+    eyebrow: {
+      fontSize: 10,
+      fontWeight: '800',
+      letterSpacing: 1.3,
+      textTransform: 'uppercase',
+      color: theme.secondary,
+      marginBottom: 2,
+    },
+    title: { fontSize: 15, fontWeight: '800', color: theme.text },
     seeAllPill: {
       flexDirection: 'row',
       alignItems: 'center',
       paddingHorizontal: 12,
       paddingVertical: 6,
-      borderRadius: 16,
+      borderRadius: 999,
       borderWidth: 1,
       borderColor: outline,
       backgroundColor: pillBg,
     },
     seeAllText: { fontSize: 12, fontWeight: '700', color: theme.tint },
-    listRow: { marginTop: 8, flexDirection: 'row', alignItems: 'center' },
+    listRow: { marginTop: 5, flexDirection: 'row', alignItems: 'center' },
     listContent: { alignItems: 'center', paddingRight: 12 },
     avatarItem: { width: 62, alignItems: 'center', marginRight: 12 },
     avatarOuter: {
@@ -263,29 +301,45 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       marginLeft: 6,
       paddingHorizontal: 10,
       paddingVertical: 8,
-      borderRadius: 12,
+      borderRadius: 999,
       borderWidth: 1,
       borderColor: outline,
       backgroundColor: pillBg,
     },
     moreText: { fontSize: 12, fontWeight: '700', color: theme.text },
-    emptyRow: {
+    emptyShell: {
       marginHorizontal: 20,
       marginTop: 2,
       marginBottom: 0,
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: shellBorder,
+      shadowColor: '#000',
+      shadowOpacity: isDark ? 0.18 : 0.06,
+      shadowRadius: 16,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 6,
+    },
+    emptyHeader: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 14,
-      paddingVertical: 8,
-      borderRadius: 16,
-      backgroundColor: surface,
-      borderWidth: 1,
-      borderColor: outline,
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    emptyHeaderLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+    },
+    emptyCopyWrap: {
+      flex: 1,
     },
     emptyIcon: {
-      width: 32,
-      height: 32,
-      borderRadius: 16,
+      width: 36,
+      height: 36,
+      borderRadius: 18,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff',
@@ -293,14 +347,15 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       borderColor: outline,
       marginRight: 10,
     },
-    emptyText: { flex: 1, fontSize: 13, color: theme.textMuted },
+    emptyTitle: { fontSize: 15, fontWeight: '800', color: theme.text, marginBottom: 1 },
+    emptyText: { flex: 1, fontSize: 11, color: theme.textMuted, lineHeight: 14 },
     postButton: {
-      paddingHorizontal: 14,
-      paddingVertical: 8,
-      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: 999,
       backgroundColor: theme.tint,
     },
-    postButtonText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+    postButtonText: { color: '#fff', fontWeight: '700', fontSize: 11 },
     collapsedRow: {
       marginHorizontal: 20,
       marginTop: 8,
@@ -314,7 +369,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       alignItems: 'center',
       paddingHorizontal: 12,
       paddingVertical: 8,
-      borderRadius: 14,
+      borderRadius: 16,
       backgroundColor: surface,
       borderWidth: 1,
       borderColor: outline,

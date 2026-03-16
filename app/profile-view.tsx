@@ -4,17 +4,16 @@ import { Colors } from '@/constants/theme';
 import { usePremiumState } from '@/hooks/use-premium-state';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
-import { computeCompatibilityPercent } from '@/lib/compat/compatibility-score';
-import { computeFirstReplyHours, computeInterestOverlapRatio, computeMatchScorePercent } from '@/lib/match/match-score';
 import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
 import { getProfileInitials, getProfilePlaceholderPalette } from '@/lib/profile-placeholders';
 import { recordProfileSignal } from '@/lib/profile-signals';
+import { isGuessPrompt, isMultipleChoiceGuess } from '@/lib/prompts/guess-prompts';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/telemetry/logger';
-import type { UserProfile } from '@/types/user-profile';
-import { getViewedProfilePremiumCopy, getViewedProfileTrustChips } from '@/lib/viewed-profile-premium';
+import type { ProfilePromptAnswer, UserProfile } from '@/types/user-profile';
+import { getViewedProfilePremiumCopy } from '@/lib/viewed-profile-premium';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import type { ViewToken } from '@shopify/flash-list';
 import { FlashList } from '@shopify/flash-list';
@@ -26,7 +25,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
-import { Alert, Animated as RNAnimated, Dimensions, FlatList, Image, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, TextInput, View, type ImageStyle, type ViewStyle } from 'react-native';
+import { Alert, Dimensions, FlatList, Image, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View, type ImageStyle, type ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Easing,
@@ -274,6 +273,18 @@ function buildSections(profile: UserProfile): PremiumSection[] {
   const lifestyleChips = [profile.exerciseFrequency, profile.smoking, profile.drinking]
     .filter(Boolean)
     .map(String);
+  const allPrompts = profile.promptAnswers || [];
+  const topPrompt = allPrompts[0];
+  const promptEntries = (profile.promptAnswers || [])
+    .filter((item) => !isGuessPrompt(item?.promptType) && item?.answer?.trim())
+    .map((item) => ({
+      title: item.promptTitle?.trim() || 'Prompt',
+      answer: item.answer.trim(),
+    }));
+  const remainingPrompts =
+    topPrompt && !isGuessPrompt(topPrompt.promptType) && topPrompt.answer?.trim()
+      ? promptEntries.slice(1, 3)
+      : promptEntries.slice(0, 2);
 
   const premiumCopy = getViewedProfilePremiumCopy(profile.name);
 
@@ -305,22 +316,6 @@ function buildSections(profile: UserProfile): PremiumSection[] {
       chips: lifestyleChips.length ? lifestyleChips : undefined,
     },
     {
-      id: 'sec-prompts',
-      tag: 'prompts',
-      title: 'Prompts',
-      body: (() => {
-        const text = [
-        profile.personalityType ? `Personality: ${profile.personalityType}` : null,
-        profile.languages?.length ? `Languages: ${profile.languages.join(', ')}` : null,
-        profile.tribe ? `Tribe: ${profile.tribe}` : null,
-        profile.religion ? `Religion: ${profile.religion}` : null,
-      ]
-        .filter(Boolean)
-        .join('\n');
-        return text || premiumCopy.promptsEmpty;
-      })(),
-    },
-    {
       id: 'sec-values',
       tag: 'values',
       title: 'Looking For',
@@ -336,6 +331,17 @@ function buildSections(profile: UserProfile): PremiumSection[] {
       })(),
     },
   ];
+
+  if (remainingPrompts.length) {
+    sections.splice(2, 0, {
+      id: 'sec-prompts',
+      tag: 'prompts',
+      title: remainingPrompts.length > 1 ? 'More prompts' : 'Prompt',
+      body: remainingPrompts
+        .map((item) => `${item.title}\n${item.answer}`)
+        .join('\n\n'),
+    });
+  }
 
   return sections;
 }
@@ -415,7 +421,7 @@ export default function ProfileViewPremiumV2Screen() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = Colors[colorScheme ?? 'light'];
-  const { profile: currentProfile, user } = useAuth();
+  const { profile: currentProfile } = useAuth();
 
   const params = useLocalSearchParams();
   const profileId = String((params as any)?.id ?? (params as any)?.profileId ?? 'preview');
@@ -431,8 +437,6 @@ export default function ProfileViewPremiumV2Screen() {
   const [fetching, setFetching] = useState(false);
   const [fetchWatchdogError, setFetchWatchdogError] = useState<Error | null>(null);
   const [fetchRetryNonce, setFetchRetryNonce] = useState(0);
-  const [matchAccepted, setMatchAccepted] = useState(false);
-  const [matchPercent, setMatchPercent] = useState<number | null>(null);
   const [myInterests, setMyInterests] = useState<string[]>([]);
   const signalOpenedRef = useRef<string | null>(null);
   const signalIntroRef = useRef<string | null>(null);
@@ -458,6 +462,7 @@ export default function ProfileViewPremiumV2Screen() {
       try {
         const mapped = await fetchViewedProfile({
           viewedProfileId: profileId,
+          viewerProfileId: currentProfile?.id ?? null,
           fallbackDistanceLabel: fallbackProfile?.distance,
           fallbackDistanceKm: fallbackProfile?.distanceKm,
         });
@@ -476,7 +481,7 @@ export default function ProfileViewPremiumV2Screen() {
     return () => {
       mounted = false;
     };
-  }, [profileId, fallbackProfile?.distance, fallbackProfile?.distanceKm, fetchRetryNonce]);
+  }, [currentProfile?.id, profileId, fallbackProfile?.distance, fallbackProfile?.distanceKm, fetchRetryNonce]);
 
   const resolvedProfile: UserProfile = useMemo(() => {
     if (fetchedProfile) return fetchedProfile;
@@ -587,66 +592,6 @@ export default function ProfileViewPremiumV2Screen() {
     presenceProfile.isActiveNow || !!(presenceProfile as any).is_active;
   const showPresence = isOnlineNow || isActiveNow;
   const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
-  const vibeReasons = useMemo(() => {
-    const reasons: string[] = [];
-    const interests = Array.isArray(resolvedProfile.interests)
-      ? resolvedProfile.interests.map((i) => i?.name).filter(Boolean)
-      : [];
-    const personality = resolvedProfile.personalityType;
-    const lookingFor = resolvedProfile.lookingFor;
-    const loveLanguage = resolvedProfile.loveLanguage;
-
-    if (personality) reasons.push(`Personality: ${personality}`);
-    if (interests[0]) reasons.push(`Shared interest: ${interests[0]}`);
-    if (lookingFor) reasons.push(`Intent: ${lookingFor}`);
-    if (loveLanguage) reasons.push(`Love language: ${loveLanguage}`);
-    if (isOnlineNow) reasons.push('Online now so you can connect');
-    else if (isActiveNow) reasons.push('Active now so you can connect');
-
-    if (reasons.length === 0)
-      reasons.push('Aligned values and lifestyle signals');
-    return reasons.slice(0, 4);
-  }, [
-    resolvedProfile.interests,
-    resolvedProfile.personalityType,
-    resolvedProfile.lookingFor,
-    resolvedProfile.loveLanguage,
-    isOnlineNow,
-    isActiveNow,
-  ]);
-  const [vibeReasonIndex, setVibeReasonIndex] = useState(0);
-  const vibeGlow = useRef(new RNAnimated.Value(0)).current;
-  useEffect(() => {
-    if (!vibeReasons.length) return;
-    setVibeReasonIndex(0);
-    if (vibeReasons.length < 2) return;
-    const id = setInterval(() => {
-      setVibeReasonIndex((prev) => (prev + 1) % vibeReasons.length);
-    }, 3200);
-    return () => clearInterval(id);
-  }, [vibeReasons]);
-  useEffect(() => {
-    if (!vibeReasons.length) return;
-    const anim = RNAnimated.loop(
-      RNAnimated.sequence([
-        RNAnimated.timing(vibeGlow, {
-          toValue: 1,
-          duration: 1400,
-          useNativeDriver: true,
-        }),
-        RNAnimated.timing(vibeGlow, {
-          toValue: 0,
-          duration: 1400,
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    anim.start();
-    return () => {
-      anim.stop();
-    };
-  }, [vibeGlow, vibeReasons.length]);
-
   useEffect(() => {
     let cancelled = false;
     const loadMyInterests = async () => {
@@ -676,73 +621,6 @@ export default function ProfileViewPremiumV2Screen() {
     };
   }, [currentProfile?.id]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const checkAccepted = async () => {
-      if (!currentProfile?.id || !resolvedProfile.id) {
-        setMatchAccepted(false);
-        return;
-      }
-      const { data } = await supabase
-        .from('matches')
-        .select('id')
-        .or(
-          `and(user1_id.eq.${currentProfile.id},user2_id.eq.${resolvedProfile.id},status.eq.ACCEPTED),and(user1_id.eq.${resolvedProfile.id},user2_id.eq.${currentProfile.id},status.eq.ACCEPTED)`,
-        )
-        .limit(1);
-      if (cancelled) return;
-      setMatchAccepted(!!(data && data.length > 0));
-    };
-    void checkAccepted();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentProfile?.id, resolvedProfile.id]);
-
-  useEffect(() => {
-    if (!matchAccepted || !user?.id || !resolvedProfile.userId) {
-      setMatchPercent(null);
-      return;
-    }
-    let cancelled = false;
-    const fetchMatchScore = async () => {
-      const { data, count } = await supabase
-        .from('messages')
-        .select('created_at,sender_id', { count: 'exact' })
-        .or(
-          `and(sender_id.eq.${user.id},receiver_id.eq.${resolvedProfile.userId}),and(sender_id.eq.${resolvedProfile.userId},receiver_id.eq.${user.id})`,
-        )
-        .order('created_at', { ascending: true })
-        .limit(50);
-      if (cancelled) return;
-      const messageRows = (data as any[] | null) ?? [];
-      const messageCount = typeof count === 'number' ? count : messageRows.length;
-      const firstReplyHours = computeFirstReplyHours(messageRows as any, user.id, resolvedProfile.userId);
-      const peerNames = resolvedProfile.interests.map((item) => item.name).filter(Boolean);
-      const interestOverlapRatio = computeInterestOverlapRatio(myInterests, peerNames) ?? undefined;
-      const bothVerified =
-        (currentProfile?.verification_level ?? 0) >= 1 && !!resolvedProfile.verified;
-      const score = computeMatchScorePercent({
-        messageCount,
-        firstReplyHours,
-        bothVerified,
-        interestOverlapRatio,
-      });
-      setMatchPercent(score);
-    };
-    void fetchMatchScore();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    currentProfile?.verification_level,
-    matchAccepted,
-    myInterests,
-    resolvedProfile.interests,
-    resolvedProfile.userId,
-    user?.id,
-  ]);
-
   const hasGalleryImages = useMemo(
     () => Array.isArray(resolvedProfile.photos) && resolvedProfile.photos.some(Boolean),
     [resolvedProfile.photos],
@@ -759,51 +637,160 @@ export default function ProfileViewPremiumV2Screen() {
     const sections = buildAutoSectionsIfNeeded(resolvedProfile, adapted.sections);
     return { ...adapted, sections };
   }, [resolvedProfile]);
+  const viewerPrompts = useMemo(
+    () => (resolvedProfile.promptAnswers || []).filter((item) => item?.promptTitle?.trim() || item?.answer?.trim()),
+    [resolvedProfile.promptAnswers],
+  );
+  const featuredPrompt = (viewerPrompts[0] ?? null) as ProfilePromptAnswer | null;
+  const [guessInput, setGuessInput] = useState('');
+  const [selectedGuessOption, setSelectedGuessOption] = useState<string | null>(null);
+  const [guessSubmitting, setGuessSubmitting] = useState(false);
+  const [guessComposerOpen, setGuessComposerOpen] = useState(false);
+  const [guessInterestSending, setGuessInterestSending] = useState(false);
+  const [guessInterestSent, setGuessInterestSent] = useState(false);
+  const [guessResult, setGuessResult] = useState<{ tone: 'correct' | 'wrong'; message: string } | null>(null);
 
   const isLoading = fetching && !fetchedProfile && !fallbackProfile && !fetchWatchdogError;
   const locationLine = useMemo(() => buildLocationLine(resolvedProfile), [resolvedProfile]);
-  const trustHighlights = useMemo(() => getViewedProfileTrustChips(presenceProfile), [presenceProfile]);
-  const compatibilityPercent = useMemo(() => {
-    if (!currentProfile || !resolvedProfile) return resolvedProfile.compatibility;
-    const targetInterests = resolvedProfile.interests.map((item) => item.name).filter(Boolean);
-    const computed = computeCompatibilityPercent(
-      {
-        interests: myInterests,
-        lookingFor: (currentProfile as any)?.looking_for,
-        loveLanguage: (currentProfile as any)?.love_language,
-        personalityType: (currentProfile as any)?.personality_type,
-        religion: (currentProfile as any)?.religion,
-        wantsChildren: (currentProfile as any)?.wants_children,
-        smoking: (currentProfile as any)?.smoking,
-      },
-      {
-        interests: targetInterests,
-        lookingFor: resolvedProfile.lookingFor,
-        loveLanguage: resolvedProfile.loveLanguage,
-        personalityType: resolvedProfile.personalityType,
-        religion: resolvedProfile.religion,
-        wantsChildren: resolvedProfile.wantsChildren,
-        smoking: resolvedProfile.smoking,
-      },
-    );
-    return typeof computed === 'number' ? computed : resolvedProfile.compatibility;
+  const sharedInterestNames = useMemo(() => {
+    const mine = new Set(myInterests.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean));
+    return resolvedProfile.interests
+      .map((item) => item?.name || '')
+      .filter(Boolean)
+      .filter((name) => mine.has(String(name).trim().toLowerCase()));
+  }, [myInterests, resolvedProfile.interests]);
+  const profileContextLine = useMemo(() => {
+    if (sharedInterestNames.length > 1) return `${sharedInterestNames.length} shared interests`;
+    if (sharedInterestNames[0]) return `Shared: ${sharedInterestNames[0]}`;
+    if (isOnlineNow) return 'Online now for a real-time intro';
+    if (isActiveNow) return 'Active now and open to connection';
+    if (resolvedProfile.lookingFor) return `Intent: ${resolvedProfile.lookingFor}`;
+    if (resolvedProfile.personalityType) return `${resolvedProfile.personalityType} energy`;
+    if (resolvedProfile.loveLanguage) return `Love language: ${resolvedProfile.loveLanguage}`;
+    return null;
   }, [
-    currentProfile,
-    myInterests,
-    resolvedProfile.compatibility,
-    resolvedProfile.interests,
+    isActiveNow,
+    isOnlineNow,
     resolvedProfile.lookingFor,
+    resolvedProfile.loveLanguage,
     resolvedProfile.personalityType,
-    resolvedProfile.religion,
-    resolvedProfile.smoking,
-    resolvedProfile.wantsChildren,
+    sharedInterestNames,
   ]);
-  const matchBadgeValue =
-    matchAccepted && typeof matchPercent === 'number'
-      ? matchPercent
-      : compatibilityPercent;
-  const matchBadgeLabel =
-    matchAccepted && typeof matchPercent === 'number' ? 'Match' : 'Vibes';
+
+  useEffect(() => {
+    const usesMultipleChoice = isGuessPrompt(featuredPrompt?.promptType) && isMultipleChoiceGuess(featuredPrompt?.guessMode);
+    setGuessInput(usesMultipleChoice ? '' : featuredPrompt?.viewerGuess || '');
+    setSelectedGuessOption(usesMultipleChoice ? featuredPrompt?.viewerGuess || null : null);
+    setGuessInterestSent(false);
+    setGuessComposerOpen(false);
+    if (featuredPrompt?.viewerGuessIsCorrect === true) {
+      setGuessResult({
+        tone: 'correct',
+        message: `👍😍 You got it right. Want to know more about ${resolvedProfile.name}?`,
+      });
+    } else if (featuredPrompt?.viewerGuess) {
+      setGuessResult({
+        tone: 'wrong',
+        message: 'Close. Ask about it and turn the guess into a real opener.',
+      });
+    } else {
+      setGuessResult(null);
+    }
+  }, [featuredPrompt?.id, featuredPrompt?.viewerGuess, featuredPrompt?.viewerGuessIsCorrect, resolvedProfile.name]);
+
+  const refreshViewedProfile = useCallback(async () => {
+    if (!profileId || profileId === 'preview') return;
+    const mapped = await fetchViewedProfile({
+      viewedProfileId: profileId,
+      viewerProfileId: currentProfile?.id ?? null,
+      fallbackDistanceLabel: fallbackProfile?.distance,
+      fallbackDistanceKm: fallbackProfile?.distanceKm,
+    });
+    setFetchedProfile(mapped);
+  }, [currentProfile?.id, fallbackProfile?.distance, fallbackProfile?.distanceKm, profileId]);
+
+  const submitFeaturedGuess = useCallback(async () => {
+    if (!featuredPrompt?.id || !currentProfile?.id || !isGuessPrompt(featuredPrompt.promptType)) return;
+    const guessValue = (isMultipleChoiceGuess(featuredPrompt.guessMode) ? selectedGuessOption : guessInput).trim();
+    if (!guessValue) return;
+
+    setGuessSubmitting(true);
+    try {
+      const { data, error } = await supabase.rpc('submit_profile_prompt_guess', {
+        p_prompt_id: featuredPrompt.id,
+        p_viewer_profile_id: currentProfile.id,
+        p_guess: guessValue,
+      });
+      if (error) {
+        Alert.alert('Guess unavailable', 'Please try again.');
+        return;
+      }
+
+      const outcome = Array.isArray(data) ? data[0] : null;
+      const isCorrect = !!outcome?.is_correct;
+      setGuessComposerOpen(false);
+      setGuessResult({
+        tone: isCorrect ? 'correct' : 'wrong',
+        message: isCorrect
+          ? `👍😍 You got it right. Want to know more about ${resolvedProfile.name}?`
+          : 'Close. Ask about it and turn the guess into a real opener.',
+      });
+      await refreshViewedProfile();
+    } catch {
+      Alert.alert('Guess unavailable', 'Please try again.');
+    } finally {
+      setGuessSubmitting(false);
+    }
+  }, [currentProfile?.id, featuredPrompt, guessInput, refreshViewedProfile, resolvedProfile.name, selectedGuessOption]);
+
+  const sendGuessInterest = useCallback(async () => {
+    if (!featuredPrompt?.id || !resolvedProfile.id || !guessResult || guessResult.tone !== 'correct' || guessInterestSending || guessInterestSent) {
+      return;
+    }
+
+    setGuessInterestSending(true);
+    try {
+      const { error } = await supabase.rpc('rpc_create_intent_request', {
+        p_recipient_id: resolvedProfile.id,
+        p_type: 'connect',
+        p_message: `I guessed your prompt right and I’d like to know more about you.`,
+        p_metadata: {
+          source: 'guess_prompt',
+          prompt_id: featuredPrompt.id,
+          guess_outcome: 'correct',
+        },
+      });
+
+      if (error) {
+        logger.error('[profile-view] send_guess_interest_failed', error);
+        const message =
+          typeof error?.message === 'string' && error.message.trim()
+            ? error.message.trim()
+            : 'Please try again.';
+        const isDuplicate = /already placed a request/i.test(message);
+        if (isDuplicate) {
+          setGuessInterestSent(true);
+        }
+        Alert.alert(isDuplicate ? 'Request already placed' : 'Unable to send request', message);
+        return;
+      }
+
+      setGuessInterestSent(true);
+      Alert.alert(
+        'Request sent',
+        `${resolvedProfile.name} will see that you answered the prompt correctly and want to know more.`,
+      );
+    } finally {
+      setGuessInterestSending(false);
+    }
+  }, [featuredPrompt?.id, guessInterestSending, guessInterestSent, guessResult, resolvedProfile.id, resolvedProfile.name]);
+
+  const openGuessComposer = useCallback(() => {
+    if (!featuredPrompt?.id || !isGuessPrompt(featuredPrompt.promptType) || isMultipleChoiceGuess(featuredPrompt.guessMode)) return;
+    setGuessComposerOpen(true);
+  }, [featuredPrompt]);
+
+  const guessLocked = featuredPrompt?.viewerGuessIsCorrect === true || guessResult?.tone === 'correct';
 
   const [videoModalVisible, setVideoModalVisible] = useState(false);
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
@@ -1360,13 +1347,11 @@ export default function ProfileViewPremiumV2Screen() {
           profile={presenceProfile}
           title={'Complete your profile'}
           locationLine={''}
-          heroOverrideUri={null}
-          heroOverrideType={null}
-          heroVideoUrl={null}
-          heroScrollY={heroScrollY}
-          isDark={isDark}
-        matchBadgeValue={matchBadgeValue}
-        matchBadgeLabel={matchBadgeLabel}
+        heroOverrideUri={null}
+        heroOverrideType={null}
+        heroVideoUrl={null}
+        heroScrollY={heroScrollY}
+        isDark={isDark}
         onBack={handleBack}
         onClose={handleClose}
       />
@@ -1398,8 +1383,6 @@ export default function ProfileViewPremiumV2Screen() {
         heroVideoUrl={heroVideoUrl}
         heroScrollY={heroScrollY}
         isDark={isDark}
-        matchBadgeValue={matchBadgeValue}
-        matchBadgeLabel={matchBadgeLabel}
         onHeroPress={handleHeroPress}
         onHeroDoubleTap={handleHeroDoubleTap}
         onBack={handleBack}
@@ -1432,6 +1415,95 @@ export default function ProfileViewPremiumV2Screen() {
         recipientName={resolvedProfile.name}
         metadata={{ source: 'profile' }}
       />
+
+      <Modal
+        visible={guessComposerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          Keyboard.dismiss();
+          setGuessComposerOpen(false);
+        }}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 12}
+          style={stylesStatic.guessComposerOverlay}
+        >
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={stylesStatic.guessComposerStage}>
+              <Pressable
+                style={stylesStatic.guessComposerBackdrop}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setGuessComposerOpen(false);
+                }}
+              />
+              <View
+                style={[
+                  stylesStatic.guessComposerSheet,
+                  { backgroundColor: theme.background, borderColor: theme.outline },
+                ]}
+              >
+            <Text style={[stylesStatic.guessComposerEyebrow, { color: theme.tint }]}>Take a guess</Text>
+            <Text style={[stylesStatic.guessComposerTitle, { color: theme.text }]}>
+              {featuredPrompt?.promptTitle?.trim() || 'Prompt'}
+            </Text>
+            {isGuessPrompt(featuredPrompt?.promptType) && featuredPrompt?.hintText?.trim() ? (
+              <Text style={[stylesStatic.guessComposerHint, { color: theme.textMuted }]}>
+                {`Hint: ${featuredPrompt.hintText.trim()}`}
+              </Text>
+            ) : null}
+            <View
+              style={[
+                stylesStatic.guessComposerInputWrap,
+                { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+              ]}
+            >
+              <TextInput
+                value={guessInput}
+                onChangeText={setGuessInput}
+                placeholder="Type your guess"
+                placeholderTextColor={theme.textMuted}
+                autoFocus
+                autoCapitalize="sentences"
+                autoCorrect={false}
+                returnKeyType="done"
+                onSubmitEditing={() => {
+                  Keyboard.dismiss();
+                  void submitFeaturedGuess();
+                }}
+                style={[stylesStatic.guessComposerInput, { color: theme.text }]}
+              />
+            </View>
+            <View style={stylesStatic.guessComposerActions}>
+              <Pressable
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setGuessComposerOpen(false);
+                }}
+                style={[stylesStatic.guessComposerSecondary, { borderColor: theme.outline }]}
+              >
+                <Text style={[stylesStatic.guessComposerSecondaryText, { color: theme.textMuted }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void submitFeaturedGuess()}
+                disabled={guessSubmitting || !guessInput.trim()}
+                style={[
+                  stylesStatic.guessComposerPrimary,
+                  { backgroundColor: guessSubmitting || !guessInput.trim() ? theme.outline : theme.tint },
+                ]}
+              >
+                <Text style={stylesStatic.guessComposerPrimaryText}>
+                  {guessSubmitting ? 'Checking...' : 'Submit guess'}
+                </Text>
+              </Pressable>
+            </View>
+              </View>
+            </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
+      </Modal>
 
       {fetchWatchdogError && !fetchedProfile && !fallbackProfile ? (
         <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
@@ -1487,22 +1559,6 @@ export default function ProfileViewPremiumV2Screen() {
               </View>
             ) : null}
 
-            {trustHighlights.length ? (
-              <View style={stylesStatic.trustRow}>
-                {trustHighlights.map((chip, index) => (
-                  <View
-                    key={`${chip}-${index}`}
-                    style={[
-                      stylesStatic.trustChip,
-                      { backgroundColor: theme.background, borderColor: theme.outline },
-                    ]}
-                  >
-                    <Text style={[stylesStatic.trustChipText, { color: theme.text }]}>{chip}</Text>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-
             {presenceProfile.occupation || !isOwnProfile ? (
               <View style={stylesStatic.heroMetaRow}>
                 {presenceProfile.occupation ? (
@@ -1528,49 +1584,174 @@ export default function ProfileViewPremiumV2Screen() {
               </View>
             ) : null}
 
-            <View style={[stylesStatic.heroDetailsDivider, { backgroundColor: theme.outline }]} />
-
-            {typeof matchBadgeValue === 'number' || vibeReasons.length ? (
-              <View style={stylesStatic.heroBadgesRow}>
-                {typeof matchBadgeValue === 'number' ? (
-                  <View style={[stylesStatic.matchBadge, { backgroundColor: theme.tint }]}>
-                    <MaterialCommunityIcons name="heart" size={14} color={Colors.light.background} />
-                    <Text style={stylesStatic.matchBadgeText}>{`${Math.round(matchBadgeValue)}% ${matchBadgeLabel}`}</Text>
-                  </View>
-                ) : (
-                  <View />
-                )}
-                {vibeReasons.length ? (
-                  <View style={stylesStatic.heroWhyInline}>
-                    <Text style={[stylesStatic.heroWhyTitle, { color: theme.textMuted }]}>
-                      Why this vibe
-                    </Text>
-                    <View style={stylesStatic.heroWhyRow}>
-                      <MaterialCommunityIcons name="star-four-points" size={12} color={theme.accent} />
-                      <RNAnimated.Text
-                        style={[
-                          stylesStatic.heroWhyText,
-                          {
-                            color: theme.accent,
-                            opacity: vibeGlow.interpolate({
-                              inputRange: [0, 1],
-                              outputRange: [0.75, 1],
-                            }),
-                          },
-                        ]}
-                        numberOfLines={1}
-                        ellipsizeMode="tail"
-                      >
-                        {vibeReasons[vibeReasonIndex] ?? vibeReasons[0]}
-                      </RNAnimated.Text>
-                    </View>
-                  </View>
-                ) : null}
+            {profileContextLine ? (
+              <View style={stylesStatic.heroContextRow}>
+                <MaterialCommunityIcons name="star-four-points" size={12} color={theme.accent} />
+                <Text style={[stylesStatic.heroContextText, { color: theme.accent }]} numberOfLines={1}>
+                  {profileContextLine}
+                </Text>
               </View>
             ) : null}
           </View>
         </View>
       )}
+
+      {featuredPrompt ? (
+        <View
+          style={[
+            stylesStatic.featuredPromptWrap,
+            guessComposerOpen && isGuessPrompt(featuredPrompt.promptType) && !isMultipleChoiceGuess(featuredPrompt.guessMode)
+              ? stylesStatic.featuredPromptHidden
+              : null,
+          ]}
+          pointerEvents={
+            guessComposerOpen && isGuessPrompt(featuredPrompt.promptType) && !isMultipleChoiceGuess(featuredPrompt.guessMode)
+              ? 'none'
+              : 'auto'
+          }
+        >
+          <View
+            style={[
+              stylesStatic.featuredPromptCard,
+              { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+            ]}
+          >
+            <Text style={[stylesStatic.featuredPromptEyebrow, { color: theme.tint }]}>
+              {isGuessPrompt(featuredPrompt.promptType) ? 'Guess prompt' : 'Featured prompt'}
+            </Text>
+            <Text style={[stylesStatic.featuredPromptTitle, { color: theme.text }]}>
+              {featuredPrompt.promptTitle?.trim() || 'Prompt'}
+            </Text>
+            {isGuessPrompt(featuredPrompt.promptType) ? (
+              <>
+                <Text style={[stylesStatic.featuredPromptAnswer, { color: theme.textMuted }]}>
+                  {featuredPrompt.hintText?.trim()
+                    ? `Hint: ${featuredPrompt.hintText.trim()}`
+                    : 'Take a guess and use the result as a natural opener.'}
+                </Text>
+                {isMultipleChoiceGuess(featuredPrompt.guessMode) ? (
+                  <View style={stylesStatic.guessOptionsWrap}>
+                    {(featuredPrompt.guessOptions || []).map((option) => {
+                      const selected = selectedGuessOption === option;
+                      return (
+                        <Pressable
+                          key={`${featuredPrompt.id}-${option}`}
+                          onPress={() => {
+                            if (guessLocked) return;
+                            setSelectedGuessOption(option);
+                          }}
+                          disabled={guessLocked}
+                          style={[
+                            stylesStatic.guessOptionPill,
+                            {
+                              backgroundColor: selected ? theme.tint : theme.background,
+                              borderColor: selected ? theme.tint : theme.outline,
+                              opacity: guessLocked ? 0.7 : 1,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              stylesStatic.guessOptionText,
+                              { color: selected ? Colors.light.background : theme.text },
+                            ]}
+                          >
+                            {option}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                ) : (
+                  <Pressable
+                    onPress={guessLocked ? undefined : openGuessComposer}
+                    disabled={guessLocked}
+                    style={[
+                      stylesStatic.guessInputWrap,
+                      stylesStatic.guessInputPressable,
+                      { backgroundColor: theme.background, borderColor: theme.outline, opacity: guessLocked ? 0.7 : 1 },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        stylesStatic.guessInput,
+                        { color: guessInput.trim() ? theme.text : theme.textMuted },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {guessInput.trim() || 'Type your guess'}
+                    </Text>
+                    <MaterialCommunityIcons name="pencil-outline" size={16} color={theme.textMuted} />
+                  </Pressable>
+                )}
+                <View style={stylesStatic.guessActionsRow}>
+                  {!guessLocked ? (
+                    <Pressable
+                      onPress={() => void submitFeaturedGuess()}
+                      disabled={guessSubmitting || !(selectedGuessOption || guessInput.trim())}
+                      style={[
+                        stylesStatic.guessPrimaryButton,
+                        {
+                          backgroundColor:
+                            guessSubmitting || !(selectedGuessOption || guessInput.trim())
+                              ? theme.outline
+                              : theme.tint,
+                        },
+                      ]}
+                    >
+                      <Text style={stylesStatic.guessPrimaryText}>
+                        {guessSubmitting ? 'Checking...' : 'Take a guess'}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                  {guessResult ? (
+                    <Pressable
+                      onPress={guessResult.tone === 'correct' ? () => void sendGuessInterest() : openIntentSheet}
+                      disabled={guessResult.tone === 'correct' ? guessInterestSending || guessInterestSent : false}
+                      style={[
+                        stylesStatic.guessSecondaryButton,
+                        { borderColor: guessResult.tone === 'correct' ? theme.tint : theme.outline },
+                        guessResult.tone === 'correct' && (guessInterestSending || guessInterestSent)
+                          ? { opacity: 0.7 }
+                          : null,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          stylesStatic.guessSecondaryText,
+                          { color: guessResult.tone === 'correct' ? theme.accent : theme.textMuted },
+                        ]}
+                      >
+                        {guessResult.tone === 'correct'
+                          ? guessInterestSent
+                            ? 'Interest sent'
+                            : guessInterestSending
+                              ? 'Sending...'
+                              : 'I’d like to know more'
+                          : 'Ask about this'}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+                {guessResult ? (
+                  <Text
+                    style={[
+                      stylesStatic.guessResultText,
+                      { color: guessResult.tone === 'correct' ? theme.accent : theme.textMuted },
+                    ]}
+                  >
+                    {guessResult.message}
+                  </Text>
+                ) : null}
+              </>
+            ) : (
+              <Text style={[stylesStatic.featuredPromptAnswer, { color: theme.text }]}>
+                {featuredPrompt.answer}
+              </Text>
+            )}
+          </View>
+        </View>
+      ) : null}
 
       <View style={styles.columnsRow}>
         {!isTextOnlyStory ? (
@@ -1664,8 +1845,6 @@ const Header = memo(function Header({
   heroVideoUrl,
   heroScrollY,
   isDark,
-  matchBadgeValue: _matchBadgeValue,
-  matchBadgeLabel: _matchBadgeLabel,
   onHeroPress,
   onHeroDoubleTap,
   onBack: _onBack,
@@ -1680,8 +1859,6 @@ const Header = memo(function Header({
   heroVideoUrl?: string | null;
   heroScrollY: SharedValue<number>;
   isDark: boolean;
-  matchBadgeValue: number | null;
-  matchBadgeLabel: string;
   onHeroPress?: (heroUri: string) => void;
   onHeroDoubleTap?: () => void;
   onBack: () => void;
@@ -2364,7 +2541,6 @@ const StoryHeader = memo(function StoryHeader({
   const isActiveNow = profile.isActiveNow || !!(profile as any).is_active;
   const showPresence = isOnlineNow || isActiveNow;
   const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
-  const trustHighlights = getViewedProfileTrustChips(profile);
   return (
     <View style={[stylesStatic.storyHeader, { backgroundColor: theme.background }]}>
       <View
@@ -2419,22 +2595,6 @@ const StoryHeader = memo(function StoryHeader({
             <Text style={[stylesStatic.storySubText, { color: theme.textMuted }]} numberOfLines={1}>
               {locationLine}
             </Text>
-          </View>
-        ) : null}
-
-        {trustHighlights.length ? (
-          <View style={stylesStatic.trustRowCentered}>
-            {trustHighlights.map((chip, index) => (
-              <View
-                key={`${chip}-${index}`}
-                style={[
-                  stylesStatic.trustChip,
-                  { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
-                ]}
-              >
-                <Text style={[stylesStatic.trustChipText, { color: theme.textMuted }]}>{chip}</Text>
-              </View>
-            ))}
           </View>
         ) : null}
 
@@ -2587,6 +2747,7 @@ function FloatingActions({
   onOpenRequest?: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const isDark = theme.background === Colors.dark.background;
   const { hasAccess } = usePremiumState();
   const [giftOpen, setGiftOpen] = useState(false);
   const [selectedGift, setSelectedGift] = useState<string | null>(null);
@@ -2795,30 +2956,44 @@ function FloatingActions({
       <View
         style={[
           stylesStatic.fabStack,
-          { bottom: 10 + Math.max(0, insets.bottom) },
+          { bottom: 4 + Math.max(0, insets.bottom) },
         ]}
         pointerEvents="box-none"
       >
-        {!isOwnProfile ? (
-          <Fab
-            theme={theme}
-            label={liked ? 'Liked' : 'Like'}
-            icon={liked ? 'heart' : 'heart-outline'}
-            colors={['#C7B3FF', '#7D7CF3'] as const}
-            onPress={sendLike}
-            showLabel={false}
-          />
-        ) : null}
-        {!isOwnProfile ? (
-          <Fab
-            theme={theme}
-            label="Note"
-            icon="message-text-outline"
-            colors={[theme.tint, '#0C6E7A'] as const}
-            onPress={openNote}
-            showLabel={false}
-          />
-        ) : null}
+        <LinearGradient
+          colors={[
+            isDark ? 'rgba(9,16,18,0.88)' : 'rgba(250,243,237,0.84)',
+            isDark ? 'rgba(9,16,18,0.72)' : 'rgba(250,243,237,0.68)',
+          ]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[
+            stylesStatic.fabDock,
+            {
+              borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(31,42,42,0.08)',
+            },
+          ]}
+        >
+          {!isOwnProfile ? (
+            <Fab
+              theme={theme}
+              label={liked ? 'Liked' : 'Like'}
+              icon={liked ? 'heart' : 'heart-outline'}
+              colors={['#C7B3FF', '#7D7CF3'] as const}
+              onPress={sendLike}
+              showLabel={false}
+            />
+          ) : null}
+          {!isOwnProfile ? (
+            <Fab
+              theme={theme}
+              label="Note"
+              icon="message-text-outline"
+              colors={[theme.tint, '#0C6E7A'] as const}
+              onPress={openNote}
+              showLabel={false}
+            />
+          ) : null}
           {isOwnProfile ? (
             <Fab
               theme={theme}
@@ -2828,16 +3003,17 @@ function FloatingActions({
               onPress={sendBoost}
               showLabel={false}
             />
-        ) : (
-          <Fab
-            theme={theme}
-            label="Gift"
-            icon="gift-outline"
-            colors={['#F3A0B4', '#C6607E'] as const}
-            onPress={openGift}
-            showLabel={false}
-          />
-        )}
+          ) : (
+            <Fab
+              theme={theme}
+              label="Gift"
+              icon="gift-outline"
+              colors={['#F3A0B4', '#C6607E'] as const}
+              onPress={openGift}
+              showLabel={false}
+            />
+          )}
+        </LinearGradient>
       </View>
       <Modal
         visible={noteOpen}
@@ -3320,88 +3496,68 @@ const stylesStatic = StyleSheet.create({
   },
   heroDetailsWrap: {
     paddingHorizontal: 12,
-    paddingTop: 12,
-    paddingBottom: 4,
+    paddingTop: 10,
+    paddingBottom: 6,
   },
-  heroBadgesRow: {
-    marginTop: 8,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 10,
-    paddingRight: 6,
-  },
-  heroDetailsDivider: {
-    height: StyleSheet.hairlineWidth,
-    marginTop: 8,
+  featuredPromptWrap: {
+    paddingHorizontal: 12,
+    paddingTop: 4,
+    paddingBottom: 2,
   },
   heroDetailsCard: {
     borderWidth: 1,
-    borderRadius: 18,
-    paddingHorizontal: 14,
+    borderRadius: 22,
+    paddingHorizontal: 15,
     paddingVertical: 10,
-  },
-  heroWhyInline: {
-    flex: 1,
-    alignItems: 'flex-start',
-    marginLeft: 8,
-    maxWidth: 200,
-  },
-  heroWhyTitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.3,
-    lineHeight: 12,
-    marginBottom: -1,
-  },
-  heroWhyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    minHeight: 18,
-    maxWidth: 200,
-  },
-  heroWhyText: {
-    fontSize: 12,
-    fontWeight: '600',
-    flexShrink: 1,
-    minWidth: 0,
   },
   heroDetailsTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 7,
     flexWrap: 'wrap',
   },
   heroDetailsName: {
-    fontSize: 20,
+    fontSize: 19,
     fontWeight: '900',
     letterSpacing: 0.2,
-    lineHeight: 22,
+    lineHeight: 21,
   },
   heroDetailsSubRow: {
-    marginTop: 4,
+    marginTop: 3,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
   },
   heroDetailsSubText: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '600',
-    lineHeight: 16,
+    lineHeight: 15,
   },
   heroDetailsMeta: {
-    marginTop: 3,
-    fontSize: 12,
+    marginTop: 1,
+    fontSize: 11.5,
     fontWeight: '600',
-    lineHeight: 16,
+    lineHeight: 15,
   },
   heroMetaRow: {
-    marginTop: 4,
+    marginTop: 6,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 10,
+    gap: 8,
+  },
+  heroContextRow: {
+    marginTop: 7,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: 16,
+  },
+  heroContextText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    letterSpacing: 0.1,
+    flexShrink: 1,
   },
   heroRequestWrap: {
     alignSelf: 'flex-end',
@@ -3414,18 +3570,191 @@ const stylesStatic = StyleSheet.create({
     elevation: 6,
   },
   heroRequestButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 5,
+    paddingHorizontal: 15,
+    paddingVertical: 6,
     borderRadius: 999,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 7,
   },
   heroRequestText: {
     color: Colors.light.background,
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '800',
-    letterSpacing: 0.3,
+    letterSpacing: 0.2,
+  },
+  featuredPromptCard: {
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+  },
+  featuredPromptEyebrow: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  featuredPromptTitle: {
+    marginTop: 6,
+    fontSize: 17,
+    lineHeight: 21,
+    fontWeight: '800',
+  },
+  featuredPromptAnswer: {
+    marginTop: 8,
+    fontSize: 13.5,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  guessOptionsWrap: {
+    marginTop: 12,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  guessOptionPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  guessOptionText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+  },
+  guessInputWrap: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  guessInputPressable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  guessInput: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  guessActionsRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  guessPrimaryButton: {
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  guessPrimaryText: {
+    color: Colors.light.background,
+    fontSize: 12.5,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  guessSecondaryButton: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+  },
+  guessSecondaryText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  guessResultText: {
+    marginTop: 10,
+    fontSize: 12.5,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  featuredPromptHidden: {
+    opacity: 0,
+  },
+  guessComposerOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    paddingHorizontal: 20,
+    paddingBottom: Platform.OS === 'ios' ? 18 : 12,
+  },
+  guessComposerStage: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  guessComposerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.58)',
+  },
+  guessComposerSheet: {
+    borderWidth: 1,
+    borderRadius: 24,
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 14,
+    gap: 10,
+  },
+  guessComposerEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.3,
+    textTransform: 'uppercase',
+  },
+  guessComposerTitle: {
+    fontSize: 20,
+    lineHeight: 26,
+    fontWeight: '800',
+  },
+  guessComposerHint: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '500',
+  },
+  guessComposerInputWrap: {
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  guessComposerInput: {
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '500',
+  },
+  guessComposerActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  guessComposerPrimary: {
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+  },
+  guessComposerPrimaryText: {
+    color: Colors.light.background,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  guessComposerSecondary: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+  },
+  guessComposerSecondaryText: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
 
   imageTagPill: {
@@ -3726,22 +4055,36 @@ const stylesStatic = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  fabDock: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.14,
+    shadowRadius: 18,
+    elevation: 8,
   },
   fabWrap: {
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.18,
-    shadowRadius: 16,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    elevation: 5,
   },
   fab: {
-    minWidth: 44,
-    height: 44,
-    borderRadius: 22,
+    minWidth: 42,
+    height: 42,
+    borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     flexDirection: 'row',
     gap: 8,
   },
@@ -3847,3 +4190,5 @@ const stylesStatic = StyleSheet.create({
     letterSpacing: 0.4,
   },
 });
+
+

@@ -73,6 +73,25 @@ const isActiveNowFromLastActive = (online: boolean | null | undefined, lastActiv
   }
 };
 
+const computeSharedInterests = (viewerInterestsRaw: string[] | undefined, interestsArr: string[]) => {
+  const viewerInterests = Array.isArray(viewerInterestsRaw) ? viewerInterestsRaw : [];
+  if (!viewerInterests.length || !interestsArr.length) return [];
+  const viewerSet = new Set(
+    viewerInterests
+      .map((item) => String(item || '').trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const unique: string[] = [];
+  interestsArr.forEach((interest) => {
+    const normalized = String(interest || '').trim().toLowerCase();
+    if (!normalized || !viewerSet.has(normalized) || unique.some((item) => item.toLowerCase() === normalized)) {
+      return;
+    }
+    unique.push(interest);
+  });
+  return unique;
+};
+
 async function signProfileVideoUrl(path?: string | null) {
   if (!path) return undefined;
   if (path.startsWith('http')) return path;
@@ -652,6 +671,48 @@ export default function useAIRecommendations(
           return undefined;
         };
 
+        const enrichRpcRowsWithInterests = async (rows: any[]) => {
+          if (!Array.isArray(rows) || rows.length === 0) return rows;
+          const idsNeedingInterests = rows
+            .filter((row) => !Array.isArray(row?.interests) || row.interests.length === 0)
+            .map((row) => row?.id)
+            .filter(Boolean);
+          if (idsNeedingInterests.length === 0) return rows;
+
+          try {
+            const { data: piData, error: piErr } = await supabase
+              .from('profile_interests')
+              .select('profile_id, interests!inner(name)')
+              .in('profile_id', idsNeedingInterests);
+
+            if (piErr || !Array.isArray(piData)) return rows;
+
+            const interestsMap: Record<string, string[]> = {};
+            for (const row of piData as any[]) {
+              const pid = row.profile_id;
+              let arr: string[] = [];
+              if (Array.isArray(row.interests)) {
+                arr = row.interests.map((i: any) => i?.name).filter(Boolean);
+              } else if (row.interests?.name) {
+                arr = [row.interests.name];
+              }
+              if (!pid) continue;
+              if (!interestsMap[pid]) interestsMap[pid] = [];
+              interestsMap[pid] = [...interestsMap[pid], ...arr];
+            }
+
+            return rows.map((row) => ({
+              ...row,
+              interests:
+                Array.isArray(row?.interests) && row.interests.length > 0
+                  ? row.interests
+                  : interestsMap[row?.id] ?? [],
+            }));
+          } catch {
+            return rows;
+          }
+        };
+
         const mapRpcRow = (p: any, includeDistanceKm: boolean): Match => {
           const interestsArr = Array.isArray(p?.interests) ? p.interests : [];
           const aiScore = toNum(p?.ai_score) ?? toNum(p?.compatibility);
@@ -704,7 +765,8 @@ export default function useAIRecommendations(
               // Keep going; the legacy (non-RPC) path may still succeed.
             }
             if (!error && Array.isArray(data)) {
-              const mapped = data.map((p: any) => mapRpcRow(p, true));
+              const enriched = await enrichRpcRowsWithInterests(data);
+              const mapped = enriched.map((p: any) => mapRpcRow(p, true));
               const filtered = filterDiscoverable(mapped);
               setMatches(filtered);
               setLastError(null);
@@ -734,7 +796,8 @@ export default function useAIRecommendations(
               // Keep going; the legacy (non-RPC) path may still succeed.
             }
             if (!error && Array.isArray(data)) {
-              const mapped = data.map((p: any) => mapRpcRow(p, false));
+              const enriched = await enrichRpcRowsWithInterests(data);
+              const mapped = enriched.map((p: any) => mapRpcRow(p, false));
               const filtered = filterDiscoverable(mapped);
               setMatches(filtered);
               setLastError(null);
@@ -765,7 +828,8 @@ export default function useAIRecommendations(
               // Keep going; the legacy (non-RPC) path may still succeed.
             }
             if (!error && Array.isArray(data)) {
-              const mapped = data.map((p: any) => mapRpcRow(p, true));
+              const enriched = await enrichRpcRowsWithInterests(data);
+              const mapped = enriched.map((p: any) => mapRpcRow(p, true));
               const filtered = filterDiscoverable(mapped);
               setMatches(filtered);
               setLastError(null);
@@ -996,6 +1060,7 @@ export default function useAIRecommendations(
 
             const ptags = Array.isArray(p.personality_tags) ? p.personality_tags.map((t: any) => (typeof t === 'string' ? t : t?.name || String(t))) : [];
             const compatibility = computeCompatibility(p, interestsArr || []);
+            const commonInterests = computeSharedInterests(viewerCompat?.interests, interestsArr || []);
 
             return ({
               id: p.id,
@@ -1003,6 +1068,7 @@ export default function useAIRecommendations(
               age: p.age,
               tagline: p.bio || '',
               interests: interestsArr || [],
+              commonInterests,
               avatar_url: p.avatar_url || undefined,
               distance: distanceStr || '',
               distanceKm: typeof distanceKm === 'number' && !Number.isNaN(distanceKm) ? distanceKm : undefined,
@@ -1124,11 +1190,13 @@ export default function useAIRecommendations(
             ? [profileData.personality_type]
             : (m as any).personalityTags || [];
           const interestsFinal = (interestsArr && interestsArr.length > 0) ? interestsArr : ((m as any).interests && (m as any).interests.length > 0 ? (m as any).interests : [profileData?.region, profileData?.tribe].filter(Boolean));
+          const commonInterests = computeSharedInterests((m as any).commonInterests ?? [], interestsFinal || []);
           merged = {
             ...m,
             profileVideo: signedProfileVideo || (m as any).profileVideo,
             personalityTags: personality,
             interests: interestsFinal,
+            commonInterests,
             tribe: profileData?.tribe ?? (m as any).tribe,
             religion: profileData?.religion ?? (m as any).religion,
             region: profileData?.region ?? (m as any).region,

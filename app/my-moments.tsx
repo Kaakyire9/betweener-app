@@ -1,17 +1,37 @@
 import MomentCreateModal from '@/components/MomentCreateModal';
 import MomentViewer from '@/components/MomentViewer';
 import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { Moment, MomentUser } from '@/hooks/useMoments';
 import { useAuth } from '@/lib/auth-context';
 import { createSignedUrl } from '@/lib/moments';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+const withAlpha = (hex: string, alpha: number) => {
+  const normalized = hex.replace('#', '');
+  const bigint = parseInt(
+    normalized.length === 3 ? normalized.split('').map((c) => c + c).join('') : normalized,
+    16,
+  );
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+};
 
 export default function MyMomentsScreen() {
+  const colorScheme = useColorScheme();
+  const resolvedScheme = (colorScheme ?? 'light') === 'dark' ? 'dark' : 'light';
+  const theme = Colors[resolvedScheme];
+  const isDark = resolvedScheme === 'dark';
+  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const { user, profile } = useAuth();
   const [moments, setMoments] = useState<Moment[]>([]);
   const [loading, setLoading] = useState(false);
@@ -200,10 +220,19 @@ export default function MyMomentsScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
+      <LinearGradient
+        colors={[
+          withAlpha(theme.secondary, isDark ? 0.16 : 0.28),
+          withAlpha(theme.accent, isDark ? 0.12 : 0.2),
+          'transparent',
+        ]}
+        style={styles.topGlow}
+        pointerEvents="none"
+      />
       <View style={styles.header}>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
-          <MaterialCommunityIcons name="arrow-left" size={22} color="#111827" />
+          <MaterialCommunityIcons name="arrow-left" size={22} color={theme.text} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>My Moments</Text>
         <View style={styles.headerSpacer} />
@@ -222,11 +251,11 @@ export default function MyMomentsScreen() {
             </Text>
             <View style={styles.emptyHighlights}>
               <View style={styles.emptyHighlightRow}>
-                <MaterialCommunityIcons name="flash-outline" size={16} color={Colors.light.tint} />
+                <MaterialCommunityIcons name="flash-outline" size={16} color={theme.tint} />
                 <Text style={styles.emptyHighlightText}>Moments keep your profile feeling active.</Text>
               </View>
               <View style={styles.emptyHighlightRow}>
-                <MaterialCommunityIcons name="heart-outline" size={16} color="#ef4444" />
+                <MaterialCommunityIcons name="heart-outline" size={16} color={theme.accent} />
                 <Text style={styles.emptyHighlightText}>Simple updates create easier conversation starters.</Text>
               </View>
             </View>
@@ -259,7 +288,7 @@ export default function MyMomentsScreen() {
                         <MaterialCommunityIcons
                           name={moment.type === 'video' ? 'video' : 'image-outline'}
                           size={20}
-                          color="#e5e7eb"
+                          color={Colors.light.background}
                         />
                       </View>
                     )}
@@ -268,18 +297,18 @@ export default function MyMomentsScreen() {
                     <Text style={styles.momentTitle}>{title}</Text>
                     <View style={styles.momentSubRow}>
                       <View style={styles.momentMetaItem}>
-                        <MaterialCommunityIcons name="clock-outline" size={13} color="#6b7280" />
+                        <MaterialCommunityIcons name="clock-outline" size={13} color={theme.textMuted} />
                         <Text style={styles.momentMetaText}>{timeLabel}</Text>
                       </View>
                       <View style={styles.momentMetaItem}>
-                        <MaterialCommunityIcons name="heart" size={13} color="#ef4444" />
+                        <MaterialCommunityIcons name="heart" size={13} color={theme.tint} />
                         <Text style={styles.momentMetaText}>{reactions}</Text>
                       </View>
                     </View>
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.moreButton} onPress={() => openMomentActions(moment)}>
-                  <MaterialCommunityIcons name="dots-horizontal" size={20} color="#6b7280" />
+                  <MaterialCommunityIcons name="dots-horizontal" size={20} color={theme.textMuted} />
                 </TouchableOpacity>
               </View>
             );
@@ -313,107 +342,124 @@ export default function MyMomentsScreen() {
           setViewerStartMomentId(null);
         }}
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8fafc' },
-  header: {
-    paddingTop: 52,
-    paddingHorizontal: 18,
-    paddingBottom: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-    backgroundColor: '#fff',
-  },
-  backButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 18, fontFamily: 'Archivo_700Bold', color: '#111827' },
-  headerSpacer: { width: 40 },
-  content: { padding: 18, paddingBottom: 40 },
-  sectionTitle: { fontSize: 16, fontFamily: 'Archivo_700Bold', color: '#111827', marginBottom: 12 },
-  emptyCard: {
-    padding: 18,
-    borderRadius: 18,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    marginBottom: 16,
-  },
-  emptyBadge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: 'rgba(11,107,105,0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(11,107,105,0.14)',
-    marginBottom: 12,
-  },
-  emptyBadgeText: {
-    color: Colors.light.tint,
-    fontSize: 11,
-    fontFamily: 'Manrope_700Bold',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-  },
-  emptyTitle: { fontSize: 16, fontFamily: 'Archivo_700Bold', color: '#111827', marginBottom: 6 },
-  emptySubtitle: { color: '#6b7280', fontFamily: 'Manrope_500Medium', lineHeight: 20 },
-  emptyHighlights: { marginTop: 14, gap: 10 },
-  emptyHighlightRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  emptyHighlightText: { flex: 1, color: '#4b5563', fontFamily: 'Manrope_600SemiBold', fontSize: 12 },
-  emptyActionButton: {
-    marginTop: 16,
-    alignSelf: 'flex-start',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: Colors.light.tint,
-  },
-  emptyActionText: { color: '#fff', fontFamily: 'Manrope_700Bold', fontSize: 13 },
-  momentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 16,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    marginBottom: 12,
-  },
-  momentPressable: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-  momentCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#0f172a',
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  momentCircleImage: { width: '100%', height: '100%' },
-  momentCircleFallback: { alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' },
-  textBadge: { color: '#f9fafb', fontFamily: 'Archivo_700Bold', fontSize: 16 },
-  momentMeta: { marginLeft: 12, flex: 1 },
-  momentTitle: { color: '#111827', fontFamily: 'Manrope_600SemiBold', fontSize: 14 },
-  momentSubRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 },
-  momentMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  momentMetaText: { color: '#6b7280', fontFamily: 'Manrope_500Medium', fontSize: 12 },
-  moreButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
-  addButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 14,
-    borderRadius: 16,
-    backgroundColor: Colors.light.tint,
-    marginTop: 6,
-  },
-  addButtonText: { color: '#fff', fontFamily: 'Manrope_700Bold' },
-  footerText: { marginTop: 16, color: '#6b7280', textAlign: 'center', fontFamily: 'Manrope_500Medium' },
-});
+const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.background },
+    topGlow: {
+      position: 'absolute',
+      left: -50,
+      right: -50,
+      top: -40,
+      height: 220,
+    },
+    header: {
+      paddingTop: 8,
+      paddingHorizontal: 18,
+      paddingBottom: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      borderBottomWidth: 1,
+      borderBottomColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+      backgroundColor: 'transparent',
+    },
+    backButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.74 : 0.84),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+    },
+    headerTitle: { fontSize: 18, fontFamily: 'Archivo_700Bold', color: theme.text },
+    headerSpacer: { width: 40 },
+    content: { padding: 18, paddingBottom: 40 },
+    sectionTitle: { fontSize: 16, fontFamily: 'Archivo_700Bold', color: theme.text, marginBottom: 12 },
+    emptyCard: {
+      padding: 18,
+      borderRadius: 22,
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.92 : 0.78),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+      marginBottom: 16,
+    },
+    emptyBadge: {
+      alignSelf: 'flex-start',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.1),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.3 : 0.14),
+      marginBottom: 12,
+    },
+    emptyBadgeText: {
+      color: theme.tint,
+      fontSize: 11,
+      fontFamily: 'Manrope_700Bold',
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
+    },
+    emptyTitle: { fontSize: 16, fontFamily: 'Archivo_700Bold', color: theme.text, marginBottom: 6 },
+    emptySubtitle: { color: theme.textMuted, fontFamily: 'Manrope_500Medium', lineHeight: 20 },
+    emptyHighlights: { marginTop: 14, gap: 10 },
+    emptyHighlightRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    emptyHighlightText: { flex: 1, color: theme.textMuted, fontFamily: 'Manrope_600SemiBold', fontSize: 12 },
+    emptyActionButton: {
+      marginTop: 16,
+      alignSelf: 'flex-start',
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderRadius: 999,
+      backgroundColor: theme.tint,
+    },
+    emptyActionText: { color: Colors.light.background, fontFamily: 'Manrope_700Bold', fontSize: 13 },
+    momentRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 12,
+      paddingHorizontal: 12,
+      borderRadius: 18,
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.92 : 0.78),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+      marginBottom: 12,
+    },
+    momentPressable: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+    momentCircle: {
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      backgroundColor: theme.text,
+      overflow: 'hidden',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    momentCircleImage: { width: '100%', height: '100%' },
+    momentCircleFallback: { alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' },
+    textBadge: { color: Colors.light.background, fontFamily: 'Archivo_700Bold', fontSize: 16 },
+    momentMeta: { marginLeft: 12, flex: 1 },
+    momentTitle: { color: theme.text, fontFamily: 'Manrope_600SemiBold', fontSize: 14 },
+    momentSubRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 },
+    momentMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    momentMetaText: { color: theme.textMuted, fontFamily: 'Manrope_500Medium', fontSize: 12 },
+    moreButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+    addButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      paddingVertical: 14,
+      borderRadius: 16,
+      backgroundColor: theme.tint,
+      marginTop: 6,
+    },
+    addButtonText: { color: Colors.light.background, fontFamily: 'Manrope_700Bold' },
+    footerText: { marginTop: 16, color: theme.textMuted, textAlign: 'center', fontFamily: 'Manrope_500Medium' },
+  });
