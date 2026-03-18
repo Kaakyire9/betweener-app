@@ -4,6 +4,7 @@ import { useResolvedProfileId } from "@/hooks/useResolvedProfileId";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
 import { getProfileInitials, getProfilePlaceholderPalette } from "@/lib/profile-placeholders";
+import { getDatePlanPreviewText } from "@/lib/message-preview";
 import { getSupabaseNetEvents, supabase } from "@/lib/supabase";
 import { captureMessage } from "@/lib/telemetry/sentry";
 import { readCache, writeCache } from "@/lib/persisted-cache";
@@ -797,6 +798,8 @@ export default function ChatScreen() {
     if (rowType === 'mood_sticker') {
       return parseStickerPreview(row.text) || row.text || 'Sticker';
     }
+    const datePlanPreview = getDatePlanPreviewText(row.text);
+    if (datePlanPreview) return datePlanPreview;
     return row.text || '';
   };
 
@@ -818,7 +821,7 @@ export default function ChatScreen() {
       case 'mood_sticker':
         return parseStickerPreview(lastMessage.text) || lastMessage.text || 'Sticker';
       default:
-        return lastMessage.text;
+        return getDatePlanPreviewText(lastMessage.text) || lastMessage.text;
     }
   };
 

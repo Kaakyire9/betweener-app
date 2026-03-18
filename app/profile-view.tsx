@@ -38,6 +38,7 @@ import Animated, {
     useDerivedValue,
     useSharedValue,
     withRepeat,
+    withSequence,
     withTiming,
     type SharedValue,
 } from 'react-native-reanimated';
@@ -90,6 +91,11 @@ const ACTIVE_VISIBLE_PERCENT_THRESHOLD = 70;
 const RIGHT_SCROLL_HOLD_MS = 600;
 const ACTIVE_TAG_MIN_INTERVAL_MS = 120;
 const ACTIVE_NOW_MS = 3 * 60 * 1000;
+
+function buildGuessResultMessage(name: string, tone: 'correct' | 'wrong') {
+  if (tone === 'correct') return `Correct. Nice one. Want to know more about ${name}?`;
+  return 'Close. Try again, or skip the game and send a message.';
+}
 
 // Content heuristics for empty-state branching.
 // Goal: "images-only" should trigger unless the profile has real narrative/intent content.
@@ -422,6 +428,7 @@ export default function ProfileViewPremiumV2Screen() {
   const isDark = colorScheme === 'dark';
   const theme = Colors[colorScheme ?? 'light'];
   const { profile: currentProfile } = useAuth();
+  const insets = useSafeAreaInsets();
 
   const params = useLocalSearchParams();
   const profileId = String((params as any)?.id ?? (params as any)?.profileId ?? 'preview');
@@ -646,9 +653,12 @@ export default function ProfileViewPremiumV2Screen() {
   const [selectedGuessOption, setSelectedGuessOption] = useState<string | null>(null);
   const [guessSubmitting, setGuessSubmitting] = useState(false);
   const [guessComposerOpen, setGuessComposerOpen] = useState(false);
+  const [guessSheetOpen, setGuessSheetOpen] = useState(false);
   const [guessInterestSending, setGuessInterestSending] = useState(false);
   const [guessInterestSent, setGuessInterestSent] = useState(false);
   const [guessResult, setGuessResult] = useState<{ tone: 'correct' | 'wrong'; message: string } | null>(null);
+  const heroHeight = Math.max(260, Math.min(390, Math.round(screenHeight * 0.36)));
+  const guessFabTop = 10 + 44 + 10 + heroHeight - 54;
 
   const isLoading = fetching && !fetchedProfile && !fallbackProfile && !fetchWatchdogError;
   const locationLine = useMemo(() => buildLocationLine(resolvedProfile), [resolvedProfile]);
@@ -791,7 +801,6 @@ export default function ProfileViewPremiumV2Screen() {
   }, [featuredPrompt]);
 
   const guessLocked = featuredPrompt?.viewerGuessIsCorrect === true || guessResult?.tone === 'correct';
-
   const [videoModalVisible, setVideoModalVisible] = useState(false);
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -800,6 +809,77 @@ export default function ProfileViewPremiumV2Screen() {
     () => Boolean(currentProfile?.id && profileId && currentProfile.id === profileId),
     [currentProfile?.id, profileId],
   );
+  const shouldFloatGuessPrompt = Boolean(featuredPrompt && isGuessPrompt(featuredPrompt.promptType) && !isOwnProfile);
+  const standardFeaturedPrompt = featuredPrompt && !isGuessPrompt(featuredPrompt.promptType) ? featuredPrompt : null;
+  const guessChallengeLabel = isMultipleChoiceGuess(featuredPrompt?.guessMode) ? '1 prompt challenge' : 'One clean guess';
+  const guessFabLabel = guessResult?.tone === 'correct'
+    ? guessInterestSent
+      ? 'Sent'
+      : 'Know more'
+    : guessResult?.tone === 'wrong'
+      ? 'Try again'
+      : 'Guess';
+  const guessFabIcon: ComponentProps<typeof MaterialCommunityIcons>['name'] = guessResult?.tone === 'correct'
+    ? 'star-four-points'
+    : guessResult?.tone === 'wrong'
+      ? 'refresh'
+      : 'chat-question-outline';
+  const guessFabColors = guessResult?.tone === 'correct'
+    ? (['#39C6A8', '#15806A'] as const)
+    : guessResult?.tone === 'wrong'
+      ? (['#7D7CF3', '#4753C8'] as const)
+      : (['#7D7CF3', '#2FB2BE'] as const);
+  const guessPrimaryLabel = guessResult?.tone === 'wrong'
+    ? 'Try again'
+    : guessSubmitting
+      ? 'Checking...'
+      : 'Take a guess';
+  const guessSecondaryLabel = guessResult?.tone === 'correct'
+    ? guessInterestSent
+      ? 'Interest sent'
+      : guessInterestSending
+        ? 'Sending...'
+        : 'Unlock opener'
+    : 'Skip and ask';
+  const guessPulse = useSharedValue(0);
+  const openGuessSheet = useCallback(() => {
+    if (!shouldFloatGuessPrompt) return;
+    Haptics.selectionAsync().catch(() => undefined);
+    setGuessSheetOpen(true);
+  }, [shouldFloatGuessPrompt]);
+  const closeGuessSheet = useCallback(() => {
+    setGuessSheetOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!guessResult?.tone) return;
+    const expected = buildGuessResultMessage(resolvedProfile.name, guessResult.tone);
+    if (guessResult.message !== expected) {
+      setGuessResult({ tone: guessResult.tone, message: expected });
+    }
+  }, [guessResult, resolvedProfile.name]);
+
+  useEffect(() => {
+    if (guessResult?.tone === 'correct') {
+      guessPulse.value = 0;
+      guessPulse.value = withSequence(
+        withTiming(1, { duration: 180, easing: Easing.out(Easing.cubic) }),
+        withTiming(0.45, { duration: 220, easing: Easing.out(Easing.cubic) }),
+        withTiming(0, { duration: 280, easing: Easing.out(Easing.cubic) }),
+      );
+      return;
+    }
+    guessPulse.value = withTiming(0, { duration: 160, easing: Easing.out(Easing.cubic) });
+  }, [guessPulse, guessResult?.tone]);
+
+  const guessFabHaloStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(guessPulse.value, [0, 1], [0, 0.3]),
+    transform: [{ scale: interpolate(guessPulse.value, [0, 1], [0.92, 1.24]) }],
+  }));
+
+  const guessFabMotionStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: interpolate(guessPulse.value, [0, 1], [1, 1.06]) }],
+  }));
 
   useEffect(() => {
     if (!currentProfile?.id || !resolvedProfile?.id) return;
@@ -1259,6 +1339,27 @@ export default function ProfileViewPremiumV2Screen() {
     ),
     [activeTag, frozenTag, highlightEnabled, theme],
   );
+  const standardPromptFooter = useMemo(() => {
+    if (!standardFeaturedPrompt) return null;
+    return (
+      <View style={stylesStatic.rightFooterPromptWrap}>
+        <View
+          style={[
+            stylesStatic.rightFooterPromptCard,
+            { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+          ]}
+        >
+          <Text style={[stylesStatic.featuredPromptEyebrow, { color: theme.tint }]}>Featured prompt</Text>
+          <Text style={[stylesStatic.bottomPromptTitle, { color: theme.text }]}>
+            {standardFeaturedPrompt.promptTitle?.trim() || 'Prompt'}
+          </Text>
+          <Text style={[stylesStatic.bottomPromptAnswer, { color: theme.textMuted }]}>
+            {standardFeaturedPrompt.answer}
+          </Text>
+        </View>
+      </View>
+    );
+  }, [standardFeaturedPrompt, theme.backgroundSubtle, theme.outline, theme.text, theme.textMuted, theme.tint]);
 
   const toggleImageReactions = useCallback((item: PremiumImage) => {
     setActiveReactionImageId((prev) => (prev === item.id ? null : item.id));
@@ -1596,7 +1697,7 @@ export default function ProfileViewPremiumV2Screen() {
         </View>
       )}
 
-      {featuredPrompt ? (
+      {featuredPrompt && isGuessPrompt(featuredPrompt.promptType) && !shouldFloatGuessPrompt ? (
         <View
           style={[
             stylesStatic.featuredPromptWrap,
@@ -1616,18 +1717,16 @@ export default function ProfileViewPremiumV2Screen() {
               { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
             ]}
           >
-            <Text style={[stylesStatic.featuredPromptEyebrow, { color: theme.tint }]}>
-              {isGuessPrompt(featuredPrompt.promptType) ? 'Guess prompt' : 'Featured prompt'}
-            </Text>
-            <Text style={[stylesStatic.featuredPromptTitle, { color: theme.text }]}>
-              {featuredPrompt.promptTitle?.trim() || 'Prompt'}
-            </Text>
             {isGuessPrompt(featuredPrompt.promptType) ? (
               <>
+                <Text style={[stylesStatic.featuredPromptEyebrow, { color: theme.tint }]}>Quick guess</Text>
+                <Text style={[stylesStatic.featuredPromptTitle, { color: theme.text }]}>
+                  {featuredPrompt.promptTitle?.trim() || 'Prompt'}
+                </Text>
                 <Text style={[stylesStatic.featuredPromptAnswer, { color: theme.textMuted }]}>
                   {featuredPrompt.hintText?.trim()
                     ? `Hint: ${featuredPrompt.hintText.trim()}`
-                    : 'Take a guess and use the result as a natural opener.'}
+                    : 'Take one clean guess. If you get it right, you unlock the next step.'}
                 </Text>
                 {isMultipleChoiceGuess(featuredPrompt.guessMode) ? (
                   <View style={stylesStatic.guessOptionsWrap}>
@@ -1699,9 +1798,7 @@ export default function ProfileViewPremiumV2Screen() {
                         },
                       ]}
                     >
-                      <Text style={stylesStatic.guessPrimaryText}>
-                        {guessSubmitting ? 'Checking...' : 'Take a guess'}
-                      </Text>
+                      <Text style={stylesStatic.guessPrimaryText}>{guessPrimaryLabel}</Text>
                     </Pressable>
                   ) : null}
                   {guessResult ? (
@@ -1744,11 +1841,7 @@ export default function ProfileViewPremiumV2Screen() {
                   </Text>
                 ) : null}
               </>
-            ) : (
-              <Text style={[stylesStatic.featuredPromptAnswer, { color: theme.text }]}>
-                {featuredPrompt.answer}
-              </Text>
-            )}
+            ) : null}
           </View>
         </View>
       ) : null}
@@ -1804,6 +1897,7 @@ export default function ProfileViewPremiumV2Screen() {
               ListHeaderComponent={
                 <StoryHeader theme={theme} profile={presenceProfile} locationLine={locationLine} />
               }
+              ListFooterComponent={standardPromptFooter}
             />
           ) : (
             <FlashList
@@ -1818,10 +1912,226 @@ export default function ProfileViewPremiumV2Screen() {
               scrollEventThrottle={16}
               contentContainerStyle={styles.rightListContent}
               renderItem={renderSectionItem}
+              ListFooterComponent={standardPromptFooter}
             />
           )}
         </View>
       </View>
+
+      {shouldFloatGuessPrompt && featuredPrompt ? (
+        <View
+          style={[
+            stylesStatic.guessFabAnchor,
+            { top: guessFabTop },
+          ]}
+          pointerEvents="box-none"
+        >
+          <Animated.View style={[stylesStatic.guessFabHalo, guessFabHaloStyle]} pointerEvents="none" />
+          <Animated.View style={guessFabMotionStyle}>
+            <Pressable onPress={openGuessSheet} style={stylesStatic.guessFabWrap}>
+              <LinearGradient
+                colors={guessFabColors}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={stylesStatic.guessFabCard}
+              >
+                <View style={stylesStatic.guessFabIconWrap}>
+                  <MaterialCommunityIcons name={guessFabIcon} size={18} color={Colors.light.background} />
+                </View>
+                <Text style={stylesStatic.guessFabTitle}>{guessFabLabel}</Text>
+              </LinearGradient>
+            </Pressable>
+          </Animated.View>
+        </View>
+      ) : null}
+
+      {shouldFloatGuessPrompt && featuredPrompt ? (
+        <Modal
+          visible={guessSheetOpen}
+          transparent
+          animationType="fade"
+          onRequestClose={closeGuessSheet}
+        >
+          <View style={stylesStatic.guessSheetOverlay}>
+            <Pressable style={stylesStatic.guessSheetBackdrop} onPress={closeGuessSheet} />
+            <View
+              style={[
+                stylesStatic.guessSheetWrap,
+                { paddingBottom: Math.max(14, insets.bottom + 10) },
+              ]}
+              pointerEvents="box-none"
+            >
+              <Pressable
+                style={[
+                  stylesStatic.guessSheetCard,
+                  { backgroundColor: theme.background, borderColor: theme.outline },
+                ]}
+                onPress={() => undefined}
+              >
+                <View style={stylesStatic.giftHandle} />
+                <View style={stylesStatic.guessSheetHeaderRow}>
+                  <View style={stylesStatic.guessSheetHeaderText}>
+                    <Text style={[stylesStatic.featuredPromptEyebrow, { color: theme.tint }]}>Quick guess</Text>
+                    <Text style={[stylesStatic.guessSheetTitle, { color: theme.text }]}>
+                      {featuredPrompt.promptTitle?.trim() || 'Prompt'}
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={closeGuessSheet}
+                    style={[stylesStatic.guessSheetClose, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}
+                  >
+                    <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
+                  </Pressable>
+                </View>
+
+                <View style={stylesStatic.guessSheetMetaRow}>
+                  <View
+                    style={[
+                      stylesStatic.guessSheetModePill,
+                      { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
+                    ]}
+                  >
+                    <MaterialCommunityIcons name="gamepad-variant-outline" size={14} color={theme.tint} />
+                    <Text style={[stylesStatic.guessSheetModeText, { color: theme.textMuted }]}>
+                      {guessChallengeLabel}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={[stylesStatic.guessSheetHint, { color: theme.textMuted }]}>
+                  {featuredPrompt.hintText?.trim()
+                    ? `Hint: ${featuredPrompt.hintText.trim()}`
+                    : 'Take one clean guess. If you get it right, you unlock the next step.'}
+                </Text>
+
+                {isMultipleChoiceGuess(featuredPrompt.guessMode) ? (
+                  <View style={stylesStatic.guessOptionsWrap}>
+                    {(featuredPrompt.guessOptions || []).map((option) => {
+                      const selected = selectedGuessOption === option;
+                      return (
+                        <Pressable
+                          key={`${featuredPrompt.id}-${option}`}
+                          onPress={() => {
+                            if (guessLocked) return;
+                            setSelectedGuessOption(option);
+                          }}
+                          disabled={guessLocked}
+                          style={[
+                            stylesStatic.guessOptionPill,
+                            {
+                              backgroundColor: selected ? theme.tint : theme.backgroundSubtle,
+                              borderColor: selected ? theme.tint : theme.outline,
+                              opacity: guessLocked ? 0.7 : 1,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              stylesStatic.guessOptionText,
+                              { color: selected ? Colors.light.background : theme.text },
+                            ]}
+                          >
+                            {option}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                ) : (
+                  <Pressable
+                    onPress={guessLocked ? undefined : openGuessComposer}
+                    disabled={guessLocked}
+                    style={[
+                      stylesStatic.guessInputWrap,
+                      stylesStatic.guessInputPressable,
+                      { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline, opacity: guessLocked ? 0.7 : 1 },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        stylesStatic.guessInput,
+                        { color: guessInput.trim() ? theme.text : theme.textMuted },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {guessInput.trim() || 'Type your guess'}
+                    </Text>
+                    <MaterialCommunityIcons name="pencil-outline" size={16} color={theme.textMuted} />
+                  </Pressable>
+                )}
+
+                <View style={stylesStatic.guessActionsRow}>
+                  {!guessLocked ? (
+                    <Pressable
+                      onPress={() => void submitFeaturedGuess()}
+                      disabled={guessSubmitting || !(selectedGuessOption || guessInput.trim())}
+                      style={[
+                        stylesStatic.guessPrimaryButton,
+                        {
+                          backgroundColor:
+                            guessSubmitting || !(selectedGuessOption || guessInput.trim())
+                              ? theme.outline
+                              : theme.tint,
+                        },
+                      ]}
+                    >
+                      <Text style={stylesStatic.guessPrimaryText}>{guessPrimaryLabel}</Text>
+                    </Pressable>
+                  ) : null}
+                  {guessResult ? (
+                    <Pressable
+                      onPress={guessResult.tone === 'correct' ? () => void sendGuessInterest() : openIntentSheet}
+                      disabled={guessResult.tone === 'correct' ? guessInterestSending || guessInterestSent : false}
+                      style={[
+                        stylesStatic.guessSecondaryButton,
+                        { borderColor: guessResult.tone === 'correct' ? theme.tint : theme.outline },
+                        guessResult.tone === 'correct' && (guessInterestSending || guessInterestSent)
+                          ? { opacity: 0.7 }
+                          : null,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          stylesStatic.guessSecondaryText,
+                          { color: guessResult.tone === 'correct' ? theme.accent : theme.textMuted },
+                        ]}
+                      >
+                        {guessSecondaryLabel}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+
+                {guessResult ? (
+                  <View
+                    style={[
+                      stylesStatic.guessSheetResultCard,
+                      {
+                        backgroundColor: theme.backgroundSubtle,
+                        borderColor: guessResult.tone === 'correct' ? theme.tint : theme.outline,
+                      },
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name={guessResult.tone === 'correct' ? 'check-decagram-outline' : 'message-question-outline'}
+                      size={18}
+                      color={guessResult.tone === 'correct' ? theme.tint : theme.textMuted}
+                    />
+                    <Text
+                      style={[
+                        stylesStatic.guessSheetResultText,
+                        { color: guessResult.tone === 'correct' ? theme.accent : theme.textMuted },
+                      ]}
+                    >
+                      {guessResult.message}
+                    </Text>
+                  </View>
+                ) : null}
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
 
       <FloatingActions
         theme={theme}
@@ -3504,6 +3814,16 @@ const stylesStatic = StyleSheet.create({
     paddingTop: 4,
     paddingBottom: 2,
   },
+  rightFooterPromptWrap: {
+    paddingTop: 14,
+    paddingBottom: 6,
+  },
+  rightFooterPromptCard: {
+    borderWidth: 1,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 15,
+  },
   heroDetailsCard: {
     borderWidth: 1,
     borderRadius: 22,
@@ -3607,6 +3927,18 @@ const stylesStatic = StyleSheet.create({
     lineHeight: 20,
     fontWeight: '500',
   },
+  bottomPromptTitle: {
+    marginTop: 6,
+    fontSize: 18,
+    lineHeight: 23,
+    fontWeight: '800',
+  },
+  bottomPromptAnswer: {
+    marginTop: 9,
+    fontSize: 14,
+    lineHeight: 21,
+    fontWeight: '500',
+  },
   guessOptionsWrap: {
     marginTop: 12,
     flexDirection: 'row',
@@ -3679,6 +4011,137 @@ const stylesStatic = StyleSheet.create({
   },
   featuredPromptHidden: {
     opacity: 0,
+  },
+  guessFabAnchor: {
+    position: 'absolute',
+    right: 20,
+    zIndex: 12,
+    elevation: 12,
+  },
+  guessFabWrap: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+    elevation: 9,
+  },
+  guessFabHalo: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    bottom: -4,
+    left: -4,
+    borderRadius: 999,
+    backgroundColor: 'rgba(57,198,168,0.45)',
+  },
+  guessFabCard: {
+    minHeight: 32,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  guessFabIconWrap: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.16)',
+  },
+  guessFabTitle: {
+    color: Colors.light.background,
+    fontSize: 10.5,
+    fontWeight: '800',
+    lineHeight: 11,
+    letterSpacing: 0.2,
+  },
+  guessSheetOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  guessSheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  guessSheetWrap: {
+    paddingHorizontal: 14,
+  },
+  guessSheetCard: {
+    borderWidth: 1,
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 16,
+  },
+  guessSheetHeaderRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  guessSheetHeaderText: {
+    flex: 1,
+  },
+  guessSheetTitle: {
+    marginTop: 6,
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '800',
+  },
+  guessSheetClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  guessSheetHint: {
+    marginTop: 10,
+    fontSize: 13.5,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  guessSheetMetaRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  guessSheetModePill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+  },
+  guessSheetModeText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  guessSheetResultCard: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  guessSheetResultText: {
+    flex: 1,
+    fontSize: 12.5,
+    lineHeight: 18,
+    fontWeight: '600',
   },
   guessComposerOverlay: {
     flex: 1,

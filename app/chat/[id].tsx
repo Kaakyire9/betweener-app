@@ -6,9 +6,13 @@ import { useMoments } from "@/hooks/useMoments";
 import { useAuth } from "@/lib/auth-context";
 import { decryptMediaBytes, encryptMediaBytes, getOrCreateDeviceKeypair } from "@/lib/e2ee";
 import { computeConversationSignalLabel, computeFirstReplyHours, computeInterestOverlapRatio } from "@/lib/match/match-score";
+import { Motion } from "@/lib/motion";
 import { supabase } from "@/lib/supabase";
+import type { Database } from "@/supabase/types/database";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import * as Calendar from "expo-calendar";
 import {
   AudioPlayer,
   createAudioPlayer,
@@ -64,6 +68,7 @@ const ATTACHMENT_SHEET_HEIGHT = 300;
 const CHAT_MEDIA_BUCKET = 'chat-media';
 const LOCATION_TEXT_PREFIX = '\u{1F4CD}';
 const LOCATION_LIVE_PREFIX = 'LIVE:';
+const DATE_PLAN_TEXT_PREFIX = 'date_plan::';
 const GOOGLE_MAPS_NATIVE_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 const GOOGLE_MAPS_WEB_API_KEY =
   process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY || GOOGLE_MAPS_NATIVE_API_KEY;
@@ -71,6 +76,61 @@ const GOOGLE_MAPS_MAP_ID = process.env.EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID;
 const LOCATION_PREVIEW_WIDTH = Math.min(screenWidth * 0.72, 320);
 const LOCATION_PREVIEW_HEIGHT = 180;
 const LIVE_LOCATION_PRESETS = [15, 60, 480] as const;
+const FALLBACK_BETWEENER_DATE_PICKS = [
+  {
+    id: 'fallback-betweener-mikline-kumasi',
+    name: 'Mikline Hotel Restaurant Kumasi',
+    address: 'Kumasi, Ghana',
+    city: 'Kumasi',
+    lat: 6.6885,
+    lng: -1.6244,
+    source: 'betweener_pick',
+    badges: ['Betweener Safe Venue', 'Betweener Discount', 'First-date surprise'],
+    summary: 'A calm dinner setting with Betweener-ready service.',
+    venueId: null,
+    metadata: {
+      date_vibe: 'Calm dinner energy',
+      planning_support: true,
+      trust_reasons: ['Well-lit setting', 'Partner-aware team', 'Easy-to-find arrival'],
+      concierge_services: ['Reserve venue', 'Arrange surprise touch', 'Safer meetup support'],
+    },
+  },
+  {
+    id: 'fallback-betweener-mikline-accra',
+    name: 'Mikline Hotel Restaurant Accra',
+    address: 'Accra, Ghana',
+    city: 'Accra',
+    lat: 5.6037,
+    lng: -0.187,
+    source: 'betweener_pick',
+    badges: ['Betweener Safe Venue', 'Betweener Discount', 'First-date surprise'],
+    summary: 'An easy city meet-up with a polished first-date feel.',
+    venueId: null,
+    metadata: {
+      date_vibe: 'Polished city meet-up',
+      planning_support: true,
+      trust_reasons: ['Central public location', 'Smooth first-date arrival', 'Comfortable social setting'],
+      concierge_services: ['Reserve venue', 'Arrange surprise touch', 'Safer meetup support'],
+    },
+  },
+] as const;
+const CONCIERGE_SERVICE_OPTIONS = [
+  {
+    id: 'reserve_venue',
+    title: 'Reserve venue',
+    description: 'Ask Betweener to help lock the place and timing in.',
+  },
+  {
+    id: 'surprise_touch',
+    title: 'Arrange surprise',
+    description: 'Add a small premium surprise to the plan.',
+  },
+  {
+    id: 'safer_meetup',
+    title: 'Safer meetup',
+    description: 'Ask for a safer arrival or meetup recommendation.',
+  },
+] as const;
 const REPORT_REASONS = [
   { id: 'spam', label: 'Spam' },
   { id: 'harassment', label: 'Harassment' },
@@ -112,12 +172,17 @@ const MAP_STYLE_DARK = [
 const getPickerMediaTypesAll = (): ImagePicker.MediaTypeOptions => ImagePicker.MediaTypeOptions.All;
 
 // Message type definition
+type DatePlanStatus = 'pending' | 'accepted' | 'declined' | 'cancelled' | 'countered';
+type DatePlanResponseKind = 'initial' | 'counter_time' | 'counter_place' | 'counter_both';
+type BetweenerVenueRow = Database["public"]["Tables"]["betweener_venues"]["Row"];
+type DatePlanRow = Database["public"]["Tables"]["date_plans"]["Row"];
+
 type MessageType = {
   id: string;
   text: string;
   senderId: string;
   timestamp: Date;
-  type: 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location' | 'system';
+  type: 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location' | 'date_plan' | 'system';
   isViewOnce?: boolean;
   encryptedMedia?: boolean;
   encryptedMediaPath?: string | null;
@@ -164,6 +229,26 @@ type MessageType = {
     mapLink?: string;
     live?: boolean;
     expiresAt?: Date | null;
+  };
+  dateInvite?: {
+    planId?: string | null;
+    parentPlanId?: string | null;
+    venueId?: string | null;
+    scheduledFor: Date;
+    placeName: string;
+    placeAddress?: string;
+    note?: string;
+    source: 'betweener_pick' | 'nearby' | 'search' | 'preferred';
+    badges?: string[];
+    summary?: string | null;
+    city?: string | null;
+    lat?: number | null;
+    lng?: number | null;
+    mapUrl?: string | null;
+    mapLink?: string | null;
+    status?: DatePlanStatus;
+    conciergeRequested?: boolean;
+    responseKind?: DatePlanResponseKind;
   };
   replyToId?: string | null;
   replyTo?: MessageType;
@@ -394,6 +479,314 @@ const parseLocationMessage = (rawText: string): MessageType['location'] | null =
   };
 };
 
+const buildDateInvitePayload = ({
+  planId,
+  parentPlanId,
+  scheduledFor,
+  place,
+  note,
+  status = 'pending',
+  conciergeRequested = false,
+  responseKind = 'initial',
+}: {
+  planId?: string | null;
+  parentPlanId?: string | null;
+  scheduledFor: Date;
+  place: DatePlaceOption;
+  note?: string | null;
+  status?: DatePlanStatus;
+  conciergeRequested?: boolean;
+  responseKind?: DatePlanResponseKind;
+}) =>
+  `${DATE_PLAN_TEXT_PREFIX}${JSON.stringify({
+    planId: planId || null,
+    parentPlanId: parentPlanId || null,
+    venueId: place.venueId ?? null,
+    scheduledFor: scheduledFor.toISOString(),
+    placeName: place.name,
+    placeAddress: place.address ?? null,
+    source: place.source,
+    badges: place.badges ?? [],
+    summary: place.summary ?? null,
+    city: place.city ?? null,
+    lat: place.lat,
+    lng: place.lng,
+    note: note?.trim() || null,
+    responseKind,
+    status,
+    conciergeRequested,
+  })}`;
+
+const parseDateInviteMessage = (rawText: string): MessageType['dateInvite'] | null => {
+  if (!rawText?.startsWith(DATE_PLAN_TEXT_PREFIX)) return null;
+  try {
+    const parsed = JSON.parse(rawText.slice(DATE_PLAN_TEXT_PREFIX.length));
+    const scheduledFor = new Date(parsed?.scheduledFor);
+    if (!parsed?.placeName || Number.isNaN(scheduledFor.getTime())) return null;
+    const lat = typeof parsed?.lat === 'number' ? parsed.lat : null;
+    const lng = typeof parsed?.lng === 'number' ? parsed.lng : null;
+    const mapUrl = lat != null && lng != null ? getStaticMapUrl(lat, lng) : null;
+    const mapLink = lat != null && lng != null ? buildMapsLink(lat, lng) : null;
+    return {
+      planId: typeof parsed?.planId === 'string' ? parsed.planId : null,
+      parentPlanId: typeof parsed?.parentPlanId === 'string' ? parsed.parentPlanId : null,
+      venueId: typeof parsed?.venueId === 'string' ? parsed.venueId : null,
+      scheduledFor,
+      placeName: String(parsed.placeName),
+      placeAddress: typeof parsed?.placeAddress === 'string' ? parsed.placeAddress : undefined,
+      note: typeof parsed?.note === 'string' ? parsed.note : undefined,
+      source: (parsed?.source as DatePlaceSource) || 'search',
+      badges: Array.isArray(parsed?.badges) ? parsed.badges.filter((value: unknown) => typeof value === 'string') : [],
+      summary: typeof parsed?.summary === 'string' ? parsed.summary : null,
+      city: typeof parsed?.city === 'string' ? parsed.city : null,
+      lat,
+      lng,
+      mapUrl,
+      mapLink,
+      responseKind:
+        parsed?.responseKind === 'counter_time' ||
+        parsed?.responseKind === 'counter_place' ||
+        parsed?.responseKind === 'counter_both'
+          ? parsed.responseKind
+          : 'initial',
+      status:
+        parsed?.status === 'accepted' ||
+        parsed?.status === 'declined' ||
+        parsed?.status === 'cancelled' ||
+        parsed?.status === 'countered'
+          ? parsed.status
+          : 'pending',
+      conciergeRequested: Boolean(parsed?.conciergeRequested),
+    };
+  } catch (error) {
+    console.log('[chat] date invite parse error', error);
+    return null;
+  }
+};
+
+const mergeDateInviteWithPlanRow = (
+  invite: MessageType['dateInvite'],
+  plan: DatePlanRow,
+): MessageType['dateInvite'] => {
+  if (!invite) return invite;
+  const lat = typeof plan.lat === 'number' ? plan.lat : invite.lat ?? null;
+  const lng = typeof plan.lng === 'number' ? plan.lng : invite.lng ?? null;
+  return {
+    ...invite,
+    planId: plan.id,
+    parentPlanId: plan.parent_plan_id,
+    venueId: plan.venue_id,
+    scheduledFor: new Date(plan.scheduled_for),
+    placeName: plan.place_name,
+    placeAddress: plan.place_address || undefined,
+    note: plan.note || undefined,
+    source: (plan.place_source as DatePlaceSource) || invite.source,
+    badges: Array.isArray(plan.place_badges)
+      ? plan.place_badges.filter((value): value is string => typeof value === 'string')
+      : invite.badges ?? [],
+    summary: plan.place_summary,
+    city: plan.city,
+    lat,
+    lng,
+    mapUrl: lat != null && lng != null ? getStaticMapUrl(lat, lng) : null,
+    mapLink: lat != null && lng != null ? buildMapsLink(lat, lng) : null,
+    status: (plan.status as DatePlanStatus) || invite.status || 'pending',
+    conciergeRequested: Boolean(plan.concierge_requested),
+    responseKind: (plan.response_kind as DatePlanResponseKind) || invite.responseKind || 'initial',
+  };
+};
+
+const formatDateInviteWhen = (date: Date) =>
+  `${date.toLocaleDateString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  })} at ${date.toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  })}`;
+
+const normalizeDatePlanText = (value?: string | null) =>
+  value?.trim().toLowerCase().replace(/\s+/g, ' ') ?? '';
+
+const isSameDatePlanPlace = (invite: NonNullable<MessageType['dateInvite']>, place: DatePlaceOption) => {
+  if (invite.venueId && place.venueId) return invite.venueId === place.venueId;
+  if (invite.lat != null && invite.lng != null) {
+    const sameLat = Math.abs(invite.lat - place.lat) < 0.000001;
+    const sameLng = Math.abs(invite.lng - place.lng) < 0.000001;
+    if (sameLat && sameLng) return true;
+  }
+  return (
+    normalizeDatePlanText(invite.placeName) === normalizeDatePlanText(place.name) &&
+    normalizeDatePlanText(invite.placeAddress) === normalizeDatePlanText(place.address)
+  );
+};
+
+const dedupeMessagesById = (items: MessageType[]) => {
+  if (items.length <= 1) return items;
+  const seen = new Set<string>();
+  const deduped: MessageType[] = [];
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    deduped.unshift(item);
+  }
+  return deduped;
+};
+
+const buildDateQuickSlots = (baseNow: Date) => {
+  const tonight = new Date(baseNow);
+  tonight.setHours(baseNow.getHours() < 18 ? 19 : 20, 0, 0, 0);
+  if (tonight.getTime() <= baseNow.getTime()) {
+    tonight.setDate(tonight.getDate() + 1);
+    tonight.setHours(19, 0, 0, 0);
+  }
+
+  const tomorrow = new Date(baseNow);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(19, 0, 0, 0);
+
+  const saturdayBrunch = new Date(baseNow);
+  const daysUntilSaturday = (6 - saturdayBrunch.getDay() + 7) % 7 || 7;
+  saturdayBrunch.setDate(saturdayBrunch.getDate() + daysUntilSaturday);
+  saturdayBrunch.setHours(11, 30, 0, 0);
+
+  return [
+    {
+      id: 'tonight',
+      label: tonight.getDate() === baseNow.getDate() ? 'Tonight' : 'Next evening',
+      caption: tonight.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+      date: tonight,
+    },
+    {
+      id: 'tomorrow',
+      label: 'Tomorrow',
+      caption: 'Dinner time',
+      date: tomorrow,
+    },
+    {
+      id: 'saturday_brunch',
+      label: 'Saturday brunch',
+      caption: '11:30 AM',
+      date: saturdayBrunch,
+    },
+  ] as const;
+};
+
+const getMetadataStringArray = (metadata: Record<string, unknown> | null | undefined, key: string) => {
+  const value = metadata?.[key];
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0) : [];
+};
+
+type DateBadgeTone = 'safe' | 'discount' | 'surprise' | 'nearby' | 'area' | 'concierge' | 'default';
+
+const getDateBadgeMeta = (badge: string) => {
+  const normalized = badge.trim().toLowerCase();
+  if (normalized.includes('safe venue')) return { icon: 'shield-check-outline' as const, tone: 'safe' as DateBadgeTone };
+  if (normalized.includes('discount')) return { icon: 'ticket-percent-outline' as const, tone: 'discount' as DateBadgeTone };
+  if (normalized.includes('surprise')) return { icon: 'party-popper' as const, tone: 'surprise' as DateBadgeTone };
+  if (normalized.includes('nearby')) return { icon: 'map-marker-radius-outline' as const, tone: 'nearby' as DateBadgeTone };
+  if (normalized.includes('their area')) return { icon: 'home-heart' as const, tone: 'area' as DateBadgeTone };
+  if (normalized.includes('concierge') || normalized.includes('betweener help')) return { icon: 'account-tie-hat-outline' as const, tone: 'concierge' as DateBadgeTone };
+  return { icon: 'tag-outline' as const, tone: 'default' as DateBadgeTone };
+};
+
+const getDateBadgePalette = ({
+  tone,
+  theme,
+  isDark,
+  surface,
+  isMyMessage = false,
+  confirmed = false,
+}: {
+  tone: DateBadgeTone;
+  theme: typeof Colors.light;
+  isDark: boolean;
+  surface: 'planner' | 'message';
+  isMyMessage?: boolean;
+  confirmed?: boolean;
+}) => {
+  const accent =
+    tone === 'safe'
+      ? '#2fb36c'
+      : tone === 'discount'
+      ? '#d4a72c'
+      : tone === 'surprise'
+      ? '#ef6f91'
+      : tone === 'nearby'
+      ? '#2c9fb4'
+      : tone === 'area'
+      ? '#7c8cff'
+      : tone === 'concierge'
+      ? '#8b6fd6'
+      : theme.tint;
+
+  if (surface === 'planner') {
+    return {
+      backgroundColor: withAlpha(accent, isDark ? 0.18 : 0.1),
+      borderColor: withAlpha(accent, isDark ? 0.34 : 0.18),
+      foregroundColor: accent,
+    };
+  }
+
+  if (isMyMessage) {
+    return {
+      backgroundColor: withAlpha(accent, confirmed ? 0.22 : 0.26),
+      borderColor: withAlpha(accent, confirmed ? 0.38 : 0.42),
+      foregroundColor: Colors.light.background,
+    };
+  }
+
+  return {
+    backgroundColor: withAlpha(accent, confirmed ? (isDark ? 0.1 : 0.08) : (isDark ? 0.14 : 0.1)),
+    borderColor: withAlpha(accent, confirmed ? (isDark ? 0.22 : 0.16) : (isDark ? 0.3 : 0.18)),
+    foregroundColor: confirmed && tone === 'default' ? theme.textMuted : accent,
+  };
+};
+
+const getDatePlaceExperience = (place: DatePlaceOption | null) => {
+  if (!place) {
+    return {
+      vibe: null as string | null,
+      trustReasons: [] as string[],
+      perks: [] as string[],
+      conciergeServices: [] as string[],
+    };
+  }
+
+  const metadata = place.metadata ?? null;
+  const vibe =
+    typeof metadata?.date_vibe === 'string' && metadata.date_vibe.trim().length > 0
+      ? metadata.date_vibe
+      : place.source === 'betweener_pick'
+      ? 'First-date ready'
+      : place.source === 'preferred'
+      ? 'Closer to their side'
+      : place.source === 'nearby'
+      ? 'Easy to get to'
+      : 'Flexible meet-up';
+
+  const defaultTrustReasons =
+    place.source === 'betweener_pick'
+      ? ['Public, easy-to-find venue', 'Comfort-first setup', 'Good for a first meeting']
+      : ['Public location', 'Easy to find on Maps', 'Simple to adjust if plans shift'];
+
+  const trustReasons = getMetadataStringArray(metadata, 'trust_reasons');
+  const conciergeServices = getMetadataStringArray(metadata, 'concierge_services');
+  const perks = [
+    ...((place.badges ?? []).filter((badge) => badge !== 'Betweener Safe Venue')),
+    ...(conciergeServices.length > 0 ? ['Betweener help available'] : []),
+  ];
+
+  return {
+    vibe,
+    trustReasons: trustReasons.length > 0 ? trustReasons : defaultTrustReasons,
+    perks,
+    conciergeServices,
+  };
+};
+
 const buildLocationMessageText = ({
   lat,
   lng,
@@ -460,6 +853,19 @@ type PlaceResult = {
   lng: number;
 };
 
+type DatePlaceSource = 'betweener_pick' | 'nearby' | 'search' | 'preferred';
+
+type DatePlaceOption = PlaceResult & {
+  source: DatePlaceSource;
+  badges?: string[];
+  summary?: string | null;
+  city?: string | null;
+  venueId?: string | null;
+  metadata?: Record<string, unknown> | null;
+};
+
+type DatePlannerMode = 'new' | 'counter_time' | 'counter_place' | 'counter_both' | 'reschedule';
+
 type MessageRowItemProps = {
   item: MessageType;
   isMyMessage: boolean;
@@ -498,6 +904,16 @@ type MessageRowItemProps = {
   onOpenLocation: (message: MessageType) => void;
   onStopLiveShare: (messageId: string) => void;
   onOpenViewOnce: (message: MessageType) => void;
+  onAcceptDatePlan: (planId: string) => void;
+  onSuggestAnotherTime: (invite: MessageType['dateInvite']) => void;
+  onSuggestAnotherPlace: (invite: MessageType['dateInvite']) => void;
+  onSuggestBoth: (invite: MessageType['dateInvite']) => void;
+  onRescheduleDatePlan: (invite: MessageType['dateInvite']) => void;
+  onCancelDatePlan: (planId: string) => void;
+  onRequestDatePlanConcierge: (planId: string) => void;
+  onAddDatePlanToCalendar: (invite: MessageType['dateInvite']) => void;
+  datePlanActionId: string | null;
+  datePlanCalendarActionId: string | null;
   viewOnceViewedByMe: boolean;
   viewOnceViewedByPeer: boolean;
   highlightQuery?: string;
@@ -749,6 +1165,16 @@ const MessageRowItem = memo(
     onOpenLocation,
     onStopLiveShare,
     onOpenViewOnce,
+    onAcceptDatePlan,
+    onSuggestAnotherTime,
+    onSuggestAnotherPlace,
+    onSuggestBoth,
+    onRescheduleDatePlan,
+    onCancelDatePlan,
+    onRequestDatePlanConcierge,
+    onAddDatePlanToCalendar,
+    datePlanActionId,
+    datePlanCalendarActionId,
     viewOnceViewedByMe,
     viewOnceViewedByPeer,
       highlightQuery,
@@ -758,6 +1184,53 @@ const MessageRowItem = memo(
     const isSystemRow = item.type === 'system' || item.isSystem;
     const focusPulse = useRef(new Animated.Value(0)).current;
     const accent = isMyMessage ? Colors.light.background : theme.tint;
+    const datePlanStatus = item.dateInvite?.status ?? 'pending';
+    const datePlanPlanId = item.dateInvite?.planId ?? null;
+    const datePlanBusy = Boolean(datePlanPlanId) && datePlanActionId === datePlanPlanId;
+    const canAcceptDatePlan =
+      item.type === 'date_plan' &&
+      !isMyMessage &&
+      datePlanStatus === 'pending' &&
+      Boolean(datePlanPlanId);
+    const canRequestDatePlanConcierge =
+      item.type === 'date_plan' &&
+      datePlanStatus === 'accepted' &&
+      !item.dateInvite?.conciergeRequested &&
+      Boolean(datePlanPlanId);
+    const canRescheduleDatePlan =
+      item.type === 'date_plan' &&
+      datePlanStatus === 'accepted' &&
+      Boolean(datePlanPlanId);
+    const canAddDatePlanToCalendar =
+      item.type === 'date_plan' &&
+      datePlanStatus === 'accepted' &&
+      Boolean(item.dateInvite);
+    const canCancelDatePlan =
+      item.type === 'date_plan' &&
+      Boolean(datePlanPlanId) &&
+      ((datePlanStatus === 'pending' && isMyMessage) || datePlanStatus === 'accepted');
+    const datePlanCalendarBusy = Boolean(datePlanPlanId) && datePlanCalendarActionId === datePlanPlanId;
+    const datePlanBadgeLabel =
+      datePlanStatus === 'accepted'
+        ? 'Plan confirmed'
+        : item.dateInvite?.responseKind === 'counter_time'
+        ? 'Suggested another time'
+        : item.dateInvite?.responseKind === 'counter_place'
+        ? 'Suggested another place'
+        : item.dateInvite?.responseKind === 'counter_both'
+        ? 'Updated suggestion'
+        : 'Date suggestion';
+    const datePlanBadgeIcon =
+      datePlanStatus === 'accepted'
+        ? 'calendar-check'
+        : item.dateInvite?.responseKind === 'counter_time' ||
+          item.dateInvite?.responseKind === 'counter_place' ||
+          item.dateInvite?.responseKind === 'counter_both'
+        ? 'calendar-refresh'
+        : 'calendar-heart';
+    const isAcceptedDatePlan = item.type === 'date_plan' && datePlanStatus === 'accepted';
+    const acceptedLockIn = useRef(new Animated.Value(isAcceptedDatePlan ? 1 : 0)).current;
+    const previousDatePlanStatus = useRef(datePlanStatus);
     const focusPulseStyle = useMemo(() => ({
       opacity: focusPulse,
       transform: [
@@ -784,6 +1257,40 @@ const MessageRowItem = memo(
     const rowTintStyle = useMemo(() => ({
       backgroundColor: withAlpha(accent, isMyMessage ? 0.06 : isDark ? 0.08 : 0.04),
     }) as const, [accent, isDark, isMyMessage]);
+    const acceptedLockInHeaderStyle = useMemo(() => ({
+      opacity: acceptedLockIn.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0.72, 1],
+      }),
+      transform: [
+        {
+          translateY: acceptedLockIn.interpolate({
+            inputRange: [0, 1],
+            outputRange: [Motion.transform.enterTranslateY, 0],
+          }),
+        },
+        {
+          scale: acceptedLockIn.interpolate({
+            inputRange: [0, 0.68, 1],
+            outputRange: [0.985, Motion.transform.popScale, 1],
+          }),
+        },
+      ],
+    }) as const, [acceptedLockIn]);
+    const acceptedLockInLiftStyle = useMemo(() => ({
+      opacity: acceptedLockIn.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0.68, 1],
+      }),
+      transform: [
+        {
+          translateY: acceptedLockIn.interpolate({
+            inputRange: [0, 1],
+            outputRange: [6, 0],
+          }),
+        },
+      ],
+    }) as const, [acceptedLockIn]);
     const rowVignetteColor = useMemo(
       () => withAlpha(theme.text, isDark ? 0.22 : 0.1),
       [isDark, theme.text]
@@ -806,6 +1313,30 @@ const MessageRowItem = memo(
         }),
       ]).start();
     }, [focusPulse, focusToken, isFocused]);
+
+    useEffect(() => {
+      const previousStatus = previousDatePlanStatus.current;
+      if (item.type !== 'date_plan') {
+        previousDatePlanStatus.current = datePlanStatus;
+        return;
+      }
+
+      if (datePlanStatus === 'accepted' && previousStatus !== 'accepted') {
+        acceptedLockIn.stopAnimation();
+        acceptedLockIn.setValue(0);
+        Animated.timing(acceptedLockIn, {
+          toValue: 1,
+          duration: Motion.duration.slow,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }).start();
+      } else if (datePlanStatus !== 'accepted') {
+        acceptedLockIn.stopAnimation();
+        acceptedLockIn.setValue(0);
+      }
+
+      previousDatePlanStatus.current = datePlanStatus;
+    }, [acceptedLockIn, datePlanStatus, item.type]);
     const waveformBars = useMemo(() => {
       if (item.type !== 'voice' || !item.voiceMessage?.waveform) return null;
       if (!isFocused && !isPlaying) return null;
@@ -873,6 +1404,8 @@ const MessageRowItem = memo(
             return 'voice note';
           case 'document':
             return 'document';
+          case 'date_plan':
+            return 'date plan';
           case 'location':
             return 'location';
           case 'mood_sticker':
@@ -957,6 +1490,7 @@ const MessageRowItem = memo(
         image: 'image-outline',
         video: 'video-outline',
         document: 'file-document-outline',
+        date_plan: 'calendar-heart',
         location: 'map-marker-outline',
         mood_sticker: 'emoticon-happy-outline',
       };
@@ -979,6 +1513,11 @@ const MessageRowItem = memo(
           break;
         case 'document':
           preview = item.replyTo.document?.name || 'Document';
+          break;
+        case 'date_plan':
+          preview = item.replyTo.dateInvite?.placeName
+            ? `Date: ${item.replyTo.dateInvite.placeName}`
+            : 'Date plan';
           break;
         case 'location':
           preview = item.replyTo.location?.label ? `Location: ${item.replyTo.location.label}` : 'Location';
@@ -1111,6 +1650,9 @@ const MessageRowItem = memo(
             if (item.type === 'document' && item.document?.url) {
               onOpenDocument(item.document);
             }
+            if (item.type === 'date_plan' && item.dateInvite?.mapLink) {
+              Linking.openURL(item.dateInvite.mapLink).catch(() => {});
+            }
             if (item.type === 'location' && item.location) {
               onOpenLocation(item);
             }
@@ -1136,6 +1678,8 @@ const MessageRowItem = memo(
             item.type === 'image' && !isEncryptedViewOnce && styles.imageBubble,
             item.type === 'video' && !isEncryptedViewOnce && styles.videoBubble,
             item.type === 'document' && styles.documentBubble,
+            item.type === 'date_plan' && (isMyMessage ? styles.datePlanBubbleMy : styles.datePlanBubbleTheir),
+            item.type === 'date_plan' && styles.datePlanBubble,
             item.type === 'location' && styles.locationBubble,
           ]}>
             {isFocused ? (
@@ -1395,6 +1939,552 @@ const MessageRowItem = memo(
                       {item.text}
                     </Text>
                   )}
+                </View>
+              ) : item.type === 'date_plan' ? (
+                <View
+                  style={[
+                    styles.datePlanMessageContainer,
+                    isAcceptedDatePlan && styles.datePlanMessageContainerConfirmed,
+                  ]}
+                >
+                  <View style={styles.datePlanHeader}>
+                    <View style={styles.datePlanHeaderTop}>
+                      <View style={[styles.datePlanBadge, { backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.16) : withAlpha(theme.tint, 0.14) }]}>
+                        <MaterialCommunityIcons
+                          name={datePlanBadgeIcon}
+                          size={14}
+                          color={isMyMessage ? Colors.light.background : theme.tint}
+                        />
+                        <Text style={[styles.datePlanBadgeText, { color: isMyMessage ? Colors.light.background : theme.tint }]}>
+                          {datePlanBadgeLabel}
+                        </Text>
+                      </View>
+                      {userAvatar ? (
+                        <View
+                          style={[
+                            styles.datePlanPersonChip,
+                            {
+                              backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.12) : withAlpha(theme.tint, 0.1),
+                              borderColor: isMyMessage ? withAlpha(Colors.light.background, 0.14) : withAlpha(theme.tint, 0.14),
+                            },
+                          ]}
+                        >
+                          <Image source={{ uri: userAvatar }} style={styles.datePlanPersonAvatar} />
+                          <Text
+                            style={[
+                              styles.datePlanPersonText,
+                              { color: isMyMessage ? Colors.light.background : theme.text },
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {isMyMessage ? `For ${peerName || 'your match'}` : peerName || 'Your match'}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    {isAcceptedDatePlan ? (
+                      <Text
+                        style={[
+                          styles.datePlanWhenEyebrow,
+                          { color: isMyMessage ? withAlpha(Colors.light.background, 0.76) : theme.textMuted },
+                        ]}
+                      >
+                        Confirmed plan
+                      </Text>
+                    ) : null}
+                    {isAcceptedDatePlan ? (
+                      <Animated.View style={acceptedLockInHeaderStyle as any}>
+                        <View
+                          style={[
+                            styles.datePlanWhenRowConfirmed,
+                            {
+                              backgroundColor: isMyMessage
+                                ? withAlpha(Colors.light.background, 0.1)
+                                : withAlpha(theme.text, 0.05),
+                            },
+                          ]}
+                        >
+                          <MaterialCommunityIcons
+                            name="calendar-check-outline"
+                            size={16}
+                            color={isMyMessage ? Colors.light.background : theme.tint}
+                          />
+                          <Text
+                            style={[
+                              styles.datePlanWhen,
+                              styles.datePlanWhenConfirmed,
+                              { color: isMyMessage ? Colors.light.background : theme.text },
+                            ]}
+                          >
+                            {item.dateInvite ? formatDateInviteWhen(item.dateInvite.scheduledFor) : 'Date suggestion'}
+                          </Text>
+                        </View>
+                      </Animated.View>
+                    ) : (
+                      <Text
+                        style={[
+                          styles.datePlanWhen,
+                          { color: isMyMessage ? Colors.light.background : theme.text },
+                        ]}
+                      >
+                        {item.dateInvite ? formatDateInviteWhen(item.dateInvite.scheduledFor) : 'Date suggestion'}
+                      </Text>
+                    )}
+                    {datePlanStatus !== 'pending' || item.dateInvite?.conciergeRequested ? (
+                      <Animated.View style={isAcceptedDatePlan ? acceptedLockInLiftStyle as any : undefined}>
+                        <View style={styles.datePlanStatusRow}>
+                        {datePlanStatus !== 'pending' ? (
+                          <View
+                            style={[
+                              styles.datePlanStatusChip,
+                              {
+                                backgroundColor: isMyMessage
+                                  ? withAlpha(Colors.light.background, 0.16)
+                                  : withAlpha(theme.tint, 0.12),
+                              },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.datePlanStatusText,
+                                { color: isMyMessage ? Colors.light.background : theme.tint },
+                              ]}
+                            >
+                              {datePlanStatus === 'accepted'
+                                ? 'Confirmed'
+                                : datePlanStatus === 'declined'
+                                ? 'Passed'
+                                : datePlanStatus === 'countered'
+                                ? 'Updated'
+                                : 'Cancelled'}
+                            </Text>
+                          </View>
+                        ) : null}
+                        {item.dateInvite?.conciergeRequested ? (
+                          <View
+                            style={[
+                              styles.datePlanStatusChip,
+                              {
+                                backgroundColor: isMyMessage
+                                  ? withAlpha(Colors.light.background, 0.12)
+                                  : withAlpha(theme.text, 0.08),
+                              },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.datePlanStatusText,
+                                { color: isMyMessage ? Colors.light.background : theme.text },
+                              ]}
+                            >
+                              Betweener helping
+                            </Text>
+                          </View>
+                        ) : null}
+                        </View>
+                      </Animated.View>
+                    ) : null}
+                  </View>
+                  {item.dateInvite?.mapUrl ? (
+                    <Image
+                      source={{ uri: item.dateInvite.mapUrl }}
+                      style={[
+                        styles.datePlanMapImage,
+                        isAcceptedDatePlan && styles.datePlanMapImageConfirmed,
+                      ]}
+                    />
+                  ) : null}
+                  <View style={styles.datePlanPlaceBlock}>
+                    <Text
+                      style={[
+                        styles.datePlanVenue,
+                        isAcceptedDatePlan && styles.datePlanVenueConfirmed,
+                        { color: isMyMessage ? Colors.light.background : theme.text },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {item.dateInvite?.placeName || 'Chosen venue'}
+                    </Text>
+                    {item.dateInvite?.placeAddress ? (
+                      <Text
+                        style={[
+                          styles.datePlanAddress,
+                          isAcceptedDatePlan && styles.datePlanAddressConfirmed,
+                          { color: isMyMessage ? withAlpha(Colors.light.background, 0.78) : theme.textMuted },
+                        ]}
+                        numberOfLines={2}
+                      >
+                        {item.dateInvite.placeAddress}
+                      </Text>
+                    ) : null}
+                    {item.dateInvite?.summary ? (
+                      <Text
+                        style={[
+                          styles.datePlanSummary,
+                          isAcceptedDatePlan && styles.datePlanSummaryConfirmed,
+                          { color: isMyMessage ? withAlpha(Colors.light.background, 0.78) : theme.textMuted },
+                        ]}
+                        numberOfLines={isAcceptedDatePlan ? 1 : 2}
+                      >
+                        {item.dateInvite.summary}
+                      </Text>
+                    ) : null}
+                  </View>
+                  {item.dateInvite?.badges?.length ? (
+                    <View style={[styles.datePlanBadgeRow, isAcceptedDatePlan && styles.datePlanBadgeRowCompact]}>
+                      {item.dateInvite.badges.slice(0, 3).map((badge) => {
+                        const badgeMeta = getDateBadgeMeta(badge);
+                        const badgePalette = getDateBadgePalette({
+                          tone: badgeMeta.tone,
+                          theme,
+                          isDark,
+                          surface: 'message',
+                          isMyMessage,
+                          confirmed: isAcceptedDatePlan,
+                        });
+                        return (
+                          <View
+                            key={badge}
+                            style={[
+                              styles.datePlanTag,
+                              isAcceptedDatePlan && styles.datePlanTagCompact,
+                              isAcceptedDatePlan && styles.datePlanTagConfirmed,
+                              {
+                                backgroundColor: badgePalette.backgroundColor,
+                                borderColor: badgePalette.borderColor,
+                                borderWidth: 1,
+                              },
+                            ]}
+                          >
+                            <View style={styles.datePlanTagContent}>
+                              <MaterialCommunityIcons
+                                name={badgeMeta.icon}
+                                size={12}
+                                color={badgePalette.foregroundColor}
+                                style={styles.datePlanTagIcon}
+                              />
+                              <Text
+                                style={[
+                                  styles.datePlanTagText,
+                                  isAcceptedDatePlan && styles.datePlanTagTextCompact,
+                                  { color: badgePalette.foregroundColor },
+                                ]}
+                              >
+                                {badge}
+                              </Text>
+                            </View>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+                  {item.dateInvite?.note ? (
+                    <View
+                      style={[
+                        styles.datePlanNoteCard,
+                        isAcceptedDatePlan && styles.datePlanNoteCardLight,
+                        { borderColor: isMyMessage ? withAlpha(Colors.light.background, 0.18) : withAlpha(theme.text, 0.12) },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.datePlanNoteLabel,
+                          isAcceptedDatePlan && styles.datePlanNoteLabelCompact,
+                          { color: isMyMessage ? withAlpha(Colors.light.background, 0.7) : theme.textMuted },
+                        ]}
+                      >
+                        Note
+                      </Text>
+                      <Text
+                        style={[
+                          styles.datePlanNoteText,
+                          isAcceptedDatePlan && styles.datePlanNoteTextCompact,
+                          { color: isMyMessage ? Colors.light.background : theme.text },
+                        ]}
+                      >
+                        {item.dateInvite.note}
+                      </Text>
+                    </View>
+                  ) : null}
+                  {canAcceptDatePlan ? (
+                    <View style={styles.datePlanActionRow}>
+                      <TouchableOpacity
+                        style={[
+                          styles.datePlanPrimaryAction,
+                          {
+                            backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.14) : theme.tint,
+                            opacity: datePlanBusy ? 0.7 : 1,
+                          },
+                        ]}
+                        disabled={datePlanBusy}
+                        onPress={() => datePlanPlanId && onAcceptDatePlan(datePlanPlanId)}
+                      >
+                        <Text
+                          style={[
+                            styles.datePlanPrimaryActionText,
+                            { color: isMyMessage ? Colors.light.background : Colors.light.background },
+                          ]}
+                        >
+                          {datePlanBusy ? 'Accepting...' : 'Accept'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          styles.datePlanSecondaryAction,
+                          {
+                            borderColor: isMyMessage
+                              ? withAlpha(Colors.light.background, 0.2)
+                              : withAlpha(theme.text, 0.14),
+                            opacity: datePlanBusy ? 0.7 : 1,
+                          },
+                        ]}
+                        disabled={datePlanBusy}
+                        onPress={() => item.dateInvite && onSuggestAnotherTime(item.dateInvite)}
+                      >
+                        <Text
+                          style={[
+                            styles.datePlanSecondaryActionText,
+                            { color: isMyMessage ? Colors.light.background : theme.text },
+                          ]}
+                        >
+                          Suggest another time
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          styles.datePlanSecondaryAction,
+                          {
+                            borderColor: isMyMessage
+                              ? withAlpha(Colors.light.background, 0.2)
+                              : withAlpha(theme.text, 0.14),
+                            opacity: datePlanBusy ? 0.7 : 1,
+                          },
+                        ]}
+                        disabled={datePlanBusy}
+                        onPress={() => item.dateInvite && onSuggestAnotherPlace(item.dateInvite)}
+                      >
+                        <Text
+                          style={[
+                            styles.datePlanSecondaryActionText,
+                            { color: isMyMessage ? Colors.light.background : theme.text },
+                          ]}
+                        >
+                          Suggest another place
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          styles.datePlanSecondaryAction,
+                          {
+                            borderColor: isMyMessage
+                              ? withAlpha(Colors.light.background, 0.2)
+                              : withAlpha(theme.text, 0.14),
+                            opacity: datePlanBusy ? 0.7 : 1,
+                          },
+                        ]}
+                        disabled={datePlanBusy}
+                        onPress={() => item.dateInvite && onSuggestBoth(item.dateInvite)}
+                      >
+                        <Text
+                          style={[
+                            styles.datePlanSecondaryActionText,
+                            { color: isMyMessage ? Colors.light.background : theme.text },
+                          ]}
+                        >
+                          Suggest both
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                  {canRescheduleDatePlan ? (
+                    <Animated.View style={acceptedLockInLiftStyle as any}>
+                      <View style={styles.datePlanActionRow}>
+                      {canAddDatePlanToCalendar ? (
+                        <TouchableOpacity
+                          style={[
+                            styles.datePlanPrimaryAction,
+                            styles.datePlanPrimaryActionWide,
+                            {
+                              backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.16) : theme.tint,
+                              opacity: datePlanCalendarBusy ? 0.7 : 1,
+                            },
+                          ]}
+                          disabled={datePlanCalendarBusy}
+                          onPress={() => item.dateInvite && onAddDatePlanToCalendar(item.dateInvite)}
+                        >
+                          <View style={styles.datePlanPrimaryActionContent}>
+                            <MaterialCommunityIcons
+                              name="calendar-plus"
+                              size={14}
+                              color={Colors.light.background}
+                            />
+                            <Text
+                              style={[
+                                styles.datePlanPrimaryActionText,
+                                { color: Colors.light.background },
+                              ]}
+                            >
+                              {datePlanCalendarBusy ? 'Adding...' : 'Add to Calendar'}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      ) : null}
+                      {item.dateInvite?.mapLink ? (
+                        <TouchableOpacity
+                          style={[
+                            styles.datePlanSecondaryAction,
+                            styles.datePlanSecondaryActionStrong,
+                            {
+                              borderColor: isMyMessage
+                                ? withAlpha(Colors.light.background, 0.2)
+                                : withAlpha(theme.text, 0.14),
+                              opacity: datePlanBusy ? 0.7 : 1,
+                            },
+                          ]}
+                          disabled={datePlanBusy}
+                          onPress={() => item.dateInvite?.mapLink && Linking.openURL(item.dateInvite.mapLink).catch(() => {})}
+                        >
+                          <View style={styles.datePlanSecondaryActionContent}>
+                            <MaterialCommunityIcons
+                              name="map-marker-path"
+                              size={14}
+                              color={isMyMessage ? Colors.light.background : theme.text}
+                            />
+                            <Text
+                              style={[
+                                styles.datePlanSecondaryActionText,
+                                { color: isMyMessage ? Colors.light.background : theme.text },
+                              ]}
+                            >
+                              Open in Maps
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      ) : null}
+                      <TouchableOpacity
+                        style={[
+                          styles.datePlanSecondaryAction,
+                          styles.datePlanSecondaryActionStrong,
+                          {
+                            borderColor: isMyMessage
+                              ? withAlpha(Colors.light.background, 0.2)
+                              : withAlpha(theme.text, 0.14),
+                            opacity: datePlanBusy ? 0.7 : 1,
+                          },
+                        ]}
+                        disabled={datePlanBusy}
+                        onPress={() => item.dateInvite && onRescheduleDatePlan(item.dateInvite)}
+                        >
+                          <Text
+                            style={[
+                              styles.datePlanSecondaryActionText,
+                              { color: isMyMessage ? Colors.light.background : theme.text },
+                            ]}
+                          >
+                            Reschedule date
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </Animated.View>
+                  ) : null}
+                  {item.type === 'date_plan' && isMyMessage && datePlanStatus === 'pending' ? (
+                    <>
+                      <Text style={[styles.datePlanPendingText, { color: withAlpha(Colors.light.background, 0.82) }]}>
+                        Waiting for their reply
+                      </Text>
+                      {canCancelDatePlan ? (
+                        <View style={styles.datePlanActionRow}>
+                          <TouchableOpacity
+                            style={[
+                              styles.datePlanSecondaryAction,
+                              {
+                                borderColor: withAlpha(Colors.light.background, 0.2),
+                                opacity: datePlanBusy ? 0.7 : 1,
+                              },
+                            ]}
+                            disabled={datePlanBusy}
+                            onPress={() => datePlanPlanId && onCancelDatePlan(datePlanPlanId)}
+                          >
+                            <Text style={[styles.datePlanSecondaryActionText, { color: Colors.light.background }]}>
+                              {datePlanBusy ? 'Cancelling...' : 'Cancel suggestion'}
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {canRequestDatePlanConcierge ? (
+                    <Animated.View style={acceptedLockInLiftStyle as any}>
+                      <TouchableOpacity
+                        style={[
+                          styles.datePlanConciergeButton,
+                          {
+                            borderColor: isMyMessage
+                              ? withAlpha(Colors.light.background, 0.22)
+                              : withAlpha(theme.tint, 0.18),
+                            backgroundColor: isMyMessage
+                              ? withAlpha(Colors.light.background, 0.08)
+                              : withAlpha(theme.tint, 0.08),
+                            opacity: datePlanBusy ? 0.7 : 1,
+                          },
+                        ]}
+                        disabled={datePlanBusy}
+                        onPress={() => datePlanPlanId && onRequestDatePlanConcierge(datePlanPlanId)}
+                      >
+                        <MaterialCommunityIcons
+                          name="account-tie-hat-outline"
+                          size={14}
+                          color={isMyMessage ? Colors.light.background : theme.tint}
+                        />
+                        <Text
+                          style={[
+                            styles.datePlanConciergeText,
+                            { color: isMyMessage ? Colors.light.background : theme.tint },
+                          ]}
+                        >
+                          {datePlanBusy ? 'Notifying Betweener...' : 'Get Betweener help'}
+                        </Text>
+                      </TouchableOpacity>
+                    </Animated.View>
+                  ) : null}
+                  {canRescheduleDatePlan && canCancelDatePlan ? (
+                    <TouchableOpacity
+                      style={[
+                        styles.datePlanTertiaryAction,
+                        { opacity: datePlanBusy ? 0.7 : 1 },
+                      ]}
+                      disabled={datePlanBusy}
+                      onPress={() => datePlanPlanId && onCancelDatePlan(datePlanPlanId)}
+                    >
+                      <Text
+                        style={[
+                          styles.datePlanTertiaryActionText,
+                          { color: isMyMessage ? withAlpha(Colors.light.background, 0.84) : '#d96b6b' },
+                        ]}
+                      >
+                        {datePlanBusy ? 'Cancelling...' : 'Cancel date'}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  {item.dateInvite?.mapLink && !canRescheduleDatePlan ? (
+                    <View style={styles.datePlanFooterRow}>
+                      <View style={styles.datePlanFooterLead}>
+                        <MaterialCommunityIcons
+                          name="map-marker-path"
+                          size={13}
+                          color={isMyMessage ? withAlpha(Colors.light.background, 0.82) : theme.textMuted}
+                        />
+                        <Text style={[styles.datePlanFooterText, { color: isMyMessage ? withAlpha(Colors.light.background, 0.82) : theme.textMuted }]}>
+                          Open in Maps
+                        </Text>
+                      </View>
+                      <MaterialCommunityIcons
+                        name="chevron-right"
+                        size={16}
+                        color={isMyMessage ? withAlpha(Colors.light.background, 0.72) : theme.textMuted}
+                      />
+                    </View>
+                  ) : null}
                 </View>
               ) : item.type === 'location' ? (
                 <View style={styles.locationMessageContainer}>
@@ -1726,6 +2816,16 @@ const MessageRowItem = memo(
     prev.onEditMessage === next.onEditMessage &&
     prev.onOpenEditHistory === next.onOpenEditHistory &&
     prev.onOpenViewOnce === next.onOpenViewOnce &&
+    prev.onAcceptDatePlan === next.onAcceptDatePlan &&
+    prev.onSuggestAnotherTime === next.onSuggestAnotherTime &&
+    prev.onSuggestAnotherPlace === next.onSuggestAnotherPlace &&
+    prev.onSuggestBoth === next.onSuggestBoth &&
+    prev.onRescheduleDatePlan === next.onRescheduleDatePlan &&
+    prev.onCancelDatePlan === next.onCancelDatePlan &&
+    prev.onRequestDatePlanConcierge === next.onRequestDatePlanConcierge &&
+    prev.onAddDatePlanToCalendar === next.onAddDatePlanToCalendar &&
+    prev.datePlanActionId === next.datePlanActionId &&
+    prev.datePlanCalendarActionId === next.datePlanCalendarActionId &&
     prev.viewOnceViewedByMe === next.viewOnceViewedByMe &&
     prev.viewOnceViewedByPeer === next.viewOnceViewedByPeer &&
     prev.timeLabel === next.timeLabel &&
@@ -1845,13 +2945,54 @@ export default function ConversationScreen() {
   const [chatSafetyVisible, setChatSafetyVisible] = useState(false);
   const [peerOnline, setPeerOnline] = useState(initialOnline);
   const [peerLastSeen, setPeerLastSeen] = useState<Date | null>(initialLastSeen);
-  const [peerProfile, setPeerProfile] = useState<{ id: string; user_id: string; verification_level?: number | null } | null>(null);
+  const [peerProfile, setPeerProfile] = useState<{
+    id: string;
+    user_id: string;
+    verification_level?: number | null;
+    full_name?: string | null;
+    city?: string | null;
+    region?: string | null;
+    location?: string | null;
+  } | null>(null);
   const [peerInterests, setPeerInterests] = useState<string[]>([]);
   const [myInterests, setMyInterests] = useState<string[]>([]);
   const [matchAccepted, setMatchAccepted] = useState(false);
   const [conversationSignal, setConversationSignal] = useState<string | null>(null);
   const [pendingIntentRequest, setPendingIntentRequest] = useState<IntentRequestSummary | null>(null);
   const [_pendingIntentLoading, setPendingIntentLoading] = useState(false);
+  const [betweenerVenues, setBetweenerVenues] = useState<DatePlaceOption[]>([]);
+  const [_datePlanStateById, setDatePlanStateById] = useState<Record<string, DatePlanRow>>({});
+  const [datePlannerVisible, setDatePlannerVisible] = useState(false);
+  const [datePlannerMode, setDatePlannerMode] = useState<DatePlannerMode>('new');
+  const [datePlannerParentPlanId, setDatePlannerParentPlanId] = useState<string | null>(null);
+  const [datePlannerBaselineInvite, setDatePlannerBaselineInvite] = useState<NonNullable<MessageType['dateInvite']> | null>(null);
+  const [datePlannerTab, setDatePlannerTab] = useState<'picks' | 'nearby' | 'search' | 'preferred'>('picks');
+  const [datePlannerDate, setDatePlannerDate] = useState(() => {
+    const base = new Date();
+    base.setDate(base.getDate() + 1);
+    base.setHours(19, 0, 0, 0);
+    return base;
+  });
+  const [datePickerMode, setDatePickerMode] = useState<'date' | 'time' | null>(null);
+  const [dateNote, setDateNote] = useState('');
+  const [dateSearchQuery, setDateSearchQuery] = useState('');
+  const [dateSuggestions, setDateSuggestions] = useState<PlaceSuggestion[]>([]);
+  const [dateSelectedPlace, setDateSelectedPlace] = useState<DatePlaceOption | null>(null);
+  const [dateSending, setDateSending] = useState(false);
+  const [datePlanActionId, setDatePlanActionId] = useState<string | null>(null);
+  const [datePlanCalendarActionId, setDatePlanCalendarActionId] = useState<string | null>(null);
+  const [dateVenueDetailPlace, setDateVenueDetailPlace] = useState<DatePlaceOption | null>(null);
+  const [datePlanConciergeVisible, setDatePlanConciergeVisible] = useState(false);
+  const [datePlanConciergePlanId, setDatePlanConciergePlanId] = useState<string | null>(null);
+  const [datePlanConciergeSelections, setDatePlanConciergeSelections] = useState<string[]>([]);
+  const [datePlanConciergeNote, setDatePlanConciergeNote] = useState('');
+  const [dateEligibleMeta, setDateEligibleMeta] = useState<{
+    hasAcceptedConnectIntent: boolean;
+    hasGuessInterest: boolean;
+  }>({
+    hasAcceptedConnectIntent: false,
+    hasGuessInterest: false,
+  });
   const [inputText, setInputText] = useState('');
   const prefillConsumedRef = useRef(false);
   const [isTyping, setIsTyping] = useState(false);
@@ -1957,7 +3098,7 @@ export default function ConversationScreen() {
       }
       const { data, error } = await supabase
         .from('profiles')
-        .select('id,user_id,verification_level')
+        .select('id,user_id,verification_level,full_name,city,region,location')
         .eq('user_id', conversationId)
         .maybeSingle();
       if (error) {
@@ -2007,6 +3148,46 @@ export default function ConversationScreen() {
       cancelled = true;
     };
   }, [peerProfile?.id, profile?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadBetweenerVenues = async () => {
+      const { data, error } = await supabase
+        .from('betweener_venues')
+        .select('id,name,address,city,lat,lng,badges,summary,sort_order,metadata')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true })
+        .order('name', { ascending: true });
+      if (error) {
+        console.log('[chat] load betweener venues error', error);
+        return;
+      }
+      if (cancelled) return;
+      const mapped = ((data as BetweenerVenueRow[] | null) ?? []).map((venue) => ({
+        id: venue.id,
+        venueId: venue.id,
+        name: venue.name,
+        address: venue.address,
+        city: venue.city,
+        lat: venue.lat,
+        lng: venue.lng,
+        badges: Array.isArray(venue.badges)
+          ? venue.badges.filter((value): value is string => typeof value === 'string')
+          : [],
+        summary: venue.summary,
+        source: 'betweener_pick' as const,
+        metadata:
+          venue.metadata && typeof venue.metadata === 'object' && !Array.isArray(venue.metadata)
+            ? (venue.metadata as Record<string, unknown>)
+            : null,
+      }));
+      setBetweenerVenues(mapped);
+    };
+    void loadBetweenerVenues();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -2083,6 +3264,48 @@ export default function ConversationScreen() {
       void refreshPendingIntent();
     }, [refreshPendingIntent]),
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadDateEligibilityMeta = async () => {
+      if (!profile?.id || !peerProfile?.id) {
+        if (!cancelled) {
+          setDateEligibleMeta({
+            hasAcceptedConnectIntent: false,
+            hasGuessInterest: false,
+          });
+        }
+        return;
+      }
+      const { data, error } = await supabase
+        .from('intent_requests')
+        .select('type,status,metadata')
+        .or(
+          `and(actor_id.eq.${profile.id},recipient_id.eq.${peerProfile.id}),and(actor_id.eq.${peerProfile.id},recipient_id.eq.${profile.id})`,
+        )
+        .limit(24);
+      if (error) {
+        console.log('[chat] date eligibility fetch error', error);
+        return;
+      }
+      if (cancelled) return;
+      const rows = (data as { type: string; status: string; metadata?: Record<string, unknown> | null }[] | null) ?? [];
+      setDateEligibleMeta({
+        hasAcceptedConnectIntent: rows.some(
+          (row) => row.type === 'connect' && (row.status === 'accepted' || row.status === 'matched'),
+        ),
+        hasGuessInterest: rows.some(
+          (row) =>
+            row.type === 'connect' &&
+            String((row.metadata as any)?.source || '').toLowerCase() === 'guess_prompt',
+        ),
+      });
+    };
+    void loadDateEligibilityMeta();
+    return () => {
+      cancelled = true;
+    };
+  }, [peerProfile?.id, profile?.id]);
 
   const acceptPendingIntent = useCallback(async () => {
     if (!pendingIntentRequest || !profile?.id) return;
@@ -2161,6 +3384,138 @@ export default function ConversationScreen() {
     profile?.verification_level,
     user?.id,
   ]);
+
+  const peerLocationLabel = useMemo(
+    () =>
+      [peerProfile?.city, peerProfile?.location, peerProfile?.region]
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .join(' · '),
+    [peerProfile?.city, peerProfile?.location, peerProfile?.region],
+  );
+
+  const recommendedDatePicks = useMemo(() => {
+    const availablePicks = betweenerVenues.length > 0 ? betweenerVenues : [...FALLBACK_BETWEENER_DATE_PICKS];
+    const preferredCity = (peerProfile?.city || peerProfile?.location || peerProfile?.region || '').toLowerCase();
+    if (!preferredCity) return [...availablePicks];
+    const prioritized = availablePicks.filter((venue) =>
+      preferredCity.includes(venue.city.toLowerCase()),
+    );
+    return prioritized.length > 0
+      ? [...prioritized, ...availablePicks.filter((venue) => !prioritized.includes(venue))]
+      : [...availablePicks];
+  }, [betweenerVenues, peerProfile?.city, peerProfile?.location, peerProfile?.region]);
+
+  const preferredDatePicks = useMemo(() => {
+    const availablePicks = betweenerVenues.length > 0 ? betweenerVenues : [...FALLBACK_BETWEENER_DATE_PICKS];
+    const preferredCity = (peerProfile?.city || peerProfile?.location || peerProfile?.region || '').toLowerCase();
+    if (!preferredCity) return [];
+    return availablePicks.filter((venue) => preferredCity.includes(venue.city.toLowerCase()));
+  }, [betweenerVenues, peerProfile?.city, peerProfile?.location, peerProfile?.region]);
+
+  const renderedMessages = useMemo(() => dedupeMessagesById(messages), [messages]);
+  const chatMessageCount = useMemo(
+    () => renderedMessages.filter((message) => !message.isSystem).length,
+    [renderedMessages],
+  );
+
+  const hasActiveChat = chatMessageCount > 0;
+  const hasStrongMutualSignals = Boolean(conversationSignal) && chatMessageCount >= 6;
+  const canPlanDate =
+    matchAccepted ||
+    dateEligibleMeta.hasAcceptedConnectIntent ||
+    hasActiveChat ||
+    dateEligibleMeta.hasGuessInterest ||
+    hasStrongMutualSignals;
+
+  const datePlanUnlockReason = useMemo(() => {
+    if (matchAccepted) return 'Unlocked because you are already matched.';
+    if (dateEligibleMeta.hasAcceptedConnectIntent) return 'Unlocked because a connect request has already been accepted.';
+    if (hasActiveChat) return 'Unlocked because this conversation is already active.';
+    if (dateEligibleMeta.hasGuessInterest) return 'Unlocked because a prompt win already turned into interest.';
+    if (hasStrongMutualSignals) return 'Unlocked because the conversation already shows strong mutual signals.';
+    return 'Keep warming the connection first, then plan the date from chat.';
+  }, [dateEligibleMeta.hasAcceptedConnectIntent, dateEligibleMeta.hasGuessInterest, hasActiveChat, hasStrongMutualSignals, matchAccepted]);
+
+  const selectedDateMapUrl = useMemo(() => {
+    if (!dateSelectedPlace) return null;
+    return getStaticMapUrl(dateSelectedPlace.lat, dateSelectedPlace.lng);
+  }, [dateSelectedPlace]);
+  const dateQuickSlots = useMemo(() => buildDateQuickSlots(new Date()), [datePlannerVisible]);
+  const selectedDateExperience = useMemo(() => getDatePlaceExperience(dateSelectedPlace), [dateSelectedPlace]);
+  const dateVenueDetailExperience = useMemo(() => getDatePlaceExperience(dateVenueDetailPlace), [dateVenueDetailPlace]);
+  const conciergePlanSummary = useMemo(
+    () => (datePlanConciergePlanId ? _datePlanStateById[datePlanConciergePlanId] ?? null : null),
+    [_datePlanStateById, datePlanConciergePlanId],
+  );
+  const datePlannerTitle = useMemo(() => {
+    if (datePlannerMode === 'counter_time') return 'Suggest another time';
+    if (datePlannerMode === 'counter_place') return 'Suggest another place';
+    if (datePlannerMode === 'counter_both') return 'Suggest both';
+    if (datePlannerMode === 'reschedule') return 'Reschedule date';
+    return 'Suggest a real plan';
+  }, [datePlannerMode]);
+  const datePlannerSubtitle = useMemo(() => {
+    if (datePlannerMode === 'counter_time') {
+      return 'Keep the plan warm by proposing a time that works better.';
+    }
+    if (datePlannerMode === 'counter_place') {
+      return 'Keep the momentum and offer a place that feels right.';
+    }
+    if (datePlannerMode === 'counter_both') {
+      return 'Update the time and place together so the plan lands better.';
+    }
+    if (datePlannerMode === 'reschedule') {
+      return 'Propose an updated plan without overwriting the one you already agreed on.';
+    }
+    return datePlanUnlockReason;
+  }, [datePlanUnlockReason, datePlannerMode]);
+  const visibleDatePlanIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          renderedMessages
+            .map((message) => message.dateInvite?.planId)
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ),
+    [renderedMessages],
+  );
+
+  const upsertDatePlanRows = useCallback((rows: DatePlanRow[]) => {
+    if (rows.length === 0) return;
+    setDatePlanStateById((prev) => {
+      const next = { ...prev };
+      rows.forEach((row) => {
+        next[row.id] = row;
+      });
+      return next;
+    });
+    setMessages((prev) =>
+      prev.map((message) => {
+        const planId = message.dateInvite?.planId;
+        if (!planId) return message;
+        const row = rows.find((entry) => entry.id === planId);
+        if (!row || !message.dateInvite) return message;
+        return {
+          ...message,
+          dateInvite: mergeDateInviteWithPlanRow(message.dateInvite, row),
+        };
+      }),
+    );
+  }, []);
+
+  const refreshDatePlan = useCallback(async (planId: string) => {
+    const { data, error } = await supabase
+      .from('date_plans')
+      .select('*')
+      .eq('id', planId)
+      .single();
+    if (error || !data) {
+      console.log('[chat] refresh date plan error', error);
+      return;
+    }
+    upsertDatePlanRows([data as DatePlanRow]);
+  }, [upsertDatePlanRows]);
   
   const messagesRef = useRef<MessageType[]>([]);
   const flatListRef = useRef<FlatList>(null);
@@ -2189,6 +3544,7 @@ export default function ConversationScreen() {
   const pinnedMessageIdsRef = useRef<Set<string>>(new Set());
   const attachmentAnim = useRef(new Animated.Value(0)).current;
   const locationSheetAnim = useRef(new Animated.Value(0)).current;
+  const suppressDateSuggestionRef = useRef(false);
   const pinnedBannerAnim = useRef(new Animated.Value(0)).current;
   const reconnectPendingRef = useRef(false);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2797,6 +4153,7 @@ export default function ConversationScreen() {
       let documentTypeLabel: string | null | undefined;
       let messageText = row.text ?? '';
       let location: MessageType['location'] | undefined;
+      let dateInvite: MessageType['dateInvite'] | undefined;
       let sticker: MessageType['sticker'] | undefined;
       const replyToId = row.reply_to_message_id ?? null;
 
@@ -2870,6 +4227,14 @@ export default function ConversationScreen() {
             messageText = '';
           }
         }
+        if (messageType === 'text' && messageText.startsWith(DATE_PLAN_TEXT_PREFIX)) {
+          const parsedDateInvite = parseDateInviteMessage(messageText);
+          if (parsedDateInvite) {
+            resolvedType = 'date_plan';
+            dateInvite = parsedDateInvite;
+            messageText = '';
+          }
+        }
         if (
           messageType === 'mood_sticker' ||
           messageText.startsWith(STICKER_TEXT_PREFIX)
@@ -2891,6 +4256,7 @@ export default function ConversationScreen() {
         documentSizeLabel = undefined;
         documentTypeLabel = undefined;
         location = undefined;
+        dateInvite = undefined;
         sticker = undefined;
       }
 
@@ -2937,6 +4303,7 @@ export default function ConversationScreen() {
               }
             : undefined,
         location,
+        dateInvite,
         replyToId,
         sticker,
       };
@@ -3013,13 +4380,13 @@ export default function ConversationScreen() {
 
   const locationViewerMessage = useMemo(() => {
     if (!locationViewerMessageId) return null;
-    return messages.find((msg) => msg.id === locationViewerMessageId) ?? null;
-  }, [locationViewerMessageId, messages]);
+    return renderedMessages.find((msg) => msg.id === locationViewerMessageId) ?? null;
+  }, [locationViewerMessageId, renderedMessages]);
 
   const actionMessage = useMemo(() => {
     if (!actionMessageId) return null;
-    return messages.find((msg) => msg.id === actionMessageId) ?? null;
-  }, [actionMessageId, messages]);
+    return renderedMessages.find((msg) => msg.id === actionMessageId) ?? null;
+  }, [actionMessageId, renderedMessages]);
 
   const isActionPinned = useMemo(() => {
     if (!actionMessage) return false;
@@ -3038,8 +4405,8 @@ export default function ConversationScreen() {
 
   const reactionSheetMessage = useMemo(() => {
     if (!reactionSheetMessageId) return null;
-    return messages.find((msg) => msg.id === reactionSheetMessageId) ?? null;
-  }, [messages, reactionSheetMessageId]);
+    return renderedMessages.find((msg) => msg.id === reactionSheetMessageId) ?? null;
+  }, [renderedMessages, reactionSheetMessageId]);
 
   const reactionSummary = useMemo(() => {
     if (!reactionSheetMessage) return [];
@@ -3200,8 +4567,395 @@ export default function ConversationScreen() {
     [locationStatus, selectPlace]
   );
 
+  const handleOpenDatePlanner = useCallback(() => {
+    if (!canPlanDate) {
+      Alert.alert('Suggest a date', datePlanUnlockReason);
+      return;
+    }
+    const defaultPick = recommendedDatePicks[0];
+    setDatePlannerMode('new');
+    setDatePlannerParentPlanId(null);
+    setDatePlannerBaselineInvite(null);
+    setDatePlannerTab(defaultPick ? 'picks' : hasPlacesKey ? 'search' : 'preferred');
+    setDateSearchQuery('');
+    setDateSuggestions([]);
+    setDateNote('');
+    setDatePickerMode(null);
+    setDateSelectedPlace(
+      defaultPick
+        ? {
+            ...defaultPick,
+            badges: [...defaultPick.badges],
+          }
+        : null,
+    );
+    setDatePlannerVisible(true);
+  }, [canPlanDate, datePlanUnlockReason, hasPlacesKey, recommendedDatePicks]);
+
+  const openCounterDatePlanner = useCallback(
+    (invite: MessageType['dateInvite'], mode: Extract<DatePlannerMode, 'counter_time' | 'counter_place' | 'counter_both'>) => {
+      if (!invite?.planId) return;
+      setDatePlannerMode(mode);
+      setDatePlannerParentPlanId(invite.planId);
+      setDatePlannerBaselineInvite(invite);
+      setDateNote('');
+      setDateSuggestions([]);
+      setDateSearchQuery('');
+      setDatePickerMode(null);
+      setDatePlannerDate(new Date(invite.scheduledFor));
+      setDateSelectedPlace({
+        id: invite.venueId || invite.planId,
+        venueId: invite.venueId ?? null,
+        name: invite.placeName,
+        address: invite.placeAddress ?? null,
+        lat: invite.lat ?? 0,
+        lng: invite.lng ?? 0,
+        source: invite.source,
+        badges: [...(invite.badges ?? [])],
+        summary: invite.summary ?? null,
+        city: invite.city ?? null,
+      });
+      setDatePlannerTab(
+        mode === 'counter_time'
+          ? 'preferred'
+          : invite.source === 'betweener_pick'
+          ? 'picks'
+          : invite.source === 'preferred'
+          ? 'preferred'
+          : 'search',
+      );
+      setDatePlannerVisible(true);
+    },
+    [],
+  );
+
+  const openRescheduleDatePlanner = useCallback((invite: MessageType['dateInvite']) => {
+    if (!invite?.planId) return;
+    setDatePlannerMode('reschedule');
+    setDatePlannerParentPlanId(invite.planId);
+    setDatePlannerBaselineInvite(invite);
+    setDateNote(invite.note ?? '');
+    setDateSuggestions([]);
+    setDateSearchQuery('');
+    setDatePickerMode(null);
+    setDatePlannerDate(new Date(invite.scheduledFor));
+    setDateSelectedPlace({
+      id: invite.venueId || invite.planId,
+      venueId: invite.venueId ?? null,
+      name: invite.placeName,
+      address: invite.placeAddress ?? null,
+      lat: invite.lat ?? 0,
+      lng: invite.lng ?? 0,
+      source: invite.source,
+      badges: [...(invite.badges ?? [])],
+      summary: invite.summary ?? null,
+      city: invite.city ?? null,
+    });
+    setDatePlannerTab(
+      invite.source === 'betweener_pick'
+        ? 'picks'
+        : invite.source === 'preferred'
+        ? 'preferred'
+        : 'search',
+    );
+    setDatePlannerVisible(true);
+  }, []);
+
+  const handleCloseDatePlanner = useCallback(() => {
+    Keyboard.dismiss();
+    setDatePickerMode(null);
+    setDatePlannerMode('new');
+    setDatePlannerParentPlanId(null);
+    setDatePlannerBaselineInvite(null);
+    setDatePlannerVisible(false);
+  }, []);
+
+  const handleDatePickerChange = useCallback(
+    (event: DateTimePickerEvent, selected?: Date) => {
+      if (Platform.OS !== 'ios') {
+        setDatePickerMode(null);
+      }
+      if (event.type === 'dismissed' || !selected) return;
+      setDatePlannerDate((prev) => {
+        const next = new Date(prev);
+        if (datePickerMode === 'date') {
+          next.setFullYear(selected.getFullYear(), selected.getMonth(), selected.getDate());
+        } else {
+          next.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
+        }
+        return next;
+      });
+    },
+    [datePickerMode],
+  );
+
+  const selectDatePlace = useCallback((place: DatePlaceOption) => {
+    suppressDateSuggestionRef.current = true;
+    setDateSelectedPlace(place);
+    setDateSearchQuery(place.name);
+    setDateSuggestions([]);
+  }, []);
+
+  const handleDateSuggestionPress = useCallback(
+    async (suggestion: PlaceSuggestion) => {
+      const details = await fetchPlaceDetails(suggestion.id);
+      if (!details) return;
+      selectDatePlace({
+        ...details,
+        source: 'search',
+      });
+    },
+    [fetchPlaceDetails, selectDatePlace],
+  );
+
+  const seedPreferredAreaSearch = useCallback(() => {
+    if (!peerLocationLabel) return;
+    setDatePlannerTab('search');
+    setDateSearchQuery(`${peerLocationLabel} restaurant`);
+    setDateSuggestions([]);
+  }, [peerLocationLabel]);
+
+  const sendDateInvitation = useCallback(async () => {
+    if (!dateSelectedPlace || !user?.id || !conversationId || isBlockedByMe || isChatBlocked || dateSending) {
+      return;
+    }
+    const scheduledFor = datePlannerDate;
+    if (scheduledFor.getTime() <= Date.now()) {
+      Alert.alert('Suggest a date', 'Choose a future time for the suggestion.');
+      return;
+    }
+    let responseKind: DatePlanResponseKind = 'initial';
+    if (datePlannerParentPlanId && datePlannerBaselineInvite) {
+      const timeChanged = scheduledFor.getTime() !== datePlannerBaselineInvite.scheduledFor.getTime();
+      const placeChanged = !isSameDatePlanPlace(datePlannerBaselineInvite, dateSelectedPlace);
+      if (!timeChanged && !placeChanged) {
+        Alert.alert(
+          datePlannerMode === 'reschedule' ? 'Reschedule date' : 'Update suggestion',
+          'Change the time, the place, or both before sending the update.',
+        );
+        return;
+      }
+      responseKind = timeChanged && placeChanged ? 'counter_both' : timeChanged ? 'counter_time' : 'counter_place';
+    }
+    setDateSending(true);
+    const tempId = `temp-date-${Date.now()}`;
+    const text = buildDateInvitePayload({
+      parentPlanId: datePlannerParentPlanId,
+      scheduledFor,
+      place: dateSelectedPlace,
+      note: dateNote,
+      responseKind,
+    });
+    const dateInvite = parseDateInviteMessage(text);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: tempId,
+        text,
+        senderId: user.id,
+        timestamp: new Date(),
+        type: 'date_plan',
+        reactions: [],
+        status: 'sending',
+        dateInvite: dateInvite ?? undefined,
+        replyToId: replyingTo?.id ?? null,
+        replyTo: replyingTo || undefined,
+      },
+    ]);
+    setReplyingTo(null);
+    try {
+      if (!peerProfile?.id) {
+        throw new Error('Unable to resolve the person you are chatting with.');
+      }
+      const { data: sendData, error: sendError } = await supabase.rpc('rpc_send_date_plan', {
+        p_recipient_profile_id: peerProfile.id,
+        p_scheduled_for: scheduledFor.toISOString(),
+        p_place_name: dateSelectedPlace.name,
+        p_place_address: dateSelectedPlace.address ?? null,
+        p_place_source: dateSelectedPlace.source,
+        p_place_badges: dateSelectedPlace.badges ?? [],
+        p_place_summary: dateSelectedPlace.summary ?? null,
+        p_city: dateSelectedPlace.city ?? null,
+        p_lat: dateSelectedPlace.lat,
+        p_lng: dateSelectedPlace.lng,
+        p_note: dateNote.trim() || null,
+        p_venue_id: dateSelectedPlace.venueId ?? null,
+        p_parent_plan_id: datePlannerParentPlanId,
+        p_response_kind: responseKind,
+        p_reply_to_message_id: replyingTo?.id ?? null,
+      });
+      const created = sendData?.[0];
+      if (sendError || !created?.message_id) {
+        console.log('[chat] send date invitation error', sendError);
+        setMessages((prev) => prev.filter((message) => message.id !== tempId));
+        Alert.alert('Suggest a date', sendError?.message || 'Unable to send the suggestion right now.');
+        return;
+      }
+      const { data: messageData, error: messageError } = await supabase
+        .from('messages')
+        .select(MESSAGE_SELECT_FIELDS)
+        .eq('id', created.message_id)
+        .single();
+      if (messageError || !messageData) {
+        console.log('[chat] fetch created date message error', messageError);
+        setMessages((prev) => prev.filter((message) => message.id !== tempId));
+        Alert.alert('Suggest a date', 'The suggestion was created, but chat could not refresh it yet.');
+        return;
+      }
+      setMessages((prev) =>
+        linkReplies(prev.map((message) => (message.id === tempId ? mapRowToMessage(messageData as MessageRow) : message))),
+      );
+      handleCloseDatePlanner();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    } catch (error) {
+      console.log('[chat] unexpected date invitation error', error);
+      setMessages((prev) => prev.filter((message) => message.id !== tempId));
+      Alert.alert('Suggest a date', error instanceof Error ? error.message : 'Unable to send the suggestion right now.');
+    } finally {
+      setDateSending(false);
+    }
+  }, [dateNote, datePlannerBaselineInvite, datePlannerDate, datePlannerMode, datePlannerParentPlanId, dateSelectedPlace, dateSending, handleCloseDatePlanner, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, peerProfile?.id, replyingTo, user?.id]);
+
+  const handleAcceptDatePlan = useCallback(async (planId: string) => {
+    if (datePlanActionId === planId) return;
+    setDatePlanActionId(planId);
+    try {
+      const { error } = await supabase.rpc('rpc_accept_date_plan', {
+        p_plan_id: planId,
+      });
+      if (error) {
+        console.log('[chat] accept date plan error', error);
+        Alert.alert('Date suggestion', error.message || 'Unable to accept this suggestion right now.');
+        return;
+      }
+      await refreshDatePlan(planId);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    } finally {
+      setDatePlanActionId((current) => (current === planId ? null : current));
+    }
+  }, [datePlanActionId, refreshDatePlan]);
+
+  const handleCancelDatePlan = useCallback(async (planId: string) => {
+    if (datePlanActionId === planId) return;
+    setDatePlanActionId(planId);
+    try {
+      const { error } = await supabase.rpc('rpc_cancel_date_plan', {
+        p_plan_id: planId,
+      });
+      if (error) {
+        console.log('[chat] cancel date plan error', error);
+        Alert.alert('Date suggestion', error.message || 'Unable to cancel this plan right now.');
+        return;
+      }
+      await refreshDatePlan(planId);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    } finally {
+      setDatePlanActionId((current) => (current === planId ? null : current));
+    }
+  }, [datePlanActionId, refreshDatePlan]);
+
+  const handleRequestDatePlanConcierge = useCallback((planId: string) => {
+    setDatePlanConciergePlanId(planId);
+    setDatePlanConciergeSelections([]);
+    setDatePlanConciergeNote('');
+    setDatePlanConciergeVisible(true);
+  }, []);
+
+  const handleAddDatePlanToCalendar = useCallback(async (invite: MessageType['dateInvite']) => {
+    if (!invite) return;
+    if (Platform.OS === 'web') {
+      Alert.alert('Add to Calendar', 'Calendar saving is available in the iOS and Android app.');
+      return;
+    }
+
+    const actionId = invite.planId ?? `${invite.placeName}-${invite.scheduledFor.toISOString()}`;
+
+    try {
+      setDatePlanCalendarActionId(actionId);
+
+      const startDate = new Date(invite.scheduledFor);
+      const endDate = new Date(startDate);
+      endDate.setHours(endDate.getHours() + 2);
+
+      const noteParts = [
+        invite.summary?.trim() || null,
+        invite.note?.trim() ? `Note: ${invite.note.trim()}` : null,
+        invite.mapLink ? `Maps: ${invite.mapLink}` : null,
+      ].filter(Boolean);
+
+      const result = await Calendar.createEventInCalendarAsync({
+        title: userName ? `Date with ${userName}` : 'Betweener date plan',
+        startDate,
+        endDate,
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        location: invite.placeAddress || invite.placeName,
+        notes: noteParts.length ? noteParts.join('\n\n') : undefined,
+        url: invite.mapLink ?? undefined,
+      });
+
+      if (result.action === Calendar.CalendarDialogResultActions.saved || result.action === Calendar.CalendarDialogResultActions.done) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      }
+    } catch (error: any) {
+      console.log('[chat] add date plan to calendar error', error);
+      Alert.alert('Add to Calendar', error?.message || 'Unable to open your calendar right now.');
+    } finally {
+      setDatePlanCalendarActionId(null);
+    }
+  }, [userName]);
+
+  const handleCloseDatePlanConcierge = useCallback(() => {
+    setDatePlanConciergeVisible(false);
+    setDatePlanConciergePlanId(null);
+    setDatePlanConciergeSelections([]);
+    setDatePlanConciergeNote('');
+  }, []);
+
+  const toggleDatePlanConciergeSelection = useCallback((optionId: string) => {
+    setDatePlanConciergeSelections((prev) =>
+      prev.includes(optionId) ? prev.filter((value) => value !== optionId) : [...prev, optionId],
+    );
+  }, []);
+
+  const submitDatePlanConciergeRequest = useCallback(async () => {
+    const planId = datePlanConciergePlanId;
+    if (!planId) return;
+    if (datePlanActionId === planId) return;
+    if (datePlanConciergeSelections.length === 0 && !datePlanConciergeNote.trim()) {
+      Alert.alert('Betweener help', 'Choose at least one way Betweener can help or add a short note.');
+      return;
+    }
+    setDatePlanActionId(planId);
+    try {
+      const selectedLabels = CONCIERGE_SERVICE_OPTIONS.filter((option) =>
+        datePlanConciergeSelections.includes(option.id),
+      ).map((option) => option.title);
+      const conciergeBrief = [
+        selectedLabels.length > 0 ? `Services: ${selectedLabels.join(', ')}` : null,
+        datePlanConciergeNote.trim() ? `Member note: ${datePlanConciergeNote.trim()}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      const { error } = await supabase.rpc('rpc_request_date_plan_concierge', {
+        p_plan_id: planId,
+        p_note: conciergeBrief || null,
+      });
+      if (error) {
+        console.log('[chat] concierge request error', error);
+        Alert.alert('Betweener help', error.message || 'Unable to ask Betweener to help right now.');
+        return;
+      }
+      await refreshDatePlan(planId);
+      handleCloseDatePlanConcierge();
+      Alert.alert('Betweener help', 'The Betweener team has been notified to help plan this date.');
+    } finally {
+      setDatePlanActionId((current) => (current === planId ? null : current));
+    }
+  }, [datePlanActionId, datePlanConciergeNote, datePlanConciergePlanId, datePlanConciergeSelections, handleCloseDatePlanConcierge, refreshDatePlan]);
+
   useEffect(() => {
-    if (!locationModalVisible || currentCoords) return;
+    if (!(locationModalVisible || datePlannerVisible) || currentCoords) return;
     let isActive = true;
     const init = async () => {
       setLocationLoading(true);
@@ -3220,7 +4974,7 @@ export default function ConversationScreen() {
         if (!isActive) return;
         const coords = { lat: position.coords.latitude, lng: position.coords.longitude };
         setCurrentCoords(coords);
-        if (!selectedPlace) {
+        if (locationModalVisible && !selectedPlace) {
           let label = 'Current location';
           let address: string | null = null;
           try {
@@ -3253,12 +5007,12 @@ export default function ConversationScreen() {
     return () => {
       isActive = false;
     };
-  }, [currentCoords, locationModalVisible]);
+  }, [currentCoords, datePlannerVisible, locationModalVisible, selectedPlace]);
 
   useEffect(() => {
-    if (!locationModalVisible || !currentCoords) return;
+    if (!(locationModalVisible || datePlannerVisible) || !currentCoords) return;
     void fetchNearbyPlaces(currentCoords);
-  }, [currentCoords, fetchNearbyPlaces, locationModalVisible]);
+  }, [currentCoords, datePlannerVisible, fetchNearbyPlaces, locationModalVisible]);
 
   useEffect(() => {
     if (!locationModalVisible) return;
@@ -3277,6 +5031,50 @@ export default function ConversationScreen() {
     }, 350);
     return () => clearTimeout(timer);
   }, [currentCoords, fetchPlaceSuggestions, locationModalVisible, locationSearchQuery]);
+
+  useEffect(() => {
+    if (!datePlannerVisible) return;
+    const query = dateSearchQuery.trim();
+    if (suppressDateSuggestionRef.current) {
+      suppressDateSuggestionRef.current = false;
+      setDateSuggestions([]);
+      return;
+    }
+    if (query.length < 2) {
+      setDateSuggestions([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      if (!hasPlacesKey) return;
+      setSearchLoading(true);
+      try {
+        const params = new URLSearchParams({
+          key: GOOGLE_MAPS_WEB_API_KEY ?? '',
+          input: query,
+          types: 'establishment',
+        });
+        if (currentCoords) {
+          params.set('location', `${currentCoords.lat},${currentCoords.lng}`);
+          params.set('radius', '8000');
+        }
+        const res = await fetch(`https://maps.googleapis.com/maps/api/place/autocomplete/json?${params.toString()}`);
+        const json = await res.json();
+        const mapped: PlaceSuggestion[] = Array.isArray(json?.predictions)
+          ? json.predictions.slice(0, 6).map((prediction: any) => ({
+              id: prediction.place_id,
+              primary: prediction.structured_formatting?.main_text || prediction.description,
+              secondary: prediction.structured_formatting?.secondary_text || null,
+            }))
+          : [];
+        setDateSuggestions(mapped);
+      } catch (error) {
+        console.log('[chat] date place suggestions error', error);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [currentCoords, datePlannerVisible, dateSearchQuery, hasPlacesKey]);
 
   useEffect(() => {
     if (!selectedPlace) return;
@@ -4758,6 +6556,10 @@ export default function ConversationScreen() {
         return 'Voice message';
       case 'document':
         return message.document?.name || 'Document';
+      case 'date_plan':
+        return message.dateInvite?.placeName
+          ? `Date: ${message.dateInvite.placeName}`
+          : 'Date plan';
       case 'location':
         return message.location?.label
           ? `Location: ${message.location.label}`
@@ -4782,6 +6584,8 @@ export default function ConversationScreen() {
         return 'microphone-outline';
       case 'document':
         return 'file-document-outline';
+      case 'date_plan':
+        return 'calendar-heart';
       case 'location':
         return 'map-marker-outline';
       case 'mood_sticker':
@@ -6020,7 +7824,57 @@ export default function ConversationScreen() {
     };
   }, []);
 
-  messagesRef.current = messages;
+  messagesRef.current = renderedMessages;
+
+  useEffect(() => {
+    if (visibleDatePlanIds.length === 0) {
+      setDatePlanStateById({});
+      return;
+    }
+    let cancelled = false;
+    const loadDatePlans = async () => {
+      const { data, error } = await supabase
+        .from('date_plans')
+        .select('*')
+        .in('id', visibleDatePlanIds);
+      if (error) {
+        console.log('[chat] load date plans error', error);
+        return;
+      }
+      if (cancelled || !data) return;
+      upsertDatePlanRows(data as DatePlanRow[]);
+    };
+    void loadDatePlans();
+    return () => {
+      cancelled = true;
+    };
+  }, [upsertDatePlanRows, visibleDatePlanIds]);
+
+  useEffect(() => {
+    if (!user?.id || !conversationId) return;
+    const channel = supabase
+      .channel(`date_plans:${user.id}:${conversationId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'date_plans',
+        },
+        (payload) => {
+          const row = (payload.new || payload.old) as DatePlanRow | undefined;
+          if (!row) return;
+          const participantIds = [row.creator_user_id, row.recipient_user_id];
+          if (!participantIds.includes(user.id) || !participantIds.includes(conversationId)) return;
+          upsertDatePlanRows([row]);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [conversationId, upsertDatePlanRows, user?.id]);
 
   useEffect(() => {
     viewOnceStatusRef.current = viewOnceStatus;
@@ -6563,6 +8417,16 @@ export default function ConversationScreen() {
             onOpenLocation={openLocationViewer}
             onStopLiveShare={stopLiveSharing}
             onOpenViewOnce={openViewOnceMessage}
+            onAcceptDatePlan={handleAcceptDatePlan}
+            onSuggestAnotherTime={(invite) => openCounterDatePlanner(invite, 'counter_time')}
+            onSuggestAnotherPlace={(invite) => openCounterDatePlanner(invite, 'counter_place')}
+            onSuggestBoth={(invite) => openCounterDatePlanner(invite, 'counter_both')}
+            onRescheduleDatePlan={openRescheduleDatePlanner}
+            onCancelDatePlan={handleCancelDatePlan}
+            onRequestDatePlanConcierge={handleRequestDatePlanConcierge}
+            onAddDatePlanToCalendar={handleAddDatePlanToCalendar}
+            datePlanActionId={datePlanActionId}
+            datePlanCalendarActionId={datePlanCalendarActionId}
             viewOnceViewedByMe={viewOnceViewedByMe}
             viewOnceViewedByPeer={viewOnceViewedByPeer}
             highlightQuery={chatSearchQuery}
@@ -6575,6 +8439,8 @@ export default function ConversationScreen() {
     [
       focusedMessageId,
       focusTick,
+      datePlanActionId,
+      datePlanCalendarActionId,
       playingVoiceId,
       showReactions,
       user?.id,
@@ -6595,8 +8461,14 @@ export default function ConversationScreen() {
       formatTime,
       chatSearchQuery,
       chatSearchVisible,
+      handleAcceptDatePlan,
+      handleCancelDatePlan,
+      handleAddDatePlanToCalendar,
       handleVideoSize,
       handleOpenDocument,
+      openCounterDatePlanner,
+      openRescheduleDatePlanner,
+      handleRequestDatePlanConcierge,
       openLocationViewer,
       stopLiveSharing,
       viewOnceStatus,
@@ -7206,6 +9078,589 @@ export default function ConversationScreen() {
       ) : null}
       <Modal
         transparent
+        visible={datePlannerVisible}
+        animationType="fade"
+        onRequestClose={handleCloseDatePlanner}
+      >
+        <Pressable style={styles.datePlannerBackdrop} onPress={handleCloseDatePlanner} />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 18 : 10}
+          style={styles.datePlannerKeyboard}
+        >
+          <View style={styles.datePlannerSheet}>
+            <BlurView intensity={38} tint={isDark ? 'dark' : 'light'} style={styles.datePlannerBlur} />
+            <ScrollView
+              contentContainerStyle={styles.datePlannerContent}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.datePlannerHeader}>
+                <View style={styles.datePlannerHeaderText}>
+                  <Text style={styles.datePlannerEyebrow}>
+                    {datePlannerMode === 'reschedule' ? 'Reschedule request' : 'Date suggestion'}
+                  </Text>
+                  <Text style={styles.datePlannerTitle}>{datePlannerTitle}</Text>
+                  <Text style={styles.datePlannerSubtitle}>{datePlannerSubtitle}</Text>
+                  {userAvatar ? (
+                    <View style={styles.datePlannerPersonChip}>
+                      <Image source={{ uri: userAvatar }} style={styles.datePlannerPersonAvatar} />
+                      <View style={styles.datePlannerPersonText}>
+                        <Text style={styles.datePlannerPersonLabel}>Planning for</Text>
+                        <Text style={styles.datePlannerPersonName} numberOfLines={1}>
+                          {userName || 'your match'}
+                        </Text>
+                      </View>
+                    </View>
+                  ) : null}
+                </View>
+                <TouchableOpacity style={styles.datePlannerClose} onPress={handleCloseDatePlanner}>
+                  <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.datePlannerWhenCard}>
+                <Text style={styles.datePlannerSectionTitle}>When</Text>
+                <View style={styles.datePlannerWhenRow}>
+                  <TouchableOpacity style={styles.datePlannerWhenButton} onPress={() => setDatePickerMode('date')}>
+                    <MaterialCommunityIcons name="calendar-blank-outline" size={18} color={theme.tint} />
+                    <Text style={styles.datePlannerWhenLabel}>
+                      {datePlannerDate.toLocaleDateString(undefined, {
+                        weekday: 'short',
+                        month: 'short',
+                        day: 'numeric',
+                      })}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.datePlannerWhenButton} onPress={() => setDatePickerMode('time')}>
+                    <MaterialCommunityIcons name="clock-time-four-outline" size={18} color={theme.tint} />
+                    <Text style={styles.datePlannerWhenLabel}>
+                      {datePlannerDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                {datePickerMode ? (
+                  <DateTimePicker
+                    value={datePlannerDate}
+                    mode={datePickerMode}
+                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                    minimumDate={datePickerMode === 'date' ? new Date() : undefined}
+                    onChange={handleDatePickerChange}
+                  />
+                ) : null}
+                <View style={styles.datePlannerQuickSlotRow}>
+                  {dateQuickSlots.map((slot) => {
+                    const active =
+                      datePlannerDate.getTime() === slot.date.getTime();
+                    return (
+                      <TouchableOpacity
+                        key={slot.id}
+                        style={[
+                          styles.datePlannerQuickSlot,
+                          active && styles.datePlannerQuickSlotActive,
+                        ]}
+                        onPress={() => setDatePlannerDate(new Date(slot.date))}
+                      >
+                        <Text style={[styles.datePlannerQuickSlotLabel, active && styles.datePlannerQuickSlotLabelActive]}>
+                          {slot.label}
+                        </Text>
+                        <Text style={[styles.datePlannerQuickSlotCaption, active && styles.datePlannerQuickSlotCaptionActive]}>
+                          {slot.caption}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              <View style={styles.datePlannerTabs}>
+                {[
+                  { key: 'picks', label: 'Betweener Picks' },
+                  { key: 'nearby', label: 'Near us' },
+                  { key: 'search', label: 'Search' },
+                  { key: 'preferred', label: 'Preferred' },
+                ].map((tab) => {
+                  const active = datePlannerTab === tab.key;
+                  return (
+                    <TouchableOpacity
+                      key={tab.key}
+                      style={[styles.datePlannerTabButton, active && styles.datePlannerTabButtonActive]}
+                      onPress={() => setDatePlannerTab(tab.key as 'picks' | 'nearby' | 'search' | 'preferred')}
+                    >
+                      <Text style={[styles.datePlannerTabText, active && styles.datePlannerTabTextActive]}>{tab.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {datePlannerTab === 'picks' ? (
+                <View style={styles.datePlannerList}>
+                  {recommendedDatePicks.map((venue) => {
+                    const selected = dateSelectedPlace?.id === venue.id;
+                    return (
+                      <TouchableOpacity
+                        key={venue.id}
+                        style={[styles.dateVenueCard, selected && styles.dateVenueCardSelected]}
+                        onPress={() =>
+                          selectDatePlace({
+                            id: venue.id,
+                            name: venue.name,
+                            address: venue.address,
+                            lat: venue.lat,
+                            lng: venue.lng,
+                            source: 'betweener_pick',
+                            badges: [...venue.badges],
+                            summary: venue.summary,
+                            city: venue.city,
+                          })
+                        }
+                      >
+                        <View style={styles.dateVenueCardHeader}>
+                          <Text style={styles.dateVenueName}>{venue.name}</Text>
+                          {selected ? <MaterialCommunityIcons name="check-circle" size={18} color={theme.tint} /> : null}
+                        </View>
+                        <Text style={styles.dateVenueAddress}>{venue.address}</Text>
+                        <Text style={styles.dateVenueSummary}>{venue.summary}</Text>
+                        <View style={styles.dateVenueBadgeRow}>
+                          {venue.badges.map((badge) => {
+                            const badgeMeta = getDateBadgeMeta(badge);
+                            const badgePalette = getDateBadgePalette({
+                              tone: badgeMeta.tone,
+                              theme,
+                              isDark,
+                              surface: 'planner',
+                            });
+                            return (
+                              <View
+                                key={badge}
+                                style={[
+                                  styles.dateVenueBadge,
+                                  {
+                                    backgroundColor: badgePalette.backgroundColor,
+                                    borderColor: badgePalette.borderColor,
+                                  },
+                                ]}
+                              >
+                                <View style={styles.dateVenueBadgeContent}>
+                                  <MaterialCommunityIcons
+                                    name={badgeMeta.icon}
+                                    size={12}
+                                    color={badgePalette.foregroundColor}
+                                    style={styles.dateVenueBadgeIcon}
+                                  />
+                                  <Text style={[styles.dateVenueBadgeText, { color: badgePalette.foregroundColor }]}>{badge}</Text>
+                                </View>
+                              </View>
+                            );
+                          })}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ) : null}
+
+              {datePlannerTab === 'nearby' ? (
+                <View style={styles.datePlannerList}>
+                  {placesLoading ? (
+                    <Text style={styles.datePlannerEmpty}>Looking for places nearby...</Text>
+                  ) : nearbyPlaces.length > 0 ? (
+                    nearbyPlaces.slice(0, 6).map((place) => {
+                      const selected = dateSelectedPlace?.id === place.id;
+                      return (
+                        <TouchableOpacity
+                          key={place.id}
+                          style={[styles.dateVenueCard, selected && styles.dateVenueCardSelected]}
+                          onPress={() =>
+                            selectDatePlace({
+                              ...place,
+                              source: 'nearby',
+                              badges: ['Nearby'],
+                              summary: 'Close enough to keep the plan easy.',
+                            })
+                          }
+                        >
+                          <View style={styles.dateVenueCardHeader}>
+                            <Text style={styles.dateVenueName}>{place.name}</Text>
+                            {selected ? <MaterialCommunityIcons name="check-circle" size={18} color={theme.tint} /> : null}
+                          </View>
+                          <Text style={styles.dateVenueAddress}>{place.address || 'Nearby venue'}</Text>
+                        </TouchableOpacity>
+                      );
+                    })
+                  ) : (
+                    <Text style={styles.datePlannerEmpty}>Enable location to surface nearby spots.</Text>
+                  )}
+                </View>
+              ) : null}
+
+              {datePlannerTab === 'search' ? (
+                <View style={styles.datePlannerList}>
+                  <View style={styles.datePlannerSearchBar}>
+                    <MaterialCommunityIcons name="magnify" size={18} color={theme.textMuted} />
+                    <TextInput
+                      style={styles.datePlannerSearchInput}
+                      placeholder="Search restaurants, lounges, cafes"
+                      placeholderTextColor={theme.textMuted}
+                      value={dateSearchQuery}
+                      onChangeText={setDateSearchQuery}
+                    />
+                    {searchLoading ? <ActivityIndicator size="small" color={theme.textMuted} /> : null}
+                  </View>
+                  {dateSuggestions.length > 0 ? (
+                    dateSuggestions.map((suggestion) => (
+                      <TouchableOpacity
+                        key={suggestion.id}
+                        style={styles.dateSuggestionRow}
+                        onPress={() => void handleDateSuggestionPress(suggestion)}
+                      >
+                        <MaterialCommunityIcons name="map-marker-outline" size={16} color={theme.textMuted} />
+                        <View style={styles.dateSuggestionText}>
+                          <Text style={styles.dateSuggestionTitle}>{suggestion.primary}</Text>
+                          {suggestion.secondary ? (
+                            <Text style={styles.dateSuggestionSubtitle}>{suggestion.secondary}</Text>
+                          ) : null}
+                        </View>
+                      </TouchableOpacity>
+                    ))
+                  ) : (
+                    <Text style={styles.datePlannerEmpty}>
+                      Search for a place and it will drop straight into the suggestion.
+                    </Text>
+                  )}
+                </View>
+              ) : null}
+
+              {datePlannerTab === 'preferred' ? (
+                <View style={styles.datePlannerList}>
+                  {preferredDatePicks.length > 0 ? (
+                    preferredDatePicks.map((venue) => {
+                      const selected = dateSelectedPlace?.id === venue.id;
+                      return (
+                        <TouchableOpacity
+                          key={venue.id}
+                          style={[styles.dateVenueCard, selected && styles.dateVenueCardSelected]}
+                          onPress={() =>
+                            selectDatePlace({
+                              id: venue.id,
+                              name: venue.name,
+                              address: venue.address,
+                              lat: venue.lat,
+                              lng: venue.lng,
+                              source: 'preferred',
+                              venueId: venue.venueId ?? null,
+                              badges: ['Their area', ...venue.badges.slice(0, 2)],
+                              summary: venue.summary,
+                              city: venue.city,
+                            })
+                          }
+                        >
+                          <View style={styles.dateVenueCardHeader}>
+                            <Text style={styles.dateVenueName}>{venue.name}</Text>
+                            {selected ? <MaterialCommunityIcons name="check-circle" size={18} color={theme.tint} /> : null}
+                          </View>
+                          <Text style={styles.dateVenueAddress}>{venue.address}</Text>
+                          <Text style={styles.dateVenueSummary}>
+                            Closer to {peerProfile?.full_name?.split(' ')[0] || 'their'} area.
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })
+                  ) : peerLocationLabel ? (
+                    <TouchableOpacity style={styles.datePreferredCard} onPress={seedPreferredAreaSearch}>
+                      <MaterialCommunityIcons name="compass-outline" size={18} color={theme.tint} />
+                      <View style={styles.datePreferredText}>
+                        <Text style={styles.datePreferredTitle}>Search around {peerLocationLabel}</Text>
+                        <Text style={styles.datePreferredSubtitle}>Use Google Places to find something in their area.</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ) : (
+                    <Text style={styles.datePlannerEmpty}>No preferred area on their profile yet.</Text>
+                  )}
+                </View>
+              ) : null}
+
+              <View style={styles.datePlannerSummaryCard}>
+                <Text style={styles.datePlannerSectionTitle}>
+                  {datePlannerMode === 'reschedule' ? 'Ready to update' : 'Ready to suggest'}
+                </Text>
+                {dateSelectedPlace ? (
+                  <>
+                    <View style={styles.datePlannerSummaryRow}>
+                      {selectedDateMapUrl ? (
+                        <Image source={{ uri: selectedDateMapUrl }} style={styles.datePlannerSummaryMap} />
+                      ) : null}
+                      <View style={styles.datePlannerSummaryText}>
+                        <Text style={styles.datePlannerSummaryTitle}>{dateSelectedPlace.name}</Text>
+                        <Text style={styles.datePlannerSummaryMeta}>
+                          {formatDateInviteWhen(datePlannerDate)}
+                        </Text>
+                        {dateSelectedPlace.address ? (
+                          <Text style={styles.datePlannerSummaryAddress}>{dateSelectedPlace.address}</Text>
+                        ) : null}
+                      </View>
+                    </View>
+                    {dateSelectedPlace.badges?.length ? (
+                      <View style={styles.dateVenueBadgeRow}>
+                        {dateSelectedPlace.badges.slice(0, 3).map((badge) => {
+                          const badgeMeta = getDateBadgeMeta(badge);
+                          const badgePalette = getDateBadgePalette({
+                            tone: badgeMeta.tone,
+                            theme,
+                            isDark,
+                            surface: 'planner',
+                          });
+                          return (
+                            <View
+                              key={badge}
+                              style={[
+                                styles.dateVenueBadge,
+                                {
+                                  backgroundColor: badgePalette.backgroundColor,
+                                  borderColor: badgePalette.borderColor,
+                                },
+                              ]}
+                            >
+                              <View style={styles.dateVenueBadgeContent}>
+                                <MaterialCommunityIcons
+                                  name={badgeMeta.icon}
+                                  size={12}
+                                  color={badgePalette.foregroundColor}
+                                  style={styles.dateVenueBadgeIcon}
+                                />
+                                <Text style={[styles.dateVenueBadgeText, { color: badgePalette.foregroundColor }]}>{badge}</Text>
+                              </View>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    ) : null}
+                    <View style={styles.datePlannerSummaryActions}>
+                      <TouchableOpacity
+                        style={styles.datePlannerInsightButton}
+                        onPress={() => setDateVenueDetailPlace(dateSelectedPlace)}
+                      >
+                        <MaterialCommunityIcons name="shield-check-outline" size={14} color={theme.tint} />
+                        <Text style={styles.datePlannerInsightButtonText}>Why this venue works</Text>
+                      </TouchableOpacity>
+                      {selectedDateExperience.conciergeServices.length > 0 ? (
+                        <View style={styles.datePlannerConciergeHint}>
+                          <MaterialCommunityIcons name="account-tie-hat-outline" size={14} color={theme.textMuted} />
+                          <Text style={styles.datePlannerConciergeHintText}>Betweener help available after acceptance</Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  </>
+                ) : (
+                  <Text style={styles.datePlannerEmpty}>Choose a place to finish the suggestion.</Text>
+                )}
+                <TextInput
+                  style={styles.datePlannerNoteInput}
+                  placeholder="Add a warm note, a small surprise, or the vibe you want"
+                  placeholderTextColor={theme.textMuted}
+                  value={dateNote}
+                  onChangeText={setDateNote}
+                  multiline
+                />
+                <TouchableOpacity
+                  style={[
+                    styles.datePlannerSendButton,
+                    (!dateSelectedPlace || dateSending) && styles.datePlannerSendButtonDisabled,
+                  ]}
+                  disabled={!dateSelectedPlace || dateSending}
+                  onPress={() => void sendDateInvitation()}
+                >
+                  <Text style={styles.datePlannerSendText}>
+                    {dateSending
+                      ? 'Sending...'
+                      : datePlannerMode === 'counter_time'
+                      ? 'Suggest another time'
+                      : datePlannerMode === 'counter_place'
+                      ? 'Suggest another place'
+                      : datePlannerMode === 'counter_both'
+                      ? 'Suggest both'
+                      : datePlannerMode === 'reschedule'
+                      ? 'Send update'
+                      : 'Send suggestion'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+      <Modal
+        transparent
+        visible={Boolean(dateVenueDetailPlace)}
+        animationType="fade"
+        onRequestClose={() => setDateVenueDetailPlace(null)}
+      >
+        <Pressable style={styles.datePlannerBackdrop} onPress={() => setDateVenueDetailPlace(null)} />
+        <View style={styles.dateDetailSheetWrap}>
+          <View style={styles.dateDetailSheet}>
+            <BlurView intensity={34} tint={isDark ? 'dark' : 'light'} style={styles.dateDetailBlur} />
+            <View style={styles.dateDetailContent}>
+              <View style={styles.dateDetailHeader}>
+                <View style={styles.dateDetailHeaderText}>
+                  <Text style={styles.dateDetailEyebrow}>Venue details</Text>
+                  <Text style={styles.dateDetailTitle}>{dateVenueDetailPlace?.name || 'Selected venue'}</Text>
+                  {dateVenueDetailPlace?.address ? (
+                    <Text style={styles.dateDetailSubtitle}>{dateVenueDetailPlace.address}</Text>
+                  ) : null}
+                </View>
+                <TouchableOpacity style={styles.datePlannerClose} onPress={() => setDateVenueDetailPlace(null)}>
+                  <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.dateDetailBlock}>
+                <Text style={styles.dateDetailBlockTitle}>Why it works</Text>
+                <Text style={styles.dateDetailBlockLead}>{dateVenueDetailExperience.vibe || 'Strong first-date fit'}</Text>
+                {dateVenueDetailExperience.trustReasons.map((reason) => (
+                  <View key={reason} style={styles.dateDetailBulletRow}>
+                    <MaterialCommunityIcons name="check-circle-outline" size={14} color={theme.tint} />
+                    <Text style={styles.dateDetailBulletText}>{reason}</Text>
+                  </View>
+                ))}
+              </View>
+
+              {dateVenueDetailExperience.perks.length > 0 ? (
+                <View style={styles.dateDetailBlock}>
+                  <Text style={styles.dateDetailBlockTitle}>Betweener perks</Text>
+                  <View style={styles.dateVenueBadgeRow}>
+                    {dateVenueDetailExperience.perks.map((perk) => {
+                      const badgeMeta = getDateBadgeMeta(perk);
+                      const badgePalette = getDateBadgePalette({
+                        tone: badgeMeta.tone,
+                        theme,
+                        isDark,
+                        surface: 'planner',
+                      });
+                      return (
+                        <View
+                          key={perk}
+                          style={[
+                            styles.dateVenueBadge,
+                            {
+                              backgroundColor: badgePalette.backgroundColor,
+                              borderColor: badgePalette.borderColor,
+                            },
+                          ]}
+                        >
+                          <View style={styles.dateVenueBadgeContent}>
+                            <MaterialCommunityIcons
+                              name={badgeMeta.icon}
+                              size={12}
+                              color={badgePalette.foregroundColor}
+                              style={styles.dateVenueBadgeIcon}
+                            />
+                            <Text style={[styles.dateVenueBadgeText, { color: badgePalette.foregroundColor }]}>{perk}</Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+              ) : null}
+
+              {dateVenueDetailExperience.conciergeServices.length > 0 ? (
+                <View style={styles.dateDetailBlock}>
+                  <Text style={styles.dateDetailBlockTitle}>Betweener can help with</Text>
+                  {dateVenueDetailExperience.conciergeServices.map((service) => (
+                    <View key={service} style={styles.dateDetailBulletRow}>
+                      <MaterialCommunityIcons name="account-tie-hat-outline" size={14} color={theme.textMuted} />
+                      <Text style={styles.dateDetailBulletText}>{service}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <Modal
+        transparent
+        visible={datePlanConciergeVisible}
+        animationType="fade"
+        onRequestClose={handleCloseDatePlanConcierge}
+      >
+        <Pressable style={styles.datePlannerBackdrop} onPress={handleCloseDatePlanConcierge} />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 18 : 10}
+          style={styles.datePlannerKeyboard}
+        >
+          <View style={styles.dateDetailSheetWrap}>
+            <View style={styles.dateDetailSheet}>
+              <BlurView intensity={34} tint={isDark ? 'dark' : 'light'} style={styles.dateDetailBlur} />
+              <ScrollView contentContainerStyle={styles.dateDetailContent} keyboardShouldPersistTaps="handled">
+                <View style={styles.dateDetailHeader}>
+                  <View style={styles.dateDetailHeaderText}>
+                    <Text style={styles.dateDetailEyebrow}>Betweener help</Text>
+                    <Text style={styles.dateDetailTitle}>Let Betweener help with the plan</Text>
+                    <Text style={styles.dateDetailSubtitle}>
+                      {conciergePlanSummary?.place_name
+                        ? `For ${conciergePlanSummary.place_name}`
+                        : 'Tell Betweener what kind of help you want.'}
+                    </Text>
+                  </View>
+                  <TouchableOpacity style={styles.datePlannerClose} onPress={handleCloseDatePlanConcierge}>
+                    <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.conciergeOptionList}>
+                  {CONCIERGE_SERVICE_OPTIONS.map((option) => {
+                    const selected = datePlanConciergeSelections.includes(option.id);
+                    return (
+                      <TouchableOpacity
+                        key={option.id}
+                        style={[styles.conciergeOptionCard, selected && styles.conciergeOptionCardSelected]}
+                        onPress={() => toggleDatePlanConciergeSelection(option.id)}
+                      >
+                        <View style={styles.conciergeOptionHeader}>
+                          <Text style={styles.conciergeOptionTitle}>{option.title}</Text>
+                          <MaterialCommunityIcons
+                            name={selected ? 'check-circle' : 'circle-outline'}
+                            size={18}
+                            color={selected ? theme.tint : theme.textMuted}
+                          />
+                        </View>
+                        <Text style={styles.conciergeOptionDescription}>{option.description}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <TextInput
+                  style={styles.datePlannerNoteInput}
+                  placeholder="Add a note for the Betweener team"
+                  placeholderTextColor={theme.textMuted}
+                  value={datePlanConciergeNote}
+                  onChangeText={setDatePlanConciergeNote}
+                  multiline
+                />
+
+                <TouchableOpacity
+                  style={[
+                    styles.datePlannerSendButton,
+                    ((!datePlanConciergePlanId || datePlanActionId === datePlanConciergePlanId) && styles.datePlannerSendButtonDisabled),
+                  ]}
+                  disabled={!datePlanConciergePlanId || datePlanActionId === datePlanConciergePlanId}
+                  onPress={() => void submitDatePlanConciergeRequest()}
+                >
+                  <Text style={styles.datePlannerSendText}>
+                    {datePlanActionId === datePlanConciergePlanId ? 'Sending request...' : 'Request Betweener help'}
+                  </Text>
+                </TouchableOpacity>
+              </ScrollView>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+      <Modal
+        transparent
         visible={headerMenuVisible}
         animationType="fade"
         onRequestClose={handleCloseHeaderMenu}
@@ -7244,6 +9699,16 @@ export default function ConversationScreen() {
                 onPress={() => {
                   handleCloseHeaderMenu();
                   handleFilterMedia();
+                }}
+              />
+              <MenuCard
+                title="Suggest a date"
+                icon="calendar-heart"
+                wide
+                badgeLabel={canPlanDate ? 'Ready' : 'Locked'}
+                onPress={() => {
+                  handleCloseHeaderMenu();
+                  handleOpenDatePlanner();
                 }}
               />
             </View>
@@ -8524,7 +10989,7 @@ export default function ConversationScreen() {
         <FlatList
           key={conversationId}
           ref={flatListRef}
-          data={messages}
+          data={renderedMessages}
           renderItem={renderMessage}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.messagesList}
@@ -9436,6 +11901,552 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontSize: 11,
       fontFamily: 'Manrope_500Medium',
       color: theme.textMuted,
+    },
+    datePlannerBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: withAlpha(Colors.dark.background, 0.62),
+    },
+    datePlannerKeyboard: {
+      flex: 1,
+      justifyContent: 'flex-end',
+    },
+    datePlannerSheet: {
+      maxHeight: screenHeight * 0.9,
+      borderTopLeftRadius: 28,
+      borderTopRightRadius: 28,
+      overflow: 'hidden',
+      backgroundColor: withAlpha(theme.background, isDark ? 0.92 : 0.97),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+    },
+    datePlannerBlur: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    datePlannerContent: {
+      padding: 18,
+      paddingBottom: Platform.OS === 'ios' ? 28 : 20,
+      gap: 12,
+    },
+    datePlannerHeader: {
+      flexDirection: 'row',
+      gap: 12,
+      alignItems: 'flex-start',
+    },
+    datePlannerHeaderText: {
+      flex: 1,
+      gap: 4,
+    },
+    datePlannerPersonChip: {
+      marginTop: 8,
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.08),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.28 : 0.16),
+    },
+    datePlannerPersonAvatar: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      backgroundColor: theme.backgroundSubtle,
+    },
+    datePlannerPersonText: {
+      flexShrink: 1,
+      gap: 1,
+    },
+    datePlannerPersonLabel: {
+      fontSize: 10,
+      fontFamily: 'Manrope_700Bold',
+      textTransform: 'uppercase',
+      letterSpacing: 0.7,
+      color: theme.textMuted,
+    },
+    datePlannerPersonName: {
+      fontSize: 13,
+      fontFamily: 'Manrope_700Bold',
+      color: theme.text,
+    },
+    datePlannerEyebrow: {
+      fontSize: 11,
+      fontFamily: 'Manrope_700Bold',
+      textTransform: 'uppercase',
+      letterSpacing: 1.1,
+      color: theme.tint,
+    },
+    datePlannerTitle: {
+      fontSize: 24,
+      fontFamily: 'Archivo_700Bold',
+      color: theme.text,
+    },
+    datePlannerSubtitle: {
+      fontSize: 13,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+      lineHeight: 20,
+    },
+    datePlannerClose: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.backgroundSubtle,
+    },
+    datePlannerWhenCard: {
+      borderRadius: 22,
+      padding: 14,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.1 : 0.04),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      gap: 12,
+    },
+    datePlannerSectionTitle: {
+      fontSize: 12,
+      fontFamily: 'Manrope_700Bold',
+      textTransform: 'uppercase',
+      letterSpacing: 0.9,
+      color: theme.textMuted,
+    },
+    datePlannerWhenRow: {
+      flexDirection: 'row',
+      gap: 10,
+    },
+    datePlannerWhenButton: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      borderRadius: 16,
+      paddingVertical: 12,
+      backgroundColor: theme.background,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.24 : 0.16),
+    },
+    datePlannerWhenLabel: {
+      fontSize: 14,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    datePlannerQuickSlotRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    datePlannerQuickSlot: {
+      minWidth: '31%',
+      paddingHorizontal: 12,
+      paddingVertical: 11,
+      borderRadius: 16,
+      backgroundColor: theme.background,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      gap: 3,
+    },
+    datePlannerQuickSlotActive: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.2 : 0.1),
+      borderColor: withAlpha(theme.tint, isDark ? 0.36 : 0.24),
+    },
+    datePlannerQuickSlotLabel: {
+      fontSize: 13,
+      fontFamily: 'Manrope_700Bold',
+      color: theme.text,
+    },
+    datePlannerQuickSlotLabelActive: {
+      color: theme.tint,
+    },
+    datePlannerQuickSlotCaption: {
+      fontSize: 11,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+    },
+    datePlannerQuickSlotCaptionActive: {
+      color: withAlpha(theme.tint, isDark ? 0.92 : 0.84),
+    },
+    datePlannerTabs: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    datePlannerTabButton: {
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      borderRadius: 999,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+    },
+    datePlannerTabButtonActive: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.22 : 0.12),
+      borderColor: withAlpha(theme.tint, isDark ? 0.35 : 0.24),
+    },
+    datePlannerTabText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.textMuted,
+    },
+    datePlannerTabTextActive: {
+      color: theme.text,
+    },
+    datePlannerList: {
+      gap: 10,
+    },
+    dateVenueCard: {
+      borderRadius: 20,
+      padding: 13,
+      backgroundColor: theme.background,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      gap: 5,
+    },
+    dateVenueCardSelected: {
+      borderColor: withAlpha(theme.tint, 0.6),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.08),
+    },
+    dateVenueCardHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 8,
+      alignItems: 'center',
+    },
+    dateVenueName: {
+      flex: 1,
+      fontSize: 15,
+      fontFamily: 'Manrope_700Bold',
+      color: theme.text,
+    },
+    dateVenueAddress: {
+      fontSize: 12,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+    },
+    dateVenueSummary: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      lineHeight: 18,
+    },
+    dateVenueBadgeRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 2,
+    },
+    dateVenueBadge: {
+      paddingHorizontal: 9,
+      paddingVertical: 5,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.1),
+      borderWidth: 1,
+    },
+    dateVenueBadgeContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    dateVenueBadgeIcon: {
+      marginTop: 0.5,
+    },
+    dateVenueBadgeText: {
+      fontSize: 11,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.tint,
+    },
+    datePlannerEmpty: {
+      fontSize: 13,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+      lineHeight: 20,
+    },
+    datePlannerSearchBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      borderRadius: 16,
+      paddingHorizontal: 12,
+      paddingVertical: 11,
+      backgroundColor: theme.background,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+    },
+    datePlannerSearchInput: {
+      flex: 1,
+      fontSize: 14,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.text,
+    },
+    dateSuggestionRow: {
+      flexDirection: 'row',
+      gap: 10,
+      alignItems: 'center',
+      borderRadius: 16,
+      padding: 12,
+      backgroundColor: theme.background,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+    },
+    dateSuggestionText: {
+      flex: 1,
+      gap: 2,
+    },
+    dateSuggestionTitle: {
+      fontSize: 14,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    dateSuggestionSubtitle: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+    },
+    datePreferredCard: {
+      flexDirection: 'row',
+      gap: 10,
+      alignItems: 'center',
+      borderRadius: 18,
+      padding: 14,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.08),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.28 : 0.18),
+    },
+    datePreferredText: {
+      flex: 1,
+      gap: 2,
+    },
+    datePreferredTitle: {
+      fontSize: 14,
+      fontFamily: 'Manrope_700Bold',
+      color: theme.text,
+    },
+    datePreferredSubtitle: {
+      fontSize: 12,
+      fontFamily: 'Manrope_400Regular',
+      color: theme.textMuted,
+      lineHeight: 18,
+    },
+    datePlannerSummaryCard: {
+      borderRadius: 24,
+      padding: 13,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      gap: 9,
+    },
+    datePlannerSummaryRow: {
+      flexDirection: 'row',
+      gap: 10,
+      alignItems: 'center',
+    },
+    datePlannerSummaryMap: {
+      width: 104,
+      height: 82,
+      borderRadius: 16,
+      backgroundColor: theme.background,
+    },
+    datePlannerSummaryText: {
+      flex: 1,
+      gap: 4,
+    },
+    datePlannerSummaryTitle: {
+      fontSize: 15,
+      fontFamily: 'Archivo_700Bold',
+      color: theme.text,
+    },
+    datePlannerSummaryMeta: {
+      fontSize: 12,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.tint,
+    },
+    datePlannerSummaryAddress: {
+      fontSize: 12,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+    },
+    datePlannerSummaryActions: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      alignItems: 'center',
+    },
+    datePlannerInsightButton: {
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.1),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.32 : 0.18),
+    },
+    datePlannerInsightButtonText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_700Bold',
+      color: theme.tint,
+    },
+    datePlannerConciergeHint: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 9,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.1 : 0.05),
+    },
+    datePlannerConciergeHintText: {
+      fontSize: 11,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.textMuted,
+    },
+    datePlannerNoteInput: {
+      minHeight: 82,
+      borderRadius: 16,
+      paddingHorizontal: 12,
+      paddingVertical: 11,
+      backgroundColor: theme.background,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      fontSize: 14,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.text,
+      textAlignVertical: 'top',
+    },
+    datePlannerSendButton: {
+      borderRadius: 18,
+      paddingVertical: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.tint,
+    },
+    datePlannerSendButtonDisabled: {
+      opacity: 0.5,
+    },
+    datePlannerSendText: {
+      fontSize: 15,
+      fontFamily: 'Archivo_700Bold',
+      color: Colors.light.background,
+    },
+    dateDetailSheetWrap: {
+      flex: 1,
+      justifyContent: 'flex-end',
+      paddingHorizontal: 16,
+      paddingBottom: 20,
+    },
+    dateDetailSheet: {
+      borderRadius: 24,
+      overflow: 'hidden',
+      backgroundColor: withAlpha(theme.background, isDark ? 0.84 : 0.96),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      shadowColor: Colors.dark.background,
+      shadowOpacity: 0.16,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 8,
+      maxHeight: '84%',
+    },
+    dateDetailBlur: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    dateDetailContent: {
+      padding: 18,
+      gap: 16,
+    },
+    dateDetailHeader: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    dateDetailHeaderText: {
+      flex: 1,
+      gap: 4,
+    },
+    dateDetailEyebrow: {
+      fontSize: 11,
+      fontFamily: 'Manrope_700Bold',
+      textTransform: 'uppercase',
+      letterSpacing: 1,
+      color: theme.tint,
+    },
+    dateDetailTitle: {
+      fontSize: 22,
+      fontFamily: 'Archivo_700Bold',
+      color: theme.text,
+    },
+    dateDetailSubtitle: {
+      fontSize: 13,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+      lineHeight: 19,
+    },
+    dateDetailBlock: {
+      gap: 10,
+      padding: 14,
+      borderRadius: 18,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.04),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+    },
+    dateDetailBlockTitle: {
+      fontSize: 12,
+      fontFamily: 'Manrope_700Bold',
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+      color: theme.textMuted,
+    },
+    dateDetailBlockLead: {
+      fontSize: 15,
+      fontFamily: 'Manrope_700Bold',
+      color: theme.text,
+      lineHeight: 22,
+    },
+    dateDetailBulletRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 8,
+    },
+    dateDetailBulletText: {
+      flex: 1,
+      fontSize: 13,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+      lineHeight: 19,
+    },
+    conciergeOptionList: {
+      gap: 10,
+    },
+    conciergeOptionCard: {
+      borderRadius: 18,
+      padding: 14,
+      backgroundColor: theme.background,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      gap: 8,
+    },
+    conciergeOptionCardSelected: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.08),
+      borderColor: withAlpha(theme.tint, isDark ? 0.34 : 0.2),
+    },
+    conciergeOptionHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    conciergeOptionTitle: {
+      flex: 1,
+      fontSize: 14,
+      fontFamily: 'Manrope_700Bold',
+      color: theme.text,
+    },
+    conciergeOptionDescription: {
+      fontSize: 12,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+      lineHeight: 18,
     },
     headerMenuBackdrop: {
       ...StyleSheet.absoluteFillObject,
@@ -11038,6 +14049,304 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     documentBubble: {
       paddingHorizontal: 10,
       paddingVertical: 8,
+    },
+    datePlanBubble: {
+      padding: 8,
+      width: Math.min(screenWidth * 0.76, 320),
+    },
+    datePlanBubbleMy: {
+      backgroundColor: isDark ? '#14979C' : '#16AEB3',
+      borderColor: withAlpha(Colors.light.background, 0.1),
+      shadowOpacity: 0.04,
+    },
+    datePlanBubbleTheir: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
+      borderColor: withAlpha(theme.tint, isDark ? 0.24 : 0.12),
+    },
+    datePlanMessageContainer: {
+      gap: 8,
+    },
+    datePlanMessageContainerConfirmed: {
+      gap: 6,
+    },
+    datePlanHeader: {
+      gap: 6,
+    },
+    datePlanHeaderTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+      flexWrap: 'wrap',
+    },
+    datePlanBadge: {
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 9,
+      paddingVertical: 5,
+      borderRadius: 999,
+    },
+    datePlanPersonChip: {
+      maxWidth: '58%',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      paddingHorizontal: 8,
+      paddingVertical: 5,
+      borderRadius: 999,
+      borderWidth: 1,
+    },
+    datePlanPersonAvatar: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      backgroundColor: theme.backgroundSubtle,
+    },
+    datePlanPersonText: {
+      flexShrink: 1,
+      fontSize: 11.5,
+      fontFamily: 'Manrope_700Bold',
+    },
+    datePlanBadgeText: {
+      fontSize: 11,
+      fontFamily: 'Manrope_700Bold',
+      letterSpacing: 0.3,
+      textTransform: 'uppercase',
+    },
+    datePlanWhenEyebrow: {
+      fontSize: 10.5,
+      fontFamily: 'Manrope_700Bold',
+      letterSpacing: 0.7,
+      textTransform: 'uppercase',
+    },
+    datePlanWhen: {
+      fontSize: 14,
+      fontFamily: 'Archivo_700Bold',
+    },
+    datePlanWhenConfirmed: {
+      fontSize: 18,
+      lineHeight: 22,
+    },
+    datePlanWhenRowConfirmed: {
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      borderRadius: 14,
+    },
+    datePlanMapImage: {
+      width: '100%',
+      height: 112,
+      borderRadius: 14,
+      backgroundColor: theme.backgroundSubtle,
+    },
+    datePlanMapImageConfirmed: {
+      height: 102,
+    },
+    datePlanPlaceBlock: {
+      gap: 3,
+    },
+    datePlanVenue: {
+      fontSize: 15,
+      fontFamily: 'Manrope_700Bold',
+    },
+    datePlanVenueConfirmed: {
+      fontSize: 17,
+      lineHeight: 22,
+    },
+    datePlanAddress: {
+      fontSize: 12,
+      fontFamily: 'Manrope_500Medium',
+      lineHeight: 18,
+    },
+    datePlanAddressConfirmed: {
+      lineHeight: 17,
+    },
+    datePlanSummary: {
+      fontSize: 11.5,
+      fontFamily: 'Manrope_400Regular',
+      lineHeight: 17,
+    },
+    datePlanSummaryConfirmed: {
+      fontSize: 11,
+      lineHeight: 16,
+    },
+    datePlanStatusRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+    },
+    datePlanStatusChip: {
+      borderRadius: 999,
+      paddingHorizontal: 9,
+      paddingVertical: 5,
+    },
+    datePlanStatusText: {
+      fontSize: 11,
+      fontFamily: 'Manrope_700Bold',
+    },
+    datePlanBadgeRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    datePlanBadgeRowCompact: {
+      gap: 6,
+    },
+    datePlanTag: {
+      borderRadius: 999,
+      paddingHorizontal: 9,
+      paddingVertical: 5,
+    },
+    datePlanTagCompact: {
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+    },
+    datePlanTagConfirmed: {
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,26,26,0.08)',
+    },
+    datePlanTagContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+    },
+    datePlanTagIcon: {
+      marginTop: 0.5,
+    },
+    datePlanTagText: {
+      fontSize: 11,
+      fontFamily: 'Manrope_600SemiBold',
+    },
+    datePlanTagTextCompact: {
+      fontSize: 10.5,
+    },
+    datePlanNoteCard: {
+      borderRadius: 14,
+      borderWidth: 1,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      gap: 3,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.16)',
+    },
+    datePlanNoteCardLight: {
+      paddingHorizontal: 9,
+      paddingVertical: 7,
+      gap: 2,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.12)',
+    },
+    datePlanNoteLabel: {
+      fontSize: 11,
+      fontFamily: 'Manrope_700Bold',
+      letterSpacing: 0.4,
+      textTransform: 'uppercase',
+    },
+    datePlanNoteLabelCompact: {
+      fontSize: 10,
+      letterSpacing: 0.6,
+    },
+    datePlanNoteText: {
+      fontSize: 13,
+      fontFamily: 'Manrope_500Medium',
+      lineHeight: 19,
+    },
+    datePlanNoteTextCompact: {
+      fontSize: 12.5,
+      lineHeight: 18,
+    },
+    datePlanActionRow: {
+      flexDirection: 'column',
+      gap: 8,
+    },
+    datePlanPrimaryAction: {
+      minHeight: 38,
+      borderRadius: 999,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 14,
+    },
+    datePlanPrimaryActionWide: {
+      paddingHorizontal: 16,
+    },
+    datePlanPrimaryActionContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+    },
+    datePlanPrimaryActionText: {
+      fontSize: 12.5,
+      fontFamily: 'Manrope_700Bold',
+    },
+    datePlanSecondaryAction: {
+      minHeight: 38,
+      borderRadius: 999,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 14,
+      borderWidth: 1,
+    },
+    datePlanSecondaryActionStrong: {
+      backgroundColor: withAlpha(theme.text, isDark ? 0.06 : 0.04),
+    },
+    datePlanSecondaryActionText: {
+      fontSize: 12.5,
+      fontFamily: 'Manrope_700Bold',
+    },
+    datePlanSecondaryActionContent: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+    },
+    datePlanPendingText: {
+      fontSize: 11.5,
+      fontFamily: 'Manrope_600SemiBold',
+    },
+    datePlanConciergeButton: {
+      minHeight: 40,
+      borderRadius: 14,
+      borderWidth: 1,
+      paddingHorizontal: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    datePlanConciergeText: {
+      fontSize: 12.5,
+      fontFamily: 'Manrope_700Bold',
+      flexShrink: 1,
+    },
+    datePlanTertiaryAction: {
+      alignSelf: 'center',
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+    },
+    datePlanTertiaryActionText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_700Bold',
+    },
+    datePlanFooterRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+      paddingTop: 2,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(13,26,26,0.08)',
+    },
+    datePlanFooterLead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    datePlanFooterText: {
+      fontSize: 11,
+      fontFamily: 'Manrope_600SemiBold',
     },
     documentMessageContainer: {
       flexDirection: 'row',

@@ -35,6 +35,66 @@ export type Database = {
         }
         Relationships: []
       }
+      betweener_venues: {
+        Row: {
+          address: string
+          badges: Json
+          city: string
+          created_at: string
+          google_place_id: string | null
+          id: string
+          is_active: boolean
+          lat: number
+          lng: number
+          map_link: string | null
+          metadata: Json
+          name: string
+          region: string | null
+          slug: string
+          sort_order: number
+          summary: string | null
+          updated_at: string
+        }
+        Insert: {
+          address: string
+          badges?: Json
+          city: string
+          created_at?: string
+          google_place_id?: string | null
+          id?: string
+          is_active?: boolean
+          lat: number
+          lng: number
+          map_link?: string | null
+          metadata?: Json
+          name: string
+          region?: string | null
+          slug: string
+          sort_order?: number
+          summary?: string | null
+          updated_at?: string
+        }
+        Update: {
+          address?: string
+          badges?: Json
+          city?: string
+          created_at?: string
+          google_place_id?: string | null
+          id?: string
+          is_active?: boolean
+          lat?: number
+          lng?: number
+          map_link?: string | null
+          metadata?: Json
+          name?: string
+          region?: string | null
+          slug?: string
+          sort_order?: number
+          summary?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       chat_prefs: {
         Row: {
           id: string
@@ -150,6 +210,213 @@ export type Database = {
             columns: ["created_by_profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      date_plan_concierge_requests: {
+        Row: {
+          assigned_admin_user_id: string | null
+          created_at: string
+          date_plan_id: string
+          id: string
+          note: string | null
+          requested_by_profile_id: string
+          requested_by_user_id: string
+          resolved_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          assigned_admin_user_id?: string | null
+          created_at?: string
+          date_plan_id: string
+          id?: string
+          note?: string | null
+          requested_by_profile_id: string
+          requested_by_user_id: string
+          resolved_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          assigned_admin_user_id?: string | null
+          created_at?: string
+          date_plan_id?: string
+          id?: string
+          note?: string | null
+          requested_by_profile_id?: string
+          requested_by_user_id?: string
+          resolved_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "date_plan_concierge_requests_date_plan_id_fkey"
+            columns: ["date_plan_id"]
+            isOneToOne: false
+            referencedRelation: "date_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "date_plan_concierge_requests_requested_by_profile_id_fkey"
+            columns: ["requested_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      date_plans: {
+        Row: {
+          accepted_at: string | null
+          accepted_by_profile_id: string | null
+          city: string | null
+          concierge_requested: boolean
+          concierge_requested_at: string | null
+          concierge_requested_by_profile_id: string | null
+          created_at: string
+          creator_profile_id: string
+          creator_user_id: string
+          declined_at: string | null
+          declined_by_profile_id: string | null
+          id: string
+          lat: number | null
+          lng: number | null
+          message_id: string | null
+          note: string | null
+          parent_plan_id: string | null
+          place_address: string | null
+          place_badges: Json
+          place_name: string
+          place_source: string
+          place_summary: string | null
+          recipient_profile_id: string
+          recipient_user_id: string
+          response_kind: string
+          scheduled_for: string
+          status: string
+          updated_at: string
+          venue_id: string | null
+        }
+        Insert: {
+          accepted_at?: string | null
+          accepted_by_profile_id?: string | null
+          city?: string | null
+          concierge_requested?: boolean
+          concierge_requested_at?: string | null
+          concierge_requested_by_profile_id?: string | null
+          created_at?: string
+          creator_profile_id: string
+          creator_user_id: string
+          declined_at?: string | null
+          declined_by_profile_id?: string | null
+          id?: string
+          lat?: number | null
+          lng?: number | null
+          message_id?: string | null
+          note?: string | null
+          parent_plan_id?: string | null
+          place_address?: string | null
+          place_badges?: Json
+          place_name: string
+          place_source: string
+          place_summary?: string | null
+          recipient_profile_id: string
+          recipient_user_id: string
+          response_kind?: string
+          scheduled_for: string
+          status?: string
+          updated_at?: string
+          venue_id?: string | null
+        }
+        Update: {
+          accepted_at?: string | null
+          accepted_by_profile_id?: string | null
+          city?: string | null
+          concierge_requested?: boolean
+          concierge_requested_at?: string | null
+          concierge_requested_by_profile_id?: string | null
+          created_at?: string
+          creator_profile_id?: string
+          creator_user_id?: string
+          declined_at?: string | null
+          declined_by_profile_id?: string | null
+          id?: string
+          lat?: number | null
+          lng?: number | null
+          message_id?: string | null
+          note?: string | null
+          parent_plan_id?: string | null
+          place_address?: string | null
+          place_badges?: Json
+          place_name?: string
+          place_source?: string
+          place_summary?: string | null
+          recipient_profile_id?: string
+          recipient_user_id?: string
+          response_kind?: string
+          scheduled_for?: string
+          status?: string
+          updated_at?: string
+          venue_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "date_plans_accepted_by_profile_id_fkey"
+            columns: ["accepted_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "date_plans_concierge_requested_by_profile_id_fkey"
+            columns: ["concierge_requested_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "date_plans_creator_profile_id_fkey"
+            columns: ["creator_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "date_plans_declined_by_profile_id_fkey"
+            columns: ["declined_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "date_plans_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "date_plans_parent_plan_id_fkey"
+            columns: ["parent_plan_id"]
+            isOneToOne: false
+            referencedRelation: "date_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "date_plans_recipient_profile_id_fkey"
+            columns: ["recipient_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "date_plans_venue_id_fkey"
+            columns: ["venue_id"]
+            isOneToOne: false
+            referencedRelation: "betweener_venues"
             referencedColumns: ["id"]
           },
         ]
@@ -2761,9 +3028,47 @@ export type Database = {
       postgis_wagyu_version: { Args: never; Returns: string }
       reset_daily_superlikes: { Args: never; Returns: undefined }
       rpc_create_profile_boost: { Args: never; Returns: Json }
+      rpc_admin_get_date_plan_concierge_queue: {
+        Args: never
+        Returns: {
+          city: string | null
+          concierge_requested_at: string | null
+          creator_name: string | null
+          creator_profile_id: string
+          date_plan_id: string
+          date_plan_status: string
+          place_address: string | null
+          place_name: string
+          recipient_name: string | null
+          recipient_profile_id: string
+          request_id: string
+          request_note: string | null
+          request_status: string
+          requested_at: string
+          requested_by_name: string | null
+          requested_by_profile_id: string
+          scheduled_for: string
+        }[]
+      }
       rpc_approve_circle_member: {
         Args: { p_circle_id: string; p_member_id: string; p_profile_id: string }
         Returns: boolean
+      }
+      rpc_accept_date_plan: {
+        Args: { p_plan_id: string }
+        Returns: {
+          concierge_requested: boolean
+          plan_id: string
+          status: string
+        }[]
+      }
+      rpc_cancel_date_plan: {
+        Args: { p_plan_id: string }
+        Returns: {
+          concierge_requested: boolean
+          plan_id: string
+          status: string
+        }[]
       }
       rpc_cancel_intent_request: {
         Args: { p_request_id: string }
@@ -2794,8 +3099,47 @@ export type Database = {
         Args: { p_decision: string; p_request_id: string }
         Returns: string
       }
+      rpc_decline_date_plan: {
+        Args: { p_plan_id: string }
+        Returns: {
+          concierge_requested: boolean
+          plan_id: string
+          status: string
+        }[]
+      }
       rpc_get_phone_verification_status: { Args: never; Returns: Json }
       rpc_get_my_premium_state: { Args: never; Returns: Json }
+      rpc_request_date_plan_concierge: {
+        Args: { p_note?: string | null; p_plan_id: string }
+        Returns: {
+          concierge_requested: boolean
+          plan_id: string
+          request_id: string
+        }[]
+      }
+      rpc_send_date_plan: {
+        Args: {
+          p_city?: string | null
+          p_lat?: number | null
+          p_lng?: number | null
+          p_note?: string | null
+          p_parent_plan_id?: string | null
+          p_place_address?: string | null
+          p_place_badges?: Json
+          p_place_name: string
+          p_place_source?: string
+          p_place_summary?: string | null
+          p_recipient_profile_id: string
+          p_reply_to_message_id?: string | null
+          p_response_kind?: string
+          p_scheduled_for: string
+          p_venue_id?: string | null
+        }
+        Returns: {
+          message_id: string
+          plan_id: string
+        }[]
+      }
       submit_profile_prompt_guess: {
         Args: {
           p_guess: string

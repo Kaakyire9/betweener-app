@@ -263,6 +263,24 @@ export default function ProfileScreen() {
   const [guessPromptOptions, setGuessPromptOptions] = useState(['', '', '']);
   const [guessPromptSaving, setGuessPromptSaving] = useState(false);
   const [deletingPromptId, setDeletingPromptId] = useState<string | null>(null);
+  const guessPromptSanitizedOptions = useMemo(
+    () => sanitizeGuessOptions(guessPromptOptions, guessPromptAnswer),
+    [guessPromptAnswer, guessPromptOptions],
+  );
+  const guessPromptPreviewOptions = useMemo(() => {
+    if (guessPromptMode !== 'multiple_choice') return [];
+    const answer = guessPromptAnswer.trim();
+    const wrongOptions = guessPromptSanitizedOptions.filter(
+      (option) => normalizeGuessText(option) !== normalizeGuessText(answer),
+    );
+    return [answer, ...wrongOptions].filter(Boolean).slice(0, 4);
+  }, [guessPromptAnswer, guessPromptMode, guessPromptSanitizedOptions]);
+  const canSaveGuessPrompt = Boolean(
+    guessPromptTitle.trim() &&
+      guessPromptAnswer.trim() &&
+      !guessPromptSaving &&
+      (guessPromptMode !== 'multiple_choice' || guessPromptSanitizedOptions.length >= 2),
+  );
   
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
@@ -896,7 +914,7 @@ export default function ProfileScreen() {
 
     const options =
       guessPromptMode === 'multiple_choice'
-        ? shuffleOptions(sanitizeGuessOptions(guessPromptOptions, answer))
+        ? shuffleOptions(guessPromptSanitizedOptions)
         : null;
 
     if (guessPromptMode === 'multiple_choice' && (!options || options.length < 2)) return;
@@ -2723,8 +2741,19 @@ export default function ProfileScreen() {
                   ) : (
                     <View style={styles.customPromptGroup}>
                       <Text style={[styles.promptHelperText, { color: theme.textMuted }]}>
-                        Hide the answer and turn one prompt into a playful opener.
+                        People get one playful guess before starting the conversation.
                       </Text>
+                      <View style={styles.guessPromptTips}>
+                        <Text style={[styles.guessPromptTip, { color: theme.textMuted }]}>
+                          Keep the hint short so the challenge stays clean.
+                        </Text>
+                        <Text style={[styles.guessPromptTip, { color: theme.textMuted }]}>
+                          If you use multiple choice, make the wrong answers believable.
+                        </Text>
+                        <Text style={[styles.guessPromptTip, { color: theme.textMuted }]}>
+                          Pick something fun to guess, not something impossible.
+                        </Text>
+                      </View>
                       <TextInput
                         value={guessPromptTitle}
                         onChangeText={setGuessPromptTitle}
@@ -2811,34 +2840,112 @@ export default function ProfileScreen() {
                       <TextInput
                         value={guessPromptHint}
                         onChangeText={setGuessPromptHint}
-                        placeholder="Optional hint"
+                        placeholder="Short hint for the viewer"
                         placeholderTextColor={theme.textMuted}
                         style={[
                           styles.customPromptInput,
                           { color: theme.text, borderColor: theme.outline },
                         ]}
                       />
+                      <View
+                        style={[
+                          styles.guessPreviewCard,
+                          { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+                        ]}
+                      >
+                        <Text style={[styles.guessPreviewEyebrow, { color: theme.tint }]}>
+                          Viewer preview
+                        </Text>
+                        <Text style={[styles.guessPreviewTitle, { color: theme.text }]}>
+                          {guessPromptTitle.trim() || 'Your guess prompt will show here'}
+                        </Text>
+                        <View style={styles.guessPreviewMetaRow}>
+                          <View
+                            style={[
+                              styles.guessPreviewMetaPill,
+                              { backgroundColor: theme.background, borderColor: theme.outline },
+                            ]}
+                          >
+                            <MaterialCommunityIcons
+                              name="gamepad-variant-outline"
+                              size={14}
+                              color={theme.tint}
+                            />
+                            <Text style={[styles.guessPreviewMetaText, { color: theme.textMuted }]}>
+                              {guessPromptMode === 'multiple_choice' ? '1 prompt challenge' : 'One clean guess'}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={[styles.guessPreviewHint, { color: theme.textMuted }]}>
+                          {guessPromptHint.trim()
+                            ? `Hint: ${guessPromptHint.trim()}`
+                            : 'Add a short hint so the viewer has a fair shot.'}
+                        </Text>
+                        {guessPromptMode === 'multiple_choice' ? (
+                          <View style={styles.guessPreviewOptions}>
+                            {guessPromptPreviewOptions.length > 0 ? (
+                              guessPromptPreviewOptions.map((option, index) => (
+                                <View
+                                  key={`guess-preview-${index}`}
+                                  style={[
+                                    styles.guessPreviewOption,
+                                    { backgroundColor: theme.background, borderColor: theme.outline },
+                                  ]}
+                                >
+                                  <Text style={[styles.guessPreviewOptionText, { color: theme.text }]}>
+                                    {option}
+                                  </Text>
+                                </View>
+                              ))
+                            ) : (
+                              <View
+                                style={[
+                                  styles.guessPreviewOption,
+                                  { backgroundColor: theme.background, borderColor: theme.outline },
+                                ]}
+                              >
+                                <Text style={[styles.guessPreviewOptionText, { color: theme.textMuted }]}>
+                                  Add a correct answer and believable wrong options
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                        ) : (
+                          <View
+                            style={[
+                              styles.guessPreviewOption,
+                              { backgroundColor: theme.background, borderColor: theme.outline },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.guessPreviewOptionText,
+                                { color: guessPromptAnswer.trim() ? theme.text : theme.textMuted },
+                              ]}
+                            >
+                              {guessPromptAnswer.trim() ? 'Type your guess' : 'Viewer types one guess here'}
+                            </Text>
+                          </View>
+                        )}
+                        <Text style={[styles.guessPreviewFooter, { color: theme.textMuted }]}>
+                          Correct answer stays hidden until they play.
+                        </Text>
+                      </View>
                       <TouchableOpacity
                         onPress={saveGuessPrompt}
-                        disabled={
-                          !guessPromptTitle.trim() ||
-                          !guessPromptAnswer.trim() ||
-                          guessPromptSaving ||
-                          (guessPromptMode === 'multiple_choice' &&
-                            sanitizeGuessOptions(guessPromptOptions, guessPromptAnswer).length < 2)
-                        }
+                        disabled={!canSaveGuessPrompt}
                         style={[
                           styles.customPromptSave,
                           {
-                            backgroundColor: guessPromptTitle.trim() && guessPromptAnswer.trim()
+                            backgroundColor: canSaveGuessPrompt
                               ? theme.tint
                               : theme.outline,
                           },
                         ]}
                       >
-                        <Text style={styles.customPromptSaveText}>
-                          {guessPromptSaving ? 'Saving...' : 'Save guess prompt'}
-                        </Text>
+                      <Text style={styles.customPromptSaveText}>
+                          {guessPromptSaving ? 'Saving...' : 'Save mini-game prompt'}
+                      </Text>
                       </TouchableOpacity>
                     </View>
                   )}
@@ -3821,8 +3928,79 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     letterSpacing: 0.2,
   },
+  guessPromptTips: {
+    gap: 6,
+  },
+  guessPromptTip: {
+    fontSize: 11.5,
+    fontFamily: 'Manrope_400Regular',
+    lineHeight: 17,
+    letterSpacing: 0.15,
+  },
   guessOptionsGroup: {
     gap: 10,
+  },
+  guessPreviewCard: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 10,
+  },
+  guessPreviewEyebrow: {
+    fontSize: 11,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+  },
+  guessPreviewTitle: {
+    fontSize: 18,
+    lineHeight: 24,
+    fontFamily: 'Archivo_600SemiBold',
+  },
+  guessPreviewMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  guessPreviewMetaPill: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  guessPreviewMetaText: {
+    fontSize: 11.5,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 0.2,
+  },
+  guessPreviewHint: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: 'Manrope_400Regular',
+    letterSpacing: 0.2,
+  },
+  guessPreviewOptions: {
+    gap: 8,
+  },
+  guessPreviewOption: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  guessPreviewOptionText: {
+    fontSize: 13,
+    fontFamily: 'Manrope_500Medium',
+    lineHeight: 18,
+  },
+  guessPreviewFooter: {
+    fontSize: 11.5,
+    lineHeight: 17,
+    fontFamily: 'Manrope_400Regular',
+    letterSpacing: 0.15,
   },
   customPromptInput: {
     borderWidth: StyleSheet.hairlineWidth,

@@ -1,6 +1,7 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
+import { getDatePlanPreviewText } from '@/lib/message-preview';
 import { supabase } from '@/lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { usePathname, useRouter } from 'expo-router';
@@ -340,6 +341,8 @@ export default function InAppToasts() {
 
   const messagePreview = useCallback((row: any, previewsAllowed: boolean) => {
     if (!previewsAllowed) return 'Sent you a message';
+    const datePlanPreview = getDatePlanPreviewText(row?.text);
+    if (datePlanPreview) return datePlanPreview;
     if (row?.text) return row.text;
     if (row?.message_type === 'image') return 'Photo';
     if (row?.message_type === 'video') return 'Video';

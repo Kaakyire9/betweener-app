@@ -22,7 +22,6 @@ type IntentRequestSheetProps = {
 
 const optionLabels: { type: IntentRequestType; label: string; subtitle: string; icon: string }[] = [
   { type: 'connect', label: 'Ask to chat', subtitle: 'Start a direct connection', icon: 'message-outline' },
-  { type: 'date_request', label: 'Ask on a date', subtitle: 'Suggest a plan', icon: 'calendar-heart' },
   { type: 'like_with_note', label: 'Like with note', subtitle: 'Add a short note', icon: 'text-box-plus-outline' },
   { type: 'circle_intro', label: 'Circle intro', subtitle: 'Contextual connect', icon: 'account-group-outline' },
 ];
@@ -58,11 +57,15 @@ export default function IntentRequestSheet({
 
   useEffect(() => {
     if (visible) {
-      setSelectedType(defaultType ?? 'connect');
+      const nextDefault =
+        defaultType && options.some((option) => option.type === defaultType)
+          ? defaultType
+          : 'connect';
+      setSelectedType(nextDefault);
       setMessage(typeof prefillMessage === 'string' ? prefillMessage : '');
       setSuggestedPlace('');
     }
-  }, [defaultType, prefillMessage, visible]);
+  }, [defaultType, options, prefillMessage, visible]);
 
   const suggested = useMemo(() => {
     const raw = typeof prefillMessage === 'string' ? prefillMessage.trim() : '';
