@@ -1,5 +1,5 @@
 import { useAuth, useAuthGuard } from '@/lib/auth-context';
-import { Redirect } from 'expo-router';
+import { Redirect, useSegments } from 'expo-router';
 import { ActivityIndicator, View } from 'react-native';
 
 type AuthGuardProps = {
@@ -73,6 +73,10 @@ export function withAuthGuard<P extends object>(
 // Guest-only guard (for auth screens)
 export function GuestGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isEmailVerified, hasProfile, phoneVerified, isLoading } = useAuth();
+  const segments = useSegments();
+  const currentScreen = segments.length > 0 ? segments[segments.length - 1] : null;
+  const allowDuringAuthenticatedRecovery =
+    currentScreen === 'callback' || currentScreen === 'reset-password';
 
   if (isLoading) {
     return (
@@ -83,7 +87,13 @@ export function GuestGuard({ children }: { children: React.ReactNode }) {
   }
 
   // If fully authenticated, redirect to main app
-  if (isAuthenticated && isEmailVerified && phoneVerified && hasProfile) {
+  if (
+    isAuthenticated &&
+    isEmailVerified &&
+    phoneVerified &&
+    hasProfile &&
+    !allowDuringAuthenticatedRecovery
+  ) {
     return <Redirect href="/(tabs)/vibes" />;
   }
 

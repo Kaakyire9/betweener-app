@@ -673,32 +673,50 @@ export default function useAIRecommendations(
 
         const enrichRpcRowsWithInterests = async (rows: any[]) => {
           if (!Array.isArray(rows) || rows.length === 0) return rows;
+          const ids = rows.map((row) => row?.id).filter(Boolean);
+          if (ids.length === 0) return rows;
+
           const idsNeedingInterests = rows
             .filter((row) => !Array.isArray(row?.interests) || row.interests.length === 0)
             .map((row) => row?.id)
             .filter(Boolean);
-          if (idsNeedingInterests.length === 0) return rows;
 
+          const genderMap: Record<string, string | null> = {};
           try {
-            const { data: piData, error: piErr } = await supabase
-              .from('profile_interests')
-              .select('profile_id, interests!inner(name)')
-              .in('profile_id', idsNeedingInterests);
-
-            if (piErr || !Array.isArray(piData)) return rows;
-
             const interestsMap: Record<string, string[]> = {};
-            for (const row of piData as any[]) {
-              const pid = row.profile_id;
-              let arr: string[] = [];
-              if (Array.isArray(row.interests)) {
-                arr = row.interests.map((i: any) => i?.name).filter(Boolean);
-              } else if (row.interests?.name) {
-                arr = [row.interests.name];
+
+            if (idsNeedingInterests.length > 0) {
+              const { data: piData, error: piErr } = await supabase
+                .from('profile_interests')
+                .select('profile_id, interests!inner(name)')
+                .in('profile_id', idsNeedingInterests);
+
+              if (!piErr && Array.isArray(piData)) {
+                for (const row of piData as any[]) {
+                  const pid = row.profile_id;
+                  let arr: string[] = [];
+                  if (Array.isArray(row.interests)) {
+                    arr = row.interests.map((i: any) => i?.name).filter(Boolean);
+                  } else if (row.interests?.name) {
+                    arr = [row.interests.name];
+                  }
+                  if (!pid) continue;
+                  if (!interestsMap[pid]) interestsMap[pid] = [];
+                  interestsMap[pid] = [...interestsMap[pid], ...arr];
+                }
               }
-              if (!pid) continue;
-              if (!interestsMap[pid]) interestsMap[pid] = [];
-              interestsMap[pid] = [...interestsMap[pid], ...arr];
+            }
+
+            const { data: profileRows, error: profileErr } = await supabase
+              .from('profiles')
+              .select('id, gender')
+              .in('id', ids);
+
+            if (!profileErr && Array.isArray(profileRows)) {
+              for (const row of profileRows as any[]) {
+                if (!row?.id) continue;
+                genderMap[String(row.id)] = row.gender ?? null;
+              }
             }
 
             return rows.map((row) => ({
@@ -707,6 +725,7 @@ export default function useAIRecommendations(
                 Array.isArray(row?.interests) && row.interests.length > 0
                   ? row.interests
                   : interestsMap[row?.id] ?? [],
+              gender: row?.gender ?? genderMap[String(row?.id)] ?? null,
             }));
           } catch {
             return rows;
@@ -743,6 +762,7 @@ export default function useAIRecommendations(
             location: p.location || undefined,
             tribe: p.tribe,
             religion: p.religion,
+            gender: (p as any).gender ?? undefined,
             region: p.region,
             current_country: (p as any).current_country,
             current_country_code: (p as any).current_country_code,
@@ -927,9 +947,9 @@ export default function useAIRecommendations(
         // due to missing columns (Postgres error 42703), retry with a
         // minimal safe column list to avoid falling back to mocks.
         const extendedSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
         const minimalSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
 
         let data: any[] | null = null;
         let error: any = null;
@@ -1082,6 +1102,7 @@ export default function useAIRecommendations(
               location: p.location || undefined,
               tribe: p.tribe,
               religion: p.religion,
+              gender: p.gender ?? undefined,
               region: p.region,
               current_country: p.current_country,
               current_country_code: (p as any).current_country_code,

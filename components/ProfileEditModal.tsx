@@ -71,6 +71,12 @@ const LOOKING_FOR_OPTIONS = [
   "Life partner", "Other"
 ];
 
+const GENDER_OPTIONS = [
+  { label: 'Male', value: 'MALE' },
+  { label: 'Female', value: 'FEMALE' },
+  { label: 'Other', value: 'OTHER' },
+];
+
 // HIGH PRIORITY: Lifestyle options
 const EXERCISE_FREQUENCY_OPTIONS = [
   "Daily", "Weekly", "Occasionally", "Never", "Other"
@@ -326,6 +332,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const [formData, setFormData] = useState({
       full_name: '',
       bio: '',
+      gender: '',
       age: '',
       region: '',
       tribe: '',
@@ -389,6 +396,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       setFormData({
         full_name: profile.full_name || '',
         bio: profile.bio || '',
+        gender: ((profile as any).gender || '').toString().trim().toUpperCase(),
         age: profile.age?.toString() || '',
         region: profile.region || '',
         tribe: (profile as any).tribe || '',
@@ -1199,7 +1207,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         photos: formData.photos,
         profile_video: formData.profile_video && formData.profile_video.trim() ? formData.profile_video.trim() : null,
         // Preserve existing required fields to avoid null constraint violations
-        gender: profile?.gender || 'OTHER',
+        gender: String(formData.gender || profile?.gender || 'OTHER').trim().toUpperCase(),
         age: profile?.age || 18,
         region: profile?.region || '',
         tribe: profile?.tribe || '',
@@ -1452,6 +1460,35 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                 maxLength={500}
               />
               <Text style={styles.characterCount}>{formData.bio.length}/500</Text>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Gender</Text>
+              <View style={styles.optionChipRow}>
+                {GENDER_OPTIONS.map((option) => {
+                  const selected = formData.gender === option.value;
+                  return (
+                    <TouchableOpacity
+                      key={option.value}
+                      style={[
+                        styles.optionChip,
+                        selected && styles.optionChipSelected,
+                      ]}
+                      onPress={() => handleInputChange('gender', option.value)}
+                      activeOpacity={0.85}
+                    >
+                      <Text
+                        style={[
+                          styles.optionChipText,
+                          selected && styles.optionChipTextSelected,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
 
             <View style={styles.row}>
@@ -3020,6 +3057,39 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     row: {
       flexDirection: 'row',
+    },
+    optionChipRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+    },
+    optionChip: {
+      minWidth: 92,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderRadius: 16,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      backgroundColor: withAlpha(theme.background, isDark ? 0.7 : 0.95),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    optionChipSelected: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.22 : 0.14),
+      borderColor: withAlpha(theme.tint, isDark ? 0.46 : 0.32),
+      shadowColor: theme.tint,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: isDark ? 0.22 : 0.12,
+      shadowRadius: 16,
+      elevation: 4,
+    },
+    optionChipText: {
+      fontSize: 15,
+      fontWeight: '600',
+      color: theme.textMuted,
+    },
+    optionChipTextSelected: {
+      color: theme.tint,
     },
     addPhotoButton: {
       flexDirection: 'row',

@@ -18,12 +18,18 @@ import {
   shuffleOptions,
 } from "@/lib/prompts/guess-prompts";
 import { supabase } from "@/lib/supabase";
+import { isTrustedAuthCallbackUrl } from "@/lib/auth-callback";
 import type { GuessMode, ProfilePromptAnswer, PromptType } from "@/types/user-profile";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as AppleAuthentication from "expo-apple-authentication";
+import * as Clipboard from "expo-clipboard";
+import { makeRedirectUri } from "expo-auth-session";
 import { router, useLocalSearchParams } from "expo-router";
+import * as Linking from "expo-linking";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Animated,
   Image,
   ImageBackground,
@@ -42,9 +48,34 @@ import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/dat
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { VideoView, useVideoPlayer } from "expo-video";
+import * as WebBrowser from "expo-web-browser";
 import * as Haptics from "expo-haptics";
 
 const DISTANCE_UNIT_KEY = 'distance_unit';
+const LINKED_METHODS_BANNER_DISMISSED_KEY = 'linked_methods_banner_dismissed_v1';
+
+type AuthCallbackParams = Record<string, string | undefined>;
+
+const mergeAuthParamsFromUrl = (target: AuthCallbackParams, url: string) => {
+  try {
+    const parsed = Linking.parse(url);
+    const query = parsed.queryParams ?? {};
+    Object.entries(query).forEach(([key, value]) => {
+      if (typeof value === 'string') target[key] = value;
+      else if (Array.isArray(value) && typeof value[0] === 'string') target[key] = value[0];
+    });
+  } catch {
+    // ignore malformed urls
+  }
+
+  if (url.includes('#')) {
+    const fragment = url.split('#')[1] || '';
+    const params = new URLSearchParams(fragment);
+    params.forEach((value, key) => {
+      target[key] = value;
+    });
+  }
+};
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
 
@@ -72,6 +103,14 @@ const DISTANCE_UNIT_OPTIONS: { value: DistanceUnit; label: string; subtitle?: st
   { value: 'km', label: 'Kilometers' },
   { value: 'mi', label: 'Miles' },
 ];
+
+const ACCOUNT_RECOVERY_METHOD_OPTIONS = [
+  { value: 'email', label: 'Email' },
+  { value: 'google', label: 'Google' },
+  { value: 'apple', label: 'Apple' },
+  { value: 'magic_link', label: 'Magic link' },
+  { value: 'other', label: 'Other' },
+] as const;
 
 const QUIET_HOURS_PRESETS = [
   { id: 'late', label: '22:00-08:00', start: '22:00:00', end: '08:00:00' },
@@ -236,12 +275,13 @@ const computeProfileCompletion = (
 };
 
 export default function ProfileScreen() {
+  WebBrowser.maybeCompleteAuthSession();
   const { signOut, user, profile, refreshProfile } = useAuth();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = colorScheme === 'dark';
   const params = useLocalSearchParams();
-  const { refreshStatus } = useVerificationStatus(profile?.id);
+  const { status: verificationStatus, refreshStatus } = useVerificationStatus(profile?.id);
   const { preference: themePreference, setPreference: setThemePreference } = useColorSchemePreference();
   
   const [selectedPrompts, setSelectedPrompts] = useState<Record<string, number>>({
@@ -291,6 +331,21 @@ export default function ProfileScreen() {
   const [emailSaving, setEmailSaving] = useState(false);
   const [emailMessage, setEmailMessage] = useState('');
   const [emailError, setEmailError] = useState('');
+  const [linkedProviders, setLinkedProviders] = useState<string[]>([]);
+  const [identitiesLoading, setIdentitiesLoading] = useState(false);
+  const [linkingProvider, setLinkingProvider] = useState<string | null>(null);
+  const [identityMessage, setIdentityMessage] = useState('');
+  const [identityError, setIdentityError] = useState('');
+  const [showRecoveryRequestModal, setShowRecoveryRequestModal] = useState(false);
+  const [recoveryCurrentMethod, setRecoveryCurrentMethod] = useState<string>('email');
+  const [recoveryPreviousMethod, setRecoveryPreviousMethod] = useState<string>('google');
+  const [recoveryContactEmail, setRecoveryContactEmail] = useState('');
+  const [recoveryPreviousEmail, setRecoveryPreviousEmail] = useState('');
+  const [recoveryNote, setRecoveryNote] = useState('');
+  const [recoverySubmitting, setRecoverySubmitting] = useState(false);
+  const [recoveryMessage, setRecoveryMessage] = useState('');
+  const [recoveryError, setRecoveryError] = useState('');
+  const [linkedMethodsBannerDismissed, setLinkedMethodsBannerDismissed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [userInterests, setUserInterests] = useState<string[]>([]);
   const [loadingInterests, setLoadingInterests] = useState(false);
@@ -352,6 +407,39 @@ export default function ProfileScreen() {
   const [rewardText, setRewardText] = useState<string | null>(null);
   const [progressTrackWidth, setProgressTrackWidth] = useState(0);
   const canSeeAdminTools = canAccessAdminTools(user?.email ?? null);
+
+  const handleCopyDevSessionToken = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) {
+        Alert.alert('Session error', error.message);
+        return;
+      }
+
+      const accessToken = data.session?.access_token ?? null;
+      const authUserId = data.session?.user?.id ?? user?.id ?? null;
+      const profileId = profile?.id ?? null;
+
+      if (!accessToken) {
+        Alert.alert('No active session', 'No access token found for the current signed-in session.');
+        return;
+      }
+
+      const debugPayload = [
+        `ACCESS_TOKEN=${accessToken}`,
+        `AUTH_USER_ID=${authUserId ?? ''}`,
+        `PROFILE_ID=${profileId ?? ''}`,
+      ].join('\n');
+
+      await Clipboard.setStringAsync(debugPayload);
+      Alert.alert(
+        'Session copied',
+        `Copied access token, auth user id, and profile id.\n\nAuth user: ${authUserId ?? 'unknown'}\nProfile: ${profileId ?? 'unknown'}`,
+      );
+    } catch (error: any) {
+      Alert.alert('Copy failed', error?.message || 'Unable to read the current session.');
+    }
+  }, [profile?.id, user?.id]);
 
   const progressSubtitle = useMemo(() => {
     if (profileCompletion.percent >= 100) return "Profile complete";
@@ -833,6 +921,30 @@ export default function ProfileScreen() {
   }, [showEditModal, loadDistanceUnit]);
 
   const handleSignOut = async () => {
+    if (linkedProviders.length < 2) {
+      Alert.alert(
+        'Before you sign out',
+        'Link Google or Apple so you always come back to the same Betweener account.',
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel',
+          },
+          {
+            text: 'Link now',
+            onPress: openEmailAccountModal,
+          },
+          {
+            text: 'Sign out anyway',
+            style: 'destructive',
+            onPress: () => {
+              void signOut();
+            },
+          },
+        ],
+      );
+      return;
+    }
     await signOut();
   };
 
@@ -1067,10 +1179,7 @@ export default function ProfileScreen() {
       if (!canSeeAdminTools) return;
       router.push('/admin');
     } else if (itemId === 'email') {
-      setEmailMessage('');
-      setEmailError('');
-      setEmailInput(user?.email ?? '');
-      setShowEmailModal(true);
+      openEmailAccountModal();
     } else if (itemId === 'notifications') {
       setShowNotificationsModal(true);
     } else if (itemId === 'privacy') {
@@ -1084,6 +1193,26 @@ export default function ProfileScreen() {
       console.log(`Navigate to ${itemId}`);
     }
   };
+
+  const openEmailAccountModal = useCallback(() => {
+    setEmailMessage('');
+    setEmailError('');
+    setIdentityMessage('');
+    setIdentityError('');
+    setEmailInput(user?.email ?? '');
+    setShowEmailModal(true);
+  }, [user?.email]);
+
+  const openRecoveryRequestModal = useCallback(() => {
+    setRecoveryError('');
+    setRecoveryMessage('');
+    setRecoveryCurrentMethod(linkedProviders.includes('google') ? 'google' : 'email');
+    setRecoveryPreviousMethod(linkedProviders.includes('apple') ? 'apple' : 'google');
+    setRecoveryContactEmail(user?.email ?? '');
+    setRecoveryPreviousEmail('');
+    setRecoveryNote('');
+    setShowRecoveryRequestModal(true);
+  }, [linkedProviders, user?.email]);
 
   const handleEmailUpdate = async () => {
     const trimmed = emailInput.trim().toLowerCase();
@@ -1114,6 +1243,251 @@ export default function ProfileScreen() {
       setEmailSaving(false);
     }
   };
+
+  const getOAuthRedirectUrl = useCallback(
+    () =>
+      makeRedirectUri({
+        scheme: 'betweenerapp',
+        path: 'auth/callback',
+      }),
+    [],
+  );
+
+  const waitForSession = useCallback(async (timeoutMs = 9000) => {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.user) return true;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return false;
+  }, []);
+
+  const loadLinkedIdentities = useCallback(async () => {
+    if (!user?.id) {
+      setLinkedProviders([]);
+      return;
+    }
+    setIdentitiesLoading(true);
+    try {
+      const { data, error } = await supabase.auth.getUserIdentities();
+      if (error) {
+        setIdentityError(error.message);
+        return;
+      }
+      const providers = Array.from(
+        new Set(
+          (data?.identities ?? [])
+            .map((identity) => String(identity.provider || '').toLowerCase())
+            .filter(Boolean),
+        ),
+      );
+      setLinkedProviders(providers);
+    } catch (error: any) {
+      setIdentityError(error?.message ?? 'Unable to load sign-in methods.');
+    } finally {
+      setIdentitiesLoading(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!showEmailModal || !user?.id) return;
+    void loadLinkedIdentities();
+  }, [loadLinkedIdentities, showEmailModal, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setLinkedProviders([]);
+      setLinkedMethodsBannerDismissed(false);
+      return;
+    }
+    void loadLinkedIdentities();
+  }, [loadLinkedIdentities, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setLinkedMethodsBannerDismissed(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(`${LINKED_METHODS_BANNER_DISMISSED_KEY}:${user.id}`);
+        if (!cancelled) {
+          setLinkedMethodsBannerDismissed(raw === '1');
+        }
+      } catch {
+        if (!cancelled) setLinkedMethodsBannerDismissed(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  const dismissLinkedMethodsBanner = useCallback(async () => {
+    setLinkedMethodsBannerDismissed(true);
+    if (!user?.id) return;
+    try {
+      await AsyncStorage.setItem(`${LINKED_METHODS_BANNER_DISMISSED_KEY}:${user.id}`, '1');
+    } catch {
+      // ignore cache failures
+    }
+  }, [user?.id]);
+
+  const shouldShowLinkedMethodsBanner =
+    !isPreviewMode &&
+    !linkedMethodsBannerDismissed &&
+    !identitiesLoading &&
+    linkedProviders.length < 2;
+
+  const finishIdentityCallback = useCallback(async (url: string) => {
+    if (!isTrustedAuthCallbackUrl(url)) {
+      throw new Error("Untrusted auth callback.");
+    }
+
+    const merged: AuthCallbackParams = {};
+    mergeAuthParamsFromUrl(merged, url);
+
+    const code = merged.code;
+    const accessToken = merged.access_token;
+    const refreshToken = merged.refresh_token;
+
+    if (code) {
+      const { error } = await supabase.auth.exchangeCodeForSession(code);
+      if (error) throw error;
+      return;
+    }
+
+    if (accessToken && refreshToken) {
+      const { error } = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      if (error) throw error;
+    }
+  }, []);
+
+  const formatIdentityLinkError = useCallback((error: any, providerLabel: string) => {
+    const code = String(error?.code || '').toLowerCase();
+    if (code === 'identity_already_exists') {
+      return `This ${providerLabel} account is already linked to another Betweener account.`;
+    }
+    if (code === 'identity_not_found') {
+      return `${providerLabel} could not be linked right now. Please try again.`;
+    }
+    return error?.message ?? `Unable to link ${providerLabel}.`;
+  }, []);
+
+  const handleLinkGoogle = useCallback(async () => {
+    setIdentityError('');
+    setIdentityMessage('');
+    setLinkingProvider('google');
+    try {
+      const redirectTo = getOAuthRedirectUrl();
+      const { data, error } = await supabase.auth.linkIdentity({
+        provider: 'google',
+        options: { redirectTo },
+      });
+      if (error || !data?.url) {
+        throw error ?? new Error('Unable to start Google linking.');
+      }
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+      if (result.type === 'success' && result.url && isTrustedAuthCallbackUrl(result.url)) {
+        await finishIdentityCallback(result.url);
+        await waitForSession(4000);
+        await loadLinkedIdentities();
+        setIdentityMessage('Google is now linked to this Betweener account.');
+      }
+    } catch (error: any) {
+      setIdentityError(formatIdentityLinkError(error, 'Google'));
+    } finally {
+      setLinkingProvider(null);
+    }
+  }, [finishIdentityCallback, formatIdentityLinkError, getOAuthRedirectUrl, loadLinkedIdentities, waitForSession]);
+
+  const handleLinkApple = useCallback(async () => {
+    if (Platform.OS !== 'ios') return;
+    setIdentityError('');
+    setIdentityMessage('');
+    setLinkingProvider('apple');
+    try {
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+      if (!credential.identityToken) {
+        throw new Error('Apple sign-in failed to return a token.');
+      }
+      const { error } = await supabase.auth.linkIdentity({
+        provider: 'apple',
+        token: credential.identityToken,
+      });
+      if (error) throw error;
+      await waitForSession(4000);
+      await loadLinkedIdentities();
+      setIdentityMessage('Apple is now linked to this Betweener account.');
+    } catch (error: any) {
+      const message = String(error?.message || '');
+      if (message.toLowerCase().includes('canceled') || message.toLowerCase().includes('cancelled')) {
+        setLinkingProvider(null);
+        return;
+      }
+      setIdentityError(formatIdentityLinkError(error, 'Apple'));
+    } finally {
+      setLinkingProvider(null);
+    }
+  }, [formatIdentityLinkError, loadLinkedIdentities, waitForSession]);
+
+  const handleSubmitRecoveryRequest = useCallback(async () => {
+    setRecoveryError('');
+    setRecoveryMessage('');
+
+    if (!recoveryContactEmail.trim()) {
+      setRecoveryError('Add a contact email so support can reach you.');
+      return;
+    }
+
+    if (!recoveryNote.trim()) {
+      setRecoveryError('Tell us what happened so support can investigate the duplicate account.');
+      return;
+    }
+
+    setRecoverySubmitting(true);
+    try {
+      const { data, error } = await supabase.rpc('rpc_request_account_recovery', {
+        p_current_sign_in_method: recoveryCurrentMethod,
+        p_previous_sign_in_method: recoveryPreviousMethod,
+        p_contact_email: recoveryContactEmail.trim(),
+        p_previous_account_email: recoveryPreviousEmail.trim() || null,
+        p_note: recoveryNote.trim(),
+        p_evidence: {
+          linked_providers: linkedProviders,
+          current_email: user?.email ?? null,
+        },
+      });
+      if (error || !data) {
+        throw error ?? new Error('Unable to submit the recovery request.');
+      }
+      setRecoveryMessage('Recovery request sent. Support will review and help reconnect the right account.');
+      setRecoverySubmitting(false);
+      setShowRecoveryRequestModal(false);
+      setIdentityMessage('Recovery request sent to support.');
+    } catch (error: any) {
+      setRecoverySubmitting(false);
+      setRecoveryError(error?.message ?? 'Unable to submit the recovery request.');
+    }
+  }, [
+    linkedProviders,
+    recoveryContactEmail,
+    recoveryCurrentMethod,
+    recoveryNote,
+    recoveryPreviousEmail,
+    recoveryPreviousMethod,
+    user?.email,
+  ]);
 
   const persistNotificationPrefs = useCallback(
     async (next: NotificationPrefs) => {
@@ -1236,6 +1610,52 @@ export default function ProfileScreen() {
     (profile as any)?.verification_level
     ?? (profile as any)?.verificationLevel
     ?? ((profile as any)?.verified ? 1 : 0);
+  const verificationCallout = useMemo(() => {
+    if (verificationStatus.loading) {
+      return {
+        title: 'Checking verification',
+        subtitle: 'Loading your review status and available verification options.',
+        action: 'Open',
+        icon: 'shield-refresh-outline' as const,
+      };
+    }
+
+    if (verificationStatus.hasPendingRequest) {
+      return {
+        title: 'Verification pending',
+        subtitle: 'Your latest document is in review. Open the modal to track status or submit a different method later.',
+        action: 'View status',
+        icon: 'progress-clock' as const,
+      };
+    }
+
+    if (verificationLevel > 0) {
+      return {
+        title: verificationLevel >= 2 ? 'Level 2 verified' : 'Verified profile',
+        subtitle: 'Open verification to add another method, strengthen trust, or check your review history.',
+        action: 'Manage',
+        icon: 'shield-check-outline' as const,
+      };
+    }
+
+    if (verificationStatus.hasRejection) {
+      return {
+        title: 'Verification needs another try',
+        subtitle: verificationStatus.rejectionReason
+          ? verificationStatus.rejectionReason
+          : 'One of your submissions was rejected. Open verification to resubmit with a stronger document or selfie check.',
+        action: 'Resubmit',
+        icon: 'alert-circle-outline' as const,
+      };
+    }
+
+    return {
+      title: 'Get verified',
+      subtitle: 'Add a trust signal to your profile with a document, social proof, or selfie liveness check.',
+      action: 'Start',
+      icon: 'shield-plus-outline' as const,
+    };
+  }, [verificationLevel, verificationStatus]);
   const isOnlineNow = !!(profile as any)?.online;
   const isActiveNow = !!(profile as any)?.is_active || !!(profile as any)?.isActiveNow;
   const showPresence = isOnlineNow || isActiveNow;
@@ -1445,13 +1865,22 @@ export default function ProfileScreen() {
           {!isPreviewMode && (
             <>
               {__DEV__ && (
-                <TouchableOpacity
-                  style={styles.devButton}
-                  onPress={() => router.push("/(auth)/onboarding?variant=ghana")}
-                  accessibilityLabel="Open Ghana onboarding (dev)"
-                >
-                  <Text style={styles.devButtonText}>GH</Text>
-                </TouchableOpacity>
+                <>
+                  <TouchableOpacity
+                    style={styles.devButton}
+                    onPress={handleCopyDevSessionToken}
+                    accessibilityLabel="Copy current session token (dev)"
+                  >
+                    <Text style={styles.devButtonText}>TOK</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.devButton}
+                    onPress={() => router.push("/(auth)/onboarding?variant=ghana")}
+                    accessibilityLabel="Open Ghana onboarding (dev)"
+                  >
+                    <Text style={styles.devButtonText}>GH</Text>
+                  </TouchableOpacity>
+                </>
               )}
               <TouchableOpacity 
                 style={[styles.settingsButton, showSettingsDropdown && styles.settingsButtonActive]} 
@@ -1582,6 +2011,43 @@ export default function ProfileScreen() {
           </Animated.View>
         </>
       )}
+
+      {shouldShowLinkedMethodsBanner ? (
+        <View
+          style={[
+            styles.linkedMethodsBanner,
+            styles.cardShadowSoft,
+            { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+          ]}
+        >
+          <View style={styles.linkedMethodsBannerHeader}>
+            <View style={[styles.linkedMethodsBannerIconWrap, { backgroundColor: theme.tint + '18' }]}>
+              <MaterialCommunityIcons name="shield-check-outline" size={18} color={theme.tint} />
+            </View>
+            <TouchableOpacity onPress={() => void dismissLinkedMethodsBanner()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
+            </TouchableOpacity>
+          </View>
+          <Text style={[styles.linkedMethodsBannerTitle, { color: theme.text }]}>Add another sign-in method</Text>
+          <Text style={[styles.linkedMethodsBannerBody, { color: theme.textMuted }]}>
+            Link Google or Apple so you always come back to the same Betweener account.
+          </Text>
+          <View style={styles.linkedMethodsBannerActions}>
+            <TouchableOpacity
+              onPress={openEmailAccountModal}
+              style={[styles.linkedMethodsBannerPrimary, { backgroundColor: theme.tint }]}
+            >
+              <Text style={styles.linkedMethodsBannerPrimaryText}>Link now</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => void dismissLinkedMethodsBanner()}
+              style={[styles.linkedMethodsBannerSecondary, { borderColor: theme.outline, backgroundColor: theme.background }]}
+            >
+              <Text style={[styles.linkedMethodsBannerSecondaryText, { color: theme.textMuted }]}>Maybe later</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
 
       <Modal
         visible={showNotificationsModal}
@@ -1839,6 +2305,278 @@ export default function ProfileScreen() {
             >
               <Text style={styles.emailSaveText}>{emailSaving ? 'Sending...' : 'Send confirmation'}</Text>
             </TouchableOpacity>
+            <View style={[styles.emailAccountDivider, { backgroundColor: theme.outline }]} />
+            <View style={styles.identitySection}>
+              <Text style={[styles.identitySectionTitle, { color: theme.text }]}>Linked sign-in methods</Text>
+              <Text style={[styles.identitySectionBody, { color: theme.textMuted }]}>
+                Add another sign-in method so Google and Apple always open the same Betweener account.
+              </Text>
+
+              <View
+                style={[
+                  styles.identityMethodCard,
+                  { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+                ]}
+              >
+                <View style={styles.identityMethodMeta}>
+                  <View style={[styles.identityMethodIcon, { backgroundColor: theme.background }]}>
+                    <MaterialCommunityIcons name="email-outline" size={18} color={theme.tint} />
+                  </View>
+                  <View style={styles.identityMethodTextWrap}>
+                    <Text style={[styles.identityMethodTitle, { color: theme.text }]}>Email</Text>
+                    <Text style={[styles.identityMethodSubtitle, { color: theme.textMuted }]}>
+                      {user?.email || 'No email on file'}
+                    </Text>
+                  </View>
+                </View>
+                <View style={[styles.identityStatusPill, { backgroundColor: theme.tint + '18', borderColor: theme.tint }]}>
+                  <Text style={[styles.identityStatusText, { color: theme.tint }]}>Primary</Text>
+                </View>
+              </View>
+
+              <View
+                style={[
+                  styles.identityMethodCard,
+                  { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+                ]}
+              >
+                <View style={styles.identityMethodMeta}>
+                  <View style={[styles.identityMethodIcon, { backgroundColor: theme.background }]}>
+                    <MaterialCommunityIcons name="google" size={18} color="#EA4335" />
+                  </View>
+                  <View style={styles.identityMethodTextWrap}>
+                    <Text style={[styles.identityMethodTitle, { color: theme.text }]}>Google</Text>
+                    <Text style={[styles.identityMethodSubtitle, { color: theme.textMuted }]}>
+                      {linkedProviders.includes('google') ? 'Linked to this account' : 'Not linked yet'}
+                    </Text>
+                  </View>
+                </View>
+                {linkedProviders.includes('google') ? (
+                  <View style={[styles.identityStatusPill, { backgroundColor: theme.tint + '18', borderColor: theme.tint }]}>
+                    <Text style={[styles.identityStatusText, { color: theme.tint }]}>Linked</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    onPress={handleLinkGoogle}
+                    disabled={identitiesLoading || linkingProvider !== null}
+                    style={[
+                      styles.identityLinkButton,
+                      {
+                        backgroundColor: theme.tint,
+                        opacity: identitiesLoading || linkingProvider !== null ? 0.65 : 1,
+                      },
+                    ]}
+                  >
+                    <Text style={styles.identityLinkButtonText}>
+                      {linkingProvider === 'google' ? 'Linking...' : 'Link Google'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {Platform.OS === 'ios' ? (
+                <View
+                  style={[
+                    styles.identityMethodCard,
+                    { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+                  ]}
+                >
+                  <View style={styles.identityMethodMeta}>
+                    <View style={[styles.identityMethodIcon, { backgroundColor: theme.background }]}>
+                      <MaterialCommunityIcons name="apple" size={18} color={theme.text} />
+                    </View>
+                    <View style={styles.identityMethodTextWrap}>
+                      <Text style={[styles.identityMethodTitle, { color: theme.text }]}>Apple</Text>
+                      <Text style={[styles.identityMethodSubtitle, { color: theme.textMuted }]}>
+                        {linkedProviders.includes('apple') ? 'Linked to this account' : 'Not linked yet'}
+                      </Text>
+                    </View>
+                  </View>
+                  {linkedProviders.includes('apple') ? (
+                    <View style={[styles.identityStatusPill, { backgroundColor: theme.tint + '18', borderColor: theme.tint }]}>
+                      <Text style={[styles.identityStatusText, { color: theme.tint }]}>Linked</Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      onPress={handleLinkApple}
+                      disabled={identitiesLoading || linkingProvider !== null}
+                      style={[
+                        styles.identityLinkButton,
+                        {
+                          backgroundColor: theme.tint,
+                          opacity: identitiesLoading || linkingProvider !== null ? 0.65 : 1,
+                        },
+                      ]}
+                    >
+                      <Text style={styles.identityLinkButtonText}>
+                        {linkingProvider === 'apple' ? 'Linking...' : 'Link Apple'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ) : null}
+
+              {identityError ? (
+                <Text style={[styles.identityError, { color: '#ef4444' }]}>{identityError}</Text>
+              ) : null}
+              {identityMessage ? (
+                <Text style={[styles.identityMessage, { color: theme.tint }]}>{identityMessage}</Text>
+              ) : null}
+              {identitiesLoading ? (
+                <Text style={[styles.identityLoading, { color: theme.textMuted }]}>Checking sign-in methods...</Text>
+              ) : null}
+
+              <View style={[styles.recoveryCard, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
+                <View style={styles.recoveryCardCopy}>
+                  <Text style={[styles.recoveryCardTitle, { color: theme.text }]}>Having trouble with another sign-in method?</Text>
+                  <Text style={[styles.recoveryCardBody, { color: theme.textMuted }]}>
+                    If Apple, Google, or email opened the wrong Betweener account, send a recovery request for support review.
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={openRecoveryRequestModal}
+                  style={[styles.recoveryCardButton, { backgroundColor: theme.tint }]}
+                >
+                  <Text style={styles.recoveryCardButtonText}>Recover account access</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showRecoveryRequestModal}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setShowRecoveryRequestModal(false)}
+      >
+        <View style={styles.emailModalBackdrop}>
+          <View
+            style={[
+              styles.emailModalCard,
+              styles.cardShadow,
+              { backgroundColor: theme.background, borderColor: theme.outline },
+            ]}
+          >
+            <View style={styles.emailModalHeader}>
+              <Text style={[styles.emailModalTitle, { color: theme.text }]}>Recover account access</Text>
+              <TouchableOpacity onPress={() => setShowRecoveryRequestModal(false)}>
+                <MaterialCommunityIcons name="close" size={20} color={theme.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <Text style={[styles.emailModalBody, { color: theme.textMuted }]}>
+              Tell support which sign-in method opened the wrong account and which one you used before. We will review it before any account merge.
+            </Text>
+
+            <View style={styles.recoveryFieldGroup}>
+              <Text style={[styles.recoveryFieldLabel, { color: theme.text }]}>How did you sign in now?</Text>
+              <View style={styles.recoveryChoiceRow}>
+                {ACCOUNT_RECOVERY_METHOD_OPTIONS.map((option) => {
+                  const active = recoveryCurrentMethod === option.value;
+                  return (
+                    <TouchableOpacity
+                      key={`current:${option.value}`}
+                      onPress={() => setRecoveryCurrentMethod(option.value)}
+                      style={[
+                        styles.recoveryChoicePill,
+                        {
+                          backgroundColor: active ? theme.tint : theme.backgroundSubtle,
+                          borderColor: active ? theme.tint : theme.outline,
+                        },
+                      ]}
+                    >
+                      <Text style={[styles.recoveryChoiceText, { color: active ? '#fff' : theme.text }]}>
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={styles.recoveryFieldGroup}>
+              <Text style={[styles.recoveryFieldLabel, { color: theme.text }]}>Which method do you want us to recover?</Text>
+              <View style={styles.recoveryChoiceRow}>
+                {ACCOUNT_RECOVERY_METHOD_OPTIONS.map((option) => {
+                  const active = recoveryPreviousMethod === option.value;
+                  return (
+                    <TouchableOpacity
+                      key={`previous:${option.value}`}
+                      onPress={() => setRecoveryPreviousMethod(option.value)}
+                      style={[
+                        styles.recoveryChoicePill,
+                        {
+                          backgroundColor: active ? theme.tint : theme.backgroundSubtle,
+                          borderColor: active ? theme.tint : theme.outline,
+                        },
+                      ]}
+                    >
+                      <Text style={[styles.recoveryChoiceText, { color: active ? '#fff' : theme.text }]}>
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            <TextInput
+              value={recoveryContactEmail}
+              onChangeText={setRecoveryContactEmail}
+              placeholder="Best contact email"
+              placeholderTextColor={theme.textMuted}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              style={[
+                styles.emailInput,
+                { color: theme.text, borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
+              ]}
+            />
+
+            <TextInput
+              value={recoveryPreviousEmail}
+              onChangeText={setRecoveryPreviousEmail}
+              placeholder="Previous account email, if you know it"
+              placeholderTextColor={theme.textMuted}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              style={[
+                styles.emailInput,
+                { color: theme.text, borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
+              ]}
+            />
+
+            <TextInput
+              value={recoveryNote}
+              onChangeText={setRecoveryNote}
+              placeholder="What happened? Example: Google created a fresh account but my real profile is under Apple."
+              placeholderTextColor={theme.textMuted}
+              multiline
+              textAlignVertical="top"
+              style={[
+                styles.recoveryTextArea,
+                { color: theme.text, borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
+              ]}
+            />
+
+            {recoveryError ? (
+              <Text style={[styles.identityError, { color: '#ef4444' }]}>{recoveryError}</Text>
+            ) : null}
+            {recoveryMessage ? (
+              <Text style={[styles.identityMessage, { color: theme.tint }]}>{recoveryMessage}</Text>
+            ) : null}
+
+            <TouchableOpacity
+              style={[
+                styles.emailSaveButton,
+                { backgroundColor: theme.tint, opacity: recoverySubmitting ? 0.6 : 1 },
+              ]}
+              onPress={handleSubmitRecoveryRequest}
+              disabled={recoverySubmitting}
+            >
+              <Text style={styles.emailSaveText}>{recoverySubmitting ? 'Sending...' : 'Send recovery request'}</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -2052,6 +2790,51 @@ export default function ProfileScreen() {
               </View>
             ) : null}
           </View>
+
+          {!isPreviewMode ? (
+            <TouchableOpacity
+              activeOpacity={0.92}
+              style={[
+                styles.heroVerificationButton,
+                { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+              ]}
+              onPress={() => setIsVerificationModalVisible(true)}
+            >
+              <View
+                style={[
+                  styles.heroVerificationIconWrap,
+                  { backgroundColor: theme.background, borderColor: theme.outline },
+                ]}
+              >
+                <MaterialCommunityIcons
+                  name={verificationCallout.icon}
+                  size={18}
+                  color={theme.tint}
+                />
+              </View>
+              <View style={styles.heroVerificationCopy}>
+                <Text style={[styles.heroVerificationTitle, { color: theme.text }]}>
+                  {verificationCallout.title}
+                </Text>
+                <Text
+                  numberOfLines={2}
+                  style={[styles.heroVerificationSubtitle, { color: theme.textMuted }]}
+                >
+                  {verificationCallout.subtitle}
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.heroVerificationAction,
+                  { backgroundColor: theme.background, borderColor: theme.outline },
+                ]}
+              >
+                <Text style={[styles.heroVerificationActionText, { color: theme.tint }]}>
+                  {verificationCallout.action}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          ) : null}
 
           <View style={styles.heroLocationRow}>
             <MaterialCommunityIcons name="map-marker" size={16} color={theme.tint} />
@@ -3511,6 +4294,50 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 14,
   },
+  heroVerificationButton: {
+    width: '100%',
+    marginTop: 12,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  heroVerificationIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  heroVerificationCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  heroVerificationTitle: {
+    fontSize: 13,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
+  heroVerificationSubtitle: {
+    fontSize: 11.5,
+    lineHeight: 16,
+    fontFamily: 'Manrope_500Medium',
+  },
+  heroVerificationAction: {
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+  },
+  heroVerificationActionText: {
+    fontSize: 11.5,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
   presenceBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -4446,6 +5273,66 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 8,
   },
+  linkedMethodsBanner: {
+    marginHorizontal: 20,
+    marginTop: 10,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  linkedMethodsBannerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  linkedMethodsBannerIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  linkedMethodsBannerTitle: {
+    fontSize: 16,
+    fontFamily: 'Archivo_600SemiBold',
+  },
+  linkedMethodsBannerBody: {
+    marginTop: 6,
+    fontSize: 12.5,
+    lineHeight: 18,
+    fontFamily: 'Manrope_400Regular',
+  },
+  linkedMethodsBannerActions: {
+    marginTop: 12,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  linkedMethodsBannerPrimary: {
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  linkedMethodsBannerPrimaryText: {
+    color: '#fff',
+    fontSize: 12,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
+  linkedMethodsBannerSecondary: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  linkedMethodsBannerSecondaryText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 0.2,
+  },
   emailModalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.55)',
@@ -4500,6 +5387,159 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontFamily: 'Manrope_600SemiBold',
+  },
+  emailAccountDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginTop: 18,
+    marginBottom: 18,
+  },
+  identitySection: {
+    gap: 10,
+  },
+  identitySectionTitle: {
+    fontSize: 15,
+    fontFamily: 'Archivo_600SemiBold',
+  },
+  identitySectionBody: {
+    fontSize: 12.5,
+    lineHeight: 18,
+    fontFamily: 'Manrope_400Regular',
+  },
+  identityMethodCard: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  identityMethodMeta: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  identityMethodIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  identityMethodTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  identityMethodTitle: {
+    fontSize: 13.5,
+    fontFamily: 'Manrope_700Bold',
+  },
+  identityMethodSubtitle: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: 'Manrope_400Regular',
+  },
+  identityStatusPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  identityStatusText: {
+    fontSize: 11.5,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
+  identityLinkButton: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  identityLinkButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
+  identityError: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: 'Manrope_500Medium',
+  },
+  identityMessage: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: 'Manrope_500Medium',
+  },
+  identityLoading: {
+    fontSize: 11.5,
+    fontFamily: 'Manrope_400Regular',
+  },
+  recoveryCard: {
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    gap: 12,
+    marginTop: 4,
+  },
+  recoveryCardCopy: {
+    gap: 4,
+  },
+  recoveryCardTitle: {
+    fontSize: 13.5,
+    fontFamily: 'Archivo_600SemiBold',
+  },
+  recoveryCardBody: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: 'Manrope_400Regular',
+  },
+  recoveryCardButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  recoveryCardButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
+  recoveryFieldGroup: {
+    gap: 8,
+    marginTop: 4,
+  },
+  recoveryFieldLabel: {
+    fontSize: 12.5,
+    fontFamily: 'Manrope_700Bold',
+  },
+  recoveryChoiceRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  recoveryChoicePill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  recoveryChoiceText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_600SemiBold',
+  },
+  recoveryTextArea: {
+    minHeight: 110,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    marginTop: 12,
+    fontFamily: 'Manrope_500Medium',
   },
   quietHoursHint: {
     fontSize: 12,

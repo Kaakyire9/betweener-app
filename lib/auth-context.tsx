@@ -451,13 +451,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshPhoneState = async (): Promise<boolean> => {
     if (phoneRefreshInFlightRef.current) return phoneVerified;
     phoneRefreshInFlightRef.current = true;
-    let knownVerified = phoneVerified || profile?.phone_verified === true;
+    const serverKnownVerified = profile?.phone_verified === true;
+    let cachedVerified = false;
+    let cachedUnverified = false;
     try {
       if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.log("[auth] refreshPhoneState: start", {
           hasUser: !!user?.id,
           profilePhoneVerified: profile?.phone_verified ?? null,
-          knownVerified,
+          serverKnownVerified,
         });
       }
       if (!user?.id) {
@@ -469,7 +471,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Fast-path: if profile already says verified, treat it as source of truth.
-      if (knownVerified) {
+      if (serverKnownVerified) {
         setPhoneVerified(true);
         try {
           await AsyncStorage.setItem(
@@ -493,15 +495,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (!isFresh) {
             await AsyncStorage.removeItem(getPhoneVerifiedCacheKey(user.id));
           } else if (cached.verified === true) {
-            knownVerified = true;
-            setPhoneVerified(true);
+            cachedVerified = true;
             if (typeof __DEV__ !== "undefined" && __DEV__) {
-              console.log("[auth] refreshPhoneState: using cached verified");
+              console.log("[auth] refreshPhoneState: cached verified hint");
             }
-            return true;
           } else if (cached.verified === false) {
             // Cache can be used to avoid repeated network calls, but don't treat it as authoritative
             // if we later learn otherwise from profile/phone_verifications.
+            cachedUnverified = true;
             if (typeof __DEV__ !== "undefined" && __DEV__) {
               console.log("[auth] refreshPhoneState: using cached unverified");
             }
@@ -571,9 +572,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       phoneRefreshInFlightRef.current = false;
     }
     if (typeof __DEV__ !== "undefined" && __DEV__) {
-      console.log("[auth] refreshPhoneState: fallback known", { knownVerified });
+      console.log("[auth] refreshPhoneState: fallback", {
+        serverKnownVerified,
+        cachedVerified,
+        cachedUnverified,
+      });
     }
-    return knownVerified;
+    const fallbackVerified = serverKnownVerified || cachedVerified;
+    setPhoneVerified(fallbackVerified);
+    return fallbackVerified;
   };
 
   const updatePresence = async (nextOnline: boolean) => {

@@ -18,6 +18,12 @@ import InAppToasts from "@/components/InAppToasts";
 import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
 import { SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
 import { initPushNotificationUX } from "@/lib/notifications/push";
+import {
+  hasFreshPendingAuthFlow,
+  isTrustedAuthCallbackUrl,
+  LAST_DEEP_LINK_URL_KEY,
+  urlHasAuthPayload,
+} from "@/lib/auth-callback";
 
 // Keep native splash visible until we decide
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -61,24 +67,31 @@ function RootLayout() {
     // Be defensive: any uncaught exception during startup can crash a release build (TestFlight)
     // before we can render a fallback UI.
     try {
-      const hasAuthPayload = (url: string) =>
-        url.includes("access_token=") ||
-        url.includes("refresh_token=") ||
-        url.includes("code=") ||
-        url.includes("token_hash=");
+      const maybeStoreAuthCallbackUrl = async (url: string) => {
+        if (!urlHasAuthPayload(url) || !isTrustedAuthCallbackUrl(url)) {
+          return;
+        }
+
+        const hasPendingFlow = await hasFreshPendingAuthFlow();
+        if (!hasPendingFlow) {
+          return;
+        }
+
+        await AsyncStorage.setItem(LAST_DEEP_LINK_URL_KEY, url);
+      };
 
       Linking.getInitialURL()
         .then((url) => {
-          if (url && hasAuthPayload(url)) {
-            AsyncStorage.setItem("last_deep_link_url", url).catch(() => {});
+          if (url) {
+            void maybeStoreAuthCallbackUrl(url).catch(() => {});
           }
         })
         .catch((e) => captureException(e, { where: "Linking.getInitialURL" }));
 
       const subscription = Linking.addEventListener("url", ({ url }) => {
         try {
-          if (url && hasAuthPayload(url)) {
-            AsyncStorage.setItem("last_deep_link_url", url).catch(() => {});
+          if (url) {
+            void maybeStoreAuthCallbackUrl(url).catch(() => {});
           }
         } catch (e) {
           captureException(e, { where: "Linking.urlListener" });

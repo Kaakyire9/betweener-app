@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { clearPendingAuthFlow, markPendingAuthFlow } from "@/lib/auth-callback";
 
 export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState("");
@@ -22,11 +23,13 @@ export default function ForgotPasswordScreen() {
       setError("Please enter a valid email address.");
       return;
     }
+    await markPendingAuthFlow("password_reset");
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: "https://getbetweener.com/auth/callback",
     });
     setLoading(false);
     if (error) {
+      await clearPendingAuthFlow();
       setError(error.message);
     } else {
       setMessage("If an account exists, we'll email a secure reset link shortly.");

@@ -25,6 +25,15 @@ module.exports = ({ config }) => {
           iosNSEFilePath: './assets/NotificationService.m',
         },
       ],
+      [
+        'expo-build-properties',
+        {
+          ios: {
+            deploymentTarget: '15.5',
+          },
+        },
+      ],
+      'react-native-vision-camera',
       ...(config.plugins ?? []),
       'expo-secure-store',
       'expo-audio',

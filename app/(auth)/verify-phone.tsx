@@ -12,7 +12,7 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { LinearGradient } from "expo-linear-gradient";
-import { ActivityIndicator, Alert, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Alert, StyleSheet, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Colors } from "@/constants/theme";
 import { useAuth } from "@/lib/auth-context";
@@ -47,8 +47,10 @@ export default function VerifyPhoneScreen() {
     location: Awaited<ReturnType<typeof captureSignupContext>>["location"];
   } | null>(null);
   const routedRef = useRef(false);
-
-  const needsPhoneForAccess = reason === "required_for_access";
+  const introMessage =
+    reason === "required_for_access"
+      ? "A verified number helps protect your account and is required before you continue."
+      : "Add a verified number to protect your account and keep matches more trustworthy.";
 
   const routeAfterVerified = async () => {
     if (routedRef.current) return;
@@ -177,16 +179,6 @@ export default function VerifyPhoneScreen() {
       style={styles.gradient}
     >
       <SafeAreaView style={styles.safeArea}>
-        <View style={styles.infoCard}>
-          <Text style={styles.infoTitle}>
-            {needsPhoneForAccess ? "One quick step to continue" : "Verify your phone"}
-          </Text>
-          <Text style={styles.infoText}>
-            {needsPhoneForAccess
-              ? "For trust and safety, phone verification is required for email/password and magic link accounts."
-              : "Add and verify your phone number so we can protect your account and reduce fake profiles."}
-          </Text>
-        </View>
         {showVerification ? (
           <PhoneVerification
             allowAnonymous
@@ -194,6 +186,7 @@ export default function VerifyPhoneScreen() {
             signupSessionId={signupSessionId}
             countryLabel={countryLabel}
             dialCode={dialCode}
+            introMessage={introMessage}
             onCancel={handleCancel}
             onPhoneVerified={async (phone) => {
               setVerifiedPhoneNumber(phone);
@@ -387,28 +380,6 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 16,
     paddingBottom: 8,
-  },
-  infoCard: {
-    marginTop: 8,
-    marginBottom: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-    backgroundColor: "rgba(247, 236, 226, 0.88)",
-    borderWidth: 1,
-    borderColor: "rgba(15, 23, 42, 0.08)",
-  },
-  infoTitle: {
-    fontSize: 16,
-    fontFamily: "Archivo_700Bold",
-    color: Colors.light.text,
-    marginBottom: 4,
-  },
-  infoText: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontFamily: "Manrope_500Medium",
-    color: Colors.light.textMuted,
   },
   loadingWrap: {
     flex: 1,

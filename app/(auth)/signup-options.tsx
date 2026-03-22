@@ -15,6 +15,12 @@ import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Colors } from "@/constants/theme";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  clearPendingAuthFlow,
+  isTrustedAuthCallbackUrl,
+  LAST_DEEP_LINK_URL_KEY,
+  markPendingAuthFlow,
+} from "@/lib/auth-callback";
 
 const isAppleAuthCancelled = (error: unknown) => {
   if (!(error instanceof Error)) {
@@ -53,6 +59,7 @@ export default function SignupOptionsScreen() {
       await setSignupPhoneNumber("");
       await setPendingAuthMethod("oauth", "google");
       await logSignupEvent({ auth_method: "oauth", oauth_provider: "google" });
+      await markPendingAuthFlow("oauth");
       const redirectTo = getRedirectUrl();
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",
@@ -62,11 +69,14 @@ export default function SignupOptionsScreen() {
         throw error ?? new Error("Unable to start Google sign-in.");
       }
       const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
-      if (result.type === "success" && result.url) {
-        await AsyncStorage.setItem("last_deep_link_url", result.url);
+      if (result.type === "success" && result.url && isTrustedAuthCallbackUrl(result.url)) {
+        await AsyncStorage.setItem(LAST_DEEP_LINK_URL_KEY, result.url);
         router.replace("/(auth)/callback");
+      } else {
+        await clearPendingAuthFlow();
       }
     } catch (error) {
+      await clearPendingAuthFlow();
       console.error("[auth] google sign-in error", error);
     } finally {
       setLoadingProvider(null);

@@ -62,7 +62,26 @@ type SuggestedMove = {
   short_tags?: string[] | null;
   has_intro_video?: boolean | null;
   distance_km?: number | null;
+  shared_interest_names?: string[] | null;
+  prompt_title?: string | null;
+  prompt_answer?: string | null;
+  bio_snippet?: string | null;
+  same_region?: boolean | null;
+  same_religion?: boolean | null;
+  same_looking_for?: boolean | null;
+  active_now?: boolean | null;
+  recently_active?: boolean | null;
+  candidate_tier?: number | null;
+  quality_band?: number | null;
+  shared_interest_count?: number | null;
 };
+
+type SuggestedMoveEventType =
+  | 'impression'
+  | 'preview_profile'
+  | 'opener_revealed'
+  | 'intent_opened'
+  | 'intent_sent';
 
 function CheckPulse({
   active,
@@ -180,11 +199,47 @@ const formatDistance = (km?: number | null) => {
   return `${km.toFixed(1)} km away`;
 };
 
+const cleanSnippet = (value?: string | null, max = 96) => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (!normalized) return null;
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, Math.max(0, max - 3)).trimEnd()}...`;
+};
+
+const buildSuggestedDisplayTags = (item: SuggestedMove, limit = 2) => {
+  const tags = Array.isArray(item.short_tags) ? item.short_tags : [];
+  const sharedInterests = Array.isArray(item.shared_interest_names) ? item.shared_interest_names : [];
+  const distanceTag = formatDistance(item.distance_km);
+  const next: string[] = [];
+  const push = (value?: string | null) => {
+    const text = typeof value === 'string' ? value.trim() : '';
+    if (!text) return;
+    if (next.some((existing) => existing.toLowerCase() === text.toLowerCase())) return;
+    next.push(text);
+  };
+
+  sharedInterests.slice(0, 2).forEach(push);
+  tags.filter((tag) => tag !== 'Shared interests').forEach(push);
+  push(distanceTag);
+
+  return next.slice(0, limit);
+};
+
 const buildMovePrompt = (item: SuggestedMove) => {
   const tags = Array.isArray(item.short_tags) ? item.short_tags : [];
-  if (item.has_intro_video || tags.includes('Intro video')) return 'Open with their intro video.';
-  if (tags.includes('Shared interests')) return 'Ask about something you both like.';
-  if (tags.includes('Active now')) return 'Send a quick hello while they are online.';
+  const sharedInterests = Array.isArray(item.shared_interest_names) ? item.shared_interest_names.filter(Boolean) : [];
+  const promptTitle = cleanSnippet(item.prompt_title, 42);
+  const promptAnswer = cleanSnippet(item.prompt_answer, 34);
+  const bioSnippet = cleanSnippet(item.bio_snippet, 90);
+  if (sharedInterests.length > 0) return `Open with your shared interest in ${sharedInterests[0]}.`;
+  if (promptTitle && promptAnswer) return `Ask what inspired their "${promptAnswer}" answer.`;
+  if (promptTitle) return `Ask about their answer to "${promptTitle}".`;
+  if (item.has_intro_video || tags.includes('Intro video')) return 'Open with something from their intro video.';
+  if (item.active_now || tags.includes('Active now')) return 'They are active now. Keep it light and timely.';
+  if (item.same_looking_for && item.same_region) return 'You want the same thing and move in the same orbit.';
+  if (item.same_looking_for) return 'Lead with what you both want from this app.';
+  if (bioSnippet) return 'Pick one detail from their profile and ask a real question.';
   return 'Send a short, confident opener.';
 };
 
@@ -192,15 +247,34 @@ const buildOpenerText = (item: SuggestedMove) => {
   const full = (item.full_name ?? '').trim();
   const first = (full.split(/\s+/)[0] || 'there').slice(0, 20);
   const tags = Array.isArray(item.short_tags) ? item.short_tags : [];
+  const sharedInterests = Array.isArray(item.shared_interest_names) ? item.shared_interest_names.filter(Boolean) : [];
+  const promptTitle = cleanSnippet(item.prompt_title, 38);
+  const promptAnswer = cleanSnippet(item.prompt_answer, 34);
+  const bioSnippet = cleanSnippet(item.bio_snippet, 80);
 
+  if (sharedInterests.length > 0) {
+    return `Hi ${first} - saw we're both into ${sharedInterests[0]}. What got you into it?`;
+  }
+  if (promptTitle) {
+    if (promptAnswer) {
+      return `Hi ${first} - your answer to "${promptTitle}" stood out to me, especially the part about "${promptAnswer}". What's the story behind it?`;
+    }
+    return `Hi ${first} - your answer to "${promptTitle}" caught my attention. What's the story behind it?`;
+  }
   if (item.has_intro_video || tags.includes('Intro video')) {
     return `Hi ${first} - I watched your intro video. What is something you are into lately?`;
   }
-  if (tags.includes('Shared interests')) {
-    return `Hi ${first} - I noticed we share some interests. What is your favorite one right now?`;
-  }
-  if (tags.includes('Active now')) {
+  if (item.active_now || tags.includes('Active now')) {
+    if (item.same_region) {
+      return `Hi ${first} - looks like we're in the same area. How is your week going so far?`;
+    }
     return `Hi ${first} - are you around right now? I would love to connect.`;
+  }
+  if (item.same_looking_for) {
+    return `Hi ${first} - I think we may be looking for something similar here. What kind of connection are you hoping to build?`;
+  }
+  if (bioSnippet) {
+    return `Hi ${first} - your profile stood out to me. What's something you're excited about these days?`;
   }
   return `Hi ${first} - your profile stood out. What are you looking for on here?`;
 };
@@ -210,6 +284,26 @@ const buildIntentType = (item: SuggestedMove): IntentRequestType => {
   if (tags.includes('Shared interests')) return 'like_with_note';
   return 'connect';
 };
+
+const buildSuggestedMoveTelemetry = (
+  item: SuggestedMove,
+  extra?: Record<string, unknown>,
+): Record<string, unknown> => ({
+  algorithm: 'moves_v2',
+  candidate_tier: item.candidate_tier ?? 0,
+  quality_band: item.quality_band ?? 0,
+  distance_km: item.distance_km ?? null,
+  shared_interest_count: item.shared_interest_count ?? item.shared_interest_names?.length ?? 0,
+  same_region: item.same_region ?? false,
+  same_religion: item.same_religion ?? false,
+  same_looking_for: item.same_looking_for ?? false,
+  active_now: item.active_now ?? false,
+  recently_active: item.recently_active ?? false,
+  has_intro_video: item.has_intro_video ?? false,
+  has_prompt: Boolean(item.prompt_title),
+  tags: item.short_tags ?? [],
+  ...extra,
+});
 
 const timeAgo = (iso?: string | null) => {
   if (!iso) return '';
@@ -554,6 +648,9 @@ export default function IntentScreen() {
   const suggestedEnter = useSharedValue(0);
   const emptyBreath = useSharedValue(1);
   const suggestedLoadedRef = useRef(false);
+  const suggestedBatchKeyRef = useRef<string | null>(null);
+  const suggestedBatchSignatureRef = useRef('');
+  const loggedSuggestedImpressionsRef = useRef<Set<string>>(new Set());
   const suggestedCacheKey = useMemo(
     () => (currentProfileId ? `cache:suggested_moves:v2:${currentProfileId}` : null),
     [currentProfileId],
@@ -1428,17 +1525,26 @@ export default function IntentScreen() {
 
   const handleSuggestedRequest = useCallback(
     (item: SuggestedMove) => {
+      void fireSuggestedMoveEvent(item.id, 'intent_opened', buildSuggestedMoveTelemetry(item, {
+        intent_type: buildIntentType(item),
+      }));
       setSuggestedSend({ id: item.id, phase: 'loading' });
       setIntentTarget({ id: item.id, name: item.full_name ?? null });
       setIntentPrefill(buildOpenerText(item));
       setIntentDefaultType(buildIntentType(item));
       setIntentSheetOpen(true);
     },
-    [],
+    [currentProfileId, suggestedExpanded, suggestedMoves],
   );
 
   const handleIntentSent = useCallback(() => {
     if (!intentTarget?.id) return;
+    const sentItem = suggestedMoves.find((item) => item.id === intentTarget.id);
+    void fireSuggestedMoveEvent(
+      intentTarget.id,
+      'intent_sent',
+      sentItem ? buildSuggestedMoveTelemetry(sentItem, { source: 'intent_sheet' }) : { source: 'intent_sheet' },
+    );
     void upsertSignal(intentTarget.id, { openedDelta: 1, liked: true, dwellDelta: 3 });
 
     // Micro delight: brief success pulse before removing the card.
@@ -1449,7 +1555,7 @@ export default function IntentScreen() {
       setSuggestedSend({ id: null, phase: 'idle' });
       suggestedSendTimerRef.current = null;
     }, 520);
-  }, [intentTarget?.id, upsertSignal]);
+  }, [currentProfileId, intentTarget?.id, suggestedExpanded, suggestedMoves, upsertSignal]);
 
   useEffect(() => {
     return () => {
@@ -1457,12 +1563,41 @@ export default function IntentScreen() {
     };
   }, []);
 
+  const getSuggestedEventContext = (candidateId?: string | null) => {
+    const visible = suggestedExpanded ? suggestedMoves : suggestedMoves.slice(0, 3);
+    const slotIndex = candidateId ? visible.findIndex((item) => item.id === candidateId) : -1;
+    return {
+      slotIndex: slotIndex >= 0 ? slotIndex : null,
+      isHero: slotIndex === 0,
+    };
+  };
+
+  const fireSuggestedMoveEvent = async (
+    candidateId: string | null | undefined,
+    eventType: SuggestedMoveEventType,
+    metadata?: Record<string, unknown>,
+  ) => {
+    if (!currentProfileId || !candidateId) return;
+    const { slotIndex, isHero } = getSuggestedEventContext(candidateId);
+    const { error } = await supabase.rpc('rpc_log_suggested_move_event', {
+      p_viewer_profile_id: currentProfileId,
+      p_candidate_profile_id: candidateId,
+      p_event_type: eventType,
+      p_surface: 'intent_suggested',
+      p_batch_key: suggestedBatchKeyRef.current ?? undefined,
+      p_slot_index: slotIndex ?? undefined,
+      p_is_hero: isHero,
+      p_metadata: metadata ?? {},
+    });
+    if (error) {
+      console.log('[intent] suggested move event error', eventType, error);
+    }
+  };
+
   const renderSuggestedCard = useCallback(
     ({ item }: { item: SuggestedMove }) => {
-      const baseTags = Array.isArray(item.short_tags) ? item.short_tags.filter(Boolean) : [];
-      const distanceTag = formatDistance(item.distance_km);
       const prompt = buildMovePrompt(item);
-      const tags = [...baseTags, ...(distanceTag ? [distanceTag] : [])].slice(0, 2);
+      const tags = buildSuggestedDisplayTags(item, 2);
       return (
         <View style={styles.suggestedCard}>
           <View pointerEvents="none" style={styles.suggestedGlow} />
@@ -1476,19 +1611,19 @@ export default function IntentScreen() {
               void upsertSignal(item.id, { openedDelta: 0, dwellDelta: 1 });
             }}
           >
-            <View style={styles.suggestedAvatarRing}>
+            <View style={styles.suggestedMediaFrame}>
               {item.avatar_url ? (
                 <Image source={{ uri: item.avatar_url }} style={styles.suggestedAvatar} />
               ) : (
-                <View style={styles.avatarFallback}>
-                  <MaterialCommunityIcons name="account-circle" size={40} color={theme.textMuted} />
+                <View style={styles.suggestedAvatarFallback}>
+                  <MaterialCommunityIcons name="account-circle" size={42} color={theme.textMuted} />
                 </View>
               )}
             </View>
             <View style={styles.suggestedInfo}>
               <View style={styles.suggestedKickerRow}>
                 <MaterialCommunityIcons name="star-four-points" size={12} color={theme.tint} />
-                <Text style={styles.suggestedKicker}>NEXT MOVE</Text>
+                <Text style={styles.suggestedKicker}>MORE FOR YOU</Text>
               </View>
               <Text style={styles.suggestedName}>
                 {`${item.full_name ?? 'Someone'}${item.age ? `, ${item.age}` : ''}`}
@@ -1523,6 +1658,7 @@ export default function IntentScreen() {
               reduceMotion={reduceMotion}
               onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
               onPress={() => {
+                void fireSuggestedMoveEvent(item.id, 'preview_profile', buildSuggestedMoveTelemetry(item, { source: 'suggested_card' }));
                 void upsertSignal(item.id, { openedDelta: 1, dwellDelta: 5 });
                 router.push({ pathname: '/profile-view', params: { profileId: String(item.id) } });
               }}
@@ -1534,7 +1670,7 @@ export default function IntentScreen() {
         </View>
       );
     },
-    [handleSuggestedRequest, reduceMotion, router, styles, suggestedSend.id, suggestedSend.phase, theme.textMuted, upsertSignal],
+    [currentProfileId, handleSuggestedRequest, reduceMotion, router, styles, suggestedExpanded, suggestedMoves, suggestedSend.id, suggestedSend.phase, theme.textMuted, upsertSignal],
   );
 
   const suggestedVisible = useMemo(
@@ -1542,9 +1678,75 @@ export default function IntentScreen() {
     [suggestedExpanded, suggestedMoves],
   );
   const shouldShowSuggested = direction === 'incoming' && suggestedVisible.length > 0;
+  const suggestedPoolIsThin =
+    direction === 'incoming' && !suggestedLoading && !suggestedError && suggestedMoves.length > 0 && suggestedMoves.length < 3;
+  const suggestedPoolEmpty =
+    direction === 'incoming' && !suggestedLoading && !suggestedError && suggestedMoves.length === 0;
+  const suggestedNoticeOwnsEmptyState =
+    direction === 'incoming' && sortedFiltered.length === 0 && (suggestedPoolIsThin || suggestedPoolEmpty);
   const suggestedHero = suggestedVisible.length > 0 ? suggestedVisible[0] : null;
   const suggestedRest = suggestedVisible.length > 1 ? suggestedVisible.slice(1) : [];
   const [heroOpenerRevealed, setHeroOpenerRevealed] = useState(false);
+
+  const renderSuggestedPoolNotice = useCallback(
+    (mode: 'thin' | 'empty') => (
+      <View style={styles.suggestedPoolNotice}>
+        <View style={styles.suggestedPoolNoticeIcon}>
+          <MaterialCommunityIcons
+            name={mode === 'thin' ? 'compass-outline' : 'map-search-outline'}
+            size={18}
+            color={theme.tint}
+          />
+        </View>
+        <View style={styles.suggestedPoolNoticeBody}>
+          <Text style={styles.suggestedPoolNoticeTitle}>
+            {mode === 'thin' ? 'Fewer strong fits right now' : 'No fresh coach picks yet'}
+          </Text>
+          <Text style={styles.suggestedPoolNoticeText}>
+            {mode === 'thin'
+              ? 'You have already worked through most of the strongest matches. Check Vibes for fresh people nearby.'
+              : 'Your strongest matches are tapped out for now. Browse Vibes or Explore while the pool refreshes.'}
+          </Text>
+          <View style={styles.suggestedPoolNoticeActions}>
+            <TouchableOpacity style={styles.ghostButton} onPress={() => router.push('/(tabs)/vibes')}>
+              <Text style={styles.ghostText}>Go to Vibes</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.secondaryButton} onPress={() => router.push('/(tabs)/explore')}>
+              <Text style={styles.secondaryText}>Explore more</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    ),
+    [router, styles, theme.tint],
+  );
+
+  useEffect(() => {
+    const signature = suggestedMoves.map((item) => item.id).join(',');
+    if (!signature || !currentProfileId) {
+      suggestedBatchSignatureRef.current = '';
+      suggestedBatchKeyRef.current = null;
+      loggedSuggestedImpressionsRef.current = new Set();
+      return;
+    }
+
+    if (signature !== suggestedBatchSignatureRef.current) {
+      suggestedBatchSignatureRef.current = signature;
+      suggestedBatchKeyRef.current = `${currentProfileId}:${Date.now()}:${suggestedRetryKey}:${suggestedMoves.length}`;
+      loggedSuggestedImpressionsRef.current = new Set();
+    }
+  }, [currentProfileId, suggestedMoves, suggestedRetryKey]);
+
+  useEffect(() => {
+    if (!shouldShowSuggested || suggestedLoading || !currentProfileId) return;
+
+    suggestedVisible.forEach((item) => {
+      const key = `${suggestedBatchKeyRef.current ?? 'no-batch'}:${item.id}`;
+      if (loggedSuggestedImpressionsRef.current.has(key)) return;
+      loggedSuggestedImpressionsRef.current.add(key);
+      void fireSuggestedMoveEvent(item.id, 'impression', buildSuggestedMoveTelemetry(item));
+    });
+  }, [currentProfileId, shouldShowSuggested, suggestedExpanded, suggestedLoading, suggestedMoves, suggestedVisible]);
 
   useEffect(() => {
     // Reset reveal state when the hero changes so the section stays clean and "coach-like".
@@ -1563,11 +1765,9 @@ export default function IntentScreen() {
 
   const renderSuggestedHero = useCallback(
     (item: SuggestedMove) => {
-      const baseTags = Array.isArray(item.short_tags) ? item.short_tags.filter(Boolean) : [];
-      const distanceTag = formatDistance(item.distance_km);
       const prompt = buildMovePrompt(item);
       const opener = buildOpenerText(item);
-      const tags = [...baseTags, ...(distanceTag ? [distanceTag] : [])].slice(0, 2);
+      const tags = buildSuggestedDisplayTags(item, 2);
 
       return (
         <View style={styles.suggestedHeroCard}>
@@ -1587,21 +1787,21 @@ export default function IntentScreen() {
             <View style={styles.suggestedHeroTopRow}>
               <View style={styles.suggestedKickerRow}>
                 <MaterialCommunityIcons name="star-four-points" size={12} color={theme.tint} />
-                <Text style={styles.suggestedKicker}>TODAY{"'"}S MOVE</Text>
+                <Text style={styles.suggestedKicker}>TOP PICK</Text>
               </View>
               <View style={styles.suggestedHeroBadge}>
                 <MaterialCommunityIcons name="target" size={12} color={theme.textMuted} />
-                <Text style={styles.suggestedHeroBadgeText}>Intent coach</Text>
+                <Text style={styles.suggestedHeroBadgeText}>Coach pick</Text>
               </View>
             </View>
 
             <View style={styles.suggestedHeroIdentityRow}>
-              <View style={styles.suggestedHeroAvatarRing}>
+              <View style={styles.suggestedHeroMediaFrame}>
                 {item.avatar_url ? (
                   <Image source={{ uri: item.avatar_url }} style={styles.suggestedHeroAvatar} />
                 ) : (
-                  <View style={styles.avatarFallback}>
-                    <MaterialCommunityIcons name="account-circle" size={46} color={theme.textMuted} />
+                  <View style={styles.suggestedHeroAvatarFallback}>
+                    <MaterialCommunityIcons name="account-circle" size={52} color={theme.textMuted} />
                   </View>
                 )}
               </View>
@@ -1619,7 +1819,12 @@ export default function IntentScreen() {
                     style={styles.suggestedHeroReveal}
                     reduceMotion={reduceMotion}
                     onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-                    onPress={() => setHeroOpenerRevealed(true)}
+                    onPress={() => {
+                      void fireSuggestedMoveEvent(item.id, 'opener_revealed', buildSuggestedMoveTelemetry(item, {
+                        prompt_title: item.prompt_title ?? null,
+                      }));
+                      setHeroOpenerRevealed(true);
+                    }}
                   >
                     <MaterialCommunityIcons name="message-text-outline" size={14} color={theme.tint} />
                     <Text style={styles.suggestedHeroRevealText}>Reveal opener</Text>
@@ -1654,6 +1859,7 @@ export default function IntentScreen() {
               reduceMotion={reduceMotion}
               onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
               onPress={() => {
+                void fireSuggestedMoveEvent(item.id, 'preview_profile', buildSuggestedMoveTelemetry(item, { source: 'suggested_hero' }));
                 void upsertSignal(item.id, { openedDelta: 1, dwellDelta: 7 });
                 router.push({ pathname: '/profile-view', params: { profileId: String(item.id) } });
               }}
@@ -1666,10 +1872,13 @@ export default function IntentScreen() {
       );
     },
     [
+      currentProfileId,
       handleSuggestedRequest,
       heroOpenerRevealed,
       reduceMotion,
       router,
+      suggestedExpanded,
+      suggestedMoves,
       styles,
       suggestedSend.id,
       suggestedSend.phase,
@@ -1915,13 +2124,19 @@ export default function IntentScreen() {
                     </Text>
                     </TouchableOpacity>
                   ) : null}
+                  {suggestedPoolIsThin ? renderSuggestedPoolNotice('thin') : null}
                 </Animated.View>
               ) : (
-                <View style={styles.suggestedMetaRow}>
-                  <Text style={styles.emptyHint}>Fresh suggestions are on the way.</Text>
-                  <TouchableOpacity style={styles.ghostButton} onPress={retrySuggested}>
-                    <Text style={styles.ghostText}>Refresh</Text>
-                  </TouchableOpacity>
+                <View style={styles.suggestedNoticeStack}>
+                  {suggestedPoolEmpty ? renderSuggestedPoolNotice('empty') : null}
+                  <View style={styles.suggestedMetaRow}>
+                    <Text style={styles.emptyHint}>
+                      {suggestedPoolEmpty ? 'Refresh after you explore a few more people.' : 'Fresh suggestions are on the way.'}
+                    </Text>
+                    <TouchableOpacity style={styles.ghostButton} onPress={retrySuggested}>
+                      <Text style={styles.ghostText}>Refresh</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               )}
               </View>
@@ -1997,13 +2212,19 @@ export default function IntentScreen() {
                         </Text>
                       </TouchableOpacity>
                     ) : null}
+                    {suggestedPoolIsThin ? renderSuggestedPoolNotice('thin') : null}
                   </Animated.View>
                 ) : (
-                  <View style={styles.suggestedMetaRow}>
-                    <Text style={styles.emptyHint}>Fresh suggestions are on the way.</Text>
-                    <TouchableOpacity style={styles.ghostButton} onPress={retrySuggested}>
-                      <Text style={styles.ghostText}>Refresh</Text>
-                    </TouchableOpacity>
+                  <View style={styles.suggestedNoticeStack}>
+                    {suggestedPoolEmpty ? renderSuggestedPoolNotice('empty') : null}
+                    <View style={styles.suggestedMetaRow}>
+                      <Text style={styles.emptyHint}>
+                        {suggestedPoolEmpty ? 'Refresh after you explore a few more people.' : 'Fresh suggestions are on the way.'}
+                      </Text>
+                      <TouchableOpacity style={styles.ghostButton} onPress={retrySuggested}>
+                        <Text style={styles.ghostText}>Refresh</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 )}
               </View>
@@ -2057,14 +2278,16 @@ export default function IntentScreen() {
                       <Text style={styles.emptyHighlightBody}>Likes, Moments, and profile prompts give people better reasons to respond.</Text>
                     </View>
                   </View>
-                  <View style={styles.emptyActions}>
-                    <TouchableOpacity style={styles.ghostButton} onPress={() => router.push('/(tabs)/vibes')}>
-                      <Text style={styles.ghostText}>Go to Vibes</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.secondaryButton} onPress={() => router.push('/(tabs)/explore')}>
-                      <Text style={styles.secondaryText}>Explore Circles</Text>
-                    </TouchableOpacity>
-                  </View>
+                  {!suggestedNoticeOwnsEmptyState ? (
+                    <View style={styles.emptyActions}>
+                      <TouchableOpacity style={styles.ghostButton} onPress={() => router.push('/(tabs)/vibes')}>
+                        <Text style={styles.ghostText}>Go to Vibes</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.secondaryButton} onPress={() => router.push('/(tabs)/explore')}>
+                        <Text style={styles.secondaryText}>Explore Circles</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
                   {!loading &&
                   direction === 'incoming' &&
                   !hasPendingIncoming &&
@@ -2504,12 +2727,37 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       opacity: isDark ? 0.35 : 0.55,
     },
     suggestedList: { paddingVertical: 4, gap: 12 },
+    suggestedNoticeStack: { gap: 10 },
     suggestedMetaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+    suggestedPoolNotice: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 12,
+      padding: 14,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(0,160,160,0.28)' : 'rgba(0,160,160,0.16)',
+      backgroundColor: isDark ? 'rgba(0,160,160,0.10)' : 'rgba(240,253,250,0.92)',
+    },
+    suggestedPoolNoticeIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(0,160,160,0.30)' : 'rgba(0,160,160,0.18)',
+      backgroundColor: isDark ? 'rgba(15,26,26,0.55)' : theme.background,
+    },
+    suggestedPoolNoticeBody: { flex: 1, gap: 6 },
+    suggestedPoolNoticeTitle: { fontSize: 13, fontWeight: '800', color: theme.text },
+    suggestedPoolNoticeText: { fontSize: 12, lineHeight: 18, color: theme.textMuted, fontWeight: '600' },
+    suggestedPoolNoticeActions: { flexDirection: 'row', gap: 10, marginTop: 2, flexWrap: 'wrap' },
     suggestedStack: { gap: 10, paddingVertical: 6 },
     suggestedMore: { alignSelf: 'flex-start', paddingHorizontal: 2, paddingVertical: 6 },
     suggestedMoreText: { fontSize: 12, color: theme.tint, fontWeight: '700' },
     suggestedHeroCard: {
-      padding: 14,
+      padding: 16,
       borderRadius: 18,
       borderWidth: 1,
       borderColor: isDark ? 'rgba(0,160,160,0.25)' : theme.outline,
@@ -2550,22 +2798,36 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: isDark ? 'rgba(15,26,26,0.65)' : theme.background,
     },
     suggestedHeroBadgeText: { fontSize: 11, color: theme.textMuted, fontWeight: '700' },
-    suggestedHeroIdentityRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    suggestedHeroAvatarRing: {
-      width: 62,
-      height: 62,
-      borderRadius: 31,
-      padding: 2,
+    suggestedHeroIdentityRow: { flexDirection: 'row', alignItems: 'stretch', gap: 14 },
+    suggestedHeroMediaFrame: {
+      width: 126,
+      height: 158,
+      borderRadius: 24,
+      padding: 3,
       borderWidth: 1,
-      borderColor: isDark ? 'rgba(0,160,160,0.45)' : theme.outline,
-      backgroundColor: isDark ? 'rgba(0,160,160,0.12)' : theme.background,
+      borderColor: isDark ? 'rgba(0,160,160,0.42)' : theme.outline,
+      backgroundColor: isDark ? 'rgba(0,160,160,0.10)' : theme.background,
+      overflow: 'hidden',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: isDark ? 0.26 : 0.12,
+      shadowRadius: 18,
+      elevation: 6,
+    },
+    suggestedHeroAvatar: { width: '100%', height: '100%', borderRadius: 21, backgroundColor: theme.backgroundSubtle },
+    suggestedHeroAvatarFallback: {
+      width: '100%',
+      height: '100%',
+      borderRadius: 21,
       alignItems: 'center',
       justifyContent: 'center',
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: theme.outline,
     },
-    suggestedHeroAvatar: { width: 58, height: 58, borderRadius: 29, backgroundColor: theme.backgroundSubtle },
-    suggestedHeroInfo: { flex: 1, gap: 4 },
-    suggestedHeroName: { fontSize: 16, fontWeight: '800', color: theme.text },
-    suggestedHeroPrompt: { fontSize: 12, color: theme.textMuted, fontWeight: '700' },
+    suggestedHeroInfo: { flex: 1, gap: 6, paddingVertical: 4 },
+    suggestedHeroName: { fontSize: 17, fontWeight: '800', color: theme.text },
+    suggestedHeroPrompt: { fontSize: 13, lineHeight: 18, color: theme.textMuted, fontWeight: '700' },
     suggestedHeroOpener: {
       marginTop: 6,
       paddingHorizontal: 10,
@@ -2594,7 +2856,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     suggestedHeroRevealText: { color: theme.tint, fontWeight: '800', fontSize: 12 },
     suggestedCard: {
-      padding: 12,
+      padding: 14,
       borderRadius: 16,
       borderWidth: 1,
       borderColor: theme.outline,
@@ -2611,7 +2873,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: theme.accent,
       opacity: isDark ? 0.14 : 0.08,
     },
-    suggestedMain: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    suggestedMain: { flexDirection: 'row', alignItems: 'stretch', gap: 14 },
     suggestedKicker: {
       fontSize: 10,
       letterSpacing: 1,
@@ -2621,21 +2883,30 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     suggestedKickerRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     suggestedHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    suggestedAvatarRing: {
-      width: 48,
-      height: 48,
-      borderRadius: 24,
-      padding: 2,
+    suggestedMediaFrame: {
+      width: 92,
+      height: 118,
+      borderRadius: 20,
+      padding: 3,
       borderWidth: 1,
-      borderColor: isDark ? 'rgba(0,160,160,0.35)' : theme.outline,
-      backgroundColor: isDark ? 'rgba(0,160,160,0.10)' : theme.background,
+      borderColor: isDark ? 'rgba(0,160,160,0.32)' : theme.outline,
+      backgroundColor: isDark ? 'rgba(0,160,160,0.08)' : theme.background,
+      overflow: 'hidden',
+    },
+    suggestedAvatar: { width: '100%', height: '100%', borderRadius: 17, backgroundColor: theme.backgroundSubtle },
+    suggestedAvatarFallback: {
+      width: '100%',
+      height: '100%',
+      borderRadius: 17,
       alignItems: 'center',
       justifyContent: 'center',
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: theme.outline,
     },
-    suggestedAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.backgroundSubtle },
-    suggestedInfo: { flex: 1, gap: 6 },
-    suggestedName: { fontSize: 13, fontWeight: '700', color: theme.text },
-    suggestedPrompt: { fontSize: 11, color: theme.textMuted, fontWeight: '600' },
+    suggestedInfo: { flex: 1, gap: 7, paddingVertical: 3 },
+    suggestedName: { fontSize: 14, fontWeight: '700', color: theme.text },
+    suggestedPrompt: { fontSize: 12, lineHeight: 17, color: theme.textMuted, fontWeight: '600' },
     suggestedTags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
     suggestedTag: {
       paddingHorizontal: 8,

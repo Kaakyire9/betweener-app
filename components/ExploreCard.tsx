@@ -77,7 +77,7 @@ const COUNTRY_NAME_TO_CODE: Record<string, string> = {
   'united arab emirates': 'AE',
 };
 
-const inferCountryCode = (...values: Array<string | null | undefined>) => {
+const inferCountryCode = (...values: (string | null | undefined)[]) => {
   for (const value of values) {
     const normalized = normalizeLabel(value);
     if (!normalized) continue;

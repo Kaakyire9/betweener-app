@@ -17,6 +17,7 @@ import {
   Animated,
   FlatList,
   Image,
+  ScrollView,
   Pressable,
   StyleSheet,
   Text,
@@ -1100,39 +1101,71 @@ export default function ChatScreen() {
   };
 
   const renderEmptyState = () => (
-    <View style={styles.emptyState}>
-      <View style={styles.emptyEyebrow}>
-        <Text style={styles.emptyEyebrowText}>Your private lounge</Text>
-      </View>
-      <Image
-        source={require('../../assets/images/no-chat-illus.png')}
-        style={styles.emptyIllustration}
-        resizeMode="contain"
-      />
-      <Text style={styles.emptyStateTitle}>No conversations yet, but the room is ready</Text>
-      <Text style={styles.emptyStateText}>
-        Match with someone who feels aligned, then open with something specific enough to be memorable.
-      </Text>
-      <View style={styles.emptyHighlights}>
-        <View style={styles.emptyHighlightCard}>
-          <MaterialCommunityIcons name="message-text-outline" size={18} color={theme.tint} />
-          <Text style={styles.emptyHighlightTitle}>Better first messages</Text>
-          <Text style={styles.emptyHighlightText}>Reference their vibe, not just their looks.</Text>
+    <ScrollView
+      style={styles.emptyStateScroll}
+      contentContainerStyle={styles.emptyStateContent}
+      showsVerticalScrollIndicator={false}
+      bounces={false}
+    >
+      <View style={styles.emptyState}>
+        <View style={styles.emptyHero}>
+          <View style={styles.emptyHeroGlowLeft} />
+          <View style={styles.emptyHeroGlowRight} />
+          <LinearGradient
+            colors={[
+              withAlpha(theme.background, isDark ? 0.98 : 0.94),
+              withAlpha(theme.backgroundSubtle, isDark ? 0.9 : 0.98),
+            ]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.emptyHeroPanel}
+          >
+            <LinearGradient
+              colors={[
+                withAlpha(theme.tint, isDark ? 0.24 : 0.18),
+                withAlpha(theme.accent, isDark ? 0.24 : 0.16),
+              ]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.emptyHeroBadge}
+            >
+              <MaterialCommunityIcons name="message-text-outline" size={30} color={theme.text} />
+            </LinearGradient>
+            <View style={[styles.emptyHeroOrb, styles.emptyHeroOrbLeft]}>
+              <MaterialCommunityIcons name="heart-outline" size={16} color={theme.tint} />
+            </View>
+            <View style={[styles.emptyHeroOrb, styles.emptyHeroOrbRight]}>
+              <MaterialCommunityIcons name="coffee-outline" size={16} color={theme.accent} />
+            </View>
+            <Text style={styles.emptyHeroKicker}>Private lounge</Text>
+            <Text style={styles.emptyHeroLine}>A thoughtful hello starts here.</Text>
+          </LinearGradient>
         </View>
-        <View style={styles.emptyHighlightCard}>
-          <MaterialCommunityIcons name="star-four-points" size={18} color={theme.accent} />
-          <Text style={styles.emptyHighlightTitle}>Premium energy</Text>
-          <Text style={styles.emptyHighlightText}>Reply early when a strong match lands.</Text>
+        <Text style={styles.emptyStateTitle}>No conversations yet, but the room is ready</Text>
+        <Text style={styles.emptyStateText}>
+          Match with someone who feels aligned, then open with something specific enough to be memorable.
+        </Text>
+        <View style={styles.emptyHighlights}>
+          <View style={styles.emptyHighlightCard}>
+            <MaterialCommunityIcons name="message-text-outline" size={18} color={theme.tint} />
+            <Text style={styles.emptyHighlightTitle}>Better first messages</Text>
+            <Text style={styles.emptyHighlightText}>Reference their vibe, not just their looks.</Text>
+          </View>
+          <View style={styles.emptyHighlightCard}>
+            <MaterialCommunityIcons name="star-four-points" size={18} color={theme.accent} />
+            <Text style={styles.emptyHighlightTitle}>Premium energy</Text>
+            <Text style={styles.emptyHighlightText}>Reply early when a strong match lands.</Text>
+          </View>
         </View>
+        <TouchableOpacity 
+          style={styles.exploreButton}
+          onPress={() => router.push('/(tabs)/vibes')}
+        >
+          <MaterialCommunityIcons name="compass" size={20} color={Colors.light.background} />
+          <Text style={styles.exploreButtonText}>Explore Vibes</Text>
+        </TouchableOpacity>
       </View>
-      <TouchableOpacity 
-        style={styles.exploreButton}
-        onPress={() => router.push('/(tabs)/vibes')}
-      >
-        <MaterialCommunityIcons name="compass" size={20} color={Colors.light.background} />
-        <Text style={styles.exploreButtonText}>Explore Vibes</Text>
-      </TouchableOpacity>
-    </View>
+    </ScrollView>
   );
 
   const renderNewMatches = () => {
@@ -1309,13 +1342,14 @@ export default function ChatScreen() {
         />
       )}
 
-      {/* Floating Action Button */}
-      <TouchableOpacity 
-        style={styles.fab}
-        onPress={() => router.push('/(tabs)/vibes')}
-      >
-        <MaterialCommunityIcons name="plus" size={24} color={Colors.light.background} />
-      </TouchableOpacity>
+      {!showEmptyState ? (
+        <TouchableOpacity 
+          style={styles.fab}
+          onPress={() => router.push('/(tabs)/vibes')}
+        >
+          <MaterialCommunityIcons name="plus" size={24} color={Colors.light.background} />
+        </TouchableOpacity>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -1659,34 +1693,112 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
 
     // Empty State
-    emptyState: {
+    emptyStateScroll: {
       flex: 1,
-      justifyContent: 'center',
+    },
+    emptyStateContent: {
+      paddingBottom: 40,
+    },
+    emptyState: {
+      justifyContent: 'flex-start',
       alignItems: 'center',
+      width: '100%',
       paddingHorizontal: 40,
+      paddingTop: 24,
+      paddingBottom: 120,
     },
-    emptyEyebrow: {
-      paddingHorizontal: 12,
-      paddingVertical: 6,
-      borderRadius: 999,
-      backgroundColor: withAlpha(theme.tint, isDark ? 0.2 : 0.1),
+    emptyHero: {
+      width: '100%',
+      alignItems: 'center',
+      marginBottom: 22,
+      position: 'relative',
+    },
+    emptyHeroGlowLeft: {
+      position: 'absolute',
+      left: '12%',
+      top: 24,
+      width: 84,
+      height: 84,
+      borderRadius: 42,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.14),
+    },
+    emptyHeroGlowRight: {
+      position: 'absolute',
+      right: '10%',
+      bottom: 22,
+      width: 92,
+      height: 92,
+      borderRadius: 46,
+      backgroundColor: withAlpha(theme.accent, isDark ? 0.16 : 0.14),
+    },
+    emptyHeroPanel: {
+      width: '100%',
+      minHeight: 208,
+      borderRadius: 28,
+      paddingHorizontal: 22,
+      paddingVertical: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
       borderWidth: 1,
-      borderColor: withAlpha(theme.tint, isDark ? 0.4 : 0.16),
-      marginBottom: 14,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 18 },
+      shadowOpacity: isDark ? 0.28 : 0.14,
+      shadowRadius: 30,
+      elevation: 10,
+      overflow: 'hidden',
     },
-    emptyEyebrowText: {
-      fontSize: 11,
+    emptyHeroBadge: {
+      width: 78,
+      height: 78,
+      borderRadius: 24,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: 16,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+    },
+    emptyHeroOrb: {
+      position: 'absolute',
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.background, isDark ? 0.8 : 0.92),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+    },
+    emptyHeroOrbLeft: {
+      left: 28,
+      top: 38,
+    },
+    emptyHeroOrbRight: {
+      right: 30,
+      top: 90,
+    },
+    emptyHeroKicker: {
+      fontSize: 12,
       fontFamily: 'Manrope_700Bold',
-      letterSpacing: 0.8,
+      letterSpacing: 0.9,
       textTransform: 'uppercase',
       color: theme.tint,
+      marginBottom: 8,
+    },
+    emptyHeroLine: {
+      fontSize: 22,
+      lineHeight: 28,
+      textAlign: 'center',
+      fontFamily: 'Archivo_700Bold',
+      color: theme.text,
+      maxWidth: 260,
     },
     emptyStateTitle: {
       fontSize: 20,
       fontFamily: 'Archivo_700Bold',
       color: theme.text,
-      marginTop: 16,
       marginBottom: 8,
+      textAlign: 'center',
     },
     emptyStateText: {
       fontSize: 16,
@@ -1722,13 +1834,6 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       lineHeight: 18,
       fontFamily: 'Manrope_500Medium',
       color: theme.textMuted,
-    },
-    emptyIllustration: {
-      width: 260,
-      height: 200,
-      maxWidth: '72%',
-      maxHeight: 260,
-      alignSelf: 'center',
     },
     exploreButton: {
       flexDirection: 'row',

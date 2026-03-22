@@ -691,14 +691,21 @@ export default function Onboarding() {
       </View>
       
       <View style={styles.headerCenter}>
-        <Text style={styles.stepTitle}>{ONBOARDING_STEPS[currentStep].title}</Text>
-        <Text style={styles.stepSubtitle}>{ONBOARDING_STEPS[currentStep].subtitle}</Text>
+        {currentStep === 0 ? (
+          <>
+            <Text style={styles.stepKicker}>Akwaaba</Text>
+            <Text style={styles.stepTitle}>{ONBOARDING_STEPS[currentStep].title}</Text>
+            <Text style={styles.stepSubtitle}>{ONBOARDING_STEPS[currentStep].subtitle}</Text>
+          </>
+        ) : (
+          <>
+            <Text style={styles.stepTitle}>{ONBOARDING_STEPS[currentStep].title}</Text>
+            <Text style={styles.stepSubtitle}>{ONBOARDING_STEPS[currentStep].subtitle}</Text>
+          </>
+        )}
       </View>
       
       <View style={styles.headerRight}>
-        <TouchableOpacity style={styles.signOutButton} onPress={signOut} accessibilityLabel="Sign out">
-          <Text style={styles.signOutText}>Sign out</Text>
-        </TouchableOpacity>
       </View>
     </View>
   );
@@ -763,6 +770,14 @@ export default function Onboarding() {
             <Text style={styles.featureChipText}>Intentional, real connections</Text>
           </View>
         </View>
+
+        <TouchableOpacity
+          style={styles.welcomeSignOutLink}
+          onPress={signOut}
+          accessibilityLabel="Sign out"
+        >
+          <Text style={styles.welcomeSignOutText}>Using the wrong account? Sign out</Text>
+        </TouchableOpacity>
       </View>
     </Animated.View>
   );
@@ -1410,6 +1425,15 @@ const styles = StyleSheet.create({
     color: BRAND_INK,
     textAlign: 'center',
   },
+  stepKicker: {
+    fontSize: 11,
+    fontFamily: 'Manrope_700Bold',
+    color: BRAND_TEAL,
+    textAlign: 'center',
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
   stepSubtitle: {
     fontSize: 14,
     fontFamily: 'Manrope_400Regular',
@@ -1578,6 +1602,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Archivo_700Bold',
     color: '#2f3a45',
+  },
+  welcomeSignOutLink: {
+    marginTop: 18,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  welcomeSignOutText: {
+    fontSize: 13,
+    fontFamily: 'Manrope_600SemiBold',
+    color: '#5A6772',
+    textAlign: 'center',
   },
 
   // Form Elements

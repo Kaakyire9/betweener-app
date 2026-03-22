@@ -235,6 +235,58 @@ serve(async (req) => {
 
     // If verification successful, update signup session metadata and (if possible) profile flags.
     if (approved) {
+      const { data: verifiedRecord } = await supabase
+        .from('phone_verifications')
+        .select('id')
+        .eq('signup_session_id', signupSessionId)
+        .eq('phone_number', phoneNumber)
+        .eq('status', 'verified')
+        .order('verified_at', { ascending: false, nullsFirst: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (!verifiedRecord?.id) {
+        const insertRowBase = {
+          signup_session_id: signupSessionId,
+          user_id: effectiveUserId,
+          phone_number: phoneNumber,
+          status: 'verified',
+          verified_at: nowIso,
+          attempts,
+          confidence_score: confidenceScore,
+          request_ip: clientIp,
+          request_user_agent: req.headers.get('user-agent'),
+        }
+
+        let { error: insertError } = await supabase
+          .from('phone_verifications')
+          .insert({
+            ...insertRowBase,
+            is_verified: true,
+          })
+
+        if (
+          insertError &&
+          (insertError.code === '42703' || String(insertError.message || '').toLowerCase().includes('is_verified'))
+        ) {
+          const retry = await supabase
+            .from('phone_verifications')
+            .insert(insertRowBase)
+          insertError = retry.error
+        }
+
+        if (insertError) {
+          console.error('Phone verification audit insert error:', insertError)
+          return new Response(
+            JSON.stringify({ error: 'Failed to persist verified phone state' }),
+            {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            }
+          )
+        }
+      }
+
       // Upsert so we never end up in a "verified but no signup_events row" state.
       const { error: signupError } = await supabase
         .from('signup_events')

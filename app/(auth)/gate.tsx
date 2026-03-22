@@ -31,59 +31,108 @@ export default function AuthGateScreen() {
     runInFlightRef.current = true;
     lastUserIdRef.current = user?.id ?? null;
     let active = true;
-    const hardFallbackTimer = setTimeout(() => {
-      if (!active || routedRef.current) return;
+    const checkMergedRedirect = async (nextUserId: string | null | undefined) => {
+      if (!nextUserId) return false;
 
-      if (typeof __DEV__ !== "undefined" && __DEV__) {
-        console.log("[auth-gate] hard fallback fired");
-      }
-
-      // If no session, go welcome
-      if (!session?.user || !user?.id) {
-        routedRef.current = true;
+      const { data, error } = await supabase.rpc("rpc_get_merged_account_redirect");
+      if (error) {
         if (typeof __DEV__ !== "undefined" && __DEV__) {
-          console.log("[auth-gate] hard fallback route", "/(auth)/welcome");
+          console.log("[auth-gate] merged redirect check failed", error.message);
         }
-        router.replace("/(auth)/welcome");
-        return;
+        return false;
       }
 
-      // If email not verified, force verify-email
-      if (!user.email_confirmed_at) {
-        routedRef.current = true;
-        if (typeof __DEV__ !== "undefined" && __DEV__) {
-          console.log("[auth-gate] hard fallback route", "/(auth)/verify-email");
-        }
-        router.replace("/(auth)/verify-email");
-        return;
+      const payload = (
+        data as {
+          is_merged?: boolean;
+          merge_case_id?: string | null;
+          kept_email_hint?: string | null;
+          kept_sign_in_methods?: string[] | null;
+        } | null
+      ) ?? null;
+      if (!payload?.is_merged) return false;
+
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // best effort only
       }
 
-      const bestVerified = phoneVerified || profile?.phone_verified === true;
-      const bestCompleted = profile?.profile_completed === true;
+      if (!active || routedRef.current) return true;
 
       routedRef.current = true;
+      router.replace({
+        pathname: "/(auth)/merged-account",
+        params: {
+          ...(payload.merge_case_id ? { mergeCaseId: payload.merge_case_id } : {}),
+          ...(payload.kept_email_hint ? { keptEmailHint: payload.kept_email_hint } : {}),
+          ...(payload.kept_sign_in_methods?.length
+            ? { keptMethods: payload.kept_sign_in_methods.join(",") }
+            : {}),
+        },
+      });
+      return true;
+    };
 
-      if (!bestVerified) {
+    const hardFallbackTimer = setTimeout(() => {
+      void (async () => {
+        if (!active || routedRef.current) return;
+
         if (typeof __DEV__ !== "undefined" && __DEV__) {
-          console.log("[auth-gate] hard fallback route", "/(auth)/verify-phone");
+          console.log("[auth-gate] hard fallback fired");
         }
-        router.replace({
-          pathname: "/(auth)/verify-phone",
-          params: {
-            next: encodeURIComponent("/(auth)/onboarding"),
-            reason: "required_for_access",
-          },
-        });
-        return;
-      }
 
-      if (typeof __DEV__ !== "undefined" && __DEV__) {
-        console.log(
-          "[auth-gate] hard fallback route",
-          bestCompleted ? "/(tabs)/vibes" : "/(auth)/onboarding"
-        );
-      }
-      router.replace(bestCompleted ? "/(tabs)/vibes" : "/(auth)/onboarding");
+        // If no session, go welcome
+        if (!session?.user || !user?.id) {
+          routedRef.current = true;
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[auth-gate] hard fallback route", "/(auth)/welcome");
+          }
+          router.replace("/(auth)/welcome");
+          return;
+        }
+
+        if (await checkMergedRedirect(user.id)) {
+          return;
+        }
+
+        // If email not verified, force verify-email
+        if (!user.email_confirmed_at) {
+          routedRef.current = true;
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[auth-gate] hard fallback route", "/(auth)/verify-email");
+          }
+          router.replace("/(auth)/verify-email");
+          return;
+        }
+
+        const bestVerified = phoneVerified || profile?.phone_verified === true;
+        const bestCompleted = profile?.profile_completed === true;
+
+        routedRef.current = true;
+
+        if (!bestVerified) {
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[auth-gate] hard fallback route", "/(auth)/verify-phone");
+          }
+          router.replace({
+            pathname: "/(auth)/verify-phone",
+            params: {
+              next: encodeURIComponent("/(auth)/onboarding"),
+              reason: "required_for_access",
+            },
+          });
+          return;
+        }
+
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log(
+            "[auth-gate] hard fallback route",
+            bestCompleted ? "/(tabs)/vibes" : "/(auth)/onboarding"
+          );
+        }
+        router.replace(bestCompleted ? "/(tabs)/vibes" : "/(auth)/onboarding");
+      })();
     }, 10000);
 
     const run = async () => {
@@ -176,6 +225,10 @@ export default function AuthGateScreen() {
             console.log("[auth-gate] no session/user");
           }
           guardRoute("/(auth)/welcome");
+          return;
+        }
+
+        if (await checkMergedRedirect(userToUse.id)) {
           return;
         }
 

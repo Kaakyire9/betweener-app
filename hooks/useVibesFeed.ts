@@ -26,6 +26,7 @@ type UseVibesFeedParams = {
   distanceUnit?: 'auto' | 'km' | 'mi';
   momentUserIds?: Set<string>;
   viewerInterests?: string[];
+  viewerGender?: string | null;
   initialFilters?: Partial<VibesFilters>;
 };
 
@@ -188,6 +189,7 @@ export default function useVibesFeed({
   distanceUnit,
   momentUserIds,
   viewerInterests,
+  viewerGender,
   initialFilters,
 }: UseVibesFeedParams) {
   const [filters, setFilters] = useState<VibesFilters>({ ...DEFAULT_FILTERS, ...initialFilters });
@@ -403,6 +405,18 @@ export default function useVibesFeed({
       ...match,
       commonInterests: computeSharedInterests(viewerInterests, (match as any).interests),
     }));
+    const normalizedViewerGender =
+      viewerGender === 'MALE' || viewerGender === 'FEMALE' ? viewerGender : null;
+
+    if (normalizedViewerGender) {
+      list = list.filter((match) => {
+        const candidateGender = String((match as any).gender || '').trim().toUpperCase();
+        if (candidateGender !== 'MALE' && candidateGender !== 'FEMALE') return true;
+        return normalizedViewerGender === 'MALE'
+          ? candidateGender === 'FEMALE'
+          : candidateGender === 'MALE';
+      });
+    }
 
     if (blockedIds.size > 0) {
       list = list.filter((m) => !blockedIds.has(String(m.id)));
@@ -418,7 +432,7 @@ export default function useVibesFeed({
     }
 
     return list;
-  }, [matches, blockedIds, swipedTodayIds, pendingIntentPeerIds, acceptedMatchPeerIds, viewerInterests]);
+  }, [matches, blockedIds, swipedTodayIds, pendingIntentPeerIds, acceptedMatchPeerIds, viewerInterests, viewerGender]);
 
   const filteredProfiles = useMemo(() => {
     return applyVibesFilters(poolProfiles, filters, { segment, momentUserIds, viewerInterests });

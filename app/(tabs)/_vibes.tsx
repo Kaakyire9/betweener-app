@@ -123,6 +123,7 @@ export default function ExploreScreen() {
     distanceUnit,
     momentUserIds: momentBoostIds,
     viewerInterests,
+    viewerGender: (profile as any)?.gender ?? null,
   });
 
   const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
