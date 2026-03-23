@@ -28,6 +28,11 @@ module.exports = ({ config }) => {
       [
         'expo-build-properties',
         {
+          android: {
+            minSdkVersion: 26,
+            compileSdkVersion: 35,
+            targetSdkVersion: 35,
+          },
           ios: {
             deploymentTarget: '15.5',
           },

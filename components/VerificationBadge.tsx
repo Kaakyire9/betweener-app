@@ -6,6 +6,8 @@ interface VerificationBadgeProps {
   level: number;
   size?: 'small' | 'medium' | 'large';
   showLabel?: boolean;
+  variant?: 'default' | 'betweener';
+  surface?: 'default' | 'explore';
   onPress?: () => void;
   style?: any;
   rejectionStatus?: {
@@ -19,6 +21,8 @@ export const VerificationBadge: React.FC<VerificationBadgeProps> = ({
   level = 0,
   size = 'medium',
   showLabel = false,
+  variant = 'default',
+  surface = 'default',
   onPress,
   style,
   rejectionStatus,
@@ -78,23 +82,67 @@ export const VerificationBadge: React.FC<VerificationBadgeProps> = ({
 
   const badge = getBadgeConfig(level);
   const sizeConfig = getSizeConfig(size);
+  const isBetweenerVerified = variant === 'betweener' && !rejectionStatus?.isRejected && level >= 2;
+  const isExploreSurface = isBetweenerVerified && surface === 'explore';
+  const betweenerSizing =
+    size === 'small'
+      ? isExploreSurface
+        ? { width: 35, height: 35, borderRadius: 17.5, iconSize: 16, accentSize: 6, accentOffset: 4 }
+        : { width: 31, height: 31, borderRadius: 15.5, iconSize: 15, accentSize: 6, accentOffset: 3 }
+      : size === 'large'
+      ? { width: 40, height: 40, borderRadius: 20, iconSize: 20, accentSize: 7, accentOffset: 4 }
+      : { width: 35, height: 35, borderRadius: 17.5, iconSize: 17, accentSize: 6, accentOffset: 3 };
 
   const BadgeContent = () => (
     <View style={[
       styles.badge,
-      {
-        backgroundColor: badge.bgColor,
-        borderColor: badge.borderColor || 'transparent',
-        padding: sizeConfig.padding,
-        borderRadius: sizeConfig.borderRadius,
-      },
+      isBetweenerVerified
+        ? [
+            isExploreSurface ? styles.betweenerBadgeExplore : styles.betweenerBadge,
+            {
+              width: betweenerSizing.width,
+              height: betweenerSizing.height,
+              borderRadius: betweenerSizing.borderRadius,
+            },
+          ]
+        : {
+            backgroundColor: badge.bgColor,
+            borderColor: badge.borderColor || 'transparent',
+            padding: sizeConfig.padding,
+            borderRadius: sizeConfig.borderRadius,
+          },
       style,
     ]}>
-      <Ionicons 
-        name={badge.icon as any} 
-        size={sizeConfig.iconSize} 
-        color={badge.color} 
-      />
+      {isBetweenerVerified ? (
+        <>
+          <View style={[styles.betweenerBadgeInner, isExploreSurface && styles.betweenerBadgeInnerExplore]}>
+            <Ionicons
+              name="shield-checkmark"
+              size={betweenerSizing.iconSize}
+              color={isExploreSurface ? '#F4DE97' : '#F7E3A1'}
+            />
+          </View>
+          <View
+            style={[
+              styles.betweenerBadgeAccent,
+              isExploreSurface && styles.betweenerBadgeAccentExplore,
+              {
+                right: betweenerSizing.accentOffset,
+                top: betweenerSizing.accentOffset,
+                width: betweenerSizing.accentSize,
+                height: betweenerSizing.accentSize,
+                borderRadius: betweenerSizing.accentSize / 2,
+              },
+            ]}
+          />
+        </>
+      ) : (
+        <Ionicons 
+          name={badge.icon as any} 
+          size={sizeConfig.iconSize} 
+          color={badge.color} 
+        />
+      )}
       {showLabel && (
         <Text style={[
           styles.label, 
@@ -128,6 +176,57 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: 'transparent',
+  },
+  betweenerBadge: {
+    backgroundColor: '#F6E2A6',
+    borderWidth: 1.5,
+    borderColor: '#D1B160',
+    shadowColor: '#0E7C7B',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  betweenerBadgeExplore: {
+    backgroundColor: 'rgba(8, 18, 24, 0.84)',
+    borderWidth: 0.8,
+    borderColor: 'rgba(244, 222, 151, 0.46)',
+    shadowColor: '#050C10',
+    shadowOffset: { width: 0, height: 9 },
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    elevation: 5,
+  },
+  betweenerBadgeInner: {
+    width: '76%',
+    height: '76%',
+    borderRadius: 999,
+    backgroundColor: '#102F2E',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+  },
+  betweenerBadgeInnerExplore: {
+    width: '78%',
+    height: '78%',
+    backgroundColor: '#123938',
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  betweenerBadgeAccent: {
+    position: 'absolute',
+    right: 3,
+    top: 3,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#12B5B0',
+    borderWidth: 1,
+    borderColor: '#F9F4E3',
+  },
+  betweenerBadgeAccentExplore: {
+    backgroundColor: '#2BDBD5',
+    borderColor: '#081317',
   },
   label: {
     fontWeight: '600',

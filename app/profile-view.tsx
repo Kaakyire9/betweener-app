@@ -1634,6 +1634,7 @@ export default function ProfileViewPremiumV2Screen() {
                 <VerificationBadge
                   level={presenceProfile.verificationLevel ?? (presenceProfile.verified ? 1 : 0)}
                   size="small"
+                  variant="betweener"
                 />
               ) : null}
               {showPresence ? (
@@ -2884,6 +2885,7 @@ const StoryHeader = memo(function StoryHeader({
             <VerificationBadge
               level={profile.verificationLevel ?? (profile.verified ? 1 : 0)}
               size="small"
+              variant="betweener"
             />
           ) : null}
           {showPresence ? (

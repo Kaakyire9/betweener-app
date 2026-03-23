@@ -2,6 +2,7 @@ import { DiasporaVerification } from "@/components/DiasporaVerification";
 import PhotoGallery from "@/components/PhotoGallery";
 import ProfileEditModal from "@/components/ProfileEditModal";
 import { VerificationBadge } from "@/components/VerificationBadge";
+import { VerificationNudgeCard } from "@/components/VerificationNudgeCard";
 import { VerificationNotifications } from "@/components/VerificationNotifications";
 import ProfileVideoModal from "@/components/ProfileVideoModal";
 import { Colors } from "@/constants/theme";
@@ -53,6 +54,7 @@ import * as Haptics from "expo-haptics";
 
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const LINKED_METHODS_BANNER_DISMISSED_KEY = 'linked_methods_banner_dismissed_v1';
+const VERIFICATION_NUDGE_DISMISSED_KEY_PREFIX = 'verification_nudge_dismissed_v1';
 
 type AuthCallbackParams = Record<string, string | undefined>;
 
@@ -281,7 +283,7 @@ export default function ProfileScreen() {
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = colorScheme === 'dark';
   const params = useLocalSearchParams();
-  const { status: verificationStatus, refreshStatus } = useVerificationStatus(profile?.id);
+  const { refreshStatus } = useVerificationStatus(profile?.id);
   const { preference: themePreference, setPreference: setThemePreference } = useColorSchemePreference();
   
   const [selectedPrompts, setSelectedPrompts] = useState<Record<string, number>>({
@@ -346,6 +348,7 @@ export default function ProfileScreen() {
   const [recoveryMessage, setRecoveryMessage] = useState('');
   const [recoveryError, setRecoveryError] = useState('');
   const [linkedMethodsBannerDismissed, setLinkedMethodsBannerDismissed] = useState(false);
+  const [verificationNudgeDismissed, setVerificationNudgeDismissed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [userInterests, setUserInterests] = useState<string[]>([]);
   const [loadingInterests, setLoadingInterests] = useState(false);
@@ -364,6 +367,10 @@ export default function ProfileScreen() {
   );
   const photosCacheKey = useMemo(
     () => (cacheProfileId ? `cache:profile_photos:v1:${cacheProfileId}` : null),
+    [cacheProfileId],
+  );
+  const verificationNudgeDismissedKey = useMemo(
+    () => (cacheProfileId ? `${VERIFICATION_NUDGE_DISMISSED_KEY_PREFIX}:${cacheProfileId}` : null),
     [cacheProfileId],
   );
   const cacheLoadedRef = useRef<{ prompts: boolean; interests: boolean; photos: boolean }>({
@@ -1610,52 +1617,42 @@ export default function ProfileScreen() {
     (profile as any)?.verification_level
     ?? (profile as any)?.verificationLevel
     ?? ((profile as any)?.verified ? 1 : 0);
-  const verificationCallout = useMemo(() => {
-    if (verificationStatus.loading) {
-      return {
-        title: 'Checking verification',
-        subtitle: 'Loading your review status and available verification options.',
-        action: 'Open',
-        icon: 'shield-refresh-outline' as const,
+  useEffect(() => {
+    let active = true;
+
+    if (!verificationNudgeDismissedKey || verificationLevel !== 1) {
+      setVerificationNudgeDismissed(false);
+      return () => {
+        active = false;
       };
     }
 
-    if (verificationStatus.hasPendingRequest) {
-      return {
-        title: 'Verification pending',
-        subtitle: 'Your latest document is in review. Open the modal to track status or submit a different method later.',
-        action: 'View status',
-        icon: 'progress-clock' as const,
-      };
-    }
+    AsyncStorage.getItem(verificationNudgeDismissedKey)
+      .then((value) => {
+        if (active) {
+          setVerificationNudgeDismissed(value === '1');
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setVerificationNudgeDismissed(false);
+        }
+      });
 
-    if (verificationLevel > 0) {
-      return {
-        title: verificationLevel >= 2 ? 'Level 2 verified' : 'Verified profile',
-        subtitle: 'Open verification to add another method, strengthen trust, or check your review history.',
-        action: 'Manage',
-        icon: 'shield-check-outline' as const,
-      };
-    }
-
-    if (verificationStatus.hasRejection) {
-      return {
-        title: 'Verification needs another try',
-        subtitle: verificationStatus.rejectionReason
-          ? verificationStatus.rejectionReason
-          : 'One of your submissions was rejected. Open verification to resubmit with a stronger document or selfie check.',
-        action: 'Resubmit',
-        icon: 'alert-circle-outline' as const,
-      };
-    }
-
-    return {
-      title: 'Get verified',
-      subtitle: 'Add a trust signal to your profile with a document, social proof, or selfie liveness check.',
-      action: 'Start',
-      icon: 'shield-plus-outline' as const,
+    return () => {
+      active = false;
     };
-  }, [verificationLevel, verificationStatus]);
+  }, [verificationLevel, verificationNudgeDismissedKey]);
+
+  const dismissVerificationNudge = useCallback(async () => {
+    setVerificationNudgeDismissed(true);
+    if (!verificationNudgeDismissedKey) return;
+    try {
+      await AsyncStorage.setItem(verificationNudgeDismissedKey, '1');
+    } catch {
+      // Best-effort dismissal persistence only.
+    }
+  }, [verificationNudgeDismissedKey]);
   const isOnlineNow = !!(profile as any)?.online;
   const isActiveNow = !!(profile as any)?.is_active || !!(profile as any)?.isActiveNow;
   const showPresence = isOnlineNow || isActiveNow;
@@ -2774,7 +2771,12 @@ export default function ProfileScreen() {
               {displayAge ? `, ${displayAge}` : ""}
             </Text>
             {verificationLevel > 0 ? (
-              <VerificationBadge level={verificationLevel} size="small" />
+              <VerificationBadge
+                level={verificationLevel}
+                size="small"
+                variant="betweener"
+                style={styles.heroInlineVerificationBadge}
+              />
             ) : null}
             {showPresence ? (
               <View
@@ -2790,51 +2792,6 @@ export default function ProfileScreen() {
               </View>
             ) : null}
           </View>
-
-          {!isPreviewMode ? (
-            <TouchableOpacity
-              activeOpacity={0.92}
-              style={[
-                styles.heroVerificationButton,
-                { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-              ]}
-              onPress={() => setIsVerificationModalVisible(true)}
-            >
-              <View
-                style={[
-                  styles.heroVerificationIconWrap,
-                  { backgroundColor: theme.background, borderColor: theme.outline },
-                ]}
-              >
-                <MaterialCommunityIcons
-                  name={verificationCallout.icon}
-                  size={18}
-                  color={theme.tint}
-                />
-              </View>
-              <View style={styles.heroVerificationCopy}>
-                <Text style={[styles.heroVerificationTitle, { color: theme.text }]}>
-                  {verificationCallout.title}
-                </Text>
-                <Text
-                  numberOfLines={2}
-                  style={[styles.heroVerificationSubtitle, { color: theme.textMuted }]}
-                >
-                  {verificationCallout.subtitle}
-                </Text>
-              </View>
-              <View
-                style={[
-                  styles.heroVerificationAction,
-                  { backgroundColor: theme.background, borderColor: theme.outline },
-                ]}
-              >
-                <Text style={[styles.heroVerificationActionText, { color: theme.tint }]}>
-                  {verificationCallout.action}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          ) : null}
 
           <View style={styles.heroLocationRow}>
             <MaterialCommunityIcons name="map-marker" size={16} color={theme.tint} />
@@ -2853,6 +2810,13 @@ export default function ProfileScreen() {
               {displayBio}
             </Text>
           </View>
+          {!isPreviewMode && verificationLevel === 1 && !verificationNudgeDismissed ? (
+            <VerificationNudgeCard
+              theme={theme}
+              onPress={() => setIsVerificationModalVisible(true)}
+              onSecondaryPress={dismissVerificationNudge}
+            />
+          ) : null}
           {!isPreviewMode ? (
             <View
               style={[
@@ -3944,6 +3908,10 @@ export default function ProfileScreen() {
         <ProfileEditModal
           visible={showEditModal}
           onClose={() => setShowEditModal(false)}
+          onOpenVerification={() => {
+            setShowEditModal(false);
+            setIsVerificationModalVisible(true);
+          }}
           onSave={async () => {
             // Force refresh the profile to ensure UI is updated
             setRefreshing(true);
@@ -4291,8 +4259,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 10,
     marginTop: 14,
+  },
+  heroInlineVerificationBadge: {
+    transform: [{ translateY: 1 }],
+    marginHorizontal: 2,
   },
   heroVerificationButton: {
     width: '100%',
@@ -4342,6 +4314,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    marginLeft: 2,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,

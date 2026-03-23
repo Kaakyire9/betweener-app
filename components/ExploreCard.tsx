@@ -1,6 +1,7 @@
 // components/ExploreCard.tsx
 import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
+import { VerificationBadge } from "@/components/VerificationBadge";
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { getProfileInitials, getProfilePlaceholderPalette, hasProfileImage } from "@/lib/profile-placeholders";
@@ -403,15 +404,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
                 }}
               >
                 {badgeVariant === "id" ? (
-                  <LinearGradientSafe
-                    colors={["#F6D58A", "#D3A33C"]}
-                    start={[0, 0]}
-                    end={[1, 1]}
-                    style={styles.idBadge}
-                  >
-                    <MaterialCommunityIcons name="shield-check" size={14} color="#2b1b00" />
-                    <Text style={styles.idBadgeText}>ID verified</Text>
-                  </LinearGradientSafe>
+                  <VerificationBadge level={2} size="small" variant="betweener" surface="explore" />
                 ) : (
                   <View style={styles.phoneBadge}>
                     <MaterialCommunityIcons name="phone-check" size={14} color={theme.tint} />
@@ -639,31 +632,11 @@ const createStyles = (
       minWidth: 100,
       maxWidth: '70%',
     },
-    topRow: { position: 'absolute', top: 14, left: 14, right: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', zIndex: 40 },
+    topRow: { position: 'absolute', top: 22, left: 22, right: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', zIndex: 40 },
     leftSlot: { alignItems: 'flex-start' },
     centerSlot: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     rightSlot: { alignItems: 'flex-end' },
     badgeWrapper: { flexDirection: 'row', alignItems: 'center' },
-    idBadge: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: 'rgba(255,255,255,0.35)',
-      shadowColor: '#D3A33C',
-      shadowOpacity: isDark ? 0.25 : 0.35,
-      shadowRadius: 10,
-      shadowOffset: { width: 0, height: 6 },
-      elevation: 6,
-    },
-    idBadgeText: {
-      marginLeft: 6,
-      color: '#2b1b00',
-      fontSize: 11,
-      fontWeight: '800',
-    },
     phoneBadge: {
       flexDirection: 'row',
       alignItems: 'center',

@@ -1,22 +1,42 @@
+import { Colors } from '@/constants/theme';
+import { useColorScheme as useAppColorScheme } from '@/hooks/use-color-scheme';
 import { useVerificationStatus } from '@/hooks/use-verification-status';
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
+import { LinearGradient } from 'expo-linear-gradient';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Svg, { Circle } from 'react-native-svg';
+import Svg, { Circle, Path } from 'react-native-svg';
 import { Worklets } from 'react-native-worklets-core';
+import Animated, {
+  Easing,
+  interpolate,
+  runOnJS,
+  useAnimatedProps,
+  useAnimatedReaction,
+  useAnimatedStyle,
+  useSharedValue,
+  withSequence,
+  withSpring,
+  withTiming,
+} from 'react-native-reanimated';
 import { useFaceDetector, type Face, type FrameFaceDetectionOptions } from 'react-native-vision-camera-face-detector';
 import { Camera as VisionCamera, runAsync, useCameraDevice, useFrameProcessor } from 'react-native-vision-camera';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
     Alert,
     Dimensions,
+    LayoutChangeEvent,
     Modal,
     ScrollView,
     StyleSheet,
     Text,
     TouchableOpacity,
-    View
+  View
 } from 'react-native';
+
+const AnimatedPath = Animated.createAnimatedComponent(Path);
 
 // Basic automated validation functions
 const validateImageQuality = async (asset: any): Promise<{ valid: boolean; message: string }> => {
@@ -121,18 +141,177 @@ const LIVENESS_GUIDE_STEPS = [
   },
 ] as const;
 
+const LIVE_GUIDE_WIDTH = 276;
+const LIVE_GUIDE_HEIGHT = 304;
+const LIVE_GUIDE_STROKE = 10;
+
+const cubicPoint = (p0: number, p1: number, p2: number, p3: number, t: number) => {
+  const mt = 1 - t;
+  return (
+    mt * mt * mt * p0 +
+    3 * mt * mt * t * p1 +
+    3 * mt * t * t * p2 +
+    t * t * t * p3
+  );
+};
+
+const buildFaceGuide = (width: number, height: number) => {
+  const cx = width / 2;
+  const topY = 18;
+  const bottomY = height - 20;
+  const rightX = width - 30;
+  const leftX = 30;
+  const upperMidY = height * 0.32;
+  const lowerMidY = height * 0.70;
+  const foreheadCurve = width * 0.18;
+  const chinCurve = width * 0.19;
+  const shoulderLift = 34;
+
+  const segments = [
+    [
+      { x: cx, y: topY },
+      { x: cx + foreheadCurve, y: topY - 2 },
+      { x: rightX, y: upperMidY - shoulderLift },
+      { x: rightX, y: upperMidY },
+    ],
+    [
+      { x: rightX, y: upperMidY },
+      { x: rightX, y: lowerMidY },
+      { x: cx + chinCurve, y: bottomY - 6 },
+      { x: cx, y: bottomY },
+    ],
+    [
+      { x: cx, y: bottomY },
+      { x: cx - chinCurve, y: bottomY - 6 },
+      { x: leftX, y: lowerMidY },
+      { x: leftX, y: upperMidY },
+    ],
+    [
+      { x: leftX, y: upperMidY },
+      { x: leftX, y: upperMidY - shoulderLift },
+      { x: cx - foreheadCurve, y: topY - 2 },
+      { x: cx, y: topY },
+    ],
+  ] as const;
+
+  const d = [
+    `M ${segments[0][0].x} ${segments[0][0].y}`,
+    ...segments.map(
+      ([start, c1, c2, end]) =>
+        `C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${end.x} ${end.y}`,
+    ),
+  ].join(' ');
+
+  let length = 0;
+  for (const [p0, p1, p2, p3] of segments) {
+    let prev = p0;
+    for (let i = 1; i <= 40; i += 1) {
+      const t = i / 40;
+      const point = {
+        x: cubicPoint(p0.x, p1.x, p2.x, p3.x, t),
+        y: cubicPoint(p0.y, p1.y, p2.y, p3.y, t),
+      };
+      length += Math.hypot(point.x - prev.x, point.y - prev.y);
+      prev = point;
+    }
+  }
+
+  return { d, length };
+};
+
+const approachSignal = (current: number, target: number, risePerSecond: number, fallPerSecond: number, dt: number) => {
+  if (target > current) {
+    return Math.min(target, current + risePerSecond * dt);
+  }
+
+  return Math.max(target, current - fallPerSecond * dt);
+};
+
+const applyHysteresis = (currentState: boolean, confidence: number, engageAt: number, releaseAt: number) => {
+  if (currentState) {
+    return confidence >= releaseAt;
+  }
+
+  return confidence >= engageAt;
+};
+
+type LiveChecklistPillProps = {
+  completed: boolean;
+  icon: string;
+  label: string;
+  tint: string;
+};
+
+const LiveChecklistPill: React.FC<LiveChecklistPillProps> = ({
+  completed,
+  icon,
+  label,
+  tint,
+}) => {
+  const scale = useSharedValue(1);
+  const glow = useSharedValue(completed ? 0.5 : 0);
+  const mountedRef = useRef(false);
+
+  useEffect(() => {
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      return;
+    }
+
+    if (completed) {
+      scale.value = withSequence(
+        withTiming(1.08, { duration: 170, easing: Easing.out(Easing.cubic) }),
+        withSpring(1, { damping: 11, stiffness: 220 }),
+      );
+      glow.value = withSequence(
+        withTiming(1, { duration: 180, easing: Easing.out(Easing.quad) }),
+        withTiming(0.68, { duration: 420, easing: Easing.out(Easing.quad) }),
+      );
+    } else {
+      scale.value = withTiming(1, { duration: 150 });
+      glow.value = withTiming(0, { duration: 150 });
+    }
+  }, [completed, glow, scale]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    shadowOpacity: glow.value * 0.32,
+    shadowRadius: 8 + glow.value * 10,
+    shadowOffset: { width: 0, height: 4 + glow.value * 4 },
+  }));
+
+  return (
+    <Animated.View
+      style={[
+        styles.liveChecklistPill,
+        completed && styles.liveChecklistPillCompleted,
+        completed && { shadowColor: tint },
+        animatedStyle,
+      ]}
+    >
+      <Ionicons
+        name={(completed ? 'checkmark-circle' : icon) as any}
+        size={16}
+        color="#fff"
+      />
+      <Text style={styles.liveChecklistText}>{label}</Text>
+    </Animated.View>
+  );
+};
+
 export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   visible,
   onClose,
   profile,
   onVerificationUpdate,
 }) => {
+  const colorScheme = useAppColorScheme();
+  const theme = colorScheme === 'dark' ? Colors.dark : Colors.light;
+  const isDark = colorScheme === 'dark';
   const [loading, setLoading] = useState(false);
   const [selectedMethod, setSelectedMethod] = useState<string | null>('selfie_liveness');
   const [showLivenessGuide, setShowLivenessGuide] = useState(false);
   const [showLiveLivenessCamera, setShowLiveLivenessCamera] = useState(false);
-  const [livenessGuideStarted, setLivenessGuideStarted] = useState(false);
-  const [livenessStepIndex, setLivenessStepIndex] = useState(0);
   const [liveCameraReady, setLiveCameraReady] = useState(false);
   const [liveRecording, setLiveRecording] = useState(false);
   const [liveRecordingProgress, setLiveRecordingProgress] = useState(0);
@@ -140,8 +319,19 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const [liveFaceCentered, setLiveFaceCentered] = useState(false);
   const [liveTurnComplete, setLiveTurnComplete] = useState(false);
   const [liveBlinkComplete, setLiveBlinkComplete] = useState(false);
+  const [liveChallengeReady, setLiveChallengeReady] = useState(false);
+  const [liveGuideLayout, setLiveGuideLayout] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const { status: verificationStatus, refreshStatus } = useVerificationStatus(profile?.id);
+  const insets = useSafeAreaInsets();
   const cameraRef = useRef<VisionCamera | null>(null);
+  const liveGuideRef = useRef<View | null>(null);
+  const liveSignalRef = useRef({
+    center: 0,
+    turn: 0,
+    blink: 0,
+    lastTimestamp: Date.now(),
+  });
+  const liveMissingFaceSinceRef = useRef<number | null>(null);
   const device = useCameraDevice('front');
   const windowSize = useMemo(() => Dimensions.get('window'), []);
   const stopRecordingTriggeredRef = useRef(false);
@@ -249,23 +439,9 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     };
   }, [stopListeners]);
 
-  useEffect(() => {
-    if (!showLivenessGuide || !livenessGuideStarted) return;
-
-    if (livenessStepIndex >= LIVENESS_GUIDE_STEPS.length - 1) return;
-
-    const timeout = setTimeout(() => {
-      setLivenessStepIndex((prev) => Math.min(prev + 1, LIVENESS_GUIDE_STEPS.length - 1));
-    }, 1300);
-
-    return () => clearTimeout(timeout);
-  }, [showLivenessGuide, livenessGuideStarted, livenessStepIndex]);
-
   const resetLivenessGuide = () => {
     setShowLivenessGuide(false);
     setShowLiveLivenessCamera(false);
-    setLivenessGuideStarted(false);
-    setLivenessStepIndex(0);
     setLiveCameraReady(false);
     setLiveRecording(false);
     setLiveRecordingProgress(0);
@@ -273,16 +449,20 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     setLiveFaceCentered(false);
     setLiveTurnComplete(false);
     setLiveBlinkComplete(false);
+    setLiveChallengeReady(false);
+    setLiveGuideLayout(null);
+    liveSignalRef.current = {
+      center: 0,
+      turn: 0,
+      blink: 0,
+      lastTimestamp: Date.now(),
+    };
+    liveMissingFaceSinceRef.current = null;
     stopRecordingTriggeredRef.current = false;
     if (recordingTimeoutRef.current) {
       clearTimeout(recordingTimeoutRef.current);
       recordingTimeoutRef.current = null;
     }
-  };
-
-  const startLivenessGuide = () => {
-    setLivenessStepIndex(0);
-    setLivenessGuideStarted(true);
   };
 
   const submitVerificationAsset = async (
@@ -399,70 +579,178 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   };
 
   const openLiveLivenessCamera = async () => {
-    const [cameraPermission, microphonePermission] = await Promise.all([
-      VisionCamera.requestCameraPermission(),
-      VisionCamera.requestMicrophonePermission(),
-    ]);
+    const cameraPermission = await VisionCamera.requestCameraPermission();
 
-    if (cameraPermission !== 'granted' || microphonePermission !== 'granted') {
+    if (cameraPermission !== 'granted') {
       Alert.alert(
         'Permission needed',
-        'Camera and microphone access are required to record the selfie-liveness challenge.',
+        'Camera access is required to record the selfie-liveness challenge.',
       );
       return;
     }
 
+    setLiveCameraReady(false);
     setShowLiveLivenessCamera(true);
   };
 
+  const handleLiveGuideLayout = useCallback((event: LayoutChangeEvent) => {
+    const fallback = event.nativeEvent.layout;
+    requestAnimationFrame(() => {
+      liveGuideRef.current?.measureInWindow((x, y, width, height) => {
+        if (width > 0 && height > 0) {
+          setLiveGuideLayout({ x, y, width, height });
+        } else {
+          setLiveGuideLayout({
+            x: (windowSize.width - fallback.width) / 2,
+            y: fallback.y,
+            width: fallback.width,
+            height: fallback.height,
+          });
+        }
+      });
+    });
+  }, [windowSize.width]);
+
   const handleLiveFacesDetected = useCallback((faces: Face[]) => {
+    const now = Date.now();
+    const previousTimestamp = liveSignalRef.current.lastTimestamp;
+    const dt = Math.min(0.12, Math.max(0.016, (now - previousTimestamp) / 1000));
+    liveSignalRef.current.lastTimestamp = now;
+
     const face = faces[0];
 
     if (!face) {
       setLiveHasFace(false);
+      if (liveChallengeReady && !liveRecording) {
+        if (liveMissingFaceSinceRef.current == null) {
+          liveMissingFaceSinceRef.current = now;
+        }
+        if (now - liveMissingFaceSinceRef.current < 1200) {
+          setLiveRecordingProgress(1);
+          return;
+        }
+      }
+      liveMissingFaceSinceRef.current = null;
       setLiveFaceCentered(false);
+      setLiveTurnComplete(false);
+      setLiveBlinkComplete(false);
+      setLiveChallengeReady(false);
+      liveSignalRef.current.center = approachSignal(liveSignalRef.current.center, 0, 0, 5.4, dt);
+      liveSignalRef.current.turn = approachSignal(liveSignalRef.current.turn, 0, 0, 6.2, dt);
+      liveSignalRef.current.blink = approachSignal(liveSignalRef.current.blink, 0, 0, 7.2, dt);
       if (!liveRecording) {
-        setLiveRecordingProgress(0);
+        setLiveRecordingProgress(Math.max(0, 0.08 + liveSignalRef.current.center * 0.14));
       }
       return;
     }
 
     setLiveHasFace(true);
+    liveMissingFaceSinceRef.current = null;
 
-    const centerX = face.bounds.x + face.bounds.width / 2;
-    const centerY = face.bounds.y + face.bounds.height / 2;
-    const centeredHorizontally = Math.abs(centerX - windowSize.width / 2) <= windowSize.width * 0.18;
-    const centeredVertically = Math.abs(centerY - windowSize.height * 0.38) <= windowSize.height * 0.2;
-    const isCentered = centeredHorizontally && centeredVertically;
-    setLiveFaceCentered(isCentered);
+    const faceLeft = face.bounds.x;
+    const faceTop = face.bounds.y;
+    const faceRight = face.bounds.x + face.bounds.width;
+    const faceBottom = face.bounds.y + face.bounds.height;
+    const faceCenterX = faceLeft + face.bounds.width / 2;
+    const faceCenterY = faceTop + face.bounds.height / 2;
+
+    const guide = liveGuideLayout ?? {
+      x: (windowSize.width - LIVE_GUIDE_WIDTH) / 2,
+      y: windowSize.height * 0.16,
+      width: LIVE_GUIDE_WIDTH,
+      height: LIVE_GUIDE_HEIGHT,
+    };
+    const guideCenterX = guide.x + guide.width / 2;
+    const guideCenterY = guide.y + guide.height * 0.58;
+    const normalizedX = Math.abs(faceCenterX - guideCenterX) / (guide.width * 0.40);
+    const normalizedY = Math.abs(faceCenterY - guideCenterY) / (guide.height * 0.46);
+    const centeredByOval = normalizedX * normalizedX + normalizedY * normalizedY <= 1;
+    const withinGuideShell =
+      faceCenterX >= guide.x + guide.width * 0.20 &&
+      faceCenterX <= guide.x + guide.width * 0.80 &&
+      faceCenterY >= guide.y + guide.height * 0.34 &&
+      faceCenterY <= guide.y + guide.height * 0.76;
+    const faceFillIsReasonable =
+      face.bounds.width >= guide.width * 0.22 &&
+      face.bounds.width <= guide.width * 0.82 &&
+      face.bounds.height >= guide.height * 0.22 &&
+      face.bounds.height <= guide.height * 0.90;
+    const rawCentered = centeredByOval && withinGuideShell && faceFillIsReasonable;
+
+    if (liveChallengeReady && !liveRecording) {
+      setLiveFaceCentered(true);
+      setLiveTurnComplete(true);
+      setLiveBlinkComplete(true);
+      setLiveRecordingProgress(1);
+      return;
+    }
 
     const yawProgress = Math.max(0, Math.min(1, Math.abs(face.yawAngle) / 18));
-    const hasTurnedEnough = yawProgress >= 0.9;
     const hasBlink =
-      face.leftEyeOpenProbability < 0.45 ||
-      face.rightEyeOpenProbability < 0.45;
+      face.leftEyeOpenProbability < 0.55 ||
+      face.rightEyeOpenProbability < 0.55;
+    const centerTarget = rawCentered ? 1 : 0;
+    liveSignalRef.current.center = approachSignal(
+      liveSignalRef.current.center,
+      centerTarget,
+      3.9,
+      3.1,
+      dt,
+    );
 
-    if (hasTurnedEnough) {
-      setLiveTurnComplete(true);
+    const nextCentered = applyHysteresis(
+      liveFaceCentered,
+      liveSignalRef.current.center,
+      0.72,
+      0.46,
+    );
+    setLiveFaceCentered(nextCentered);
+
+    const turnTarget = nextCentered ? yawProgress : 0;
+    liveSignalRef.current.turn = approachSignal(
+      liveSignalRef.current.turn,
+      turnTarget,
+      3.1,
+      2.8,
+      dt,
+    );
+
+    const nextTurnComplete = nextCentered
+      ? applyHysteresis(liveTurnComplete, liveSignalRef.current.turn, 0.84, 0.52)
+      : false;
+    setLiveTurnComplete(nextTurnComplete);
+
+    if (nextCentered && nextTurnComplete && hasBlink) {
+      liveSignalRef.current.blink = 1;
+    } else {
+      liveSignalRef.current.blink = approachSignal(
+        liveSignalRef.current.blink,
+        0,
+        0,
+        1.4,
+        dt,
+      );
     }
-    if (hasBlink && (hasTurnedEnough || liveTurnComplete)) {
-      setLiveBlinkComplete(true);
+
+    const nextBlinkComplete = nextCentered
+      ? applyHysteresis(liveBlinkComplete, liveSignalRef.current.blink, 0.76, 0.34)
+      : false;
+    setLiveBlinkComplete(nextBlinkComplete);
+
+    if (nextCentered && nextTurnComplete && nextBlinkComplete) {
+      setLiveChallengeReady(true);
     }
 
-    const turnDone = hasTurnedEnough || liveTurnComplete;
-    const blinkDone = (hasBlink && turnDone) || liveBlinkComplete;
-    const nextProgress = !isCentered
-      ? 0.08
-      : Math.min(
-          1,
-          0.2 +
-            yawProgress * 0.55 +
-            (turnDone ? 0.1 : 0) +
-            (blinkDone ? 0.15 : 0),
-        );
+    const nextProgress = !nextCentered
+      ? 0.08 + liveSignalRef.current.center * 0.14
+      : nextBlinkComplete
+        ? 1
+        : nextTurnComplete
+          ? 0.80 + liveSignalRef.current.blink * 0.18
+          : 0.24 + liveSignalRef.current.turn * 0.48;
 
-    setLiveRecordingProgress(nextProgress);
-  }, [liveBlinkComplete, liveRecording, liveTurnComplete, windowSize.height, windowSize.width]);
+    setLiveRecordingProgress(Math.max(0.08, Math.min(1, nextProgress)));
+  }, [liveBlinkComplete, liveChallengeReady, liveFaceCentered, liveGuideLayout, liveRecording, liveTurnComplete, windowSize.height, windowSize.width]);
   const runLiveFaceDetection = useMemo(
     () =>
       Worklets.createRunOnJS((faces: Face[]) => {
@@ -481,11 +769,27 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   }, [detectFaces, runLiveFaceDetection]);
 
   const beginLiveLivenessRecording = async () => {
-    if (!cameraRef.current || liveRecording) return;
+    if (liveRecording) return;
+    if (!device) {
+      Alert.alert('Camera unavailable', 'The front camera could not be started on this device.');
+      return;
+    }
+    if (!cameraRef.current || !liveCameraReady) {
+      Alert.alert('Camera warming up', 'Please wait a moment for the camera to finish starting.');
+      return;
+    }
+    if (!liveHasFace) {
+      Alert.alert('Face not ready', 'Bring your face back into the guide ring before recording.');
+      return;
+    }
+    if (!liveChallengeReady) {
+      Alert.alert('Finish the challenge first', 'Turn slightly left and blink once before recording the face check.');
+      return;
+    }
 
     try {
       setLiveRecording(true);
-      setLiveRecordingProgress((prev) => (prev < 0.2 ? 0.2 : prev));
+      setLiveRecordingProgress(1);
       stopRecordingTriggeredRef.current = false;
 
       recordingTimeoutRef.current = setTimeout(() => {
@@ -538,15 +842,6 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   };
 
   useEffect(() => {
-    if (!liveRecording || liveRecordingProgress < 0.98 || stopRecordingTriggeredRef.current !== false) {
-      return;
-    }
-
-    stopRecordingTriggeredRef.current = true;
-    void cameraRef.current?.stopRecording();
-  }, [liveRecording, liveRecordingProgress]);
-
-  useEffect(() => {
     return () => {
       if (recordingTimeoutRef.current) {
         clearTimeout(recordingTimeoutRef.current);
@@ -566,8 +861,6 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
 
       if (method.id === 'selfie_liveness') {
         setShowLivenessGuide(true);
-        setLivenessGuideStarted(false);
-        setLivenessStepIndex(0);
         return;
       }
       await captureAndSubmitVerification(method);
@@ -592,15 +885,18 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   };
 
   const currentBadge = getVerificationBadge(profile?.verification_level || 0);
-  const activeLivenessStep = LIVENESS_GUIDE_STEPS[livenessStepIndex];
   const ringSize = 220;
   const ringStroke = 12;
   const ringRadius = (ringSize - ringStroke) / 2;
   const ringCircumference = 2 * Math.PI * ringRadius;
-  const ringProgress = activeLivenessStep.progress;
-  const ringOffset = ringCircumference * (1 - ringProgress);
+  const liveGuideWidth = LIVE_GUIDE_WIDTH;
+  const liveGuideHeight = LIVE_GUIDE_HEIGHT;
+  const liveGuideStroke = LIVE_GUIDE_STROKE;
+  const prepRingProgress = 1;
+  const prepRingOffset = ringCircumference * (1 - prepRingProgress);
   const liveRingProgress = liveRecordingProgress > 0 ? liveRecordingProgress : 0.08;
-  const liveRingOffset = ringCircumference * (1 - liveRingProgress);
+  const liveGuide = useMemo(() => buildFaceGuide(liveGuideWidth, liveGuideHeight), [liveGuideHeight, liveGuideWidth]);
+  const liveChallengeComplete = liveChallengeReady || (liveHasFace && liveFaceCentered && liveTurnComplete && liveBlinkComplete);
   const livePrompt = !liveHasFace
     ? 'Center your face before you begin'
     : !liveFaceCentered
@@ -612,23 +908,376 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
           : liveRecording
             ? 'Hold steady and finish strong'
             : 'Challenge complete. Record your clip';
+  const livePromptBody = liveRecording
+    ? 'Follow the motion smoothly while the ring fills around you.'
+    : liveChallengeComplete
+      ? 'Your face check is ready. Record one short clip and complete the movement in a single take.'
+      : !liveHasFace
+        ? 'Position yourself inside the guide ring so we can start reading your challenge.'
+        : !liveFaceCentered
+          ? 'Move your face into the guide ring until the camera locks on.'
+          : !liveTurnComplete
+            ? 'Turn a little left until the progress ring moves close to 12:00.'
+            : 'Blink once while staying in frame to finish the challenge.';
+  const liveChecklist = [
+    { key: 'center', icon: 'scan-outline', label: 'Face centered', completed: liveChallengeComplete || (liveHasFace && liveFaceCentered) },
+    { key: 'turn', icon: 'refresh-circle-outline', label: 'Turn left', completed: liveChallengeComplete || liveTurnComplete },
+    { key: 'blink', icon: 'eye-outline', label: 'Blink', completed: liveChallengeComplete || liveBlinkComplete },
+  ] as const;
+  const [liveDisplayedProgress, setLiveDisplayedProgress] = useState(Math.round(liveRingProgress * 100));
+  const liveAnimatedProgress = useSharedValue(liveRingProgress);
+  const liveRingPulse = useSharedValue(0);
+  const livePromptReveal = useSharedValue(1);
+  const livePromptCompleteAccent = useSharedValue(0);
+  const liveCompletedRef = useRef(liveChallengeComplete);
+  const sheetSurface = isDark ? theme.backgroundSubtle : '#fffdf9';
+  const elevatedSurface = isDark ? '#182626' : '#fffaf4';
+  const heroSurface = isDark ? '#1b2929' : '#fff7ef';
+  const sectionBorder = theme.outline;
+  const titleColor = theme.text;
+  const bodyColor = theme.textMuted;
+  const softTintSurface = isDark ? `${theme.tint}22` : `${theme.tint}14`;
+  const softAccentSurface = isDark ? `${theme.accent}30` : `${theme.accent}14`;
+  const selectedCardStyle = {
+    borderColor: theme.accent,
+    backgroundColor: isDark ? '#1c272d' : '#fff7ef',
+  } as const;
 
-  return (
-    <>
-      <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
-        <View style={styles.container}>
-          <View style={styles.header}>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Ionicons name="close" size={24} color="#333" />
+  useEffect(() => {
+    liveAnimatedProgress.value = withTiming(liveRingProgress, {
+      duration: liveRecording ? 110 : liveChallengeComplete ? 280 : 220,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [liveAnimatedProgress, liveChallengeComplete, liveRecording, liveRingProgress]);
+
+  useAnimatedReaction(
+    () => Math.round(liveAnimatedProgress.value * 100),
+    (value, previous) => {
+      if (value !== previous) {
+        runOnJS(setLiveDisplayedProgress)(value);
+      }
+    },
+    [setLiveDisplayedProgress],
+  );
+
+  useEffect(() => {
+    livePromptReveal.value = 0;
+    livePromptReveal.value = withTiming(1, {
+      duration: 240,
+      easing: Easing.out(Easing.cubic),
+    });
+  }, [livePrompt, livePromptBody, livePromptReveal]);
+
+  useEffect(() => {
+    if (liveChallengeComplete && !liveCompletedRef.current) {
+      liveRingPulse.value = 0;
+      livePromptCompleteAccent.value = 0;
+      liveRingPulse.value = withSequence(
+        withTiming(1, { duration: 260, easing: Easing.out(Easing.cubic) }),
+        withTiming(0, { duration: 820, easing: Easing.out(Easing.quad) }),
+      );
+      livePromptCompleteAccent.value = withSequence(
+        withTiming(1, { duration: 240, easing: Easing.out(Easing.cubic) }),
+        withTiming(0, { duration: 520, easing: Easing.out(Easing.quad) }),
+      );
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+    }
+    liveCompletedRef.current = liveChallengeComplete;
+  }, [liveChallengeComplete, livePromptCompleteAccent, liveRingPulse]);
+
+  const liveRingAnimatedProps = useAnimatedProps(() => ({
+    strokeDashoffset: liveGuide.length * (1 - liveAnimatedProgress.value),
+  }));
+
+  const liveRingWrapAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: 1 + liveRingPulse.value * 0.035 }],
+    shadowOpacity: 0.18 + liveRingPulse.value * 0.16,
+    shadowRadius: 18 + liveRingPulse.value * 14,
+  }));
+
+  const livePromptAnimatedStyle = useAnimatedStyle(() => ({
+    opacity: 0.72 + livePromptReveal.value * 0.28,
+    transform: [
+      { translateY: (1 - livePromptReveal.value) * 10 - livePromptCompleteAccent.value * 4 },
+      { scale: 1 + livePromptCompleteAccent.value * 0.018 },
+    ] as any,
+  }));
+
+  if (showLiveLivenessCamera) {
+    return (
+      <Modal
+        visible={visible}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={resetLivenessGuide}
+      >
+        <View style={styles.liveCameraScreen}>
+          {device ? (
+            <VisionCamera
+              ref={cameraRef}
+              style={styles.liveCamera}
+              device={device}
+              isActive={showLiveLivenessCamera}
+              video
+              preview
+              frameProcessor={liveFrameProcessor}
+              onInitialized={() => setLiveCameraReady(true)}
+              onStarted={() => setLiveCameraReady(true)}
+              onPreviewStarted={() => setLiveCameraReady(true)}
+              onError={(error) => {
+                console.error('Live liveness camera error:', error);
+                setLiveCameraReady(false);
+              }}
+            />
+          ) : (
+            <View style={[styles.liveCamera, styles.liveCameraFallback]}>
+              <Ionicons name="videocam-off-outline" size={44} color="#fff" />
+              <Text style={styles.liveCameraFallbackTitle}>Front camera unavailable</Text>
+              <Text style={styles.liveCameraFallbackText}>
+                This device could not start the live face-check camera.
+              </Text>
+            </View>
+          )}
+
+          <View style={styles.liveCameraOverlay}>
+            <LinearGradient
+              colors={['rgba(8,12,18,0.62)', 'rgba(8,12,18,0.12)', 'rgba(8,12,18,0.68)']}
+              start={{ x: 0.5, y: 0 }}
+              end={{ x: 0.5, y: 1 }}
+              style={styles.liveCameraGradient}
+              pointerEvents="none"
+            />
+            <View style={styles.liveCameraTopBar}>
+              <TouchableOpacity onPress={resetLivenessGuide} style={styles.liveCameraClose}>
+                <Ionicons name="close" size={22} color="#fff" />
+              </TouchableOpacity>
+              <View style={styles.liveCameraBadge}>
+                <Text style={styles.liveCameraBadgeText}>Selfie liveness</Text>
+              </View>
+              <View style={styles.liveCameraStatusWrap}>
+                <Text style={styles.liveCameraStatusText}>
+                  {!device ? 'No camera' : liveRecording ? 'Recording' : liveCameraReady ? 'Ready' : 'Starting'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.liveCameraCenter}>
+              <Animated.View
+                ref={liveGuideRef}
+                onLayout={handleLiveGuideLayout}
+                style={[styles.liveRingWrap, liveRingWrapAnimatedStyle]}
+              >
+                <Svg width={liveGuideWidth} height={liveGuideHeight}>
+                  <Path
+                    d={liveGuide.d}
+                    stroke={`${theme.accent}18`}
+                    strokeWidth={liveGuideStroke + 6}
+                    fill="none"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                  />
+                  <Path
+                    d={liveGuide.d}
+                    stroke="rgba(255,255,255,0.14)"
+                    strokeWidth={liveGuideStroke}
+                    fill="none"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                  />
+                  <AnimatedPath
+                    d={liveGuide.d}
+                    stroke={theme.accent}
+                    strokeWidth={liveGuideStroke}
+                    fill="none"
+                    strokeDasharray={`${liveGuide.length} ${liveGuide.length}`}
+                    animatedProps={liveRingAnimatedProps}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <Path
+                    d={liveGuide.d}
+                    stroke="rgba(255,255,255,0.18)"
+                    strokeWidth={2}
+                    fill="none"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                  />
+                </Svg>
+                <View style={styles.liveRingCenter}>
+                  <Text style={styles.liveRingPercent}>{liveDisplayedProgress}%</Text>
+                  <Text style={styles.liveRingHint}>toward 12:00</Text>
+                </View>
+              </Animated.View>
+              <Animated.View style={[styles.livePromptWrap, livePromptAnimatedStyle]}>
+                <Text style={styles.livePromptTitle}>{livePrompt}</Text>
+                <Text style={styles.livePromptBody}>{livePromptBody}</Text>
+              </Animated.View>
+            </View>
+
+            <View style={styles.liveCameraFooter}>
+              <View style={styles.liveFooterDock}>
+                <View style={styles.liveChecklistRow}>
+                  {liveChecklist.map((item) => (
+                    <LiveChecklistPill
+                      key={item.key}
+                      completed={item.completed}
+                      icon={item.icon}
+                      label={item.label}
+                      tint={theme.accent}
+                    />
+                  ))}
+                </View>
+
+                <TouchableOpacity
+                  style={[
+                    styles.liveRecordButton,
+                    (!device || liveRecording || loading) && styles.liveRecordButtonDisabled,
+                  ]}
+                  onPress={beginLiveLivenessRecording}
+                  disabled={!device || liveRecording || loading}
+                >
+                  <View style={[styles.liveRecordButtonInner, liveRecording && styles.liveRecordButtonInnerActive]} />
+                </TouchableOpacity>
+                <Text style={styles.liveRecordButtonLabel}>
+                  {liveRecording
+                    ? 'Recording...'
+                    : !liveCameraReady
+                      ? 'Camera starting...'
+                      : liveChallengeComplete
+                        ? 'Tap to record'
+                        : 'Complete the challenge first'}
+                </Text>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
+
+  if (showLivenessGuide) {
+    return (
+      <Modal
+        visible={visible}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={resetLivenessGuide}
+      >
+        <View style={[styles.livenessScreen, { backgroundColor: theme.background }]}>
+          <View style={[styles.livenessHeader, { paddingTop: Math.max(insets.top + 8, 28) }]}>
+            <TouchableOpacity
+              onPress={resetLivenessGuide}
+              style={[styles.livenessBackButton, { backgroundColor: elevatedSurface, borderColor: sectionBorder }]}
+            >
+              <Ionicons name="chevron-back" size={24} color={titleColor} />
             </TouchableOpacity>
-            <Text style={styles.title}>Diaspora Verification</Text>
+            <Text style={[styles.livenessHeaderTitle, { color: titleColor }]}>Selfie liveness</Text>
             <View style={styles.placeholder} />
           </View>
 
-          <ScrollView style={styles.content}>
+          <ScrollView
+            style={styles.livenessScroll}
+            contentContainerStyle={[
+              styles.livenessContent,
+              { paddingBottom: Math.max(insets.bottom + 28, 40) },
+            ]}
+            showsVerticalScrollIndicator={false}
+          >
+            <Text style={[styles.livenessEyebrow, { color: theme.accent }]}>Before you record</Text>
+            <Text style={[styles.livenessTitle, { color: titleColor }]}>Get ready for a quick face check</Text>
+            <Text style={[styles.livenessSubtitle, { color: bodyColor }]}>
+              Use the front camera, keep your face in frame, then turn slightly left and blink once. The live camera screen will track the real challenge for you.
+            </Text>
+
+            <View style={styles.livenessRingWrap}>
+              <Svg width={ringSize} height={ringSize}>
+                <Circle
+                  cx={ringSize / 2}
+                  cy={ringSize / 2}
+                  r={ringRadius}
+                  stroke={sectionBorder}
+                  strokeWidth={ringStroke}
+                  fill="none"
+                />
+                <Circle
+                  cx={ringSize / 2}
+                  cy={ringSize / 2}
+                  r={ringRadius}
+                  stroke={theme.tint}
+                  strokeWidth={ringStroke}
+                  fill="none"
+                  strokeDasharray={`${ringCircumference} ${ringCircumference}`}
+                  strokeDashoffset={prepRingOffset}
+                  strokeLinecap="round"
+                  transform={`rotate(-90 ${ringSize / 2} ${ringSize / 2})`}
+                />
+              </Svg>
+              <View style={styles.livenessRingCenter}>
+                <Ionicons name="videocam-outline" size={30} color={theme.tint} />
+                <Text style={[styles.livenessRingPercent, { color: titleColor }]}>3 steps</Text>
+                <Text style={[styles.livenessRingCaption, { color: theme.accent }]}>before recording</Text>
+              </View>
+            </View>
+
+            <View style={[styles.livenessStepCard, { backgroundColor: elevatedSurface, borderColor: sectionBorder }]}>
+              <View style={styles.livenessStepTopRow}>
+                <Text style={[styles.livenessStepTitle, { color: titleColor }]}>What you will do on camera</Text>
+              </View>
+              <Text style={[styles.livenessStepBody, { color: bodyColor }]}>
+                The live camera will only unlock recording after it sees your face centered, your slight left turn, and one blink.
+              </Text>
+            </View>
+
+            <View style={[styles.livenessTimeline, { backgroundColor: elevatedSurface, borderColor: sectionBorder }]}>
+              {LIVENESS_GUIDE_STEPS.map((step) => (
+                <View key={step.title} style={styles.livenessTimelineRow}>
+                  <View style={[styles.livenessTimelineDotActive, { backgroundColor: theme.accent }]} />
+                  <Text style={[styles.livenessTimelineText, styles.livenessTimelineTextActive, { color: titleColor }]}>
+                    {step.title}
+                  </Text>
+                </View>
+              ))}
+            </View>
+
+            <View style={styles.livenessFooter}>
+              <TouchableOpacity
+                style={[
+                  styles.livenessPrimaryButton,
+                  { backgroundColor: theme.tint, shadowColor: theme.tint },
+                  loading && styles.submitButtonDisabled,
+                ]}
+                onPress={openLiveLivenessCamera}
+                disabled={loading}
+              >
+                <Text style={styles.livenessPrimaryButtonText}>
+                  Open live camera
+                </Text>
+              </TouchableOpacity>
+              <Text style={[styles.livenessPrepNote, { color: bodyColor }]}>
+                Tip: use good lighting and keep your phone at eye level for the fastest review.
+              </Text>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
+        <View style={[styles.container, { backgroundColor: theme.background }]}>
+          <View style={[styles.header, { borderBottomColor: sectionBorder, backgroundColor: sheetSurface }]}>
+            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+              <Ionicons name="close" size={24} color={titleColor} />
+            </TouchableOpacity>
+            <Text style={[styles.title, { color: titleColor }]}>Betweener Verification</Text>
+            <View style={styles.placeholder} />
+          </View>
+
+          <ScrollView style={[styles.content, { backgroundColor: theme.background }]}>
           {/* Rejection Status Alert */}
           {verificationStatus.hasRejection && (
-            <View style={styles.rejectionAlert}>
+            <View style={[styles.rejectionAlert, { backgroundColor: isDark ? '#2a1718' : '#ffebee' }]}>
               <View style={styles.rejectionHeader}>
                 <Ionicons name="close-circle" size={24} color="#f44336" />
                 <Text style={styles.rejectionTitle}>Verification Rejected</Text>
@@ -651,7 +1300,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
 
           {/* Pending Status Alert */}
           {verificationStatus.pendingRequest && !verificationStatus.hasRejection && (
-            <View style={styles.pendingAlert}>
+            <View style={[styles.pendingAlert, { backgroundColor: isDark ? '#2a2416' : '#fff3e0' }]}>
               <View style={styles.pendingHeader}>
                 <Ionicons name="time" size={24} color="#FF9800" />
                 <Text style={styles.pendingTitle}>Verification Pending</Text>
@@ -666,7 +1315,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
           )}
 
           {/* Current Status */}
-          <View style={styles.statusCard}>
+          <View style={[styles.statusCard, { backgroundColor: elevatedSurface, borderColor: sectionBorder }]}>
             <View style={styles.statusHeader}>
               <Ionicons 
                 name={currentBadge.icon as any} 
@@ -674,8 +1323,8 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                 color={currentBadge.color} 
               />
               <View style={styles.statusText}>
-                <Text style={styles.statusLevel}>{currentBadge.label} Verified</Text>
-                <Text style={styles.statusDescription}>
+                <Text style={[styles.statusLevel, { color: titleColor }]}>{currentBadge.label} Verified</Text>
+                <Text style={[styles.statusDescription, { color: bodyColor }]}>
                   {profile?.verification_level === 0 && "Start verification to build trust"}
                   {profile?.verification_level === 1 && "Basic verification completed"}
                   {profile?.verification_level === 2 && "Fully verified diaspora member"}
@@ -687,39 +1336,40 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
 
           {/* Why Verify */}
           <View style={styles.section}>
-            <Text style={styles.sectionEyebrow}>Trust on Betweener</Text>
-            <Text style={styles.sectionTitle}>Why verify your profile?</Text>
-            <Text style={styles.sectionIntro}>
+            <Text style={[styles.sectionEyebrow, { color: theme.accent }]}>Trust on Betweener</Text>
+            <Text style={[styles.sectionTitle, { color: titleColor }]}>Why verify your profile?</Text>
+            <Text style={[styles.sectionIntro, { color: bodyColor }]}>
               Verification makes your profile feel more real, lowers hesitation, and gives serious matches
               a stronger reason to engage.
             </Text>
             <View style={styles.benefitsList}>
               <View style={styles.benefit}>
-                <Ionicons name="shield-checkmark" size={20} color="#4CAF50" />
-                <Text style={styles.benefitText}>Build trust with potential matches</Text>
+                <Ionicons name="shield-checkmark" size={20} color={theme.tint} />
+                <Text style={[styles.benefitText, { color: bodyColor }]}>Build trust with potential matches</Text>
               </View>
               <View style={styles.benefit}>
-                <Ionicons name="eye" size={20} color="#4CAF50" />
-                <Text style={styles.benefitText}>Increase profile visibility</Text>
+                <Ionicons name="eye" size={20} color={theme.tint} />
+                <Text style={[styles.benefitText, { color: bodyColor }]}>Increase profile visibility</Text>
               </View>
               <View style={styles.benefit}>
-                <Ionicons name="heart" size={20} color="#4CAF50" />
-                <Text style={styles.benefitText}>Connect with verified diaspora members</Text>
+                <Ionicons name="heart" size={20} color={theme.tint} />
+                <Text style={[styles.benefitText, { color: bodyColor }]}>Connect with verified diaspora members</Text>
               </View>
               <View style={styles.benefit}>
-                <Ionicons name="globe" size={20} color="#4CAF50" />
-                <Text style={styles.benefitText}>Access long-distance matching features</Text>
+                <Ionicons name="globe" size={20} color={theme.tint} />
+                <Text style={[styles.benefitText, { color: bodyColor }]}>Access long-distance matching features</Text>
               </View>
             </View>
           </View>
 
           {/* Featured verification method */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Start with the fastest option</Text>
+            <Text style={[styles.sectionTitle, { color: titleColor }]}>Start with the fastest option</Text>
             <TouchableOpacity
               style={[
                 styles.featuredMethodCard,
-                selectedMethod === featuredMethod.id && styles.selectedMethod,
+                { backgroundColor: heroSurface, borderColor: sectionBorder },
+                selectedMethod === featuredMethod.id && [styles.selectedMethod, selectedCardStyle],
               ]}
               onPress={() => setSelectedMethod(featuredMethod.id)}
               disabled={loading}
@@ -731,52 +1381,52 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                 </View>
                 <View style={styles.featuredCopy}>
                   <View style={styles.featuredTitleRow}>
-                    <Text style={styles.featuredTitle}>{featuredMethod.title}</Text>
-                    <View style={styles.recommendedBadge}>
-                      <Text style={styles.recommendedBadgeText}>Recommended</Text>
+                    <Text style={[styles.featuredTitle, { color: titleColor }]}>{featuredMethod.title}</Text>
+                    <View style={[styles.recommendedBadge, { backgroundColor: softAccentSurface }]}>
+                      <Text style={[styles.recommendedBadgeText, { color: theme.accent }]}>Recommended</Text>
                     </View>
                   </View>
-                  <Text style={styles.featuredDescription}>{featuredMethod.description}</Text>
+                  <Text style={[styles.featuredDescription, { color: bodyColor }]}>{featuredMethod.description}</Text>
                 </View>
               </View>
 
               <View style={styles.featuredMetaRow}>
-                <View style={[styles.metaPill, styles.metaPillPrimary]}>
-                  <Ionicons name="flash-outline" size={14} color="#5B21B6" />
-                  <Text style={[styles.metaPillText, styles.metaPillTextPrimary]}>{featuredMethod.helperLabel}</Text>
+                <View style={[styles.metaPill, styles.metaPillPrimary, { backgroundColor: softAccentSurface, borderColor: `${theme.accent}35` }]}>
+                  <Ionicons name="flash-outline" size={14} color={theme.accent} />
+                  <Text style={[styles.metaPillText, styles.metaPillTextPrimary, { color: theme.accent }]}>{featuredMethod.helperLabel}</Text>
                 </View>
-                <View style={styles.metaPill}>
-                  <Ionicons name="time-outline" size={14} color="#666" />
-                  <Text style={styles.metaPillText}>{featuredMethod.reviewLabel}</Text>
+                <View style={[styles.metaPill, { backgroundColor: elevatedSurface, borderColor: sectionBorder }]}>
+                  <Ionicons name="time-outline" size={14} color={bodyColor} />
+                  <Text style={[styles.metaPillText, { color: bodyColor }]}>{featuredMethod.reviewLabel}</Text>
                 </View>
-                <View style={styles.metaPill}>
-                  <Ionicons name="shield-checkmark-outline" size={14} color="#666" />
-                  <Text style={styles.metaPillText}>Level {featuredMethod.level}</Text>
+                <View style={[styles.metaPill, { backgroundColor: elevatedSurface, borderColor: sectionBorder }]}>
+                  <Ionicons name="shield-checkmark-outline" size={14} color={bodyColor} />
+                  <Text style={[styles.metaPillText, { color: bodyColor }]}>Level {featuredMethod.level}</Text>
                 </View>
               </View>
 
-              <View style={styles.howItWorksCard}>
-                <Text style={styles.howItWorksTitle}>How it works</Text>
+              <View style={[styles.howItWorksCard, { backgroundColor: elevatedSurface, borderColor: sectionBorder }]}>
+                <Text style={[styles.howItWorksTitle, { color: theme.accent }]}>How it works</Text>
                 <View style={styles.howItWorksSteps}>
                   <View style={styles.howItWorksStep}>
-                    <View style={styles.howItWorksBadge}>
-                      <Text style={styles.howItWorksBadgeText}>1</Text>
+                    <View style={[styles.howItWorksBadge, { backgroundColor: softAccentSurface }]}>
+                      <Text style={[styles.howItWorksBadgeText, { color: theme.accent }]}>1</Text>
                     </View>
-                    <Text style={styles.howItWorksStepText}>Open the front camera and start recording</Text>
+                    <Text style={[styles.howItWorksStepText, { color: bodyColor }]}>Open the front camera and start recording</Text>
                   </View>
-                  <View style={styles.howItWorksDivider} />
+                  <View style={[styles.howItWorksDivider, { backgroundColor: `${theme.accent}35` }]} />
                   <View style={styles.howItWorksStep}>
-                    <View style={styles.howItWorksBadge}>
-                      <Text style={styles.howItWorksBadgeText}>2</Text>
+                    <View style={[styles.howItWorksBadge, { backgroundColor: softAccentSurface }]}>
+                      <Text style={[styles.howItWorksBadgeText, { color: theme.accent }]}>2</Text>
                     </View>
-                    <Text style={styles.howItWorksStepText}>Turn slightly left and blink during the clip</Text>
+                    <Text style={[styles.howItWorksStepText, { color: bodyColor }]}>Turn slightly left and blink during the clip</Text>
                   </View>
-                  <View style={styles.howItWorksDivider} />
+                  <View style={[styles.howItWorksDivider, { backgroundColor: `${theme.accent}35` }]} />
                   <View style={styles.howItWorksStep}>
-                    <View style={styles.howItWorksBadge}>
-                      <Text style={styles.howItWorksBadgeText}>3</Text>
+                    <View style={[styles.howItWorksBadge, { backgroundColor: softAccentSurface }]}>
+                      <Text style={[styles.howItWorksBadgeText, { color: theme.accent }]}>3</Text>
                     </View>
-                    <Text style={styles.howItWorksStepText}>Submit for quick review</Text>
+                    <Text style={[styles.howItWorksStepText, { color: bodyColor }]}>Submit for quick review</Text>
                   </View>
                 </View>
               </View>
@@ -785,16 +1435,17 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
 
           {/* Other verification methods */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Other ways to verify</Text>
+            <Text style={[styles.sectionTitle, { color: titleColor }]}>Other ways to verify</Text>
             {fastMethods.length > 0 ? (
               <View style={styles.methodGroup}>
-                <Text style={styles.methodGroupTitle}>Lightweight trust signals</Text>
+                <Text style={[styles.methodGroupTitle, { color: bodyColor }]}>Lightweight trust signals</Text>
                 {fastMethods.map((method) => (
                   <TouchableOpacity
                     key={method.id}
                     style={[
                       styles.methodCard,
-                      selectedMethod === method.id && styles.selectedMethod
+                      { backgroundColor: elevatedSurface, borderColor: sectionBorder },
+                      selectedMethod === method.id && [styles.selectedMethod, selectedCardStyle],
                     ]}
                     onPress={() => setSelectedMethod(method.id)}
                     disabled={loading}
@@ -805,16 +1456,16 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                       </View>
                       <View style={styles.methodInfo}>
                         <View style={styles.methodTopRow}>
-                          <Text style={styles.methodTitle}>{method.title}</Text>
-                          <View style={styles.reviewBadge}>
-                            <Text style={styles.reviewBadgeText}>{method.reviewLabel}</Text>
+                          <Text style={[styles.methodTitle, { color: titleColor }]}>{method.title}</Text>
+                          <View style={[styles.reviewBadge, { backgroundColor: isDark ? theme.background : theme.backgroundSubtle }]}>
+                            <Text style={[styles.reviewBadgeText, { color: bodyColor }]}>{method.reviewLabel}</Text>
                           </View>
                         </View>
-                        <Text style={styles.methodDescription}>{method.description}</Text>
-                        <Text style={styles.methodHelper}>{method.helperLabel}</Text>
+                        <Text style={[styles.methodDescription, { color: bodyColor }]}>{method.description}</Text>
+                        <Text style={[styles.methodHelper, { color: bodyColor }]}>{method.helperLabel}</Text>
                       </View>
-                      <View style={styles.levelBadgeMuted}>
-                        <Text style={styles.levelTextMuted}>L{method.level}</Text>
+                      <View style={[styles.levelBadgeMuted, { backgroundColor: softTintSurface, borderColor: `${theme.tint}30` }]}>
+                        <Text style={[styles.levelTextMuted, { color: theme.tint }]}>L{method.level}</Text>
                       </View>
                     </View>
                   </TouchableOpacity>
@@ -823,13 +1474,14 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
             ) : null}
 
             <View style={styles.methodGroup}>
-              <Text style={styles.methodGroupTitle}>Document verification</Text>
+              <Text style={[styles.methodGroupTitle, { color: bodyColor }]}>Document verification</Text>
               {documentMethods.map((method) => (
                 <TouchableOpacity
                   key={method.id}
                   style={[
                     styles.methodCard,
-                    selectedMethod === method.id && styles.selectedMethod
+                    { backgroundColor: elevatedSurface, borderColor: sectionBorder },
+                    selectedMethod === method.id && [styles.selectedMethod, selectedCardStyle],
                   ]}
                   onPress={() => setSelectedMethod(method.id)}
                   disabled={loading}
@@ -840,16 +1492,16 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                     </View>
                     <View style={styles.methodInfo}>
                       <View style={styles.methodTopRow}>
-                        <Text style={styles.methodTitle}>{method.title}</Text>
-                        <View style={styles.reviewBadge}>
-                          <Text style={styles.reviewBadgeText}>{method.reviewLabel}</Text>
+                        <Text style={[styles.methodTitle, { color: titleColor }]}>{method.title}</Text>
+                        <View style={[styles.reviewBadge, { backgroundColor: isDark ? theme.background : theme.backgroundSubtle }]}>
+                          <Text style={[styles.reviewBadgeText, { color: bodyColor }]}>{method.reviewLabel}</Text>
                         </View>
                       </View>
-                      <Text style={styles.methodDescription}>{method.description}</Text>
-                      <Text style={styles.methodHelper}>{method.helperLabel}</Text>
+                      <Text style={[styles.methodDescription, { color: bodyColor }]}>{method.description}</Text>
+                      <Text style={[styles.methodHelper, { color: bodyColor }]}>{method.helperLabel}</Text>
                     </View>
-                    <View style={styles.levelBadgeMuted}>
-                      <Text style={styles.levelTextMuted}>L{method.level}</Text>
+                    <View style={[styles.levelBadgeMuted, { backgroundColor: softTintSurface, borderColor: `${theme.tint}30` }]}>
+                      <Text style={[styles.levelTextMuted, { color: theme.tint }]}>L{method.level}</Text>
                     </View>
                   </View>
                 </TouchableOpacity>
@@ -860,12 +1512,13 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
           {/* Action Button */}
           {selectedMethod && (
             <View style={styles.submitSection}>
-              <Text style={styles.submitHelper}>
+              <Text style={[styles.submitHelper, { color: bodyColor }]}>
                 {verificationMethods.find((method) => method.id === selectedMethod)?.helperLabel}
               </Text>
               <TouchableOpacity
                 style={[
                   styles.submitButton,
+                  { backgroundColor: theme.tint },
                   (loading || !verificationStatus.canResubmit) && styles.submitButtonDisabled
                 ]}
                 onPress={() => handleImageUpload(selectedMethod)}
@@ -884,9 +1537,9 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
           )}
 
           {/* Disclaimer */}
-          <View style={styles.disclaimer}>
-            <Ionicons name="information-circle-outline" size={16} color="#666" />
-            <Text style={styles.disclaimerText}>
+          <View style={[styles.disclaimer, { backgroundColor: elevatedSurface }]}>
+            <Ionicons name="information-circle-outline" size={16} color={bodyColor} />
+            <Text style={[styles.disclaimerText, { color: bodyColor }]}>
               Your documents are securely stored and only used for verification purposes. 
               Most reviews are completed within 1-2 business days.
             </Text>
@@ -894,240 +1547,6 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
           </ScrollView>
         </View>
       </Modal>
-
-      <Modal visible={showLivenessGuide} animationType="slide" presentationStyle="fullScreen" onRequestClose={resetLivenessGuide}>
-        <View style={styles.livenessScreen}>
-          <View style={styles.livenessHeader}>
-            <TouchableOpacity onPress={resetLivenessGuide} style={styles.livenessBackButton}>
-              <Ionicons name="chevron-back" size={24} color="#1f2937" />
-            </TouchableOpacity>
-            <Text style={styles.livenessHeaderTitle}>Selfie liveness</Text>
-            <View style={styles.placeholder} />
-          </View>
-
-          <View style={styles.livenessContent}>
-            <Text style={styles.livenessEyebrow}>Guided challenge</Text>
-            <Text style={styles.livenessTitle}>Complete one smooth motion to reach 100%</Text>
-            <Text style={styles.livenessSubtitle}>
-              This is a guided prep screen for your short verification clip. Follow the prompts, then record the challenge in one pass.
-            </Text>
-
-            <View style={styles.livenessRingWrap}>
-              <Svg width={ringSize} height={ringSize}>
-                <Circle
-                  cx={ringSize / 2}
-                  cy={ringSize / 2}
-                  r={ringRadius}
-                  stroke="#e5e7eb"
-                  strokeWidth={ringStroke}
-                  fill="none"
-                />
-                <Circle
-                  cx={ringSize / 2}
-                  cy={ringSize / 2}
-                  r={ringRadius}
-                  stroke="#7C4DFF"
-                  strokeWidth={ringStroke}
-                  fill="none"
-                  strokeDasharray={`${ringCircumference} ${ringCircumference}`}
-                  strokeDashoffset={ringOffset}
-                  strokeLinecap="round"
-                  transform={`rotate(-90 ${ringSize / 2} ${ringSize / 2})`}
-                />
-              </Svg>
-              <View style={styles.livenessRingCenter}>
-                <Ionicons name={activeLivenessStep.icon as any} size={30} color="#7C4DFF" />
-                <Text style={styles.livenessRingPercent}>{Math.round(ringProgress * 100)}%</Text>
-                <Text style={styles.livenessRingCaption}>to 12:00</Text>
-              </View>
-            </View>
-
-            <View style={styles.livenessStepCard}>
-              <View style={styles.livenessStepTopRow}>
-                <Text style={styles.livenessStepTitle}>{activeLivenessStep.title}</Text>
-                <Text style={styles.livenessStepCount}>
-                  {livenessStepIndex + 1}/{LIVENESS_GUIDE_STEPS.length}
-                </Text>
-              </View>
-              <Text style={styles.livenessStepBody}>{activeLivenessStep.body}</Text>
-            </View>
-
-            <View style={styles.livenessTimeline}>
-              {LIVENESS_GUIDE_STEPS.map((step, index) => {
-                const completed = index < livenessStepIndex;
-                const active = index === livenessStepIndex;
-                return (
-                  <View key={step.title} style={styles.livenessTimelineRow}>
-                    <View
-                      style={[
-                        styles.livenessTimelineDot,
-                        completed && styles.livenessTimelineDotComplete,
-                        active && styles.livenessTimelineDotActive,
-                      ]}
-                    />
-                    <Text
-                      style={[
-                        styles.livenessTimelineText,
-                        (completed || active) && styles.livenessTimelineTextActive,
-                      ]}
-                    >
-                      {step.title}
-                    </Text>
-                  </View>
-                );
-              })}
-            </View>
-
-            <View style={styles.livenessFooter}>
-              {!livenessGuideStarted ? (
-                <TouchableOpacity style={styles.livenessPrimaryButton} onPress={startLivenessGuide}>
-                  <Text style={styles.livenessPrimaryButtonText}>Start challenge</Text>
-                </TouchableOpacity>
-              ) : livenessStepIndex < LIVENESS_GUIDE_STEPS.length - 1 ? (
-                <View style={styles.livenessPendingBadge}>
-                  <Ionicons name="time-outline" size={16} color="#7C4DFF" />
-                  <Text style={styles.livenessPendingText}>Advancing through the challenge...</Text>
-                </View>
-              ) : (
-                <>
-                  <TouchableOpacity
-                    style={[styles.livenessPrimaryButton, loading && styles.submitButtonDisabled]}
-                    onPress={openLiveLivenessCamera}
-                    disabled={loading}
-                  >
-                    <Text style={styles.livenessPrimaryButtonText}>
-                      Open live camera
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.livenessSecondaryButton}
-                    onPress={() => {
-                      setLivenessGuideStarted(false);
-                      setLivenessStepIndex(0);
-                    }}
-                    disabled={loading}
-                  >
-                    <Text style={styles.livenessSecondaryButtonText}>Run challenge again</Text>
-                  </TouchableOpacity>
-                </>
-              )}
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={showLiveLivenessCamera} animationType="slide" presentationStyle="fullScreen" onRequestClose={resetLivenessGuide}>
-        <View style={styles.liveCameraScreen}>
-          {device ? (
-            <VisionCamera
-              ref={cameraRef}
-              style={styles.liveCamera}
-              device={device}
-              isActive={showLiveLivenessCamera}
-              video
-              audio
-              preview
-              frameProcessor={liveFrameProcessor}
-              onInitialized={() => setLiveCameraReady(true)}
-              onError={(error) => {
-                console.error('Live liveness camera error:', error);
-                setLiveCameraReady(false);
-              }}
-            />
-          ) : (
-            <View style={[styles.liveCamera, styles.liveCameraFallback]}>
-              <Ionicons name="videocam-off-outline" size={44} color="#fff" />
-              <Text style={styles.liveCameraFallbackTitle}>Front camera unavailable</Text>
-              <Text style={styles.liveCameraFallbackText}>
-                This device could not start the live face-check camera.
-              </Text>
-            </View>
-          )}
-
-          <View style={styles.liveCameraOverlay}>
-            <View style={styles.liveCameraTopBar}>
-              <TouchableOpacity onPress={resetLivenessGuide} style={styles.liveCameraClose}>
-                <Ionicons name="close" size={22} color="#fff" />
-              </TouchableOpacity>
-              <View style={styles.liveCameraBadge}>
-                <Text style={styles.liveCameraBadgeText}>Selfie liveness</Text>
-              </View>
-              <View style={styles.liveCameraStatusWrap}>
-                <Text style={styles.liveCameraStatusText}>
-                  {!device ? 'No camera' : liveRecording ? 'Recording' : 'Ready'}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.liveCameraCenter}>
-              <View style={styles.liveRingWrap}>
-                <Svg width={ringSize} height={ringSize}>
-                  <Circle
-                    cx={ringSize / 2}
-                    cy={ringSize / 2}
-                    r={ringRadius}
-                    stroke="rgba(255,255,255,0.18)"
-                    strokeWidth={ringStroke}
-                    fill="none"
-                  />
-                  <Circle
-                    cx={ringSize / 2}
-                    cy={ringSize / 2}
-                    r={ringRadius}
-                    stroke="#8b5cf6"
-                    strokeWidth={ringStroke}
-                    fill="none"
-                    strokeDasharray={`${ringCircumference} ${ringCircumference}`}
-                    strokeDashoffset={liveRingOffset}
-                    strokeLinecap="round"
-                    transform={`rotate(-90 ${ringSize / 2} ${ringSize / 2})`}
-                  />
-                </Svg>
-                <View style={styles.liveRingCenter}>
-                  <Text style={styles.liveRingPercent}>{Math.round(liveRingProgress * 100)}%</Text>
-                  <Text style={styles.liveRingHint}>toward 12:00</Text>
-                </View>
-              </View>
-              <Text style={styles.livePromptTitle}>{livePrompt}</Text>
-              <Text style={styles.livePromptBody}>
-                {liveRecording
-                  ? 'Follow the motion smoothly while the ring fills around you.'
-                  : 'When you are ready, start the short face-check recording and perform the movement in one take.'}
-              </Text>
-            </View>
-
-            <View style={styles.liveCameraFooter}>
-              <View style={styles.liveChecklistPill}>
-                <Ionicons name="scan-outline" size={16} color="#fff" />
-                <Text style={styles.liveChecklistText}>Face centered</Text>
-              </View>
-              <View style={styles.liveChecklistPill}>
-                <Ionicons name="refresh-circle-outline" size={16} color="#fff" />
-                <Text style={styles.liveChecklistText}>Turn left</Text>
-              </View>
-              <View style={styles.liveChecklistPill}>
-                <Ionicons name="eye-outline" size={16} color="#fff" />
-                <Text style={styles.liveChecklistText}>Blink</Text>
-              </View>
-
-              <TouchableOpacity
-                style={[
-                  styles.liveRecordButton,
-                  (!device || !liveCameraReady || liveRecording || loading) && styles.liveRecordButtonDisabled,
-                ]}
-                onPress={beginLiveLivenessRecording}
-                disabled={!device || !liveCameraReady || liveRecording || loading}
-              >
-                <View style={[styles.liveRecordButtonInner, liveRecording && styles.liveRecordButtonInnerActive]} />
-              </TouchableOpacity>
-              <Text style={styles.liveRecordButtonLabel}>
-                {liveRecording ? 'Recording...' : 'Tap to record'}
-              </Text>
-            </View>
-          </View>
-        </View>
-      </Modal>
-    </>
   );
 };
 
@@ -1138,14 +1557,16 @@ const styles = StyleSheet.create({
   },
   livenessScreen: {
     flex: 1,
-    backgroundColor: '#f7f4ff',
+    backgroundColor: '#fbf3ea',
+  },
+  livenessScroll: {
+    flex: 1,
   },
   livenessHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingTop: 60,
     paddingBottom: 18,
   },
   livenessBackButton: {
@@ -1154,7 +1575,9 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.9)',
+    backgroundColor: 'rgba(255,255,255,0.88)',
+    borderWidth: 1,
+    borderColor: '#ede0d0',
   },
   livenessHeaderTitle: {
     fontSize: 18,
@@ -1162,29 +1585,27 @@ const styles = StyleSheet.create({
     color: '#1f2937',
   },
   livenessContent: {
-    flex: 1,
     paddingHorizontal: 24,
-    paddingBottom: 24,
   },
   livenessEyebrow: {
     fontSize: 11,
     fontWeight: '700',
     letterSpacing: 0.7,
     textTransform: 'uppercase',
-    color: '#7C4DFF',
+    color: '#7C5FE6',
     marginBottom: 8,
   },
   livenessTitle: {
     fontSize: 28,
     lineHeight: 34,
     fontWeight: '700',
-    color: '#111827',
+    color: '#18212f',
   },
   livenessSubtitle: {
     marginTop: 10,
     fontSize: 14,
     lineHeight: 21,
-    color: '#6b7280',
+    color: '#5f6673',
   },
   livenessRingWrap: {
     marginTop: 28,
@@ -1198,14 +1619,14 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   livenessRingPercent: {
-    fontSize: 34,
+    fontSize: 32,
     fontWeight: '800',
-    color: '#111827',
+    color: '#18212f',
   },
   livenessRingCaption: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#7C4DFF',
+    color: '#0f8f8e',
     letterSpacing: 0.3,
     textTransform: 'uppercase',
   },
@@ -1213,9 +1634,14 @@ const styles = StyleSheet.create({
     marginTop: 28,
     borderRadius: 22,
     padding: 18,
-    backgroundColor: '#fff',
+    backgroundColor: 'rgba(255,255,255,0.92)',
     borderWidth: 1,
-    borderColor: '#ece7ff',
+    borderColor: '#ecdcc8',
+    shadowColor: '#52321d',
+    shadowOpacity: 0.08,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
   },
   livenessStepTopRow: {
     flexDirection: 'row',
@@ -1227,7 +1653,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 18,
     fontWeight: '700',
-    color: '#1f2937',
+    color: '#18212f',
   },
   livenessStepCount: {
     fontSize: 12,
@@ -1238,14 +1664,16 @@ const styles = StyleSheet.create({
     marginTop: 10,
     fontSize: 14,
     lineHeight: 20,
-    color: '#6b7280',
+    color: '#5f6673',
   },
   livenessTimeline: {
     marginTop: 22,
     borderRadius: 18,
     padding: 16,
-    backgroundColor: 'rgba(255,255,255,0.8)',
+    backgroundColor: 'rgba(255,255,255,0.9)',
     gap: 10,
+    borderWidth: 1,
+    borderColor: '#ecdcc8',
   },
   livenessTimelineRow: {
     flexDirection: 'row',
@@ -1262,7 +1690,7 @@ const styles = StyleSheet.create({
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: '#7C4DFF',
+    backgroundColor: '#0f8f8e',
   },
   livenessTimelineDotComplete: {
     backgroundColor: '#10b981',
@@ -1273,18 +1701,30 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   livenessTimelineTextActive: {
-    color: '#1f2937',
+    color: '#18212f',
   },
   livenessFooter: {
-    marginTop: 'auto',
-    paddingTop: 20,
+    marginTop: 24,
+    paddingTop: 8,
     gap: 12,
+  },
+  livenessPrepNote: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#5f6673',
+    textAlign: 'center',
+    paddingHorizontal: 8,
   },
   livenessPrimaryButton: {
     borderRadius: 16,
     paddingVertical: 16,
     alignItems: 'center',
-    backgroundColor: '#7C4DFF',
+    backgroundColor: '#0f8f8e',
+    shadowColor: '#0f8f8e',
+    shadowOpacity: 0.2,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
   },
   livenessPrimaryButtonText: {
     fontSize: 16,
@@ -1352,6 +1792,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: 'rgba(15, 23, 42, 0.24)',
   },
+  liveCameraGradient: {
+    ...StyleSheet.absoluteFillObject,
+  },
   liveCameraTopBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1364,13 +1807,17 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: 'rgba(10,16,24,0.34)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   liveCameraBadge: {
     borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(10,16,24,0.34)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   liveCameraBadgeText: {
     fontSize: 12,
@@ -1380,9 +1827,11 @@ const styles = StyleSheet.create({
   },
   liveCameraStatusWrap: {
     borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    backgroundColor: 'rgba(124,77,255,0.84)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(15,143,142,0.88)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   liveCameraStatusText: {
     fontSize: 12,
@@ -1396,14 +1845,21 @@ const styles = StyleSheet.create({
   liveRingWrap: {
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: 2,
+    marginBottom: 10,
+    shadowColor: '#8B5CF6',
+    shadowOpacity: 0.22,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 10 },
   },
   liveRingCenter: {
     position: 'absolute',
     alignItems: 'center',
     justifyContent: 'center',
+    transform: [{ translateY: 8 }],
   },
   liveRingPercent: {
-    fontSize: 34,
+    fontSize: 38,
     fontWeight: '800',
     color: '#fff',
   },
@@ -1416,12 +1872,15 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   livePromptTitle: {
-    marginTop: 24,
-    fontSize: 24,
-    lineHeight: 30,
+    marginTop: 14,
+    fontSize: 26,
+    lineHeight: 32,
     fontWeight: '800',
     color: '#fff',
     textAlign: 'center',
+  },
+  livePromptWrap: {
+    alignItems: 'center',
   },
   livePromptBody: {
     marginTop: 8,
@@ -1432,16 +1891,41 @@ const styles = StyleSheet.create({
   },
   liveCameraFooter: {
     alignItems: 'center',
+    gap: 10,
+  },
+  liveFooterDock: {
+    minWidth: 286,
+    maxWidth: 338,
+    alignItems: 'center',
     gap: 12,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 14,
+    borderRadius: 30,
+    backgroundColor: 'rgba(10,16,24,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.07)',
+  },
+  liveChecklistRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
   },
   liveChecklistPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     borderRadius: 999,
-    paddingHorizontal: 12,
+    paddingHorizontal: 13,
     paddingVertical: 8,
-    backgroundColor: 'rgba(0,0,0,0.34)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  liveChecklistPillCompleted: {
+    backgroundColor: 'rgba(15,143,142,0.46)',
+    borderColor: 'rgba(255,255,255,0.12)',
   },
   liveChecklistText: {
     fontSize: 12,
@@ -1449,15 +1933,19 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   liveRecordButton: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
+    width: 94,
+    height: 94,
+    borderRadius: 47,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 4,
+    borderWidth: 3,
     borderColor: '#fff',
-    backgroundColor: 'rgba(255,255,255,0.16)',
-    marginTop: 8,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    marginTop: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.16,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 8 },
   },
   liveRecordButtonDisabled: {
     opacity: 0.55,
@@ -1477,6 +1965,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: '#fff',
+    letterSpacing: 0.2,
   },
   header: {
     flexDirection: 'row',

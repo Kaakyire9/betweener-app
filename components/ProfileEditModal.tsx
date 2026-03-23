@@ -1,5 +1,6 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useVerificationStatus } from '@/hooks/use-verification-status';
 import { useAuth } from '@/lib/auth-context';
 import { getProfileInitials, hasProfileImage } from '@/lib/profile-placeholders';
 import { supabase } from '@/lib/supabase';
@@ -26,6 +27,7 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { VerificationBadge } from './VerificationBadge';
 
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
@@ -230,6 +232,7 @@ interface ProfileEditModalProps {
   visible: boolean;
   onClose: () => void;
   onSave: (updatedProfile: any) => void;
+  onOpenVerification?: () => void;
 }
 
 const InlineVideoPreview = ({ uri, shouldPlay, styles }: { uri: string; shouldPlay: boolean; styles: ReturnType<typeof createStyles>; }) => {
@@ -252,12 +255,13 @@ const InlineVideoPreview = ({ uri, shouldPlay, styles }: { uri: string; shouldPl
   return <VideoView style={styles.videoPreview} player={player} contentFit="cover" nativeControls={false} />;
 };
 
-export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEditModalProps) {
+export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerification }: ProfileEditModalProps) {
   const { user, profile, updateProfile, refreshProfile } = useAuth();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const { status: verificationStatus } = useVerificationStatus(profile?.id);
   const isGhanaProfile = useMemo(() => {
     const currentCountry = (profile as any)?.current_country;
     const countryCode = (profile as any)?.current_country_code;
@@ -373,6 +377,58 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     [formData.full_name, profile?.full_name, user?.email],
   );
   const hasAvatarImage = hasProfileImage(formData.avatar_url);
+  const verificationLevel =
+    (profile as any)?.verification_level
+    ?? (profile as any)?.verificationLevel
+    ?? ((profile as any)?.verified ? 1 : 0);
+  const verificationCallout = useMemo(() => {
+    if (verificationStatus.loading) {
+      return {
+        title: 'Checking trust status',
+        subtitle: 'Refreshing your verification status and review progress.',
+        action: 'Open',
+        icon: 'shield-refresh-outline' as const,
+      };
+    }
+
+    if (verificationStatus.hasPendingRequest) {
+      return {
+        title: 'In review',
+        subtitle: 'Your latest verification is under review. Track it here or add another method later.',
+        action: 'Status',
+        icon: 'progress-clock' as const,
+      };
+    }
+
+    if (verificationLevel > 0) {
+      return {
+        title: verificationLevel >= 2 ? 'Trust confirmed' : 'Verified profile',
+        subtitle: verificationLevel >= 2
+          ? 'Your profile carries Betweener verification. Review methods, history, or add another signal.'
+          : 'Your profile already has a trust signal. Strengthen it with another method.',
+        action: verificationLevel >= 2 ? 'Details' : 'Add more',
+        icon: 'shield-check-outline' as const,
+      };
+    }
+
+    if (verificationStatus.hasRejection) {
+      return {
+        title: 'Needs another try',
+        subtitle: verificationStatus.rejectionReason
+          ? verificationStatus.rejectionReason
+          : 'One of your submissions was rejected. Resubmit with a stronger document or selfie check.',
+        action: 'Resubmit',
+        icon: 'alert-circle-outline' as const,
+      };
+    }
+
+    return {
+      title: 'Build trust on Betweener',
+      subtitle: 'Add a trust signal with a document, social proof, or selfie liveness.',
+      action: 'Start',
+      icon: 'shield-plus-outline' as const,
+    };
+  }, [verificationLevel, verificationStatus]);
 
   // Load current profile data when modal opens
   const hydratedFromProfileRef = useRef(false);
@@ -1421,6 +1477,47 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
               </TouchableOpacity>
             </View>
           </View>
+
+          <TouchableOpacity
+            activeOpacity={0.92}
+            style={styles.verificationCard}
+            onPress={onOpenVerification}
+            disabled={!onOpenVerification}
+          >
+            <View style={styles.sectionTitleRow}>
+              <View style={[styles.sectionIconWrap, styles.verificationSectionIconWrap]}>
+                <MaterialCommunityIcons
+                  name="shield-check-outline"
+                  size={18}
+                  color={theme.tint}
+                  style={styles.sectionIcon}
+                />
+              </View>
+              <Text style={styles.sectionTitle}>Trust & Verification</Text>
+            </View>
+
+            <View style={styles.verificationCardRow}>
+              <View style={styles.verificationBadgeWrap}>
+                {verificationLevel > 0 ? (
+                  <VerificationBadge level={verificationLevel} size="medium" variant="betweener" />
+                ) : (
+                  <View style={styles.verificationBadgePlaceholder}>
+                    <MaterialCommunityIcons name="shield-plus-outline" size={18} color={theme.tint} />
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.verificationCardCopy}>
+                <Text style={styles.verificationCardTitle}>{verificationCallout.title}</Text>
+                <Text style={styles.verificationCardSubtitle}>{verificationCallout.subtitle}</Text>
+              </View>
+
+              <View style={styles.verificationCardAction}>
+                <Text style={styles.verificationCardActionText}>{verificationCallout.action}</Text>
+                <MaterialCommunityIcons name="chevron-right" size={16} color={theme.tint} />
+              </View>
+            </View>
+          </TouchableOpacity>
 
           {/* Basic Info */}
           <View style={styles.section}>
@@ -2876,6 +2973,21 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       shadowRadius: 14,
       elevation: 3,
     },
+    verificationCard: {
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.92 : 0.98),
+      paddingHorizontal: 18,
+      paddingVertical: 18,
+      marginBottom: 12,
+      marginHorizontal: 16,
+      borderWidth: 1,
+      borderRadius: 18,
+      borderColor: withAlpha(theme.tint, isDark ? 0.22 : 0.16),
+      shadowColor: theme.tint,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: isDark ? 0.16 : 0.08,
+      shadowRadius: 16,
+      elevation: 3,
+    },
     sectionHeader: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -2907,12 +3019,69 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       shadowRadius: 10,
       elevation: 6,
     },
+    verificationSectionIconWrap: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.1),
+      borderColor: withAlpha(theme.tint, isDark ? 0.36 : 0.22),
+      shadowColor: theme.tint,
+    },
     sectionTitle: {
       fontSize: 16,
       fontWeight: '700',
       letterSpacing: 0.2,
       color: theme.text,
       lineHeight: 20,
+    },
+    verificationCardRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    verificationBadgeWrap: {
+      width: 42,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    verificationBadgePlaceholder: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.4 : 0.22),
+    },
+    verificationCardCopy: {
+      flex: 1,
+      gap: 4,
+    },
+    verificationCardTitle: {
+      fontSize: 15,
+      fontWeight: '700',
+      color: theme.text,
+      letterSpacing: 0.2,
+    },
+    verificationCardSubtitle: {
+      fontSize: 12,
+      lineHeight: 17,
+      color: theme.textMuted,
+    },
+    verificationCardAction: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.82 : 0.95),
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+    },
+    verificationCardActionText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: theme.tint,
+      letterSpacing: 0.2,
     },
     avatarContainer: {
       alignItems: 'center',
