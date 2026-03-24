@@ -3499,21 +3499,6 @@ export type Database = {
         Args: { p_request_id: string }
         Returns: boolean
       }
-      rpc_submit_selfie_liveness_verification: {
-        Args: {
-          p_capture_mode?: string
-          p_challenge_type?: string
-          p_document_path: string
-          p_profile_id: string
-          p_reference_asset_path?: string
-        }
-        Returns: {
-          already_pending: boolean
-          created_at: string
-          request_id: string
-          status: string
-        }[]
-      }
       rpc_admin_create_account_merge_case: {
         Args: {
           p_candidate_reason?: string
@@ -3966,6 +3951,21 @@ export type Database = {
           p_role: string
         }
         Returns: boolean
+      }
+      rpc_submit_selfie_liveness_verification: {
+        Args: {
+          p_capture_mode?: string
+          p_challenge_type?: string
+          p_document_path: string
+          p_profile_id: string
+          p_reference_asset_path?: string
+        }
+        Returns: {
+          already_pending: boolean
+          created_at: string
+          request_id: string
+          status: string
+        }[]
       }
       rpc_upsert_profile_signal: {
         Args: {

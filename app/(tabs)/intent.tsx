@@ -4,23 +4,24 @@ import { useIntentRequests, type IntentRequest, type IntentRequestType } from '@
 import { useReduceMotion } from '@/hooks/useReduceMotion';
 import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
-import { computeCompatibilityPercent } from '@/lib/compat/compatibility-score';
-import { computeFirstReplyHours, computeInterestOverlapRatio, computeMatchScorePercent } from '@/lib/match/match-score';
+import { computeFirstReplyHours, computeInterestOverlapRatio } from '@/lib/match/match-score';
 import { Motion } from '@/lib/motion';
 import { readCache, writeCache } from '@/lib/persisted-cache';
 import { supabase } from '@/lib/supabase';
+import { getViewedProfileTrustChips } from '@/lib/viewed-profile-premium';
 import AnimatedPressable from '@/components/motion/AnimatedPressable';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Image as ExpoImage } from 'expo-image';
 import * as Haptics from 'expo-haptics';
+import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Image, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FlatList, Image, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Animated, {
   FadeIn,
   FadeInDown,
   FadeOut,
   FadeOutUp,
-  interpolateColor,
   useAnimatedStyle,
   useSharedValue,
   withRepeat,
@@ -189,6 +190,98 @@ function PillPulse({
         style,
       ]}
     />
+  );
+}
+
+function RevealCue({
+  active,
+  reduceMotion,
+  children,
+}: {
+  active: boolean;
+  reduceMotion: boolean;
+  children: ReactNode;
+}) {
+  const sweep = useSharedValue(-120);
+  const glow = useSharedValue(0);
+
+  useEffect(() => {
+    if (!active || reduceMotion) {
+      sweep.value = -120;
+      glow.value = 0;
+      return;
+    }
+
+    sweep.value = withRepeat(
+      withSequence(
+        withTiming(180, { duration: 760, easing: Motion.easing.outCubic }),
+        withTiming(-120, { duration: 0 }),
+        withTiming(-120, { duration: 1500 }),
+      ),
+      -1,
+      false,
+    );
+    glow.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 520, easing: Motion.easing.outCubic }),
+        withTiming(0, { duration: 720, easing: Motion.easing.outCubic }),
+      ),
+      -1,
+      false,
+    );
+  }, [active, glow, reduceMotion, sweep]);
+
+  const sweepStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: sweep.value }],
+    opacity: 0.14,
+  }));
+
+  const glowStyle = useAnimatedStyle(() => ({
+    opacity: 0.08 + glow.value * 0.1,
+    transform: [{ scale: 1 + glow.value * 0.02 }],
+  }));
+
+  return (
+    <View style={{ position: 'relative', overflow: 'hidden' }}>
+      {!reduceMotion && active ? (
+        <>
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              {
+                position: 'absolute',
+                inset: -1,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: 'rgba(210,255,250,0.28)',
+              },
+              glowStyle,
+            ]}
+          />
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              {
+                position: 'absolute',
+                top: -20,
+                bottom: -20,
+                width: 64,
+                transform: [{ rotate: '18deg' }],
+              },
+              sweepStyle,
+            ]}
+          >
+            <LinearGradient
+              colors={['rgba(255,255,255,0)', 'rgba(255,255,255,0.18)', 'rgba(255,255,255,0)']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={{ flex: 1 }}
+            />
+          </Animated.View>
+        </>
+      ) : null}
+      {children}
+    </View>
   );
 }
 
@@ -437,6 +530,53 @@ const typeIcon = (item: Pick<IntentRequest, 'type' | 'message' | 'metadata'>) =>
   }
 };
 
+const getIntentConversationSignal = ({
+  messageCount,
+  firstReplyHours,
+  bothVerified,
+  interestOverlapRatio,
+}: {
+  messageCount?: number | null;
+  firstReplyHours?: number | null;
+  bothVerified?: boolean;
+  interestOverlapRatio?: number;
+}) => {
+  const totalMessages = typeof messageCount === 'number' ? messageCount : 0;
+
+  if (totalMessages >= 8 && bothVerified && (interestOverlapRatio ?? 0) >= 0.28 && (firstReplyHours == null || firstReplyHours <= 24)) {
+    return 'Consistent chemistry';
+  }
+
+  if (totalMessages >= 6 && (firstReplyHours == null || firstReplyHours <= 36)) {
+    return 'Strong momentum';
+  }
+
+  if (totalMessages >= 4 && (firstReplyHours == null || firstReplyHours <= 24)) {
+    return 'Great flow';
+  }
+
+  return null;
+};
+
+const getIntentTrustSignals = ({
+  verificationLevel,
+  peerInterests,
+  lookingFor,
+}: {
+  verificationLevel?: number | null;
+  peerInterests: string[];
+  lookingFor?: string | null;
+}) =>
+  getViewedProfileTrustChips({
+    verificationLevel: verificationLevel ?? 0,
+    verified: (verificationLevel ?? 0) >= 1,
+    profileVideo: null,
+    profileVideoPath: null,
+    interests: peerInterests.map((name) => ({ name })),
+    lookingFor: lookingFor ?? '',
+    bio: '',
+  } as any);
+
 function SegmentedToggle({
   value,
   onChange,
@@ -515,101 +655,6 @@ function SegmentedToggle({
     </View>
   );
 }
-
-function AnimatedChip({
-  label,
-  icon,
-  active,
-  onPress,
-  reduceMotion,
-  theme,
-  activeFill = true,
-}: {
-  label: string;
-  icon?: string;
-  active: boolean;
-  onPress: () => void;
-  reduceMotion: boolean;
-  theme: typeof Colors.light;
-  activeFill?: boolean;
-}) {
-  const t = useSharedValue(active ? 1 : 0);
-  const pop = useSharedValue(1);
-  const chipStyles = useMemo(() => chipBaseStyles, []);
-
-  useEffect(() => {
-    if (reduceMotion) {
-      t.value = active ? 1 : 0;
-      pop.value = 1;
-      return;
-    }
-
-    t.value = withTiming(active ? 1 : 0, { duration: Motion.duration.base, easing: Motion.easing.outCubic });
-    if (active) {
-      pop.value = withSequence(
-        withTiming(Motion.transform.popScale, { duration: Motion.duration.fast, easing: Motion.easing.outCubic }),
-        withSpring(1, Motion.spring),
-      );
-    } else {
-      pop.value = 1;
-    }
-  }, [active, pop, reduceMotion, t]);
-
-  const chipStyle = useAnimatedStyle(() => {
-    const bgFrom = theme.backgroundSubtle;
-    const bgTo = activeFill ? theme.tint : theme.backgroundSubtle;
-    const borderFrom = theme.outline;
-    const borderTo = activeFill ? theme.tint : theme.outline;
-
-    return {
-      backgroundColor: interpolateColor(t.value, [0, 1], [bgFrom, bgTo]),
-      borderColor: interpolateColor(t.value, [0, 1], [borderFrom, borderTo]),
-      transform: reduceMotion ? [] : [{ scale: pop.value }],
-    };
-  }, [activeFill, reduceMotion, theme]);
-
-  const textStyle = useAnimatedStyle(() => {
-    const from = theme.textMuted;
-    const to = Colors.light.background;
-    return {
-      color: interpolateColor(t.value, [0, 1], [from, to]),
-    };
-  }, [theme]);
-
-  return (
-    <AnimatedPressable
-      reduceMotion={reduceMotion}
-      onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-      onPress={onPress}
-    >
-      <Animated.View style={[chipStyles.container, chipStyle]}>
-        {icon ? (
-          <MaterialCommunityIcons
-            name={icon as any}
-            size={16}
-            color={activeFill && active ? Colors.light.background : theme.textMuted}
-          />
-        ) : null}
-        <Animated.Text style={[chipStyles.text, textStyle]}>{label}</Animated.Text>
-      </Animated.View>
-    </AnimatedPressable>
-  );
-}
-
-const chipBaseStyles = StyleSheet.create({
-  container: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 999,
-    borderWidth: 1,
-    minHeight: 40,
-  },
-  text: { fontSize: 12, lineHeight: 14, paddingBottom: 1, fontWeight: '600' },
-});
 
 export default function IntentScreen() {
   const { user, profile } = useAuth();
@@ -1123,28 +1168,6 @@ export default function IntentScreen() {
       const sharedInterests = myInterests.length
         ? peerInterests.filter((i) => myInterests.includes(i)).slice(0, 3)
         : [];
-      const compatPct = myProfile
-        ? computeCompatibilityPercent(
-            {
-              interests: myInterests,
-              lookingFor: myProfile.looking_for,
-              loveLanguage: myProfile.love_language,
-              personalityType: myProfile.personality_type,
-              religion: myProfile.religion,
-              wantsChildren: myProfile.wants_children,
-              smoking: myProfile.smoking,
-            },
-            {
-              interests: peerInterests,
-              lookingFor: peer?.looking_for,
-              loveLanguage: peer?.love_language,
-              personalityType: peer?.personality_type,
-              religion: peer?.religion,
-              wantsChildren: peer?.wants_children,
-              smoking: peer?.smoking,
-            },
-          )
-        : undefined;
       const isVerified = (profile?.verification_level ?? 0) >= 1 && (peer?.verification_level ?? 0) >= 1;
       const interestOverlapRatio = computeInterestOverlapRatio(myInterests, peerInterests) ?? undefined;
       const peerUserId = peer?.user_id;
@@ -1154,17 +1177,14 @@ export default function IntentScreen() {
       const guessPromptSource = String(meta?.source || '').toLowerCase() === 'guess_prompt';
       const guessPromptCorrect = String(meta?.guess_outcome || '').toLowerCase() === 'correct';
       const isGuessPromptIntent = item.type === 'connect' && guessPromptSource && guessPromptCorrect;
-      const matchPct =
-        item.status === 'accepted'
-          ? computeMatchScorePercent({
-              messageCount: matchMetricsEntry?.messageCount,
-              firstReplyHours: matchMetricsEntry?.firstReplyHours,
-              bothVerified: isVerified,
-              interestOverlapRatio,
-            })
-          : null;
       const photos = Array.isArray(peer?.photos) ? peer?.photos.filter(Boolean) : [];
       const previewPhotos = photos.slice(0, 3);
+      const avatarUri = peer?.avatar_url ?? previewPhotos[0] ?? null;
+      const primaryPhoto = previewPhotos[0] ?? null;
+      const secondaryPhotos = previewPhotos.slice(1, 3);
+      const singlePhotoDuplicatesAvatar = Boolean(primaryPhoto) && Boolean(avatarUri) && secondaryPhotos.length === 0 && primaryPhoto === avatarUri;
+      const hasMultiPhotoGallery = Boolean(primaryPhoto) && secondaryPhotos.length > 0;
+      const hasSinglePhotoTile = Boolean(primaryPhoto) && secondaryPhotos.length === 0 && !singlePhotoDuplicatesAvatar;
       const timeLabel = timeAgo(item.created_at);
       const expiry = item.status === 'pending' && !isExpired(item) ? expiresIn(item.expires_at) : null;
       const hoursLeft = item.status === 'pending' && !isExpired(item) ? hoursUntil(item.expires_at) : null;
@@ -1191,6 +1211,7 @@ export default function IntentScreen() {
         false;
       const canResend = !isIncoming && item.status !== 'pending' && item.status !== 'accepted' && !autoClosedByMatch;
       const canOpenChat = !actionable && (canMessage || autoClosedByMatch);
+      const isClosedCard = !autoClosedByMatch && (pendingExpired || item.status === 'passed' || item.status === 'expired' || item.status === 'cancelled');
       const statusLabel =
         pendingExpired
           ? 'Expired'
@@ -1226,11 +1247,36 @@ export default function IntentScreen() {
       const sameRegion = Boolean(myProfile?.region) && Boolean(peer?.region) && String(myProfile?.region) === String(peer?.region);
       const sharedValues =
         Boolean(myProfile?.religion) && Boolean(peer?.religion) && String(myProfile?.religion) === String(peer?.religion);
+      const conversationSignal =
+        item.status === 'accepted' || autoClosedByMatch
+          ? getIntentConversationSignal({
+              messageCount: matchMetricsEntry?.messageCount,
+              firstReplyHours: matchMetricsEntry?.firstReplyHours,
+              bothVerified: isVerified,
+              interestOverlapRatio,
+            })
+          : null;
+      const trustSignals = getIntentTrustSignals({
+        verificationLevel: peer?.verification_level,
+        peerInterests,
+        lookingFor: peer?.looking_for,
+      });
+      const headerSignals: { label: string; tone: 'accent' | 'tint' | 'soft' }[] = [];
+      const pushHeaderSignal = (label: string | null | undefined, tone: 'accent' | 'tint' | 'soft') => {
+        if (!label) return;
+        if (headerSignals.some((entry) => entry.label.toLowerCase() === String(label).toLowerCase())) return;
+        headerSignals.push({ label, tone });
+      };
+      pushHeaderSignal(conversationSignal, 'accent');
+      pushHeaderSignal(trustSignals[0] ?? null, 'tint');
+      if (sameGoals) pushHeaderSignal('Intent shared', 'soft');
+      if (sharedValues) pushHeaderSignal('Shared values', 'soft');
+      if (sameRegion) pushHeaderSignal('Same region', 'soft');
       const whyChips = [
         sharedValues ? 'Shared values' : null,
         sameGoals ? 'Same goals' : null,
         sameRegion ? 'Same region' : null,
-      ].filter(Boolean).slice(0, 2) as string[];
+      ].filter(Boolean).slice(0, 1) as string[];
       const displayMessage = isGuessPromptIntent
         ? isIncoming
           ? `${name} got your prompt right and would like to know more about you.`
@@ -1238,12 +1284,58 @@ export default function IntentScreen() {
         : typeof item.message === 'string' && item.message.trim().length > 0
           ? item.message.trim()
           : null;
+      const singlePhotoChip = whyChips[0] ?? null;
+      const singlePhotoHeadline = displayMessage
+        ? displayMessage
+        : item.status === 'accepted'
+          ? 'A more intentional fit.'
+          : highlightIncoming
+            ? 'Worth a closer look.'
+            : 'A calm, promising match.';
+      const singlePhotoSupport = sharedInterests.length > 0
+        ? sharedInterests.slice(0, 2).join(' · ')
+        : sharedInterests.length > 0
+          ? `Common: ${sharedInterests.slice(0, 2).join(' · ')}`
+          : whyChips.length > 0
+            ? whyChips.join(' · ')
+            : item.status === 'accepted'
+              ? 'Shared signals suggest a smoother conversation.'
+              : 'Shared context can make the first move easier.';
+
+      const singlePhotoPanelChip =
+        singlePhotoChip && headerSignals.some((entry) => entry.label.toLowerCase() === singlePhotoChip.toLowerCase())
+          ? null
+          : singlePhotoChip;
+      const singlePhotoPanelSupport = sharedInterests.length > 0
+        ? sharedInterests.slice(0, 2).join(' · ')
+        : whyChips.length > 1
+          ? whyChips.slice(1).join(' · ')
+          : item.status === 'accepted'
+            ? 'Shared context can make the next step easier.'
+            : highlightIncoming
+              ? 'Shared context can make the first move easier.'
+              : 'A softer way to keep momentum going.';
+
+      const closedPreviewUri = primaryPhoto ?? avatarUri;
+      const closedStateTitle = pendingExpired
+        ? 'This request expired.'
+        : item.status === 'passed'
+          ? 'Passed for now.'
+          : item.status === 'cancelled'
+            ? 'This request was cancelled.'
+            : 'This request is closed.';
+      const closedStateBody = canResend
+        ? 'The timing can change. Reopen the door only if it still feels right.'
+        : pendingExpired
+          ? 'The window closed, but you can still revisit the profile or move toward fresher signals.'
+          : 'Keep the profile for context, then follow the strongest momentum elsewhere.';
 
       return (
         <Animated.View>
           <Animated.View
             style={[
               styles.card,
+              isClosedCard && styles.cardClosed,
               highlightIncoming && styles.cardIncoming,
               highlightIncoming && urgent && styles.cardIncomingUrgent,
               deepLinkRequestId && item.id === deepLinkRequestId && styles.cardDeepLinked,
@@ -1260,94 +1352,117 @@ export default function IntentScreen() {
                     })
             }
           >
-          <View style={styles.rowTop}>
-            {peer?.avatar_url ? (
-              <Image source={{ uri: peer.avatar_url }} style={styles.avatarImage} />
-            ) : (
-              <View style={styles.avatarFallback}>
-                <MaterialCommunityIcons name="account-circle" size={40} color={theme.textMuted} />
+          <View style={styles.requestHeroRow}>
+            <View style={styles.requestAvatarWrap}>
+              {avatarUri ? (
+                <Image source={{ uri: avatarUri }} style={styles.requestAvatarImage} />
+              ) : (
+                <View style={styles.requestAvatarFallback}>
+                  <MaterialCommunityIcons name="account-circle" size={42} color={theme.textMuted} />
+                </View>
+              )}
+            </View>
+            <View style={styles.requestContent}>
+              <View style={styles.requestHeaderRow}>
+                <View style={styles.requestTitleWrap}>
+                  <Text style={styles.requestName}>{name}</Text>
+                  <Text style={styles.requestMeta}>{location || 'Location hidden'}</Text>
+                </View>
+                <View style={styles.pillWrap}>
+                  <PillPulse active={highlightIncoming} reduceMotion={reduceMotion} color={theme.tint} />
+                  <View
+                    style={[
+                      styles.statusPill,
+                      statusTone === 'good' && styles.statusPillGood,
+                      statusTone === 'info' && styles.statusPillInfo,
+                      statusTone === 'warn' && styles.statusPillWarn,
+                      statusTone === 'muted' && styles.statusPillMuted,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.statusText,
+                        statusTone === 'good' && styles.statusTextGood,
+                        statusTone === 'info' && styles.statusTextInfo,
+                        statusTone === 'warn' && styles.statusTextWarn,
+                      ]}
+                    >
+                      {statusLabel}
+                    </Text>
+                  </View>
+                </View>
               </View>
-            )}
-            <View style={styles.rowInfo}>
-              <Text style={styles.name}>{name}</Text>
-              <Text style={styles.meta}>{location || 'Location hidden'}</Text>
               <View style={styles.badgeRow}>
                 <View style={styles.typeBadge}>
                   <MaterialCommunityIcons name={typeIcon(item)} size={12} color={theme.tint} />
                   <Text style={styles.typeBadgeText}>{typeLabel(item)}</Text>
                 </View>
-                {typeof matchPct === 'number' ? (
-                  <View style={styles.compatBadge}>
-                    <MaterialCommunityIcons name="heart" size={12} color={theme.accent} />
-                    <Text style={styles.compatBadgeText}>{`${matchPct}% Match`}</Text>
+                {headerSignals.slice(0, 1).map((signal) => (
+                  <View
+                    key={`${item.id}-${signal.label}`}
+                    style={[
+                      styles.signalBadge,
+                      signal.tone === 'accent' && styles.signalBadgeAccent,
+                      signal.tone === 'tint' && styles.signalBadgeTint,
+                      signal.tone === 'soft' && styles.signalBadgeSoft,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.signalBadgeText,
+                        signal.tone === 'accent' && styles.signalBadgeTextAccent,
+                        signal.tone === 'tint' && styles.signalBadgeTextTint,
+                        signal.tone === 'soft' && styles.signalBadgeTextSoft,
+                      ]}
+                    >
+                      {signal.label}
+                    </Text>
                   </View>
-                ) : typeof compatPct === 'number' ? (
-                  <View style={styles.compatBadge}>
-                    <MaterialCommunityIcons name="star-four-points" size={12} color={theme.accent} />
-                    <Text style={styles.compatBadgeText}>{`${compatPct}% Vibe`}</Text>
-                  </View>
-                ) : null}
+                ))}
+                <View style={styles.badgeRowSpacer} />
                 <Text style={styles.timeLabel}>{timeLabel}</Text>
-                {expiry ? (
-                  <View style={[styles.pillWrap]}>
+              </View>
+              {expiry ? (
+                <View style={styles.expiryRow}>
+                  <View style={styles.pillWrap}>
                     <PillPulse active={urgent} reduceMotion={reduceMotion} color={lastChance ? '#ef4444' : theme.accent} />
                     <View style={[styles.expiryPill, urgent && styles.expiryPillUrgent]}>
-                    <MaterialCommunityIcons name={urgent ? 'timer-off-outline' : 'timer-outline'} size={12} color={urgent ? '#ef4444' : theme.accent} />
-                    <Text style={[styles.expiryLabel, urgent && styles.expiryLabelUrgent]}>{`Expires in ${expiry}`}</Text>
+                      <MaterialCommunityIcons
+                        name={urgent ? 'timer-off-outline' : 'timer-outline'}
+                        size={12}
+                        color={urgent ? '#ef4444' : theme.accent}
+                      />
+                      <Text style={[styles.expiryLabel, urgent && styles.expiryLabelUrgent]}>{`Expires in ${expiry}`}</Text>
                     </View>
                   </View>
-                ) : null}
-              </View>
-            </View>
-            <View style={styles.pillWrap}>
-              <PillPulse active={highlightIncoming} reduceMotion={reduceMotion} color={theme.tint} />
-              <View
-                style={[
-                  styles.statusPill,
-                  statusTone === 'good' && styles.statusPillGood,
-                  statusTone === 'info' && styles.statusPillInfo,
-                  statusTone === 'warn' && styles.statusPillWarn,
-                  statusTone === 'muted' && styles.statusPillMuted,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.statusText,
-                    statusTone === 'good' && styles.statusTextGood,
-                    statusTone === 'info' && styles.statusTextInfo,
-                    statusTone === 'warn' && styles.statusTextWarn,
-                  ]}
-                >
-                  {statusLabel}
+                </View>
+              ) : null}
+              {displayMessage ? (
+                <Text style={styles.requestMessage} numberOfLines={3}>
+                  {displayMessage}
                 </Text>
-              </View>
+              ) : null}
+
+              {highlightIncoming ? (
+                <View style={styles.replyHintRow}>
+                  <MaterialCommunityIcons name="star-four-points" size={14} color={theme.tint} />
+                  <Text style={styles.replyHintLabel}>Suggested reply:</Text>
+                  <Text style={styles.replyHintText} numberOfLines={1}>
+                    {quickReply}
+                  </Text>
+                </View>
+              ) : null}
+
+              {autoClosedByMatch ? (
+                <View style={styles.matchedHintRow}>
+                  <MaterialCommunityIcons name="chat-outline" size={14} color={theme.tint} />
+                  <Text style={styles.matchedHintText}>You matched, continue in chat.</Text>
+                </View>
+              ) : null}
             </View>
           </View>
 
-          {displayMessage ? (
-            <Text style={styles.message} numberOfLines={2}>
-              {displayMessage}
-            </Text>
-          ) : null}
-
-          {highlightIncoming ? (
-            <View style={styles.replyHintRow}>
-              <MaterialCommunityIcons name="star-four-points" size={14} color={theme.tint} />
-              <Text style={styles.replyHintLabel}>Suggested reply:</Text>
-              <Text style={styles.replyHintText} numberOfLines={1}>
-                {quickReply}
-              </Text>
-            </View>
-          ) : null}
-
-          {autoClosedByMatch ? (
-            <View style={styles.matchedHintRow}>
-              <MaterialCommunityIcons name="chat-outline" size={14} color={theme.tint} />
-              <Text style={styles.matchedHintText}>You matched—continue in chat.</Text>
-            </View>
-          ) : null}
-
-          {whyChips.length > 0 ? (
+          {whyChips.length > 0 && !hasSinglePhotoTile ? (
             <View style={styles.whyRow}>
               {whyChips.map((tag) => (
                 <View key={`${item.id}-${tag}`} style={styles.whyChip}>
@@ -1357,7 +1472,73 @@ export default function IntentScreen() {
             </View>
           ) : null}
 
-          {sharedInterests.length > 0 ? (
+          {isClosedCard ? (
+            <View style={styles.closedStatePanel}>
+              {closedPreviewUri ? (
+                <View style={styles.closedStateMediaWrap}>
+                  <Image source={{ uri: closedPreviewUri }} style={styles.closedStateMedia} resizeMode="cover" />
+                </View>
+              ) : null}
+              <View style={styles.closedStateBody}>
+                <Text style={styles.closedStateTitle}>{closedStateTitle}</Text>
+                <Text style={styles.closedStateText}>{closedStateBody}</Text>
+              </View>
+            </View>
+          ) : null}
+
+          {!isClosedCard && hasMultiPhotoGallery ? (
+            <View style={styles.requestGalleryRow}>
+              <View style={styles.requestGalleryPrimaryWrap}>
+                <View pointerEvents="none" style={styles.requestGalleryPlate} />
+                <Image source={{ uri: primaryPhoto! }} style={styles.requestGalleryPrimaryImage} resizeMode="cover" />
+              </View>
+              <View style={styles.requestGallerySecondaryColumn}>
+                {secondaryPhotos.map((uri, idx) => (
+                  <View
+                    key={`${peerId}-gallery-${idx}`}
+                    style={[
+                      styles.requestGallerySecondaryFrame,
+                      idx === 1 && styles.requestGallerySecondaryFrameOffset,
+                    ]}
+                  >
+                    <View pointerEvents="none" style={styles.requestGallerySecondaryPlate} />
+                    <ExpoImage
+                      source={{ uri }}
+                      style={styles.requestGallerySecondaryImage}
+                      contentFit="cover"
+                      contentPosition="top center"
+                    />
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
+          {!isClosedCard && hasSinglePhotoTile ? (
+            <View style={styles.requestSingleFeatureRow}>
+              <View style={styles.requestSingleMediaWrap}>
+                <View pointerEvents="none" style={styles.requestSingleMediaPlate} />
+                <Image source={{ uri: primaryPhoto! }} style={styles.requestSingleMediaImage} resizeMode="cover" />
+              </View>
+              <View style={styles.requestSingleDetailPanel}>
+                {singlePhotoPanelChip ? (
+                  <View style={styles.requestSingleChipRow}>
+                    <View style={styles.requestSingleChip}>
+                      <Text style={styles.requestSingleChipText}>{singlePhotoPanelChip}</Text>
+                    </View>
+                  </View>
+                ) : null}
+                <Text style={styles.requestSingleHeadline} numberOfLines={2}>
+                  {singlePhotoHeadline}
+                </Text>
+                <Text style={styles.requestSingleSupport} numberOfLines={2}>
+                  {singlePhotoPanelSupport}
+                </Text>
+              </View>
+            </View>
+          ) : null}
+
+          {sharedInterests.length > 0 && !hasSinglePhotoTile && !isClosedCard ? (
             <View style={styles.commonRow}>
               <Text style={styles.commonLabel}>Common:</Text>
               <View style={styles.commonChips}>
@@ -1370,15 +1551,7 @@ export default function IntentScreen() {
             </View>
           ) : null}
 
-          {previewPhotos.length > 0 ? (
-            <View style={styles.photoRow}>
-              {previewPhotos.map((uri, idx) => (
-                <Image key={`${peerId}-${idx}`} source={{ uri }} style={styles.photoThumb} />
-              ))}
-            </View>
-          ) : null}
-
-          <View style={styles.actionsRow}>
+          <View style={[styles.actionsRow, hasSinglePhotoTile && styles.actionsRowSingleMedia]}>
             {isIncoming && actionable ? (
               <>
                 <AnimatedPressable
@@ -1437,7 +1610,39 @@ export default function IntentScreen() {
               </>
             ) : null}
 
-            {canOpenChat ? (
+            {isClosedCard ? (
+              <>
+                {!isIncoming && canResend ? (
+                  <AnimatedPressable
+                    reduceMotion={reduceMotion}
+                    onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                    onPress={() => resendIntent(peerId, peer?.full_name ?? null, item.type, quickReply)}
+                    style={[styles.primaryButton, styles.actionWide]}
+                  >
+                    <Text style={styles.primaryText}>Send again</Text>
+                  </AnimatedPressable>
+                ) : (
+                  <AnimatedPressable
+                    reduceMotion={reduceMotion}
+                    onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                    onPress={() => router.push('/(tabs)/vibes')}
+                    style={[styles.ghostButton, styles.actionWide]}
+                  >
+                    <Text style={styles.ghostText}>See similar people</Text>
+                  </AnimatedPressable>
+                )}
+                <AnimatedPressable
+                  reduceMotion={reduceMotion}
+                  onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                  onPress={() => router.push({ pathname: '/profile-view', params: { profileId: String(peerId) } })}
+                  style={[styles.profileButton, styles.actionWide]}
+                >
+                  <Text style={styles.profileText}>View profile</Text>
+                </AnimatedPressable>
+              </>
+            ) : null}
+
+            {!isClosedCard && canOpenChat ? (
               <>
                 <AnimatedPressable
                   reduceMotion={reduceMotion}
@@ -1458,7 +1663,7 @@ export default function IntentScreen() {
               </>
             ) : null}
 
-            {canResend ? (
+            {!isClosedCard && canResend ? (
               <>
                 <AnimatedPressable
                   reduceMotion={reduceMotion}
@@ -1601,6 +1806,7 @@ export default function IntentScreen() {
       return (
         <View style={styles.suggestedCard}>
           <View pointerEvents="none" style={styles.suggestedGlow} />
+          <View pointerEvents="none" style={styles.suggestedGlowSoft} />
           <AnimatedPressable
             style={styles.suggestedMain}
             reduceMotion={reduceMotion}
@@ -1611,14 +1817,22 @@ export default function IntentScreen() {
               void upsertSignal(item.id, { openedDelta: 0, dwellDelta: 1 });
             }}
           >
-            <View style={styles.suggestedMediaFrame}>
-              {item.avatar_url ? (
-                <Image source={{ uri: item.avatar_url }} style={styles.suggestedAvatar} />
-              ) : (
-                <View style={styles.suggestedAvatarFallback}>
-                  <MaterialCommunityIcons name="account-circle" size={42} color={theme.textMuted} />
-                </View>
-              )}
+            <View style={styles.suggestedMediaWrap}>
+              <View pointerEvents="none" style={styles.suggestedMediaPlate} />
+              <View style={styles.suggestedMediaFrame}>
+                {item.avatar_url ? (
+                  <ExpoImage
+                    source={{ uri: item.avatar_url }}
+                    style={styles.suggestedAvatar}
+                    contentFit="cover"
+                    contentPosition="top center"
+                  />
+                ) : (
+                  <View style={styles.suggestedAvatarFallback}>
+                    <MaterialCommunityIcons name="account-circle" size={42} color={theme.textMuted} />
+                  </View>
+                )}
+              </View>
             </View>
             <View style={styles.suggestedInfo}>
               <View style={styles.suggestedKickerRow}>
@@ -1650,7 +1864,9 @@ export default function IntentScreen() {
               onPress={() => handleSuggestedRequest(item)}
               style={styles.suggestedPrimary}
             >
-              <MaterialCommunityIcons name="send" size={16} color={Colors.light.background} />
+              <View style={styles.suggestedPrimaryIconWrap}>
+                <MaterialCommunityIcons name="send" size={14} color={Colors.light.background} />
+              </View>
               <Text style={styles.suggestedPrimaryText}>Send intent</Text>
               <CheckPulse active={suggestedSend.id === item.id && suggestedSend.phase === 'success'} tint={Colors.light.background} />
             </AnimatedPressable>
@@ -1664,7 +1880,8 @@ export default function IntentScreen() {
               }}
               style={styles.suggestedSecondary}
             >
-              <Text style={styles.suggestedSecondaryText}>Preview</Text>
+              <Text style={styles.suggestedSecondaryText}>View profile</Text>
+              <MaterialCommunityIcons name="arrow-top-right" size={13} color={theme.textMuted} />
             </AnimatedPressable>
           </View>
         </View>
@@ -1768,90 +1985,112 @@ export default function IntentScreen() {
       const prompt = buildMovePrompt(item);
       const opener = buildOpenerText(item);
       const tags = buildSuggestedDisplayTags(item, 2);
+      const heroPalette: [string, string, string] = isDark
+        ? ['#132324', '#1A2A2B', '#223033']
+        : ['#173236', '#1D3A3E', '#28474A'];
+      const heroFooterPalette: [string, string] = isDark
+        ? ['rgba(0,160,160,0.84)', 'rgba(125,91,166,0.86)']
+        : ['rgba(15,158,154,0.88)', 'rgba(125,91,166,0.84)'];
 
       return (
         <View style={styles.suggestedHeroCard}>
           <View pointerEvents="none" style={styles.suggestedHeroGlow} />
-          <View pointerEvents="none" style={styles.suggestedHeroGlow2} />
-
-          <AnimatedPressable
-            style={styles.suggestedHeroMain}
-            reduceMotion={reduceMotion}
-            liftY={reduceMotion ? 0 : Motion.transform.cardLiftY}
-            liftScale={reduceMotion ? 1 : 1.01}
-            onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-            onPress={() => {
-              void upsertSignal(item.id, { openedDelta: 0, dwellDelta: 2 });
-            }}
-          >
-            <View style={styles.suggestedHeroTopRow}>
-              <View style={styles.suggestedKickerRow}>
-                <MaterialCommunityIcons name="star-four-points" size={12} color={theme.tint} />
-                <Text style={styles.suggestedKicker}>TOP PICK</Text>
+          <LinearGradient colors={heroPalette} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.suggestedHeroStage}>
+            <View pointerEvents="none" style={styles.suggestedHeroGlow2} />
+            <AnimatedPressable
+              style={styles.suggestedHeroMain}
+              reduceMotion={reduceMotion}
+              liftY={reduceMotion ? 0 : Motion.transform.cardLiftY}
+              liftScale={reduceMotion ? 1 : 1.01}
+              onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+              onPress={() => {
+                void upsertSignal(item.id, { openedDelta: 0, dwellDelta: 2 });
+              }}
+            >
+              <View style={styles.suggestedHeroTopRow}>
+                <View style={styles.suggestedHeroEyebrow}>
+                  <MaterialCommunityIcons name="star-four-points" size={12} color={theme.tint} />
+                  <Text style={styles.suggestedHeroEyebrowText}>Top pick</Text>
+                </View>
+                <View style={styles.suggestedHeroCoachMark}>
+                  <MaterialCommunityIcons
+                    name="star-shooting"
+                    size={12}
+                    color={isDark ? 'rgba(232,240,237,0.68)' : 'rgba(255,250,245,0.88)'}
+                  />
+                  <Text style={styles.suggestedHeroCoachText}>Betweener select</Text>
+                </View>
               </View>
-              <View style={styles.suggestedHeroBadge}>
-                <MaterialCommunityIcons name="target" size={12} color={theme.textMuted} />
-                <Text style={styles.suggestedHeroBadgeText}>Coach pick</Text>
-              </View>
-            </View>
 
-            <View style={styles.suggestedHeroIdentityRow}>
-              <View style={styles.suggestedHeroMediaFrame}>
-                {item.avatar_url ? (
-                  <Image source={{ uri: item.avatar_url }} style={styles.suggestedHeroAvatar} />
-                ) : (
-                  <View style={styles.suggestedHeroAvatarFallback}>
-                    <MaterialCommunityIcons name="account-circle" size={52} color={theme.textMuted} />
+              <View style={styles.suggestedHeroEditorialRow}>
+                <View style={styles.suggestedHeroMediaWrap}>
+                  <View pointerEvents="none" style={styles.suggestedHeroMediaPlate} />
+                  <View style={styles.suggestedHeroMediaFrame}>
+                    {item.avatar_url ? (
+                      <Image source={{ uri: item.avatar_url }} style={styles.suggestedHeroAvatar} />
+                    ) : (
+                      <View style={styles.suggestedHeroAvatarFallback}>
+                        <MaterialCommunityIcons name="account-circle" size={52} color={theme.textMuted} />
+                      </View>
+                    )}
                   </View>
-                )}
-              </View>
-              <View style={styles.suggestedHeroInfo}>
-                <Text style={styles.suggestedHeroName}>
-                  {`${item.full_name ?? 'Someone'}${item.age ? `, ${item.age}` : ''}`}
-                </Text>
-                <Text style={styles.suggestedHeroPrompt}>{prompt}</Text>
-                {heroOpenerRevealed ? (
-                  <Text style={styles.suggestedHeroOpener} numberOfLines={2}>
-                    {`"${opener}"`}
+                </View>
+                <View style={styles.suggestedHeroInfo}>
+                  <Text style={styles.suggestedHeroName}>
+                    {`${item.full_name ?? 'Someone'}${item.age ? `, ${item.age}` : ''}`}
                   </Text>
-                ) : (
-                  <AnimatedPressable
-                    style={styles.suggestedHeroReveal}
-                    reduceMotion={reduceMotion}
-                    onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-                    onPress={() => {
-                      void fireSuggestedMoveEvent(item.id, 'opener_revealed', buildSuggestedMoveTelemetry(item, {
-                        prompt_title: item.prompt_title ?? null,
-                      }));
-                      setHeroOpenerRevealed(true);
-                    }}
-                  >
-                    <MaterialCommunityIcons name="message-text-outline" size={14} color={theme.tint} />
-                    <Text style={styles.suggestedHeroRevealText}>Reveal opener</Text>
-                  </AnimatedPressable>
-                )}
+                  <Text style={styles.suggestedHeroPrompt}>{prompt}</Text>
+                  {tags.length ? (
+                    <View style={styles.suggestedHeroMetaRow}>
+                      {tags.map((tag, index) => (
+                        <View key={`${item.id}-${tag}`} style={styles.suggestedHeroMetaItem}>
+                          {index > 0 ? <View style={styles.suggestedHeroMetaDot} /> : null}
+                          <Text style={styles.suggestedHeroMetaText}>{tag}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+                  {heroOpenerRevealed ? (
+                    <Text style={styles.suggestedHeroOpener} numberOfLines={3}>
+                      {`"${opener}"`}
+                    </Text>
+                  ) : (
+                    <RevealCue active={!heroOpenerRevealed} reduceMotion={reduceMotion}>
+                      <AnimatedPressable
+                        style={styles.suggestedHeroReveal}
+                        reduceMotion={reduceMotion}
+                        onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                        onPress={() => {
+                          void fireSuggestedMoveEvent(item.id, 'opener_revealed', buildSuggestedMoveTelemetry(item, {
+                            prompt_title: item.prompt_title ?? null,
+                          }));
+                          setHeroOpenerRevealed(true);
+                        }}
+                      >
+                        <MaterialCommunityIcons
+                          name="message-text-outline"
+                          size={14}
+                          color={isDark ? '#86D8D2' : '#CFF9F5'}
+                        />
+                        <Text style={styles.suggestedHeroRevealText}>Reveal opener</Text>
+                      </AnimatedPressable>
+                    </RevealCue>
+                  )}
+                </View>
               </View>
-            </View>
+            </AnimatedPressable>
+          </LinearGradient>
 
-            {tags.length ? (
-              <View style={styles.suggestedTags}>
-                {tags.map((tag) => (
-                  <View key={`${item.id}-${tag}`} style={styles.suggestedTag}>
-                    <Text style={styles.suggestedTagText}>{tag}</Text>
-                  </View>
-                ))}
-              </View>
-            ) : null}
-          </AnimatedPressable>
-
-          <View style={styles.suggestedHeroCtas}>
+          <LinearGradient colors={heroFooterPalette} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.suggestedHeroFooterBand}>
             <AnimatedPressable
               reduceMotion={reduceMotion}
               onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
               onPress={() => handleSuggestedRequest(item)}
               style={styles.suggestedHeroPrimary}
             >
-              <MaterialCommunityIcons name="send" size={16} color={Colors.light.background} />
+              <View style={styles.suggestedHeroPrimaryIconWrap}>
+                <MaterialCommunityIcons name="send" size={15} color={Colors.light.background} />
+              </View>
               <Text style={styles.suggestedHeroPrimaryText}>Send intent</Text>
               <CheckPulse active={suggestedSend.id === item.id && suggestedSend.phase === 'success'} tint={Colors.light.background} />
             </AnimatedPressable>
@@ -1865,9 +2104,10 @@ export default function IntentScreen() {
               }}
               style={styles.suggestedHeroLink}
             >
-              <Text style={styles.suggestedHeroLinkText}>Preview profile</Text>
+              <Text style={styles.suggestedHeroLinkText}>View profile</Text>
+              <MaterialCommunityIcons name="arrow-top-right" size={14} color="rgba(255,246,236,0.9)" />
             </AnimatedPressable>
-          </View>
+          </LinearGradient>
         </View>
       );
     },
@@ -1875,6 +2115,7 @@ export default function IntentScreen() {
       currentProfileId,
       handleSuggestedRequest,
       heroOpenerRevealed,
+      isDark,
       reduceMotion,
       router,
       suggestedExpanded,
@@ -1909,6 +2150,55 @@ export default function IntentScreen() {
     const found = typePills.find((p) => p.key === typeFilter);
     return found?.label ?? 'All';
   }, [typeFilter, typePills]);
+
+  const activeFilterLabel = useMemo(() => {
+    const found = filters.find((p) => p.key === filter);
+    return found?.label ?? 'Action';
+  }, [filter, filters]);
+
+  const filterSummary = useMemo(
+    () => `${activeFilterLabel} \u00B7 ${activeTypeLabel === 'All' ? 'All types' : activeTypeLabel}`,
+    [activeFilterLabel, activeTypeLabel],
+  );
+
+  const nonDefaultFilterCount = useMemo(() => {
+    let count = 0;
+    if (filter !== 'action') count += 1;
+    if (typeFilter !== 'all') count += 1;
+    return count;
+  }, [filter, typeFilter]);
+
+  const incomingHeaderCopy = useMemo(() => {
+    if (filter === 'passed') {
+      return {
+        icon: 'archive-outline' as const,
+        title: 'Passed for now',
+        hint: 'Signals you chose not to pursue, kept quietly for context.',
+      };
+    }
+
+    if (filter === 'accepted') {
+      return {
+        icon: 'heart-outline' as const,
+        title: 'Accepted',
+        hint: 'Connections already moving forward.',
+      };
+    }
+
+    if (filter === 'all') {
+      return {
+        icon: 'inbox-arrow-down' as const,
+        title: 'Inbox',
+        hint: 'See every incoming signal in one calm view.',
+      };
+    }
+
+    return {
+      icon: 'inbox-arrow-down' as const,
+      title: 'Received',
+      hint: 'Respond fast to keep the momentum.',
+    };
+  }, [filter]);
 
   const suggestedStackStyle = useAnimatedStyle(() => {
     const v = suggestedEnter.value;
@@ -1972,43 +2262,27 @@ export default function IntentScreen() {
         />
       </Animated.View>
 
-      <Animated.View entering={enterChips}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.filterScroll}
-          contentContainerStyle={styles.filterRow}
-          keyboardShouldPersistTaps="handled"
+      <Animated.View entering={enterChips} style={styles.filterBar}>
+        <View style={styles.filterSummaryPill}>
+          <MaterialCommunityIcons name="tune-variant" size={14} color={theme.tint} />
+          <Text style={styles.filterSummaryText} numberOfLines={1}>
+            {filterSummary}
+          </Text>
+        </View>
+        <AnimatedPressable
+          reduceMotion={reduceMotion}
+          onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+          onPress={() => setTypePickerOpen(true)}
+          style={styles.filterTrigger}
         >
-          {filters.map((pill) => {
-            const active = pill.key === filter;
-            return (
-              <AnimatedChip
-                key={pill.key}
-                label={pill.label}
-                active={active}
-                reduceMotion={reduceMotion}
-                theme={theme}
-                onPress={() => {
-                  if (!active) void Haptics.selectionAsync();
-                  if (!active) setFilter(pill.key);
-                }}
-              />
-            );
-          })}
-
-          <AnimatedChip
-            label={`Type: ${activeTypeLabel}`}
-            icon="filter-variant"
-            active={typeFilter !== 'all'}
-            reduceMotion={reduceMotion}
-            theme={theme}
-            onPress={() => {
-              void Haptics.selectionAsync();
-              setTypePickerOpen(true);
-            }}
-          />
-        </ScrollView>
+          <MaterialCommunityIcons name="filter-variant" size={16} color={theme.tint} />
+          <Text style={styles.filterTriggerText}>Filter</Text>
+          {nonDefaultFilterCount > 0 ? (
+            <View style={styles.filterTriggerCount}>
+              <Text style={styles.filterTriggerCountText}>{nonDefaultFilterCount}</Text>
+            </View>
+          ) : null}
+        </AnimatedPressable>
       </Animated.View>
 
         <Animated.View key={direction} style={{ flex: 1 }}>
@@ -2050,13 +2324,13 @@ export default function IntentScreen() {
                     style={styles.inboxHeader}
                   >
                     <View style={styles.inboxHeaderLine}>
-                      <MaterialCommunityIcons name="inbox-arrow-down" size={16} color={theme.tint} />
-                      <Text style={styles.inboxHeaderTitle}>Received</Text>
+                      <MaterialCommunityIcons name={incomingHeaderCopy.icon} size={16} color={theme.tint} />
+                      <Text style={styles.inboxHeaderTitle}>{incomingHeaderCopy.title}</Text>
                       <View style={styles.inboxCountPill}>
                         <Text style={styles.inboxCountText}>{sortedFiltered.length}</Text>
                       </View>
                     </View>
-                    <Text style={styles.inboxHeaderHint}>Respond fast to keep the momentum.</Text>
+                    <Text style={styles.inboxHeaderHint}>{incomingHeaderCopy.hint}</Text>
                   </Animated.View>
                 ) : (
                   <View style={styles.suggestedSection}>
@@ -2327,12 +2601,46 @@ export default function IntentScreen() {
           <Pressable style={styles.pickerBackdropPress} onPress={() => setTypePickerOpen(false)} />
           <View style={styles.pickerSheet}>
             <View style={styles.pickerHeader}>
-              <Text style={styles.pickerTitle}>Filter type</Text>
+              <Text style={styles.pickerTitle}>Filters</Text>
               <TouchableOpacity style={styles.pickerClose} onPress={() => setTypePickerOpen(false)} activeOpacity={0.85}>
                 <MaterialCommunityIcons name="close" size={16} color={theme.text} />
               </TouchableOpacity>
             </View>
 
+            <View style={styles.pickerSection}>
+              <Text style={styles.pickerSectionTitle}>Status</Text>
+              {filters.map((pill) => {
+                const active = pill.key === filter;
+                return (
+                  <TouchableOpacity
+                    key={pill.key}
+                    style={[styles.pickerRow, active && styles.pickerRowActive]}
+                    onPress={() => setFilter(pill.key)}
+                    activeOpacity={0.85}
+                  >
+                    <View style={[styles.pickerIcon, active && styles.pickerIconActive]}>
+                      <MaterialCommunityIcons
+                        name={
+                          pill.key === 'action'
+                            ? 'gesture-tap-button'
+                            : pill.key === 'accepted'
+                              ? 'check-circle-outline'
+                              : pill.key === 'passed'
+                                ? 'skip-next-circle-outline'
+                                : 'layers-outline'
+                        }
+                        size={18}
+                        color={active ? Colors.light.background : theme.tint}
+                      />
+                    </View>
+                    <Text style={[styles.pickerRowText, active && styles.pickerRowTextActive]}>{pill.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <View style={styles.pickerSection}>
+              <Text style={styles.pickerSectionTitle}>Type</Text>
             {typePills.map((pill) => {
               const active = pill.key === typeFilter;
               return (
@@ -2341,7 +2649,6 @@ export default function IntentScreen() {
                   style={[styles.pickerRow, active && styles.pickerRowActive]}
                   onPress={() => {
                     setTypeFilter(pill.key);
-                    setTypePickerOpen(false);
                   }}
                   activeOpacity={0.85}
                 >
@@ -2352,6 +2659,23 @@ export default function IntentScreen() {
                 </TouchableOpacity>
               );
             })}
+            </View>
+
+            <View style={styles.pickerFooter}>
+              <TouchableOpacity
+                style={styles.pickerReset}
+                onPress={() => {
+                  setFilter('action');
+                  setTypeFilter('all');
+                }}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.pickerResetText}>Reset</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.pickerApply} onPress={() => setTypePickerOpen(false)} activeOpacity={0.85}>
+                <Text style={styles.pickerApplyText}>Done</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -2369,12 +2693,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     toggleIndicator: {
       position: 'absolute',
       left: 0,
-      top: 0,
-      bottom: 0,
+      top: 2,
+      bottom: 2,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: theme.tint,
-      backgroundColor: theme.tint,
+      borderColor: isDark ? 'rgba(0,160,160,0.74)' : theme.tint,
+      backgroundColor: isDark ? 'rgba(0,160,160,0.84)' : theme.tint,
     },
     togglePill: {
       flex: 1,
@@ -2382,40 +2706,61 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       paddingVertical: 10,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: theme.outline,
+      borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(31,42,42,0.08)',
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: theme.backgroundSubtle,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.015)' : theme.backgroundSubtle,
     },
     togglePillActive: { backgroundColor: theme.tint, borderColor: theme.tint },
     togglePillActiveGhost: { backgroundColor: 'transparent', borderColor: 'transparent' },
     toggleText: { fontSize: 12, lineHeight: 14, paddingBottom: 1, color: theme.textMuted, fontWeight: '600' },
     toggleTextActive: { color: Colors.light.background },
-    // Keep spacing on the scroll view itself so the content container can't get clipped.
-    filterScroll: { marginTop: 10 },
-    filterRow: {
+    filterBar: {
       flexDirection: 'row',
       alignItems: 'center',
+      justifyContent: 'space-between',
       paddingHorizontal: 18,
       gap: 10,
-      paddingRight: 18,
+      marginTop: 4,
     },
-    filterPill: {
-      minHeight: 40,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
+    filterSummaryPill: {
+      flex: 1,
+      minHeight: 32,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: theme.backgroundSubtle,
+      borderColor: isDark ? 'rgba(255,255,255,0.018)' : 'rgba(31,42,42,0.035)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.008)' : 'rgba(255,255,255,0.12)',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+    },
+    filterSummaryText: { flex: 1, fontSize: 11, color: theme.textMuted, fontWeight: '600' },
+    filterTrigger: {
+      minHeight: 36,
+      paddingHorizontal: 13,
+      paddingVertical: 7,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(0,160,160,0.12)' : 'rgba(0,128,128,0.12)',
+      backgroundColor: isDark ? 'rgba(0,160,160,0.028)' : 'rgba(255,255,255,0.30)',
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 6,
+      gap: 8,
     },
-    filterPillActive: { backgroundColor: theme.tint, borderColor: theme.tint },
-    filterText: { fontSize: 12, lineHeight: 14, paddingBottom: 1, color: theme.textMuted, fontWeight: '600' },
-    filterTextActive: { color: Colors.light.background },
+    filterTriggerText: { fontSize: 12, color: theme.tint, fontWeight: '700' },
+    filterTriggerCount: {
+      minWidth: 18,
+      height: 18,
+      paddingHorizontal: 5,
+      borderRadius: 999,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.tint,
+    },
+    filterTriggerCountText: { fontSize: 10, fontWeight: '800', color: Colors.light.background },
     listContent: { padding: 18, paddingBottom: 40, gap: 12 },
     inboxHeader: { marginTop: 6, gap: 4, paddingHorizontal: 2 },
     inboxHeaderLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -2442,6 +2787,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       shadowOffset: { width: 0, height: 10 },
       elevation: 3,
     },
+    cardClosed: {
+      borderColor: isDark ? 'rgba(255,255,255,0.045)' : 'rgba(31,42,42,0.05)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.018)' : 'rgba(255,250,245,0.72)',
+      shadowOpacity: isDark ? 0.14 : 0.04,
+      elevation: 1,
+    },
     cardIncoming: {
       borderColor: isDark ? 'rgba(0,160,160,0.35)' : 'rgba(0,160,160,0.22)',
       backgroundColor: isDark ? 'rgba(0,160,160,0.06)' : theme.backgroundSubtle,
@@ -2453,6 +2804,244 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderColor: isDark ? 'rgba(168, 85, 247, 0.55)' : 'rgba(124, 58, 237, 0.40)',
       shadowOpacity: isDark ? 0.34 : 0.14,
       elevation: 6,
+    },
+    requestHeroRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 12,
+    },
+    requestAvatarWrap: {
+      width: 58,
+      height: 58,
+      borderRadius: 29,
+      padding: 2,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(0,160,160,0.22)' : 'rgba(31,42,42,0.08)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : theme.background,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: isDark ? 0.18 : 0.08,
+      shadowRadius: 12,
+      elevation: 3,
+    },
+    requestAvatarImage: {
+      width: '100%',
+      height: '100%',
+      borderRadius: 27,
+      backgroundColor: theme.backgroundSubtle,
+    },
+    requestAvatarFallback: {
+      width: '100%',
+      height: '100%',
+      borderRadius: 27,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: theme.outline,
+    },
+    requestContent: {
+      flex: 1,
+      gap: 8,
+      paddingTop: 2,
+    },
+    requestHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    requestTitleWrap: {
+      flex: 1,
+      gap: 3,
+    },
+    requestName: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: theme.text,
+    },
+    requestMeta: {
+      fontSize: 12,
+      color: theme.textMuted,
+    },
+    requestMessage: {
+      marginTop: 2,
+      fontSize: 14,
+      lineHeight: 20,
+      color: theme.text,
+      fontWeight: '600',
+    },
+    requestGalleryRow: {
+      flexDirection: 'row',
+      gap: 10,
+      marginTop: 12,
+      height: 164,
+    },
+    requestGalleryPrimaryWrap: {
+      flex: 1.6,
+      height: 164,
+      position: 'relative',
+    },
+    requestGalleryPlate: {
+      position: 'absolute',
+      left: 10,
+      top: 10,
+      right: -2,
+      bottom: -2,
+      borderRadius: 24,
+      backgroundColor: isDark ? 'rgba(255,246,236,0.05)' : 'rgba(255,246,236,0.18)',
+      transform: [{ rotate: '-3deg' }],
+    },
+    requestGalleryPrimaryImage: {
+      width: '100%',
+      height: '100%',
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(0,160,160,0.22)' : 'rgba(31,42,42,0.08)',
+      backgroundColor: theme.backgroundSubtle,
+      overflow: 'hidden',
+    },
+    requestGallerySecondaryColumn: {
+      flex: 0.78,
+      gap: 10,
+      height: 164,
+      alignSelf: 'flex-end',
+    },
+    requestGallerySecondaryFrame: {
+      position: 'relative',
+      height: 77,
+      borderRadius: 18,
+      overflow: 'visible',
+    },
+    requestGallerySecondaryFrameOffset: {
+      marginLeft: 10,
+    },
+    requestGallerySecondaryPlate: {
+      position: 'absolute',
+      left: 6,
+      top: 5,
+      right: -1,
+      bottom: -1,
+      borderRadius: 18,
+      backgroundColor: isDark ? 'rgba(255,246,236,0.025)' : 'rgba(255,246,236,0.07)',
+      transform: [{ rotate: '-1.75deg' }],
+    },
+    requestGallerySecondaryImage: {
+      width: '100%',
+      height: '100%',
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(0,160,160,0.18)' : 'rgba(31,42,42,0.06)',
+      backgroundColor: theme.backgroundSubtle,
+      overflow: 'hidden',
+    },
+    requestSingleFeatureRow: {
+      marginTop: 12,
+      flexDirection: 'row',
+      alignItems: 'stretch',
+      gap: 14,
+    },
+    requestSingleMediaWrap: {
+      width: 170,
+      height: 196,
+      position: 'relative',
+    },
+    requestSingleMediaPlate: {
+      position: 'absolute',
+      left: 9,
+      top: 9,
+      right: -1,
+      bottom: -1,
+      borderRadius: 22,
+      backgroundColor: isDark ? 'rgba(255,246,236,0.05)' : 'rgba(255,246,236,0.16)',
+      transform: [{ rotate: '-3deg' }],
+    },
+    requestSingleMediaImage: {
+      width: '100%',
+      height: '100%',
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(0,160,160,0.22)' : 'rgba(31,42,42,0.08)',
+      backgroundColor: theme.backgroundSubtle,
+    },
+    requestSingleDetailPanel: {
+      flex: 1,
+      minHeight: 196,
+      paddingVertical: 12,
+      justifyContent: 'center',
+      gap: 8,
+    },
+    requestSingleChipRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+    },
+    requestSingleChip: {
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.outline,
+      backgroundColor: isDark ? 'rgba(0,160,160,0.10)' : 'rgba(0,160,160,0.06)',
+    },
+    requestSingleChipText: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: theme.tint,
+    },
+    requestSingleHeadline: {
+      fontSize: 15,
+      lineHeight: 22,
+      fontWeight: '700',
+      color: theme.text,
+    },
+    requestSingleSupport: {
+      fontSize: 12,
+      lineHeight: 18,
+      color: theme.textMuted,
+    },
+    closedStatePanel: {
+      marginTop: 12,
+      padding: 12,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(31,42,42,0.05)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.018)' : 'rgba(255,255,255,0.34)',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    closedStateMediaWrap: {
+      width: 72,
+      height: 72,
+      borderRadius: 16,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(31,42,42,0.06)',
+      backgroundColor: theme.backgroundSubtle,
+    },
+    closedStateMedia: {
+      width: '100%',
+      height: '100%',
+    },
+    closedStateBody: {
+      flex: 1,
+      gap: 4,
+    },
+    closedStateTitle: {
+      fontSize: 14,
+      lineHeight: 20,
+      fontWeight: '700',
+      color: theme.text,
+    },
+    closedStateText: {
+      fontSize: 12,
+      lineHeight: 18,
+      color: theme.textMuted,
+    },
+    actionsRowSingleMedia: {
+      marginTop: 8,
     },
     rowTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     avatarImage: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.backgroundSubtle },
@@ -2473,10 +3062,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
-      rowGap: 6,
-      flexWrap: 'wrap',
       marginTop: 6,
     },
+    badgeRowSpacer: { flex: 1 },
     typeBadge: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -2485,23 +3073,42 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       paddingVertical: 4,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff',
+      borderColor: isDark ? 'rgba(0,160,160,0.18)' : 'rgba(31,42,42,0.06)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.62)',
     },
     typeBadgeText: { fontSize: 11, color: theme.tint, fontWeight: '600' },
-    compatBadge: {
+    signalBadge: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 4,
       paddingHorizontal: 8,
       paddingVertical: 4,
       borderRadius: 999,
       borderWidth: 1,
       borderColor: theme.outline,
-      backgroundColor: isDark ? 'rgba(125, 91, 166, 0.12)' : 'rgba(125, 91, 166, 0.08)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.62)',
     },
-    compatBadgeText: { fontSize: 11, color: theme.accent, fontWeight: '600' },
+    signalBadgeAccent: {
+      borderColor: isDark ? 'rgba(125, 91, 166, 0.22)' : 'rgba(125, 91, 166, 0.12)',
+      backgroundColor: isDark ? 'rgba(125, 91, 166, 0.10)' : 'rgba(125, 91, 166, 0.06)',
+    },
+    signalBadgeTint: {
+      borderColor: isDark ? 'rgba(0,160,160,0.18)' : 'rgba(0,128,128,0.10)',
+      backgroundColor: isDark ? 'rgba(0,160,160,0.08)' : 'rgba(0,128,128,0.05)',
+    },
+    signalBadgeSoft: {
+      borderColor: isDark ? 'rgba(255,246,236,0.10)' : 'rgba(31,42,42,0.06)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.035)' : 'rgba(255,255,255,0.54)',
+    },
+    signalBadgeText: { fontSize: 11, fontWeight: '600', color: theme.textMuted },
+    signalBadgeTextAccent: { color: theme.accent },
+    signalBadgeTextTint: { color: theme.tint },
+    signalBadgeTextSoft: { color: theme.textMuted },
     timeLabel: { fontSize: 11, color: theme.textMuted },
+    expiryRow: {
+      marginTop: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
     expiryPill: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -2565,17 +3172,17 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: isDark ? 'rgba(14, 116, 144, 0.14)' : 'rgba(14, 116, 144, 0.08)',
     },
     matchedHintText: { flex: 1, fontSize: 12, fontWeight: '800', color: theme.tint },
-    whyRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
+    whyRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
     whyChip: {
       paddingHorizontal: 8,
       paddingVertical: 4,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: isDark ? 'rgba(0,160,160,0.10)' : 'rgba(0,160,160,0.06)',
+      borderColor: isDark ? 'rgba(0,160,160,0.14)' : 'rgba(0,128,128,0.08)',
+      backgroundColor: isDark ? 'rgba(0,160,160,0.08)' : 'rgba(0,128,128,0.045)',
     },
-    whyChipText: { fontSize: 11, fontWeight: '700', color: theme.tint },
-    commonRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 },
+    whyChipText: { fontSize: 11, fontWeight: '600', color: theme.tint },
+    commonRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
     commonLabel: { fontSize: 11, color: theme.textMuted, fontWeight: '600' },
     commonChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
     commonChip: {
@@ -2697,7 +3304,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: theme.backgroundSubtle,
       marginTop: 2,
     },
-    suggestedSection: { marginTop: 16, gap: 12 },
+    suggestedSection: { marginTop: 20, gap: 12 },
     suggestedSectionFooter: {
       marginTop: 14,
       paddingTop: 12,
@@ -2708,7 +3315,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     suggestedTitleRow: { gap: 4, paddingHorizontal: 2 },
     suggestedTitleLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     suggestedTitle: { fontSize: 14, fontWeight: '700', color: theme.text },
-    suggestedSubtitle: { fontSize: 11, color: theme.textMuted },
+    suggestedSubtitle: { fontSize: 11, color: theme.textMuted, marginTop: 2 },
     suggestedSkeletonWrap: { gap: 10, paddingVertical: 6 },
     suggestedSkeletonHero: {
       height: 158,
@@ -2757,89 +3364,156 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     suggestedMore: { alignSelf: 'flex-start', paddingHorizontal: 2, paddingVertical: 6 },
     suggestedMoreText: { fontSize: 12, color: theme.tint, fontWeight: '700' },
     suggestedHeroCard: {
-      padding: 16,
-      borderRadius: 18,
+      borderRadius: 22,
       borderWidth: 1,
-      borderColor: isDark ? 'rgba(0,160,160,0.25)' : theme.outline,
-      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : theme.backgroundSubtle,
+      borderColor: isDark ? 'rgba(0,160,160,0.18)' : 'rgba(31,42,42,0.08)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : theme.backgroundSubtle,
       overflow: 'hidden',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 16 },
+      shadowOpacity: isDark ? 0.24 : 0.10,
+      shadowRadius: 28,
+      elevation: 8,
+    },
+    suggestedHeroStage: {
+      paddingHorizontal: 18,
+      paddingTop: 16,
+      paddingBottom: 18,
     },
     suggestedHeroGlow: {
       position: 'absolute',
-      top: -120,
-      right: -100,
-      width: 240,
-      height: 240,
-      borderRadius: 120,
+      top: -78,
+      right: -56,
+      width: 190,
+      height: 190,
+      borderRadius: 95,
       backgroundColor: theme.accent,
-      opacity: isDark ? 0.18 : 0.10,
+      opacity: isDark ? 0.10 : 0.08,
     },
     suggestedHeroGlow2: {
       position: 'absolute',
-      bottom: -160,
-      left: -140,
-      width: 300,
-      height: 300,
-      borderRadius: 150,
+      bottom: -104,
+      left: -92,
+      width: 208,
+      height: 208,
+      borderRadius: 104,
       backgroundColor: theme.tint,
-      opacity: isDark ? 0.10 : 0.06,
+      opacity: isDark ? 0.06 : 0.05,
     },
-    suggestedHeroMain: { gap: 12 },
+    suggestedHeroMain: { gap: 14 },
     suggestedHeroTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    suggestedHeroBadge: {
+    suggestedHeroEyebrow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+    },
+    suggestedHeroEyebrowText: {
+      fontSize: 11,
+      letterSpacing: 1.8,
+      color: theme.tint,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+    },
+    suggestedHeroCoachMark: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
       paddingHorizontal: 10,
       paddingVertical: 6,
       borderRadius: 999,
-      borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: isDark ? 'rgba(15,26,26,0.65)' : theme.background,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,248,241,0.10)',
     },
-    suggestedHeroBadgeText: { fontSize: 11, color: theme.textMuted, fontWeight: '700' },
-    suggestedHeroIdentityRow: { flexDirection: 'row', alignItems: 'stretch', gap: 14 },
+    suggestedHeroCoachText: {
+      fontSize: 11,
+      color: isDark ? 'rgba(232,240,237,0.76)' : 'rgba(255,250,245,0.9)',
+      fontWeight: '700',
+    },
+    suggestedHeroEditorialRow: { flexDirection: 'row', alignItems: 'stretch', gap: 18 },
+    suggestedHeroMediaWrap: {
+      marginLeft: -10,
+      marginTop: 8,
+      marginBottom: -58,
+    },
+    suggestedHeroMediaPlate: {
+      position: 'absolute',
+      left: 10,
+      top: 16,
+      width: 152,
+      height: 204,
+      borderRadius: 34,
+      backgroundColor: isDark ? 'rgba(255,246,236,0.08)' : 'rgba(255,246,236,0.20)',
+      transform: [{ rotate: '-6deg' }],
+    },
     suggestedHeroMediaFrame: {
-      width: 126,
-      height: 158,
-      borderRadius: 24,
-      padding: 3,
+      width: 148,
+      height: 198,
+      borderRadius: 30,
+      padding: 4,
       borderWidth: 1,
-      borderColor: isDark ? 'rgba(0,160,160,0.42)' : theme.outline,
-      backgroundColor: isDark ? 'rgba(0,160,160,0.10)' : theme.background,
+      borderColor: isDark ? 'rgba(113, 221, 214, 0.26)' : 'rgba(255,255,255,0.28)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.18)',
       overflow: 'hidden',
       shadowColor: '#000',
-      shadowOffset: { width: 0, height: 10 },
-      shadowOpacity: isDark ? 0.26 : 0.12,
-      shadowRadius: 18,
-      elevation: 6,
+      shadowOffset: { width: 0, height: 12 },
+      shadowOpacity: isDark ? 0.30 : 0.18,
+      shadowRadius: 24,
+      elevation: 7,
     },
-    suggestedHeroAvatar: { width: '100%', height: '100%', borderRadius: 21, backgroundColor: theme.backgroundSubtle },
+    suggestedHeroAvatar: { width: '100%', height: '100%', borderRadius: 26, backgroundColor: theme.backgroundSubtle },
     suggestedHeroAvatarFallback: {
       width: '100%',
       height: '100%',
-      borderRadius: 21,
+      borderRadius: 26,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: theme.backgroundSubtle,
       borderWidth: 1,
       borderColor: theme.outline,
     },
-    suggestedHeroInfo: { flex: 1, gap: 6, paddingVertical: 4 },
-    suggestedHeroName: { fontSize: 17, fontWeight: '800', color: theme.text },
-    suggestedHeroPrompt: { fontSize: 13, lineHeight: 18, color: theme.textMuted, fontWeight: '700' },
+    suggestedHeroInfo: { flex: 1, gap: 9, paddingTop: 16, paddingBottom: 10 },
+    suggestedHeroName: {
+      fontSize: 34,
+      lineHeight: 38,
+      color: '#FFF6EC',
+      fontFamily: 'PlayfairDisplay_700Bold',
+      maxWidth: 180,
+    },
+    suggestedHeroPrompt: {
+      fontSize: 14,
+      lineHeight: 20,
+      color: isDark ? 'rgba(232,240,237,0.84)' : 'rgba(245,235,221,0.84)',
+      fontWeight: '600',
+    },
+    suggestedHeroMetaRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 2,
+    },
+    suggestedHeroMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    suggestedHeroMetaDot: {
+      width: 4,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: isDark ? 'rgba(232,240,237,0.45)' : 'rgba(245,235,221,0.45)',
+    },
+    suggestedHeroMetaText: {
+      fontSize: 11,
+      letterSpacing: 0.3,
+      color: isDark ? 'rgba(232,240,237,0.66)' : 'rgba(245,235,221,0.70)',
+      fontWeight: '700',
+    },
     suggestedHeroOpener: {
       marginTop: 6,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      borderRadius: 14,
-      borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: isDark ? 'rgba(15,26,26,0.55)' : theme.background,
-      color: theme.text,
-      fontSize: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 18,
+      backgroundColor: isDark ? 'rgba(6,12,12,0.28)' : 'rgba(255,255,255,0.10)',
+      color: '#FFF6EC',
+      fontSize: 13,
       fontWeight: '700',
-      lineHeight: 16,
+      lineHeight: 19,
     },
     suggestedHeroReveal: {
       marginTop: 8,
@@ -2847,53 +3521,93 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
-      paddingHorizontal: 10,
+      paddingHorizontal: 12,
       paddingVertical: 8,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: isDark ? 'rgba(15,26,26,0.50)' : theme.background,
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.15)',
+      backgroundColor: isDark ? 'rgba(6,12,12,0.14)' : 'rgba(255,255,255,0.06)',
     },
-    suggestedHeroRevealText: { color: theme.tint, fontWeight: '800', fontSize: 12 },
+    suggestedHeroRevealText: { color: '#D4FFFB', fontWeight: '800', fontSize: 12 },
+    suggestedHeroFooterBand: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      paddingHorizontal: 18,
+      paddingTop: 10,
+      paddingBottom: 10,
+      borderTopWidth: 1,
+      borderTopColor: 'rgba(255,255,255,0.08)',
+    },
     suggestedCard: {
       padding: 14,
       borderRadius: 16,
       borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : theme.backgroundSubtle,
+      borderColor: isDark ? 'rgba(255,255,255,0.045)' : 'rgba(31,42,42,0.06)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.026)' : theme.backgroundSubtle,
       overflow: 'hidden',
     },
     suggestedGlow: {
       position: 'absolute',
-      top: -80,
-      right: -80,
-      width: 180,
-      height: 180,
-      borderRadius: 90,
+      top: -74,
+      right: -74,
+      width: 164,
+      height: 164,
+      borderRadius: 82,
       backgroundColor: theme.accent,
-      opacity: isDark ? 0.14 : 0.08,
+      opacity: isDark ? 0.07 : 0.045,
     },
-    suggestedMain: { flexDirection: 'row', alignItems: 'stretch', gap: 14 },
+    suggestedGlowSoft: {
+      position: 'absolute',
+      bottom: -54,
+      left: -40,
+      width: 120,
+      height: 120,
+      borderRadius: 60,
+      backgroundColor: theme.tint,
+      opacity: isDark ? 0.05 : 0.035,
+    },
+    suggestedMain: { flexDirection: 'row', alignItems: 'stretch', gap: 16 },
     suggestedKicker: {
       fontSize: 10,
-      letterSpacing: 1,
+      letterSpacing: 1.4,
       color: theme.tint,
       fontWeight: '800',
       marginBottom: 2,
     },
     suggestedKickerRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     suggestedHeader: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    suggestedMediaFrame: {
-      width: 92,
+    suggestedMediaWrap: {
+      marginLeft: -4,
+      marginTop: -2,
+    },
+    suggestedMediaPlate: {
+      position: 'absolute',
+      left: 8,
+      top: 8,
+      width: 94,
       height: 118,
       borderRadius: 20,
+      backgroundColor: isDark ? 'rgba(255,246,236,0.06)' : 'rgba(255,246,236,0.18)',
+      transform: [{ rotate: '-4deg' }],
+    },
+    suggestedMediaFrame: {
+      width: 90,
+      height: 114,
+      borderRadius: 19,
       padding: 3,
       borderWidth: 1,
-      borderColor: isDark ? 'rgba(0,160,160,0.32)' : theme.outline,
-      backgroundColor: isDark ? 'rgba(0,160,160,0.08)' : theme.background,
+      borderColor: isDark ? 'rgba(0,160,160,0.28)' : 'rgba(31,42,42,0.08)',
+      backgroundColor: isDark ? 'rgba(0,160,160,0.07)' : 'rgba(255,255,255,0.72)',
       overflow: 'hidden',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: isDark ? 0.18 : 0.08,
+      shadowRadius: 18,
+      elevation: 4,
     },
-    suggestedAvatar: { width: '100%', height: '100%', borderRadius: 17, backgroundColor: theme.backgroundSubtle },
+    suggestedAvatar: { width: '100%', height: '100%', borderRadius: 16, backgroundColor: theme.backgroundSubtle },
     suggestedAvatarFallback: {
       width: '100%',
       height: '100%',
@@ -2904,57 +3618,84 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderWidth: 1,
       borderColor: theme.outline,
     },
-    suggestedInfo: { flex: 1, gap: 7, paddingVertical: 3 },
+    suggestedInfo: { flex: 1, gap: 6, paddingVertical: 4 },
     suggestedName: { fontSize: 14, fontWeight: '700', color: theme.text },
-    suggestedPrompt: { fontSize: 12, lineHeight: 17, color: theme.textMuted, fontWeight: '600' },
+    suggestedPrompt: { fontSize: 11, lineHeight: 17, color: theme.textMuted, fontWeight: '600' },
     suggestedTags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
     suggestedTag: {
       paddingHorizontal: 8,
       paddingVertical: 4,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: theme.background,
+      borderColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(31,42,42,0.05)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.025)' : theme.background,
     },
     suggestedTagText: { fontSize: 10, color: theme.textMuted, fontWeight: '600' },
     suggestedActions: { flexDirection: 'row', gap: 8, marginTop: 12 },
-    suggestedCtas: { flexDirection: 'row', gap: 8, marginTop: 12 },
+    suggestedCtas: { flexDirection: 'row', gap: 10, marginTop: 10, alignItems: 'center' },
     suggestedPrimary: {
       position: 'relative',
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
       paddingHorizontal: 12,
-      paddingVertical: 8,
+      paddingVertical: 7,
       borderRadius: 999,
       backgroundColor: theme.tint,
     },
-    suggestedPrimaryText: { color: Colors.light.background, fontWeight: '700', fontSize: 12 },
-    suggestedSecondary: {
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: theme.background,
+    suggestedPrimaryIconWrap: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(255,255,255,0.14)',
     },
-    suggestedSecondaryText: { color: theme.textMuted, fontWeight: '700', fontSize: 12 },
-    suggestedHeroCtas: { marginTop: 12, gap: 10 },
+    suggestedPrimaryText: { color: Colors.light.background, fontWeight: '700', fontSize: 11 },
+    suggestedSecondary: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 2,
+      paddingVertical: 4,
+    },
+    suggestedSecondaryText: { color: theme.textMuted, fontWeight: '700', fontSize: 11 },
     suggestedHeroPrimary: {
       position: 'relative',
-      width: '100%',
+      flex: 1,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
       gap: 8,
-      paddingHorizontal: 14,
-      paddingVertical: 12,
-      borderRadius: 14,
-      backgroundColor: theme.tint,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 999,
+      backgroundColor: 'rgba(255,246,236,0.12)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,246,236,0.15)',
+    },
+    suggestedHeroPrimaryIconWrap: {
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(255,255,255,0.12)',
     },
     suggestedHeroPrimaryText: { color: Colors.light.background, fontWeight: '800', fontSize: 13 },
-    suggestedHeroLink: { alignSelf: 'center', paddingVertical: 4, paddingHorizontal: 8 },
-    suggestedHeroLinkText: { color: theme.textMuted, fontWeight: '800', fontSize: 12 },
+    suggestedHeroLink: {
+      alignSelf: 'center',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingVertical: 3,
+      paddingHorizontal: 4,
+    },
+    suggestedHeroLinkText: {
+      color: 'rgba(255,246,236,0.88)',
+      fontWeight: '800',
+      fontSize: 12,
+    },
     pickerBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
     pickerBackdropPress: { flex: 1 },
     pickerSheet: {
@@ -2969,6 +3710,14 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     pickerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
     pickerTitle: { fontSize: 16, fontWeight: '800', color: theme.text },
+    pickerSection: { gap: 10, marginBottom: 14 },
+    pickerSectionTitle: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: theme.textMuted,
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+    },
     pickerClose: {
       width: 32,
       height: 32,
@@ -3004,4 +3753,25 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     pickerIconActive: { borderColor: theme.tint, backgroundColor: theme.tint },
     pickerRowText: { fontSize: 14, fontWeight: '700', color: theme.text },
     pickerRowTextActive: { color: theme.text },
+    pickerFooter: { flexDirection: 'row', gap: 10, marginTop: 6 },
+    pickerReset: {
+      flex: 1,
+      minHeight: 44,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: theme.outline,
+      backgroundColor: theme.backgroundSubtle,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    pickerResetText: { fontSize: 14, fontWeight: '700', color: theme.textMuted },
+    pickerApply: {
+      flex: 1.2,
+      minHeight: 44,
+      borderRadius: 14,
+      backgroundColor: theme.tint,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    pickerApplyText: { fontSize: 14, fontWeight: '800', color: Colors.light.background },
   });
