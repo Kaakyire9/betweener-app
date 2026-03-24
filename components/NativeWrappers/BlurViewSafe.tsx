@@ -3,9 +3,9 @@ import { Platform, View, ViewProps, UIManager } from 'react-native';
 // Use expo-blur when available (dev-client). On web or missing native module, fall back to View.
 let ExpoBlur: any = null;
 try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+   
   ExpoBlur = require('expo-blur').BlurView;
-} catch (e) {
+} catch (_e) {
   ExpoBlur = null;
 }
 
@@ -21,7 +21,7 @@ function hasNativeBlur(): boolean {
         if (cfg) return true;
       }
     }
-  } catch (e) {
+  } catch (_e) {
     // ignore
   }
   return false;

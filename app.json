@@ -4,6 +4,15 @@
     "owner": "kaakyire9",
     "slug": "betweener",
     "version": "1.0.0",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "enabled": true,
+      "checkAutomatically": "ON_ERROR_RECOVERY",
+      "fallbackToCacheTimeout": 0,
+      "url": "https://u.expo.dev/7de6cdc4-8616-446f-99de-82764af3a7e6"
+    },
     "orientation": "portrait",
     "scheme": "betweenerapp",
     "platforms": [
@@ -25,6 +34,8 @@
         "NSPhotoLibraryAddUsageDescription": "Betweener needs permission to save photos you choose to download.",
         "NSCameraUsageDescription": "Betweener needs camera access so you can take profile photos and create moments.",
         "NSMicrophoneUsageDescription": "Betweener uses the microphone for voice messages and audio features in chat.",
+        "NSCalendarsUsageDescription": "Betweener uses your calendar so you can save accepted date plans to your phone.",
+        "NSCalendarsFullAccessUsageDescription": "Betweener uses your calendar so you can save accepted date plans to your phone.",
         "CFBundleURLTypes": [
           {
             "CFBundleURLName": "com.aduboffour.betweener",
@@ -45,6 +56,10 @@
       "package": "com.aduboffour.betweener",
       "googleServicesFile": "./google-services.json",
       "softwareKeyboardLayoutMode": "resize",
+      "permissions": [
+        "READ_CALENDAR",
+        "WRITE_CALENDAR"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/foreground-icon.png",
         "backgroundImage": "./assets/images/background-icon.png"
@@ -97,12 +112,13 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
-          "imageWidth": 200,
+          "image": "./assets/images/foreground-icon.png",
+          "imageWidth": 176,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
+          "backgroundColor": "#05070D",
           "dark": {
-            "backgroundColor": "#000000"
+            "image": "./assets/images/foreground-icon.png",
+            "backgroundColor": "#05070D"
           }
         }
       ],
@@ -113,7 +129,6 @@
         }
       ],
       "expo-font",
-      "expo-web-browser",
       "expo-video",
       [
         "@sentry/react-native/expo",

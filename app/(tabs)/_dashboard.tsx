@@ -1,4 +1,5 @@
 import { Colors } from "@/constants/theme";
+import { usePremiumState } from "@/hooks/use-premium-state";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
@@ -8,10 +9,8 @@ import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Dimensions, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-
-const { width } = Dimensions.get("window");
 
 const withAlpha = (hex: string, alpha: number) => {
   const normalized = hex.replace('#', '');
@@ -24,9 +23,9 @@ const withAlpha = (hex: string, alpha: number) => {
 
 const getGreeting = (date: Date) => {
   const h = date.getHours();
-  if (h < 12) return "Good morning! ??";
-  if (h < 18) return "Good afternoon! ???";
-  return "Good evening! ??";
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
 };
 
 const getInitials = (name: string) => {
@@ -76,6 +75,13 @@ export default function DashboardScreen() {
   const isDark = resolvedScheme === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const { user, profile } = useAuth();
+  const {
+    activeBoostEndsAt,
+    currentPlan,
+    hasAccess,
+    hasActiveBoost,
+    loading: premiumLoading,
+  } = usePremiumState();
   const [greeting, setGreeting] = useState(() => getGreeting(new Date()));
   const [liveProfile, setLiveProfile] = useState<any | null>(profile ?? null);
 
@@ -145,7 +151,7 @@ export default function DashboardScreen() {
     if (profilePhotosCount < 3) return "Add 1 more photo for +20% visibility";
     const bio = (liveProfile.bio || '').trim();
     if (bio.length < 40) return "Add a longer bio for better matches";
-    return "Looking good — keep it updated";
+    return "Looking good - keep it updated";
   }, [liveProfile, profilePhotosCount]);
 
   useEffect(() => {
@@ -202,8 +208,15 @@ export default function DashboardScreen() {
   const [profileViews, setProfileViews] = useState(0);
   const [likesReceived, setLikesReceived] = useState(0);
   const [conversationStreak, setConversationStreak] = useState(0);
-  const [boostsLeft] = useState(2);
   const isOnline = !!liveProfile?.is_active;
+  const boostsUnlocked = hasAccess('SILVER');
+  const boostStatusText = premiumLoading
+    ? 'Checking premium access...'
+    : hasActiveBoost && activeBoostEndsAt
+      ? `Boost live until ${new Date(activeBoostEndsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+      : boostsUnlocked
+        ? `${currentPlan} includes 30-minute profile boosts`
+        : 'Unlock 30-minute boosts with Silver or Gold';
 
   useEffect(() => {
     if (!user?.id || !myProfileId) {
@@ -689,16 +702,15 @@ export default function DashboardScreen() {
   }, [user?.id]);
 
   const badges = [
-    { name: "First Match", icon: "??", earned: true },
-    { name: "Chatterbox", icon: "??", earned: true },
-    { name: "Consistent", icon: "??", earned: false },
+    { name: "First Match", icon: "FM", earned: true },
+    { name: "Chatterbox", icon: "CB", earned: true },
+    { name: "Consistent", icon: "CO", earned: false },
   ];
 
   const goToExplore = () => router.push("/(tabs)/explore");
   const goToActivity = () => router.push("/(tabs)/activity");
   const goToChat = () => router.push("/(tabs)/chat");
   const goToProfile = () => router.push("/(tabs)/profile");
-  const goToMoments = () => router.push("/moments");
   const openProfileView = (profileId?: string | null) => {
     if (!profileId) return;
     router.push({ pathname: '/profile-view', params: { profileId: String(profileId) } });
@@ -722,6 +734,36 @@ export default function DashboardScreen() {
     </>
   );
 
+  const renderRecentActivityEmptyState = () => (
+    <View style={styles.emptyCard}>
+      <View style={styles.emptyBadge}>
+        <Text style={styles.emptyBadgeText}>Quiet inbox</Text>
+      </View>
+      <Text style={styles.emptyStateTitle}>Your latest activity will show up here</Text>
+      <Text style={styles.emptyStateText}>
+        Likes, notes, gifts, and profile reactions will start to collect once your profile and discovery loop pick up momentum.
+      </Text>
+      <View style={styles.emptyHighlights}>
+        <View style={styles.emptyHighlightRow}>
+          <MaterialCommunityIcons name="account-star-outline" size={16} color={theme.tint} />
+          <Text style={styles.emptyHighlightText}>A stronger first photo and fuller profile usually improve activity quality.</Text>
+        </View>
+        <View style={styles.emptyHighlightRow}>
+          <MaterialCommunityIcons name="message-outline" size={16} color={theme.tint} />
+          <Text style={styles.emptyHighlightText}>Moments and active chats give people more reasons to engage with you.</Text>
+        </View>
+      </View>
+      <View style={styles.emptyActions}>
+        <TouchableOpacity style={styles.emptyPrimaryButton} onPress={goToExplore}>
+          <Text style={styles.emptyPrimaryButtonText}>Open Vibes</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.emptySecondaryButton} onPress={goToProfile}>
+          <Text style={styles.emptySecondaryButtonText}>Polish profile</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   const ProfileSnapshotCard = () => (
     <TouchableOpacity style={styles.card} activeOpacity={0.92} onPress={goToProfile}>
       <CardChrome />
@@ -737,8 +779,8 @@ export default function DashboardScreen() {
           <Text style={styles.profileName}>{displayName}</Text>
           <Text style={styles.lastActive}>{isOnline ? 'Active now' : 'Offline'}</Text>
           <View style={styles.moodContainer}>
-            <Text style={styles.moodSticker}>??</Text>
-            <Text style={styles.moodText}>Happy vibes</Text>
+            <Text style={styles.moodSticker}>Live</Text>
+            <Text style={styles.moodText}>Ready for meaningful connection</Text>
           </View>
         </View>
       </View>
@@ -870,10 +912,10 @@ export default function DashboardScreen() {
             <View style={styles.conversationHeader}>
               <Text style={styles.conversationName}>{match.name}</Text>
               <View style={styles.statusIndicator}>
-                <Text style={styles.statusIcon}>?</Text>
+                <View style={styles.statusDot} />
               </View>
             </View>
-            <Text style={styles.lastMessage}>{match.lastMessage || 'Say hi ??'}</Text>
+            <Text style={styles.lastMessage}>{match.lastMessage || 'Start with a thoughtful hello.'}</Text>
           </View>
           {match.unread > 0 ? <View style={styles.unreadDot} /> : null}
         </TouchableOpacity>
@@ -882,7 +924,7 @@ export default function DashboardScreen() {
       <View style={styles.moodStickersBar}>
         <Text style={styles.moodStickersTitle}>Quick Send:</Text>
         <View style={styles.moodStickers}>
-          {["??", "??", "??", "??", "??"].map((sticker, index) => (
+          {["Say hi", "Nice photo", "Let's chat", "How is your day?", "Good energy"].map((sticker, index) => (
             <TouchableOpacity key={index} style={styles.moodStickerBtn} onPress={goToChat}>
               <Text style={styles.moodStickerText}>{sticker}</Text>
             </TouchableOpacity>
@@ -898,11 +940,11 @@ export default function DashboardScreen() {
       <View style={styles.cardHeader}>
         <Text style={styles.cardTitle}>Recent Activity</Text>
         <TouchableOpacity style={styles.viewAllButton} onPress={goToActivity}>
-          <Text style={styles.viewAllText}>View all</Text>
+          <Text style={styles.viewAllText}>Open inbox</Text>
         </TouchableOpacity>
       </View>
       {recentActivity.length === 0 ? (
-        <Text style={styles.emptyStateText}>Your latest activity will show here.</Text>
+        renderRecentActivityEmptyState()
       ) : (
         recentActivity.map((item) => (
           <TouchableOpacity
@@ -989,7 +1031,7 @@ export default function DashboardScreen() {
       >
         <View style={styles.swipeButtonGradient}>
           <MaterialCommunityIcons name="cards-heart" size={24} color={Colors.light.background} />
-          <Text style={styles.swipeButtonText}>Start Swiping</Text>
+          <Text style={styles.swipeButtonText}>Open Vibes</Text>
         </View>
       </TouchableOpacity>
     </View>
@@ -1002,12 +1044,15 @@ export default function DashboardScreen() {
       <View style={styles.boostInfo}>
         <View style={styles.boostItem}>
           <MaterialCommunityIcons name="rocket" size={24} color={theme.accent} />
-          <Text style={styles.boostText}>{boostsLeft} Free Boosts Left</Text>
+          <Text style={styles.boostText}>{boostStatusText}</Text>
         </View>
-        <TouchableOpacity style={styles.superLikeBtn} onPress={goToExplore}>
+        <TouchableOpacity
+          style={styles.superLikeBtn}
+          onPress={boostsUnlocked ? goToProfile : () => router.push('/premium-plans')}
+        >
           <View style={styles.superLikeGradient}>
-            <MaterialCommunityIcons name="star" size={20} color={Colors.light.background} />
-            <Text style={styles.superLikeText}>Try Super Like</Text>
+            <MaterialCommunityIcons name={boostsUnlocked ? 'rocket-launch-outline' : 'crown-outline'} size={20} color={Colors.light.background} />
+            <Text style={styles.superLikeText}>{boostsUnlocked ? 'Open profile boosts' : 'Unlock boosts'}</Text>
           </View>
         </TouchableOpacity>
       </View>
@@ -1020,7 +1065,7 @@ export default function DashboardScreen() {
       <Text style={styles.cardTitle}>Safety & Wellness</Text>
       <View style={styles.safetyTip}>
         <MaterialCommunityIcons name="lightbulb" size={20} color={theme.accent} />
-        <Text style={styles.safetyText}>?? Never share financial info with matches</Text>
+        <Text style={styles.safetyText}>Never share financial information with matches.</Text>
       </View>
       <View style={styles.safetyActions}>
         <TouchableOpacity style={styles.safetyBtn} onPress={goToProfile}>
@@ -1248,10 +1293,83 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       letterSpacing: 0.3,
       fontWeight: "600",
     },
+    emptyCard: {
+      borderRadius: 18,
+      padding: 16,
+      gap: 10,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.38 : 0.82),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+    },
+    emptyBadge: {
+      alignSelf: "flex-start",
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.36 : 0.9),
+    },
+    emptyBadgeText: {
+      fontSize: 10,
+      color: theme.textMuted,
+      fontWeight: "700",
+      letterSpacing: 0.3,
+    },
+    emptyStateTitle: {
+      fontSize: 18,
+      lineHeight: 24,
+      color: theme.text,
+      fontFamily: 'PlayfairDisplay_600SemiBold',
+    },
     emptyStateText: {
       fontSize: 13,
       color: theme.textMuted,
+      lineHeight: 20,
+    },
+    emptyHighlights: {
+      gap: 8,
+    },
+    emptyHighlightRow: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 8,
+    },
+    emptyHighlightText: {
+      flex: 1,
+      fontSize: 12,
       lineHeight: 18,
+      color: theme.textMuted,
+    },
+    emptyActions: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 10,
+      marginTop: 2,
+    },
+    emptyPrimaryButton: {
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+      borderRadius: 999,
+      backgroundColor: theme.tint,
+    },
+    emptyPrimaryButtonText: {
+      color: Colors.light.background,
+      fontSize: 12,
+      fontWeight: "700",
+    },
+    emptySecondaryButton: {
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.28 : 0.7),
+    },
+    emptySecondaryButtonText: {
+      color: theme.text,
+      fontSize: 12,
+      fontWeight: "600",
     },
     badge: {
       backgroundColor: theme.tint,
@@ -1419,9 +1537,16 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     statusIndicator: {
       marginLeft: "auto",
+      width: 10,
+      height: 10,
+      alignItems: "center",
+      justifyContent: "center",
     },
-    statusIcon: {
-      fontSize: 12,
+    statusDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: theme.secondary,
     },
     lastMessage: {
       fontSize: 14,
@@ -1618,4 +1743,5 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       height: 20,
     },
   });
+
 

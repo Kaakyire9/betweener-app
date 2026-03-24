@@ -1,6 +1,7 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
+import { getDatePlanPreviewText } from '@/lib/message-preview';
 import { supabase } from '@/lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { usePathname, useRouter } from 'expo-router';
@@ -21,6 +22,7 @@ type ToastItem = {
 
 type NotificationPrefs = {
   inapp_enabled: boolean;
+  preview_text: boolean;
   messages: boolean;
   message_reactions: boolean;
   reactions: boolean;
@@ -38,6 +40,13 @@ type NotificationPrefs = {
 
 const TOAST_DURATION_MS = 4200;
 
+type ProfileLite = {
+  id: string;
+  user_id: string | null;
+  full_name: string | null;
+  avatar_url: string | null;
+};
+
 export default function InAppToasts() {
   const { user, profile } = useAuth();
   const colorScheme = useColorScheme();
@@ -51,6 +60,41 @@ export default function InAppToasts() {
   const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
   const timeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const lastToastAtRef = useRef<Record<string, number>>({});
+  const profileCacheRef = useRef<Map<string, ProfileLite>>(new Map());
+
+  const getProfileLite = useCallback(
+    async (id: string, opts?: { preferUserId?: boolean }) => {
+      if (!id) return null;
+      const preferUserId = opts?.preferUserId === true;
+      const key = `${preferUserId ? 'u' : 'p'}:${id}`;
+      const cached = profileCacheRef.current.get(key);
+      if (cached) return cached;
+
+      const byUser = async () => {
+        const { data } = await supabase
+          .from('profiles')
+          .select('id,user_id,full_name,avatar_url')
+          .eq('user_id', id)
+          .maybeSingle();
+        return (data as ProfileLite | null) ?? null;
+      };
+
+      const byProfile = async () => {
+        const { data } = await supabase
+          .from('profiles')
+          .select('id,user_id,full_name,avatar_url')
+          .eq('id', id)
+          .maybeSingle();
+        return (data as ProfileLite | null) ?? null;
+      };
+
+      // Many entry points pass auth.users ids (messages/reactions); others pass profiles.id (swipes/matches/intents).
+      const resolved = preferUserId ? (await byUser()) ?? (await byProfile()) : (await byProfile()) ?? (await byUser());
+      if (resolved) profileCacheRef.current.set(key, resolved);
+      return resolved;
+    },
+    [],
+  );
 
   const pushToast = useCallback((toast: ToastItem) => {
     const now = Date.now();
@@ -93,7 +137,7 @@ export default function InAppToasts() {
       const { data, error } = await supabase
         .from('notification_prefs')
         .select(
-          'inapp_enabled,messages,message_reactions,reactions,likes,superlikes,matches,notes,gifts,boosts,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
+          'inapp_enabled,preview_text,messages,message_reactions,reactions,likes,superlikes,matches,notes,gifts,boosts,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
         )
         .eq('user_id', user.id)
         .maybeSingle();
@@ -106,6 +150,7 @@ export default function InAppToasts() {
       if (data) {
         setPrefs({
           inapp_enabled: Boolean(data.inapp_enabled),
+          preview_text: (data as any)?.preview_text !== false,
           messages: Boolean(data.messages),
           message_reactions: Boolean(data.message_reactions),
           reactions: Boolean(data.reactions),
@@ -143,6 +188,7 @@ export default function InAppToasts() {
           if (!row) return;
           setPrefs({
             inapp_enabled: Boolean(row.inapp_enabled),
+            preview_text: row.preview_text !== false,
             messages: Boolean(row.messages),
             message_reactions: Boolean(row.message_reactions),
             reactions: Boolean(row.reactions),
@@ -213,12 +259,24 @@ export default function InAppToasts() {
           const row = payload.new as any;
           if (!row) return;
           if (!canInAppNotify('messages')) return;
-          pushToast({
-            id: `system-${row.id}`,
-            title: 'Request update',
-            body: row.text ?? 'Request update',
-            emoji: '✨',
-          });
+          // Mirror server behavior: only push to the requester; accepter gets in-app only.
+          if (String(row?.metadata?.role || '') === 'accepter') return;
+          void (async () => {
+            const peerUserId = typeof row.peer_user_id === 'string' ? row.peer_user_id : null;
+            const peer = peerUserId ? await getProfileLite(peerUserId, { preferUserId: true }) : null;
+            const peerName = (peer?.full_name ?? '').trim() || 'They';
+            const titleText = row.event_type === 'request_accepted' ? `${peerName} accepted` : 'Update';
+            const bodyText =
+              row.event_type === 'request_accepted' ? 'Start with a thoughtful hello.' : (row.text ?? 'Update');
+
+            pushToast({
+              id: `system-${row.id}`,
+              title: titleText,
+              body: bodyText,
+              avatarUrl: peer?.avatar_url ?? null,
+              profileId: peer?.id ?? null,
+            });
+          })();
         },
       )
       .subscribe();
@@ -226,7 +284,7 @@ export default function InAppToasts() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [canInAppNotify, pushToast, user?.id]);
+  }, [canInAppNotify, getProfileLite, pushToast, user?.id]);
 
   useEffect(() => {
     if (!profile?.id) return;
@@ -240,6 +298,9 @@ export default function InAppToasts() {
           const row = payload.new as any;
           if (!row) return;
           if (!canInAppNotify('messages')) return;
+          if (row.status !== 'pending') return;
+          // Likes are notified via swipes (LIKE/SUPERLIKE) and mirrored into Intent; avoid duplicate toasts.
+          if (row.type === 'like_with_note') return;
 
           let actorName: string | null = null;
           let actorAvatar: string | null = null;
@@ -253,10 +314,19 @@ export default function InAppToasts() {
             actorAvatar = data.avatar_url ?? null;
           }
 
+          const bodyText =
+            row.type === 'connect'
+              ? 'Sent you a connect request.'
+              : row.type === 'date_request'
+                ? 'Sent you a date request.'
+                : row.type === 'circle_intro'
+                  ? 'Sent you a circle intro.'
+                  : 'Sent you a request.';
+
           pushToast({
             id: `intent-${row.id}`,
-            title: actorName ? `${actorName} sent a request` : 'New request',
-            body: row.message ? row.message : 'Open to respond.',
+            title: (actorName ?? '').trim() || 'Someone',
+            body: bodyText,
             avatarUrl: actorAvatar,
             profileId: row.actor_id,
           });
@@ -269,7 +339,10 @@ export default function InAppToasts() {
     };
   }, [canInAppNotify, profile?.id, pushToast]);
 
-  const messagePreview = useCallback((row: any) => {
+  const messagePreview = useCallback((row: any, previewsAllowed: boolean) => {
+    if (!previewsAllowed) return 'Sent you a message';
+    const datePlanPreview = getDatePlanPreviewText(row?.text);
+    if (datePlanPreview) return datePlanPreview;
     if (row?.text) return row.text;
     if (row?.message_type === 'image') return 'Photo';
     if (row?.message_type === 'video') return 'Video';
@@ -326,26 +399,25 @@ export default function InAppToasts() {
           if (isChatRoute) return;
           if (isActiveChatWith(row.sender_id)) return;
           if (!canInAppNotify('messages')) return;
-          const preview = messagePreview(row);
+          const previewAllowed = prefs?.preview_text !== false;
+          const preview = messagePreview(row, previewAllowed);
           void (async () => {
             let name = 'New message';
             let avatarUrl: string | null = null;
+            let senderProfileId: string | null = null;
             try {
-              const { data } = await supabase
-                .from('profiles')
-                .select('full_name,avatar_url')
-                .eq('id', row.sender_id)
-                .maybeSingle();
-              if (data?.full_name) name = data.full_name;
-              if (data?.avatar_url) avatarUrl = data.avatar_url;
+              const p = await getProfileLite(String(row.sender_id), { preferUserId: true });
+              if (p?.full_name) name = p.full_name;
+              if (p?.avatar_url) avatarUrl = p.avatar_url;
+              if (p?.id) senderProfileId = p.id;
             } catch {}
             pushToast({
               id: `msg-${row.id}`,
               title: name,
               body: preview,
               avatarUrl,
-              profileId: row.sender_id,
-              chatId: row.sender_id,
+              profileId: senderProfileId ?? null,
+              chatId: senderProfileId ?? String(row.sender_id),
             });
           })();
         },
@@ -355,7 +427,7 @@ export default function InAppToasts() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [canInAppNotify, isChatRoute, messagePreview, pushToast, user?.id]);
+  }, [canInAppNotify, getProfileLite, isActiveChatWith, isChatRoute, messagePreview, prefs?.preview_text, pushToast, user?.id]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -375,6 +447,7 @@ export default function InAppToasts() {
             let name = 'Someone';
             let avatarUrl: string | null = null;
             let otherId: string | null = null;
+            let reactorProfileId: string | null = null;
             try {
               const { data: messageRow } = await supabase
                 .from('messages')
@@ -385,13 +458,10 @@ export default function InAppToasts() {
               if (messageRow.sender_id !== user.id && messageRow.receiver_id !== user.id) return;
               otherId = messageRow.sender_id === user.id ? messageRow.receiver_id : messageRow.sender_id;
               if (isActiveChatWith(otherId)) return;
-              const { data } = await supabase
-                .from('profiles')
-                .select('id, full_name, avatar_url')
-                .eq('id', row.user_id)
-                .maybeSingle();
-              if (data?.full_name) name = data.full_name;
-              if (data?.avatar_url) avatarUrl = data.avatar_url;
+              const p = await getProfileLite(String(row.user_id), { preferUserId: true });
+              if (p?.full_name) name = p.full_name;
+              if (p?.avatar_url) avatarUrl = p.avatar_url;
+              if (p?.id) reactorProfileId = p.id;
             } catch {}
 
             pushToast({
@@ -399,8 +469,8 @@ export default function InAppToasts() {
               title: name,
               body: row.emoji ? `reacted ${row.emoji}` : 'reacted to your message',
               avatarUrl,
-              profileId: row.user_id ?? otherId ?? null,
-              chatId: otherId ?? row.user_id ?? null,
+              profileId: reactorProfileId ?? null,
+              chatId: reactorProfileId ?? otherId ?? String(row.user_id),
             });
           })();
         },
@@ -410,7 +480,7 @@ export default function InAppToasts() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [canInAppNotify, isActiveChatWith, isChatRoute, pushToast, user?.id]);
+  }, [canInAppNotify, getProfileLite, isActiveChatWith, isChatRoute, pushToast, user?.id]);
 
   useEffect(() => {
     if (!profile?.id || !user?.id) return;
@@ -429,21 +499,19 @@ export default function InAppToasts() {
             const emoji = row.emoji || null;
             let name = 'Someone';
             let avatarUrl: string | null = null;
+            let reactorProfileId: string | null = null;
             try {
-              const { data } = await supabase
-                .from('profiles')
-                .select('full_name,avatar_url')
-                .eq('id', row.reactor_user_id)
-                .maybeSingle();
-              if (data?.full_name) name = data.full_name;
-              if (data?.avatar_url) avatarUrl = data.avatar_url;
+              const p = await getProfileLite(String(row.reactor_user_id), { preferUserId: true });
+              if (p?.full_name) name = p.full_name;
+              if (p?.avatar_url) avatarUrl = p.avatar_url;
+              if (p?.id) reactorProfileId = p.id;
             } catch {}
             pushToast({
               id: `react-${row.id}`,
               title: name,
               body: emoji ? `reacted ${emoji}` : 'reacted to your photo',
               avatarUrl,
-              profileId: row.reactor_user_id,
+              profileId: reactorProfileId ?? null,
             });
           })();
         },
@@ -453,7 +521,7 @@ export default function InAppToasts() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [canInAppNotify, profile?.id, pushToast, user?.id]);
+  }, [canInAppNotify, getProfileLite, profile?.id, pushToast, user?.id]);
 
   useEffect(() => {
     if (!profile?.id || !user?.id) return;
@@ -471,21 +539,19 @@ export default function InAppToasts() {
           void (async () => {
             let name = 'New note';
             let avatarUrl: string | null = null;
+            let senderProfileId: string | null = null;
             try {
-              const { data } = await supabase
-                .from('profiles')
-                .select('full_name,avatar_url')
-                .eq('id', row.sender_id)
-                .maybeSingle();
-              if (data?.full_name) name = data.full_name;
-              if (data?.avatar_url) avatarUrl = data.avatar_url;
+              const p = await getProfileLite(String(row.sender_id), { preferUserId: true });
+              if (p?.full_name) name = p.full_name;
+              if (p?.avatar_url) avatarUrl = p.avatar_url;
+              if (p?.id) senderProfileId = p.id;
             } catch {}
             pushToast({
               id: `note-${row.id}`,
               title: name,
               body: row.note || 'sent you a note',
               avatarUrl,
-              profileId: row.sender_id,
+              profileId: senderProfileId ?? null,
             });
           })();
         },
@@ -495,7 +561,7 @@ export default function InAppToasts() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [canInAppNotify, profile?.id, pushToast, user?.id]);
+  }, [canInAppNotify, getProfileLite, profile?.id, pushToast, user?.id]);
 
   useEffect(() => {
     if (!profile?.id || !user?.id) return;
@@ -513,21 +579,19 @@ export default function InAppToasts() {
           void (async () => {
             let name = 'New gift';
             let avatarUrl: string | null = null;
+            let senderProfileId: string | null = null;
             try {
-              const { data } = await supabase
-                .from('profiles')
-                .select('full_name,avatar_url')
-                .eq('id', row.sender_id)
-                .maybeSingle();
-              if (data?.full_name) name = data.full_name;
-              if (data?.avatar_url) avatarUrl = data.avatar_url;
+              const p = await getProfileLite(String(row.sender_id), { preferUserId: true });
+              if (p?.full_name) name = p.full_name;
+              if (p?.avatar_url) avatarUrl = p.avatar_url;
+              if (p?.id) senderProfileId = p.id;
             } catch {}
             pushToast({
               id: `gift-${row.id}`,
               title: name,
               body: `${name} sent you ${giftLabel(row.gift_type)}`,
               avatarUrl,
-              profileId: row.sender_id,
+              profileId: senderProfileId ?? null,
             });
           })();
         },
@@ -537,7 +601,7 @@ export default function InAppToasts() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [canInAppNotify, giftLabel, profile?.id, pushToast, user?.id]);
+  }, [canInAppNotify, getProfileLite, giftLabel, profile?.id, pushToast, user?.id]);
 
   useEffect(() => {
     if (!profile?.id || !user?.id) return;
@@ -556,7 +620,6 @@ export default function InAppToasts() {
             id: `boost-${row.id}`,
             title: 'Boost active',
             body: 'Your profile is now boosted',
-            emoji: '🚀',
             profileId: row.user_id,
           });
         },
@@ -598,7 +661,7 @@ export default function InAppToasts() {
               pushToast({
                 id: `superlike-${row.id}`,
                 title: name,
-                body: 'sent you a superlike',
+                body: 'Sent you a superlike',
                 avatarUrl,
                 profileId: row.swiper_id,
               });
@@ -608,7 +671,7 @@ export default function InAppToasts() {
               pushToast({
                 id: `like-${row.id}`,
                 title: name,
-                body: 'liked your profile',
+                body: 'Liked your profile',
                 avatarUrl,
                 profileId: row.swiper_id,
               });
@@ -642,7 +705,7 @@ export default function InAppToasts() {
               pushToast({
                 id: `superlike-${row.id}`,
                 title: name,
-                body: 'sent you a superlike',
+                body: 'Sent you a superlike',
                 avatarUrl,
                 profileId: row.swiper_id,
               });
@@ -652,7 +715,7 @@ export default function InAppToasts() {
               pushToast({
                 id: `like-${row.id}`,
                 title: name,
-                body: 'liked your profile',
+                body: 'Liked your profile',
                 avatarUrl,
                 profileId: row.swiper_id,
               });
@@ -670,73 +733,76 @@ export default function InAppToasts() {
   useEffect(() => {
     if (!profile?.id) return;
 
+    const handleMatch = async (row: any) => {
+      if (!row) return;
+      if (row.status !== 'ACCEPTED') return;
+      if (row.user1_id !== profile.id && row.user2_id !== profile.id) return;
+      if (!canInAppNotify('matches')) return;
+
+      const otherId = row.user1_id === profile.id ? row.user2_id : row.user1_id;
+      if (!otherId) return;
+
+      let otherName = 'them';
+      let otherAvatar: string | null = null;
+      let otherUserId: string | null = null;
+
+      try {
+        const { data } = await supabase
+          .from('profiles')
+          .select('id,user_id,full_name,avatar_url')
+          .eq('id', otherId)
+          .maybeSingle();
+        const profileRow = data as any;
+        if (profileRow?.full_name) otherName = profileRow.full_name;
+        if (profileRow?.avatar_url) otherAvatar = profileRow.avatar_url;
+        if (profileRow?.user_id) otherUserId = profileRow.user_id;
+      } catch {
+        // best-effort only
+      }
+
+      // Mirror server dedupe: if the user just got "NAME accepted", skip the match toast.
+      if (otherUserId && user?.id) {
+        try {
+          const { data: sm } = await supabase
+            .from('system_messages')
+            .select('id')
+            .eq('user_id', user.id)
+            .eq('peer_user_id', otherUserId)
+            .eq('event_type', 'request_accepted')
+            .gte('created_at', new Date(Date.now() - 30_000).toISOString())
+            .limit(1);
+          if (Array.isArray(sm) && sm.length) return;
+        } catch {
+          // ignore
+        }
+      }
+
+      pushToast({
+        id: `match-${row.id}`,
+        title: "It's a match",
+        body: `You and ${otherName || 'them'} matched - say hi.`,
+        avatarUrl: otherAvatar,
+        profileId: otherId,
+      });
+    };
+
     const channel = supabase
       .channel(`inapp_matches:${profile.id}`)
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'matches' },
         (payload) => {
-          const row = payload.new as any;
-          if (!row) return;
-          if (row.status !== 'ACCEPTED') return;
-          if (row.user1_id !== profile.id && row.user2_id !== profile.id) return;
-          if (!canInAppNotify('matches')) return;
-          void (async () => {
-            const otherId = row.user1_id === profile.id ? row.user2_id : row.user1_id;
-            if (!otherId) return;
-            let name = "It's a match";
-            let avatarUrl: string | null = null;
-            try {
-              const { data } = await supabase
-                .from('profiles')
-                .select('full_name,avatar_url')
-                .eq('id', otherId)
-                .maybeSingle();
-              if (data?.full_name) name = data.full_name;
-              if (data?.avatar_url) avatarUrl = data.avatar_url;
-            } catch {}
-            pushToast({
-              id: `match-${row.id}`,
-              title: name,
-              body: 'It’s a match',
-              avatarUrl,
-              profileId: otherId,
-            });
-          })();
+          void handleMatch((payload as any)?.new);
         },
       )
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'matches' },
         (payload) => {
-          const row = payload.new as any;
-          if (!row) return;
-          if (payload.old?.status === 'ACCEPTED') return;
-          if (row.status !== 'ACCEPTED') return;
-          if (row.user1_id !== profile.id && row.user2_id !== profile.id) return;
-          if (!canInAppNotify('matches')) return;
-          void (async () => {
-            const otherId = row.user1_id === profile.id ? row.user2_id : row.user1_id;
-            if (!otherId) return;
-            let name = "It's a match";
-            let avatarUrl: string | null = null;
-            try {
-              const { data } = await supabase
-                .from('profiles')
-                .select('full_name,avatar_url')
-                .eq('id', otherId)
-                .maybeSingle();
-              if (data?.full_name) name = data.full_name;
-              if (data?.avatar_url) avatarUrl = data.avatar_url;
-            } catch {}
-            pushToast({
-              id: `match-${row.id}`,
-              title: name,
-              body: 'It’s a match',
-              avatarUrl,
-              profileId: otherId,
-            });
-          })();
+          const next = (payload as any)?.new;
+          if (!next) return;
+          if ((payload as any)?.old?.status === next.status) return;
+          void handleMatch(next);
         },
       )
       .subscribe();
@@ -744,7 +810,7 @@ export default function InAppToasts() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [canInAppNotify, profile?.id, pushToast]);
+  }, [canInAppNotify, profile?.id, pushToast, user?.id]);
 
   const containerStyle = useMemo(
     () => [styles.container, { top: insets.top + 10 }],

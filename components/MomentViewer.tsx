@@ -359,6 +359,11 @@ export default function MomentViewer({ visible, users, startUserId, startMomentI
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <View style={styles.container}>
+        <LinearGradient
+          colors={['rgba(0,0,0,0.42)', 'rgba(0,0,0,0.12)', 'transparent']}
+          style={styles.topGradient}
+          pointerEvents="none"
+        />
         <View style={styles.progressRow}>
           {currentUser.moments.map((m, idx) => (
             <View key={m.id} style={styles.progressTrack}>
@@ -385,7 +390,7 @@ export default function MomentViewer({ visible, users, startUserId, startMomentI
             </View>
           </View>
           <Pressable onPress={onClose} style={styles.closeButton}>
-            <MaterialCommunityIcons name="close" size={20} color="#fff" />
+            <MaterialCommunityIcons name="close" size={18} color="#fff" />
           </Pressable>
         </View>
 
@@ -417,22 +422,28 @@ export default function MomentViewer({ visible, users, startUserId, startMomentI
         <LinearGradient colors={['transparent', 'rgba(0,0,0,0.6)']} style={styles.bottomGradient} pointerEvents="none" />
 
         <View style={styles.actions}>
-          <View style={styles.reactionColumn}>
-            {REACTIONS.map((emojiValue) => {
-              const isActive = userReaction === emojiValue;
-              const count = reactionCounts[emojiValue] || 0;
-              return (
-                <Pressable key={emojiValue} onPress={() => handleReact(emojiValue)} style={[styles.reactionButton, isActive && styles.reactionActive]}>
-                  <Text style={styles.reactionEmoji}>{emojiValue}</Text>
-                  {count > 0 ? <Text style={styles.reactionCount}>{count}</Text> : null}
-                </Pressable>
-              );
-            })}
-          </View>
-          <Pressable style={styles.commentButton} onPress={() => setCommentsVisible(true)}>
-            <MaterialCommunityIcons name="comment-outline" size={18} color="#fff" />
-            {commentCount > 0 ? <Text style={styles.commentCount}>{commentCount}</Text> : null}
-          </Pressable>
+          <LinearGradient
+            colors={['rgba(10,16,24,0.26)', 'rgba(10,16,24,0.16)']}
+            style={styles.actionsRail}
+          >
+            <View style={styles.reactionColumn}>
+              {REACTIONS.map((emojiValue) => {
+                const isActive = userReaction === emojiValue;
+                const count = reactionCounts[emojiValue] || 0;
+                return (
+                  <Pressable key={emojiValue} onPress={() => handleReact(emojiValue)} style={[styles.reactionButton, isActive && styles.reactionActive]}>
+                    <Text style={styles.reactionEmoji}>{emojiValue}</Text>
+                    {count > 0 ? <Text style={styles.reactionCount}>{count}</Text> : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+            <View style={styles.actionsDivider} />
+            <Pressable style={styles.commentButton} onPress={() => setCommentsVisible(true)}>
+              <MaterialCommunityIcons name="comment-outline" size={17} color="#fff" />
+              {commentCount > 0 ? <Text style={styles.commentCount}>{commentCount}</Text> : null}
+            </Pressable>
+          </LinearGradient>
         </View>
       </View>
 
@@ -443,12 +454,13 @@ export default function MomentViewer({ visible, users, startUserId, startMomentI
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  progressRow: { position: 'absolute', top: 48, left: 12, right: 12, flexDirection: 'row', gap: 6, zIndex: 10 },
-  progressTrack: { flex: 1, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.25)', overflow: 'hidden' },
-  progressFill: { height: 3, backgroundColor: '#fff', borderRadius: 2 },
+  topGradient: { position: 'absolute', left: 0, right: 0, top: 0, height: 164, zIndex: 5 },
+  progressRow: { position: 'absolute', top: 44, left: 12, right: 12, flexDirection: 'row', gap: 4, zIndex: 10 },
+  progressTrack: { flex: 1, height: 2, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.18)', overflow: 'hidden' },
+  progressFill: { height: 2, backgroundColor: 'rgba(255,255,255,0.96)', borderRadius: 999 },
   header: {
     position: 'absolute',
-    top: 64,
+    top: 56,
     left: 16,
     right: 16,
     flexDirection: 'row',
@@ -456,13 +468,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 10,
   },
-  userInfo: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  avatar: { width: 40, height: 40, borderRadius: 20 },
-  avatarFallback: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#111827', alignItems: 'center', justifyContent: 'center' },
+  userInfo: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  avatar: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)' },
+  avatarFallback: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(15,23,42,0.78)', alignItems: 'center', justifyContent: 'center' },
   avatarInitial: { color: '#fff', fontFamily: 'Archivo_700Bold' },
-  userName: { color: '#fff', fontFamily: 'Archivo_700Bold', fontSize: 15 },
-  timeLeft: { color: '#d1d5db', fontFamily: 'Manrope_500Medium', fontSize: 12, marginTop: 2 },
-  closeButton: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' },
+  userName: { color: '#fff', fontFamily: 'Archivo_700Bold', fontSize: 13.5 },
+  timeLeft: { color: 'rgba(255,255,255,0.78)', fontFamily: 'Manrope_500Medium', fontSize: 10.5, marginTop: 1 },
+  closeButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(15,23,42,0.24)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   mediaWrapper: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   media: { width: '100%', height: '100%' },
   mediaFallback: { width: '100%', height: '100%', backgroundColor: '#0b1220' },
@@ -481,45 +502,65 @@ const styles = StyleSheet.create({
     bottom: 120,
     left: 18,
     right: 18,
-    padding: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     borderRadius: 16,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: 'rgba(12,18,28,0.42)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
   },
-  captionText: { color: '#fff', fontFamily: 'Manrope_500Medium', fontSize: 14 },
+  captionText: { color: '#fff', fontFamily: 'Manrope_500Medium', fontSize: 13, lineHeight: 18 },
   bottomGradient: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 220 },
   actions: {
     position: 'absolute',
     right: 14,
     top: '50%',
-    transform: [{ translateY: -60 }],
+    transform: [{ translateY: -46 }],
     alignItems: 'center',
-    gap: 14,
   },
-  reactionColumn: { gap: 12, alignItems: 'center' },
+  actionsRail: {
+    alignItems: 'center',
+    paddingHorizontal: 6,
+    paddingVertical: 8,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  reactionColumn: { gap: 8, alignItems: 'center' },
+  actionsDivider: {
+    width: 20,
+    height: 1,
+    marginVertical: 8,
+    backgroundColor: 'rgba(255,255,255,0.14)',
+  },
   reactionButton: {
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    gap: 2,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(15,23,42,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
-  reactionActive: { backgroundColor: 'rgba(236,72,153,0.35)' },
-  reactionEmoji: { fontSize: 18 },
-  reactionCount: { color: '#fff', fontSize: 11, fontFamily: 'Manrope_600SemiBold' },
+  reactionActive: { backgroundColor: 'rgba(236,72,153,0.18)', borderColor: 'rgba(255,255,255,0.18)' },
+  reactionEmoji: { fontSize: 16 },
+  reactionCount: { color: '#fff', fontSize: 9, fontFamily: 'Manrope_600SemiBold' },
   commentButton: {
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(15,23,42,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
     alignSelf: 'center',
   },
-  commentCount: { color: '#fff', fontSize: 11, fontFamily: 'Manrope_600SemiBold', marginTop: 2 },
+  commentCount: { color: '#fff', fontSize: 9, fontFamily: 'Manrope_600SemiBold', marginTop: 2 },
   gestureLayer: {
     ...StyleSheet.absoluteFillObject,
   },

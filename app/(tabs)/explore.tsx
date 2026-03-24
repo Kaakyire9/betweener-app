@@ -1,13 +1,14 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
+import { readCache, writeCache } from '@/lib/persisted-cache';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useFocusEffect } from '@react-navigation/native';
-import { router } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Image, Modal, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Notice from '@/components/ui/Notice';
 
 type Circle = {
   id: string;
@@ -28,6 +29,12 @@ type CircleMembership = {
   circles?: Circle | null;
 };
 
+type CirclesCache = {
+  myCircles: CircleMembership[];
+  discoverCircles: Circle[];
+  circleImageUrls: Record<string, string>;
+};
+
 const normalizeCircle = (input: Circle | Circle[] | null | undefined): Circle | null => {
   if (!input) return null;
   return Array.isArray(input) ? (input[0] ?? null) : input;
@@ -45,8 +52,14 @@ export default function CirclesScreen() {
   const [myCircles, setMyCircles] = useState<CircleMembership[]>([]);
   const [discoverCircles, setDiscoverCircles] = useState<Circle[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [circleImageUrls, setCircleImageUrls] = useState<Record<string, string>>({});
+  const circlesCacheKey = useMemo(
+    () => (currentProfileId ? `cache:circles:v1:${currentProfileId}` : null),
+    [currentProfileId],
+  );
+  const circlesCacheLoadedKeyRef = useRef<string | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
@@ -82,14 +95,58 @@ export default function CirclesScreen() {
     };
   }, [profile?.id, user?.id]);
 
+  // Cached-first: hydrate circles quickly, then refresh in background.
+  useEffect(() => {
+    if (!circlesCacheKey) return;
+    if (circlesCacheLoadedKeyRef.current === circlesCacheKey) return;
+    circlesCacheLoadedKeyRef.current = circlesCacheKey;
+
+    let cancelled = false;
+    (async () => {
+      const cached = await readCache<CirclesCache>(circlesCacheKey, 10 * 60_000);
+      if (cancelled || !cached) return;
+      if (Array.isArray(cached.myCircles) && cached.myCircles.length > 0) {
+        setMyCircles((prev) => (prev.length === 0 ? cached.myCircles : prev));
+      }
+      if (Array.isArray(cached.discoverCircles) && cached.discoverCircles.length > 0) {
+        setDiscoverCircles((prev) => (prev.length === 0 ? cached.discoverCircles : prev));
+      }
+      if (cached.circleImageUrls && Object.keys(cached.circleImageUrls).length > 0) {
+        setCircleImageUrls((prev) => (Object.keys(prev).length === 0 ? cached.circleImageUrls : prev));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [circlesCacheKey]);
+
+  const refreshCircleImageUrls = useCallback(async (circles: Circle[]) => {
+    if (!circles || circles.length === 0) return {};
+    const imagePairs = await Promise.all(
+      circles.map(async (circle) => {
+        if (!circle.image_path) return [circle.id, null] as const;
+        const { data } = await supabase.storage.from('circle-images').createSignedUrl(circle.image_path, 3600);
+        return [circle.id, data?.signedUrl ?? null] as const;
+      }),
+    );
+    const nextMap: Record<string, string> = {};
+    imagePairs.forEach(([id, url]) => {
+      if (url) nextMap[id] = url;
+    });
+    return nextMap;
+  }, []);
+
   const loadCircles = useCallback(async () => {
     if (!currentProfileId) return;
     setLoading(true);
+    setLoadError(null);
     try {
-      const { data: membershipRows } = await supabase
+      const { data: membershipRows, error: membershipError } = await supabase
         .from('circle_members')
         .select('id,circle_id,role,status,circles (id,name,description,visibility,category,created_by_profile_id,image_path,image_updated_at)')
         .eq('profile_id', currentProfileId);
+      if (membershipError) throw membershipError;
 
       const memberships: CircleMembership[] = (membershipRows || []).map((row: any) => ({
         id: String(row.id),
@@ -100,12 +157,13 @@ export default function CirclesScreen() {
       }));
       setMyCircles(memberships);
 
-      const { data: circlesRows } = await supabase
+      const { data: circlesRows, error: circlesError } = await supabase
         .from('circles')
         .select('id,name,description,visibility,category,created_by_profile_id,image_path,image_updated_at')
         .eq('visibility', 'public')
         .order('created_at', { ascending: false })
         .limit(24);
+      if (circlesError) throw circlesError;
 
       const joinedIds = new Set(memberships.map((m) => String(m.circle_id)));
       const filtered = (circlesRows || []).filter((c) => !joinedIds.has(String(c.id)));
@@ -115,24 +173,38 @@ export default function CirclesScreen() {
         ...memberships.map((m) => m.circles).filter(Boolean) as Circle[],
         ...(filtered as Circle[]),
       ];
-      const imagePairs = await Promise.all(
-        allCircles.map(async (circle) => {
-          if (!circle.image_path) return [circle.id, null] as const;
-          const { data } = await supabase.storage
-            .from('circle-images')
-            .createSignedUrl(circle.image_path, 3600);
-          return [circle.id, data?.signedUrl ?? null] as const;
-        }),
-      );
-      const nextMap: Record<string, string> = {};
-      imagePairs.forEach(([id, url]) => {
-        if (url) nextMap[id] = url;
-      });
-      setCircleImageUrls(nextMap);
+
+      // Persist the list immediately; don't block on signed URL generation.
+      if (circlesCacheKey) {
+        void writeCache(circlesCacheKey, {
+          myCircles: memberships,
+          discoverCircles: filtered as Circle[],
+          circleImageUrls: {},
+        });
+      }
+
+      void (async () => {
+        try {
+          const nextMap = await refreshCircleImageUrls(allCircles);
+          setCircleImageUrls(nextMap);
+          if (circlesCacheKey) {
+            void writeCache(circlesCacheKey, {
+              myCircles: memberships,
+              discoverCircles: filtered as Circle[],
+              circleImageUrls: nextMap,
+            });
+          }
+        } catch {
+          // ignore image URL errors
+        }
+      })();
+    } catch (_e) {
+      // Keep whatever we have (cache/previous state) and surface a retry CTA.
+      setLoadError('Could not load circles. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
-  }, [currentProfileId]);
+  }, [circlesCacheKey, currentProfileId, refreshCircleImageUrls]);
 
   useFocusEffect(
     useCallback(() => {
@@ -203,6 +275,55 @@ export default function CirclesScreen() {
     router.push({ pathname: '/circles/[id]', params: { id: String(circleId) } });
   }, []);
 
+  const renderEmptyCirclesCard = useCallback(
+    ({
+      badge,
+      title,
+      body,
+      highlights,
+      primaryLabel,
+      onPrimary,
+      secondaryLabel,
+      onSecondary,
+    }: {
+      badge: string;
+      title: string;
+      body: string;
+      highlights: { icon: string; text: string }[];
+      primaryLabel: string;
+      onPrimary: () => void;
+      secondaryLabel?: string;
+      onSecondary?: () => void;
+    }) => (
+      <View style={styles.emptyCard}>
+        <View style={styles.emptyBadge}>
+          <Text style={styles.emptyBadgeText}>{badge}</Text>
+        </View>
+        <Text style={styles.emptyTitle}>{title}</Text>
+        <Text style={styles.emptyHint}>{body}</Text>
+        <View style={styles.emptyHighlights}>
+          {highlights.map((item) => (
+            <View key={item.text} style={styles.emptyHighlightRow}>
+              <MaterialCommunityIcons name={item.icon as any} size={16} color={theme.tint} />
+              <Text style={styles.emptyHighlightText}>{item.text}</Text>
+            </View>
+          ))}
+        </View>
+        <View style={styles.emptyActions}>
+          <TouchableOpacity style={styles.primaryButton} onPress={onPrimary}>
+            <Text style={styles.primaryText}>{primaryLabel}</Text>
+          </TouchableOpacity>
+          {secondaryLabel && onSecondary ? (
+            <TouchableOpacity style={styles.secondaryButton} onPress={onSecondary}>
+              <Text style={styles.secondaryText}>{secondaryLabel}</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </View>
+    ),
+    [styles, theme.tint],
+  );
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -216,13 +337,32 @@ export default function CirclesScreen() {
         </TouchableOpacity>
       </View>
 
+      {loadError && myCircles.length === 0 && discoverCircles.length === 0 ? (
+        <Notice
+          title="Couldn't load circles"
+          message={loadError}
+          actionLabel="Retry"
+          onAction={() => void loadCircles()}
+          icon="cloud-alert"
+        />
+      ) : null}
+
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>My circles</Text>
         {myCircles.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyText}>No circles yet.</Text>
-            <Text style={styles.emptyHint}>Create a trusted space or join one.</Text>
-          </View>
+          renderEmptyCirclesCard({
+            badge: 'Start your network',
+            title: 'No circles yet, but your people can start here',
+            body: 'Create a trusted room for introductions, or step into one that already matches your energy.',
+            highlights: [
+              { icon: 'shield-check-outline', text: 'Private circles feel curated, safer, and more intentional.' },
+              { icon: 'account-group-outline', text: 'A strong circle turns introductions into warmer conversations.' },
+            ],
+            primaryLabel: 'Create a circle',
+            onPrimary: () => setCreateOpen(true),
+            secondaryLabel: 'Refresh',
+            onSecondary: () => void loadCircles(),
+          })
         ) : (
           myCircles.map((membership) => {
             const circle = membership.circles;
@@ -263,10 +403,19 @@ export default function CirclesScreen() {
         {loading && discoverCircles.length === 0 ? (
           <Text style={styles.emptyText}>Loading circles...</Text>
         ) : discoverCircles.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyText}>No public circles right now.</Text>
-            <Text style={styles.emptyHint}>Start one to set the tone.</Text>
-          </View>
+          renderEmptyCirclesCard({
+            badge: 'Curated discovery',
+            title: 'No public circles are open right now',
+            body: 'That usually means this space is still early or your future circle has not been created yet.',
+            highlights: [
+              { icon: 'star-four-points-outline', text: 'Founding circles help shape the culture other members will feel.' },
+              { icon: 'refresh', text: 'Check back after a refresh as new communities can appear at any time.' },
+            ],
+            primaryLabel: 'Create one now',
+            onPrimary: () => setCreateOpen(true),
+            secondaryLabel: 'Refresh',
+            onSecondary: () => void loadCircles(),
+          })
         ) : (
           discoverCircles.map((circle) => (
             <View key={circle.id} style={styles.card}>
@@ -431,14 +580,53 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     secondaryText: { color: theme.text, fontWeight: '600', fontSize: 12 },
     emptyCard: {
       padding: 14,
-      borderRadius: 16,
+      borderRadius: 20,
       borderWidth: 1,
       borderColor: theme.outline,
       backgroundColor: theme.backgroundSubtle,
-      gap: 6,
+      gap: 10,
     },
-    emptyText: { fontSize: 12, color: theme.textMuted },
-    emptyHint: { fontSize: 11, color: theme.textMuted },
+    emptyBadge: {
+      alignSelf: 'flex-start',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.outline,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff',
+    },
+    emptyBadgeText: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: theme.textMuted,
+      letterSpacing: 0.3,
+    },
+    emptyTitle: {
+      fontSize: 17,
+      lineHeight: 22,
+      color: theme.text,
+      fontFamily: 'PlayfairDisplay_700Bold',
+    },
+    emptyText: { fontSize: 12, color: theme.textMuted, lineHeight: 20 },
+    emptyHint: { fontSize: 12, color: theme.textMuted, lineHeight: 20 },
+    emptyHighlights: { gap: 8 },
+    emptyHighlightRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 8,
+    },
+    emptyHighlightText: {
+      flex: 1,
+      fontSize: 12,
+      lineHeight: 18,
+      color: theme.textMuted,
+    },
+    emptyActions: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+      marginTop: 2,
+    },
     modalBackdrop: {
       flex: 1,
       backgroundColor: 'rgba(0,0,0,0.35)',

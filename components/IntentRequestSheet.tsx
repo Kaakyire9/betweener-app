@@ -1,9 +1,11 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Dimensions, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 
 type IntentRequestType = 'connect' | 'date_request' | 'like_with_note' | 'circle_intro';
 
@@ -12,22 +14,27 @@ type IntentRequestSheetProps = {
   onClose: () => void;
   recipientId?: string | null;
   recipientName?: string | null;
+  defaultType?: IntentRequestType;
+  prefillMessage?: string | null;
   metadata?: Record<string, unknown>;
   onSent?: (requestId: string | null) => void;
 };
 
 const optionLabels: { type: IntentRequestType; label: string; subtitle: string; icon: string }[] = [
   { type: 'connect', label: 'Ask to chat', subtitle: 'Start a direct connection', icon: 'message-outline' },
-  { type: 'date_request', label: 'Ask on a date', subtitle: 'Suggest a plan', icon: 'calendar-heart' },
   { type: 'like_with_note', label: 'Like with note', subtitle: 'Add a short note', icon: 'text-box-plus-outline' },
   { type: 'circle_intro', label: 'Circle intro', subtitle: 'Contextual connect', icon: 'account-group-outline' },
 ];
+
+const { height: screenHeight } = Dimensions.get('window');
 
 export default function IntentRequestSheet({
   visible,
   onClose,
   recipientId,
   recipientName,
+  defaultType,
+  prefillMessage,
   metadata,
   onSent,
 }: IntentRequestSheetProps) {
@@ -35,11 +42,14 @@ export default function IntentRequestSheet({
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const { profile } = useAuth();
+  const myProfileId = profile?.id ? String(profile.id) : null;
   const [selectedType, setSelectedType] = useState<IntentRequestType>('connect');
   const [message, setMessage] = useState('');
   const [suggestedPlace, setSuggestedPlace] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const allowCircle = metadata?.source === 'circles';
+  const isSuggested = metadata?.source === 'intent_suggested';
   const options = useMemo(
     () => (allowCircle ? optionLabels : optionLabels.filter((opt) => opt.type !== 'circle_intro')),
     [allowCircle],
@@ -47,19 +57,56 @@ export default function IntentRequestSheet({
 
   useEffect(() => {
     if (visible) {
-      setSelectedType('connect');
-      setMessage('');
+      const nextDefault =
+        defaultType && options.some((option) => option.type === defaultType)
+          ? defaultType
+          : 'connect';
+      setSelectedType(nextDefault);
+      setMessage(typeof prefillMessage === 'string' ? prefillMessage : '');
       setSuggestedPlace('');
     }
-  }, [visible]);
+  }, [defaultType, options, prefillMessage, visible]);
+
+  const suggested = useMemo(() => {
+    const raw = typeof prefillMessage === 'string' ? prefillMessage.trim() : '';
+    return raw.length ? raw : null;
+  }, [prefillMessage]);
 
   const handleSubmit = async () => {
     if (!recipientId) {
       Alert.alert('Request', 'Select a profile to send a request.');
       return;
     }
+    if (!myProfileId) {
+      Alert.alert('Request', 'Please finish setting up your profile and try again.');
+      return;
+    }
     setSubmitting(true);
     try {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+      // Premium guardrail: only 1 pending request per pair (any direction/type).
+      // We still enforce this server-side, but checking here prevents confusing "success" states and double-taps.
+      const { data: pendingBetween, error: pendingErr } = await supabase
+        .from('intent_requests')
+        .select('id,actor_id,recipient_id,type,expires_at,status')
+        .eq('status', 'pending')
+        .gt('expires_at', new Date().toISOString())
+        .or(
+          `and(actor_id.eq.${myProfileId},recipient_id.eq.${recipientId}),and(actor_id.eq.${recipientId},recipient_id.eq.${myProfileId})`,
+        )
+        .limit(1);
+      if (pendingErr) throw pendingErr;
+      if (Array.isArray(pendingBetween) && pendingBetween.length > 0) {
+        const existing = pendingBetween[0] as any;
+        const incoming = String(existing?.actor_id) === String(recipientId);
+        const msg = incoming
+          ? `You already have a request from ${recipientName || 'this person'}. Open Intent to respond.`
+          : `You've already placed a request to ${recipientName || 'this person'}. Please wait for their response.`;
+        Alert.alert('Request pending', msg);
+        return;
+      }
+
       const { data, error } = await supabase.rpc('rpc_create_intent_request', {
         p_recipient_id: recipientId,
         p_type: selectedType,
@@ -70,47 +117,98 @@ export default function IntentRequestSheet({
       });
       if (error) throw error;
       if (data) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         Alert.alert('Request sent', `Your request to ${recipientName || 'connect'} is on the way.`);
         onSent?.(data as string);
         onClose();
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Please try again.';
-      Alert.alert('Request failed', msg);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      // Supabase errors are often plain objects (not Error instances).
+      const supaMessage =
+        err && typeof err === 'object' && 'message' in err && typeof (err as any).message === 'string'
+          ? (err as any).message
+          : null;
+      const supaDetails =
+        err && typeof err === 'object' && 'details' in err && typeof (err as any).details === 'string'
+          ? (err as any).details
+          : null;
+      const msg = err instanceof Error ? err.message : supaMessage || 'Please try again.';
+      // Friendly UX for common guardrail errors.
+      const friendly =
+        msg && /already have a request from them|open intent to respond/i.test(msg)
+          ? `You already have a request from ${recipientName || 'this person'}. Open Intent to respond.`
+          : msg && /already sent|already placed|request pending/i.test(msg)
+            ? `You've already placed a request to ${recipientName || 'this person'}. Please wait for their response.`
+            : msg && /already matched/i.test(msg)
+              ? 'You are already matched. Continue the conversation in chat.'
+              : null;
+      Alert.alert('Request failed', friendly ?? (supaDetails ? `${msg}\n\n${supaDetails}` : msg));
+      // Surface the full object for debugging/telemetry.
+      console.error('[intent] rpc_create_intent_request failed', err);
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={() => {
+        Keyboard.dismiss();
+        onClose();
+      }}
+    >
       <View style={styles.backdrop}>
-        <Pressable style={styles.backdropPress} onPress={onClose} />
+        <Pressable
+          style={styles.backdropPress}
+          onPress={() => {
+            Keyboard.dismiss();
+            onClose();
+          }}
+        />
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 16 : 0}
-          style={{ width: '100%' }}
+          behavior="padding"
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 12 : 6}
+          style={{ width: '100%', justifyContent: 'flex-end' }}
         >
-          <View style={styles.sheet}>
-            <ScrollView
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.sheetContent}
-            >
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={styles.sheet}>
+              <ScrollView
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.sheetContent}
+              >
               <View style={styles.header}>
-                <Text style={styles.title}>Send Request</Text>
-                <TouchableOpacity onPress={onClose} activeOpacity={0.85} style={styles.closeButton}>
+                <Text style={styles.title}>{isSuggested ? 'Send intent' : 'Send request'}</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    onClose();
+                  }}
+                  activeOpacity={0.85}
+                  style={styles.closeButton}
+                >
                   <MaterialCommunityIcons name="close" size={18} color={theme.text} />
                 </TouchableOpacity>
               </View>
-              <Text style={styles.subtitle}>Choose how you want to connect.</Text>
+              <Text style={styles.subtitle}>
+                {recipientName ? `To ${recipientName}. ` : ''}
+                Choose how you want to connect.
+              </Text>
 
               <View style={styles.options}>
                 {options.map((opt) => (
                   <TouchableOpacity
                     key={opt.type}
                     style={[styles.optionRow, selectedType === opt.type && styles.optionRowActive]}
-                    onPress={() => setSelectedType(opt.type)}
+                    onPress={() => {
+                      void Haptics.selectionAsync();
+                      setSelectedType(opt.type);
+                    }}
                     activeOpacity={0.85}
                   >
                     <View style={[styles.optionIcon, selectedType === opt.type && styles.optionIconActive]}>
@@ -126,6 +224,38 @@ export default function IntentRequestSheet({
 
               <View style={styles.inputBlock}>
                 <Text style={styles.inputLabel}>Message (optional)</Text>
+                {suggested ? (
+                  <View style={styles.suggestedRow}>
+                    <View style={styles.suggestedLeft}>
+                      <MaterialCommunityIcons name="star-four-points" size={14} color={theme.tint} />
+                      <Text style={styles.suggestedLabel}>Suggested opener</Text>
+                    </View>
+                    <View style={styles.suggestedActions}>
+                      <TouchableOpacity
+                        style={styles.suggestedAction}
+                        onPress={() => {
+                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          setMessage(suggested);
+                        }}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={styles.suggestedActionText}>Use</Text>
+                      </TouchableOpacity>
+                      {message.trim().length ? (
+                        <TouchableOpacity
+                          style={styles.suggestedAction}
+                          onPress={() => {
+                            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            setMessage('');
+                          }}
+                          activeOpacity={0.85}
+                        >
+                          <Text style={styles.suggestedActionText}>Clear</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  </View>
+                ) : null}
                 <TextInput
                   value={message}
                   onChangeText={setMessage}
@@ -157,8 +287,9 @@ export default function IntentRequestSheet({
               >
                 <Text style={styles.submitText}>{submitting ? 'Sending...' : 'Send request'}</Text>
               </TouchableOpacity>
-            </ScrollView>
-          </View>
+              </ScrollView>
+            </View>
+          </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
       </View>
     </Modal>
@@ -173,14 +304,15 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: theme.background,
       borderTopLeftRadius: 20,
       borderTopRightRadius: 20,
+      maxHeight: Math.round(screenHeight * 0.74),
       paddingHorizontal: 16,
-      paddingTop: 14,
-      paddingBottom: 20,
+      paddingTop: 12,
+      paddingBottom: Platform.OS === 'android' ? 10 : 16,
       borderWidth: 1,
       borderColor: theme.outline,
     },
     sheetContent: {
-      paddingBottom: 12,
+      paddingBottom: Platform.OS === 'android' ? 10 : 8,
     },
     header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     title: { fontSize: 18, fontWeight: '800', color: theme.text },
@@ -226,6 +358,25 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     optionSubtitle: { fontSize: 12, color: theme.textMuted, marginTop: 2 },
     inputBlock: { marginTop: 14 },
     inputLabel: { fontSize: 12, fontWeight: '700', color: theme.text, marginBottom: 6 },
+    suggestedRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      marginBottom: 8,
+    },
+    suggestedLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    suggestedLabel: { fontSize: 12, color: theme.textMuted, fontWeight: '700' },
+    suggestedActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    suggestedAction: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.outline,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : theme.backgroundSubtle,
+    },
+    suggestedActionText: { color: theme.tint, fontWeight: '700', fontSize: 12 },
     input: {
       borderWidth: 1,
       borderColor: theme.outline,

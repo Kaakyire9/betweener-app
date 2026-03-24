@@ -7,7 +7,9 @@ export type Match = {
   location?: string;
   tribe?: string;
   religion?: string;
+  gender?: string;
   interests: string[];
+  commonInterests?: string[];
   avatar_url?: string;
   distance?: string;
   distanceKm?: number;

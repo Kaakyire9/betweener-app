@@ -14,6 +14,351 @@ export type Database = {
   }
   public: {
     Tables: {
+      account_merge_cases: {
+        Row: {
+          candidate_reason: string | null
+          created_at: string
+          created_by: string | null
+          evidence: Json
+          executed_at: string | null
+          executed_by: string | null
+          execution_summary: Json
+          id: string
+          notes: string | null
+          preflight_summary: Json
+          request_channel: string
+          requester_user_id: string | null
+          resolved_at: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          source_profile_id: string | null
+          source_user_id: string
+          status: string
+          target_profile_id: string | null
+          target_user_id: string
+          updated_at: string
+        }
+        Insert: {
+          candidate_reason?: string | null
+          created_at?: string
+          created_by?: string | null
+          evidence?: Json
+          executed_at?: string | null
+          executed_by?: string | null
+          execution_summary?: Json
+          id?: string
+          notes?: string | null
+          preflight_summary?: Json
+          request_channel?: string
+          requester_user_id?: string | null
+          resolved_at?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          source_profile_id?: string | null
+          source_user_id: string
+          status?: string
+          target_profile_id?: string | null
+          target_user_id: string
+          updated_at?: string
+        }
+        Update: {
+          candidate_reason?: string | null
+          created_at?: string
+          created_by?: string | null
+          evidence?: Json
+          executed_at?: string | null
+          executed_by?: string | null
+          execution_summary?: Json
+          id?: string
+          notes?: string | null
+          preflight_summary?: Json
+          request_channel?: string
+          requester_user_id?: string | null
+          resolved_at?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          source_profile_id?: string | null
+          source_user_id?: string
+          status?: string
+          target_profile_id?: string | null
+          target_user_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "account_merge_cases_source_profile_id_fkey"
+            columns: ["source_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "account_merge_cases_target_profile_id_fkey"
+            columns: ["target_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      account_merge_events: {
+        Row: {
+          actor_user_id: string | null
+          created_at: string
+          event_type: string
+          id: string
+          merge_case_id: string
+          metadata: Json
+        }
+        Insert: {
+          actor_user_id?: string | null
+          created_at?: string
+          event_type: string
+          id?: string
+          merge_case_id: string
+          metadata?: Json
+        }
+        Update: {
+          actor_user_id?: string | null
+          created_at?: string
+          event_type?: string
+          id?: string
+          merge_case_id?: string
+          metadata?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "account_merge_events_merge_case_id_fkey"
+            columns: ["merge_case_id"]
+            isOneToOne: false
+            referencedRelation: "account_merge_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      account_merge_execution_failures: {
+        Row: {
+          actor_user_id: string | null
+          context: Json
+          created_at: string
+          error_context: string | null
+          error_detail: string | null
+          error_hint: string | null
+          error_message: string
+          failed_step: string | null
+          id: string
+          merge_case_id: string | null
+          source_user_id: string | null
+          sqlstate: string | null
+          target_user_id: string | null
+        }
+        Insert: {
+          actor_user_id?: string | null
+          context?: Json
+          created_at?: string
+          error_context?: string | null
+          error_detail?: string | null
+          error_hint?: string | null
+          error_message: string
+          failed_step?: string | null
+          id?: string
+          merge_case_id?: string | null
+          source_user_id?: string | null
+          sqlstate?: string | null
+          target_user_id?: string | null
+        }
+        Update: {
+          actor_user_id?: string | null
+          context?: Json
+          created_at?: string
+          error_context?: string | null
+          error_detail?: string | null
+          error_hint?: string | null
+          error_message?: string
+          failed_step?: string | null
+          id?: string
+          merge_case_id?: string | null
+          source_user_id?: string | null
+          sqlstate?: string | null
+          target_user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "account_merge_execution_failures_merge_case_id_fkey"
+            columns: ["merge_case_id"]
+            isOneToOne: false
+            referencedRelation: "account_merge_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      account_recovery_request_events: {
+        Row: {
+          actor_user_id: string | null
+          created_at: string
+          event_type: string
+          id: string
+          metadata: Json
+          request_id: string
+        }
+        Insert: {
+          actor_user_id?: string | null
+          created_at?: string
+          event_type: string
+          id?: string
+          metadata?: Json
+          request_id: string
+        }
+        Update: {
+          actor_user_id?: string | null
+          created_at?: string
+          event_type?: string
+          id?: string
+          metadata?: Json
+          request_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "account_recovery_request_events_request_id_fkey"
+            columns: ["request_id"]
+            isOneToOne: false
+            referencedRelation: "account_recovery_requests"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      account_recovery_requests: {
+        Row: {
+          contact_email: string | null
+          created_at: string
+          current_sign_in_method: string | null
+          evidence: Json
+          id: string
+          linked_merge_case_id: string | null
+          note: string | null
+          previous_account_email: string | null
+          previous_sign_in_method: string | null
+          requester_profile_id: string | null
+          requester_user_id: string
+          review_notes: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          contact_email?: string | null
+          created_at?: string
+          current_sign_in_method?: string | null
+          evidence?: Json
+          id?: string
+          linked_merge_case_id?: string | null
+          note?: string | null
+          previous_account_email?: string | null
+          previous_sign_in_method?: string | null
+          requester_profile_id?: string | null
+          requester_user_id: string
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          contact_email?: string | null
+          created_at?: string
+          current_sign_in_method?: string | null
+          evidence?: Json
+          id?: string
+          linked_merge_case_id?: string | null
+          note?: string | null
+          previous_account_email?: string | null
+          previous_sign_in_method?: string | null
+          requester_profile_id?: string | null
+          requester_user_id?: string
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "account_recovery_requests_linked_merge_case_id_fkey"
+            columns: ["linked_merge_case_id"]
+            isOneToOne: false
+            referencedRelation: "account_merge_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "account_recovery_requests_requester_profile_id_fkey"
+            columns: ["requester_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      betweener_venues: {
+        Row: {
+          address: string
+          badges: Json
+          city: string
+          created_at: string
+          google_place_id: string | null
+          id: string
+          is_active: boolean
+          lat: number
+          lng: number
+          map_link: string | null
+          metadata: Json
+          name: string
+          region: string | null
+          slug: string
+          sort_order: number
+          summary: string | null
+          updated_at: string
+        }
+        Insert: {
+          address: string
+          badges?: Json
+          city: string
+          created_at?: string
+          google_place_id?: string | null
+          id?: string
+          is_active?: boolean
+          lat: number
+          lng: number
+          map_link?: string | null
+          metadata?: Json
+          name: string
+          region?: string | null
+          slug: string
+          sort_order?: number
+          summary?: string | null
+          updated_at?: string
+        }
+        Update: {
+          address?: string
+          badges?: Json
+          city?: string
+          created_at?: string
+          google_place_id?: string | null
+          id?: string
+          is_active?: boolean
+          lat?: number
+          lng?: number
+          map_link?: string | null
+          metadata?: Json
+          name?: string
+          region?: string | null
+          slug?: string
+          sort_order?: number
+          summary?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       blocks: {
         Row: {
           blocked_id: string
@@ -154,6 +499,213 @@ export type Database = {
           },
         ]
       }
+      date_plan_concierge_requests: {
+        Row: {
+          assigned_admin_user_id: string | null
+          created_at: string
+          date_plan_id: string
+          id: string
+          note: string | null
+          requested_by_profile_id: string
+          requested_by_user_id: string
+          resolved_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          assigned_admin_user_id?: string | null
+          created_at?: string
+          date_plan_id: string
+          id?: string
+          note?: string | null
+          requested_by_profile_id: string
+          requested_by_user_id: string
+          resolved_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          assigned_admin_user_id?: string | null
+          created_at?: string
+          date_plan_id?: string
+          id?: string
+          note?: string | null
+          requested_by_profile_id?: string
+          requested_by_user_id?: string
+          resolved_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "date_plan_concierge_requests_date_plan_id_fkey"
+            columns: ["date_plan_id"]
+            isOneToOne: true
+            referencedRelation: "date_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "date_plan_concierge_requests_requested_by_profile_id_fkey"
+            columns: ["requested_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      date_plans: {
+        Row: {
+          accepted_at: string | null
+          accepted_by_profile_id: string | null
+          city: string | null
+          concierge_requested: boolean
+          concierge_requested_at: string | null
+          concierge_requested_by_profile_id: string | null
+          created_at: string
+          creator_profile_id: string
+          creator_user_id: string
+          declined_at: string | null
+          declined_by_profile_id: string | null
+          id: string
+          lat: number | null
+          lng: number | null
+          message_id: string | null
+          note: string | null
+          parent_plan_id: string | null
+          place_address: string | null
+          place_badges: Json
+          place_name: string
+          place_source: string
+          place_summary: string | null
+          recipient_profile_id: string
+          recipient_user_id: string
+          response_kind: string
+          scheduled_for: string
+          status: string
+          updated_at: string
+          venue_id: string | null
+        }
+        Insert: {
+          accepted_at?: string | null
+          accepted_by_profile_id?: string | null
+          city?: string | null
+          concierge_requested?: boolean
+          concierge_requested_at?: string | null
+          concierge_requested_by_profile_id?: string | null
+          created_at?: string
+          creator_profile_id: string
+          creator_user_id: string
+          declined_at?: string | null
+          declined_by_profile_id?: string | null
+          id?: string
+          lat?: number | null
+          lng?: number | null
+          message_id?: string | null
+          note?: string | null
+          parent_plan_id?: string | null
+          place_address?: string | null
+          place_badges?: Json
+          place_name: string
+          place_source: string
+          place_summary?: string | null
+          recipient_profile_id: string
+          recipient_user_id: string
+          response_kind?: string
+          scheduled_for: string
+          status?: string
+          updated_at?: string
+          venue_id?: string | null
+        }
+        Update: {
+          accepted_at?: string | null
+          accepted_by_profile_id?: string | null
+          city?: string | null
+          concierge_requested?: boolean
+          concierge_requested_at?: string | null
+          concierge_requested_by_profile_id?: string | null
+          created_at?: string
+          creator_profile_id?: string
+          creator_user_id?: string
+          declined_at?: string | null
+          declined_by_profile_id?: string | null
+          id?: string
+          lat?: number | null
+          lng?: number | null
+          message_id?: string | null
+          note?: string | null
+          parent_plan_id?: string | null
+          place_address?: string | null
+          place_badges?: Json
+          place_name?: string
+          place_source?: string
+          place_summary?: string | null
+          recipient_profile_id?: string
+          recipient_user_id?: string
+          response_kind?: string
+          scheduled_for?: string
+          status?: string
+          updated_at?: string
+          venue_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "date_plans_accepted_by_profile_id_fkey"
+            columns: ["accepted_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "date_plans_concierge_requested_by_profile_id_fkey"
+            columns: ["concierge_requested_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "date_plans_creator_profile_id_fkey"
+            columns: ["creator_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "date_plans_declined_by_profile_id_fkey"
+            columns: ["declined_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "date_plans_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: true
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "date_plans_parent_plan_id_fkey"
+            columns: ["parent_plan_id"]
+            isOneToOne: false
+            referencedRelation: "date_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "date_plans_recipient_profile_id_fkey"
+            columns: ["recipient_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "date_plans_venue_id_fkey"
+            columns: ["venue_id"]
+            isOneToOne: false
+            referencedRelation: "betweener_venues"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       distance_calculations_cache: {
         Row: {
           accuracy: string
@@ -232,6 +784,41 @@ export type Database = {
         }
         Relationships: []
       }
+      intent_request_nudges: {
+        Row: {
+          created_at: string
+          id: string
+          intent_request_id: string
+          kind: string
+          metadata: Json
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          intent_request_id: string
+          kind: string
+          metadata?: Json
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          intent_request_id?: string
+          kind?: string
+          metadata?: Json
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "intent_request_nudges_intent_request_id_fkey"
+            columns: ["intent_request_id"]
+            isOneToOne: false
+            referencedRelation: "intent_requests"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       intent_requests: {
         Row: {
           actor_id: string
@@ -307,6 +894,30 @@ export type Database = {
         }
         Relationships: []
       }
+      internal_admins: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          email: string | null
+          role: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          email?: string | null
+          role?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          email?: string | null
+          role?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       matches: {
         Row: {
           created_at: string
@@ -343,6 +954,64 @@ export type Database = {
           {
             foreignKeyName: "fk_match_user2"
             columns: ["user2_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      merged_accounts: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          merge_case_id: string
+          note: string | null
+          source_profile_id: string
+          source_user_id: string
+          status: string
+          target_profile_id: string
+          target_user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          merge_case_id: string
+          note?: string | null
+          source_profile_id: string
+          source_user_id: string
+          status?: string
+          target_profile_id: string
+          target_user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          merge_case_id?: string
+          note?: string | null
+          source_profile_id?: string
+          source_user_id?: string
+          status?: string
+          target_profile_id?: string
+          target_user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "merged_accounts_merge_case_id_fkey"
+            columns: ["merge_case_id"]
+            isOneToOne: true
+            referencedRelation: "account_merge_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "merged_accounts_source_profile_id_fkey"
+            columns: ["source_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "merged_accounts_target_profile_id_fkey"
+            columns: ["target_profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -1072,32 +1741,111 @@ export type Database = {
           },
         ]
       }
+      profile_prompt_guesses: {
+        Row: {
+          attempts_count: number
+          created_at: string
+          guessed_value: string
+          id: string
+          is_correct: boolean
+          normalized_guess: string
+          profile_prompt_id: string
+          target_profile_id: string
+          updated_at: string
+          viewer_profile_id: string
+        }
+        Insert: {
+          attempts_count?: number
+          created_at?: string
+          guessed_value: string
+          id?: string
+          is_correct?: boolean
+          normalized_guess: string
+          profile_prompt_id: string
+          target_profile_id: string
+          updated_at?: string
+          viewer_profile_id: string
+        }
+        Update: {
+          attempts_count?: number
+          created_at?: string
+          guessed_value?: string
+          id?: string
+          is_correct?: boolean
+          normalized_guess?: string
+          profile_prompt_id?: string
+          target_profile_id?: string
+          updated_at?: string
+          viewer_profile_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_prompt_guesses_profile_prompt_id_fkey"
+            columns: ["profile_prompt_id"]
+            isOneToOne: false
+            referencedRelation: "profile_prompts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "profile_prompt_guesses_target_profile_id_fkey"
+            columns: ["target_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "profile_prompt_guesses_viewer_profile_id_fkey"
+            columns: ["viewer_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profile_prompts: {
         Row: {
           answer: string
           created_at: string
+          guess_mode: string | null
+          guess_options: Json | null
+          hint_text: string | null
           id: string
+          normalized_answer: string | null
           profile_id: string
           prompt_key: string
           prompt_title: string | null
+          prompt_type: string
+          reveal_policy: string
           updated_at: string
         }
         Insert: {
           answer: string
           created_at?: string
+          guess_mode?: string | null
+          guess_options?: Json | null
+          hint_text?: string | null
           id?: string
+          normalized_answer?: string | null
           profile_id: string
           prompt_key: string
           prompt_title?: string | null
+          prompt_type?: string
+          reveal_policy?: string
           updated_at?: string
         }
         Update: {
           answer?: string
           created_at?: string
+          guess_mode?: string | null
+          guess_options?: Json | null
+          hint_text?: string | null
           id?: string
+          normalized_answer?: string | null
           profile_id?: string
           prompt_key?: string
           prompt_title?: string | null
+          prompt_type?: string
+          reveal_policy?: string
           updated_at?: string
         }
         Relationships: [
@@ -1440,6 +2188,66 @@ export type Database = {
         }
         Relationships: []
       }
+      revenuecat_webhook_events: {
+        Row: {
+          aliases: string[]
+          app_user_id: string | null
+          created_at: string
+          environment: string | null
+          event_id: string
+          event_timestamp_ms: number | null
+          event_type: string
+          id: string
+          last_error: string | null
+          original_app_user_id: string | null
+          payload: Json
+          processed_at: string | null
+          processing_status: string
+          synced_user_ids: string[]
+          transferred_from: string[]
+          transferred_to: string[]
+          updated_at: string
+        }
+        Insert: {
+          aliases?: string[]
+          app_user_id?: string | null
+          created_at?: string
+          environment?: string | null
+          event_id: string
+          event_timestamp_ms?: number | null
+          event_type: string
+          id?: string
+          last_error?: string | null
+          original_app_user_id?: string | null
+          payload: Json
+          processed_at?: string | null
+          processing_status?: string
+          synced_user_ids?: string[]
+          transferred_from?: string[]
+          transferred_to?: string[]
+          updated_at?: string
+        }
+        Update: {
+          aliases?: string[]
+          app_user_id?: string | null
+          created_at?: string
+          environment?: string | null
+          event_id?: string
+          event_timestamp_ms?: number | null
+          event_type?: string
+          id?: string
+          last_error?: string | null
+          original_app_user_id?: string | null
+          payload?: Json
+          processed_at?: string | null
+          processing_status?: string
+          synced_user_ids?: string[]
+          transferred_from?: string[]
+          transferred_to?: string[]
+          updated_at?: string
+        }
+        Relationships: []
+      }
       settings: {
         Row: {
           created_at: string
@@ -1604,29 +2412,104 @@ export type Database = {
       subscriptions: {
         Row: {
           ends_at: string
+          external_customer_id: string | null
+          external_entitlement: string | null
+          external_environment: string | null
+          external_product_id: string | null
           id: string
           is_active: boolean
+          source: string
           started_at: string
           type: Database["public"]["Enums"]["subscription_type"]
+          updated_at: string
           user_id: string
         }
         Insert: {
           ends_at: string
+          external_customer_id?: string | null
+          external_entitlement?: string | null
+          external_environment?: string | null
+          external_product_id?: string | null
           id?: string
           is_active?: boolean
+          source?: string
           started_at?: string
           type: Database["public"]["Enums"]["subscription_type"]
+          updated_at?: string
           user_id: string
         }
         Update: {
           ends_at?: string
+          external_customer_id?: string | null
+          external_entitlement?: string | null
+          external_environment?: string | null
+          external_product_id?: string | null
           id?: string
           is_active?: boolean
+          source?: string
           started_at?: string
           type?: Database["public"]["Enums"]["subscription_type"]
+          updated_at?: string
           user_id?: string
         }
         Relationships: []
+      }
+      suggested_move_events: {
+        Row: {
+          batch_key: string | null
+          candidate_profile_id: string
+          created_at: string
+          event_type: string
+          id: string
+          is_hero: boolean | null
+          metadata: Json
+          slot_index: number | null
+          surface: string
+          viewer_profile_id: string
+          viewer_user_id: string
+        }
+        Insert: {
+          batch_key?: string | null
+          candidate_profile_id: string
+          created_at?: string
+          event_type: string
+          id?: string
+          is_hero?: boolean | null
+          metadata?: Json
+          slot_index?: number | null
+          surface?: string
+          viewer_profile_id: string
+          viewer_user_id: string
+        }
+        Update: {
+          batch_key?: string | null
+          candidate_profile_id?: string
+          created_at?: string
+          event_type?: string
+          id?: string
+          is_hero?: boolean | null
+          metadata?: Json
+          slot_index?: number | null
+          surface?: string
+          viewer_profile_id?: string
+          viewer_user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "suggested_move_events_candidate_profile_id_fkey"
+            columns: ["candidate_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "suggested_move_events_viewer_profile_id_fkey"
+            columns: ["viewer_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       swipes: {
         Row: {
@@ -2393,6 +3276,10 @@ export type Database = {
         Returns: boolean
       }
       geomfromewkt: { Args: { "": string }; Returns: unknown }
+      get_active_subscription_plan: {
+        Args: { p_user_id?: string }
+        Returns: Database["public"]["Enums"]["subscription_type"]
+      }
       get_nearby_users: {
         Args: { p_limit?: number; p_radius_km?: number; p_user_id: string }
         Returns: {
@@ -2528,6 +3415,24 @@ export type Database = {
           verified: boolean
         }[]
       }
+      get_viewed_profile_prompts: {
+        Args: { p_profile_id: string; p_viewer_profile_id?: string }
+        Returns: {
+          answer: string
+          created_at: string
+          guess_mode: string
+          guess_options: Json
+          hint_text: string
+          id: string
+          profile_id: string
+          prompt_key: string
+          prompt_title: string
+          prompt_type: string
+          reveal_policy: string
+          viewer_guess: string
+          viewer_guess_is_correct: boolean
+        }[]
+      }
       gettransactionid: { Args: never; Returns: unknown }
       is_circle_member: {
         Args: { p_circle_id: string; p_user_id: string }
@@ -2537,6 +3442,7 @@ export type Database = {
         Args: { p_circle_id: string; p_user_id: string }
         Returns: boolean
       }
+      is_internal_admin: { Args: never; Returns: boolean }
       is_match: { Args: { a: string; b: string }; Returns: boolean }
       is_quiet_hours: { Args: { p_user_id: string }; Returns: boolean }
       longtransactionsenabled: { Args: never; Returns: boolean }
@@ -2581,9 +3487,293 @@ export type Database = {
       postgis_version: { Args: never; Returns: string }
       postgis_wagyu_version: { Args: never; Returns: string }
       reset_daily_superlikes: { Args: never; Returns: undefined }
+      rpc_accept_date_plan: {
+        Args: { p_plan_id: string }
+        Returns: {
+          concierge_requested: boolean
+          plan_id: string
+          status: string
+        }[]
+      }
+      rpc_ack_verification_request: {
+        Args: { p_request_id: string }
+        Returns: boolean
+      }
+      rpc_admin_create_account_merge_case: {
+        Args: {
+          p_candidate_reason?: string
+          p_evidence?: Json
+          p_notes?: string
+          p_request_channel?: string
+          p_requester_user_id?: string
+          p_source_profile_id?: string
+          p_source_user_id: string
+          p_target_profile_id?: string
+          p_target_user_id: string
+        }
+        Returns: string
+      }
+      rpc_admin_dashboard_overview: { Args: never; Returns: Json }
+      rpc_admin_execute_account_merge_case: {
+        Args: { p_case_id: string }
+        Returns: Json
+      }
+      rpc_admin_get_account_merge_case: {
+        Args: { p_case_id: string }
+        Returns: {
+          candidate_reason: string
+          created_at: string
+          created_by: string
+          evidence: Json
+          executed_at: string
+          executed_by: string
+          execution_summary: Json
+          id: string
+          notes: string
+          preflight_summary: Json
+          request_channel: string
+          requester_user_id: string
+          resolved_at: string
+          reviewed_at: string
+          reviewed_by: string
+          source_avatar_url: string
+          source_name: string
+          source_profile_id: string
+          source_user_id: string
+          status: string
+          target_avatar_url: string
+          target_name: string
+          target_profile_id: string
+          target_user_id: string
+          updated_at: string
+        }[]
+      }
+      rpc_admin_get_account_merge_case_events: {
+        Args: { p_case_id: string }
+        Returns: {
+          actor_role: string
+          actor_user_id: string
+          created_at: string
+          event_type: string
+          id: string
+          merge_case_id: string
+          metadata: Json
+        }[]
+      }
+      rpc_admin_get_account_merge_queue: {
+        Args: never
+        Returns: {
+          candidate_reason: string
+          created_at: string
+          created_by: string
+          evidence: Json
+          executed_at: string
+          executed_by: string
+          execution_summary: Json
+          id: string
+          notes: string
+          preflight_summary: Json
+          request_channel: string
+          requester_user_id: string
+          resolved_at: string
+          reviewed_at: string
+          reviewed_by: string
+          source_avatar_url: string
+          source_name: string
+          source_profile_id: string
+          source_user_id: string
+          status: string
+          target_avatar_url: string
+          target_name: string
+          target_profile_id: string
+          target_user_id: string
+          updated_at: string
+        }[]
+      }
+      rpc_admin_get_account_recovery_request: {
+        Args: { p_request_id: string }
+        Returns: {
+          contact_email: string
+          created_at: string
+          current_sign_in_method: string
+          evidence: Json
+          id: string
+          linked_merge_case_id: string
+          note: string
+          previous_account_email: string
+          previous_sign_in_method: string
+          requester_avatar_url: string
+          requester_name: string
+          requester_profile_id: string
+          requester_user_id: string
+          review_notes: string
+          reviewed_at: string
+          reviewed_by: string
+          status: string
+          updated_at: string
+        }[]
+      }
+      rpc_admin_get_account_recovery_request_events: {
+        Args: { p_request_id: string }
+        Returns: {
+          actor_role: string
+          actor_user_id: string
+          created_at: string
+          event_type: string
+          id: string
+          metadata: Json
+          request_id: string
+        }[]
+      }
+      rpc_admin_get_account_recovery_requests: {
+        Args: never
+        Returns: {
+          contact_email: string
+          created_at: string
+          current_sign_in_method: string
+          evidence: Json
+          id: string
+          linked_merge_case_id: string
+          note: string
+          previous_account_email: string
+          previous_sign_in_method: string
+          requester_avatar_url: string
+          requester_name: string
+          requester_profile_id: string
+          requester_user_id: string
+          review_notes: string
+          reviewed_at: string
+          reviewed_by: string
+          status: string
+          updated_at: string
+        }[]
+      }
+      rpc_admin_get_account_recovery_requests_by_merge_case: {
+        Args: { p_merge_case_id: string }
+        Returns: {
+          contact_email: string
+          created_at: string
+          current_sign_in_method: string
+          evidence: Json
+          id: string
+          linked_merge_case_id: string
+          note: string
+          previous_account_email: string
+          previous_sign_in_method: string
+          requester_avatar_url: string
+          requester_name: string
+          requester_profile_id: string
+          requester_user_id: string
+          review_notes: string
+          reviewed_at: string
+          reviewed_by: string
+          status: string
+          updated_at: string
+        }[]
+      }
+      rpc_admin_get_date_plan_concierge_queue: {
+        Args: never
+        Returns: {
+          city: string
+          concierge_requested_at: string
+          creator_name: string
+          creator_profile_id: string
+          date_plan_id: string
+          date_plan_status: string
+          place_address: string
+          place_name: string
+          recipient_name: string
+          recipient_profile_id: string
+          request_id: string
+          request_note: string
+          request_status: string
+          requested_at: string
+          requested_by_name: string
+          requested_by_profile_id: string
+          scheduled_for: string
+        }[]
+      }
+      rpc_admin_get_reports_queue: {
+        Args: never
+        Returns: {
+          created_at: string
+          id: string
+          reason: string
+          reported_avatar: string
+          reported_name: string
+          reported_user_id: string
+          reported_verification_level: number
+          reporter_avatar: string
+          reporter_name: string
+          reporter_user_id: string
+          reporter_verification_level: number
+          status: string
+        }[]
+      }
+      rpc_admin_get_verification_queue: {
+        Args: never
+        Returns: {
+          auto_verification_score: number
+          avatar_url: string
+          current_country: string
+          document_url: string
+          full_name: string
+          id: string
+          profile_id: string
+          reviewed_at: string
+          reviewer_notes: string
+          status: string
+          submitted_at: string
+          user_id: string
+          verification_level: number
+          verification_type: string
+        }[]
+      }
+      rpc_admin_preview_account_merge_case: {
+        Args: { p_case_id: string }
+        Returns: Json
+      }
+      rpc_admin_review_verification_request: {
+        Args: { p_decision: string; p_notes?: string; p_request_id: string }
+        Returns: boolean
+      }
+      rpc_admin_update_account_merge_case: {
+        Args: {
+          p_case_id: string
+          p_execution_summary?: Json
+          p_notes?: string
+          p_status: string
+        }
+        Returns: boolean
+      }
+      rpc_admin_update_account_recovery_request: {
+        Args: {
+          p_linked_merge_case_id?: string
+          p_request_id: string
+          p_review_notes?: string
+          p_status: string
+        }
+        Returns: boolean
+      }
+      rpc_admin_update_report_status: {
+        Args: { p_report_id: string; p_status: string }
+        Returns: boolean
+      }
       rpc_approve_circle_member: {
         Args: { p_circle_id: string; p_member_id: string; p_profile_id: string }
         Returns: boolean
+      }
+      rpc_backfill_swipe_likes_into_intent_requests: {
+        Args: { p_days?: number; p_limit?: number }
+        Returns: number
+      }
+      rpc_cancel_date_plan: {
+        Args: { p_plan_id: string }
+        Returns: {
+          concierge_requested: boolean
+          plan_id: string
+          status: string
+        }[]
       }
       rpc_cancel_intent_request: {
         Args: { p_request_id: string }
@@ -2610,20 +3800,43 @@ export type Database = {
         }
         Returns: string
       }
+      rpc_create_profile_boost: { Args: never; Returns: Json }
       rpc_decide_intent_request: {
         Args: { p_decision: string; p_request_id: string }
         Returns: string
       }
+      rpc_decline_date_plan: {
+        Args: { p_plan_id: string }
+        Returns: {
+          concierge_requested: boolean
+          plan_id: string
+          status: string
+        }[]
+      }
+      rpc_get_merged_account_redirect: { Args: never; Returns: Json }
+      rpc_get_my_premium_state: { Args: never; Returns: Json }
       rpc_get_phone_verification_status: { Args: never; Returns: Json }
       rpc_get_suggested_moves: {
         Args: { p_limit?: number; p_profile_id: string }
         Returns: {
+          active_now: boolean
           age: number
           avatar_url: string
+          bio_snippet: string
+          candidate_tier: number
           distance_km: number
           full_name: string
           has_intro_video: boolean
           id: string
+          prompt_answer: string
+          prompt_title: string
+          quality_band: number
+          recently_active: boolean
+          same_looking_for: boolean
+          same_region: boolean
+          same_religion: boolean
+          shared_interest_count: number
+          shared_interest_names: string[]
           short_tags: string[]
         }[]
       }
@@ -2644,11 +3857,92 @@ export type Database = {
         Args: { p_signup_session_id: string }
         Returns: boolean
       }
+      rpc_log_suggested_move_event: {
+        Args: {
+          p_batch_key?: string
+          p_candidate_profile_id: string
+          p_event_type: string
+          p_is_hero?: boolean
+          p_metadata?: Json
+          p_slot_index?: number
+          p_surface?: string
+          p_viewer_profile_id: string
+        }
+        Returns: boolean
+      }
       rpc_mark_expired_intent_requests: { Args: never; Returns: number }
+      rpc_process_intent_request_jobs: {
+        Args: { p_remind_before?: string; p_window?: string }
+        Returns: Json
+      }
       rpc_remove_circle_member: {
         Args: { p_circle_id: string; p_member_id: string; p_profile_id: string }
         Returns: boolean
       }
+      rpc_request_account_recovery: {
+        Args: {
+          p_contact_email?: string
+          p_current_sign_in_method?: string
+          p_evidence?: Json
+          p_note?: string
+          p_previous_account_email?: string
+          p_previous_sign_in_method?: string
+        }
+        Returns: string
+      }
+      rpc_request_date_plan_concierge: {
+        Args: { p_note?: string; p_plan_id: string }
+        Returns: {
+          concierge_requested: boolean
+          plan_id: string
+          request_id: string
+        }[]
+      }
+      rpc_send_date_plan:
+        | {
+            Args: {
+              p_city?: string
+              p_lat?: number
+              p_lng?: number
+              p_note?: string
+              p_parent_plan_id?: string
+              p_place_address?: string
+              p_place_badges?: Json
+              p_place_name: string
+              p_place_source?: string
+              p_place_summary?: string
+              p_recipient_profile_id: string
+              p_reply_to_message_id?: string
+              p_response_kind?: string
+              p_scheduled_for: string
+              p_venue_id?: string
+            }
+            Returns: {
+              message_id: string
+              plan_id: string
+            }[]
+          }
+        | {
+            Args: {
+              p_city?: string
+              p_lat?: number
+              p_lng?: number
+              p_note?: string
+              p_place_address?: string
+              p_place_badges?: Json
+              p_place_name: string
+              p_place_source?: string
+              p_place_summary?: string
+              p_recipient_profile_id: string
+              p_reply_to_message_id?: string
+              p_scheduled_for: string
+              p_venue_id?: string
+            }
+            Returns: {
+              message_id: string
+              plan_id: string
+            }[]
+          }
       rpc_set_circle_member_role: {
         Args: {
           p_circle_id: string
@@ -2657,6 +3951,21 @@ export type Database = {
           p_role: string
         }
         Returns: boolean
+      }
+      rpc_submit_selfie_liveness_verification: {
+        Args: {
+          p_capture_mode?: string
+          p_challenge_type?: string
+          p_document_path: string
+          p_profile_id: string
+          p_reference_asset_path?: string
+        }
+        Returns: {
+          already_pending: boolean
+          created_at: string
+          request_id: string
+          status: string
+        }[]
       }
       rpc_upsert_profile_signal: {
         Args: {
@@ -2672,6 +3981,22 @@ export type Database = {
       }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
+      spatial_ref_sys_rows: {
+        Args: never
+        Returns: {
+          auth_name: string | null
+          auth_srid: number | null
+          proj4text: string | null
+          srid: number
+          srtext: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "spatial_ref_sys"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       st_3dclosestpoint: {
         Args: { geom1: unknown; geom2: unknown }
         Returns: unknown
@@ -3252,6 +4577,18 @@ export type Database = {
       st_wrapx: {
         Args: { geom: unknown; move: number; wrap: number }
         Returns: unknown
+      }
+      submit_profile_prompt_guess: {
+        Args: {
+          p_guess: string
+          p_prompt_id: string
+          p_viewer_profile_id: string
+        }
+        Returns: {
+          is_correct: boolean
+          revealed_answer: string
+          viewer_guess: string
+        }[]
       }
       unaccent: { Args: { "": string }; Returns: string }
       unlockrows: { Args: { "": string }; Returns: number }

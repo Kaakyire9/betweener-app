@@ -1,10 +1,11 @@
 import { isDistanceLabel, parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
 import { supabase } from '@/lib/supabase';
-import type { Interest, UserProfile } from '@/types/user-profile';
+import type { Interest, ProfilePromptAnswer, UserProfile } from '@/types/user-profile';
 
 export type FetchViewedProfileOptions = {
   viewedProfileId: string;
+  viewerProfileId?: string | null;
   fallbackDistanceLabel?: string;
   fallbackDistanceKm?: number;
 };
@@ -14,7 +15,7 @@ export type FetchViewedProfileOptions = {
  * Extracted from app/profile-view.tsx so premium variants can reuse the exact same data shape.
  */
 export async function fetchViewedProfile(options: FetchViewedProfileOptions): Promise<UserProfile> {
-  const { viewedProfileId, fallbackDistanceLabel, fallbackDistanceKm } = options;
+  const { viewedProfileId, viewerProfileId, fallbackDistanceLabel, fallbackDistanceKm } = options;
 
   const selectFull =
     'id, user_id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, religion, personality_type, height, looking_for, love_language, languages_spoken, current_country, current_country_code, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, verification_level';
@@ -42,6 +43,7 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
   if (error || !data) throw error || new Error('Profile not found');
 
   let interestsArr: Interest[] = [];
+  let promptAnswers: ProfilePromptAnswer[] = [];
   try {
     const { data: piRows } = await supabase
       .from('profile_interests')
@@ -62,6 +64,36 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
         category: 'Interest',
         emoji: getInterestEmoji(n),
       }));
+    }
+  } catch {
+    // non-fatal
+  }
+
+  try {
+    const { data: promptRows } = await supabase.rpc('get_viewed_profile_prompts', {
+      p_profile_id: viewedProfileId,
+      p_viewer_profile_id: viewerProfileId ?? null,
+    });
+
+    if (Array.isArray(promptRows) && promptRows.length > 0) {
+      promptAnswers = promptRows
+        .map((row: any) => ({
+          id: row.id,
+          promptKey: row.prompt_key || undefined,
+          promptTitle: row.prompt_title || null,
+          answer: typeof row?.answer === 'string' ? row.answer : '',
+          promptType: row.prompt_type || 'standard',
+          guessMode: row.guess_mode || null,
+          guessOptions: Array.isArray(row.guess_options)
+            ? row.guess_options.filter((item: unknown) => typeof item === 'string')
+            : null,
+          hintText: row.hint_text || null,
+          revealPolicy: row.reveal_policy || 'never',
+          viewerGuess: row.viewer_guess || null,
+          viewerGuessIsCorrect:
+            typeof row?.viewer_guess_is_correct === 'boolean' ? row.viewer_guess_is_correct : null,
+          createdAt: row.created_at || undefined,
+        }));
     }
   } catch {
     // non-fatal
@@ -113,6 +145,7 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
     tribe: data.tribe || undefined,
     religion: data.religion || undefined,
     interests: interestsArr,
+    promptAnswers,
   };
 
   if ((!mapped.photos || mapped.photos.length === 0) && mapped.profilePicture) {

@@ -6,8 +6,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { useMemo, useState } from 'react';
 import { Alert, Modal, Pressable, StyleSheet, Text, TextInput, View, useColorScheme } from 'react-native';
 
-const getPickerMediaTypeImages = (): ImagePicker.MediaType[] => ['images'];
-const getPickerMediaTypeVideos = (): ImagePicker.MediaType[] => ['videos'];
+const pickerMediaTypeImages: ImagePicker.MediaType = 'images';
+const pickerMediaTypeVideos: ImagePicker.MediaType = 'videos';
 
 type Props = {
   visible: boolean;
@@ -46,7 +46,7 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: getPickerMediaTypeImages(),
+      mediaTypes: pickerMediaTypeImages,
       quality: 0.9,
     });
     if (result.canceled || !result.assets?.[0]?.uri) return;
@@ -71,8 +71,40 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: getPickerMediaTypeVideos(),
+      mediaTypes: pickerMediaTypeVideos,
       videoMaxDuration: 15,
+      allowsEditing: true,
+      videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
+      videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
+    });
+    if (result.canceled || !result.assets?.[0]?.uri) return;
+    setSaving(true);
+    const res = await createMomentFromMedia({ userId: user.id, type: 'video', uri: result.assets[0].uri, caption });
+    setSaving(false);
+    if (res.error) {
+      setError(res.error);
+      return;
+    }
+    Alert.alert('Moment posted', 'Your Moment is live for 24 hours.');
+    onCreated();
+    close();
+  };
+
+  const handlePickVideo = async () => {
+    if (!user?.id) return;
+    setError(null);
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      setError('Permission needed to access videos.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: pickerMediaTypeVideos,
+      quality: 0.9,
+      videoMaxDuration: 15,
+      allowsEditing: true,
+      videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
+      videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
     });
     if (result.canceled || !result.assets?.[0]?.uri) return;
     setSaving(true);
@@ -122,6 +154,10 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
             <Pressable style={styles.option} onPress={handleRecordVideo} disabled={saving}>
               <MaterialCommunityIcons name="video" size={18} color={Colors.light.background} />
               <Text style={styles.optionText}>{saving ? 'Uploading...' : 'Record Video (15s max)'}</Text>
+            </Pressable>
+            <Pressable style={styles.option} onPress={handlePickVideo} disabled={saving}>
+              <MaterialCommunityIcons name="video-plus-outline" size={18} color={Colors.light.background} />
+              <Text style={styles.optionText}>Pick Video</Text>
             </Pressable>
             <Pressable style={styles.option} onPress={handlePickPhoto} disabled={saving}>
               <MaterialCommunityIcons name="image" size={18} color={Colors.light.background} />

@@ -13,6 +13,7 @@ import {
   View,
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { clearPendingAuthFlow, markPendingAuthFlow } from "@/lib/auth-callback";
 
 export default function SignupScreen() {
   const [email, setEmail] = useState("");
@@ -49,9 +50,11 @@ export default function SignupScreen() {
     setSuccess("");
 
     try {
+      await markPendingAuthFlow("email_signup");
       const { error } = await signUp(email, password);
 
       if (error) {
+        await clearPendingAuthFlow();
         setError(error.message);
         return;
       }
@@ -62,7 +65,8 @@ export default function SignupScreen() {
       setTimeout(() => {
         router.replace("/(auth)/verify-email");
       }, 1500);
-    } catch (err: any) {
+    } catch (_err: any) {
+      await clearPendingAuthFlow();
       setError("An unexpected error occurred. Please try again.");
     }
   };

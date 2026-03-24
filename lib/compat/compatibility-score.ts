@@ -19,13 +19,13 @@ type CompatWeights = {
 };
 
 const DEFAULT_WEIGHTS: CompatWeights = {
-  interests: 0.4,
-  lookingFor: 0.15,
-  loveLanguage: 0.1,
-  personalityType: 0.1,
-  religion: 0.1,
+  interests: 0.35,
+  lookingFor: 0.2,
+  loveLanguage: 0.08,
+  personalityType: 0.12,
+  religion: 0.08,
   wantsChildren: 0.1,
-  smoking: 0.05,
+  smoking: 0.07,
 };
 
 const normalizeToken = (value?: string | null) =>

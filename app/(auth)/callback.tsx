@@ -4,10 +4,17 @@ import * as Linking from "expo-linking";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
+import {
+  AUTH_PENDING_TOKENS_KEY,
+  clearPendingAuthFlow,
+  getFreshPendingAuthFlow,
+  isTrustedAuthCallbackUrl,
+  LAST_DEEP_LINK_URL_KEY,
+  urlHasAuthPayload,
+} from "@/lib/auth-callback";
 
 type CallbackParams = Record<string, string | undefined>;
 const AUTH_CALLBACK_LAST_SIG_KEY = "auth_callback_last_sig_v1";
-const AUTH_PENDING_TOKENS_KEY = "auth_pending_tokens_v1";
 
 const mergeParamsFromUrl = (target: CallbackParams, url: string) => {
   try {
@@ -77,6 +84,15 @@ export default function AuthCallback() {
     return null;
   };
 
+  const routeToResetPassword = async (waitMs = 2500) => {
+    if (didNavigateRef.current) return;
+    await waitForSession(waitMs);
+    didNavigateRef.current = true;
+    setIsComplete(true);
+    setStatus("Reset link verified. Redirecting...");
+    router.replace("/(auth)/reset-password");
+  };
+
   const routeToGate = async (waitMs = 1200) => {
     if (didNavigateRef.current) return;
     const hasSession = await waitForSession(waitMs);
@@ -101,25 +117,45 @@ export default function AuthCallback() {
     const run = async () => {
       setIsProcessing(true);
       try {
+        const pendingFlow = await getFreshPendingAuthFlow();
+        const pendingPurpose = pendingFlow?.purpose ?? null;
+        const isPendingPasswordReset = pendingPurpose === "password_reset";
+
         const hasExistingSession = await waitForSession(800);
-        if (hasExistingSession) {
+        if (hasExistingSession && !isPendingPasswordReset) {
           await routeToGate(800);
           return;
         }
 
+        const hasPendingFlow = pendingFlow !== null;
         const merged: CallbackParams = {};
-        Object.entries(params).forEach(([key, value]) => {
-          if (typeof value === "string") merged[key] = value;
-          else if (Array.isArray(value) && typeof value[0] === "string") merged[key] = value[0];
-        });
+        if (hasPendingFlow) {
+          Object.entries(params).forEach(([key, value]) => {
+            if (typeof value === "string") merged[key] = value;
+            else if (Array.isArray(value) && typeof value[0] === "string") merged[key] = value[0];
+          });
+        }
 
         const initialUrl = await Linking.getInitialURL();
-        if (initialUrl) mergeParamsFromUrl(merged, initialUrl);
+        if (
+          hasPendingFlow &&
+          initialUrl &&
+          urlHasAuthPayload(initialUrl) &&
+          isTrustedAuthCallbackUrl(initialUrl)
+        ) {
+          mergeParamsFromUrl(merged, initialUrl);
+        }
 
-        const storedUrl = await AsyncStorage.getItem("last_deep_link_url");
+        const storedUrl = await AsyncStorage.getItem(LAST_DEEP_LINK_URL_KEY);
         if (storedUrl) {
-          mergeParamsFromUrl(merged, storedUrl);
-          await AsyncStorage.removeItem("last_deep_link_url");
+          if (
+            hasPendingFlow &&
+            urlHasAuthPayload(storedUrl) &&
+            isTrustedAuthCallbackUrl(storedUrl)
+          ) {
+            mergeParamsFromUrl(merged, storedUrl);
+          }
+          await AsyncStorage.removeItem(LAST_DEEP_LINK_URL_KEY);
         }
 
         const accessToken = merged.access_token;
@@ -127,6 +163,17 @@ export default function AuthCallback() {
         const code = merged.code;
         const tokenHash = merged.token_hash;
         const type = merged.type;
+        const isRecoveryFlow = type === "recovery" || isPendingPasswordReset;
+        const hasCallbackPayload = !!(accessToken || refreshToken || code || tokenHash || type);
+
+        if (hasCallbackPayload && !hasPendingFlow) {
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.warn("[auth-callback] ignored unexpected callback payload");
+          }
+          router.replace("/(auth)/welcome");
+          return;
+        }
+
         const callbackSig = buildCallbackSignature({
           accessToken,
           refreshToken,
@@ -137,17 +184,26 @@ export default function AuthCallback() {
         if (callbackSig) {
           const lastSig = await AsyncStorage.getItem(AUTH_CALLBACK_LAST_SIG_KEY);
           if (lastSig === callbackSig) {
-            await routeToGate(1800);
-            if (!didNavigateRef.current) {
-              didNavigateRef.current = true;
-              router.replace("/(auth)/gate");
+            await clearPendingAuthFlow();
+            if (isRecoveryFlow) {
+              await routeToResetPassword(1800);
+              if (!didNavigateRef.current) {
+                didNavigateRef.current = true;
+                router.replace("/(auth)/reset-password");
+              }
+            } else {
+              await routeToGate(1800);
+              if (!didNavigateRef.current) {
+                didNavigateRef.current = true;
+                router.replace("/(auth)/gate");
+              }
             }
             return;
           }
         }
 
         if (tokenHash && type) {
-          setStatus("Verifying your email...");
+          setStatus(isRecoveryFlow ? "Verifying your reset link..." : "Verifying your email...");
           const { error } = await withTimeout(
             supabase.auth.verifyOtp({
               token_hash: tokenHash,
@@ -160,13 +216,22 @@ export default function AuthCallback() {
           if (callbackSig) {
             await AsyncStorage.setItem(AUTH_CALLBACK_LAST_SIG_KEY, callbackSig);
           }
-          didNavigateRef.current = true;
-          router.replace("/(auth)/verify-email?verified=true");
+          await clearPendingAuthFlow();
+          if (isRecoveryFlow) {
+            await routeToResetPassword(2500);
+            if (!didNavigateRef.current) {
+              didNavigateRef.current = true;
+              router.replace("/(auth)/reset-password");
+            }
+          } else {
+            didNavigateRef.current = true;
+            router.replace("/(auth)/verify-email?verified=true");
+          }
           return;
         }
 
         if (code) {
-          setStatus("Completing sign in...");
+          setStatus(isRecoveryFlow ? "Preparing password reset..." : "Completing sign in...");
           const { error } = await withTimeout(
             supabase.auth.exchangeCodeForSession(code),
             9000,
@@ -176,12 +241,17 @@ export default function AuthCallback() {
           if (callbackSig) {
             await AsyncStorage.setItem(AUTH_CALLBACK_LAST_SIG_KEY, callbackSig);
           }
-          await routeToGate();
+          await clearPendingAuthFlow();
+          if (isRecoveryFlow) {
+            await routeToResetPassword(2500);
+          } else {
+            await routeToGate();
+          }
           return;
         }
 
         if (accessToken && refreshToken) {
-          setStatus("Completing sign in...");
+          setStatus(isRecoveryFlow ? "Preparing password reset..." : "Completing sign in...");
           await AsyncStorage.setItem(
             AUTH_PENDING_TOKENS_KEY,
             JSON.stringify({
@@ -207,29 +277,57 @@ export default function AuthCallback() {
           if (callbackSig) {
             await AsyncStorage.setItem(AUTH_CALLBACK_LAST_SIG_KEY, callbackSig);
           }
-          // Always hand off to gate; it can recover pending tokens and route correctly.
-          if (!didNavigateRef.current) {
-            didNavigateRef.current = true;
-            setIsComplete(true);
-            setStatus("Signed in! Redirecting...");
-            router.replace("/(auth)/gate");
+          await clearPendingAuthFlow();
+          if (isRecoveryFlow) {
+            await routeToResetPassword(2500);
+            if (!didNavigateRef.current) {
+              didNavigateRef.current = true;
+              router.replace("/(auth)/reset-password");
+            }
+          } else {
+            // Always hand off to gate; it can recover pending tokens and route correctly.
+            if (!didNavigateRef.current) {
+              didNavigateRef.current = true;
+              setIsComplete(true);
+              setStatus("Signed in! Redirecting...");
+              router.replace("/(auth)/gate");
+            }
           }
           return;
         }
 
-        await routeToGate();
-        if (!didNavigateRef.current) {
-          didNavigateRef.current = true;
-          router.replace("/(auth)/gate");
+        if (isPendingPasswordReset) {
+          await clearPendingAuthFlow();
+          await routeToResetPassword(1200);
+          if (!didNavigateRef.current) {
+            didNavigateRef.current = true;
+            router.replace("/(auth)/reset-password");
+          }
+        } else {
+          await routeToGate();
+          if (!didNavigateRef.current) {
+            didNavigateRef.current = true;
+            router.replace("/(auth)/gate");
+          }
         }
       } catch (error) {
         if (typeof __DEV__ !== "undefined" && __DEV__) {
           console.error("[auth-callback] callback error", error);
         }
-        await routeToGate();
-        if (!didNavigateRef.current) {
-          didNavigateRef.current = true;
-          router.replace("/(auth)/gate");
+        const pendingFlow = await getFreshPendingAuthFlow();
+        if (pendingFlow?.purpose === "password_reset") {
+          await clearPendingAuthFlow();
+          await routeToResetPassword(1200);
+          if (!didNavigateRef.current) {
+            didNavigateRef.current = true;
+            router.replace("/(auth)/reset-password");
+          }
+        } else {
+          await routeToGate();
+          if (!didNavigateRef.current) {
+            didNavigateRef.current = true;
+            router.replace("/(auth)/gate");
+          }
         }
       } finally {
         setIsProcessing(false);
@@ -243,10 +341,19 @@ export default function AuthCallback() {
     const watchdog = setTimeout(() => {
       if (didNavigateRef.current) return;
       void (async () => {
-        await routeToGate();
-        if (!didNavigateRef.current) {
-          didNavigateRef.current = true;
-          router.replace("/(auth)/gate");
+        const pendingFlow = await getFreshPendingAuthFlow();
+        if (pendingFlow?.purpose === "password_reset") {
+          await routeToResetPassword(1200);
+          if (!didNavigateRef.current) {
+            didNavigateRef.current = true;
+            router.replace("/(auth)/reset-password");
+          }
+        } else {
+          await routeToGate();
+          if (!didNavigateRef.current) {
+            didNavigateRef.current = true;
+            router.replace("/(auth)/gate");
+          }
         }
       })();
     }, 8000);

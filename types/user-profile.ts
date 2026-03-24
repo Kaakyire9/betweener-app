@@ -1,4 +1,22 @@
 export type Interest = { id: string; name: string; category: string; emoji: string };
+export type PromptType = 'standard' | 'guess';
+export type GuessMode = 'multiple_choice' | 'free_text';
+export type GuessRevealPolicy = 'never' | 'after_correct';
+export type ProfilePromptAnswer = {
+  id: string;
+  promptKey?: string;
+  promptTitle?: string | null;
+  answer: string;
+  promptType?: PromptType;
+  guessMode?: GuessMode | null;
+  guessOptions?: string[] | null;
+  hintText?: string | null;
+  normalizedAnswer?: string | null;
+  revealPolicy?: GuessRevealPolicy | null;
+  viewerGuess?: string | null;
+  viewerGuessIsCorrect?: boolean | null;
+  createdAt?: string;
+};
 
 export type UserProfile = {
   id: string;
@@ -37,6 +55,7 @@ export type UserProfile = {
   wantsChildren?: string;
   locationPrecision?: string;
   interests: Interest[];
+  promptAnswers?: ProfilePromptAnswer[];
   compatibility: number;
   verificationLevel?: number;
 };

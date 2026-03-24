@@ -2,20 +2,36 @@ import { DiasporaVerification } from "@/components/DiasporaVerification";
 import PhotoGallery from "@/components/PhotoGallery";
 import ProfileEditModal from "@/components/ProfileEditModal";
 import { VerificationBadge } from "@/components/VerificationBadge";
+import { VerificationNudgeCard } from "@/components/VerificationNudgeCard";
 import { VerificationNotifications } from "@/components/VerificationNotifications";
 import ProfileVideoModal from "@/components/ProfileVideoModal";
 import { Colors } from "@/constants/theme";
 import { useColorScheme, useColorSchemePreference } from "@/hooks/use-color-scheme";
 import { useVerificationStatus } from "@/hooks/use-verification-status";
 import { useAuth } from "@/lib/auth-context";
+import { canAccessAdminTools } from "@/lib/internal-tools";
+import { readCache, writeCache } from "@/lib/persisted-cache";
+import { getProfileInitials, getProfilePlaceholderPalette, hasProfileImage } from "@/lib/profile-placeholders";
+import {
+  DEFAULT_GUESS_REVEAL_POLICY,
+  normalizeGuessText,
+  sanitizeGuessOptions,
+  shuffleOptions,
+} from "@/lib/prompts/guess-prompts";
 import { supabase } from "@/lib/supabase";
+import { isTrustedAuthCallbackUrl } from "@/lib/auth-callback";
+import type { GuessMode, ProfilePromptAnswer, PromptType } from "@/types/user-profile";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as AppleAuthentication from "expo-apple-authentication";
+import * as Clipboard from "expo-clipboard";
+import { makeRedirectUri } from "expo-auth-session";
 import { router, useLocalSearchParams } from "expo-router";
+import * as Linking from "expo-linking";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Animated,
-  Dimensions,
   Image,
   ImageBackground,
   Modal,
@@ -33,10 +49,35 @@ import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/dat
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { VideoView, useVideoPlayer } from "expo-video";
+import * as WebBrowser from "expo-web-browser";
 import * as Haptics from "expo-haptics";
 
-const { width: screenWidth } = Dimensions.get('window');
 const DISTANCE_UNIT_KEY = 'distance_unit';
+const LINKED_METHODS_BANNER_DISMISSED_KEY = 'linked_methods_banner_dismissed_v1';
+const VERIFICATION_NUDGE_DISMISSED_KEY_PREFIX = 'verification_nudge_dismissed_v1';
+
+type AuthCallbackParams = Record<string, string | undefined>;
+
+const mergeAuthParamsFromUrl = (target: AuthCallbackParams, url: string) => {
+  try {
+    const parsed = Linking.parse(url);
+    const query = parsed.queryParams ?? {};
+    Object.entries(query).forEach(([key, value]) => {
+      if (typeof value === 'string') target[key] = value;
+      else if (Array.isArray(value) && typeof value[0] === 'string') target[key] = value[0];
+    });
+  } catch {
+    // ignore malformed urls
+  }
+
+  if (url.includes('#')) {
+    const fragment = url.split('#')[1] || '';
+    const params = new URLSearchParams(fragment);
+    params.forEach((value, key) => {
+      target[key] = value;
+    });
+  }
+};
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
 
@@ -64,6 +105,14 @@ const DISTANCE_UNIT_OPTIONS: { value: DistanceUnit; label: string; subtitle?: st
   { value: 'km', label: 'Kilometers' },
   { value: 'mi', label: 'Miles' },
 ];
+
+const ACCOUNT_RECOVERY_METHOD_OPTIONS = [
+  { value: 'email', label: 'Email' },
+  { value: 'google', label: 'Google' },
+  { value: 'apple', label: 'Apple' },
+  { value: 'magic_link', label: 'Magic link' },
+  { value: 'other', label: 'Other' },
+] as const;
 
 const QUIET_HOURS_PRESETS = [
   { id: 'late', label: '22:00-08:00', start: '22:00:00', end: '08:00:00' },
@@ -96,6 +145,12 @@ const SETTINGS_MENU_ITEMS = [
     title: 'Dating Preferences',
     icon: 'heart',
     color: Colors.light.tint
+  },
+  {
+    id: 'premium',
+    title: 'Premium Plans',
+    icon: 'crown-outline',
+    color: '#D4A017'
   },
   {
     id: 'help',
@@ -185,7 +240,7 @@ const computeProfileCompletion = (
   const hasHeight = !!(profile.height || '').trim();
   const hasPrompts = promptCount > 0;
 
-  const checks: Array<{ label: string; ok: boolean }> = [
+  const checks: { label: string; ok: boolean }[] = [
     { label: 'Add your name', ok: hasName },
     { label: 'Add your age', ok: hasAge },
     { label: 'Add your gender', ok: hasGender },
@@ -208,6 +263,7 @@ const computeProfileCompletion = (
     { label: 'Add your interests', ok: hasInterests },
     { label: 'Add at least 2 photos', ok: hasPhotos },
     { label: 'Add a profile photo', ok: hasAvatar },
+    { label: 'Add a profile video', ok: hasVideo },
     { label: 'Add your height', ok: hasHeight },
     { label: 'Answer a prompt', ok: hasPrompts },
   ];
@@ -221,32 +277,52 @@ const computeProfileCompletion = (
 };
 
 export default function ProfileScreen() {
+  WebBrowser.maybeCompleteAuthSession();
   const { signOut, user, profile, refreshProfile } = useAuth();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = colorScheme === 'dark';
   const params = useLocalSearchParams();
-  const { status: verificationStatus, refreshStatus } = useVerificationStatus(profile?.id);
+  const { refreshStatus } = useVerificationStatus(profile?.id);
   const { preference: themePreference, setPreference: setThemePreference } = useColorSchemePreference();
-  const verificationLoading = verificationStatus?.loading ?? false;
   
   const [selectedPrompts, setSelectedPrompts] = useState<Record<string, number>>({
     two_truths_lie: 0,
     week_goal: 1,
     vibe_song: 2
   });
-  const [promptAnswers, setPromptAnswers] = useState<Array<{
-    id: string;
-    prompt_key: string;
-    prompt_title: string | null;
-    answer: string;
-    created_at: string;
-  }>>([]);
+  const [promptAnswers, setPromptAnswers] = useState<ProfilePromptAnswer[]>([]);
   const [promptsLoading, setPromptsLoading] = useState(false);
   const [showPromptEditor, setShowPromptEditor] = useState(false);
+  const [promptComposerMode, setPromptComposerMode] = useState<PromptType>('standard');
   const [customPromptTitle, setCustomPromptTitle] = useState('');
   const [customPromptAnswer, setCustomPromptAnswer] = useState('');
   const [customPromptSaving, setCustomPromptSaving] = useState(false);
+  const [guessPromptTitle, setGuessPromptTitle] = useState('');
+  const [guessPromptAnswer, setGuessPromptAnswer] = useState('');
+  const [guessPromptHint, setGuessPromptHint] = useState('');
+  const [guessPromptMode, setGuessPromptMode] = useState<GuessMode>('multiple_choice');
+  const [guessPromptOptions, setGuessPromptOptions] = useState(['', '', '']);
+  const [guessPromptSaving, setGuessPromptSaving] = useState(false);
+  const [deletingPromptId, setDeletingPromptId] = useState<string | null>(null);
+  const guessPromptSanitizedOptions = useMemo(
+    () => sanitizeGuessOptions(guessPromptOptions, guessPromptAnswer),
+    [guessPromptAnswer, guessPromptOptions],
+  );
+  const guessPromptPreviewOptions = useMemo(() => {
+    if (guessPromptMode !== 'multiple_choice') return [];
+    const answer = guessPromptAnswer.trim();
+    const wrongOptions = guessPromptSanitizedOptions.filter(
+      (option) => normalizeGuessText(option) !== normalizeGuessText(answer),
+    );
+    return [answer, ...wrongOptions].filter(Boolean).slice(0, 4);
+  }, [guessPromptAnswer, guessPromptMode, guessPromptSanitizedOptions]);
+  const canSaveGuessPrompt = Boolean(
+    guessPromptTitle.trim() &&
+      guessPromptAnswer.trim() &&
+      !guessPromptSaving &&
+      (guessPromptMode !== 'multiple_choice' || guessPromptSanitizedOptions.length >= 2),
+  );
   
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
@@ -257,10 +333,51 @@ export default function ProfileScreen() {
   const [emailSaving, setEmailSaving] = useState(false);
   const [emailMessage, setEmailMessage] = useState('');
   const [emailError, setEmailError] = useState('');
+  const [linkedProviders, setLinkedProviders] = useState<string[]>([]);
+  const [identitiesLoading, setIdentitiesLoading] = useState(false);
+  const [linkingProvider, setLinkingProvider] = useState<string | null>(null);
+  const [identityMessage, setIdentityMessage] = useState('');
+  const [identityError, setIdentityError] = useState('');
+  const [showRecoveryRequestModal, setShowRecoveryRequestModal] = useState(false);
+  const [recoveryCurrentMethod, setRecoveryCurrentMethod] = useState<string>('email');
+  const [recoveryPreviousMethod, setRecoveryPreviousMethod] = useState<string>('google');
+  const [recoveryContactEmail, setRecoveryContactEmail] = useState('');
+  const [recoveryPreviousEmail, setRecoveryPreviousEmail] = useState('');
+  const [recoveryNote, setRecoveryNote] = useState('');
+  const [recoverySubmitting, setRecoverySubmitting] = useState(false);
+  const [recoveryMessage, setRecoveryMessage] = useState('');
+  const [recoveryError, setRecoveryError] = useState('');
+  const [linkedMethodsBannerDismissed, setLinkedMethodsBannerDismissed] = useState(false);
+  const [verificationNudgeDismissed, setVerificationNudgeDismissed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [userInterests, setUserInterests] = useState<string[]>([]);
   const [loadingInterests, setLoadingInterests] = useState(false);
   const [userPhotos, setUserPhotos] = useState<string[]>([]);
+  const scrollViewRef = useRef<ScrollView | null>(null);
+  const promptEditorYRef = useRef(0);
+
+  const cacheProfileId = profile?.id ?? user?.id ?? null;
+  const promptsCacheKey = useMemo(
+    () => (cacheProfileId ? `cache:profile_prompts:v2:${cacheProfileId}` : null),
+    [cacheProfileId],
+  );
+  const interestsCacheKey = useMemo(
+    () => (cacheProfileId ? `cache:profile_interests:v1:${cacheProfileId}` : null),
+    [cacheProfileId],
+  );
+  const photosCacheKey = useMemo(
+    () => (cacheProfileId ? `cache:profile_photos:v1:${cacheProfileId}` : null),
+    [cacheProfileId],
+  );
+  const verificationNudgeDismissedKey = useMemo(
+    () => (cacheProfileId ? `${VERIFICATION_NUDGE_DISMISSED_KEY_PREFIX}:${cacheProfileId}` : null),
+    [cacheProfileId],
+  );
+  const cacheLoadedRef = useRef<{ prompts: boolean; interests: boolean; photos: boolean }>({
+    prompts: false,
+    interests: false,
+    photos: false,
+  });
   const [isVerificationModalVisible, setIsVerificationModalVisible] = useState(false);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [notificationPrefs, setNotificationPrefs] = useState<NotificationPrefs>({
@@ -282,6 +399,7 @@ export default function ProfileScreen() {
     quiet_hours_tz: 'UTC',
   });
   const [notificationPrefsLoaded, setNotificationPrefsLoaded] = useState(false);
+  const [likesCount, setLikesCount] = useState(0);
   const [matchesCount, setMatchesCount] = useState(0);
   const [chatsCount, setChatsCount] = useState(0);
   const [matchQuality, setMatchQuality] = useState<number | null>(null);
@@ -295,12 +413,46 @@ export default function ProfileScreen() {
   const prevProgressRef = useRef(profileCompletion.percent);
   const [rewardText, setRewardText] = useState<string | null>(null);
   const [progressTrackWidth, setProgressTrackWidth] = useState(0);
+  const canSeeAdminTools = canAccessAdminTools(user?.email ?? null);
+
+  const handleCopyDevSessionToken = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      if (error) {
+        Alert.alert('Session error', error.message);
+        return;
+      }
+
+      const accessToken = data.session?.access_token ?? null;
+      const authUserId = data.session?.user?.id ?? user?.id ?? null;
+      const profileId = profile?.id ?? null;
+
+      if (!accessToken) {
+        Alert.alert('No active session', 'No access token found for the current signed-in session.');
+        return;
+      }
+
+      const debugPayload = [
+        `ACCESS_TOKEN=${accessToken}`,
+        `AUTH_USER_ID=${authUserId ?? ''}`,
+        `PROFILE_ID=${profileId ?? ''}`,
+      ].join('\n');
+
+      await Clipboard.setStringAsync(debugPayload);
+      Alert.alert(
+        'Session copied',
+        `Copied access token, auth user id, and profile id.\n\nAuth user: ${authUserId ?? 'unknown'}\nProfile: ${profileId ?? 'unknown'}`,
+      );
+    } catch (error: any) {
+      Alert.alert('Copy failed', error?.message || 'Unable to read the current session.');
+    }
+  }, [profile?.id, user?.id]);
 
   const progressSubtitle = useMemo(() => {
-    if (profileCompletion.percent >= 100) return "Your profile feels complete";
-    if (profileCompletion.percent >= 80) return "Almost there - looking good";
-    if (profileCompletion.percent >= 50) return "Your profile is taking shape";
-    return "Start shaping your presence";
+    if (profileCompletion.percent >= 100) return "Profile complete";
+    if (profileCompletion.percent >= 80) return "Strong presence";
+    if (profileCompletion.percent >= 50) return "Shaping your presence";
+    return "Start with your best details";
   }, [profileCompletion.percent]);
 
   const nextPrompt = useMemo(() => {
@@ -370,6 +522,54 @@ export default function ProfileScreen() {
     }
   };
 
+  const applyPromptAnswers = useCallback(
+    (rows: ProfilePromptAnswer[]) => {
+      setPromptAnswers(rows);
+      setSelectedPrompts((prev) => {
+        const nextSelected: Record<string, number> = { ...prev };
+        rows.forEach((row) => {
+          const prompt = PROFILE_PROMPTS.find((p) => p.id === row.promptKey);
+          if (!prompt) return;
+          const idx = prompt.responses.findIndex((r) => r === row.answer);
+          if (idx >= 0) nextSelected[row.promptKey || prompt.id] = idx;
+        });
+        return nextSelected;
+      });
+    },
+    [],
+  );
+
+  // Cached-first hydration for profile sub-data (prompts/interests/photos).
+  useEffect(() => {
+    if (promptsCacheKey && !cacheLoadedRef.current.prompts) {
+      cacheLoadedRef.current.prompts = true;
+      void (async () => {
+        const cached = await readCache<typeof promptAnswers>(promptsCacheKey, 30 * 60_000);
+        if (cached && Array.isArray(cached) && cached.length > 0 && promptAnswers.length === 0) {
+          applyPromptAnswers(cached as any);
+        }
+      })();
+    }
+    if (interestsCacheKey && !cacheLoadedRef.current.interests) {
+      cacheLoadedRef.current.interests = true;
+      void (async () => {
+        const cached = await readCache<string[]>(interestsCacheKey, 30 * 60_000);
+        if (cached && Array.isArray(cached) && cached.length > 0) {
+          setUserInterests((prev) => (prev.length === 0 ? cached : prev));
+        }
+      })();
+    }
+    if (photosCacheKey && !cacheLoadedRef.current.photos) {
+      cacheLoadedRef.current.photos = true;
+      void (async () => {
+        const cached = await readCache<string[]>(photosCacheKey, 30 * 60_000);
+        if (cached && Array.isArray(cached) && cached.length > 0) {
+          setUserPhotos((prev) => (prev.length === 0 ? cached : prev));
+        }
+      })();
+    }
+  }, [applyPromptAnswers, interestsCacheKey, photosCacheKey, promptsCacheKey, promptAnswers.length]);
+
   const loadPromptAnswers = useCallback(async () => {
     if (!profile?.id) {
       setPromptAnswers([]);
@@ -380,7 +580,7 @@ export default function ProfileScreen() {
     try {
       const { data, error } = await supabase
         .from('profile_prompts')
-        .select('id,prompt_key,prompt_title,answer,created_at')
+        .select('id,prompt_key,prompt_title,prompt_type,answer,guess_mode,guess_options,hint_text,normalized_answer,reveal_policy,created_at')
         .eq('profile_id', profile.id)
         .order('created_at', { ascending: false })
         .limit(10);
@@ -388,32 +588,32 @@ export default function ProfileScreen() {
         console.log('[profile] prompt fetch error', error);
         return;
       }
-      const rows = (data || []) as Array<{
-        id: string;
-        prompt_key: string;
-        prompt_title: string | null;
-        answer: string;
-        created_at: string;
-      }>;
-      setPromptAnswers(rows);
-      setSelectedPrompts((prev) => {
-        const nextSelected: Record<string, number> = { ...prev };
-        rows.forEach((row) => {
-          const prompt = PROFILE_PROMPTS.find((p) => p.id === row.prompt_key);
-          if (!prompt) return;
-          const idx = prompt.responses.findIndex((r) => r === row.answer);
-          if (idx >= 0) nextSelected[row.prompt_key] = idx;
-        });
-        return nextSelected;
-      });
+      const rows = ((data || []) as any[]).map((row) => ({
+        id: row.id,
+        promptKey: row.prompt_key || undefined,
+        promptTitle: row.prompt_title || null,
+        answer: row.answer || '',
+        promptType: row.prompt_type || 'standard',
+        guessMode: row.guess_mode || null,
+        guessOptions: Array.isArray(row.guess_options)
+          ? row.guess_options.filter((item: unknown) => typeof item === 'string')
+          : null,
+        hintText: row.hint_text || null,
+        normalizedAnswer: row.normalized_answer || null,
+        revealPolicy: row.reveal_policy || DEFAULT_GUESS_REVEAL_POLICY,
+        createdAt: row.created_at || undefined,
+      })) as ProfilePromptAnswer[];
+      applyPromptAnswers(rows);
+      if (promptsCacheKey) void writeCache(promptsCacheKey, rows);
     } finally {
       setPromptsLoading(false);
     }
-  }, [profile?.id]);
+  }, [applyPromptAnswers, profile?.id, promptsCacheKey]);
 
   // Fetch user interests from profile_interests table
   const fetchUserInterests = async () => {
-    if (!user?.id) return;
+    const pid = profile?.id ?? null;
+    if (!pid) return;
     
     try {
       setLoadingInterests(true);
@@ -424,12 +624,13 @@ export default function ProfileScreen() {
             name
           )
         `)
-        .eq('profile_id', user.id);
+        .eq('profile_id', pid);
       
-      if (error) throw error;
+      if (error) return;
       
       const interests = data?.map(item => (item as any).interests.name) || [];
       setUserInterests(interests);
+      if (interestsCacheKey) void writeCache(interestsCacheKey, interests);
     } catch (error) {
       console.error('Error fetching user interests:', error);
     } finally {
@@ -446,6 +647,7 @@ export default function ProfileScreen() {
       const profilePhotos = (profile as any)?.photos || [];
       if (profilePhotos.length > 0) {
         setUserPhotos(profilePhotos);
+        if (photosCacheKey) void writeCache(photosCacheKey, profilePhotos);
         return;
       }
 
@@ -474,6 +676,7 @@ export default function ProfileScreen() {
           });
         
         setUserPhotos(photoUrls);
+        if (photosCacheKey) void writeCache(photosCacheKey, photoUrls);
       }
     } catch (error) {
       console.error('Error loading photos:', error);
@@ -482,10 +685,35 @@ export default function ProfileScreen() {
 
   const fetchProfileStats = useCallback(async () => {
     if (!profile?.id || !user?.id) {
+      setLikesCount(0);
       setMatchesCount(0);
       setChatsCount(0);
       setMatchQuality(null);
       return;
+    }
+
+    try {
+      // Likes are stored as incoming intent requests (keyed by profiles.id).
+      const { data: intents, error: intentsError } = await supabase
+        .from('intent_requests')
+        .select('id,type,status,expires_at')
+        .eq('recipient_id', profile.id)
+        .eq('status', 'pending')
+        .order('created_at', { ascending: false })
+        .limit(300);
+
+      if (intentsError || !intents) {
+        setLikesCount(0);
+      } else {
+        const now = Date.now();
+        const actionable = (intents as any[]).filter((row) => {
+          const ts = typeof row?.expires_at === 'string' ? Date.parse(row.expires_at) : NaN;
+          return Number.isNaN(ts) ? true : ts >= now;
+        });
+        setLikesCount(actionable.filter((row) => row?.type === 'like_with_note').length);
+      }
+    } catch {
+      setLikesCount(0);
     }
 
     try {
@@ -513,13 +741,14 @@ export default function ProfileScreen() {
         if (otherIds.length > 0) {
           const { data: profilesData, error: profilesError } = await supabase
             .from('profiles')
-            .select('id,compatibility')
+            // `compatibility` column does not exist in current schema; use `ai_score` as a proxy.
+            .select('id,ai_score')
             .in('id', otherIds);
           if (profilesError || !profilesData) {
             setMatchQuality(null);
           } else {
             const scores = (profilesData as any[])
-              .map((p) => (typeof p?.compatibility === 'number' ? p.compatibility : null))
+              .map((p) => (typeof p?.ai_score === 'number' ? p.ai_score : null))
               .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
             if (scores.length > 0) {
               const avg = scores.reduce((sum, v) => sum + v, 0) / scores.length;
@@ -699,6 +928,30 @@ export default function ProfileScreen() {
   }, [showEditModal, loadDistanceUnit]);
 
   const handleSignOut = async () => {
+    if (linkedProviders.length < 2) {
+      Alert.alert(
+        'Before you sign out',
+        'Link Google or Apple so you always come back to the same Betweener account.',
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel',
+          },
+          {
+            text: 'Link now',
+            onPress: openEmailAccountModal,
+          },
+          {
+            text: 'Sign out anyway',
+            style: 'destructive',
+            onPress: () => {
+              void signOut();
+            },
+          },
+        ],
+      );
+      return;
+    }
     await signOut();
   };
 
@@ -764,9 +1017,109 @@ export default function ProfileScreen() {
     void loadPromptAnswers();
   };
 
+  const resetGuessPromptComposer = useCallback(() => {
+    setGuessPromptTitle('');
+    setGuessPromptAnswer('');
+    setGuessPromptHint('');
+    setGuessPromptMode('multiple_choice');
+    setGuessPromptOptions(['', '', '']);
+  }, []);
+
+  const saveGuessPrompt = async () => {
+    if (isPreviewMode || !profile?.id) return;
+    const title = guessPromptTitle.trim();
+    const answer = guessPromptAnswer.trim();
+    if (!title || !answer) return;
+
+    const options =
+      guessPromptMode === 'multiple_choice'
+        ? shuffleOptions(guessPromptSanitizedOptions)
+        : null;
+
+    if (guessPromptMode === 'multiple_choice' && (!options || options.length < 2)) return;
+
+    setGuessPromptSaving(true);
+    try {
+      const existingGuessIds = promptAnswers
+        .filter((row) => row.promptType === 'guess')
+        .map((row) => row.id)
+        .filter(Boolean);
+
+      if (existingGuessIds.length > 0) {
+        const { error: deleteError } = await supabase
+          .from('profile_prompts')
+          .delete()
+          .eq('profile_id', profile.id)
+          .in('id', existingGuessIds);
+        if (deleteError) {
+          console.log('[profile] guess prompt cleanup error', deleteError);
+          return;
+        }
+      }
+
+      const { error } = await supabase.from('profile_prompts').insert({
+        profile_id: profile.id,
+        prompt_key: 'guess',
+        prompt_title: title,
+        prompt_type: 'guess',
+        answer,
+        guess_mode: guessPromptMode,
+        guess_options: options,
+        hint_text: guessPromptHint.trim() || null,
+        normalized_answer: normalizeGuessText(answer),
+        reveal_policy: DEFAULT_GUESS_REVEAL_POLICY,
+      });
+
+      if (error) {
+        console.log('[profile] guess prompt insert error', error);
+        return;
+      }
+
+      resetGuessPromptComposer();
+      void loadPromptAnswers();
+    } finally {
+      setGuessPromptSaving(false);
+    }
+  };
+
+  const deletePrompt = useCallback(
+    async (promptRowId: string) => {
+      if (isPreviewMode || !profile?.id || !promptRowId) return;
+      setDeletingPromptId(promptRowId);
+      try {
+        const { error } = await supabase
+          .from('profile_prompts')
+          .delete()
+          .eq('profile_id', profile.id)
+          .eq('id', promptRowId);
+        if (error) {
+          console.log('[profile] prompt delete error', error);
+          return;
+        }
+        void loadPromptAnswers();
+      } finally {
+        setDeletingPromptId(null);
+      }
+    },
+    [isPreviewMode, loadPromptAnswers, profile?.id],
+  );
+
   const togglePreviewMode = () => {
     setIsPreviewMode(!isPreviewMode);
   };
+
+  const openPromptEditor = useCallback(() => {
+    if (isPreviewMode) return;
+    setShowPromptEditor(true);
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        scrollViewRef.current?.scrollTo({
+          y: Math.max(0, promptEditorYRef.current - 24),
+          animated: true,
+        });
+      }, 80);
+    });
+  }, [isPreviewMode]);
 
   const openFullPreview = () => {
     // Navigate to the full profile view screen in preview mode
@@ -830,19 +1183,43 @@ export default function ProfileScreen() {
     if (itemId === 'logout') {
       handleSignOut();
     } else if (itemId === 'admin') {
+      if (!canSeeAdminTools) return;
       router.push('/admin');
     } else if (itemId === 'email') {
-      setEmailMessage('');
-      setEmailError('');
-      setEmailInput(user?.email ?? '');
-      setShowEmailModal(true);
+      openEmailAccountModal();
     } else if (itemId === 'notifications') {
       setShowNotificationsModal(true);
+    } else if (itemId === 'privacy') {
+      router.push('/trust-center');
+    } else if (itemId === 'help') {
+      router.push('/support-center');
+    } else if (itemId === 'premium') {
+      router.push('/premium-plans');
     } else {
       // Handle other settings navigation
       console.log(`Navigate to ${itemId}`);
     }
   };
+
+  const openEmailAccountModal = useCallback(() => {
+    setEmailMessage('');
+    setEmailError('');
+    setIdentityMessage('');
+    setIdentityError('');
+    setEmailInput(user?.email ?? '');
+    setShowEmailModal(true);
+  }, [user?.email]);
+
+  const openRecoveryRequestModal = useCallback(() => {
+    setRecoveryError('');
+    setRecoveryMessage('');
+    setRecoveryCurrentMethod(linkedProviders.includes('google') ? 'google' : 'email');
+    setRecoveryPreviousMethod(linkedProviders.includes('apple') ? 'apple' : 'google');
+    setRecoveryContactEmail(user?.email ?? '');
+    setRecoveryPreviousEmail('');
+    setRecoveryNote('');
+    setShowRecoveryRequestModal(true);
+  }, [linkedProviders, user?.email]);
 
   const handleEmailUpdate = async () => {
     const trimmed = emailInput.trim().toLowerCase();
@@ -873,6 +1250,251 @@ export default function ProfileScreen() {
       setEmailSaving(false);
     }
   };
+
+  const getOAuthRedirectUrl = useCallback(
+    () =>
+      makeRedirectUri({
+        scheme: 'betweenerapp',
+        path: 'auth/callback',
+      }),
+    [],
+  );
+
+  const waitForSession = useCallback(async (timeoutMs = 9000) => {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.user) return true;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return false;
+  }, []);
+
+  const loadLinkedIdentities = useCallback(async () => {
+    if (!user?.id) {
+      setLinkedProviders([]);
+      return;
+    }
+    setIdentitiesLoading(true);
+    try {
+      const { data, error } = await supabase.auth.getUserIdentities();
+      if (error) {
+        setIdentityError(error.message);
+        return;
+      }
+      const providers = Array.from(
+        new Set(
+          (data?.identities ?? [])
+            .map((identity) => String(identity.provider || '').toLowerCase())
+            .filter(Boolean),
+        ),
+      );
+      setLinkedProviders(providers);
+    } catch (error: any) {
+      setIdentityError(error?.message ?? 'Unable to load sign-in methods.');
+    } finally {
+      setIdentitiesLoading(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!showEmailModal || !user?.id) return;
+    void loadLinkedIdentities();
+  }, [loadLinkedIdentities, showEmailModal, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setLinkedProviders([]);
+      setLinkedMethodsBannerDismissed(false);
+      return;
+    }
+    void loadLinkedIdentities();
+  }, [loadLinkedIdentities, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setLinkedMethodsBannerDismissed(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(`${LINKED_METHODS_BANNER_DISMISSED_KEY}:${user.id}`);
+        if (!cancelled) {
+          setLinkedMethodsBannerDismissed(raw === '1');
+        }
+      } catch {
+        if (!cancelled) setLinkedMethodsBannerDismissed(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  const dismissLinkedMethodsBanner = useCallback(async () => {
+    setLinkedMethodsBannerDismissed(true);
+    if (!user?.id) return;
+    try {
+      await AsyncStorage.setItem(`${LINKED_METHODS_BANNER_DISMISSED_KEY}:${user.id}`, '1');
+    } catch {
+      // ignore cache failures
+    }
+  }, [user?.id]);
+
+  const shouldShowLinkedMethodsBanner =
+    !isPreviewMode &&
+    !linkedMethodsBannerDismissed &&
+    !identitiesLoading &&
+    linkedProviders.length < 2;
+
+  const finishIdentityCallback = useCallback(async (url: string) => {
+    if (!isTrustedAuthCallbackUrl(url)) {
+      throw new Error("Untrusted auth callback.");
+    }
+
+    const merged: AuthCallbackParams = {};
+    mergeAuthParamsFromUrl(merged, url);
+
+    const code = merged.code;
+    const accessToken = merged.access_token;
+    const refreshToken = merged.refresh_token;
+
+    if (code) {
+      const { error } = await supabase.auth.exchangeCodeForSession(code);
+      if (error) throw error;
+      return;
+    }
+
+    if (accessToken && refreshToken) {
+      const { error } = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      if (error) throw error;
+    }
+  }, []);
+
+  const formatIdentityLinkError = useCallback((error: any, providerLabel: string) => {
+    const code = String(error?.code || '').toLowerCase();
+    if (code === 'identity_already_exists') {
+      return `This ${providerLabel} account is already linked to another Betweener account.`;
+    }
+    if (code === 'identity_not_found') {
+      return `${providerLabel} could not be linked right now. Please try again.`;
+    }
+    return error?.message ?? `Unable to link ${providerLabel}.`;
+  }, []);
+
+  const handleLinkGoogle = useCallback(async () => {
+    setIdentityError('');
+    setIdentityMessage('');
+    setLinkingProvider('google');
+    try {
+      const redirectTo = getOAuthRedirectUrl();
+      const { data, error } = await supabase.auth.linkIdentity({
+        provider: 'google',
+        options: { redirectTo },
+      });
+      if (error || !data?.url) {
+        throw error ?? new Error('Unable to start Google linking.');
+      }
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+      if (result.type === 'success' && result.url && isTrustedAuthCallbackUrl(result.url)) {
+        await finishIdentityCallback(result.url);
+        await waitForSession(4000);
+        await loadLinkedIdentities();
+        setIdentityMessage('Google is now linked to this Betweener account.');
+      }
+    } catch (error: any) {
+      setIdentityError(formatIdentityLinkError(error, 'Google'));
+    } finally {
+      setLinkingProvider(null);
+    }
+  }, [finishIdentityCallback, formatIdentityLinkError, getOAuthRedirectUrl, loadLinkedIdentities, waitForSession]);
+
+  const handleLinkApple = useCallback(async () => {
+    if (Platform.OS !== 'ios') return;
+    setIdentityError('');
+    setIdentityMessage('');
+    setLinkingProvider('apple');
+    try {
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+      if (!credential.identityToken) {
+        throw new Error('Apple sign-in failed to return a token.');
+      }
+      const { error } = await supabase.auth.linkIdentity({
+        provider: 'apple',
+        token: credential.identityToken,
+      });
+      if (error) throw error;
+      await waitForSession(4000);
+      await loadLinkedIdentities();
+      setIdentityMessage('Apple is now linked to this Betweener account.');
+    } catch (error: any) {
+      const message = String(error?.message || '');
+      if (message.toLowerCase().includes('canceled') || message.toLowerCase().includes('cancelled')) {
+        setLinkingProvider(null);
+        return;
+      }
+      setIdentityError(formatIdentityLinkError(error, 'Apple'));
+    } finally {
+      setLinkingProvider(null);
+    }
+  }, [formatIdentityLinkError, loadLinkedIdentities, waitForSession]);
+
+  const handleSubmitRecoveryRequest = useCallback(async () => {
+    setRecoveryError('');
+    setRecoveryMessage('');
+
+    if (!recoveryContactEmail.trim()) {
+      setRecoveryError('Add a contact email so support can reach you.');
+      return;
+    }
+
+    if (!recoveryNote.trim()) {
+      setRecoveryError('Tell us what happened so support can investigate the duplicate account.');
+      return;
+    }
+
+    setRecoverySubmitting(true);
+    try {
+      const { data, error } = await supabase.rpc('rpc_request_account_recovery', {
+        p_current_sign_in_method: recoveryCurrentMethod,
+        p_previous_sign_in_method: recoveryPreviousMethod,
+        p_contact_email: recoveryContactEmail.trim(),
+        p_previous_account_email: recoveryPreviousEmail.trim() || null,
+        p_note: recoveryNote.trim(),
+        p_evidence: {
+          linked_providers: linkedProviders,
+          current_email: user?.email ?? null,
+        },
+      });
+      if (error || !data) {
+        throw error ?? new Error('Unable to submit the recovery request.');
+      }
+      setRecoveryMessage('Recovery request sent. Support will review and help reconnect the right account.');
+      setRecoverySubmitting(false);
+      setShowRecoveryRequestModal(false);
+      setIdentityMessage('Recovery request sent to support.');
+    } catch (error: any) {
+      setRecoverySubmitting(false);
+      setRecoveryError(error?.message ?? 'Unable to submit the recovery request.');
+    }
+  }, [
+    linkedProviders,
+    recoveryContactEmail,
+    recoveryCurrentMethod,
+    recoveryNote,
+    recoveryPreviousEmail,
+    recoveryPreviousMethod,
+    user?.email,
+  ]);
 
   const persistNotificationPrefs = useCallback(
     async (next: NotificationPrefs) => {
@@ -937,11 +1559,11 @@ export default function ProfileScreen() {
   const heroImageUri =
     userPhotos[0]
     || profile?.avatar_url
-    || 'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=600&h=900&fit=crop&crop=face';
+    || '';
   const avatarImageUri =
     profile?.avatar_url
     || userPhotos[0]
-    || 'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=600&h=900&fit=crop&crop=face';
+    || '';
   const heroVideoSource =
     (profile as any)?.profile_video
     || (profile as any)?.profileVideo
@@ -954,6 +1576,10 @@ export default function ProfileScreen() {
     profile?.full_name
     || (profile as any)?.name
     || 'Your Name';
+  const profileInitials = getProfileInitials(displayName, 'B');
+  const placeholderPalette = getProfilePlaceholderPalette(user?.id || profile?.id || displayName);
+  const hasHeroImage = hasProfileImage(heroImageUri);
+  const hasAvatarImage = hasProfileImage(avatarImageUri);
   const displayAge = profile?.age ? String(profile.age) : '';
   const rawBio = (profile?.bio || '').trim();
   const defaultHookLines = [
@@ -991,25 +1617,81 @@ export default function ProfileScreen() {
     (profile as any)?.verification_level
     ?? (profile as any)?.verificationLevel
     ?? ((profile as any)?.verified ? 1 : 0);
+  useEffect(() => {
+    let active = true;
+
+    if (!verificationNudgeDismissedKey || verificationLevel !== 1) {
+      setVerificationNudgeDismissed(false);
+      return () => {
+        active = false;
+      };
+    }
+
+    AsyncStorage.getItem(verificationNudgeDismissedKey)
+      .then((value) => {
+        if (active) {
+          setVerificationNudgeDismissed(value === '1');
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setVerificationNudgeDismissed(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [verificationLevel, verificationNudgeDismissedKey]);
+
+  const dismissVerificationNudge = useCallback(async () => {
+    setVerificationNudgeDismissed(true);
+    if (!verificationNudgeDismissedKey) return;
+    try {
+      await AsyncStorage.setItem(verificationNudgeDismissedKey, '1');
+    } catch {
+      // Best-effort dismissal persistence only.
+    }
+  }, [verificationNudgeDismissedKey]);
   const isOnlineNow = !!(profile as any)?.online;
   const isActiveNow = !!(profile as any)?.is_active || !!(profile as any)?.isActiveNow;
   const showPresence = isOnlineNow || isActiveNow;
   const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
   const aboutMeText = rawBio || 'Add a few lines about you.';
+  const showAboutCard = !!rawBio && rawBio !== displayBio;
+  const qualityLabel = useMemo(() => {
+    if (typeof matchQuality !== 'number') return 'Fresh';
+    if (matchQuality >= 75) return 'Strong';
+    if (matchQuality >= 55) return 'Warm';
+    if (matchQuality >= 35) return 'Building';
+    return 'Fresh';
+  }, [matchQuality]);
+  const hasGalleryMedia = userPhotos.length > 0 || !!heroVideoSource;
   const promptHighlights = useMemo(
     () =>
       promptAnswers
         .map((row) => {
-          const prompt = PROFILE_PROMPTS.find((p) => p.id === row.prompt_key);
+          const prompt = PROFILE_PROMPTS.find((p) => p.id === row.promptKey);
+          const isGuess = row.promptType === 'guess';
           return {
             id: row.id,
-            title: row.prompt_title || prompt?.title || 'Prompt',
-            answer: row.answer,
+            title: row.promptTitle || prompt?.title || 'Prompt',
+            answer: isGuess ? `Answer: ${row.answer}` : row.answer,
+            eyebrow: isGuess ? 'Guess prompt' : 'Featured prompt',
+            meta:
+              isGuess && row.guessMode
+                ? row.guessMode === 'multiple_choice'
+                  ? 'Multiple choice'
+                  : 'Type your guess'
+                : null,
+            promptType: row.promptType || 'standard',
           };
         })
         .slice(0, 2),
     [promptAnswers],
   );
+  const featuredPrompt = promptHighlights[0] ?? null;
+  const extraPrompts = promptHighlights.slice(1);
 
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
@@ -1180,13 +1862,22 @@ export default function ProfileScreen() {
           {!isPreviewMode && (
             <>
               {__DEV__ && (
-                <TouchableOpacity
-                  style={styles.devButton}
-                  onPress={() => router.push("/(auth)/onboarding?variant=ghana")}
-                  accessibilityLabel="Open Ghana onboarding (dev)"
-                >
-                  <Text style={styles.devButtonText}>GH</Text>
-                </TouchableOpacity>
+                <>
+                  <TouchableOpacity
+                    style={styles.devButton}
+                    onPress={handleCopyDevSessionToken}
+                    accessibilityLabel="Copy current session token (dev)"
+                  >
+                    <Text style={styles.devButtonText}>TOK</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.devButton}
+                    onPress={() => router.push("/(auth)/onboarding?variant=ghana")}
+                    accessibilityLabel="Open Ghana onboarding (dev)"
+                  >
+                    <Text style={styles.devButtonText}>GH</Text>
+                  </TouchableOpacity>
+                </>
               )}
               <TouchableOpacity 
                 style={[styles.settingsButton, showSettingsDropdown && styles.settingsButtonActive]} 
@@ -1279,13 +1970,8 @@ export default function ProfileScreen() {
               <View style={[styles.dropdownDivider, { backgroundColor: theme.outline }]} />
             </View>
 
-            {SETTINGS_MENU_ITEMS.filter(item => {
-              // Hide admin option for regular users (you can add admin check here)
-              if (item.adminOnly) {
-                // Add your admin check logic here, for now showing to everyone
-                // return user?.email === 'admin@betweener.com' || user?.email?.includes('admin');
-                return true; // Show to everyone for testing
-              }
+            {SETTINGS_MENU_ITEMS.filter((item) => {
+              if (item.adminOnly) return canSeeAdminTools;
               return true;
             }).map((item) => {
               if (item.type === 'divider') {
@@ -1322,6 +2008,43 @@ export default function ProfileScreen() {
           </Animated.View>
         </>
       )}
+
+      {shouldShowLinkedMethodsBanner ? (
+        <View
+          style={[
+            styles.linkedMethodsBanner,
+            styles.cardShadowSoft,
+            { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+          ]}
+        >
+          <View style={styles.linkedMethodsBannerHeader}>
+            <View style={[styles.linkedMethodsBannerIconWrap, { backgroundColor: theme.tint + '18' }]}>
+              <MaterialCommunityIcons name="shield-check-outline" size={18} color={theme.tint} />
+            </View>
+            <TouchableOpacity onPress={() => void dismissLinkedMethodsBanner()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
+            </TouchableOpacity>
+          </View>
+          <Text style={[styles.linkedMethodsBannerTitle, { color: theme.text }]}>Add another sign-in method</Text>
+          <Text style={[styles.linkedMethodsBannerBody, { color: theme.textMuted }]}>
+            Link Google or Apple so you always come back to the same Betweener account.
+          </Text>
+          <View style={styles.linkedMethodsBannerActions}>
+            <TouchableOpacity
+              onPress={openEmailAccountModal}
+              style={[styles.linkedMethodsBannerPrimary, { backgroundColor: theme.tint }]}
+            >
+              <Text style={styles.linkedMethodsBannerPrimaryText}>Link now</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => void dismissLinkedMethodsBanner()}
+              style={[styles.linkedMethodsBannerSecondary, { borderColor: theme.outline, backgroundColor: theme.background }]}
+            >
+              <Text style={[styles.linkedMethodsBannerSecondaryText, { color: theme.textMuted }]}>Maybe later</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
 
       <Modal
         visible={showNotificationsModal}
@@ -1579,6 +2302,278 @@ export default function ProfileScreen() {
             >
               <Text style={styles.emailSaveText}>{emailSaving ? 'Sending...' : 'Send confirmation'}</Text>
             </TouchableOpacity>
+            <View style={[styles.emailAccountDivider, { backgroundColor: theme.outline }]} />
+            <View style={styles.identitySection}>
+              <Text style={[styles.identitySectionTitle, { color: theme.text }]}>Linked sign-in methods</Text>
+              <Text style={[styles.identitySectionBody, { color: theme.textMuted }]}>
+                Add another sign-in method so Google and Apple always open the same Betweener account.
+              </Text>
+
+              <View
+                style={[
+                  styles.identityMethodCard,
+                  { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+                ]}
+              >
+                <View style={styles.identityMethodMeta}>
+                  <View style={[styles.identityMethodIcon, { backgroundColor: theme.background }]}>
+                    <MaterialCommunityIcons name="email-outline" size={18} color={theme.tint} />
+                  </View>
+                  <View style={styles.identityMethodTextWrap}>
+                    <Text style={[styles.identityMethodTitle, { color: theme.text }]}>Email</Text>
+                    <Text style={[styles.identityMethodSubtitle, { color: theme.textMuted }]}>
+                      {user?.email || 'No email on file'}
+                    </Text>
+                  </View>
+                </View>
+                <View style={[styles.identityStatusPill, { backgroundColor: theme.tint + '18', borderColor: theme.tint }]}>
+                  <Text style={[styles.identityStatusText, { color: theme.tint }]}>Primary</Text>
+                </View>
+              </View>
+
+              <View
+                style={[
+                  styles.identityMethodCard,
+                  { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+                ]}
+              >
+                <View style={styles.identityMethodMeta}>
+                  <View style={[styles.identityMethodIcon, { backgroundColor: theme.background }]}>
+                    <MaterialCommunityIcons name="google" size={18} color="#EA4335" />
+                  </View>
+                  <View style={styles.identityMethodTextWrap}>
+                    <Text style={[styles.identityMethodTitle, { color: theme.text }]}>Google</Text>
+                    <Text style={[styles.identityMethodSubtitle, { color: theme.textMuted }]}>
+                      {linkedProviders.includes('google') ? 'Linked to this account' : 'Not linked yet'}
+                    </Text>
+                  </View>
+                </View>
+                {linkedProviders.includes('google') ? (
+                  <View style={[styles.identityStatusPill, { backgroundColor: theme.tint + '18', borderColor: theme.tint }]}>
+                    <Text style={[styles.identityStatusText, { color: theme.tint }]}>Linked</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    onPress={handleLinkGoogle}
+                    disabled={identitiesLoading || linkingProvider !== null}
+                    style={[
+                      styles.identityLinkButton,
+                      {
+                        backgroundColor: theme.tint,
+                        opacity: identitiesLoading || linkingProvider !== null ? 0.65 : 1,
+                      },
+                    ]}
+                  >
+                    <Text style={styles.identityLinkButtonText}>
+                      {linkingProvider === 'google' ? 'Linking...' : 'Link Google'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {Platform.OS === 'ios' ? (
+                <View
+                  style={[
+                    styles.identityMethodCard,
+                    { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+                  ]}
+                >
+                  <View style={styles.identityMethodMeta}>
+                    <View style={[styles.identityMethodIcon, { backgroundColor: theme.background }]}>
+                      <MaterialCommunityIcons name="apple" size={18} color={theme.text} />
+                    </View>
+                    <View style={styles.identityMethodTextWrap}>
+                      <Text style={[styles.identityMethodTitle, { color: theme.text }]}>Apple</Text>
+                      <Text style={[styles.identityMethodSubtitle, { color: theme.textMuted }]}>
+                        {linkedProviders.includes('apple') ? 'Linked to this account' : 'Not linked yet'}
+                      </Text>
+                    </View>
+                  </View>
+                  {linkedProviders.includes('apple') ? (
+                    <View style={[styles.identityStatusPill, { backgroundColor: theme.tint + '18', borderColor: theme.tint }]}>
+                      <Text style={[styles.identityStatusText, { color: theme.tint }]}>Linked</Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      onPress={handleLinkApple}
+                      disabled={identitiesLoading || linkingProvider !== null}
+                      style={[
+                        styles.identityLinkButton,
+                        {
+                          backgroundColor: theme.tint,
+                          opacity: identitiesLoading || linkingProvider !== null ? 0.65 : 1,
+                        },
+                      ]}
+                    >
+                      <Text style={styles.identityLinkButtonText}>
+                        {linkingProvider === 'apple' ? 'Linking...' : 'Link Apple'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ) : null}
+
+              {identityError ? (
+                <Text style={[styles.identityError, { color: '#ef4444' }]}>{identityError}</Text>
+              ) : null}
+              {identityMessage ? (
+                <Text style={[styles.identityMessage, { color: theme.tint }]}>{identityMessage}</Text>
+              ) : null}
+              {identitiesLoading ? (
+                <Text style={[styles.identityLoading, { color: theme.textMuted }]}>Checking sign-in methods...</Text>
+              ) : null}
+
+              <View style={[styles.recoveryCard, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
+                <View style={styles.recoveryCardCopy}>
+                  <Text style={[styles.recoveryCardTitle, { color: theme.text }]}>Having trouble with another sign-in method?</Text>
+                  <Text style={[styles.recoveryCardBody, { color: theme.textMuted }]}>
+                    If Apple, Google, or email opened the wrong Betweener account, send a recovery request for support review.
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={openRecoveryRequestModal}
+                  style={[styles.recoveryCardButton, { backgroundColor: theme.tint }]}
+                >
+                  <Text style={styles.recoveryCardButtonText}>Recover account access</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showRecoveryRequestModal}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setShowRecoveryRequestModal(false)}
+      >
+        <View style={styles.emailModalBackdrop}>
+          <View
+            style={[
+              styles.emailModalCard,
+              styles.cardShadow,
+              { backgroundColor: theme.background, borderColor: theme.outline },
+            ]}
+          >
+            <View style={styles.emailModalHeader}>
+              <Text style={[styles.emailModalTitle, { color: theme.text }]}>Recover account access</Text>
+              <TouchableOpacity onPress={() => setShowRecoveryRequestModal(false)}>
+                <MaterialCommunityIcons name="close" size={20} color={theme.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <Text style={[styles.emailModalBody, { color: theme.textMuted }]}>
+              Tell support which sign-in method opened the wrong account and which one you used before. We will review it before any account merge.
+            </Text>
+
+            <View style={styles.recoveryFieldGroup}>
+              <Text style={[styles.recoveryFieldLabel, { color: theme.text }]}>How did you sign in now?</Text>
+              <View style={styles.recoveryChoiceRow}>
+                {ACCOUNT_RECOVERY_METHOD_OPTIONS.map((option) => {
+                  const active = recoveryCurrentMethod === option.value;
+                  return (
+                    <TouchableOpacity
+                      key={`current:${option.value}`}
+                      onPress={() => setRecoveryCurrentMethod(option.value)}
+                      style={[
+                        styles.recoveryChoicePill,
+                        {
+                          backgroundColor: active ? theme.tint : theme.backgroundSubtle,
+                          borderColor: active ? theme.tint : theme.outline,
+                        },
+                      ]}
+                    >
+                      <Text style={[styles.recoveryChoiceText, { color: active ? '#fff' : theme.text }]}>
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={styles.recoveryFieldGroup}>
+              <Text style={[styles.recoveryFieldLabel, { color: theme.text }]}>Which method do you want us to recover?</Text>
+              <View style={styles.recoveryChoiceRow}>
+                {ACCOUNT_RECOVERY_METHOD_OPTIONS.map((option) => {
+                  const active = recoveryPreviousMethod === option.value;
+                  return (
+                    <TouchableOpacity
+                      key={`previous:${option.value}`}
+                      onPress={() => setRecoveryPreviousMethod(option.value)}
+                      style={[
+                        styles.recoveryChoicePill,
+                        {
+                          backgroundColor: active ? theme.tint : theme.backgroundSubtle,
+                          borderColor: active ? theme.tint : theme.outline,
+                        },
+                      ]}
+                    >
+                      <Text style={[styles.recoveryChoiceText, { color: active ? '#fff' : theme.text }]}>
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            <TextInput
+              value={recoveryContactEmail}
+              onChangeText={setRecoveryContactEmail}
+              placeholder="Best contact email"
+              placeholderTextColor={theme.textMuted}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              style={[
+                styles.emailInput,
+                { color: theme.text, borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
+              ]}
+            />
+
+            <TextInput
+              value={recoveryPreviousEmail}
+              onChangeText={setRecoveryPreviousEmail}
+              placeholder="Previous account email, if you know it"
+              placeholderTextColor={theme.textMuted}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              style={[
+                styles.emailInput,
+                { color: theme.text, borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
+              ]}
+            />
+
+            <TextInput
+              value={recoveryNote}
+              onChangeText={setRecoveryNote}
+              placeholder="What happened? Example: Google created a fresh account but my real profile is under Apple."
+              placeholderTextColor={theme.textMuted}
+              multiline
+              textAlignVertical="top"
+              style={[
+                styles.recoveryTextArea,
+                { color: theme.text, borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
+              ]}
+            />
+
+            {recoveryError ? (
+              <Text style={[styles.identityError, { color: '#ef4444' }]}>{recoveryError}</Text>
+            ) : null}
+            {recoveryMessage ? (
+              <Text style={[styles.identityMessage, { color: theme.tint }]}>{recoveryMessage}</Text>
+            ) : null}
+
+            <TouchableOpacity
+              style={[
+                styles.emailSaveButton,
+                { backgroundColor: theme.tint, opacity: recoverySubmitting ? 0.6 : 1 },
+              ]}
+              onPress={handleSubmitRecoveryRequest}
+              disabled={recoverySubmitting}
+            >
+              <Text style={styles.emailSaveText}>{recoverySubmitting ? 'Sending...' : 'Send recovery request'}</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -1600,6 +2595,7 @@ export default function ProfileScreen() {
       )}
 
       <Animated.ScrollView
+        ref={scrollViewRef}
         style={[styles.scrollView, { backgroundColor: theme.background }]}
         showsVerticalScrollIndicator={false}
         onScroll={Animated.event(
@@ -1641,18 +2637,6 @@ export default function ProfileScreen() {
                 <View style={styles.heroInnerStroke} pointerEvents="none" />
                 <View style={styles.heroGrain} pointerEvents="none" />
                 <View style={styles.heroTopRow}>
-                  <View
-                    style={[
-                      styles.heroPill,
-                      {
-                        backgroundColor: isDark ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.8)",
-                        borderColor: theme.outline,
-                      },
-                    ]}
-                  >
-                    <MaterialCommunityIcons name="star-four-points" size={12} color={theme.tint} />
-                    <Text style={[styles.heroPillText, { color: theme.text }]}>Profile</Text>
-                  </View>
                   {!isPreviewMode && (
                     <TouchableOpacity
                       style={[
@@ -1670,52 +2654,78 @@ export default function ProfileScreen() {
                 </View>
               </View>
             ) : (
-              <ImageBackground
-                source={{ uri: heroImageUri }}
-                style={styles.heroImage}
-                imageStyle={styles.heroImageStyle}
-              >
-                <View style={styles.heroTint} />
-                <LinearGradient
-                  colors={["rgba(0,0,0,0.35)", "transparent"]}
-                  style={styles.heroTopGradient}
-                />
-                <LinearGradient
-                  colors={["transparent", "rgba(0,0,0,0.55)"]}
-                  style={styles.heroBottomGradient}
-                />
-                <View style={styles.heroVignette} pointerEvents="none" />
-                <View style={styles.heroInnerStroke} pointerEvents="none" />
-                <View style={styles.heroGrain} pointerEvents="none" />
-                <View style={styles.heroTopRow}>
-                  <View
-                    style={[
-                      styles.heroPill,
-                      {
-                        backgroundColor: isDark ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.8)",
-                        borderColor: theme.outline,
-                      },
-                    ]}
-                  >
-                    <MaterialCommunityIcons name="star-four-points" size={12} color={theme.tint} />
-                    <Text style={[styles.heroPillText, { color: theme.text }]}>Profile</Text>
+              hasHeroImage ? (
+                <ImageBackground
+                  source={{ uri: heroImageUri }}
+                  style={styles.heroImage}
+                  imageStyle={styles.heroImageStyle}
+                >
+                  <View style={styles.heroTint} />
+                  <LinearGradient
+                    colors={["rgba(0,0,0,0.35)", "transparent"]}
+                    style={styles.heroTopGradient}
+                  />
+                  <LinearGradient
+                    colors={["transparent", "rgba(0,0,0,0.55)"]}
+                    style={styles.heroBottomGradient}
+                  />
+                  <View style={styles.heroVignette} pointerEvents="none" />
+                  <View style={styles.heroInnerStroke} pointerEvents="none" />
+                  <View style={styles.heroGrain} pointerEvents="none" />
+                  <View style={styles.heroTopRow}>
+                    {!isPreviewMode && (
+                      <TouchableOpacity
+                        style={[
+                          styles.heroEditButton,
+                          {
+                            backgroundColor: isDark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.9)",
+                            borderColor: theme.outline,
+                          },
+                        ]}
+                        onPress={() => setShowEditModal(true)}
+                      >
+                        <MaterialCommunityIcons name="pencil" size={16} color={theme.text} />
+                      </TouchableOpacity>
+                    )}
                   </View>
-                  {!isPreviewMode && (
-                    <TouchableOpacity
-                      style={[
-                        styles.heroEditButton,
-                        {
-                          backgroundColor: isDark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.9)",
-                          borderColor: theme.outline,
-                        },
-                      ]}
-                      onPress={() => setShowEditModal(true)}
-                    >
-                      <MaterialCommunityIcons name="pencil" size={16} color={theme.text} />
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </ImageBackground>
+                </ImageBackground>
+              ) : (
+                <LinearGradient
+                  colors={[placeholderPalette.start, placeholderPalette.end]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.heroImage}
+                >
+                  <View style={styles.heroTint} />
+                  <View style={styles.heroVignette} pointerEvents="none" />
+                  <View style={styles.heroInnerStroke} pointerEvents="none" />
+                  <View style={styles.heroGrain} pointerEvents="none" />
+                  <View style={styles.heroTopRow}>
+                    {!isPreviewMode && (
+                      <TouchableOpacity
+                        style={[
+                          styles.heroEditButton,
+                          {
+                            backgroundColor: "rgba(255,255,255,0.14)",
+                            borderColor: "rgba(255,255,255,0.24)",
+                          },
+                        ]}
+                        onPress={() => setShowEditModal(true)}
+                      >
+                        <MaterialCommunityIcons name="pencil" size={16} color="#fff" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                  <View style={styles.heroPlaceholderContent}>
+                    <Text style={styles.heroPlaceholderEyebrow}>Premium presence starts here</Text>
+                    <Text style={styles.heroPlaceholderInitials}>{profileInitials}</Text>
+                    <Text style={styles.heroPlaceholderTitle}>Add a portrait that feels like you</Text>
+                    <Text style={styles.heroPlaceholderSubtitle}>
+                      Strong first photos lift trust, reply rates, and overall profile quality.
+                    </Text>
+                  </View>
+                </LinearGradient>
+              )
             )}
           </View>
 
@@ -1728,10 +2738,21 @@ export default function ProfileScreen() {
               style={styles.avatarRing}
             >
               <View style={[styles.avatarInner, { backgroundColor: theme.background }]}>
-                <Image
-                  source={{ uri: avatarImageUri }}
-                  style={[styles.avatar, { borderColor: theme.background }]}
-                />
+                {hasAvatarImage ? (
+                  <Image
+                    source={{ uri: avatarImageUri }}
+                    style={[styles.avatar, { borderColor: theme.background }]}
+                  />
+                ) : (
+                  <LinearGradient
+                    colors={[placeholderPalette.start, placeholderPalette.end]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={[styles.avatar, styles.avatarPlaceholder]}
+                  >
+                    <Text style={styles.avatarPlaceholderInitials}>{profileInitials}</Text>
+                  </LinearGradient>
+                )}
               </View>
             </LinearGradient>
             {!isPreviewMode && (
@@ -1750,7 +2771,12 @@ export default function ProfileScreen() {
               {displayAge ? `, ${displayAge}` : ""}
             </Text>
             {verificationLevel > 0 ? (
-              <VerificationBadge level={verificationLevel} size="small" />
+              <VerificationBadge
+                level={verificationLevel}
+                size="small"
+                variant="betweener"
+                style={styles.heroInlineVerificationBadge}
+              />
             ) : null}
             {showPresence ? (
               <View
@@ -1784,15 +2810,13 @@ export default function ProfileScreen() {
               {displayBio}
             </Text>
           </View>
-          {useDefaultBio ? (
-            <View style={[styles.intentDivider, { backgroundColor: theme.outline }]} />
+          {!isPreviewMode && verificationLevel === 1 && !verificationNudgeDismissed ? (
+            <VerificationNudgeCard
+              theme={theme}
+              onPress={() => setIsVerificationModalVisible(true)}
+              onSecondaryPress={dismissVerificationNudge}
+            />
           ) : null}
-          {useDefaultBio ? (
-            <Text style={[styles.intentLine, { color: theme.textMuted }]}>
-              Open to meaningful connection
-            </Text>
-          ) : null}
-
           {!isPreviewMode ? (
             <View
               style={[
@@ -1828,14 +2852,20 @@ export default function ProfileScreen() {
                   style={[
                     styles.progressFill,
                     {
-                      backgroundColor: theme.tint,
                       width: progressAnim.interpolate({
                         inputRange: [0, 100],
                         outputRange: ["0%", "100%"],
                       }),
                     },
                   ]}
-                />
+                >
+                  <LinearGradient
+                    colors={[theme.tint, theme.accent]}
+                    start={{ x: 0, y: 0.5 }}
+                    end={{ x: 1, y: 0.5 }}
+                    style={styles.progressFillGradient}
+                  />
+                </Animated.View>
                 {progressTrackWidth > 0 && !progressAnimatedOnceRef.current ? (
                   <Animated.View
                     pointerEvents="none"
@@ -1861,18 +2891,13 @@ export default function ProfileScreen() {
               </View>
               {profileCompletion.percent < 100 ? (
                 <Text style={[styles.progressHelper, { color: theme.textMuted }]}>
-                  Thoughtful details help you feel more understood.
+                  A few thoughtful details make the whole profile feel stronger.
                 </Text>
               ) : (
                 <Text style={[styles.progressHelper, { color: theme.textMuted }]}>
                   {"You're all set."}
                 </Text>
               )}
-              {profileCompletion.percent < 100 && !(profile as any)?.profile_video ? (
-                <Text style={[styles.progressHelper, { color: theme.textMuted }]}>
-                  Bonus: Add an intro video
-                </Text>
-              ) : null}
               {nextPrompt ? (
                 <TouchableOpacity
                   style={styles.progressHintRow}
@@ -1889,6 +2914,82 @@ export default function ProfileScreen() {
                   <MaterialCommunityIcons name="chevron-right" size={14} color={theme.textMuted} />
                 </TouchableOpacity>
               ) : null}
+            </View>
+          ) : null}
+
+          {featuredPrompt ? (
+            <View
+              style={[
+                styles.featuredPromptCard,
+                { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+              ]}
+            >
+              <View style={styles.featuredPromptHeader}>
+                <Text style={[styles.featuredPromptEyebrow, { color: theme.tint }]}>
+                  {featuredPrompt.eyebrow}
+                </Text>
+                {!isPreviewMode ? (
+                  <View style={styles.promptHeaderActions}>
+                    <TouchableOpacity
+                      style={[styles.promptActionButton, { borderColor: theme.outline }]}
+                      onPress={() => {
+                        setPromptComposerMode(featuredPrompt.promptType === 'guess' ? 'guess' : 'standard');
+                        openPromptEditor();
+                      }}
+                    >
+                      <MaterialCommunityIcons name="pencil" size={14} color={theme.tint} />
+                      <Text style={[styles.promptActionText, { color: theme.tint }]}>Edit</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.promptRemoveButton, { borderColor: theme.outline }]}
+                      onPress={() => void deletePrompt(featuredPrompt.id)}
+                      disabled={deletingPromptId === featuredPrompt.id}
+                    >
+                      <MaterialCommunityIcons name="trash-can-outline" size={14} color={theme.textMuted} />
+                      <Text style={[styles.promptRemoveText, { color: theme.textMuted }]}>
+                        {deletingPromptId === featuredPrompt.id ? 'Removing' : 'Remove'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
+              </View>
+              <Text style={[styles.featuredPromptTitle, { color: theme.text }]}>
+                {featuredPrompt.title}
+              </Text>
+              {featuredPrompt.meta ? (
+                <Text style={[styles.promptMetaText, { color: theme.textMuted }]}>
+                  {featuredPrompt.meta}
+                </Text>
+              ) : null}
+              <Text style={[styles.featuredPromptAnswer, { color: theme.text }]}>
+                {featuredPrompt.answer}
+              </Text>
+            </View>
+          ) : !isPreviewMode && !promptsLoading ? (
+            <View
+              style={[
+                styles.featuredPromptCard,
+                { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+              ]}
+            >
+              <Text style={[styles.featuredPromptEyebrow, { color: theme.tint }]}>
+                Add your voice
+              </Text>
+              <Text style={[styles.featuredPromptTitle, { color: theme.text }]}>
+                One good prompt makes the profile memorable.
+              </Text>
+              <Text style={[styles.featuredPromptAnswer, { color: theme.textMuted }]}>
+                Share a thought, a value, or a line that feels unmistakably like you.
+              </Text>
+              <TouchableOpacity
+                style={[styles.inlinePromptCta, { backgroundColor: theme.tint }]}
+                onPress={() => {
+                  setPromptComposerMode('standard');
+                  openPromptEditor();
+                }}
+              >
+                <Text style={styles.inlinePromptCtaText}>Answer a prompt</Text>
+              </TouchableOpacity>
             </View>
           ) : null}
 
@@ -2082,13 +3183,6 @@ export default function ProfileScreen() {
             )}
           </View>
 
-          {/* Show compatibility score in preview mode */}
-          {isPreviewMode && (
-            <View style={styles.compatibilityContainer}>
-              <MaterialCommunityIcons name="heart" size={20} color={Colors.light.tint} />
-              <Text style={styles.compatibilityText}>85% Match</Text>
-            </View>
-          )}
         </View>
 
         {/* Quick Stats - Hidden in preview mode */}
@@ -2108,28 +3202,51 @@ export default function ProfileScreen() {
                 style={styles.statsHighlightLine}
               />
             </View>
-            <View style={styles.statItem}>
-              <Text style={[styles.statNumber, { color: theme.text }]}>
-                {matchesCount}
-              </Text>
+            <TouchableOpacity
+              style={styles.statItem}
+              activeOpacity={0.85}
+              onPress={() => router.push('/(tabs)/intent?type=like_with_note')}
+            >
+              <Text style={[styles.statNumber, { color: theme.text }]}>{likesCount}</Text>
+              <Text style={[styles.statLabel, { color: theme.textMuted }]}>Likes</Text>
+            </TouchableOpacity>
+            <View style={[styles.statDivider, { backgroundColor: theme.outline }]} />
+            <TouchableOpacity
+              style={styles.statItem}
+              activeOpacity={0.85}
+              onPress={() => router.push('/(tabs)/chat?focus=matches')}
+            >
+              <Text style={[styles.statNumber, { color: theme.text }]}>{matchesCount}</Text>
               <Text style={[styles.statLabel, { color: theme.textMuted }]}>Matches</Text>
-            </View>
+            </TouchableOpacity>
             <View style={[styles.statDivider, { backgroundColor: theme.outline }]} />
-            <View style={styles.statItem}>
-              <Text style={[styles.statNumber, { color: theme.text }]}>
-                {chatsCount}
-              </Text>
+            <TouchableOpacity
+              style={styles.statItem}
+              activeOpacity={0.85}
+              onPress={() => router.push('/(tabs)/chat')}
+            >
+              <Text style={[styles.statNumber, { color: theme.text }]}>{chatsCount}</Text>
               <Text style={[styles.statLabel, { color: theme.textMuted }]}>Chats</Text>
-            </View>
+            </TouchableOpacity>
             <View style={[styles.statDivider, { backgroundColor: theme.outline }]} />
-            <View style={styles.statItem}>
-              <Text style={[styles.statNumber, { color: theme.text }]}>
-                {typeof matchQuality === 'number' ? `${matchQuality}%` : '—'}
+            <TouchableOpacity
+              style={styles.statItem}
+              activeOpacity={0.85}
+              onPress={() => router.push('/(tabs)/intent')}
+            >
+              <Text
+                style={[
+                  styles.statNumber,
+                  styles.statWord,
+                  { color: theme.text },
+                ]}
+              >
+                {qualityLabel}
               </Text>
-              <Text style={[styles.statLabel, { color: theme.textMuted }]}>Match Quality</Text>
-            </View>
+              <Text style={[styles.statLabel, { color: theme.textMuted }]}>Quality</Text>
+            </TouchableOpacity>
             <Text style={[styles.statsHint, { color: theme.textMuted }]}>
-              Based on mutual intent alignment
+              Tap a tile to jump in
             </Text>
           </View>
         )}
@@ -2158,19 +3275,41 @@ export default function ProfileScreen() {
             )}
           </View>
           
-          <PhotoGallery
-            photos={userPhotos.length > 0 ? userPhotos : [
-              'https://images.unsplash.com/photo-1500003116-9aa12eeae7e2?w=300&h=400&fit=crop&crop=face',
-              'https://images.unsplash.com/photo-1501003211169-0a1dd7228f2d?w=300&h=400&fit=crop&crop=face',
-              'https://images.unsplash.com/photo-1502003119688-b3b9e7b2e1e8?w=300&h=400&fit=crop&crop=face'
-            ]}
-            introVideoUrl={heroVideoUrl}
-            introVideoThumbnail={heroVideoThumbnail || avatarImageUri}
-            onOpenVideo={() => setIntroVideoOpen(true)}
-            canEdit={!isPreviewMode}
-            onAddPhoto={() => setShowEditModal(true)}
-            onRemovePhoto={removePhoto}
-          />
+          {hasGalleryMedia ? (
+            <PhotoGallery
+              photos={userPhotos}
+              introVideoUrl={heroVideoUrl}
+              introVideoThumbnail={heroVideoThumbnail || avatarImageUri}
+              onOpenVideo={() => setIntroVideoOpen(true)}
+              canEdit={!isPreviewMode}
+              onAddPhoto={() => setShowEditModal(true)}
+              onRemovePhoto={removePhoto}
+            />
+          ) : (
+            <View
+              style={[
+                styles.emptyFeatureCard,
+                styles.galleryEmptyCard,
+                { backgroundColor: theme.background, borderColor: theme.outline },
+              ]}
+            >
+              <View style={[styles.emptyFeatureIconWrap, { backgroundColor: theme.backgroundSubtle }]}>
+                <MaterialCommunityIcons name="image-plus" size={22} color={theme.tint} />
+              </View>
+              <Text style={[styles.emptyFeatureTitle, { color: theme.text }]}>Your gallery is still quiet</Text>
+              <Text style={[styles.emptyFeatureSubtitle, { color: theme.textMuted }]}>
+                Add a few photos or an intro video so your profile feels complete, real, and easy to trust.
+              </Text>
+              {!isPreviewMode ? (
+                <TouchableOpacity
+                  style={[styles.emptyFeatureButton, { backgroundColor: theme.tint }]}
+                  onPress={() => setShowEditModal(true)}
+                >
+                  <Text style={styles.emptyFeatureButtonText}>Add media</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          )}
         </View>
 
         <ProfileVideoModal
@@ -2179,183 +3318,483 @@ export default function ProfileScreen() {
           onClose={() => setIntroVideoOpen(false)}
         />
 
-        {/* About Me Section */}
-        <View
-          style={[
-            styles.section,
-            styles.sectionCard,
-            styles.cardShadowSoft,
-            { paddingTop: 5, backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-          ]}
-        >
-          <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: theme.text }]}>
-              About Me
-            </Text>
-            {!isPreviewMode && (
-              <TouchableOpacity 
-                style={[styles.editButton, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}
-                onPress={() => setShowEditModal(true)}
-              >
-                <MaterialCommunityIcons name="pencil" size={16} color={theme.tint} />
-                <Text style={[styles.editButtonText, { color: theme.tint }]}>Edit</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
+        {showAboutCard ? (
           <View
             style={[
-              styles.aboutCard,
-              { backgroundColor: theme.background, borderColor: theme.outline },
+              styles.section,
+              styles.sectionCard,
+              styles.cardShadowSoft,
+              { paddingTop: 5, backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
             ]}
           >
-            <Text
-              style={[
-                styles.aboutText,
-                { color: rawBio ? theme.text : theme.textMuted },
-              ]}
-            >
-              {aboutMeText}
-            </Text>
-          </View>
-
-          {promptsLoading ? (
-            <Text style={[styles.promptEmptyText, { color: theme.textMuted }]}>
-              Loading prompts...
-            </Text>
-          ) : promptHighlights.length ? (
-            <View style={styles.promptHighlights}>
-              {promptHighlights.map((prompt) => (
-                <View
-                  key={prompt.id}
-                  style={[
-                    styles.promptHighlightCard,
-                    { backgroundColor: theme.background, borderColor: theme.outline },
-                  ]}
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionTitle, { color: theme.text }]}>
+                About Me
+              </Text>
+              {!isPreviewMode && (
+                <TouchableOpacity 
+                  style={[styles.editButton, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}
+                  onPress={() => setShowEditModal(true)}
                 >
-                  <Text style={[styles.promptHighlightTitle, { color: theme.textMuted }]}>
-                    {prompt.title}
-                  </Text>
-                  <Text style={[styles.promptHighlightAnswer, { color: theme.text }]}>
-                    {prompt.answer}
-                  </Text>
-                </View>
-              ))}
+                  <MaterialCommunityIcons name="pencil" size={16} color={theme.tint} />
+                  <Text style={[styles.editButtonText, { color: theme.tint }]}>Edit</Text>
+                </TouchableOpacity>
+              )}
             </View>
-          ) : (
-            <Text style={[styles.promptEmptyText, { color: theme.textMuted }]}>
-              Add a prompt or two to share more about you.
-            </Text>
-          )}
 
-          {!isPreviewMode ? (
-            <View style={styles.promptActionsRow}>
-              <TouchableOpacity
-                style={[styles.promptActionButton, { borderColor: theme.outline }]}
-                onPress={() => setShowPromptEditor((prev) => !prev)}
-              >
-                <MaterialCommunityIcons name="comment-quote-outline" size={16} color={theme.tint} />
-                <Text style={[styles.promptActionText, { color: theme.tint }]}>
-                  {showPromptEditor ? 'Hide prompts' : 'Add prompt'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-
-          {showPromptEditor ? (
-            <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+            {showAboutCard ? (
               <View
                 style={[
-                  styles.promptCard,
-                  styles.cardShadowSoft,
+                  styles.aboutCard,
                   { backgroundColor: theme.background, borderColor: theme.outline },
                 ]}
               >
-                <Text style={[styles.promptTitle, { color: theme.text }]}>
-                  Create your own
+                <Text
+                  style={[
+                    styles.aboutText,
+                    { color: rawBio ? theme.text : theme.textMuted },
+                  ]}
+                >
+                  {aboutMeText}
                 </Text>
-                <View style={styles.customPromptGroup}>
-                  <TextInput
-                    value={customPromptTitle}
-                    onChangeText={setCustomPromptTitle}
-                    placeholder="Write your question..."
-                    placeholderTextColor={theme.textMuted}
-                    style={[
-                      styles.customPromptInput,
-                      { color: theme.text, borderColor: theme.outline },
-                    ]}
-                  />
-                  <TextInput
-                    value={customPromptAnswer}
-                    onChangeText={setCustomPromptAnswer}
-                    placeholder="Your answer..."
-                    placeholderTextColor={theme.textMuted}
-                    style={[
-                      styles.customPromptInput,
-                      styles.customPromptAnswer,
-                      { color: theme.text, borderColor: theme.outline },
-                    ]}
-                    multiline
-                  />
-                  <TouchableOpacity
-                    onPress={saveCustomPrompt}
-                    disabled={!customPromptTitle.trim() || !customPromptAnswer.trim() || customPromptSaving}
-                    style={[
-                      styles.customPromptSave,
-                      {
-                        backgroundColor: customPromptTitle.trim() && customPromptAnswer.trim()
-                          ? theme.tint
-                          : theme.outline,
-                      },
-                    ]}
-                  >
-                    <Text style={styles.customPromptSaveText}>
-                      {customPromptSaving ? 'Saving...' : 'Save prompt'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
               </View>
-              {PROFILE_PROMPTS.map((prompt) => (
+            ) : null}
+
+          </View>
+        ) : null}
+
+        {(showPromptEditor || extraPrompts.length > 0 || (!featuredPrompt && !isPreviewMode) || promptsLoading) ? (
+          <View
+            style={[
+              styles.section,
+              styles.sectionCard,
+              styles.cardShadowSoft,
+              { paddingTop: 5, backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+            ]}
+            onLayout={(event) => {
+              promptEditorYRef.current = event.nativeEvent.layout.y;
+            }}
+          >
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionTitle, { color: theme.text }]}>Prompts</Text>
+              {!isPreviewMode ? (
+                <TouchableOpacity
+                  style={[styles.editButton, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}
+                  onPress={() => setShowPromptEditor((prev) => !prev)}
+                >
+                  <MaterialCommunityIcons name="comment-quote-outline" size={16} color={theme.tint} />
+                  <Text style={[styles.editButtonText, { color: theme.tint }]}>
+                    {showPromptEditor ? 'Hide' : 'Manage'}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            {showPromptEditor ? (
+              <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
                 <View
-                  key={prompt.id}
                   style={[
                     styles.promptCard,
                     styles.cardShadowSoft,
                     { backgroundColor: theme.background, borderColor: theme.outline },
                   ]}
                 >
-                  <Text style={[styles.promptTitle, { color: theme.text }]}>{prompt.title}</Text>
-                  <View style={styles.promptOptions}>
-                    {prompt.responses.map((response, index) => {
-                      const selected = selectedPrompts[prompt.id] === index;
-                      return (
+                  <Text style={[styles.promptTitle, { color: theme.text }]}>
+                    Add a prompt
+                  </Text>
+                  <View style={styles.promptComposerTabs}>
+                    <TouchableOpacity
+                      onPress={() => setPromptComposerMode('standard')}
+                      style={[
+                        styles.promptComposerTab,
+                        {
+                          backgroundColor:
+                            promptComposerMode === 'standard' ? theme.tint : theme.backgroundSubtle,
+                          borderColor: promptComposerMode === 'standard' ? theme.tint : theme.outline,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.promptComposerTabText,
+                          { color: promptComposerMode === 'standard' ? '#fff' : theme.textMuted },
+                        ]}
+                      >
+                        Standard
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => setPromptComposerMode('guess')}
+                      style={[
+                        styles.promptComposerTab,
+                        {
+                          backgroundColor:
+                            promptComposerMode === 'guess' ? theme.tint : theme.backgroundSubtle,
+                          borderColor: promptComposerMode === 'guess' ? theme.tint : theme.outline,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.promptComposerTabText,
+                          { color: promptComposerMode === 'guess' ? '#fff' : theme.textMuted },
+                        ]}
+                      >
+                        Guess
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  {promptComposerMode === 'standard' ? (
+                    <View style={styles.customPromptGroup}>
+                      <TextInput
+                        value={customPromptTitle}
+                        onChangeText={setCustomPromptTitle}
+                        placeholder="Write your question..."
+                        placeholderTextColor={theme.textMuted}
+                        style={[
+                          styles.customPromptInput,
+                          { color: theme.text, borderColor: theme.outline },
+                        ]}
+                      />
+                      <TextInput
+                        value={customPromptAnswer}
+                        onChangeText={setCustomPromptAnswer}
+                        placeholder="Your answer..."
+                        placeholderTextColor={theme.textMuted}
+                        style={[
+                          styles.customPromptInput,
+                          styles.customPromptAnswer,
+                          { color: theme.text, borderColor: theme.outline },
+                        ]}
+                        multiline
+                      />
+                      <TouchableOpacity
+                        onPress={saveCustomPrompt}
+                        disabled={!customPromptTitle.trim() || !customPromptAnswer.trim() || customPromptSaving}
+                        style={[
+                          styles.customPromptSave,
+                          {
+                            backgroundColor: customPromptTitle.trim() && customPromptAnswer.trim()
+                              ? theme.tint
+                              : theme.outline,
+                          },
+                        ]}
+                      >
+                        <Text style={styles.customPromptSaveText}>
+                          {customPromptSaving ? 'Saving...' : 'Save prompt'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.customPromptGroup}>
+                      <Text style={[styles.promptHelperText, { color: theme.textMuted }]}>
+                        People get one playful guess before starting the conversation.
+                      </Text>
+                      <View style={styles.guessPromptTips}>
+                        <Text style={[styles.guessPromptTip, { color: theme.textMuted }]}>
+                          Keep the hint short so the challenge stays clean.
+                        </Text>
+                        <Text style={[styles.guessPromptTip, { color: theme.textMuted }]}>
+                          If you use multiple choice, make the wrong answers believable.
+                        </Text>
+                        <Text style={[styles.guessPromptTip, { color: theme.textMuted }]}>
+                          Pick something fun to guess, not something impossible.
+                        </Text>
+                      </View>
+                      <TextInput
+                        value={guessPromptTitle}
+                        onChangeText={setGuessPromptTitle}
+                        placeholder="Ask something playful..."
+                        placeholderTextColor={theme.textMuted}
+                        style={[
+                          styles.customPromptInput,
+                          { color: theme.text, borderColor: theme.outline },
+                        ]}
+                      />
+                      <TextInput
+                        value={guessPromptAnswer}
+                        onChangeText={setGuessPromptAnswer}
+                        placeholder="Correct answer"
+                        placeholderTextColor={theme.textMuted}
+                        style={[
+                          styles.customPromptInput,
+                          { color: theme.text, borderColor: theme.outline },
+                        ]}
+                      />
+                      <View style={styles.promptComposerTabs}>
                         <TouchableOpacity
-                          key={index}
+                          onPress={() => setGuessPromptMode('multiple_choice')}
                           style={[
-                            styles.promptOption,
-                            { backgroundColor: theme.background, borderColor: theme.outline },
-                            selected && { backgroundColor: theme.tint, borderColor: theme.tint },
+                            styles.promptComposerTab,
+                            {
+                              backgroundColor:
+                                guessPromptMode === 'multiple_choice' ? theme.accent : theme.backgroundSubtle,
+                              borderColor:
+                                guessPromptMode === 'multiple_choice' ? theme.accent : theme.outline,
+                            },
                           ]}
-                          onPress={() => handlePromptSelect(prompt.id, index)}
                         >
                           <Text
                             style={[
-                              styles.promptOptionText,
-                              { color: theme.text },
-                              selected && styles.promptOptionTextSelected,
+                              styles.promptComposerTabText,
+                              { color: guessPromptMode === 'multiple_choice' ? '#fff' : theme.textMuted },
                             ]}
                           >
-                            {response}
+                            Multiple choice
                           </Text>
                         </TouchableOpacity>
-                      );
-                    })}
-                  </View>
+                        <TouchableOpacity
+                          onPress={() => setGuessPromptMode('free_text')}
+                          style={[
+                            styles.promptComposerTab,
+                            {
+                              backgroundColor: guessPromptMode === 'free_text' ? theme.accent : theme.backgroundSubtle,
+                              borderColor: guessPromptMode === 'free_text' ? theme.accent : theme.outline,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.promptComposerTabText,
+                              { color: guessPromptMode === 'free_text' ? '#fff' : theme.textMuted },
+                            ]}
+                          >
+                            Type a guess
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                      {guessPromptMode === 'multiple_choice' ? (
+                        <View style={styles.guessOptionsGroup}>
+                          {guessPromptOptions.map((value, index) => (
+                            <TextInput
+                              key={`guess-option-${index}`}
+                              value={value}
+                              onChangeText={(next) =>
+                                setGuessPromptOptions((prev) =>
+                                  prev.map((item, itemIndex) => (itemIndex === index ? next : item)),
+                                )
+                              }
+                              placeholder={`Wrong option ${index + 1}`}
+                              placeholderTextColor={theme.textMuted}
+                              style={[
+                                styles.customPromptInput,
+                                { color: theme.text, borderColor: theme.outline },
+                              ]}
+                            />
+                          ))}
+                        </View>
+                      ) : null}
+                      <TextInput
+                        value={guessPromptHint}
+                        onChangeText={setGuessPromptHint}
+                        placeholder="Short hint for the viewer"
+                        placeholderTextColor={theme.textMuted}
+                        style={[
+                          styles.customPromptInput,
+                          { color: theme.text, borderColor: theme.outline },
+                        ]}
+                      />
+                      <View
+                        style={[
+                          styles.guessPreviewCard,
+                          { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+                        ]}
+                      >
+                        <Text style={[styles.guessPreviewEyebrow, { color: theme.tint }]}>
+                          Viewer preview
+                        </Text>
+                        <Text style={[styles.guessPreviewTitle, { color: theme.text }]}>
+                          {guessPromptTitle.trim() || 'Your guess prompt will show here'}
+                        </Text>
+                        <View style={styles.guessPreviewMetaRow}>
+                          <View
+                            style={[
+                              styles.guessPreviewMetaPill,
+                              { backgroundColor: theme.background, borderColor: theme.outline },
+                            ]}
+                          >
+                            <MaterialCommunityIcons
+                              name="gamepad-variant-outline"
+                              size={14}
+                              color={theme.tint}
+                            />
+                            <Text style={[styles.guessPreviewMetaText, { color: theme.textMuted }]}>
+                              {guessPromptMode === 'multiple_choice' ? '1 prompt challenge' : 'One clean guess'}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={[styles.guessPreviewHint, { color: theme.textMuted }]}>
+                          {guessPromptHint.trim()
+                            ? `Hint: ${guessPromptHint.trim()}`
+                            : 'Add a short hint so the viewer has a fair shot.'}
+                        </Text>
+                        {guessPromptMode === 'multiple_choice' ? (
+                          <View style={styles.guessPreviewOptions}>
+                            {guessPromptPreviewOptions.length > 0 ? (
+                              guessPromptPreviewOptions.map((option, index) => (
+                                <View
+                                  key={`guess-preview-${index}`}
+                                  style={[
+                                    styles.guessPreviewOption,
+                                    { backgroundColor: theme.background, borderColor: theme.outline },
+                                  ]}
+                                >
+                                  <Text style={[styles.guessPreviewOptionText, { color: theme.text }]}>
+                                    {option}
+                                  </Text>
+                                </View>
+                              ))
+                            ) : (
+                              <View
+                                style={[
+                                  styles.guessPreviewOption,
+                                  { backgroundColor: theme.background, borderColor: theme.outline },
+                                ]}
+                              >
+                                <Text style={[styles.guessPreviewOptionText, { color: theme.textMuted }]}>
+                                  Add a correct answer and believable wrong options
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                        ) : (
+                          <View
+                            style={[
+                              styles.guessPreviewOption,
+                              { backgroundColor: theme.background, borderColor: theme.outline },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.guessPreviewOptionText,
+                                { color: guessPromptAnswer.trim() ? theme.text : theme.textMuted },
+                              ]}
+                            >
+                              {guessPromptAnswer.trim() ? 'Type your guess' : 'Viewer types one guess here'}
+                            </Text>
+                          </View>
+                        )}
+                        <Text style={[styles.guessPreviewFooter, { color: theme.textMuted }]}>
+                          Correct answer stays hidden until they play.
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        onPress={saveGuessPrompt}
+                        disabled={!canSaveGuessPrompt}
+                        style={[
+                          styles.customPromptSave,
+                          {
+                            backgroundColor: canSaveGuessPrompt
+                              ? theme.tint
+                              : theme.outline,
+                          },
+                        ]}
+                      >
+                      <Text style={styles.customPromptSaveText}>
+                          {guessPromptSaving ? 'Saving...' : 'Save mini-game prompt'}
+                      </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
-              ))}
-            </Animated.View>
-          ) : null}
-        </View>
+                {PROFILE_PROMPTS.map((prompt) => (
+                  <View
+                    key={prompt.id}
+                    style={[
+                      styles.promptCard,
+                      styles.cardShadowSoft,
+                      { backgroundColor: theme.background, borderColor: theme.outline },
+                    ]}
+                  >
+                    <Text style={[styles.promptTitle, { color: theme.text }]}>{prompt.title}</Text>
+                    <View style={styles.promptOptions}>
+                      {prompt.responses.map((response, index) => {
+                        const selected = selectedPrompts[prompt.id] === index;
+                        return (
+                          <TouchableOpacity
+                            key={index}
+                            style={[
+                              styles.promptOption,
+                              { backgroundColor: theme.background, borderColor: theme.outline },
+                              selected && { backgroundColor: theme.tint, borderColor: theme.tint },
+                            ]}
+                            onPress={() => handlePromptSelect(prompt.id, index)}
+                          >
+                            <Text
+                              style={[
+                                styles.promptOptionText,
+                                { color: theme.text },
+                                selected && styles.promptOptionTextSelected,
+                              ]}
+                            >
+                              {response}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                ))}
+              </Animated.View>
+            ) : promptsLoading ? (
+              <Text style={[styles.promptEmptyText, { color: theme.textMuted }]}>Loading prompts...</Text>
+            ) : extraPrompts.length ? (
+              <View style={styles.promptHighlights}>
+                {extraPrompts.map((prompt) => (
+                  <View
+                    key={prompt.id}
+                    style={[
+                      styles.promptHighlightCard,
+                      { backgroundColor: theme.background, borderColor: theme.outline },
+                    ]}
+                  >
+                    <View style={styles.promptHighlightTopRow}>
+                      <Text style={[styles.promptHighlightTitle, { color: theme.textMuted }]}>
+                        {prompt.title}
+                      </Text>
+                      {!isPreviewMode ? (
+                        <TouchableOpacity
+                          style={[styles.promptRemoveIconButton, { borderColor: theme.outline }]}
+                          onPress={() => void deletePrompt(prompt.id)}
+                          disabled={deletingPromptId === prompt.id}
+                        >
+                          <MaterialCommunityIcons
+                            name="trash-can-outline"
+                            size={14}
+                            color={theme.textMuted}
+                          />
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                    {prompt.meta ? (
+                      <Text style={[styles.promptMetaText, { color: theme.textMuted }]}>
+                        {prompt.meta}
+                      </Text>
+                    ) : null}
+                    <Text style={[styles.promptHighlightAnswer, { color: theme.text }]}>
+                      {prompt.answer}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ) : !featuredPrompt ? (
+              <View
+                style={[
+                  styles.emptyFeatureCard,
+                  { backgroundColor: theme.background, borderColor: theme.outline },
+                ]}
+              >
+                <View style={[styles.emptyFeatureIconWrap, { backgroundColor: theme.backgroundSubtle }]}>
+                  <MaterialCommunityIcons name="comment-quote-outline" size={20} color={theme.tint} />
+                </View>
+                <Text style={[styles.emptyFeatureTitle, { color: theme.text }]}>Give people something to remember</Text>
+                <Text style={[styles.emptyFeatureSubtitle, { color: theme.textMuted }]}>
+                  One thoughtful answer gives your profile warmth, voice, and much better recall.
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
 
         {/* Interests Section */}
         <View
@@ -2391,7 +3830,28 @@ export default function ProfileScreen() {
                 </View>
               ))
             ) : (
-              <Text style={[styles.noInterestsText, { color: theme.textMuted }]}>No interests added yet. Tap Edit to add your interests!</Text>
+              <View
+                style={[
+                  styles.emptyFeatureCard,
+                  { backgroundColor: theme.background, borderColor: theme.outline },
+                ]}
+              >
+                <View style={[styles.emptyFeatureIconWrap, { backgroundColor: theme.backgroundSubtle }]}>
+                  <MaterialCommunityIcons name="star-four-points" size={20} color={theme.tint} />
+                </View>
+                <Text style={[styles.emptyFeatureTitle, { color: theme.text }]}>Interests help the right people stop scrolling</Text>
+                <Text style={[styles.emptyFeatureSubtitle, { color: theme.textMuted }]}>
+                  Add a few interests so your matches can spot shared energy faster.
+                </Text>
+                {!isPreviewMode ? (
+                  <TouchableOpacity
+                    style={[styles.emptyFeatureButton, { backgroundColor: theme.tint }]}
+                    onPress={() => setShowEditModal(true)}
+                  >
+                    <Text style={styles.emptyFeatureButtonText}>Add interests</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             )}
           </View>
         </View>
@@ -2448,7 +3908,11 @@ export default function ProfileScreen() {
         <ProfileEditModal
           visible={showEditModal}
           onClose={() => setShowEditModal(false)}
-          onSave={async (updatedProfile) => {
+          onOpenVerification={() => {
+            setShowEditModal(false);
+            setIsVerificationModalVisible(true);
+          }}
+          onSave={async () => {
             // Force refresh the profile to ensure UI is updated
             setRefreshing(true);
             try {
@@ -2474,7 +3938,7 @@ export default function ProfileScreen() {
             refreshStatus();
           }}
           profile={profile}
-          onVerificationUpdate={(level) => {
+          onVerificationUpdate={() => {
             // Refresh profile to show updated verification level
             refreshProfile();
             refreshStatus();
@@ -2679,25 +4143,47 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(255,255,255,0.02)',
   },
+  heroPlaceholderContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+  },
+  heroPlaceholderEyebrow: {
+    fontSize: 11,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    color: 'rgba(255,255,255,0.78)',
+    marginBottom: 10,
+  },
+  heroPlaceholderInitials: {
+    fontSize: 62,
+    fontFamily: 'PlayfairDisplay_700Bold',
+    letterSpacing: 2,
+    color: '#fff',
+  },
+  heroPlaceholderTitle: {
+    marginTop: 10,
+    fontSize: 22,
+    fontFamily: 'PlayfairDisplay_600SemiBold',
+    color: '#fff',
+    textAlign: 'center',
+  },
+  heroPlaceholderSubtitle: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 20,
+    fontFamily: 'Manrope_500Medium',
+    color: 'rgba(255,255,255,0.8)',
+    textAlign: 'center',
+  },
   heroTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     paddingHorizontal: 16,
     paddingTop: 14,
-  },
-  heroPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  heroPillText: {
-    fontSize: 12,
-    fontFamily: 'Manrope_600SemiBold',
   },
   heroEditButton: {
     width: 34,
@@ -2708,36 +4194,36 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   heroAvatarWrap: {
-    marginTop: -48,
+    marginTop: -42,
     alignItems: 'center',
     justifyContent: 'center',
   },
   heroAvatarGlow: {
     position: 'absolute',
-    width: 126,
-    height: 126,
-    borderRadius: 63,
+    width: 116,
+    height: 116,
+    borderRadius: 58,
     backgroundColor: 'rgba(255,255,255,0.52)',
     shadowColor: '#a78bfa',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.24,
-    shadowRadius: 18,
-    elevation: 10,
+    shadowRadius: 16,
+    elevation: 8,
   },
   avatarRing: {
     padding: 3,
-    borderRadius: 48,
+    borderRadius: 45,
   },
   avatarInner: {
     padding: 2,
-    borderRadius: 44,
+    borderRadius: 41,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: 'rgba(255,255,255,0.9)',
   },
   avatar: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
+    width: 84,
+    height: 84,
+    borderRadius: 42,
     borderWidth: 2,
     borderColor: '#fff',
     shadowColor: '#000',
@@ -2745,6 +4231,16 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.18,
     shadowRadius: 12,
     elevation: 10,
+  },
+  avatarPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarPlaceholderInitials: {
+    fontSize: 30,
+    fontFamily: 'PlayfairDisplay_700Bold',
+    color: '#fff',
+    letterSpacing: 1.4,
   },
   editAvatarButton: {
     position: 'absolute',
@@ -2763,13 +4259,62 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
+    gap: 10,
     marginTop: 14,
+  },
+  heroInlineVerificationBadge: {
+    transform: [{ translateY: 1 }],
+    marginHorizontal: 2,
+  },
+  heroVerificationButton: {
+    width: '100%',
+    marginTop: 12,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  heroVerificationIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  heroVerificationCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  heroVerificationTitle: {
+    fontSize: 13,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
+  heroVerificationSubtitle: {
+    fontSize: 11.5,
+    lineHeight: 16,
+    fontFamily: 'Manrope_500Medium',
+  },
+  heroVerificationAction: {
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+  },
+  heroVerificationActionText: {
+    fontSize: 11.5,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
   },
   presenceBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    marginLeft: 2,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
@@ -2795,7 +4340,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginTop: 8,
+    marginTop: 6,
   },
   locationText: {
     fontSize: 13,
@@ -2803,40 +4348,98 @@ const styles = StyleSheet.create({
     color: '#6b7280',
   },
   heroBioCard: {
-    marginTop: 16,
-    borderRadius: 18,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-  },
-  bio: {
-    fontSize: 14,
-    fontFamily: 'Manrope_400Regular',
-    color: '#374151',
-    textAlign: 'center',
-    lineHeight: 22,
-    letterSpacing: 0.2,
-  },
-  intentDivider: {
-    width: 36,
-    height: StyleSheet.hairlineWidth,
-    marginTop: 10,
-    borderRadius: 999,
-    opacity: 0.6,
-  },
-  intentLine: {
-    marginTop: 6,
-    fontSize: 12,
-    fontFamily: 'Manrope_500Medium',
-    letterSpacing: 0.2,
-    textAlign: 'center',
-  },
-  progressCard: {
     marginTop: 14,
     borderRadius: 18,
     borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
+  },
+  bio: {
+    fontSize: 13,
+    fontFamily: 'Manrope_400Regular',
+    color: '#374151',
+    textAlign: 'center',
+    lineHeight: 20,
+    letterSpacing: 0.2,
+  },
+  featuredPromptCard: {
+    marginTop: 12,
+    width: '100%',
+    borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 14,
+  },
+  featuredPromptHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 8,
+  },
+  promptHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  featuredPromptEyebrow: {
+    fontSize: 11,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  featuredPromptTitle: {
+    fontSize: 17,
+    fontFamily: 'PlayfairDisplay_600SemiBold',
+    lineHeight: 22,
+  },
+  promptMetaText: {
+    marginTop: 6,
+    fontSize: 11.5,
+    fontFamily: 'Manrope_500Medium',
+    lineHeight: 16,
+    letterSpacing: 0.2,
+  },
+  featuredPromptAnswer: {
+    marginTop: 8,
+    fontSize: 14,
+    fontFamily: 'Manrope_500Medium',
+    lineHeight: 22,
+    letterSpacing: 0.15,
+  },
+  inlinePromptCta: {
+    alignSelf: 'flex-start',
+    marginTop: 14,
+    borderRadius: 999,
+    paddingHorizontal: 15,
+    paddingVertical: 9,
+  },
+  inlinePromptCtaText: {
+    color: '#fff',
+    fontSize: 13,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
+  promptRemoveButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  promptRemoveText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 0.2,
+  },
+  progressCard: {
+    marginTop: 12,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 15,
+    paddingVertical: 10,
     width: '100%',
   },
   progressTopRow: {
@@ -2858,21 +4461,29 @@ const styles = StyleSheet.create({
   progressPctWrap: {
     minWidth: 54,
     alignItems: 'flex-end',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.06)',
   },
   progressPct: {
-    fontSize: 16,
+    fontSize: 15,
     fontFamily: 'Archivo_700Bold',
     letterSpacing: 0.2,
   },
   progressTrack: {
-    marginTop: 10,
-    height: 8,
+    marginTop: 8,
+    height: 9,
     borderRadius: 999,
     overflow: 'hidden',
   },
   progressFill: {
-    height: 8,
+    height: 9,
     borderRadius: 999,
+    overflow: 'hidden',
+  },
+  progressFillGradient: {
+    flex: 1,
   },
   progressGlow: {
     position: 'absolute',
@@ -2883,38 +4494,22 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(183,153,255,0.45)',
   },
   progressHintRow: {
-    marginTop: 8,
+    marginTop: 7,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
   },
   progressHelper: {
-    marginTop: 8,
-    fontSize: 12,
+    marginTop: 7,
+    fontSize: 11.5,
     fontFamily: 'Manrope_400Regular',
-    lineHeight: 16,
+    lineHeight: 15,
   },
   progressHint: {
     fontSize: 12,
     fontFamily: 'Manrope_500Medium',
     flexShrink: 1,
   },
-  compatibilityContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.light.tint + '15',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginTop: 16,
-    gap: 8,
-  },
-  compatibilityText: {
-    fontSize: 16,
-    fontFamily: 'PlayfairDisplay_600SemiBold',
-    color: Colors.light.tint,
-  },
-  
   // Stats
   statsContainer: {
     flexDirection: 'row',
@@ -2943,6 +4538,10 @@ const styles = StyleSheet.create({
     color: Colors.light.tint,
     marginBottom: 4,
     letterSpacing: 0.3,
+  },
+  statWord: {
+    fontSize: 18,
+    letterSpacing: 0.2,
   },
   statLabel: {
     fontSize: 10,
@@ -3030,16 +4629,71 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
   },
+  promptHighlightTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    marginBottom: 6,
+  },
   promptHighlightTitle: {
     fontSize: 12,
     fontFamily: 'Manrope_600SemiBold',
     letterSpacing: 0.4,
-    marginBottom: 6,
   },
   promptHighlightAnswer: {
     fontSize: 14,
     fontFamily: 'Manrope_500Medium',
     lineHeight: 21,
+  },
+  promptRemoveIconButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyFeatureCard: {
+    marginTop: 12,
+    alignSelf: 'stretch',
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  emptyFeatureIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  emptyFeatureTitle: {
+    fontSize: 15,
+    fontFamily: 'Archivo_600SemiBold',
+    textAlign: 'center',
+  },
+  emptyFeatureSubtitle: {
+    marginTop: 6,
+    fontSize: 13,
+    lineHeight: 20,
+    fontFamily: 'Manrope_400Regular',
+    textAlign: 'center',
+  },
+  emptyFeatureButton: {
+    marginTop: 14,
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  emptyFeatureButtonText: {
+    color: '#fff',
+    fontSize: 13,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 0.2,
   },
   promptEmptyText: {
     marginTop: 10,
@@ -3050,6 +4704,103 @@ const styles = StyleSheet.create({
   customPromptGroup: {
     marginTop: 8,
     gap: 10,
+  },
+  promptComposerTabs: {
+    marginTop: 6,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  promptComposerTab: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  promptComposerTabText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 0.2,
+  },
+  promptHelperText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_400Regular',
+    lineHeight: 18,
+    letterSpacing: 0.2,
+  },
+  guessPromptTips: {
+    gap: 6,
+  },
+  guessPromptTip: {
+    fontSize: 11.5,
+    fontFamily: 'Manrope_400Regular',
+    lineHeight: 17,
+    letterSpacing: 0.15,
+  },
+  guessOptionsGroup: {
+    gap: 10,
+  },
+  guessPreviewCard: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 10,
+  },
+  guessPreviewEyebrow: {
+    fontSize: 11,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+  },
+  guessPreviewTitle: {
+    fontSize: 18,
+    lineHeight: 24,
+    fontFamily: 'Archivo_600SemiBold',
+  },
+  guessPreviewMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  guessPreviewMetaPill: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  guessPreviewMetaText: {
+    fontSize: 11.5,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 0.2,
+  },
+  guessPreviewHint: {
+    fontSize: 12,
+    lineHeight: 18,
+    fontFamily: 'Manrope_400Regular',
+    letterSpacing: 0.2,
+  },
+  guessPreviewOptions: {
+    gap: 8,
+  },
+  guessPreviewOption: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  guessPreviewOptionText: {
+    fontSize: 13,
+    fontFamily: 'Manrope_500Medium',
+    lineHeight: 18,
+  },
+  guessPreviewFooter: {
+    fontSize: 11.5,
+    lineHeight: 17,
+    fontFamily: 'Manrope_400Regular',
+    letterSpacing: 0.15,
   },
   customPromptInput: {
     borderWidth: StyleSheet.hairlineWidth,
@@ -3132,6 +4883,9 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope_400Regular',
     color: '#6b7280',
     marginTop: 8,
+  },
+  galleryEmptyCard: {
+    marginHorizontal: 20,
   },
   photoCard: {
     position: 'relative',
@@ -3413,21 +5167,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     backgroundColor: 'transparent',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: '#e2e8f0',
     flexBasis: '48%',
     flexGrow: 1,
     shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
     elevation: 2,
   },
   detailText: {
-    fontSize: 13,
+    fontSize: 13.5,
     color: '#475569',
     fontFamily: 'Manrope_500Medium',
   },
@@ -3492,6 +5246,66 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 8,
   },
+  linkedMethodsBanner: {
+    marginHorizontal: 20,
+    marginTop: 10,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  linkedMethodsBannerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  linkedMethodsBannerIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  linkedMethodsBannerTitle: {
+    fontSize: 16,
+    fontFamily: 'Archivo_600SemiBold',
+  },
+  linkedMethodsBannerBody: {
+    marginTop: 6,
+    fontSize: 12.5,
+    lineHeight: 18,
+    fontFamily: 'Manrope_400Regular',
+  },
+  linkedMethodsBannerActions: {
+    marginTop: 12,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  linkedMethodsBannerPrimary: {
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  linkedMethodsBannerPrimaryText: {
+    color: '#fff',
+    fontSize: 12,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
+  linkedMethodsBannerSecondary: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  linkedMethodsBannerSecondaryText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 0.2,
+  },
   emailModalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.55)',
@@ -3546,6 +5360,159 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontFamily: 'Manrope_600SemiBold',
+  },
+  emailAccountDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginTop: 18,
+    marginBottom: 18,
+  },
+  identitySection: {
+    gap: 10,
+  },
+  identitySectionTitle: {
+    fontSize: 15,
+    fontFamily: 'Archivo_600SemiBold',
+  },
+  identitySectionBody: {
+    fontSize: 12.5,
+    lineHeight: 18,
+    fontFamily: 'Manrope_400Regular',
+  },
+  identityMethodCard: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  identityMethodMeta: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  identityMethodIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  identityMethodTextWrap: {
+    flex: 1,
+    gap: 2,
+  },
+  identityMethodTitle: {
+    fontSize: 13.5,
+    fontFamily: 'Manrope_700Bold',
+  },
+  identityMethodSubtitle: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: 'Manrope_400Regular',
+  },
+  identityStatusPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  identityStatusText: {
+    fontSize: 11.5,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
+  identityLinkButton: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  identityLinkButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
+  identityError: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: 'Manrope_500Medium',
+  },
+  identityMessage: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: 'Manrope_500Medium',
+  },
+  identityLoading: {
+    fontSize: 11.5,
+    fontFamily: 'Manrope_400Regular',
+  },
+  recoveryCard: {
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    gap: 12,
+    marginTop: 4,
+  },
+  recoveryCardCopy: {
+    gap: 4,
+  },
+  recoveryCardTitle: {
+    fontSize: 13.5,
+    fontFamily: 'Archivo_600SemiBold',
+  },
+  recoveryCardBody: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: 'Manrope_400Regular',
+  },
+  recoveryCardButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  recoveryCardButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
+  recoveryFieldGroup: {
+    gap: 8,
+    marginTop: 4,
+  },
+  recoveryFieldLabel: {
+    fontSize: 12.5,
+    fontFamily: 'Manrope_700Bold',
+  },
+  recoveryChoiceRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  recoveryChoicePill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  recoveryChoiceText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_600SemiBold',
+  },
+  recoveryTextArea: {
+    minHeight: 110,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 14,
+    marginTop: 12,
+    fontFamily: 'Manrope_500Medium',
   },
   quietHoursHint: {
     fontSize: 12,

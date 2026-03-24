@@ -63,7 +63,7 @@ export default function CircleDetailScreen() {
   const [membership, setMembership] = useState<MemberRow | null>(null);
   const [loading, setLoading] = useState(false);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [imageUploading, setImageUploading] = useState(false);
+  const [_imageUploading, setImageUploading] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState('');
 
@@ -103,7 +103,7 @@ export default function CircleDetailScreen() {
     if (!circleId) return;
     setLoading(true);
     try {
-      const { data: circleRow, error: circleErr } = await supabase
+      const { data: circleRow, error: _circleErr } = await supabase
         .from('circles')
         .select('id,name,description,visibility,category,created_by_profile_id,image_path,image_updated_at')
         .eq('id', circleId)
@@ -111,7 +111,7 @@ export default function CircleDetailScreen() {
       setCircle((circleRow as Circle) || null);
 
       if (currentProfileId) {
-        const { data: myMembership, error: memberErr } = await supabase
+        const { data: myMembership, error: _memberErr } = await supabase
           .from('circle_members')
           .select('id,role,status,is_visible,profile_id')
           .eq('circle_id', circleId)
@@ -122,7 +122,7 @@ export default function CircleDetailScreen() {
         setMembership(null);
       }
 
-      const { data: memberRows, error: membersErr } = await supabase
+      const { data: memberRows, error: _membersErr } = await supabase
         .from('circle_members')
         .select('id,role,status,is_visible,profile_id,profiles (id,full_name,avatar_url,age,location,city,region)')
         .eq('circle_id', circleId);
@@ -263,6 +263,48 @@ export default function CircleDetailScreen() {
   const isMember = isOwner || membership?.status === 'active';
   const joinLabel = circle?.visibility === 'private' ? 'Request to join' : 'Join circle';
 
+  const renderEmptyMembersCard = useCallback(() => {
+    const title = isLeader
+      ? 'Your circle is ready for its first trusted members'
+      : 'This circle is still taking shape';
+    const body = isLeader
+      ? 'Invite carefully and keep the tone intentional. The first few members usually define the quality of every introduction after that.'
+      : 'The host has opened the room, but the member list has not filled out yet. Check back soon as new introductions arrive.';
+    return (
+      <View style={styles.emptyCard}>
+        <View style={styles.emptyBadge}>
+          <Text style={styles.emptyBadgeText}>{isLeader ? 'Founding circle' : 'Early access'}</Text>
+        </View>
+        <Text style={styles.emptyTitle}>{title}</Text>
+        <Text style={styles.emptyHint}>{body}</Text>
+        <View style={styles.emptyHighlights}>
+          <View style={styles.emptyHighlightRow}>
+            <MaterialCommunityIcons name="shield-check-outline" size={16} color={theme.tint} />
+            <Text style={styles.emptyHighlightText}>
+              Smaller circles feel safer, warmer, and more deliberate.
+            </Text>
+          </View>
+          <View style={styles.emptyHighlightRow}>
+            <MaterialCommunityIcons name="account-multiple-plus-outline" size={16} color={theme.tint} />
+            <Text style={styles.emptyHighlightText}>
+              Strong members make introductions easier to trust and easier to act on.
+            </Text>
+          </View>
+        </View>
+        <View style={styles.emptyActions}>
+          {isLeader ? (
+            <TouchableOpacity style={styles.primaryButton} onPress={() => setEditingName(true)}>
+              <Text style={styles.primaryText}>Edit circle</Text>
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity style={styles.secondaryButton} onPress={() => router.replace('/(tabs)/explore')}>
+            <Text style={styles.secondaryText}>Back to circles</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }, [isLeader, styles, theme.tint]);
+
   const handleSaveName = useCallback(async () => {
     if (!circleId || !currentProfileId) return;
     const trimmed = nameValue.trim();
@@ -292,7 +334,7 @@ export default function CircleDetailScreen() {
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: 'images',
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.8,
@@ -435,10 +477,7 @@ export default function CircleDetailScreen() {
         {loading && members.length === 0 ? (
           <Text style={styles.emptyText}>Loading members...</Text>
         ) : members.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyText}>No members yet.</Text>
-            <Text style={styles.emptyHint}>Invite trusted people to join this circle.</Text>
-          </View>
+          renderEmptyMembersCard()
         ) : (
           <FlatList
             data={members}
@@ -564,7 +603,7 @@ export default function CircleDetailScreen() {
   );
 }
 
-const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
+const createStyles = (theme: typeof Colors.light, _isDark: boolean) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: theme.background, paddingHorizontal: 18 },
     header: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 10, paddingBottom: 6 },
@@ -678,7 +717,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     section: { marginTop: 18, gap: 10 },
     sectionTitle: { fontSize: 14, fontWeight: '700', color: theme.text },
-    emptyText: { fontSize: 12, color: theme.textMuted },
+    emptyText: { fontSize: 12, color: theme.textMuted, lineHeight: 20 },
     memberCard: {
       padding: 12,
       borderRadius: 16,
@@ -767,13 +806,52 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     emptyCard: {
       padding: 14,
-      borderRadius: 16,
+      borderRadius: 20,
       borderWidth: 1,
       borderColor: theme.outline,
       backgroundColor: theme.backgroundSubtle,
-      gap: 6,
+      gap: 10,
     },
-    emptyHint: { fontSize: 11, color: theme.textMuted },
+    emptyBadge: {
+      alignSelf: 'flex-start',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.outline,
+      backgroundColor: theme.background,
+    },
+    emptyBadgeText: {
+      fontSize: 10,
+      fontWeight: '700',
+      letterSpacing: 0.3,
+      color: theme.textMuted,
+    },
+    emptyTitle: {
+      fontSize: 17,
+      lineHeight: 22,
+      color: theme.text,
+      fontFamily: 'PlayfairDisplay_700Bold',
+    },
+    emptyHighlights: { gap: 8 },
+    emptyHighlightRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 8,
+    },
+    emptyHighlightText: {
+      flex: 1,
+      fontSize: 12,
+      lineHeight: 18,
+      color: theme.textMuted,
+    },
+    emptyActions: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+      marginTop: 2,
+    },
+    emptyHint: { fontSize: 12, lineHeight: 20, color: theme.textMuted },
   });
 
 const withAlpha = (hex: string, alpha: number) => {

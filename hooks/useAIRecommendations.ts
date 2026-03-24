@@ -1,6 +1,8 @@
 import { supabase } from '@/lib/supabase';
 import { Match } from '@/types/match';
 import { computeCompatibilityPercent } from '@/lib/compat/compatibility-score';
+import { readCache, writeCache } from '@/lib/persisted-cache';
+import { addBreadcrumb } from '@/lib/telemetry/sentry';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DeviceEventEmitter, Linking } from 'react-native';
@@ -71,6 +73,25 @@ const isActiveNowFromLastActive = (online: boolean | null | undefined, lastActiv
   }
 };
 
+const computeSharedInterests = (viewerInterestsRaw: string[] | undefined, interestsArr: string[]) => {
+  const viewerInterests = Array.isArray(viewerInterestsRaw) ? viewerInterestsRaw : [];
+  if (!viewerInterests.length || !interestsArr.length) return [];
+  const viewerSet = new Set(
+    viewerInterests
+      .map((item) => String(item || '').trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const unique: string[] = [];
+  interestsArr.forEach((interest) => {
+    const normalized = String(interest || '').trim().toLowerCase();
+    if (!normalized || !viewerSet.has(normalized) || unique.some((item) => item.toLowerCase() === normalized)) {
+      return;
+    }
+    unique.push(interest);
+  });
+  return unique;
+};
+
 async function signProfileVideoUrl(path?: string | null) {
   if (!path) return undefined;
   if (path.startsWith('http')) return path;
@@ -99,7 +120,7 @@ export default function useAIRecommendations(
   const [lastFetchedAt, setLastFetchedAt] = useState<number | null>(null);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [lastMutualMatch, setLastMutualMatch] = useState<Match | null>(null);
-  const [swipeHistory, setSwipeHistory] = useState<Array<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }>>([]);
+  const [swipeHistory, setSwipeHistory] = useState<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }[]>([]);
   const mountedRef = useRef(true);
   const presencePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mode = opts?.mode ?? 'forYou';
@@ -110,6 +131,48 @@ export default function useAIRecommendations(
     () => (effectiveDistanceUnit === 'auto' ? resolveAutoUnit() : effectiveDistanceUnit),
     [effectiveDistanceUnit]
   );
+
+  const cacheKey = useMemo(() => {
+    if (!userId) return null;
+    const win = mode === 'active' ? String(activeWindowMinutes) : '-';
+    return `cache:ai_recs:v1:${userId}:${mode}:${win}`;
+  }, [activeWindowMinutes, mode, userId]);
+  const cacheLoadedKeyRef = useRef<string | null>(null);
+  const cacheWriteInFlightRef = useRef(false);
+
+  const persistMatchesCache = useCallback(
+    async (next: Match[]) => {
+      if (!cacheKey) return;
+      if (cacheWriteInFlightRef.current) return;
+      cacheWriteInFlightRef.current = true;
+      try {
+        await writeCache(cacheKey, { fetchedAt: Date.now(), matches: next });
+      } finally {
+        cacheWriteInFlightRef.current = false;
+      }
+    },
+    [cacheKey],
+  );
+
+  // Cached-first: hydrate from last good payload quickly, then refresh in background.
+  useEffect(() => {
+    if (!cacheKey) return;
+    if (cacheLoadedKeyRef.current === cacheKey) return;
+    cacheLoadedKeyRef.current = cacheKey;
+
+    let cancelled = false;
+    (async () => {
+      const cached = await readCache<{ fetchedAt: number; matches: Match[] }>(cacheKey, 6 * 60_000);
+      if (cancelled || !cached || !Array.isArray(cached.matches)) return;
+      setMatches((prev) => (prev.length === 0 ? cached.matches : prev));
+      setLastError(null);
+      setLastFetchedAt((prev) => prev ?? cached.fetchedAt ?? Date.now());
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cacheKey]);
 
   const getStoredDistanceUnit = useCallback(async (): Promise<DistanceUnit> => {
     try {
@@ -242,7 +305,11 @@ export default function useAIRecommendations(
       if (!head) return prev;
       return [...prev, { id, action, index, match: head }];
     });
-    setMatches((prev: Match[]) => prev.slice(1));
+    setMatches((prev: Match[]) => {
+      const next = prev.slice(1);
+      void persistMatchesCache(next);
+      return next;
+    });
     // Persist the swipe to Supabase if configured and we have a userId
     (async () => {
       try {
@@ -257,6 +324,25 @@ export default function useAIRecommendations(
           }], { onConflict: 'swiper_id,target_id' });
         if (insertErr) {
           console.log('[recordSwipe] failed to upsert swipe', insertErr);
+        }
+
+        // Keep the Intent "Likes" tab in sync with swipes.
+        // We model a swipe-like as a lightweight intent_request of type `like_with_note` so it shows up
+        // in Incoming/Sent and can be accepted/passed using the existing intent flow.
+        if (action === 'like' || action === 'superlike') {
+          const { error: intentErr } = await supabase.rpc('rpc_create_intent_request', {
+            p_recipient_id: id,
+            p_type: 'like_with_note',
+            p_message: action === 'superlike' ? 'Superliked you.' : null,
+            p_metadata: {
+              source: 'swipe',
+              swipe_action: action,
+            },
+          });
+          if (intentErr) {
+            // Best-effort: swipes should still function even if the Intent mirror fails.
+            console.log('[recordSwipe] failed to create like intent', intentErr);
+          }
         }
 
         // If this was a 'like', check whether the target already liked us -> mutual match
@@ -280,11 +366,11 @@ export default function useAIRecommendations(
             }
           }
         }
-      } catch (e) {
+      } catch (_e) {
         // ignore and keep local mock behavior
       }
     })();
-  }, [matches]);
+  }, [matches, persistMatchesCache, userId]);
 
   // Expose a deterministic trigger for QA and debug: can be called to force the celebration modal
   const triggerMutualMatch = useCallback((matchId: string) => {
@@ -298,7 +384,7 @@ export default function useAIRecommendations(
         }, 10_000);
         return true;
       }
-    } catch (e) {}
+    } catch (_e) {}
     return false;
   }, [matches]);
 
@@ -337,8 +423,8 @@ export default function useAIRecommendations(
           if (statusErr) {
             console.log('[matches realtime] status update error', statusErr);
           }
-        } catch (e) {
-          console.log('[matches realtime] status update threw', e);
+        } catch (_e) {
+          console.log('[matches realtime] status update threw', _e);
         }
 
         // fetch the other profile with minimal fields
@@ -390,7 +476,7 @@ export default function useAIRecommendations(
               matchedInterests = matchedInterests.concat(arr);
             }
           }
-        } catch (e) {}
+        } catch (_e) {}
 
         const matched: Match = {
           id: profileData.id,
@@ -417,8 +503,8 @@ export default function useAIRecommendations(
         setTimeout(() => {
           if (mountedRef.current) setLastMutualMatch(null);
         }, 10_000);
-      } catch (e) {
-        console.log('[matches realtime] handler threw', e);
+      } catch (_e) {
+        console.log('[matches realtime] handler threw', _e);
       }
     };
 
@@ -451,7 +537,7 @@ export default function useAIRecommendations(
             }
           }
         }
-      } catch (e) {}
+      } catch (_e) {}
     };
 
     // handle initial URL if app was launched via deep link
@@ -488,10 +574,12 @@ export default function useAIRecommendations(
     setMatches((prev) => {
       if (prev.length === 0) return [lastEntry!.match];
       const withoutLast = prev.slice(0, -1);
-      return [lastEntry!.match, ...withoutLast];
+      const next = [lastEntry!.match, ...withoutLast];
+      void persistMatchesCache(next);
+      return next;
     });
     return { match: lastEntry.match, index: lastEntry.index };
-  }, []);
+  }, [persistMatchesCache]);
 
   const smartCount = useMemo(() => {
     // pretend some are AI-curated
@@ -515,28 +603,270 @@ export default function useAIRecommendations(
     try {
       const storedUnit = await getStoredDistanceUnit();
       const unitForFormat: DistanceUnit = storedUnit === 'auto' ? resolveAutoUnit() : storedUnit;
-      console.log('[useAIRecommendations] fetchMatchesFromServer starting', { userId });
-      const resolveProfileVideos = async (list: Match[]) => {
-        if (!Array.isArray(list) || list.length === 0) return list;
-        const signedByPath: Record<string, string> = {};
-        await Promise.all(
-          list.map(async (m) => {
-            const raw = (m as any).profileVideo;
-            if (!raw || typeof raw !== 'string' || raw.startsWith('http')) return;
-            if (signedByPath[raw]) return;
-            const signed = await signProfileVideoUrl(raw);
-            if (signed) signedByPath[raw] = signed;
-          }),
-        );
-        if (Object.keys(signedByPath).length === 0) return list;
-        return list.map((m) => {
-          const raw = (m as any).profileVideo;
-          if (raw && signedByPath[raw]) {
-            return { ...m, profileVideo: signedByPath[raw] } as Match;
+      const fetchId = `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      addBreadcrumb('[recs] fetch_start', {
+        fetchId,
+        mode,
+        hasUserId: !!userId,
+      });
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log('[useAIRecommendations] fetchMatchesFromServer starting', { userId, fetchId, mode });
+      }
+
+      // Fast path: hit the scored RPCs first. Avoid prefetching extra viewer data
+      // (profile/interests) on cold start/resume, because those extra queries can hang
+      // and prevent the feed RPC from ever being attempted.
+      if (supabase && userId) {
+        const noteRpcFailure = (err: any, fn: string) => {
+          // Important: mark that a fetch attempt happened so the UI can exit skeleton/loading
+          // deterministically and show a retry/error state.
+          setLastError(err as any);
+          setLastFetchedAt(Date.now());
+          addBreadcrumb('[recs] fetch_fail', {
+            fetchId,
+            mode,
+            fn,
+            errorCode: (err as any)?.code ?? null,
+            status: (err as any)?.status ?? null,
+            message: String((err as any)?.message || err || 'rpc_failed'),
+          });
+        };
+
+        const rpc = async (fn: string, args: Record<string, unknown>) => {
+          const startedAt = Date.now();
+          addBreadcrumb('[recs] rpc_start', { fetchId, mode, fn });
+          try {
+            const res = await supabase.rpc(fn as any, args as any);
+            const ms = Date.now() - startedAt;
+            addBreadcrumb('[recs] rpc_end', {
+              fetchId,
+              mode,
+              fn,
+              ms,
+              ok: !res.error,
+              status: (res as any)?.status ?? null,
+              rows: Array.isArray((res as any)?.data) ? (res as any).data.length : null,
+              errorCode: (res as any)?.error?.code ?? null,
+            });
+            return res as any;
+          } catch (e) {
+            const ms = Date.now() - startedAt;
+            addBreadcrumb('[recs] rpc_throw', {
+              fetchId,
+              mode,
+              fn,
+              ms,
+              message: String((e as any)?.message || e || 'rpc_throw'),
+            });
+            throw e;
           }
-          return m;
-        });
-      };
+        };
+
+        const toNum = (v: unknown): number | undefined => {
+          if (typeof v === 'number') return v;
+          if (typeof v === 'string') {
+            const n = Number(v);
+            return Number.isFinite(n) ? n : undefined;
+          }
+          return undefined;
+        };
+
+        const enrichRpcRowsWithInterests = async (rows: any[]) => {
+          if (!Array.isArray(rows) || rows.length === 0) return rows;
+          const ids = rows.map((row) => row?.id).filter(Boolean);
+          if (ids.length === 0) return rows;
+
+          const idsNeedingInterests = rows
+            .filter((row) => !Array.isArray(row?.interests) || row.interests.length === 0)
+            .map((row) => row?.id)
+            .filter(Boolean);
+
+          const genderMap: Record<string, string | null> = {};
+          try {
+            const interestsMap: Record<string, string[]> = {};
+
+            if (idsNeedingInterests.length > 0) {
+              const { data: piData, error: piErr } = await supabase
+                .from('profile_interests')
+                .select('profile_id, interests!inner(name)')
+                .in('profile_id', idsNeedingInterests);
+
+              if (!piErr && Array.isArray(piData)) {
+                for (const row of piData as any[]) {
+                  const pid = row.profile_id;
+                  let arr: string[] = [];
+                  if (Array.isArray(row.interests)) {
+                    arr = row.interests.map((i: any) => i?.name).filter(Boolean);
+                  } else if (row.interests?.name) {
+                    arr = [row.interests.name];
+                  }
+                  if (!pid) continue;
+                  if (!interestsMap[pid]) interestsMap[pid] = [];
+                  interestsMap[pid] = [...interestsMap[pid], ...arr];
+                }
+              }
+            }
+
+            const { data: profileRows, error: profileErr } = await supabase
+              .from('profiles')
+              .select('id, gender')
+              .in('id', ids);
+
+            if (!profileErr && Array.isArray(profileRows)) {
+              for (const row of profileRows as any[]) {
+                if (!row?.id) continue;
+                genderMap[String(row.id)] = row.gender ?? null;
+              }
+            }
+
+            return rows.map((row) => ({
+              ...row,
+              interests:
+                Array.isArray(row?.interests) && row.interests.length > 0
+                  ? row.interests
+                  : interestsMap[row?.id] ?? [],
+              gender: row?.gender ?? genderMap[String(row?.id)] ?? null,
+            }));
+          } catch {
+            return rows;
+          }
+        };
+
+        const mapRpcRow = (p: any, includeDistanceKm: boolean): Match => {
+          const interestsArr = Array.isArray(p?.interests) ? p.interests : [];
+          const aiScore = toNum(p?.ai_score) ?? toNum(p?.compatibility);
+          const distanceKm = includeDistanceKm ? toNum(p?.distance_km) : undefined;
+
+          return ({
+            id: p.id,
+            name: p.full_name || p.user_id || String(p.id),
+            age: p.age,
+            tagline: p.bio || '',
+            interests: interestsArr,
+            avatar_url: p.avatar_url || undefined,
+            distance: includeDistanceKm
+              ? formatDistance(distanceKm, p.location || p.region, unitForFormat)
+              : (p.location || p.region || ''),
+            distanceKm: distanceKm,
+            isActiveNow: isActiveNowFromLastActive(!!p.online, p.last_active ?? null),
+            lastActive: p.last_active ?? null,
+            verified: typeof p.verified === 'boolean'
+              ? p.verified
+              : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
+            verification_level: typeof p.verification_level === 'number' ? p.verification_level : undefined,
+            personalityTags: Array.isArray((p as any).personality_tags)
+              ? (p as any).personality_tags
+              : ((p as any).personality_type ? [(p as any).personality_type] : []),
+            compatibility: typeof aiScore === 'number' ? aiScore : undefined,
+            profileVideo: (p as any).profile_video || undefined,
+            location: p.location || undefined,
+            tribe: p.tribe,
+            religion: p.religion,
+            gender: (p as any).gender ?? undefined,
+            region: p.region,
+            current_country: (p as any).current_country,
+            current_country_code: (p as any).current_country_code,
+            location_precision: (p as any).location_precision,
+          } as Match);
+        };
+
+        if (mode === 'nearby') {
+          try {
+            const args = { p_user_id: userId, p_limit: 20 };
+            const scored = await rpc('get_recs_nearby_scored', args);
+            if (scored?.error?.code === 'client_timeout') {
+              noteRpcFailure(scored.error, 'get_recs_nearby_scored');
+              return;
+            }
+            const { data, error } = !scored.error ? scored : await rpc('get_recs_nearby', args);
+            if (error) {
+              noteRpcFailure(error, scored.error ? 'get_recs_nearby' : 'get_recs_nearby_scored');
+              if ((error as any)?.code === 'client_timeout') return;
+              // Keep going; the legacy (non-RPC) path may still succeed.
+            }
+            if (!error && Array.isArray(data)) {
+              const enriched = await enrichRpcRowsWithInterests(data);
+              const mapped = enriched.map((p: any) => mapRpcRow(p, true));
+              const filtered = filterDiscoverable(mapped);
+              setMatches(filtered);
+              setLastError(null);
+              setLastFetchedAt(Date.now());
+              void persistMatchesCache(filtered);
+              if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] nearby rpc result', { count: mapped.length });
+              addBreadcrumb('[recs] fetch_ok', { fetchId, mode, rows: mapped.length });
+              return;
+            }
+          } catch (e) {
+            console.log('[useAIRecommendations] nearby rpc error', e);
+            noteRpcFailure(e as any, 'get_recs_nearby_scored');
+            // Fall through to the legacy table-query path below.
+          }
+        } else if (mode === 'active') {
+          try {
+            const args = { p_user_id: userId, p_window_minutes: activeWindowMinutes };
+            const scored = await rpc('get_recs_active_scored', args);
+            if (scored?.error?.code === 'client_timeout') {
+              noteRpcFailure(scored.error, 'get_recs_active_scored');
+              return;
+            }
+            const { data, error } = !scored.error ? scored : await rpc('get_recs_active', args);
+            if (error) {
+              noteRpcFailure(error, scored.error ? 'get_recs_active' : 'get_recs_active_scored');
+              if ((error as any)?.code === 'client_timeout') return;
+              // Keep going; the legacy (non-RPC) path may still succeed.
+            }
+            if (!error && Array.isArray(data)) {
+              const enriched = await enrichRpcRowsWithInterests(data);
+              const mapped = enriched.map((p: any) => mapRpcRow(p, false));
+              const filtered = filterDiscoverable(mapped);
+              setMatches(filtered);
+              setLastError(null);
+              setLastFetchedAt(Date.now());
+              void persistMatchesCache(filtered);
+              if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] active rpc result', { count: mapped.length });
+              addBreadcrumb('[recs] fetch_ok', { fetchId, mode, rows: mapped.length });
+              return;
+            }
+          } catch (e) {
+            console.log('[useAIRecommendations] active rpc error', e);
+            noteRpcFailure(e as any, 'get_recs_active_scored');
+            // Fall through to the legacy table-query path below.
+          }
+        } else {
+          // Default: for-you feed
+          try {
+            const args = { p_user_id: userId, p_limit: 20 };
+            const scored = await rpc('get_recs_for_you_scored', args);
+            if (scored?.error?.code === 'client_timeout') {
+              noteRpcFailure(scored.error, 'get_recs_for_you_scored');
+              return;
+            }
+            const { data, error } = !scored.error ? scored : await rpc('get_recs_for_you', args);
+            if (error) {
+              noteRpcFailure(error, scored.error ? 'get_recs_for_you' : 'get_recs_for_you_scored');
+              if ((error as any)?.code === 'client_timeout') return;
+              // Keep going; the legacy (non-RPC) path may still succeed.
+            }
+            if (!error && Array.isArray(data)) {
+              const enriched = await enrichRpcRowsWithInterests(data);
+              const mapped = enriched.map((p: any) => mapRpcRow(p, true));
+              const filtered = filterDiscoverable(mapped);
+              setMatches(filtered);
+              setLastError(null);
+              setLastFetchedAt(Date.now());
+              void persistMatchesCache(filtered);
+              if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] forYou rpc result', { count: mapped.length });
+              addBreadcrumb('[recs] fetch_ok', { fetchId, mode, rows: mapped.length });
+              return;
+            }
+          } catch (e) {
+            console.log('[useAIRecommendations] forYou rpc error', e);
+            noteRpcFailure(e as any, 'get_recs_for_you_scored');
+            // Fall through to the legacy table-query path below.
+          }
+        }
+      }
+
       let viewerCompat: {
         interests?: string[];
         lookingFor?: string | null;
@@ -569,7 +899,7 @@ export default function useAIRecommendations(
               gender: (myProfile as any).gender ?? null,
             };
           }
-        } catch (e) {
+        } catch (_e) {
           userCoords = null;
         }
       }
@@ -590,7 +920,7 @@ export default function useAIRecommendations(
             }
             viewerCompat.interests = names;
           }
-        } catch (e) {
+        } catch (_e) {
           // ignore interest errors
         }
       }
@@ -609,145 +939,17 @@ export default function useAIRecommendations(
         if (typeof computed === 'number') return computed;
         return typeof p?.compatibility === 'number' ? p.compatibility : null;
       };
-      // If Supabase is configured and we have a user id, fetch profiles
+
+      // Scored RPCs failed; fall back to legacy table queries.
       if (supabase && userId) {
-        // Nearby mode: server-side distance sort via RPC
-        if (mode === 'nearby') {
-          try {
-            const scored = await supabase.rpc('get_recs_nearby_scored', { p_user_id: userId, p_limit: 20 });
-            const { data, error } = !scored.error ? scored : await supabase.rpc('get_recs_nearby', { p_user_id: userId, p_limit: 20 });
-            if (!error && Array.isArray(data)) {
-              const mapped: Match[] = data.map((p: any) => {
-                const interestsArr = Array.isArray(p.interests) ? p.interests : [];
-                const compatibility = computeCompatibility(p, interestsArr);
-                return ({
-                id: p.id,
-                name: p.full_name || p.user_id || String(p.id),
-                age: p.age,
-                tagline: p.bio || '',
-                interests: interestsArr,
-                avatar_url: p.avatar_url || undefined,
-                distance: formatDistance(p.distance_km, p.location || p.region, unitForFormat),
-                distanceKm: typeof p.distance_km === 'number' ? p.distance_km : undefined,
-                isActiveNow: isActiveNowFromLastActive(!!p.online, p.last_active ?? null),
-                lastActive: p.last_active ?? null,
-                verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
-                verification_level: typeof p.verification_level === 'number' ? p.verification_level : undefined,
-                personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
-                compatibility: typeof compatibility === 'number' ? compatibility : undefined,
-                profileVideo: (p as any).profile_video || undefined,
-                location: p.location || undefined,
-                tribe: p.tribe,
-                religion: p.religion,
-                region: p.region,
-                current_country: (p as any).current_country,
-                current_country_code: (p as any).current_country_code,
-                location_precision: (p as any).location_precision,
-              } as Match);
-              });
-              const withSigned = await resolveProfileVideos(mapped);
-              setMatches(filterDiscoverable(withSigned));
-            if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] nearby rpc result', { count: mapped.length });
-            return;
-          }
-        } catch (e) {
-          console.log('[useAIRecommendations] nearby rpc error', e);
-        }
-        }
-
-        // Active mode: server-side active filter via RPC
-        if (mode === 'active') {
-          try {
-            const scored = await supabase.rpc('get_recs_active_scored', { p_user_id: userId, p_window_minutes: activeWindowMinutes });
-            const { data, error } = !scored.error ? scored : await supabase.rpc('get_recs_active', { p_user_id: userId, p_window_minutes: activeWindowMinutes });
-            if (!error && Array.isArray(data)) {
-              const mapped: Match[] = data.map((p: any) => {
-                const interestsArr = Array.isArray(p.interests) ? p.interests : [];
-                const compatibility = computeCompatibility(p, interestsArr);
-                return ({
-                id: p.id,
-                name: p.full_name || p.user_id || String(p.id),
-                age: p.age,
-                tagline: p.bio || '',
-                interests: interestsArr,
-                avatar_url: p.avatar_url || undefined,
-                distance: p.location || p.region || '',
-                distanceKm: undefined,
-                isActiveNow: isActiveNowFromLastActive(!!p.online, p.last_active ?? null),
-                lastActive: p.last_active ?? null,
-                verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
-                verification_level: typeof p.verification_level === 'number' ? p.verification_level : undefined,
-                personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
-                compatibility: typeof compatibility === 'number' ? compatibility : undefined,
-                profileVideo: (p as any).profile_video || undefined,
-                location: p.location || undefined,
-                tribe: p.tribe,
-                religion: p.religion,
-                region: p.region,
-                current_country: (p as any).current_country,
-                current_country_code: (p as any).current_country_code,
-                location_precision: (p as any).location_precision,
-              } as Match);
-              });
-              const withSigned = await resolveProfileVideos(mapped);
-              setMatches(filterDiscoverable(withSigned));
-              if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] active rpc result', { count: mapped.length });
-              return;
-            }
-          } catch (e) {
-            console.log('[useAIRecommendations] active rpc error', e);
-          }
-        }
-
-        // For-you mode: prefer scored RPC (per-viewer compatibility)
-        try {
-          const { data, error } = await supabase.rpc('get_recs_for_you_scored', { p_user_id: userId, p_limit: 20 });
-          if (!error && Array.isArray(data)) {
-            const mapped: Match[] = data.map((p: any) => {
-              const interestsArr = Array.isArray(p.interests) ? p.interests : [];
-              const compatibility = computeCompatibility(p, interestsArr);
-              return ({
-              id: p.id,
-              name: p.full_name || p.user_id || String(p.id),
-              age: p.age,
-              tagline: p.bio || '',
-              interests: interestsArr,
-              avatar_url: p.avatar_url || undefined,
-              distance: formatDistance(p.distance_km, p.location || p.region, unitForFormat),
-              distanceKm: typeof p.distance_km === 'number' ? p.distance_km : undefined,
-              isActiveNow: isActiveNowFromLastActive(!!p.online, p.last_active ?? null),
-              lastActive: p.last_active ?? null,
-              verified: typeof p.verified === 'boolean' ? p.verified : (typeof p.verification_level === 'number' ? p.verification_level > 0 : false),
-              verification_level: typeof p.verification_level === 'number' ? p.verification_level : undefined,
-              personalityTags: Array.isArray((p as any).personality_tags) ? (p as any).personality_tags : ((p as any).personality_type ? [(p as any).personality_type] : []),
-              compatibility: typeof compatibility === 'number' ? compatibility : undefined,
-              profileVideo: (p as any).profile_video || undefined,
-              location: p.location || undefined,
-              tribe: p.tribe,
-              religion: p.religion,
-              region: p.region,
-              current_country: (p as any).current_country,
-              current_country_code: (p as any).current_country_code,
-              location_precision: (p as any).location_precision,
-            } as Match);
-            });
-            const withSigned = await resolveProfileVideos(mapped);
-            setMatches(filterDiscoverable(withSigned));
-            if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] forYou scored rpc result', { count: mapped.length });
-            return;
-          }
-        } catch (e) {
-          // fall through to legacy query
-        }
-
         // The `profiles` table may vary across environments. Try an
         // extended select first (includes optional fields). If it fails
         // due to missing columns (Postgres error 42703), retry with a
         // minimal safe column list to avoid falling back to mocks.
         const extendedSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
         const minimalSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
+          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
 
         let data: any[] | null = null;
         let error: any = null;
@@ -775,8 +977,8 @@ export default function useAIRecommendations(
           data = res.data;
           // @ts-ignore
           error = res.error;
-        } catch (e) {
-          error = e;
+        } catch (_e) {
+          error = _e as any;
         }
 
         // If we got a missing-column error, retry with minimalSelect
@@ -801,8 +1003,8 @@ export default function useAIRecommendations(
             // @ts-ignore
             error = res2.error;
             usedMinimal = true;
-          } catch (e) {
-            error = e;
+          } catch (_e) {
+            error = _e as any;
           }
         }
 
@@ -816,7 +1018,7 @@ export default function useAIRecommendations(
               usedMinimal,
             });
           }
-        } catch (e) {}
+        } catch (_e) {}
 
         if (!error && Array.isArray(data) && data.length > 0) {
           // Also fetch profile interests in bulk to populate the UI tags
@@ -843,7 +1045,7 @@ export default function useAIRecommendations(
             if (typeof __DEV__ !== 'undefined' && __DEV__) {
               console.log('[useAIRecommendations] profile_interests result', { count: Object.keys(interestsMap).length, interestsMap });
             }
-          } catch (e) {
+          } catch (_e) {
             // ignore profile interests errors
           }
 
@@ -869,7 +1071,7 @@ export default function useAIRecommendations(
                 const km = haversineKm(userCoords.latitude!, userCoords.longitude!, Number(p.latitude), Number(p.longitude));
                 distanceStr = formatDistance(km, p.location || p.region, unitForFormat);
                 distanceKm = km;
-              } catch (e) {
+              } catch (_e) {
                 distanceStr = p.location || p.region || '';
               }
             } else if (p.location || p.region) {
@@ -878,6 +1080,7 @@ export default function useAIRecommendations(
 
             const ptags = Array.isArray(p.personality_tags) ? p.personality_tags.map((t: any) => (typeof t === 'string' ? t : t?.name || String(t))) : [];
             const compatibility = computeCompatibility(p, interestsArr || []);
+            const commonInterests = computeSharedInterests(viewerCompat?.interests, interestsArr || []);
 
             return ({
               id: p.id,
@@ -885,6 +1088,7 @@ export default function useAIRecommendations(
               age: p.age,
               tagline: p.bio || '',
               interests: interestsArr || [],
+              commonInterests,
               avatar_url: p.avatar_url || undefined,
               distance: distanceStr || '',
               distanceKm: typeof distanceKm === 'number' && !Number.isNaN(distanceKm) ? distanceKm : undefined,
@@ -898,6 +1102,7 @@ export default function useAIRecommendations(
               location: p.location || undefined,
               tribe: p.tribe,
               religion: p.religion,
+              gender: p.gender ?? undefined,
               region: p.region,
               current_country: p.current_country,
               current_country_code: (p as any).current_country_code,
@@ -907,10 +1112,11 @@ export default function useAIRecommendations(
               profile_completed: (p as any).profile_completed,
             } as Match);
           });
-          const withSigned = await resolveProfileVideos(mapped);
-          setMatches(filterDiscoverable(withSigned));
+          const filtered = filterDiscoverable(mapped);
+          setMatches(filtered);
           setLastError(null);
           setLastFetchedAt(Date.now());
+          void persistMatchesCache(filtered);
           if (typeof __DEV__ !== 'undefined' && __DEV__) {
             console.log('[useAIRecommendations] fetched matches from server', { count: mapped.length, sample: mapped.slice(0, 3) });
           }
@@ -927,6 +1133,7 @@ export default function useAIRecommendations(
           setMatches([]);
           setLastError(null);
           setLastFetchedAt(Date.now());
+          void persistMatchesCache([]);
           return;
         }
       } else {
@@ -937,16 +1144,16 @@ export default function useAIRecommendations(
       }
     } catch (e) {
       console.log('[useAIRecommendations] fetch error', e);
-      setMatches([]);
       setLastError(e as any);
+      setLastFetchedAt((prev) => prev ?? Date.now());
       return;
     }
     // If we reached here it means a server fetch was attempted and failed
-    // (or returned no profiles). Leave matches empty to avoid mock data.
-    console.log('[useAIRecommendations] leaving matches empty after fetch failure');
-    setMatches([]);
+    // (or returned no profiles). Keep any cached/previous matches visible.
+    console.log('[useAIRecommendations] fetch failed (keeping existing matches if any)');
     setLastError((prev) => prev ?? new Error('fetch_failed'));
-  }, [userId, mode, activeWindowMinutes, resolvedDistanceUnit, getStoredDistanceUnit]);
+    setLastFetchedAt((prev) => prev ?? Date.now());
+  }, [userId, mode, activeWindowMinutes, resolvedDistanceUnit, getStoredDistanceUnit, persistMatchesCache]);
 
     // Fetch matches on mount and when userId changes
     useEffect(() => {
@@ -964,7 +1171,7 @@ export default function useAIRecommendations(
     if (!profileId || !supabase) return null;
     try {
       // fetch optional profile fields
-      const { data: profileData, error: pErr } = await supabase
+      const { data: profileData } = await supabase
         .from('profiles')
               .select('id, profile_video, latitude, longitude, region, tribe, religion, current_country, current_country_code, location_precision, personality_type, online, is_active, last_active, verification_level')
         .eq('id', profileId)
@@ -989,7 +1196,7 @@ export default function useAIRecommendations(
             interestsArr = interestsArr.concat(arr);
           }
         }
-      } catch (e) {}
+      } catch (_e) {}
 
       const signedProfileVideo = profileData?.profile_video
         ? await signProfileVideoUrl(profileData.profile_video)
@@ -1004,11 +1211,13 @@ export default function useAIRecommendations(
             ? [profileData.personality_type]
             : (m as any).personalityTags || [];
           const interestsFinal = (interestsArr && interestsArr.length > 0) ? interestsArr : ((m as any).interests && (m as any).interests.length > 0 ? (m as any).interests : [profileData?.region, profileData?.tribe].filter(Boolean));
+          const commonInterests = computeSharedInterests((m as any).commonInterests ?? [], interestsFinal || []);
           merged = {
             ...m,
             profileVideo: signedProfileVideo || (m as any).profileVideo,
             personalityTags: personality,
             interests: interestsFinal,
+            commonInterests,
             tribe: profileData?.tribe ?? (m as any).tribe,
             religion: profileData?.religion ?? (m as any).religion,
             region: profileData?.region ?? (m as any).region,
@@ -1022,7 +1231,7 @@ export default function useAIRecommendations(
       });
 
       return merged;
-    } catch (e) {
+    } catch (_e) {
       return null;
     }
   }, []);

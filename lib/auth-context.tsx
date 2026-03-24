@@ -1,7 +1,7 @@
 import { getOrCreateDeviceKeypair } from '@/lib/e2ee';
 import { registerPushToken } from '@/lib/notifications/push';
 import { clearSignupSession, consumeSignupMetadata, finalizeSignupPhoneVerification, getSignupPhoneState, updateSignupEventForUser } from '@/lib/signup-tracking';
-import { supabase } from '@/lib/supabase';
+import { ensureFreshSession, initSupabaseAuthLifecycle, supabase } from '@/lib/supabase';
 import { Session, User } from '@supabase/supabase-js';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
@@ -123,7 +123,7 @@ const fetchProfileViaRest = async (userId: string, accessToken?: string | null) 
       console.warn("[auth] fetchProfileViaRest: http error", { status: res.status, body: bodyText });
       return null;
     }
-    const data = (await res.json()) as Array<Profile>;
+    const data = (await res.json()) as Profile[];
     return data?.[0] ?? null;
   } catch (error) {
     console.warn("[auth] fetchProfileViaRest: fetch error", error);
@@ -162,7 +162,7 @@ const fetchProfilePhoneFlagsViaRest = async (
     ])) as Response;
 
     if (!res.ok) return null;
-    const data = (await res.json()) as Array<{ phone_verified?: boolean | null; phone_number?: string | null }>;
+    const data = (await res.json()) as { phone_verified?: boolean | null; phone_number?: string | null }[];
     return data?.[0] ?? null;
   } catch (error) {
     if (typeof __DEV__ !== "undefined" && __DEV__) {
@@ -213,12 +213,12 @@ const fetchVerifiedPhoneViaRest = async (
       ),
     ])) as Response;
     if (!res.ok) return null;
-    const data = (await res.json()) as Array<{
+    const data = (await res.json()) as {
       phone_number?: string | null;
       status?: string | null;
       is_verified?: boolean | null;
       verified_at?: string | null;
-    }>;
+    }[];
     return data?.[0] ?? null;
   } catch (error) {
     if (typeof __DEV__ !== "undefined" && __DEV__) {
@@ -248,6 +248,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const hasProfile = !!profile && profile.profile_completed === true;
   const isEmailVerified = !!user?.email_confirmed_at;
 
+  // Ensure Supabase token refresh is correctly managed across iOS background/foreground.
+  useEffect(() => {
+    const cleanup = initSupabaseAuthLifecycle();
+    return cleanup;
+  }, []);
+
   // Attach user id to crash/error reports (no PII beyond user id).
   useEffect(() => {
     setSentryUser(user?.id ?? null);
@@ -276,18 +282,63 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (typeof __DEV__ !== "undefined" && __DEV__) {
-        console.log("[auth] initial session", {
-          hasSession: !!session,
-          hasUser: !!session?.user,
-        });
+    let cancelled = false;
+    const initAuth = async () => {
+      try {
+        const { data, error } = await Promise.race([
+          supabase.auth.getSession(),
+          new Promise<{
+            data: { session: null };
+            error: Error;
+          }>((resolve) =>
+            setTimeout(() => resolve({ data: { session: null }, error: new Error("initial_session_timeout") }), 2500)
+          ),
+        ]);
+
+        if (cancelled) return;
+        if (error && typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] initial getSession error", error);
+        }
+
+        const initialSession = data?.session ?? null;
+        accessTokenRef.current = initialSession?.access_token ?? null;
+        setSession(initialSession);
+        setUser(initialSession?.user ?? null);
+
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] initial session", {
+            hasSession: !!initialSession,
+            hasUser: !!initialSession?.user,
+          });
+        }
+
+        if (initialSession?.user) {
+          // Warm profile state on cold launch so screens don't wait on a later auth event.
+          void ensureProfileExists(initialSession.user.id);
+          const initialProfile = await fetchProfile(initialSession.user.id);
+          if (!cancelled && initialProfile?.phone_verified === true) {
+            setPhoneVerified(true);
+          }
+        } else {
+          setProfile(null);
+          setPhoneVerified(false);
+        }
+      } catch (error) {
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] initial auth bootstrap error", error);
+        }
+        if (cancelled) return;
+        accessTokenRef.current = null;
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+        setPhoneVerified(false);
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
-      setSession(session);
-      setUser(session?.user ?? null);
-      setIsLoading(false);
-    });
+    };
+
+    void initAuth();
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -329,11 +380,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } else {
           accessTokenRef.current = null;
           setProfile(null);
+          setPhoneVerified(false);
         }
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
   }, []);
 
   // Fetch user profile
@@ -396,13 +451,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshPhoneState = async (): Promise<boolean> => {
     if (phoneRefreshInFlightRef.current) return phoneVerified;
     phoneRefreshInFlightRef.current = true;
-    let knownVerified = phoneVerified || profile?.phone_verified === true;
+    const serverKnownVerified = profile?.phone_verified === true;
+    let cachedVerified = false;
+    let cachedUnverified = false;
     try {
       if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.log("[auth] refreshPhoneState: start", {
           hasUser: !!user?.id,
           profilePhoneVerified: profile?.phone_verified ?? null,
-          knownVerified,
+          serverKnownVerified,
         });
       }
       if (!user?.id) {
@@ -414,7 +471,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Fast-path: if profile already says verified, treat it as source of truth.
-      if (knownVerified) {
+      if (serverKnownVerified) {
         setPhoneVerified(true);
         try {
           await AsyncStorage.setItem(
@@ -438,15 +495,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (!isFresh) {
             await AsyncStorage.removeItem(getPhoneVerifiedCacheKey(user.id));
           } else if (cached.verified === true) {
-            knownVerified = true;
-            setPhoneVerified(true);
+            cachedVerified = true;
             if (typeof __DEV__ !== "undefined" && __DEV__) {
-              console.log("[auth] refreshPhoneState: using cached verified");
+              console.log("[auth] refreshPhoneState: cached verified hint");
             }
-            return true;
           } else if (cached.verified === false) {
             // Cache can be used to avoid repeated network calls, but don't treat it as authoritative
             // if we later learn otherwise from profile/phone_verifications.
+            cachedUnverified = true;
             if (typeof __DEV__ !== "undefined" && __DEV__) {
               console.log("[auth] refreshPhoneState: using cached unverified");
             }
@@ -516,9 +572,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       phoneRefreshInFlightRef.current = false;
     }
     if (typeof __DEV__ !== "undefined" && __DEV__) {
-      console.log("[auth] refreshPhoneState: fallback known", { knownVerified });
+      console.log("[auth] refreshPhoneState: fallback", {
+        serverKnownVerified,
+        cachedVerified,
+        cachedUnverified,
+      });
     }
-    return knownVerified;
+    const fallbackVerified = serverKnownVerified || cachedVerified;
+    setPhoneVerified(fallbackVerified);
+    return fallbackVerified;
   };
 
   const updatePresence = async (nextOnline: boolean) => {
@@ -551,20 +613,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     resumeRefreshAtRef.current = now;
 
     try {
-      const { data, error } = await Promise.race([
-        supabase.auth.refreshSession(),
-        new Promise<{
-          data: { session: Session | null };
-          error: Error | null;
-        }>((resolve) => setTimeout(() => resolve({ data: { session: null }, error: null }), RESUME_REFRESH_TIMEOUT_MS)),
+      const status = await Promise.race([
+        ensureFreshSession(),
+        new Promise<'failed'>((resolve) => setTimeout(() => resolve('failed'), RESUME_REFRESH_TIMEOUT_MS)),
       ]);
 
-      if (error) {
-        if (typeof __DEV__ !== "undefined" && __DEV__) {
-          console.log("[auth] refreshSessionOnResume: refresh error", error);
-        }
-        return;
-      }
+      if (status === 'failed' || status === 'no_session') return;
+
+      // Pull the latest session snapshot so downstream requests have a current token.
+      const { data } = await Promise.race([
+        supabase.auth.getSession(),
+        new Promise<{ data: { session: null } }>((resolve) => setTimeout(() => resolve({ data: { session: null } }), 1500)),
+      ]);
 
       if (data?.session) {
         accessTokenRef.current = data.session.access_token ?? null;
@@ -589,6 +649,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const setOffline = () => mounted && void updatePresence(false);
 
     setOnline();
+    // Cold start with a persisted session won't emit an AppState transition.
+    // Refresh once here so stale access tokens are renewed after relaunch.
+    void refreshSessionOnResume();
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         setOnline();

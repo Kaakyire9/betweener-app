@@ -11,7 +11,7 @@ export async function requestAndSavePreciseLocation(profileId: string): Promise<
   let Location: any;
   try {
     Location = require('expo-location');
-  } catch (e) {
+  } catch (_e) {
     return { ok: false, error: 'expo-location is not installed. Add it to your project to enable GPS.' };
   }
 

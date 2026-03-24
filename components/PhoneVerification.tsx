@@ -1,18 +1,19 @@
 import { useAuth } from '@/lib/auth-context';
 import { PhoneVerificationService } from '@/lib/phone-verification';
 import { logger } from '@/lib/telemetry/logger';
-import { Colors, Fonts } from '@/constants/theme';
+import { Colors } from '@/constants/theme';
 import countryData from '@/data/countries.json';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  FlatList,
   SectionList,
   KeyboardAvoidingView,
   Modal,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -30,6 +31,7 @@ interface PhoneVerificationProps {
   signupSessionId?: string | null;
   countryLabel?: string;
   dialCode?: string;
+  introMessage?: string;
 }
 
 export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
@@ -41,6 +43,7 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
   signupSessionId,
   countryLabel = 'Ghana',
   dialCode = '+233',
+  introMessage,
 }) => {
   const { user, session } = useAuth();
   const theme = useMemo(() => Colors.light, []);
@@ -53,7 +56,7 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
   const [step, setStep] = useState<'phone' | 'code'>('phone');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
-  const [verificationSid, setVerificationSid] = useState('');
+  const [_verificationSid, setVerificationSid] = useState('');
   const [loading, setLoading] = useState(false);
 
   const countryOptions = useMemo(() => countryData, []);
@@ -68,6 +71,15 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
   }, [countryOptions]);
 
   const dialDigits = selectedCountry.dial.replace(/[^\d]/g, '');
+  const compactCountryLabel = useMemo(() => {
+    const compactMap: Record<string, string> = {
+      'United Kingdom': 'UK',
+      'United States': 'US',
+      'United Arab Emirates': 'UAE',
+      'South Africa': 'S. Africa',
+    };
+    return compactMap[selectedCountry.label] ?? selectedCountry.label;
+  }, [selectedCountry.label]);
 
   const promptCountryMismatch = async (args: {
     enteredDigits: string;
@@ -245,7 +257,7 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
       } else {
         Alert.alert('Error', result.error || 'Failed to send verification code');
       }
-    } catch (error) {
+    } catch (_error) {
       Alert.alert('Error', 'Failed to send verification code');
     } finally {
       setLoading(false);
@@ -300,7 +312,7 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
         Alert.alert('Error', result.error || 'Invalid verification code');
         setVerificationCode('');
       }
-    } catch (error) {
+    } catch (_error) {
       Alert.alert('Error', 'Failed to verify code');
     } finally {
       setLoading(false);
@@ -311,137 +323,192 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
 
 
   return (
-    <View style={[styles.container, { backgroundColor: 'transparent' }]}>
-      <View style={[styles.panel, { backgroundColor: 'rgba(247, 236, 226, 0.86)' }]}>
+    <KeyboardAvoidingView
+      style={[styles.container, { backgroundColor: 'transparent' }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 18 : 0}
+    >
+      <View style={styles.panelShadow} />
+      <View style={[styles.panel, { backgroundColor: 'rgba(252, 246, 240, 0.92)' }]}>
         <View style={styles.header}>
-        <TouchableOpacity onPress={onCancel} style={styles.closeButton}>
-          <Ionicons name="chevron-back" size={22} color={theme.text} />
-        </TouchableOpacity>
-        <Text style={[styles.title, { color: theme.text }]}>Phone Verification</Text>
-        <View style={styles.placeholder} />
+          <TouchableOpacity onPress={onCancel} style={styles.closeButton}>
+            <Ionicons name="chevron-back" size={22} color={theme.text} />
+          </TouchableOpacity>
+          <Text style={[styles.title, { color: theme.text }]}>Verify your phone</Text>
+          <View style={styles.placeholder} />
         </View>
 
-        <View style={styles.content}>
-        {step === 'phone' ? (
-          <>
-            <Text style={[styles.promptTitle, { color: theme.text }]}>
-              Can we get your number?
-            </Text>
-            <View style={[styles.phoneRow, { borderBottomColor: theme.outline }]}>
-              <TouchableOpacity
-                style={[styles.countryPill, { borderRightColor: theme.outline }]}
-                activeOpacity={0.8}
-                onPress={() => setCountryModalVisible(true)}
-              >
-                <Text style={[styles.countryText, { color: theme.text }]}>{selectedCountry.label}</Text>
-                <Text style={[styles.countryCode, { color: theme.textMuted }]}>{selectedCountry.dial}</Text>
-                <Ionicons name="chevron-down" size={16} color={theme.textMuted} />
-              </TouchableOpacity>
-              <TextInput
-                style={[styles.phoneInput, { color: theme.text }]}
-                value={phoneNumber}
-                onChangeText={(text) => setPhoneNumber(formatPhoneNumber(text))}
-                placeholder="Phone number"
-                keyboardType="phone-pad"
-                autoComplete="tel"
-                placeholderTextColor={theme.textMuted}
-              />
-            </View>
-            <Text style={[styles.noticeText, { color: theme.textMuted }]}>
-              By entering your number, you agree to receive texts about your account, including
-              verification codes and important updates.
-            </Text>
-            {selectedCountry.dial === '+233' ? (
-              <Text style={[styles.noticeText, { color: theme.textMuted }]}>
-                Tip (Ghana): enter your number without the leading 0 (e.g. 246666647).
-              </Text>
-            ) : null}
-            <View style={styles.helperRow}>
-              <Ionicons name="information-circle-outline" size={14} color={theme.accent} />
-              <Text style={[styles.helperText, { color: theme.accent }]}>
-                Tip: Confirm your country code matches your number.
-              </Text>
-            </View>
-            <Text style={[styles.noticeText, { color: theme.textMuted }]}>
-              Message frequency varies. Reply STOP to cancel.
-            </Text>
+        <ScrollView
+          style={styles.scrollArea}
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          bounces={false}
+        >
+          {step === 'phone' ? (
+            <>
+              <View style={styles.heroBlock}>
+                <View style={[styles.eyebrowPill, { backgroundColor: 'rgba(0, 128, 128, 0.09)' }]}>
+                  <Ionicons name="shield-checkmark-outline" size={14} color={theme.tint} />
+                  <Text style={[styles.eyebrowText, { color: theme.tint }]}>Secure verification</Text>
+                </View>
+                <Text style={[styles.promptTitle, { color: theme.text }]}>
+                  Can we get your number?
+                </Text>
+                <Text style={[styles.description, styles.introText, { color: theme.textMuted }]}>
+                  {introMessage ?? 'Add a verified number to protect your account and keep matches more trustworthy.'}
+                </Text>
+              </View>
 
-            <TouchableOpacity
-              style={[
-                styles.button,
-                { backgroundColor: theme.tint },
-                loading && styles.buttonDisabled,
-              ]}
-              onPress={handleSendCode}
-              disabled={loading}
-            >
-              {loading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <>
-                  <Text style={styles.buttonText}>Next</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          </>
-        ) : (
-          <>
-            <Text style={[styles.promptTitle, { color: theme.text }]}>Enter your code</Text>
-            <Text style={[styles.description, { color: theme.textMuted }]}>
-              We sent a 6-digit code to {selectedCountry.dial} {phoneNumber}
-            </Text>
-            
-            <View style={styles.inputContainer}>
-              <Text style={[styles.label, { color: theme.text }]}>Verification Code</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  styles.codeInput,
-                  { borderColor: theme.outline, color: theme.text, backgroundColor: theme.backgroundSubtle },
-                ]}
-                value={verificationCode}
-                onChangeText={setVerificationCode}
-                placeholder="123456"
-                keyboardType="number-pad"
-                maxLength={6}
-                autoComplete="sms-otp"
-                placeholderTextColor={theme.textMuted}
-              />
-              
-              {/* Confidence score intentionally hidden in UI (internal only). */}
-            </View>
+              <View style={[styles.inputSurface, { borderColor: 'rgba(125, 91, 166, 0.08)' }]}>
+                <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>Mobile number</Text>
+                <View style={[styles.phoneRow, { borderBottomColor: theme.outline }]}>
+                  <TouchableOpacity
+                    style={[styles.countryPill, { borderRightColor: theme.outline }]}
+                    activeOpacity={0.8}
+                    onPress={() => setCountryModalVisible(true)}
+                  >
+                    <View style={styles.countryCopy}>
+                      <Text
+                        style={[styles.countryText, { color: theme.text }]}
+                        numberOfLines={1}
+                        ellipsizeMode="tail"
+                      >
+                        {compactCountryLabel}
+                      </Text>
+                      <Text style={[styles.countryCode, { color: theme.textMuted }]}>
+                        {selectedCountry.dial}
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-down" size={16} color={theme.textMuted} />
+                  </TouchableOpacity>
+                  <TextInput
+                    style={[styles.phoneInput, { color: theme.text }]}
+                    value={phoneNumber}
+                    onChangeText={(text) => setPhoneNumber(formatPhoneNumber(text))}
+                    placeholder="Phone number"
+                    keyboardType="phone-pad"
+                    autoComplete="tel"
+                    placeholderTextColor={theme.textMuted}
+                  />
+                </View>
+              </View>
 
-            <View style={styles.buttonContainer}>
+              <View style={styles.guidanceBlock}>
+                <Text style={[styles.noticeText, { color: theme.textMuted }]}>
+                  By entering your number, you agree to receive texts about your account, including
+                  verification codes and important updates.
+                </Text>
+                {selectedCountry.dial === '+233' ? (
+                  <Text style={[styles.noticeText, { color: theme.textMuted }]}>
+                    Tip (Ghana): enter your number without the leading 0 (e.g. 246666647).
+                  </Text>
+                ) : null}
+                <View style={[styles.helperCard, { backgroundColor: 'rgba(125, 91, 166, 0.07)' }]}>
+                  <Ionicons name="information-circle-outline" size={16} color={theme.accent} />
+                  <Text style={[styles.helperText, { color: theme.accent }]}>
+                    Confirm your country code matches your number before continuing.
+                  </Text>
+                </View>
+                <Text style={[styles.noticeText, styles.noticeFinePrint, { color: theme.textMuted }]}>
+                  Message frequency varies. Reply STOP to cancel.
+                </Text>
+              </View>
+
               <TouchableOpacity
                 style={[
-                  styles.button,
-                  { backgroundColor: theme.tint },
+                  styles.buttonWrap,
                   loading && styles.buttonDisabled,
                 ]}
-                onPress={handleVerifyCode}
+                onPress={handleSendCode}
                 disabled={loading}
               >
-                {loading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <>
-                    <Ionicons name="checkmark-circle" size={20} color="#fff" />
-                    <Text style={styles.buttonText}>Verify Code</Text>
-                  </>
-                )}
+                <LinearGradient
+                  colors={loading ? ['#80b6b4', '#80b6b4'] : ['#0f8f8e', '#127f9e']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.button}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <>
+                      <Text style={styles.buttonText}>Next</Text>
+                      <Ionicons name="arrow-forward" size={18} color="#fff" />
+                    </>
+                  )}
+                </LinearGradient>
               </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={styles.resendButton}
-                onPress={() => setStep('phone')}
-                disabled={loading}
-              >
-                <Text style={[styles.resendText, { color: theme.tint }]}>Change Phone Number</Text>
-              </TouchableOpacity>
-            </View>
-          </>
-        )}
-        </View>
+            </>
+          ) : (
+            <>
+              <View style={styles.heroBlock}>
+                <View style={[styles.eyebrowPill, { backgroundColor: 'rgba(15, 186, 181, 0.09)' }]}>
+                  <Ionicons name="chatbubble-ellipses-outline" size={14} color={theme.tint} />
+                  <Text style={[styles.eyebrowText, { color: theme.tint }]}>Enter verification code</Text>
+                </View>
+                <Text style={[styles.promptTitle, { color: theme.text }]}>Check your messages</Text>
+                <Text style={[styles.description, styles.introText, { color: theme.textMuted }]}>
+                  We sent a 6-digit code to {selectedCountry.dial} {phoneNumber}.
+                </Text>
+              </View>
+
+              <View style={styles.inputContainer}>
+                <Text style={[styles.fieldLabel, { color: theme.textMuted }]}>Verification code</Text>
+                <TextInput
+                  style={[
+                    styles.input,
+                    styles.codeInput,
+                    { borderColor: theme.outline, color: theme.text, backgroundColor: theme.backgroundSubtle },
+                  ]}
+                  value={verificationCode}
+                  onChangeText={setVerificationCode}
+                  placeholder="123456"
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  autoComplete="sms-otp"
+                  placeholderTextColor={theme.textMuted}
+                />
+              </View>
+
+              <View style={styles.buttonContainer}>
+                <TouchableOpacity
+                  style={[
+                    styles.buttonWrap,
+                    loading && styles.buttonDisabled,
+                  ]}
+                  onPress={handleVerifyCode}
+                  disabled={loading}
+                >
+                  <LinearGradient
+                    colors={loading ? ['#80b6b4', '#80b6b4'] : ['#0f8f8e', '#127f9e']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.button}
+                  >
+                    {loading ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <>
+                        <Ionicons name="checkmark-circle" size={20} color="#fff" />
+                        <Text style={styles.buttonText}>Verify Code</Text>
+                      </>
+                    )}
+                  </LinearGradient>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.resendButton}
+                  onPress={() => setStep('phone')}
+                  disabled={loading}
+                >
+                  <Text style={[styles.resendText, { color: theme.tint }]}>Change Phone Number</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+        </ScrollView>
       </View>
       <Modal
         visible={countryModalVisible}
@@ -506,7 +573,7 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
           </KeyboardAvoidingView>
         </View>
       </Modal>
-    </View>
+    </KeyboardAvoidingView>
   );
 };
 
@@ -514,53 +581,120 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingVertical: 8,
+    position: 'relative',
+  },
+  panelShadow: {
+    position: 'absolute',
+    top: 22,
+    left: 18,
+    right: 18,
+    bottom: 10,
+    borderRadius: 30,
+    backgroundColor: 'rgba(255,255,255,0.24)',
+    opacity: 0.55,
   },
   panel: {
     flex: 1,
-    borderRadius: 28,
+    borderRadius: 30,
     overflow: 'hidden',
     shadowColor: '#0f172a',
-    shadowOpacity: 0.14,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 6,
+    shadowOpacity: 0.16,
+    shadowRadius: 28,
+    shadowOffset: { width: 0, height: 16 },
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.52)',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 12,
+    paddingHorizontal: 22,
+    paddingTop: 16,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(95, 112, 108, 0.12)',
   },
   closeButton: {
-    padding: 8,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    borderWidth: 1,
+    borderColor: 'rgba(95, 112, 108, 0.12)',
   },
   title: {
-    fontSize: 18,
-    fontWeight: '600',
-    fontFamily: Fonts?.sans,
+    fontSize: 20,
+    fontFamily: 'Archivo_700Bold',
     letterSpacing: 0.2,
   },
   placeholder: {
-    width: 40,
+    width: 38,
   },
   content: {
+    flexGrow: 1,
+    paddingHorizontal: 24,
+    paddingTop: 28,
+    paddingBottom: 34,
+  },
+  scrollArea: {
     flex: 1,
-    padding: 24,
+  },
+  heroBlock: {
+    marginBottom: 22,
+  },
+  eyebrowPill: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    marginBottom: 16,
+  },
+  eyebrowText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
   },
   promptTitle: {
-    fontSize: 30,
+    fontSize: 32,
     fontFamily: 'Archivo_700Bold',
-    letterSpacing: 0.2,
-    marginBottom: 18,
+    lineHeight: 38,
+    letterSpacing: -0.4,
+    marginBottom: 10,
+  },
+  introText: {
+    marginBottom: 0,
+  },
+  inputSurface: {
+    borderRadius: 24,
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 10,
+    backgroundColor: 'rgba(255,255,255,0.66)',
+    borderWidth: 1,
+    shadowColor: '#ffffff',
+    shadowOpacity: 0.18,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  fieldLabel: {
+    fontSize: 12,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 12,
   },
   phoneRow: {
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: 1,
     paddingBottom: 8,
-    marginBottom: 14,
   },
   countryPill: {
     flexDirection: 'row',
@@ -568,101 +702,119 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingRight: 12,
     borderRightWidth: 1,
+    width: '42%',
+    minWidth: 118,
+    flexShrink: 0,
+  },
+  countryCopy: {
+    flex: 1,
+    minWidth: 0,
   },
   countryText: {
     fontSize: 14,
     fontFamily: 'Manrope_600SemiBold',
+    flexShrink: 1,
   },
   countryCode: {
-    fontSize: 14,
+    fontSize: 13,
     fontFamily: 'Manrope_600SemiBold',
   },
   phoneInput: {
     flex: 1,
-    fontSize: 16,
-    paddingVertical: 4,
+    fontSize: 18,
+    paddingVertical: 8,
     paddingHorizontal: 12,
     fontFamily: 'Manrope_500Medium',
+    minWidth: 0,
+  },
+  guidanceBlock: {
+    marginTop: 16,
+    marginBottom: 22,
+    gap: 10,
   },
   noticeText: {
     fontSize: 13,
-    lineHeight: 18,
-    marginTop: 10,
+    lineHeight: 20,
     fontFamily: 'Manrope_400Regular',
+  },
+  noticeFinePrint: {
+    fontSize: 12.5,
+    opacity: 0.92,
   },
   helperText: {
-    fontSize: 12,
+    flex: 1,
+    fontSize: 12.5,
     lineHeight: 18,
-    marginTop: 6,
-    fontFamily: 'Manrope_400Regular',
-    fontStyle: 'italic',
+    fontFamily: 'Manrope_600SemiBold',
   },
-  helperRow: {
-    marginTop: 6,
+  helperCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     gap: 6,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
   },
   description: {
-    fontSize: 16,
+    fontSize: 15,
     textAlign: 'left',
-    marginBottom: 30,
-    lineHeight: 24,
-    fontFamily: 'Manrope_400Regular',
+    marginBottom: 28,
+    lineHeight: 23,
+    fontFamily: 'Manrope_500Medium',
   },
   inputContainer: {
     width: '100%',
-    marginBottom: 30,
-  },
-  label: {
-    fontSize: 16,
-    fontFamily: 'Manrope_600SemiBold',
-    marginBottom: 8,
+    marginBottom: 26,
   },
   input: {
-    borderWidth: 2,
-    borderRadius: 12,
-    padding: 16,
+    borderWidth: 1,
+    borderRadius: 22,
+    paddingHorizontal: 18,
+    paddingVertical: 18,
     fontSize: 16,
     fontFamily: 'Manrope_500Medium',
   },
   codeInput: {
     textAlign: 'center',
-    fontSize: 24,
+    fontSize: 28,
     fontFamily: 'Archivo_700Bold',
-    letterSpacing: 4,
-  },
-  hint: {
-    fontSize: 12,
-    marginTop: 8,
+    letterSpacing: 6,
   },
   buttonContainer: {
     width: '100%',
     gap: 12,
   },
+  buttonWrap: {
+    borderRadius: 18,
+    overflow: 'hidden',
+    shadowColor: '#0f8f8e',
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 7,
+  },
   button: {
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: 18,
+    paddingVertical: 18,
+    paddingHorizontal: 18,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
   },
   buttonDisabled: {
-    backgroundColor: '#ccc',
+    opacity: 0.78,
   },
   buttonText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: 17,
     fontFamily: 'Manrope_700Bold',
   },
   resendButton: {
-    padding: 12,
+    paddingVertical: 10,
     alignItems: 'center',
   },
   resendText: {
-    color: '#007AFF',
     fontSize: 14,
     fontFamily: 'Manrope_600SemiBold',
   },

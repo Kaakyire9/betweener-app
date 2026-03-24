@@ -14,7 +14,7 @@
 
 // Important: use a single import path for the Supabase client to avoid bundlers (Metro)
 // creating multiple module instances (which can lead to missing sessions in some files).
-import { supabase } from '@/lib/supabase';
+import { supabase, supabaseFetch } from '@/lib/supabase';
 
 /**
  * Result interface for phone verification operations
@@ -225,7 +225,7 @@ export class PhoneVerificationService {
         };
       }
       
-      const response = await fetch(`${config.supabaseUrl}/functions/v1/send-verification`, {
+      const response = await supabaseFetch(`${config.supabaseUrl}/functions/v1/send-verification`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -245,6 +245,12 @@ export class PhoneVerificationService {
       if (!response.ok) {
         if (typeof __DEV__ !== 'undefined' && __DEV__) {
           console.log('[phone] send-verification failed', { status: response.status, body: raw });
+        }
+        if (data?.code === 'missing_config') {
+          return { success: false, error: 'Backend configuration missing. Please update/reinstall this build.' };
+        }
+        if (data?.code === 'network_timeout') {
+          return { success: false, error: 'Network timeout. Please try again.' };
         }
         let errorMessage = data.error || 'Failed to send verification code';
         const twilioMessage = String(data.twilioError || '').toLowerCase();
@@ -331,7 +337,7 @@ export class PhoneVerificationService {
         };
       }
       
-      const response = await fetch(`${config.supabaseUrl}/functions/v1/verify-phone`, {
+      const response = await supabaseFetch(`${config.supabaseUrl}/functions/v1/verify-phone`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -352,6 +358,12 @@ export class PhoneVerificationService {
       if (!response.ok) {
         if (typeof __DEV__ !== 'undefined' && __DEV__) {
           console.log('[phone] verify-phone failed', { status: response.status, body: raw });
+        }
+        if (data?.code === 'missing_config') {
+          return { success: false, error: 'Backend configuration missing. Please update/reinstall this build.' };
+        }
+        if (data?.code === 'network_timeout') {
+          return { success: false, error: 'Network timeout. Please try again.' };
         }
         return {
           success: false,

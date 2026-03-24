@@ -29,7 +29,7 @@ export async function uploadImageSimple(
 
     // Read file as base64
     const base64 = await FileSystem.readAsStringAsync(uri, {
-      encoding: 'base64',
+      encoding: FileSystem.EncodingType.Base64,
     });
 
     // Convert base64 to blob-like object for Supabase
@@ -41,7 +41,7 @@ export async function uploadImageSimple(
     const byteArray = new Uint8Array(byteNumbers);
 
     // Upload to Supabase
-    const { data, error } = await supabase.storage
+    const { error } = await supabase.storage
       .from(bucket)
       .upload(filePath, byteArray, {
         contentType: `image/${fileExtension}`,

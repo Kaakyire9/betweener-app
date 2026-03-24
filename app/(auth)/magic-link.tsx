@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { clearPendingAuthFlow, markPendingAuthFlow } from "@/lib/auth-callback";
 
 export default function MagicLinkScreen() {
   const [email, setEmail] = useState("");
@@ -45,6 +46,7 @@ export default function MagicLinkScreen() {
     setSuccess("");
 
     try {
+      await markPendingAuthFlow(isSignup ? "email_signup" : "email_link");
       const { error } = await supabase.auth.signInWithOtp({
         email: email,
         options: {
@@ -62,8 +64,13 @@ export default function MagicLinkScreen() {
           raw.includes("email not confirmed");
 
         if (!isSignup && isMissingAccount) {
-          setError("No account found with this email. Tap Create account to get started.");
+          await clearPendingAuthFlow();
+          setCooldown(90);
+          setSuccess(
+            "If an account matches this email, a sign-in link is on the way. If nothing arrives, check the address or create an account below."
+          );
         } else {
+          await clearPendingAuthFlow();
           setError(error.message);
         }
         return;
@@ -80,7 +87,8 @@ export default function MagicLinkScreen() {
       setTimeout(() => {
         router.replace("/(auth)/verify-email");
       }, 2000);
-    } catch (err: any) {
+    } catch (_err: any) {
+      await clearPendingAuthFlow();
       setError("An unexpected error occurred. Please try again.");
     } finally {
       setLoading(false);

@@ -88,7 +88,7 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
             runOnJS(completeSwipe)(dir);
           });
           rotate.value = withTiming(dir === "right" ? 18 : -18, { duration: 300 });
-        } catch (e) {
+        } catch (_e) {
           runOnJS(completeSwipe)(dir as any);
         }
       },
@@ -101,7 +101,7 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
           translateY.value = 0;
           rotate.value = 0;
           scale.value = withTiming(1, { duration: 260 });
-        } catch (e) {}
+        } catch (_e) {}
       },
     }));
 

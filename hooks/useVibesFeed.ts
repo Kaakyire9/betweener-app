@@ -1,6 +1,7 @@
 import useAIRecommendations from '@/hooks/useAIRecommendations';
 import type { Match } from '@/types/match';
-import { supabase } from '@/lib/supabase';
+import { getSupabaseNetEvents, supabase } from '@/lib/supabase';
+import { captureMessage } from '@/lib/telemetry/sentry';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export type VibesSegment = 'forYou' | 'nearby' | 'activeNow';
@@ -12,6 +13,10 @@ export type VibesFilters = {
   maxAge: number;
   religionFilter: string | null;
   locationQuery: string;
+  hasVideoOnly: boolean;
+  activeOnly: boolean;
+  minVibeScore: number | null;
+  minSharedInterests: number;
 };
 
 type UseVibesFeedParams = {
@@ -20,6 +25,8 @@ type UseVibesFeedParams = {
   activeWindowMinutes?: number;
   distanceUnit?: 'auto' | 'km' | 'mi';
   momentUserIds?: Set<string>;
+  viewerInterests?: string[];
+  viewerGender?: string | null;
   initialFilters?: Partial<VibesFilters>;
 };
 
@@ -30,6 +37,10 @@ const DEFAULT_FILTERS: VibesFilters = {
   maxAge: 60,
   religionFilter: null,
   locationQuery: '',
+  hasVideoOnly: false,
+  activeOnly: false,
+  minVibeScore: null,
+  minSharedInterests: 0,
 };
 
 const toStartOfTodayIso = () => {
@@ -61,12 +72,124 @@ const isRecentlyActive = (lastActive?: string | null) => {
   }
 };
 
+const computeSharedInterests = (viewerInterests: string[] | undefined, matchInterests: string[] | undefined) => {
+  if (!Array.isArray(viewerInterests) || !viewerInterests.length) return [];
+  if (!Array.isArray(matchInterests) || !matchInterests.length) return [];
+  const viewerSet = new Set(
+    viewerInterests.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean),
+  );
+  const shared: string[] = [];
+  matchInterests.forEach((interest) => {
+    const normalized = String(interest || '').trim().toLowerCase();
+    if (!normalized || !viewerSet.has(normalized) || shared.some((item) => item.toLowerCase() === normalized)) {
+      return;
+    }
+    shared.push(interest);
+  });
+  return shared;
+};
+
+// Shared filter logic so the UI can show an accurate "preview count" while users tweak draft filters.
+export function applyVibesFilters(
+  list: Match[],
+  filters: VibesFilters,
+  opts: {
+    segment: VibesSegment;
+    momentUserIds?: Set<string>;
+    viewerInterests?: string[];
+  },
+): Match[] {
+  let out = list.slice();
+  const { segment, momentUserIds, viewerInterests } = opts;
+
+  if (filters.hasVideoOnly) {
+    out = out.filter((m) => Boolean((m as any).profileVideo));
+  }
+  if (filters.activeOnly) {
+    out = out.filter((m) => Boolean((m as any).isActiveNow) || isRecentlyActive((m as any).lastActive));
+  }
+  if (filters.minVibeScore != null) {
+    const min = filters.minVibeScore as number;
+    out = out.filter((m) => {
+      const score = typeof (m as any).compatibility === 'number' ? (m as any).compatibility : null;
+      if (score == null) return true;
+      return score >= min;
+    });
+  }
+  if (filters.minSharedInterests > 0 && Array.isArray(viewerInterests) && viewerInterests.length > 0) {
+    const viewerSet = new Set(viewerInterests.map((s) => String(s).toLowerCase()));
+    const min = filters.minSharedInterests;
+    out = out.filter((m) => {
+      // Interests are sometimes fetched lazily. If we don't have them yet, keep the card.
+      const interests = Array.isArray((m as any).interests) ? (m as any).interests : null;
+      if (!interests) return true;
+      let shared = 0;
+      for (const it of interests) {
+        if (viewerSet.has(String(it).toLowerCase())) shared += 1;
+        if (shared >= min) return true;
+      }
+      return false;
+    });
+  }
+  if (filters.verifiedOnly) {
+    out = out.filter((m) => {
+      const level = typeof (m as any).verification_level === 'number' ? (m as any).verification_level : null;
+      return level != null ? level > 0 : !!m.verified;
+    });
+  }
+  if (segment === 'nearby' && filters.distanceFilterKm != null) {
+    out = out.filter((m) => {
+      const distanceKm = (m as any).distanceKm ?? parseDistanceKm(m.distance);
+      if (distanceKm == null) return true;
+      return distanceKm <= (filters.distanceFilterKm as number);
+    });
+  }
+  if (filters.minAge || filters.maxAge) {
+    out = out.filter((m) => {
+      const age = (m as any).age;
+      if (age == null) return true;
+      return age >= (filters.minAge || 0) && age <= (filters.maxAge || 200);
+    });
+  }
+  if (filters.religionFilter) {
+    const needle = filters.religionFilter.toLowerCase();
+    out = out.filter((m) => String((m as any).religion || '').toLowerCase() === needle);
+  }
+  if (filters.locationQuery.trim()) {
+    // Users often type "City, Country" (e.g. "Accra, Ghana"). Our cards typically store just the city/region.
+    // Treat the first segment as the primary needle so the filter behaves as expected.
+    const q = filters.locationQuery.trim().split(',')[0]!.trim().toLowerCase();
+    out = out.filter((m) => {
+      const loc = String((m as any).location || (m as any).region || '').toLowerCase();
+      return loc.includes(q);
+    });
+  }
+
+  if (segment === 'forYou') {
+    const momentIds = momentUserIds ?? new Set<string>();
+    out = out
+      .map((m) => {
+        const ai = typeof (m as any).compatibility === 'number' ? (m as any).compatibility : 0;
+        const momentBoost = momentIds.has(String(m.id)) ? 30 : 0;
+        const activeBoost = m.isActiveNow ? 20 : isRecentlyActive((m as any).lastActive) ? 12 : 0;
+        const score = momentBoost + activeBoost + Math.max(0, Math.min(100, ai)) / 10;
+        return { match: m, score };
+      })
+      .sort((a, b) => b.score - a.score)
+      .map((row) => row.match);
+  }
+
+  return out;
+}
+
 export default function useVibesFeed({
   userId,
   segment,
   activeWindowMinutes = 15,
   distanceUnit,
   momentUserIds,
+  viewerInterests,
+  viewerGender,
   initialFilters,
 }: UseVibesFeedParams) {
   const [filters, setFilters] = useState<VibesFilters>({ ...DEFAULT_FILTERS, ...initialFilters });
@@ -74,7 +197,10 @@ export default function useVibesFeed({
   const [refreshCount, setRefreshCount] = useState(0);
   const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
   const [swipedTodayIds, setSwipedTodayIds] = useState<Set<string>>(new Set());
-  const hasLoadedRef = useRef(false);
+  const [pendingIntentPeerIds, setPendingIntentPeerIds] = useState<Set<string>>(new Set());
+  const [acceptedMatchPeerIds, setAcceptedMatchPeerIds] = useState<Set<string>>(new Set());
+  const [watchdogError, setWatchdogError] = useState<Error | null>(null);
+  const lastWatchdogLogAtRef = useRef(0);
 
   const mode = segment === 'activeNow' ? 'active' : segment === 'nearby' ? 'nearby' : 'forYou';
 
@@ -146,12 +272,119 @@ export default function useVibesFeed({
     };
   }, [userId, refreshCount]);
 
+  // Remove from the discovery deck any profile with a pending intent interaction
+  // (incoming or outgoing), or an already-accepted match.
   useEffect(() => {
-    if (matches.length > 0) hasLoadedRef.current = true;
-  }, [matches.length]);
+    if (!userId) return;
+    let cancelled = false;
+
+    const fetchIntentPeers = async () => {
+      try {
+        const nowIso = new Date().toISOString();
+        const { data, error } = await supabase
+          .from('intent_requests')
+          .select('actor_id,recipient_id,expires_at,status')
+          .eq('status', 'pending')
+          .gte('expires_at', nowIso)
+          .or(`actor_id.eq.${userId},recipient_id.eq.${userId}`);
+        if (error || !data || cancelled) return;
+
+        const next = new Set<string>();
+        (data as any[]).forEach((row) => {
+          const actor = row?.actor_id ? String(row.actor_id) : null;
+          const recipient = row?.recipient_id ? String(row.recipient_id) : null;
+          if (!actor || !recipient) return;
+          const other = actor === String(userId) ? recipient : actor;
+          if (other) next.add(other);
+        });
+        setPendingIntentPeerIds(next);
+      } catch {
+        // ignore
+      }
+    };
+
+    const fetchAcceptedMatchPeers = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('matches')
+          .select('user1_id,user2_id,status')
+          .in('status', ['PENDING', 'ACCEPTED'])
+          .or(`user1_id.eq.${userId},user2_id.eq.${userId}`);
+        if (error || !data || cancelled) return;
+
+        const next = new Set<string>();
+        (data as any[]).forEach((row) => {
+          const a = row?.user1_id ? String(row.user1_id) : null;
+          const b = row?.user2_id ? String(row.user2_id) : null;
+          if (!a || !b) return;
+          const other = a === String(userId) ? b : a;
+          if (other) next.add(other);
+        });
+        setAcceptedMatchPeerIds(next);
+      } catch {
+        // ignore
+      }
+    };
+
+    void fetchIntentPeers();
+    void fetchAcceptedMatchPeers();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, refreshCount]);
+
+  // If the server returns 0 rows (valid when there are no eligible profiles yet),
+  // we still want to stop showing the skeleton.
+  const hasFetchedOnce = lastFetchedAt != null || lastError != null;
+
+  // Guardrail: if we ever get stuck in "loading" without a result or error,
+  // stop showing an infinite skeleton and report minimal diagnostics to Sentry.
+  useEffect(() => {
+    setWatchdogError(null);
+    if (!userId) return;
+    if (hasFetchedOnce) return;
+
+    const t = setTimeout(() => {
+      // Re-check at fire time; avoid stale closures.
+      if (!userId) return;
+      if (lastFetchedAt != null || lastError != null) return;
+
+      const err = new Error('vibes_feed_timeout');
+      setWatchdogError(err);
+
+      const now = Date.now();
+      if (now - lastWatchdogLogAtRef.current > 60_000) {
+        lastWatchdogLogAtRef.current = now;
+        captureMessage('[vibes] feed timeout (skeleton watchdog)', {
+          segment,
+          mode,
+          hasUserId: !!userId,
+          lastFetchedAt,
+          lastError: lastError ? String((lastError as any).message || lastError) : null,
+          net: getSupabaseNetEvents(),
+        });
+      }
+    }, 12_000);
+
+    return () => clearTimeout(t);
+  }, [hasFetchedOnce, lastError, lastFetchedAt, mode, segment, userId]);
 
   const applyFilters = useCallback((next: Partial<VibesFilters>) => {
-    setFilters((prev) => ({ ...prev, ...next }));
+    setFilters((prev) => {
+      const merged = { ...prev, ...next } as VibesFilters;
+      // Keep age bounds sane.
+      if (merged.minAge > merged.maxAge) {
+        const tmp = merged.minAge;
+        merged.minAge = merged.maxAge;
+        merged.maxAge = tmp;
+      }
+      merged.minSharedInterests = Math.max(0, Math.min(5, merged.minSharedInterests || 0));
+      if (merged.minVibeScore != null) {
+        merged.minVibeScore = Math.max(0, Math.min(100, merged.minVibeScore));
+      }
+      return merged;
+    });
   }, []);
 
   const refresh = useCallback(() => {
@@ -167,8 +400,23 @@ export default function useVibesFeed({
     }
   }, [matches, refreshing]);
 
-  const filteredProfiles = useMemo(() => {
-    let list = matches.slice();
+  const poolProfiles = useMemo(() => {
+    let list = matches.slice().map((match) => ({
+      ...match,
+      commonInterests: computeSharedInterests(viewerInterests, (match as any).interests),
+    }));
+    const normalizedViewerGender =
+      viewerGender === 'MALE' || viewerGender === 'FEMALE' ? viewerGender : null;
+
+    if (normalizedViewerGender) {
+      list = list.filter((match) => {
+        const candidateGender = String((match as any).gender || '').trim().toUpperCase();
+        if (candidateGender !== 'MALE' && candidateGender !== 'FEMALE') return true;
+        return normalizedViewerGender === 'MALE'
+          ? candidateGender === 'FEMALE'
+          : candidateGender === 'MALE';
+      });
+    }
 
     if (blockedIds.size > 0) {
       list = list.filter((m) => !blockedIds.has(String(m.id)));
@@ -176,79 +424,32 @@ export default function useVibesFeed({
     if (swipedTodayIds.size > 0) {
       list = list.filter((m) => !swipedTodayIds.has(String(m.id)));
     }
-    if (filters.verifiedOnly) {
-      list = list.filter((m) => {
-        const level = typeof (m as any).verification_level === 'number' ? (m as any).verification_level : null;
-        return level != null ? level > 0 : !!m.verified;
-      });
+    if (pendingIntentPeerIds.size > 0) {
+      list = list.filter((m) => !pendingIntentPeerIds.has(String(m.id)));
     }
-    if (filters.distanceFilterKm != null) {
-      list = list.filter((m) => {
-        const distanceKm = (m as any).distanceKm ?? parseDistanceKm(m.distance);
-        if (distanceKm == null) return true;
-        return distanceKm <= (filters.distanceFilterKm as number);
-      });
-    }
-    if (filters.minAge || filters.maxAge) {
-      list = list.filter((m) => {
-        const age = (m as any).age;
-        if (age == null) return true;
-        return age >= (filters.minAge || 0) && age <= (filters.maxAge || 200);
-      });
-    }
-    if (filters.religionFilter) {
-      const needle = filters.religionFilter.toLowerCase();
-      list = list.filter((m) => String((m as any).religion || '').toLowerCase() === needle);
-    }
-    if (filters.locationQuery.trim()) {
-      const q = filters.locationQuery.trim().toLowerCase();
-      list = list.filter((m) => {
-        const loc = String((m as any).location || (m as any).region || '').toLowerCase();
-        return loc.includes(q);
-      });
-    }
-
-    if (segment === 'forYou') {
-      const momentIds = momentUserIds ?? new Set<string>();
-      list = list
-        .map((m) => {
-          const ai = typeof (m as any).compatibility === 'number' ? (m as any).compatibility : 0;
-          const momentBoost = momentIds.has(String(m.id)) ? 30 : 0;
-          const activeBoost = m.isActiveNow ? 20 : isRecentlyActive((m as any).lastActive) ? 12 : 0;
-          const score = momentBoost + activeBoost + Math.max(0, Math.min(100, ai)) / 10;
-          return { match: m, score };
-        })
-        .sort((a, b) => b.score - a.score)
-        .map((row) => row.match);
+    if (acceptedMatchPeerIds.size > 0) {
+      list = list.filter((m) => !acceptedMatchPeerIds.has(String(m.id)));
     }
 
     return list;
-  }, [
-    matches,
-    blockedIds,
-    swipedTodayIds,
-    filters.verifiedOnly,
-    filters.distanceFilterKm,
-    filters.minAge,
-    filters.maxAge,
-    filters.religionFilter,
-    filters.locationQuery,
-    segment,
-    momentUserIds,
-  ]);
+  }, [matches, blockedIds, swipedTodayIds, pendingIntentPeerIds, acceptedMatchPeerIds, viewerInterests, viewerGender]);
+
+  const filteredProfiles = useMemo(() => {
+    return applyVibesFilters(poolProfiles, filters, { segment, momentUserIds, viewerInterests });
+  }, [filters, momentUserIds, poolProfiles, segment, viewerInterests]);
 
   return {
     segment,
     profiles: filteredProfiles,
+    poolProfiles,
     filters,
     applyFilters,
     refresh,
     refreshing,
     refreshRemaining: Math.max(0, 3 - refreshCount),
-    // Avoid "skeleton forever" when we already know we hit an error or the user/profile
-    // context isn't ready yet.
-    loading: !!userId && !hasLoadedRef.current && filteredProfiles.length === 0 && !lastError,
-    error: lastError,
+    // Avoid "skeleton forever": "loaded" can mean "loaded 0 items".
+    loading: !!userId && !hasFetchedOnce && filteredProfiles.length === 0 && !lastError && !watchdogError,
+    error: lastError ?? watchdogError,
     lastFetchedAt,
     fetchNextBatch: refresh,
     recordSwipe,

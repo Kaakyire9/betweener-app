@@ -1,13 +1,15 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useVerificationStatus } from '@/hooks/use-verification-status';
 import { useAuth } from '@/lib/auth-context';
+import { getProfileInitials, hasProfileImage } from '@/lib/profile-placeholders';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { VideoView, useVideoPlayer } from 'expo-video';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Video as VideoCompressor, getRealPath } from 'react-native-compressor';
 import {
     ActivityIndicator,
@@ -25,6 +27,7 @@ import {
     View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { VerificationBadge } from './VerificationBadge';
 
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
@@ -68,6 +71,12 @@ const LOOKING_FOR_OPTIONS = [
   "Long-term relationship", "Short-term dating", "Friendship", "Networking",
   "Marriage", "Casual dating", "Something serious", "Let's see what happens",
   "Life partner", "Other"
+];
+
+const GENDER_OPTIONS = [
+  { label: 'Male', value: 'MALE' },
+  { label: 'Female', value: 'FEMALE' },
+  { label: 'Other', value: 'OTHER' },
 ];
 
 // HIGH PRIORITY: Lifestyle options
@@ -198,22 +207,6 @@ const GLOBAL_LANGUAGES_OPTIONS = [
   "Other",
 ];
 
-// DIASPORA: Country options (focusing on major Ghanaian diaspora locations)
-const COUNTRY_OPTIONS = [
-  "Ghana", "United States", "United Kingdom", "Canada", "Germany", "Netherlands", 
-  "Italy", "Australia", "South Africa", "Nigeria", "Ivory Coast", "Burkina Faso", 
-  "France", "Spain", "Belgium", "Sweden", "Norway", "Dubai", "Other"
-];
-
-const DIASPORA_STATUS_OPTIONS = [
-  "LOCAL", "DIASPORA", "VISITING"
-];
-
-const FUTURE_GHANA_PLANS_OPTIONS = [
-  "Planning to return permanently", "Visit annually", "Visit occasionally", 
-  "Uncertain about return", "Staying abroad permanently", "Other"
-];
-
 const withAlpha = (hex: string | undefined | null, alpha: number) => {
   if (!hex) {
     return `rgba(0,0,0,${Math.max(0, Math.min(1, alpha))})`;
@@ -239,6 +232,7 @@ interface ProfileEditModalProps {
   visible: boolean;
   onClose: () => void;
   onSave: (updatedProfile: any) => void;
+  onOpenVerification?: () => void;
 }
 
 const InlineVideoPreview = ({ uri, shouldPlay, styles }: { uri: string; shouldPlay: boolean; styles: ReturnType<typeof createStyles>; }) => {
@@ -261,12 +255,13 @@ const InlineVideoPreview = ({ uri, shouldPlay, styles }: { uri: string; shouldPl
   return <VideoView style={styles.videoPreview} player={player} contentFit="cover" nativeControls={false} />;
 };
 
-export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEditModalProps) {
-  const { user, profile, updateProfile } = useAuth();
+export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerification }: ProfileEditModalProps) {
+  const { user, profile, updateProfile, refreshProfile } = useAuth();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const { status: verificationStatus } = useVerificationStatus(profile?.id);
   const isGhanaProfile = useMemo(() => {
     const currentCountry = (profile as any)?.current_country;
     const countryCode = (profile as any)?.current_country_code;
@@ -285,6 +280,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const [videoUploadStage, setVideoUploadStage] = useState<string | null>(null);
   const [videoUploadProgress, setVideoUploadProgress] = useState<number | null>(null);
   const [videoPreviewUrl, setVideoPreviewUrl] = useState<string | null>(null);
+  const [visibilitySaving, setVisibilitySaving] = useState(false);
   
   // Original dropdown states
   const [showHeightPicker, setShowHeightPicker] = useState(false);
@@ -305,9 +301,6 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const [showLivingSituationPicker, setShowLivingSituationPicker] = useState(false);
   const [showPetsPicker, setShowPetsPicker] = useState(false);
   const [showLanguagesPicker, setShowLanguagesPicker] = useState(false);
-  
-  // DIASPORA picker visibility states (simplified)
-  const [showFutureGhanaPlansPicker, setShowFutureGhanaPlansPicker] = useState(false);
   
   // Original custom input states
   const [customHeight, setCustomHeight] = useState('');
@@ -333,9 +326,6 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [statusTone, setStatusTone] = useState<'error' | 'success' | null>(null);
   
-  // DIASPORA custom input states (simplified)
-  const [customFutureGhanaPlans, setCustomFutureGhanaPlans] = useState('');
-  
   // Interests states
   const [availableInterests, setAvailableInterests] = useState<string[]>([]);
   const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
@@ -346,6 +336,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
   const [formData, setFormData] = useState({
       full_name: '',
       bio: '',
+      gender: '',
       age: '',
       region: '',
       tribe: '',
@@ -381,10 +372,75 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         : selectedLanguages;
     return normalizeLanguages(base);
   }, [formData?.languages_spoken, selectedLanguages]);
+  const avatarInitials = useMemo(
+    () => getProfileInitials(formData.full_name || profile?.full_name || user?.email || null),
+    [formData.full_name, profile?.full_name, user?.email],
+  );
+  const hasAvatarImage = hasProfileImage(formData.avatar_url);
+  const verificationLevel =
+    (profile as any)?.verification_level
+    ?? (profile as any)?.verificationLevel
+    ?? ((profile as any)?.verified ? 1 : 0);
+  const verificationCallout = useMemo(() => {
+    if (verificationStatus.loading) {
+      return {
+        title: 'Checking trust status',
+        subtitle: 'Refreshing your verification status and review progress.',
+        action: 'Open',
+        icon: 'shield-refresh-outline' as const,
+      };
+    }
+
+    if (verificationStatus.hasPendingRequest) {
+      return {
+        title: 'In review',
+        subtitle: 'Your latest verification is under review. Track it here or add another method later.',
+        action: 'Status',
+        icon: 'progress-clock' as const,
+      };
+    }
+
+    if (verificationLevel > 0) {
+      return {
+        title: verificationLevel >= 2 ? 'Trust confirmed' : 'Verified profile',
+        subtitle: verificationLevel >= 2
+          ? 'Your profile carries Betweener verification. Review methods, history, or add another signal.'
+          : 'Your profile already has a trust signal. Strengthen it with another method.',
+        action: verificationLevel >= 2 ? 'Details' : 'Add more',
+        icon: 'shield-check-outline' as const,
+      };
+    }
+
+    if (verificationStatus.hasRejection) {
+      return {
+        title: 'Needs another try',
+        subtitle: verificationStatus.rejectionReason
+          ? verificationStatus.rejectionReason
+          : 'One of your submissions was rejected. Resubmit with a stronger document or selfie check.',
+        action: 'Resubmit',
+        icon: 'alert-circle-outline' as const,
+      };
+    }
+
+    return {
+      title: 'Build trust on Betweener',
+      subtitle: 'Add a trust signal with a document, social proof, or selfie liveness.',
+      action: 'Start',
+      icon: 'shield-plus-outline' as const,
+    };
+  }, [verificationLevel, verificationStatus]);
 
   // Load current profile data when modal opens
+  const hydratedFromProfileRef = useRef(false);
   useEffect(() => {
-    if (visible && profile) {
+    if (!visible) {
+      hydratedFromProfileRef.current = false;
+      return;
+    }
+
+    // Only hydrate once per open so background refreshes don't clobber in-progress edits.
+    if (visible && profile && !hydratedFromProfileRef.current) {
+      hydratedFromProfileRef.current = true;
       setStatusMessage(null);
       setStatusTone(null);
       const normalizedLanguages = normalizeLanguages(
@@ -396,6 +452,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       setFormData({
         full_name: profile.full_name || '',
         bio: profile.bio || '',
+        gender: ((profile as any).gender || '').toString().trim().toUpperCase(),
         age: profile.age?.toString() || '',
         region: profile.region || '',
         tribe: (profile as any).tribe || '',
@@ -427,24 +484,27 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       // Set selected languages for multi-select
       setSelectedLanguages(filteredLanguages);
     }
-    
-    // Load available interests and user's current interests when modal opens
-    if (visible) {
-      fetchAvailableInterests();
-      fetchUserInterests();
-      const loadDistanceUnit = async () => {
-        try {
-          const stored = await AsyncStorage.getItem(DISTANCE_UNIT_KEY);
-          if (stored === 'auto' || stored === 'km' || stored === 'mi') {
-            setDistanceUnit(stored);
-          } else {
-            setDistanceUnit('auto');
-          }
-        } catch {}
-      };
-      void loadDistanceUnit();
-    }
   }, [visible, profile]);
+
+  // One-time side loads per open (avoid clobbering edits if profile refreshes while modal is open).
+  useEffect(() => {
+    if (!visible) return;
+
+    fetchAvailableInterests();
+    fetchUserInterests();
+
+    const loadDistanceUnit = async () => {
+      try {
+        const stored = await AsyncStorage.getItem(DISTANCE_UNIT_KEY);
+        if (stored === 'auto' || stored === 'km' || stored === 'mi') {
+          setDistanceUnit(stored);
+        } else {
+          setDistanceUnit('auto');
+        }
+      } catch {}
+    };
+    void loadDistanceUnit();
+  }, [visible]);
 
   useEffect(() => {
     let mounted = true;
@@ -483,9 +543,103 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     }));
   };
 
+  const resolveProfileId = async (): Promise<string | null> => {
+    const pid = (profile as any)?.id as string | undefined;
+    if (pid) return pid;
+    if (!user?.id) return null;
+
+    // Fallback for edge cases where the auth context hasn't loaded profile yet.
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (error) return null;
+    return (data as any)?.id ?? null;
+  };
+
+  const persistDiscoverableInVibes = async (next: boolean) => {
+    setVisibilitySaving(true);
+    try {
+      const pid = await resolveProfileId();
+      if (!pid) throw new Error('Profile not loaded');
+      console.log('[ProfileEditModal] persistDiscoverableInVibes:start', { pid, next });
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({ discoverable_in_vibes: next })
+        .eq('id', pid)
+        .select('id, discoverable_in_vibes, profile_completed, matchmaking_mode')
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) throw new Error('No profile row updated (RLS or id mismatch)');
+      console.log('[ProfileEditModal] persistDiscoverableInVibes:ok', data);
+
+      // Ensure the UI reflects server-side triggers (profile_completed guard, matchmaking_mode, etc).
+      await refreshProfile();
+    } catch (e) {
+      console.error('Failed to persist discoverable_in_vibes', e);
+      // Revert optimistic UI if the server refused the change.
+      setFormData((prev) => ({ ...prev, discoverable_in_vibes: !next }));
+    } finally {
+      setVisibilitySaving(false);
+    }
+  };
+
+  const persistMatchmakingMode = async (next: boolean) => {
+    setVisibilitySaving(true);
+    try {
+      const pid = await resolveProfileId();
+      if (!pid) throw new Error('Profile not loaded');
+
+      // Preserve current UX: enabling matchmaking hides you; disabling shows you.
+      const nextDiscoverable = next ? false : true;
+
+      console.log('[ProfileEditModal] persistMatchmakingMode:start', {
+        pid,
+        next,
+        nextDiscoverable,
+      });
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({
+          matchmaking_mode: next,
+          discoverable_in_vibes: nextDiscoverable,
+        })
+        .eq('id', pid)
+        .select('id, matchmaking_mode, discoverable_in_vibes, profile_completed')
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!data) throw new Error('No profile row updated (RLS or id mismatch)');
+
+      console.log('[ProfileEditModal] persistMatchmakingMode:ok', data);
+
+      setFormData((prev) => ({
+        ...prev,
+        matchmaking_mode: Boolean((data as any).matchmaking_mode),
+        discoverable_in_vibes: Boolean((data as any).discoverable_in_vibes),
+      }));
+
+      await refreshProfile();
+    } catch (e) {
+      console.error('Failed to persist matchmaking_mode', e);
+      // Revert optimistic UI if the server refused the change.
+      setFormData((prev) => ({
+        ...prev,
+        matchmaking_mode: !next,
+        discoverable_in_vibes: next ? true : false,
+      }));
+    } finally {
+      setVisibilitySaving(false);
+    }
+  };
+
   // Load user's current interests from profile_interests table
   const fetchUserInterests = async () => {
-    if (!user?.id) return;
+    const pid = await resolveProfileId();
+    if (!pid) return;
     
     try {
       const { data, error } = await supabase
@@ -495,7 +649,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
             name
           )
         `)
-        .eq('profile_id', user.id);
+        .eq('profile_id', pid);
       
       if (error) throw error;
       
@@ -508,14 +662,15 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
 
   // Save user interests to profile_interests table
   const saveUserInterests = async (interests: string[]) => {
-    if (!user?.id) return;
+    const pid = await resolveProfileId();
+    if (!pid) return;
     
     try {
       // First, delete existing interests for this user
       await supabase
         .from('profile_interests')
         .delete()
-        .eq('profile_id', user.id);
+        .eq('profile_id', pid);
       
       // Then insert new interests
       if (interests.length > 0) {
@@ -529,7 +684,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         
         // Insert profile_interests relationships
         const profileInterests = interestData?.map(interest => ({
-          profile_id: user.id,
+          profile_id: pid,
           interest_id: interest.id
         })) || [];
         
@@ -718,7 +873,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       const uint8Array = new Uint8Array(blob);
 
       // Upload using the Uint8Array which Supabase accepts
-      const { data, error } = await supabase.storage
+      const { error } = await supabase.storage
         .from('profile-photos')
         .upload(filePath, uint8Array, {
           contentType: `image/${fileExtension}`,
@@ -765,7 +920,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['videos'],
+      mediaTypes: 'videos',
       videoMaxDuration: 30,
       allowsEditing: true,
       // Best-effort compression on iOS. Android behavior depends on the picker app.
@@ -786,7 +941,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
     }
 
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['videos'],
+      mediaTypes: 'videos',
       videoMaxDuration: 30,
       allowsEditing: true,
       videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
@@ -1107,10 +1262,8 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
         avatar_url: formData.avatar_url,
         photos: formData.photos,
         profile_video: formData.profile_video && formData.profile_video.trim() ? formData.profile_video.trim() : null,
-        matchmaking_mode: Boolean(formData.matchmaking_mode),
-        discoverable_in_vibes: Boolean(formData.discoverable_in_vibes),
         // Preserve existing required fields to avoid null constraint violations
-        gender: profile?.gender || 'OTHER',
+        gender: String(formData.gender || profile?.gender || 'OTHER').trim().toUpperCase(),
         age: profile?.age || 18,
         region: profile?.region || '',
         tribe: profile?.tribe || '',
@@ -1224,9 +1377,7 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
       }
 
       // Save interests separately through profile_interests table
-      if (selectedInterests.length > 0) {
-        await saveUserInterests(selectedInterests);
-      }
+      await saveUserInterests(selectedInterests);
 
       Alert.alert('Success', 'Profile updated successfully!');
       onSave(updateData);
@@ -1300,12 +1451,19 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
               <Text style={styles.sectionTitle}>Profile Photo</Text>
             </View>
             <View style={styles.avatarContainer}>
-              <Image
-                source={{
-                  uri: formData.avatar_url || 'https://images.unsplash.com/photo-1494790108755-2616c6ad7b85?w=400&h=600&fit=crop&crop=face'
-                }}
-                style={styles.avatar}
-              />
+              {hasAvatarImage ? (
+                <Image
+                  source={{
+                    uri: formData.avatar_url,
+                  }}
+                  style={styles.avatar}
+                />
+              ) : (
+                <View style={styles.avatarPlaceholder}>
+                  <Text style={styles.avatarPlaceholderInitials}>{avatarInitials}</Text>
+                  <Text style={styles.avatarPlaceholderCaption}>Add a clear photo to build trust faster</Text>
+                </View>
+              )}
               <TouchableOpacity
                 style={styles.editAvatarButton}
                 onPress={() => pickImage(true)}
@@ -1319,6 +1477,47 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
               </TouchableOpacity>
             </View>
           </View>
+
+          <TouchableOpacity
+            activeOpacity={0.92}
+            style={styles.verificationCard}
+            onPress={onOpenVerification}
+            disabled={!onOpenVerification}
+          >
+            <View style={styles.sectionTitleRow}>
+              <View style={[styles.sectionIconWrap, styles.verificationSectionIconWrap]}>
+                <MaterialCommunityIcons
+                  name="shield-check-outline"
+                  size={18}
+                  color={theme.tint}
+                  style={styles.sectionIcon}
+                />
+              </View>
+              <Text style={styles.sectionTitle}>Trust & Verification</Text>
+            </View>
+
+            <View style={styles.verificationCardRow}>
+              <View style={styles.verificationBadgeWrap}>
+                {verificationLevel > 0 ? (
+                  <VerificationBadge level={verificationLevel} size="medium" variant="betweener" />
+                ) : (
+                  <View style={styles.verificationBadgePlaceholder}>
+                    <MaterialCommunityIcons name="shield-plus-outline" size={18} color={theme.tint} />
+                  </View>
+                )}
+              </View>
+
+              <View style={styles.verificationCardCopy}>
+                <Text style={styles.verificationCardTitle}>{verificationCallout.title}</Text>
+                <Text style={styles.verificationCardSubtitle}>{verificationCallout.subtitle}</Text>
+              </View>
+
+              <View style={styles.verificationCardAction}>
+                <Text style={styles.verificationCardActionText}>{verificationCallout.action}</Text>
+                <MaterialCommunityIcons name="chevron-right" size={16} color={theme.tint} />
+              </View>
+            </View>
+          </TouchableOpacity>
 
           {/* Basic Info */}
           <View style={styles.section}>
@@ -1358,6 +1557,35 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                 maxLength={500}
               />
               <Text style={styles.characterCount}>{formData.bio.length}/500</Text>
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Gender</Text>
+              <View style={styles.optionChipRow}>
+                {GENDER_OPTIONS.map((option) => {
+                  const selected = formData.gender === option.value;
+                  return (
+                    <TouchableOpacity
+                      key={option.value}
+                      style={[
+                        styles.optionChip,
+                        selected && styles.optionChipSelected,
+                      ]}
+                      onPress={() => handleInputChange('gender', option.value)}
+                      activeOpacity={0.85}
+                    >
+                      <Text
+                        style={[
+                          styles.optionChipText,
+                          selected && styles.optionChipTextSelected,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
 
             <View style={styles.row}>
@@ -1677,28 +1905,31 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                 </Text>
               </View>
               <TouchableOpacity
-                onPress={() =>
-                  setFormData((prev) => {
-                    const next = !prev.matchmaking_mode;
-                    return {
-                      ...prev,
-                      matchmaking_mode: next,
-                      discoverable_in_vibes: next ? false : true,
-                    };
-                  })
-                }
+                disabled={visibilitySaving}
+                onPress={() => {
+                  const next = !formData.matchmaking_mode;
+                  const nextDiscoverable = next ? false : true;
+                  setFormData((prev) => ({
+                    ...prev,
+                    matchmaking_mode: next,
+                    discoverable_in_vibes: nextDiscoverable,
+                  }));
+                  void persistMatchmakingMode(next);
+                }}
                 style={[
                   styles.togglePill,
                   formData.matchmaking_mode ? styles.togglePillActive : null,
+                  visibilitySaving ? styles.togglePillDisabled : null,
                 ]}
               >
                 <Text
                   style={[
                     styles.toggleText,
                     formData.matchmaking_mode ? styles.toggleTextActive : null,
+                    visibilitySaving ? styles.toggleTextDisabled : null,
                   ]}
                 >
-                  {formData.matchmaking_mode ? 'On' : 'Off'}
+                  {visibilitySaving ? 'Saving...' : formData.matchmaking_mode ? 'On' : 'Off'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -1711,28 +1942,29 @@ export default function ProfileEditModal({ visible, onClose, onSave }: ProfileEd
                 </Text>
               </View>
               <TouchableOpacity
-                disabled={formData.matchmaking_mode}
-                onPress={() =>
-                  setFormData((prev) => ({
-                    ...prev,
-                    discoverable_in_vibes: !prev.discoverable_in_vibes,
-                  }))
-                }
+                disabled={formData.matchmaking_mode || visibilitySaving}
+                onPress={() => {
+                  const next = !formData.discoverable_in_vibes;
+                  setFormData((prev) => ({ ...prev, discoverable_in_vibes: next }));
+                  void persistDiscoverableInVibes(next);
+                }}
                 style={[
                   styles.togglePill,
                   formData.discoverable_in_vibes ? styles.togglePillActive : null,
-                  formData.matchmaking_mode ? styles.togglePillDisabled : null,
+                  (formData.matchmaking_mode || visibilitySaving) ? styles.togglePillDisabled : null,
                 ]}
               >
                 <Text
                   style={[
                     styles.toggleText,
                     formData.discoverable_in_vibes ? styles.toggleTextActive : null,
-                    formData.matchmaking_mode ? styles.toggleTextDisabled : null,
+                    (formData.matchmaking_mode || visibilitySaving) ? styles.toggleTextDisabled : null,
                   ]}
                 >
                   {formData.matchmaking_mode
                     ? 'Hidden'
+                    : visibilitySaving
+                      ? 'Saving...'
                     : formData.discoverable_in_vibes
                       ? 'On'
                       : 'Off'}
@@ -2741,6 +2973,21 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       shadowRadius: 14,
       elevation: 3,
     },
+    verificationCard: {
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.92 : 0.98),
+      paddingHorizontal: 18,
+      paddingVertical: 18,
+      marginBottom: 12,
+      marginHorizontal: 16,
+      borderWidth: 1,
+      borderRadius: 18,
+      borderColor: withAlpha(theme.tint, isDark ? 0.22 : 0.16),
+      shadowColor: theme.tint,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: isDark ? 0.16 : 0.08,
+      shadowRadius: 16,
+      elevation: 3,
+    },
     sectionHeader: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -2772,12 +3019,69 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       shadowRadius: 10,
       elevation: 6,
     },
+    verificationSectionIconWrap: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.1),
+      borderColor: withAlpha(theme.tint, isDark ? 0.36 : 0.22),
+      shadowColor: theme.tint,
+    },
     sectionTitle: {
       fontSize: 16,
       fontWeight: '700',
       letterSpacing: 0.2,
       color: theme.text,
       lineHeight: 20,
+    },
+    verificationCardRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    verificationBadgeWrap: {
+      width: 42,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    verificationBadgePlaceholder: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.4 : 0.22),
+    },
+    verificationCardCopy: {
+      flex: 1,
+      gap: 4,
+    },
+    verificationCardTitle: {
+      fontSize: 15,
+      fontWeight: '700',
+      color: theme.text,
+      letterSpacing: 0.2,
+    },
+    verificationCardSubtitle: {
+      fontSize: 12,
+      lineHeight: 17,
+      color: theme.textMuted,
+    },
+    verificationCardAction: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.82 : 0.95),
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+    },
+    verificationCardActionText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: theme.tint,
+      letterSpacing: 0.2,
     },
     avatarContainer: {
       alignItems: 'center',
@@ -2789,6 +3093,36 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderRadius: 50,
       borderWidth: 3,
       borderColor: withAlpha(theme.text, isDark ? 0.25 : 0.12),
+    },
+    avatarPlaceholder: {
+      width: 112,
+      height: 112,
+      borderRadius: 56,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 14,
+      shadowColor: theme.tint,
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: isDark ? 0.28 : 0.16,
+      shadowRadius: 18,
+      elevation: 8,
+    },
+    avatarPlaceholderInitials: {
+      fontSize: 30,
+      fontFamily: 'PlayfairDisplay_700Bold',
+      color: theme.text,
+      letterSpacing: 1.2,
+    },
+    avatarPlaceholderCaption: {
+      marginTop: 4,
+      fontSize: 10,
+      lineHeight: 13,
+      textAlign: 'center',
+      color: theme.textMuted,
+      fontFamily: 'Manrope_500Medium',
     },
     editAvatarButton: {
       position: 'absolute',
@@ -2892,6 +3226,39 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     row: {
       flexDirection: 'row',
+    },
+    optionChipRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+    },
+    optionChip: {
+      minWidth: 92,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderRadius: 16,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      backgroundColor: withAlpha(theme.background, isDark ? 0.7 : 0.95),
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    optionChipSelected: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.22 : 0.14),
+      borderColor: withAlpha(theme.tint, isDark ? 0.46 : 0.32),
+      shadowColor: theme.tint,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: isDark ? 0.22 : 0.12,
+      shadowRadius: 16,
+      elevation: 4,
+    },
+    optionChipText: {
+      fontSize: 15,
+      fontWeight: '600',
+      color: theme.textMuted,
+    },
+    optionChipTextSelected: {
+      color: theme.tint,
     },
     addPhotoButton: {
       flexDirection: 'row',

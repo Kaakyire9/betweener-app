@@ -1,28 +1,31 @@
 import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { VerificationBadge } from '@/components/VerificationBadge';
 import { Colors } from '@/constants/theme';
+import { usePremiumState } from '@/hooks/use-premium-state';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
-import { computeCompatibilityPercent } from '@/lib/compat/compatibility-score';
-import { computeFirstReplyHours, computeInterestOverlapRatio, computeMatchScorePercent } from '@/lib/match/match-score';
 import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
+import { getProfileInitials, getProfilePlaceholderPalette } from '@/lib/profile-placeholders';
 import { recordProfileSignal } from '@/lib/profile-signals';
+import { isGuessPrompt, isMultipleChoiceGuess } from '@/lib/prompts/guess-prompts';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/telemetry/logger';
-import type { UserProfile } from '@/types/user-profile';
+import type { ProfilePromptAnswer, UserProfile } from '@/types/user-profile';
+import { getViewedProfilePremiumCopy } from '@/lib/viewed-profile-premium';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import type { ViewToken } from '@shopify/flash-list';
 import { FlashList } from '@shopify/flash-list';
 import IntentRequestSheet from '@/components/IntentRequestSheet';
+import Notice from '@/components/ui/Notice';
 import { ProfileHeroSkeleton } from '@/components/ui/Skeleton';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
-import { Alert, Animated as RNAnimated, Dimensions, FlatList, Image, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, TextInput, View, type ImageStyle, type ViewStyle } from 'react-native';
+import { Alert, Dimensions, FlatList, Image, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View, type ImageStyle, type ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Easing,
@@ -35,10 +38,11 @@ import Animated, {
     useDerivedValue,
     useSharedValue,
     withRepeat,
+    withSequence,
     withTiming,
     type SharedValue,
 } from 'react-native-reanimated';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -88,13 +92,17 @@ const RIGHT_SCROLL_HOLD_MS = 600;
 const ACTIVE_TAG_MIN_INTERVAL_MS = 120;
 const ACTIVE_NOW_MS = 3 * 60 * 1000;
 
+function buildGuessResultMessage(name: string, tone: 'correct' | 'wrong') {
+  if (tone === 'correct') return `Correct. Nice one. Want to know more about ${name}?`;
+  return 'Close. Try again, or skip the game and send a message.';
+}
+
 // Content heuristics for empty-state branching.
 // Goal: "images-only" should trigger unless the profile has real narrative/intent content.
 const BIO_MEANINGFUL_MIN_CHARS = 40;
 const BIO_MIN_PUBLIC_CHARS = 20;
 const LOOKING_FOR_MEANINGFUL_MIN_CHARS = 10;
 const INTERESTS_MEANINGFUL_MIN_COUNT = 3;
-const PROFILE_COMPLETION_MIN_INTERESTS = 3;
 
 function formatHeaderTitle(name: string, age: number) {
   if (!name) return '';
@@ -271,13 +279,20 @@ function buildSections(profile: UserProfile): PremiumSection[] {
   const lifestyleChips = [profile.exerciseFrequency, profile.smoking, profile.drinking]
     .filter(Boolean)
     .map(String);
+  const allPrompts = profile.promptAnswers || [];
+  const topPrompt = allPrompts[0];
+  const promptEntries = (profile.promptAnswers || [])
+    .filter((item) => !isGuessPrompt(item?.promptType) && item?.answer?.trim())
+    .map((item) => ({
+      title: item.promptTitle?.trim() || 'Prompt',
+      answer: item.answer.trim(),
+    }));
+  const remainingPrompts =
+    topPrompt && !isGuessPrompt(topPrompt.promptType) && topPrompt.answer?.trim()
+      ? promptEntries.slice(1, 3)
+      : promptEntries.slice(0, 2);
 
-  const premiumCopy = {
-    aboutEmpty: "This section hasn't been filled yet - ask something thoughtful.",
-    lifestyleEmpty: 'Lifestyle details coming soon.',
-    promptsEmpty: 'Conversation starters coming soon.',
-    valuesEmpty: 'Intentions will appear here once shared.',
-  };
+  const premiumCopy = getViewedProfilePremiumCopy(profile.name);
 
   const sections: PremiumSection[] = [
     {
@@ -307,22 +322,6 @@ function buildSections(profile: UserProfile): PremiumSection[] {
       chips: lifestyleChips.length ? lifestyleChips : undefined,
     },
     {
-      id: 'sec-prompts',
-      tag: 'prompts',
-      title: 'Prompts',
-      body: (() => {
-        const text = [
-        profile.personalityType ? `Personality: ${profile.personalityType}` : null,
-        profile.languages?.length ? `Languages: ${profile.languages.join(', ')}` : null,
-        profile.tribe ? `Tribe: ${profile.tribe}` : null,
-        profile.religion ? `Religion: ${profile.religion}` : null,
-      ]
-        .filter(Boolean)
-        .join('\n');
-        return text || premiumCopy.promptsEmpty;
-      })(),
-    },
-    {
       id: 'sec-values',
       tag: 'values',
       title: 'Looking For',
@@ -339,11 +338,23 @@ function buildSections(profile: UserProfile): PremiumSection[] {
     },
   ];
 
+  if (remainingPrompts.length) {
+    sections.splice(2, 0, {
+      id: 'sec-prompts',
+      tag: 'prompts',
+      title: remainingPrompts.length > 1 ? 'More prompts' : 'Prompt',
+      body: remainingPrompts
+        .map((item) => `${item.title}\n${item.answer}`)
+        .join('\n\n'),
+    });
+  }
+
   return sections;
 }
 
 function buildAutoSectionsIfNeeded(profile: UserProfile, existing: PremiumSection[]): PremiumSection[] {
   if (existing.length > 0) return existing;
+  const premiumCopy = getViewedProfilePremiumCopy(profile.name);
 
   const basics = [
     profile.height ? `Height: ${profile.height}` : null,
@@ -373,26 +384,26 @@ function buildAutoSectionsIfNeeded(profile: UserProfile, existing: PremiumSectio
       id: 'auto-basics',
       tag: 'intro',
       title: 'Basics',
-      body: basics.length ? basics.join('\n') : 'Key details will appear here once added.',
+      body: basics.length ? basics.join('\n') : premiumCopy.basicsEmpty,
     },
     {
       id: 'auto-intentions',
       tag: 'values',
       title: 'Intentions',
-      body: intentions.length ? intentions.join('\n') : 'Intentions will appear here once shared.',
+      body: intentions.length ? intentions.join('\n') : premiumCopy.valuesEmpty,
       chips: interests.slice(0, 6),
     },
     {
       id: 'auto-lifestyle',
       tag: 'lifestyle',
       title: 'Lifestyle',
-      body: lifestyle.length ? lifestyle.join('\n') : 'Lifestyle details coming soon.',
+      body: lifestyle.length ? lifestyle.join('\n') : premiumCopy.lifestyleEmpty,
     },
     {
       id: 'auto-ask',
       tag: 'prompts',
       title: 'Ask Me Anything',
-      body: 'Start with something specific - a thoughtful question goes a long way.',
+      body: premiumCopy.askAnything,
     },
   ];
 
@@ -416,7 +427,8 @@ export default function ProfileViewPremiumV2Screen() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const theme = Colors[colorScheme ?? 'light'];
-  const { profile: currentProfile, user } = useAuth();
+  const { profile: currentProfile } = useAuth();
+  const insets = useSafeAreaInsets();
 
   const params = useLocalSearchParams();
   const profileId = String((params as any)?.id ?? (params as any)?.profileId ?? 'preview');
@@ -430,8 +442,8 @@ export default function ProfileViewPremiumV2Screen() {
   const [heroVideoUrl, setHeroVideoUrl] = useState<string | null>(null);
   const [heroOverrideType, setHeroOverrideType] = useState<'image' | 'video' | null>(null);
   const [fetching, setFetching] = useState(false);
-  const [matchAccepted, setMatchAccepted] = useState(false);
-  const [matchPercent, setMatchPercent] = useState<number | null>(null);
+  const [fetchWatchdogError, setFetchWatchdogError] = useState<Error | null>(null);
+  const [fetchRetryNonce, setFetchRetryNonce] = useState(0);
   const [myInterests, setMyInterests] = useState<string[]>([]);
   const signalOpenedRef = useRef<string | null>(null);
   const signalIntroRef = useRef<string | null>(null);
@@ -446,16 +458,29 @@ export default function ProfileViewPremiumV2Screen() {
         return;
       }
       setFetching(true);
+      setFetchWatchdogError(null);
+      const watchdog = setTimeout(() => {
+        if (!mounted) return;
+        // If this ever triggers, it means we got stuck before the network layer (common culprit: auth/storage).
+        setFetchWatchdogError(new Error('profile_view_timeout'));
+        setFetching(false);
+        logger.warn('[profile-view] fetch timeout', { profileId });
+      }, 12_000);
       try {
         const mapped = await fetchViewedProfile({
           viewedProfileId: profileId,
+          viewerProfileId: currentProfile?.id ?? null,
           fallbackDistanceLabel: fallbackProfile?.distance,
           fallbackDistanceKm: fallbackProfile?.distanceKm,
         });
-        if (mounted) setFetchedProfile(mapped);
+        if (mounted) {
+          setFetchedProfile(mapped);
+          setFetchWatchdogError(null);
+        }
       } catch {
         if (mounted) setFetchedProfile(null);
       } finally {
+        clearTimeout(watchdog);
         if (mounted) setFetching(false);
       }
     };
@@ -463,7 +488,7 @@ export default function ProfileViewPremiumV2Screen() {
     return () => {
       mounted = false;
     };
-  }, [profileId, fallbackProfile?.distance, fallbackProfile?.distanceKm]);
+  }, [currentProfile?.id, profileId, fallbackProfile?.distance, fallbackProfile?.distanceKm, fetchRetryNonce]);
 
   const resolvedProfile: UserProfile = useMemo(() => {
     if (fetchedProfile) return fetchedProfile;
@@ -574,66 +599,6 @@ export default function ProfileViewPremiumV2Screen() {
     presenceProfile.isActiveNow || !!(presenceProfile as any).is_active;
   const showPresence = isOnlineNow || isActiveNow;
   const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
-  const vibeReasons = useMemo(() => {
-    const reasons: string[] = [];
-    const interests = Array.isArray(resolvedProfile.interests)
-      ? resolvedProfile.interests.map((i) => i?.name).filter(Boolean)
-      : [];
-    const personality = resolvedProfile.personalityType;
-    const lookingFor = resolvedProfile.lookingFor;
-    const loveLanguage = resolvedProfile.loveLanguage;
-
-    if (personality) reasons.push(`Personality: ${personality}`);
-    if (interests[0]) reasons.push(`Shared interest: ${interests[0]}`);
-    if (lookingFor) reasons.push(`Intent: ${lookingFor}`);
-    if (loveLanguage) reasons.push(`Love language: ${loveLanguage}`);
-    if (isOnlineNow) reasons.push('Online now so you can connect');
-    else if (isActiveNow) reasons.push('Active now so you can connect');
-
-    if (reasons.length === 0)
-      reasons.push('Aligned values and lifestyle signals');
-    return reasons.slice(0, 4);
-  }, [
-    resolvedProfile.interests,
-    resolvedProfile.personalityType,
-    resolvedProfile.lookingFor,
-    resolvedProfile.loveLanguage,
-    isOnlineNow,
-    isActiveNow,
-  ]);
-  const [vibeReasonIndex, setVibeReasonIndex] = useState(0);
-  const vibeGlow = useRef(new RNAnimated.Value(0)).current;
-  useEffect(() => {
-    if (!vibeReasons.length) return;
-    setVibeReasonIndex(0);
-    if (vibeReasons.length < 2) return;
-    const id = setInterval(() => {
-      setVibeReasonIndex((prev) => (prev + 1) % vibeReasons.length);
-    }, 3200);
-    return () => clearInterval(id);
-  }, [vibeReasons]);
-  useEffect(() => {
-    if (!vibeReasons.length) return;
-    const anim = RNAnimated.loop(
-      RNAnimated.sequence([
-        RNAnimated.timing(vibeGlow, {
-          toValue: 1,
-          duration: 1400,
-          useNativeDriver: true,
-        }),
-        RNAnimated.timing(vibeGlow, {
-          toValue: 0,
-          duration: 1400,
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    anim.start();
-    return () => {
-      anim.stop();
-    };
-  }, [vibeGlow, vibeReasons.length]);
-
   useEffect(() => {
     let cancelled = false;
     const loadMyInterests = async () => {
@@ -663,73 +628,6 @@ export default function ProfileViewPremiumV2Screen() {
     };
   }, [currentProfile?.id]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const checkAccepted = async () => {
-      if (!currentProfile?.id || !resolvedProfile.id) {
-        setMatchAccepted(false);
-        return;
-      }
-      const { data } = await supabase
-        .from('matches')
-        .select('id')
-        .or(
-          `and(user1_id.eq.${currentProfile.id},user2_id.eq.${resolvedProfile.id},status.eq.ACCEPTED),and(user1_id.eq.${resolvedProfile.id},user2_id.eq.${currentProfile.id},status.eq.ACCEPTED)`,
-        )
-        .limit(1);
-      if (cancelled) return;
-      setMatchAccepted(!!(data && data.length > 0));
-    };
-    void checkAccepted();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentProfile?.id, resolvedProfile.id]);
-
-  useEffect(() => {
-    if (!matchAccepted || !user?.id || !resolvedProfile.userId) {
-      setMatchPercent(null);
-      return;
-    }
-    let cancelled = false;
-    const fetchMatchScore = async () => {
-      const { data, count } = await supabase
-        .from('messages')
-        .select('created_at,sender_id', { count: 'exact' })
-        .or(
-          `and(sender_id.eq.${user.id},receiver_id.eq.${resolvedProfile.userId}),and(sender_id.eq.${resolvedProfile.userId},receiver_id.eq.${user.id})`,
-        )
-        .order('created_at', { ascending: true })
-        .limit(50);
-      if (cancelled) return;
-      const messageRows = (data as any[] | null) ?? [];
-      const messageCount = typeof count === 'number' ? count : messageRows.length;
-      const firstReplyHours = computeFirstReplyHours(messageRows as any, user.id, resolvedProfile.userId);
-      const peerNames = resolvedProfile.interests.map((item) => item.name).filter(Boolean);
-      const interestOverlapRatio = computeInterestOverlapRatio(myInterests, peerNames) ?? undefined;
-      const bothVerified =
-        (currentProfile?.verification_level ?? 0) >= 1 && !!resolvedProfile.verified;
-      const score = computeMatchScorePercent({
-        messageCount,
-        firstReplyHours,
-        bothVerified,
-        interestOverlapRatio,
-      });
-      setMatchPercent(score);
-    };
-    void fetchMatchScore();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    currentProfile?.verification_level,
-    matchAccepted,
-    myInterests,
-    resolvedProfile.interests,
-    resolvedProfile.userId,
-    user?.id,
-  ]);
-
   const hasGalleryImages = useMemo(
     () => Array.isArray(resolvedProfile.photos) && resolvedProfile.photos.some(Boolean),
     [resolvedProfile.photos],
@@ -746,58 +644,242 @@ export default function ProfileViewPremiumV2Screen() {
     const sections = buildAutoSectionsIfNeeded(resolvedProfile, adapted.sections);
     return { ...adapted, sections };
   }, [resolvedProfile]);
+  const viewerPrompts = useMemo(
+    () => (resolvedProfile.promptAnswers || []).filter((item) => item?.promptTitle?.trim() || item?.answer?.trim()),
+    [resolvedProfile.promptAnswers],
+  );
+  const featuredPrompt = (viewerPrompts[0] ?? null) as ProfilePromptAnswer | null;
+  const [guessInput, setGuessInput] = useState('');
+  const [selectedGuessOption, setSelectedGuessOption] = useState<string | null>(null);
+  const [guessSubmitting, setGuessSubmitting] = useState(false);
+  const [guessComposerOpen, setGuessComposerOpen] = useState(false);
+  const [guessSheetOpen, setGuessSheetOpen] = useState(false);
+  const [guessInterestSending, setGuessInterestSending] = useState(false);
+  const [guessInterestSent, setGuessInterestSent] = useState(false);
+  const [guessResult, setGuessResult] = useState<{ tone: 'correct' | 'wrong'; message: string } | null>(null);
+  const heroHeight = Math.max(260, Math.min(390, Math.round(screenHeight * 0.36)));
+  const guessFabTop = 10 + 44 + 10 + heroHeight - 54;
 
-  const isLoading = fetching && !fetchedProfile && !fallbackProfile;
+  const isLoading = fetching && !fetchedProfile && !fallbackProfile && !fetchWatchdogError;
   const locationLine = useMemo(() => buildLocationLine(resolvedProfile), [resolvedProfile]);
-  const compatibilityPercent = useMemo(() => {
-    if (!currentProfile || !resolvedProfile) return resolvedProfile.compatibility;
-    const targetInterests = resolvedProfile.interests.map((item) => item.name).filter(Boolean);
-    const computed = computeCompatibilityPercent(
-      {
-        interests: myInterests,
-        lookingFor: (currentProfile as any)?.looking_for,
-        loveLanguage: (currentProfile as any)?.love_language,
-        personalityType: (currentProfile as any)?.personality_type,
-        religion: (currentProfile as any)?.religion,
-        wantsChildren: (currentProfile as any)?.wants_children,
-        smoking: (currentProfile as any)?.smoking,
-      },
-      {
-        interests: targetInterests,
-        lookingFor: resolvedProfile.lookingFor,
-        loveLanguage: resolvedProfile.loveLanguage,
-        personalityType: resolvedProfile.personalityType,
-        religion: resolvedProfile.religion,
-        wantsChildren: resolvedProfile.wantsChildren,
-        smoking: resolvedProfile.smoking,
-      },
-    );
-    return typeof computed === 'number' ? computed : resolvedProfile.compatibility;
+  const sharedInterestNames = useMemo(() => {
+    const mine = new Set(myInterests.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean));
+    return resolvedProfile.interests
+      .map((item) => item?.name || '')
+      .filter(Boolean)
+      .filter((name) => mine.has(String(name).trim().toLowerCase()));
+  }, [myInterests, resolvedProfile.interests]);
+  const profileContextLine = useMemo(() => {
+    if (sharedInterestNames.length > 1) return `${sharedInterestNames.length} shared interests`;
+    if (sharedInterestNames[0]) return `Shared: ${sharedInterestNames[0]}`;
+    if (isOnlineNow) return 'Online now for a real-time intro';
+    if (isActiveNow) return 'Active now and open to connection';
+    if (resolvedProfile.lookingFor) return `Intent: ${resolvedProfile.lookingFor}`;
+    if (resolvedProfile.personalityType) return `${resolvedProfile.personalityType} energy`;
+    if (resolvedProfile.loveLanguage) return `Love language: ${resolvedProfile.loveLanguage}`;
+    return null;
   }, [
-    currentProfile,
-    myInterests,
-    resolvedProfile.compatibility,
-    resolvedProfile.interests,
+    isActiveNow,
+    isOnlineNow,
     resolvedProfile.lookingFor,
+    resolvedProfile.loveLanguage,
     resolvedProfile.personalityType,
-    resolvedProfile.religion,
-    resolvedProfile.smoking,
-    resolvedProfile.wantsChildren,
+    sharedInterestNames,
   ]);
-  const matchBadgeValue =
-    matchAccepted && typeof matchPercent === 'number'
-      ? matchPercent
-      : compatibilityPercent;
-  const matchBadgeLabel =
-    matchAccepted && typeof matchPercent === 'number' ? 'Match' : 'Vibes';
 
+  useEffect(() => {
+    const usesMultipleChoice = isGuessPrompt(featuredPrompt?.promptType) && isMultipleChoiceGuess(featuredPrompt?.guessMode);
+    setGuessInput(usesMultipleChoice ? '' : featuredPrompt?.viewerGuess || '');
+    setSelectedGuessOption(usesMultipleChoice ? featuredPrompt?.viewerGuess || null : null);
+    setGuessInterestSent(false);
+    setGuessComposerOpen(false);
+    if (featuredPrompt?.viewerGuessIsCorrect === true) {
+      setGuessResult({
+        tone: 'correct',
+        message: `👍😍 You got it right. Want to know more about ${resolvedProfile.name}?`,
+      });
+    } else if (featuredPrompt?.viewerGuess) {
+      setGuessResult({
+        tone: 'wrong',
+        message: 'Close. Ask about it and turn the guess into a real opener.',
+      });
+    } else {
+      setGuessResult(null);
+    }
+  }, [featuredPrompt?.id, featuredPrompt?.viewerGuess, featuredPrompt?.viewerGuessIsCorrect, resolvedProfile.name]);
+
+  const refreshViewedProfile = useCallback(async () => {
+    if (!profileId || profileId === 'preview') return;
+    const mapped = await fetchViewedProfile({
+      viewedProfileId: profileId,
+      viewerProfileId: currentProfile?.id ?? null,
+      fallbackDistanceLabel: fallbackProfile?.distance,
+      fallbackDistanceKm: fallbackProfile?.distanceKm,
+    });
+    setFetchedProfile(mapped);
+  }, [currentProfile?.id, fallbackProfile?.distance, fallbackProfile?.distanceKm, profileId]);
+
+  const submitFeaturedGuess = useCallback(async () => {
+    if (!featuredPrompt?.id || !currentProfile?.id || !isGuessPrompt(featuredPrompt.promptType)) return;
+    const guessValue = (isMultipleChoiceGuess(featuredPrompt.guessMode) ? selectedGuessOption : guessInput).trim();
+    if (!guessValue) return;
+
+    setGuessSubmitting(true);
+    try {
+      const { data, error } = await supabase.rpc('submit_profile_prompt_guess', {
+        p_prompt_id: featuredPrompt.id,
+        p_viewer_profile_id: currentProfile.id,
+        p_guess: guessValue,
+      });
+      if (error) {
+        Alert.alert('Guess unavailable', 'Please try again.');
+        return;
+      }
+
+      const outcome = Array.isArray(data) ? data[0] : null;
+      const isCorrect = !!outcome?.is_correct;
+      setGuessComposerOpen(false);
+      setGuessResult({
+        tone: isCorrect ? 'correct' : 'wrong',
+        message: isCorrect
+          ? `👍😍 You got it right. Want to know more about ${resolvedProfile.name}?`
+          : 'Close. Ask about it and turn the guess into a real opener.',
+      });
+      await refreshViewedProfile();
+    } catch {
+      Alert.alert('Guess unavailable', 'Please try again.');
+    } finally {
+      setGuessSubmitting(false);
+    }
+  }, [currentProfile?.id, featuredPrompt, guessInput, refreshViewedProfile, resolvedProfile.name, selectedGuessOption]);
+
+  const sendGuessInterest = useCallback(async () => {
+    if (!featuredPrompt?.id || !resolvedProfile.id || !guessResult || guessResult.tone !== 'correct' || guessInterestSending || guessInterestSent) {
+      return;
+    }
+
+    setGuessInterestSending(true);
+    try {
+      const { error } = await supabase.rpc('rpc_create_intent_request', {
+        p_recipient_id: resolvedProfile.id,
+        p_type: 'connect',
+        p_message: `I guessed your prompt right and I’d like to know more about you.`,
+        p_metadata: {
+          source: 'guess_prompt',
+          prompt_id: featuredPrompt.id,
+          guess_outcome: 'correct',
+        },
+      });
+
+      if (error) {
+        logger.error('[profile-view] send_guess_interest_failed', error);
+        const message =
+          typeof error?.message === 'string' && error.message.trim()
+            ? error.message.trim()
+            : 'Please try again.';
+        const isDuplicate = /already placed a request/i.test(message);
+        if (isDuplicate) {
+          setGuessInterestSent(true);
+        }
+        Alert.alert(isDuplicate ? 'Request already placed' : 'Unable to send request', message);
+        return;
+      }
+
+      setGuessInterestSent(true);
+      Alert.alert(
+        'Request sent',
+        `${resolvedProfile.name} will see that you answered the prompt correctly and want to know more.`,
+      );
+    } finally {
+      setGuessInterestSending(false);
+    }
+  }, [featuredPrompt?.id, guessInterestSending, guessInterestSent, guessResult, resolvedProfile.id, resolvedProfile.name]);
+
+  const openGuessComposer = useCallback(() => {
+    if (!featuredPrompt?.id || !isGuessPrompt(featuredPrompt.promptType) || isMultipleChoiceGuess(featuredPrompt.guessMode)) return;
+    setGuessComposerOpen(true);
+  }, [featuredPrompt]);
+
+  const guessLocked = featuredPrompt?.viewerGuessIsCorrect === true || guessResult?.tone === 'correct';
   const [videoModalVisible, setVideoModalVisible] = useState(false);
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const isOwnProfile = useMemo(
-    () => Boolean(currentUserId && profileId && currentUserId === profileId),
-    [currentUserId, profileId],
+    // Profiles are keyed by profiles.id (not auth.uid()), so compare against the viewer's profile id.
+    () => Boolean(currentProfile?.id && profileId && currentProfile.id === profileId),
+    [currentProfile?.id, profileId],
   );
+  const shouldFloatGuessPrompt = Boolean(featuredPrompt && isGuessPrompt(featuredPrompt.promptType) && !isOwnProfile);
+  const standardFeaturedPrompt = featuredPrompt && !isGuessPrompt(featuredPrompt.promptType) ? featuredPrompt : null;
+  const guessChallengeLabel = isMultipleChoiceGuess(featuredPrompt?.guessMode) ? '1 prompt challenge' : 'One clean guess';
+  const guessFabLabel = guessResult?.tone === 'correct'
+    ? guessInterestSent
+      ? 'Sent'
+      : 'Know more'
+    : guessResult?.tone === 'wrong'
+      ? 'Try again'
+      : 'Guess';
+  const guessFabIcon: ComponentProps<typeof MaterialCommunityIcons>['name'] = guessResult?.tone === 'correct'
+    ? 'star-four-points'
+    : guessResult?.tone === 'wrong'
+      ? 'refresh'
+      : 'chat-question-outline';
+  const guessFabColors = guessResult?.tone === 'correct'
+    ? (['#39C6A8', '#15806A'] as const)
+    : guessResult?.tone === 'wrong'
+      ? (['#7D7CF3', '#4753C8'] as const)
+      : (['#7D7CF3', '#2FB2BE'] as const);
+  const guessPrimaryLabel = guessResult?.tone === 'wrong'
+    ? 'Try again'
+    : guessSubmitting
+      ? 'Checking...'
+      : 'Take a guess';
+  const guessSecondaryLabel = guessResult?.tone === 'correct'
+    ? guessInterestSent
+      ? 'Interest sent'
+      : guessInterestSending
+        ? 'Sending...'
+        : 'Unlock opener'
+    : 'Skip and ask';
+  const guessPulse = useSharedValue(0);
+  const openGuessSheet = useCallback(() => {
+    if (!shouldFloatGuessPrompt) return;
+    Haptics.selectionAsync().catch(() => undefined);
+    setGuessSheetOpen(true);
+  }, [shouldFloatGuessPrompt]);
+  const closeGuessSheet = useCallback(() => {
+    setGuessSheetOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!guessResult?.tone) return;
+    const expected = buildGuessResultMessage(resolvedProfile.name, guessResult.tone);
+    if (guessResult.message !== expected) {
+      setGuessResult({ tone: guessResult.tone, message: expected });
+    }
+  }, [guessResult, resolvedProfile.name]);
+
+  useEffect(() => {
+    if (guessResult?.tone === 'correct') {
+      guessPulse.value = 0;
+      guessPulse.value = withSequence(
+        withTiming(1, { duration: 180, easing: Easing.out(Easing.cubic) }),
+        withTiming(0.45, { duration: 220, easing: Easing.out(Easing.cubic) }),
+        withTiming(0, { duration: 280, easing: Easing.out(Easing.cubic) }),
+      );
+      return;
+    }
+    guessPulse.value = withTiming(0, { duration: 160, easing: Easing.out(Easing.cubic) });
+  }, [guessPulse, guessResult?.tone]);
+
+  const guessFabHaloStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(guessPulse.value, [0, 1], [0, 0.3]),
+    transform: [{ scale: interpolate(guessPulse.value, [0, 1], [0.92, 1.24]) }],
+  }));
+
+  const guessFabMotionStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: interpolate(guessPulse.value, [0, 1], [1, 1.06]) }],
+  }));
 
   useEffect(() => {
     if (!currentProfile?.id || !resolvedProfile?.id) return;
@@ -820,7 +902,6 @@ export default function ProfileViewPremiumV2Screen() {
 
 
   const isTextOnlyStory = !hasGalleryImages && meaningfulText && (hasAvatarOnly || !!resolvedProfile.profilePicture);
-  const isImagesOnly = hasGalleryImages && !meaningfulText;
 
   // --- Soft Sync state ---
   // Stored on UI thread to avoid re-rendering the whole right list.
@@ -1096,7 +1177,7 @@ export default function ProfileViewPremiumV2Screen() {
   );
 
   const onViewableItemsChanged = useCallback(
-    ({ viewableItems }: { viewableItems: Array<ViewToken<PremiumImage>> }) => {
+    ({ viewableItems }: { viewableItems: ViewToken<PremiumImage>[] }) => {
       if (!viewableItems || viewableItems.length === 0) return;
 
       // Prefer highest visible percent when available.
@@ -1184,7 +1265,7 @@ export default function ProfileViewPremiumV2Screen() {
   );
 
   const onRightViewableItemsChangedForStory = useCallback(
-    ({ viewableItems }: { viewableItems: Array<ViewToken<PremiumSection>> }) => {
+    ({ viewableItems }: { viewableItems: ViewToken<PremiumSection>[] }) => {
       if (!viewableItems || viewableItems.length === 0) return;
       // Pick the most visible item when available.
       let best: { tag: ProfileImageTag; percent: number } | null = null;
@@ -1202,26 +1283,6 @@ export default function ProfileViewPremiumV2Screen() {
       if (best && best.percent >= 60) setActiveTagSafely(best.tag);
     },
     [setActiveTagSafely],
-  );
-
-  const renderImageItem = useCallback(
-    ({ item }: { item: PremiumImage }) => {
-      const hasVideoTile = !!heroVideoUrl;
-      const isIntroActive = activeTagJs === 'intro';
-      const isActive = item.isVideo
-        ? isIntroActive
-        : item.tag === activeTagJs && !(hasVideoTile && item.tag === 'intro');
-      return (
-        <ImageCard
-          theme={theme}
-          item={item}
-          isActive={isActive}
-          height={IMAGE_ITEM_HEIGHT}
-          isVideo={item.isVideo}
-        />
-      );
-    },
-    [activeTagJs, heroVideoUrl, theme],
   );
 
   const onImageTap = useCallback(
@@ -1278,6 +1339,27 @@ export default function ProfileViewPremiumV2Screen() {
     ),
     [activeTag, frozenTag, highlightEnabled, theme],
   );
+  const standardPromptFooter = useMemo(() => {
+    if (!standardFeaturedPrompt) return null;
+    return (
+      <View style={stylesStatic.rightFooterPromptWrap}>
+        <View
+          style={[
+            stylesStatic.rightFooterPromptCard,
+            { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+          ]}
+        >
+          <Text style={[stylesStatic.featuredPromptEyebrow, { color: theme.tint }]}>Featured prompt</Text>
+          <Text style={[stylesStatic.bottomPromptTitle, { color: theme.text }]}>
+            {standardFeaturedPrompt.promptTitle?.trim() || 'Prompt'}
+          </Text>
+          <Text style={[stylesStatic.bottomPromptAnswer, { color: theme.textMuted }]}>
+            {standardFeaturedPrompt.answer}
+          </Text>
+        </View>
+      </View>
+    );
+  }, [standardFeaturedPrompt, theme.backgroundSubtle, theme.outline, theme.text, theme.textMuted, theme.tint]);
 
   const toggleImageReactions = useCallback((item: PremiumImage) => {
     setActiveReactionImageId((prev) => (prev === item.id ? null : item.id));
@@ -1366,13 +1448,11 @@ export default function ProfileViewPremiumV2Screen() {
           profile={presenceProfile}
           title={'Complete your profile'}
           locationLine={''}
-          heroOverrideUri={null}
-          heroOverrideType={null}
-          heroVideoUrl={null}
-          heroScrollY={heroScrollY}
-          isDark={isDark}
-        matchBadgeValue={matchBadgeValue}
-        matchBadgeLabel={matchBadgeLabel}
+        heroOverrideUri={null}
+        heroOverrideType={null}
+        heroVideoUrl={null}
+        heroScrollY={heroScrollY}
+        isDark={isDark}
         onBack={handleBack}
         onClose={handleClose}
       />
@@ -1404,8 +1484,6 @@ export default function ProfileViewPremiumV2Screen() {
         heroVideoUrl={heroVideoUrl}
         heroScrollY={heroScrollY}
         isDark={isDark}
-        matchBadgeValue={matchBadgeValue}
-        matchBadgeLabel={matchBadgeLabel}
         onHeroPress={handleHeroPress}
         onHeroDoubleTap={handleHeroDoubleTap}
         onBack={handleBack}
@@ -1439,7 +1517,106 @@ export default function ProfileViewPremiumV2Screen() {
         metadata={{ source: 'profile' }}
       />
 
-      {isLoading ? (
+      <Modal
+        visible={guessComposerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          Keyboard.dismiss();
+          setGuessComposerOpen(false);
+        }}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 8 : 12}
+          style={stylesStatic.guessComposerOverlay}
+        >
+          <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <View style={stylesStatic.guessComposerStage}>
+              <Pressable
+                style={stylesStatic.guessComposerBackdrop}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setGuessComposerOpen(false);
+                }}
+              />
+              <View
+                style={[
+                  stylesStatic.guessComposerSheet,
+                  { backgroundColor: theme.background, borderColor: theme.outline },
+                ]}
+              >
+            <Text style={[stylesStatic.guessComposerEyebrow, { color: theme.tint }]}>Take a guess</Text>
+            <Text style={[stylesStatic.guessComposerTitle, { color: theme.text }]}>
+              {featuredPrompt?.promptTitle?.trim() || 'Prompt'}
+            </Text>
+            {isGuessPrompt(featuredPrompt?.promptType) && featuredPrompt?.hintText?.trim() ? (
+              <Text style={[stylesStatic.guessComposerHint, { color: theme.textMuted }]}>
+                {`Hint: ${featuredPrompt.hintText.trim()}`}
+              </Text>
+            ) : null}
+            <View
+              style={[
+                stylesStatic.guessComposerInputWrap,
+                { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+              ]}
+            >
+              <TextInput
+                value={guessInput}
+                onChangeText={setGuessInput}
+                placeholder="Type your guess"
+                placeholderTextColor={theme.textMuted}
+                autoFocus
+                autoCapitalize="sentences"
+                autoCorrect={false}
+                returnKeyType="done"
+                onSubmitEditing={() => {
+                  Keyboard.dismiss();
+                  void submitFeaturedGuess();
+                }}
+                style={[stylesStatic.guessComposerInput, { color: theme.text }]}
+              />
+            </View>
+            <View style={stylesStatic.guessComposerActions}>
+              <Pressable
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setGuessComposerOpen(false);
+                }}
+                style={[stylesStatic.guessComposerSecondary, { borderColor: theme.outline }]}
+              >
+                <Text style={[stylesStatic.guessComposerSecondaryText, { color: theme.textMuted }]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void submitFeaturedGuess()}
+                disabled={guessSubmitting || !guessInput.trim()}
+                style={[
+                  stylesStatic.guessComposerPrimary,
+                  { backgroundColor: guessSubmitting || !guessInput.trim() ? theme.outline : theme.tint },
+                ]}
+              >
+                <Text style={stylesStatic.guessComposerPrimaryText}>
+                  {guessSubmitting ? 'Checking...' : 'Submit guess'}
+                </Text>
+              </Pressable>
+            </View>
+              </View>
+            </View>
+          </TouchableWithoutFeedback>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {fetchWatchdogError && !fetchedProfile && !fallbackProfile ? (
+        <View style={{ paddingHorizontal: 16, paddingTop: 8 }}>
+          <Notice
+            title="Couldn't load profile"
+            message="Check your connection and try again."
+            actionLabel="Retry"
+            onAction={() => setFetchRetryNonce((n) => n + 1)}
+            icon="cloud-alert"
+          />
+        </View>
+      ) : isLoading ? (
         <ProfileHeroSkeleton />
       ) : (
         <View style={stylesStatic.heroDetailsWrap}>
@@ -1457,6 +1634,7 @@ export default function ProfileViewPremiumV2Screen() {
                 <VerificationBadge
                   level={presenceProfile.verificationLevel ?? (presenceProfile.verified ? 1 : 0)}
                   size="small"
+                  variant="betweener"
                 />
               ) : null}
               {showPresence ? (
@@ -1508,49 +1686,166 @@ export default function ProfileViewPremiumV2Screen() {
               </View>
             ) : null}
 
-            <View style={[stylesStatic.heroDetailsDivider, { backgroundColor: theme.outline }]} />
-
-            {typeof matchBadgeValue === 'number' || vibeReasons.length ? (
-              <View style={stylesStatic.heroBadgesRow}>
-                {typeof matchBadgeValue === 'number' ? (
-                  <View style={[stylesStatic.matchBadge, { backgroundColor: theme.tint }]}>
-                    <MaterialCommunityIcons name="heart" size={14} color={Colors.light.background} />
-                    <Text style={stylesStatic.matchBadgeText}>{`${Math.round(matchBadgeValue)}% ${matchBadgeLabel}`}</Text>
-                  </View>
-                ) : (
-                  <View />
-                )}
-                {vibeReasons.length ? (
-                  <View style={stylesStatic.heroWhyInline}>
-                    <Text style={[stylesStatic.heroWhyTitle, { color: theme.textMuted }]}>
-                      Why this vibe
-                    </Text>
-                    <View style={stylesStatic.heroWhyRow}>
-                      <MaterialCommunityIcons name="star-four-points" size={12} color={theme.accent} />
-                      <RNAnimated.Text
-                        style={[
-                          stylesStatic.heroWhyText,
-                          {
-                            color: theme.accent,
-                            opacity: vibeGlow.interpolate({
-                              inputRange: [0, 1],
-                              outputRange: [0.75, 1],
-                            }),
-                          },
-                        ]}
-                        numberOfLines={1}
-                        ellipsizeMode="tail"
-                      >
-                        {vibeReasons[vibeReasonIndex] ?? vibeReasons[0]}
-                      </RNAnimated.Text>
-                    </View>
-                  </View>
-                ) : null}
+            {profileContextLine ? (
+              <View style={stylesStatic.heroContextRow}>
+                <MaterialCommunityIcons name="star-four-points" size={12} color={theme.accent} />
+                <Text style={[stylesStatic.heroContextText, { color: theme.accent }]} numberOfLines={1}>
+                  {profileContextLine}
+                </Text>
               </View>
             ) : null}
           </View>
         </View>
       )}
+
+      {featuredPrompt && isGuessPrompt(featuredPrompt.promptType) && !shouldFloatGuessPrompt ? (
+        <View
+          style={[
+            stylesStatic.featuredPromptWrap,
+            guessComposerOpen && isGuessPrompt(featuredPrompt.promptType) && !isMultipleChoiceGuess(featuredPrompt.guessMode)
+              ? stylesStatic.featuredPromptHidden
+              : null,
+          ]}
+          pointerEvents={
+            guessComposerOpen && isGuessPrompt(featuredPrompt.promptType) && !isMultipleChoiceGuess(featuredPrompt.guessMode)
+              ? 'none'
+              : 'auto'
+          }
+        >
+          <View
+            style={[
+              stylesStatic.featuredPromptCard,
+              { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+            ]}
+          >
+            {isGuessPrompt(featuredPrompt.promptType) ? (
+              <>
+                <Text style={[stylesStatic.featuredPromptEyebrow, { color: theme.tint }]}>Quick guess</Text>
+                <Text style={[stylesStatic.featuredPromptTitle, { color: theme.text }]}>
+                  {featuredPrompt.promptTitle?.trim() || 'Prompt'}
+                </Text>
+                <Text style={[stylesStatic.featuredPromptAnswer, { color: theme.textMuted }]}>
+                  {featuredPrompt.hintText?.trim()
+                    ? `Hint: ${featuredPrompt.hintText.trim()}`
+                    : 'Take one clean guess. If you get it right, you unlock the next step.'}
+                </Text>
+                {isMultipleChoiceGuess(featuredPrompt.guessMode) ? (
+                  <View style={stylesStatic.guessOptionsWrap}>
+                    {(featuredPrompt.guessOptions || []).map((option) => {
+                      const selected = selectedGuessOption === option;
+                      return (
+                        <Pressable
+                          key={`${featuredPrompt.id}-${option}`}
+                          onPress={() => {
+                            if (guessLocked) return;
+                            setSelectedGuessOption(option);
+                          }}
+                          disabled={guessLocked}
+                          style={[
+                            stylesStatic.guessOptionPill,
+                            {
+                              backgroundColor: selected ? theme.tint : theme.background,
+                              borderColor: selected ? theme.tint : theme.outline,
+                              opacity: guessLocked ? 0.7 : 1,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              stylesStatic.guessOptionText,
+                              { color: selected ? Colors.light.background : theme.text },
+                            ]}
+                          >
+                            {option}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                ) : (
+                  <Pressable
+                    onPress={guessLocked ? undefined : openGuessComposer}
+                    disabled={guessLocked}
+                    style={[
+                      stylesStatic.guessInputWrap,
+                      stylesStatic.guessInputPressable,
+                      { backgroundColor: theme.background, borderColor: theme.outline, opacity: guessLocked ? 0.7 : 1 },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        stylesStatic.guessInput,
+                        { color: guessInput.trim() ? theme.text : theme.textMuted },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {guessInput.trim() || 'Type your guess'}
+                    </Text>
+                    <MaterialCommunityIcons name="pencil-outline" size={16} color={theme.textMuted} />
+                  </Pressable>
+                )}
+                <View style={stylesStatic.guessActionsRow}>
+                  {!guessLocked ? (
+                    <Pressable
+                      onPress={() => void submitFeaturedGuess()}
+                      disabled={guessSubmitting || !(selectedGuessOption || guessInput.trim())}
+                      style={[
+                        stylesStatic.guessPrimaryButton,
+                        {
+                          backgroundColor:
+                            guessSubmitting || !(selectedGuessOption || guessInput.trim())
+                              ? theme.outline
+                              : theme.tint,
+                        },
+                      ]}
+                    >
+                      <Text style={stylesStatic.guessPrimaryText}>{guessPrimaryLabel}</Text>
+                    </Pressable>
+                  ) : null}
+                  {guessResult ? (
+                    <Pressable
+                      onPress={guessResult.tone === 'correct' ? () => void sendGuessInterest() : openIntentSheet}
+                      disabled={guessResult.tone === 'correct' ? guessInterestSending || guessInterestSent : false}
+                      style={[
+                        stylesStatic.guessSecondaryButton,
+                        { borderColor: guessResult.tone === 'correct' ? theme.tint : theme.outline },
+                        guessResult.tone === 'correct' && (guessInterestSending || guessInterestSent)
+                          ? { opacity: 0.7 }
+                          : null,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          stylesStatic.guessSecondaryText,
+                          { color: guessResult.tone === 'correct' ? theme.accent : theme.textMuted },
+                        ]}
+                      >
+                        {guessResult.tone === 'correct'
+                          ? guessInterestSent
+                            ? 'Interest sent'
+                            : guessInterestSending
+                              ? 'Sending...'
+                              : 'I’d like to know more'
+                          : 'Ask about this'}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+                {guessResult ? (
+                  <Text
+                    style={[
+                      stylesStatic.guessResultText,
+                      { color: guessResult.tone === 'correct' ? theme.accent : theme.textMuted },
+                    ]}
+                  >
+                    {guessResult.message}
+                  </Text>
+                ) : null}
+              </>
+            ) : null}
+          </View>
+        </View>
+      ) : null}
 
       <View style={styles.columnsRow}>
         {!isTextOnlyStory ? (
@@ -1603,6 +1898,7 @@ export default function ProfileViewPremiumV2Screen() {
               ListHeaderComponent={
                 <StoryHeader theme={theme} profile={presenceProfile} locationLine={locationLine} />
               }
+              ListFooterComponent={standardPromptFooter}
             />
           ) : (
             <FlashList
@@ -1617,10 +1913,226 @@ export default function ProfileViewPremiumV2Screen() {
               scrollEventThrottle={16}
               contentContainerStyle={styles.rightListContent}
               renderItem={renderSectionItem}
+              ListFooterComponent={standardPromptFooter}
             />
           )}
         </View>
       </View>
+
+      {shouldFloatGuessPrompt && featuredPrompt ? (
+        <View
+          style={[
+            stylesStatic.guessFabAnchor,
+            { top: guessFabTop },
+          ]}
+          pointerEvents="box-none"
+        >
+          <Animated.View style={[stylesStatic.guessFabHalo, guessFabHaloStyle]} pointerEvents="none" />
+          <Animated.View style={guessFabMotionStyle}>
+            <Pressable onPress={openGuessSheet} style={stylesStatic.guessFabWrap}>
+              <LinearGradient
+                colors={guessFabColors}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={stylesStatic.guessFabCard}
+              >
+                <View style={stylesStatic.guessFabIconWrap}>
+                  <MaterialCommunityIcons name={guessFabIcon} size={18} color={Colors.light.background} />
+                </View>
+                <Text style={stylesStatic.guessFabTitle}>{guessFabLabel}</Text>
+              </LinearGradient>
+            </Pressable>
+          </Animated.View>
+        </View>
+      ) : null}
+
+      {shouldFloatGuessPrompt && featuredPrompt ? (
+        <Modal
+          visible={guessSheetOpen}
+          transparent
+          animationType="fade"
+          onRequestClose={closeGuessSheet}
+        >
+          <View style={stylesStatic.guessSheetOverlay}>
+            <Pressable style={stylesStatic.guessSheetBackdrop} onPress={closeGuessSheet} />
+            <View
+              style={[
+                stylesStatic.guessSheetWrap,
+                { paddingBottom: Math.max(14, insets.bottom + 10) },
+              ]}
+              pointerEvents="box-none"
+            >
+              <Pressable
+                style={[
+                  stylesStatic.guessSheetCard,
+                  { backgroundColor: theme.background, borderColor: theme.outline },
+                ]}
+                onPress={() => undefined}
+              >
+                <View style={stylesStatic.giftHandle} />
+                <View style={stylesStatic.guessSheetHeaderRow}>
+                  <View style={stylesStatic.guessSheetHeaderText}>
+                    <Text style={[stylesStatic.featuredPromptEyebrow, { color: theme.tint }]}>Quick guess</Text>
+                    <Text style={[stylesStatic.guessSheetTitle, { color: theme.text }]}>
+                      {featuredPrompt.promptTitle?.trim() || 'Prompt'}
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={closeGuessSheet}
+                    style={[stylesStatic.guessSheetClose, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}
+                  >
+                    <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
+                  </Pressable>
+                </View>
+
+                <View style={stylesStatic.guessSheetMetaRow}>
+                  <View
+                    style={[
+                      stylesStatic.guessSheetModePill,
+                      { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
+                    ]}
+                  >
+                    <MaterialCommunityIcons name="gamepad-variant-outline" size={14} color={theme.tint} />
+                    <Text style={[stylesStatic.guessSheetModeText, { color: theme.textMuted }]}>
+                      {guessChallengeLabel}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={[stylesStatic.guessSheetHint, { color: theme.textMuted }]}>
+                  {featuredPrompt.hintText?.trim()
+                    ? `Hint: ${featuredPrompt.hintText.trim()}`
+                    : 'Take one clean guess. If you get it right, you unlock the next step.'}
+                </Text>
+
+                {isMultipleChoiceGuess(featuredPrompt.guessMode) ? (
+                  <View style={stylesStatic.guessOptionsWrap}>
+                    {(featuredPrompt.guessOptions || []).map((option) => {
+                      const selected = selectedGuessOption === option;
+                      return (
+                        <Pressable
+                          key={`${featuredPrompt.id}-${option}`}
+                          onPress={() => {
+                            if (guessLocked) return;
+                            setSelectedGuessOption(option);
+                          }}
+                          disabled={guessLocked}
+                          style={[
+                            stylesStatic.guessOptionPill,
+                            {
+                              backgroundColor: selected ? theme.tint : theme.backgroundSubtle,
+                              borderColor: selected ? theme.tint : theme.outline,
+                              opacity: guessLocked ? 0.7 : 1,
+                            },
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              stylesStatic.guessOptionText,
+                              { color: selected ? Colors.light.background : theme.text },
+                            ]}
+                          >
+                            {option}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                ) : (
+                  <Pressable
+                    onPress={guessLocked ? undefined : openGuessComposer}
+                    disabled={guessLocked}
+                    style={[
+                      stylesStatic.guessInputWrap,
+                      stylesStatic.guessInputPressable,
+                      { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline, opacity: guessLocked ? 0.7 : 1 },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        stylesStatic.guessInput,
+                        { color: guessInput.trim() ? theme.text : theme.textMuted },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {guessInput.trim() || 'Type your guess'}
+                    </Text>
+                    <MaterialCommunityIcons name="pencil-outline" size={16} color={theme.textMuted} />
+                  </Pressable>
+                )}
+
+                <View style={stylesStatic.guessActionsRow}>
+                  {!guessLocked ? (
+                    <Pressable
+                      onPress={() => void submitFeaturedGuess()}
+                      disabled={guessSubmitting || !(selectedGuessOption || guessInput.trim())}
+                      style={[
+                        stylesStatic.guessPrimaryButton,
+                        {
+                          backgroundColor:
+                            guessSubmitting || !(selectedGuessOption || guessInput.trim())
+                              ? theme.outline
+                              : theme.tint,
+                        },
+                      ]}
+                    >
+                      <Text style={stylesStatic.guessPrimaryText}>{guessPrimaryLabel}</Text>
+                    </Pressable>
+                  ) : null}
+                  {guessResult ? (
+                    <Pressable
+                      onPress={guessResult.tone === 'correct' ? () => void sendGuessInterest() : openIntentSheet}
+                      disabled={guessResult.tone === 'correct' ? guessInterestSending || guessInterestSent : false}
+                      style={[
+                        stylesStatic.guessSecondaryButton,
+                        { borderColor: guessResult.tone === 'correct' ? theme.tint : theme.outline },
+                        guessResult.tone === 'correct' && (guessInterestSending || guessInterestSent)
+                          ? { opacity: 0.7 }
+                          : null,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          stylesStatic.guessSecondaryText,
+                          { color: guessResult.tone === 'correct' ? theme.accent : theme.textMuted },
+                        ]}
+                      >
+                        {guessSecondaryLabel}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+
+                {guessResult ? (
+                  <View
+                    style={[
+                      stylesStatic.guessSheetResultCard,
+                      {
+                        backgroundColor: theme.backgroundSubtle,
+                        borderColor: guessResult.tone === 'correct' ? theme.tint : theme.outline,
+                      },
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name={guessResult.tone === 'correct' ? 'check-decagram-outline' : 'message-question-outline'}
+                      size={18}
+                      color={guessResult.tone === 'correct' ? theme.tint : theme.textMuted}
+                    />
+                    <Text
+                      style={[
+                        stylesStatic.guessSheetResultText,
+                        { color: guessResult.tone === 'correct' ? theme.accent : theme.textMuted },
+                      ]}
+                    >
+                      {guessResult.message}
+                    </Text>
+                  </View>
+                ) : null}
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
 
       <FloatingActions
         theme={theme}
@@ -1638,17 +2150,15 @@ const Header = memo(function Header({
   theme,
   profile,
   title,
-  locationLine,
+  locationLine: _locationLine,
   heroOverrideUri,
   heroOverrideType,
   heroVideoUrl,
   heroScrollY,
   isDark,
-  matchBadgeValue,
-  matchBadgeLabel,
   onHeroPress,
   onHeroDoubleTap,
-  onBack,
+  onBack: _onBack,
   onClose,
 }: {
   theme: typeof Colors.light;
@@ -1660,8 +2170,6 @@ const Header = memo(function Header({
   heroVideoUrl?: string | null;
   heroScrollY: SharedValue<number>;
   isDark: boolean;
-  matchBadgeValue: number | null;
-  matchBadgeLabel: string;
   onHeroPress?: (heroUri: string) => void;
   onHeroDoubleTap?: () => void;
   onBack: () => void;
@@ -1672,10 +2180,8 @@ const Header = memo(function Header({
     (Array.isArray(profile.photos) && profile.photos.find(Boolean)) ||
     profile.profilePicture ||
     '';
-  const isOnlineNow = !!(profile as any).online;
-  const isActiveNow = profile.isActiveNow || !!(profile as any).is_active;
-  const showPresence = isOnlineNow || isActiveNow;
-  const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
+  const placeholderPalette = getProfilePlaceholderPalette(profile.id || profile.name);
+  const profileInitials = getProfileInitials(profile.name);
   const showHeroVideo =
     heroOverrideType === 'video'
       ? true
@@ -1788,7 +2294,20 @@ const Header = memo(function Header({
             style={[stylesStatic.heroImage, heroImageStyle]}
             resizeMode="cover"
           />
-        ) : null}
+        ) : (
+          <LinearGradient
+            colors={[placeholderPalette.start, placeholderPalette.end]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={stylesStatic.heroImage}
+          >
+            <View style={stylesStatic.heroPlaceholderContent}>
+              <Text style={stylesStatic.heroPlaceholderEyebrow}>Intentional presence</Text>
+              <Text style={stylesStatic.heroPlaceholderInitials}>{profileInitials}</Text>
+              <Text style={stylesStatic.heroPlaceholderText}>This profile is still unfolding.</Text>
+            </View>
+          </LinearGradient>
+        )}
 
         <LinearGradient
           colors={['rgba(0,0,0,0.5)', 'transparent']}
@@ -1840,7 +2359,7 @@ const Header = memo(function Header({
 });
 
 function PhotoLightboxModal({
-  theme,
+  theme: _theme,
   open,
   items,
   startIndex,
@@ -2107,11 +2626,11 @@ function PhotoLightboxModal({
 
                             {chips.length ? (
                               <View style={stylesStatic.lightboxInterestsRow}>
-                                {chips.map((name) => {
+                                {chips.map((name, idx) => {
                                   const emoji = getInterestEmoji(name);
                                   return (
                                     <View
-                                      key={name}
+                                      key={`${name}-${idx}`}
                                       style={[
                                         stylesStatic.lightboxInterestPill,
                                         { borderColor: Colors.dark.outline, backgroundColor: Colors.dark.backgroundSubtle },
@@ -2327,6 +2846,8 @@ const StoryHeader = memo(function StoryHeader({
   locationLine: string;
 }) {
   const avatarUri = profile.profilePicture || '';
+  const placeholderPalette = getProfilePlaceholderPalette(profile.id || profile.name);
+  const profileInitials = getProfileInitials(profile.name);
   const isOnlineNow = !!(profile as any).online;
   const isActiveNow = profile.isActiveNow || !!(profile as any).is_active;
   const showPresence = isOnlineNow || isActiveNow;
@@ -2339,7 +2860,20 @@ const StoryHeader = memo(function StoryHeader({
           { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
         ]}
       >
-        {avatarUri ? <Image source={{ uri: avatarUri }} style={stylesStatic.storyAvatar} /> : null}
+        {avatarUri ? (
+          <Image source={{ uri: avatarUri }} style={stylesStatic.storyAvatar} />
+        ) : (
+          <LinearGradient
+            colors={[placeholderPalette.start, placeholderPalette.end]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={stylesStatic.storyAvatar}
+          >
+            <View style={stylesStatic.storyAvatarPlaceholder}>
+              <Text style={stylesStatic.storyAvatarInitials}>{profileInitials}</Text>
+            </View>
+          </LinearGradient>
+        )}
       </View>
 
       <View style={stylesStatic.storyTextCol}>
@@ -2351,6 +2885,7 @@ const StoryHeader = memo(function StoryHeader({
             <VerificationBadge
               level={profile.verificationLevel ?? (profile.verified ? 1 : 0)}
               size="small"
+              variant="betweener"
             />
           ) : null}
           {showPresence ? (
@@ -2514,7 +3049,7 @@ function FloatingActions({
   currentUserId,
   viewerProfileId,
   isOwnProfile,
-  onOpenRequest,
+  onOpenRequest: _onOpenRequest,
 }: {
   theme: typeof Colors.light;
   profileId: string;
@@ -2524,6 +3059,8 @@ function FloatingActions({
   onOpenRequest?: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const isDark = theme.background === Colors.dark.background;
+  const { hasAccess } = usePremiumState();
   const [giftOpen, setGiftOpen] = useState(false);
   const [selectedGift, setSelectedGift] = useState<string | null>(null);
   const [giftSending, setGiftSending] = useState(false);
@@ -2544,7 +3081,18 @@ function FloatingActions({
   );
 
   const canSendToProfile = Boolean(currentUserId && profileId && currentUserId !== profileId);
+  const canUseBoosts = hasAccess('SILVER');
   const noteLength = noteText.trim().length;
+  const openBoostUpsell = () => {
+    Alert.alert(
+      'Unlock boosts',
+      'Profile boosts are included with Silver and Gold. Upgrade to activate 30-minute visibility boosts.',
+      [
+        { text: 'Not now', style: 'cancel' },
+        { text: 'View plans', onPress: () => router.push('/premium-plans') },
+      ],
+    );
+  };
 
   const openNote = () => {
     if (!canSendToProfile) {
@@ -2607,33 +3155,48 @@ function FloatingActions({
 
   const sendBoost = async () => {
     if (!currentUserId) return;
+    if (!canUseBoosts) {
+      openBoostUpsell();
+      return;
+    }
     setBoostSending(true);
-    const endsAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-    const { error } = await supabase.from('profile_boosts').insert({
-      user_id: currentUserId,
-      ends_at: endsAt,
-    });
+    const { data, error } = await supabase.rpc('rpc_create_profile_boost');
     setBoostSending(false);
     if (error) {
       logger.error('[profile-view] send_boost_failed', error);
+      if (String(error.message || '').toLowerCase().includes('premium subscription required')) {
+        openBoostUpsell();
+        return;
+      }
+      if (String(error.message || '').toLowerCase().includes('boost already active')) {
+        Alert.alert('Boost already live', 'Your current boost is still running. Check your premium plans screen for timing.');
+        return;
+      }
       Alert.alert('Unable to boost', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
       return;
     }
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-    Alert.alert('Boost active', 'Your profile is boosted for 30 minutes.');
+    const endsAt = typeof data === 'object' && data && 'ends_at' in data ? (data.ends_at as string | null) : null;
+    Alert.alert(
+      'Boost active',
+      endsAt
+        ? `Your profile is boosted until ${new Date(endsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`
+        : 'Your profile is boosted for 30 minutes.',
+    );
   };
 
   useEffect(() => {
     let cancelled = false;
     const loadLikeState = async () => {
-      if (!currentUserId || !profileId || isOwnProfile) {
+      // Swipes are keyed by profile ids (swiper_id/target_id). Use the viewer's profile id.
+      if (!viewerProfileId || !profileId || isOwnProfile) {
         setLiked(false);
         return;
       }
       const { data } = await supabase
         .from('swipes')
         .select('action')
-        .eq('swiper_id', currentUserId)
+        .eq('swiper_id', viewerProfileId)
         .eq('target_id', profileId)
         .in('action', ['LIKE', 'SUPERLIKE'])
         .limit(1);
@@ -2644,17 +3207,18 @@ function FloatingActions({
     return () => {
       cancelled = true;
     };
-  }, [currentUserId, isOwnProfile, profileId]);
+  }, [isOwnProfile, profileId, viewerProfileId]);
 
   const sendLike = async () => {
-    if (!currentUserId || !profileId || isOwnProfile || likeSending) return;
+    // Swipes are keyed by profile ids (swiper_id/target_id). Use the viewer's profile id.
+    if (!viewerProfileId || !profileId || isOwnProfile || likeSending) return;
     setLikeSending(true);
     const { error } = await supabase
       .from('swipes')
       .upsert(
         [
           {
-            swiper_id: currentUserId,
+            swiper_id: viewerProfileId,
             target_id: profileId,
             action: 'LIKE',
           },
@@ -2667,6 +3231,27 @@ function FloatingActions({
       Alert.alert('Unable to like', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
       return;
     }
+
+    // Mirror likes into Intent requests so they show up in the Intent -> Likes feed.
+    try {
+      const { error: intentErr } = await supabase.rpc('rpc_create_intent_request', {
+        p_recipient_id: profileId,
+        p_type: 'like_with_note',
+        p_message: null,
+        p_metadata: { source: 'profile_view', swipe_action: 'like' },
+      });
+      if (intentErr) {
+        logger.warn('[profile-view] create_like_intent_failed', {
+          message: intentErr.message,
+          code: (intentErr as any).code ?? null,
+          details: (intentErr as any).details ?? null,
+        });
+      }
+    } catch (e) {
+      // Best-effort only.
+      logger.warn('[profile-view] create_like_intent_throw', { message: String((e as any)?.message || e || 'unknown') });
+    }
+
     setLiked(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
     if (viewerProfileId) {
@@ -2683,49 +3268,64 @@ function FloatingActions({
       <View
         style={[
           stylesStatic.fabStack,
-          { bottom: 10 + Math.max(0, insets.bottom) },
+          { bottom: 4 + Math.max(0, insets.bottom) },
         ]}
         pointerEvents="box-none"
       >
-        {!isOwnProfile ? (
-          <Fab
-            theme={theme}
-            label={liked ? 'Liked' : 'Like'}
-            icon={liked ? 'heart' : 'heart-outline'}
-            colors={['#C7B3FF', '#7D7CF3'] as const}
-            onPress={sendLike}
-            showLabel={false}
-          />
-        ) : null}
-        {!isOwnProfile ? (
-          <Fab
-            theme={theme}
-            label="Note"
-            icon="message-text-outline"
-            colors={[theme.tint, '#0C6E7A'] as const}
-            onPress={openNote}
-            showLabel={false}
-          />
-        ) : null}
-        {isOwnProfile ? (
-          <Fab
-            theme={theme}
-            label={boostSending ? 'Boosting' : 'Boost'}
-            icon="rocket-launch-outline"
-            colors={['#F6C453', '#C68B1E'] as const}
-            onPress={sendBoost}
-            showLabel={false}
-          />
-        ) : (
-          <Fab
-            theme={theme}
-            label="Gift"
-            icon="gift-outline"
-            colors={['#F3A0B4', '#C6607E'] as const}
-            onPress={openGift}
-            showLabel={false}
-          />
-        )}
+        <LinearGradient
+          colors={[
+            isDark ? 'rgba(9,16,18,0.88)' : 'rgba(250,243,237,0.84)',
+            isDark ? 'rgba(9,16,18,0.72)' : 'rgba(250,243,237,0.68)',
+          ]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[
+            stylesStatic.fabDock,
+            {
+              borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(31,42,42,0.08)',
+            },
+          ]}
+        >
+          {!isOwnProfile ? (
+            <Fab
+              theme={theme}
+              label={liked ? 'Liked' : 'Like'}
+              icon={liked ? 'heart' : 'heart-outline'}
+              colors={['#C7B3FF', '#7D7CF3'] as const}
+              onPress={sendLike}
+              showLabel={false}
+            />
+          ) : null}
+          {!isOwnProfile ? (
+            <Fab
+              theme={theme}
+              label="Note"
+              icon="message-text-outline"
+              colors={[theme.tint, '#0C6E7A'] as const}
+              onPress={openNote}
+              showLabel={false}
+            />
+          ) : null}
+          {isOwnProfile ? (
+            <Fab
+              theme={theme}
+              label={boostSending ? 'Boosting' : canUseBoosts ? 'Boost' : 'Unlock Boosts'}
+              icon="rocket-launch-outline"
+              colors={['#F6C453', '#C68B1E'] as const}
+              onPress={sendBoost}
+              showLabel={false}
+            />
+          ) : (
+            <Fab
+              theme={theme}
+              label="Gift"
+              icon="gift-outline"
+              colors={['#F3A0B4', '#C6607E'] as const}
+              onPress={openGift}
+              showLabel={false}
+            />
+          )}
+        </LinearGradient>
       </View>
       <Modal
         visible={noteOpen}
@@ -2856,7 +3456,7 @@ function FloatingActions({
 }
 
 function Fab({
-  theme,
+  theme: _theme,
   label,
   icon,
   colors,
@@ -2949,6 +3549,34 @@ const stylesStatic = StyleSheet.create({
   heroImage: {
     width: '100%',
     height: '100%',
+  },
+  heroPlaceholderContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  heroPlaceholderEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    color: 'rgba(255,255,255,0.78)',
+    marginBottom: 10,
+  },
+  heroPlaceholderInitials: {
+    fontSize: 54,
+    fontWeight: '900',
+    letterSpacing: 2,
+    color: '#fff',
+  },
+  heroPlaceholderText: {
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.82)',
+    textAlign: 'center',
   },
   heroTopGradient: {
     position: 'absolute',
@@ -3180,88 +3808,78 @@ const stylesStatic = StyleSheet.create({
   },
   heroDetailsWrap: {
     paddingHorizontal: 12,
-    paddingTop: 12,
-    paddingBottom: 4,
+    paddingTop: 10,
+    paddingBottom: 6,
   },
-  heroBadgesRow: {
-    marginTop: 8,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 10,
-    paddingRight: 6,
+  featuredPromptWrap: {
+    paddingHorizontal: 12,
+    paddingTop: 4,
+    paddingBottom: 2,
   },
-  heroDetailsDivider: {
-    height: StyleSheet.hairlineWidth,
-    marginTop: 8,
+  rightFooterPromptWrap: {
+    paddingTop: 14,
+    paddingBottom: 6,
+  },
+  rightFooterPromptCard: {
+    borderWidth: 1,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 15,
   },
   heroDetailsCard: {
     borderWidth: 1,
-    borderRadius: 18,
-    paddingHorizontal: 14,
+    borderRadius: 22,
+    paddingHorizontal: 15,
     paddingVertical: 10,
-  },
-  heroWhyInline: {
-    flex: 1,
-    alignItems: 'flex-start',
-    marginLeft: 8,
-    maxWidth: 200,
-  },
-  heroWhyTitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.3,
-    lineHeight: 12,
-    marginBottom: -1,
-  },
-  heroWhyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    minHeight: 18,
-    maxWidth: 200,
-  },
-  heroWhyText: {
-    fontSize: 12,
-    fontWeight: '600',
-    flexShrink: 1,
-    minWidth: 0,
   },
   heroDetailsTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 7,
     flexWrap: 'wrap',
   },
   heroDetailsName: {
-    fontSize: 20,
+    fontSize: 19,
     fontWeight: '900',
     letterSpacing: 0.2,
-    lineHeight: 22,
+    lineHeight: 21,
   },
   heroDetailsSubRow: {
-    marginTop: 4,
+    marginTop: 3,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
   },
   heroDetailsSubText: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '600',
-    lineHeight: 16,
+    lineHeight: 15,
   },
   heroDetailsMeta: {
-    marginTop: 3,
-    fontSize: 12,
+    marginTop: 1,
+    fontSize: 11.5,
     fontWeight: '600',
-    lineHeight: 16,
+    lineHeight: 15,
   },
   heroMetaRow: {
-    marginTop: 4,
+    marginTop: 6,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 10,
+    gap: 8,
+  },
+  heroContextRow: {
+    marginTop: 7,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: 16,
+  },
+  heroContextText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    letterSpacing: 0.1,
+    flexShrink: 1,
   },
   heroRequestWrap: {
     alignSelf: 'flex-end',
@@ -3274,18 +3892,334 @@ const stylesStatic = StyleSheet.create({
     elevation: 6,
   },
   heroRequestButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 5,
+    paddingHorizontal: 15,
+    paddingVertical: 6,
     borderRadius: 999,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  heroRequestText: {
+    color: Colors.light.background,
+    fontSize: 11.5,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  featuredPromptCard: {
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+  },
+  featuredPromptEyebrow: {
+    fontSize: 10.5,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  featuredPromptTitle: {
+    marginTop: 6,
+    fontSize: 17,
+    lineHeight: 21,
+    fontWeight: '800',
+  },
+  featuredPromptAnswer: {
+    marginTop: 8,
+    fontSize: 13.5,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  bottomPromptTitle: {
+    marginTop: 6,
+    fontSize: 18,
+    lineHeight: 23,
+    fontWeight: '800',
+  },
+  bottomPromptAnswer: {
+    marginTop: 9,
+    fontSize: 14,
+    lineHeight: 21,
+    fontWeight: '500',
+  },
+  guessOptionsWrap: {
+    marginTop: 12,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  guessOptionPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  guessOptionText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+  },
+  guessInputWrap: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  guessInputPressable: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  guessInput: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  guessActionsRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  guessPrimaryButton: {
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  guessPrimaryText: {
+    color: Colors.light.background,
+    fontSize: 12.5,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  guessSecondaryButton: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+  },
+  guessSecondaryText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  guessResultText: {
+    marginTop: 10,
+    fontSize: 12.5,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  featuredPromptHidden: {
+    opacity: 0,
+  },
+  guessFabAnchor: {
+    position: 'absolute',
+    right: 20,
+    zIndex: 12,
+    elevation: 12,
+  },
+  guessFabWrap: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+    elevation: 9,
+  },
+  guessFabHalo: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    bottom: -4,
+    left: -4,
+    borderRadius: 999,
+    backgroundColor: 'rgba(57,198,168,0.45)',
+  },
+  guessFabCard: {
+    minHeight: 32,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  guessFabIconWrap: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.16)',
+  },
+  guessFabTitle: {
+    color: Colors.light.background,
+    fontSize: 10.5,
+    fontWeight: '800',
+    lineHeight: 11,
+    letterSpacing: 0.2,
+  },
+  guessSheetOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  guessSheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  guessSheetWrap: {
+    paddingHorizontal: 14,
+  },
+  guessSheetCard: {
+    borderWidth: 1,
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 16,
+  },
+  guessSheetHeaderRow: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  guessSheetHeaderText: {
+    flex: 1,
+  },
+  guessSheetTitle: {
+    marginTop: 6,
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '800',
+  },
+  guessSheetClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  guessSheetHint: {
+    marginTop: 10,
+    fontSize: 13.5,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  guessSheetMetaRow: {
+    marginTop: 12,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  heroRequestText: {
-    color: Colors.light.background,
-    fontSize: 12,
+  guessSheetModePill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+  },
+  guessSheetModeText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  guessSheetResultCard: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  guessSheetResultText: {
+    flex: 1,
+    fontSize: 12.5,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  guessComposerOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    paddingHorizontal: 20,
+    paddingBottom: Platform.OS === 'ios' ? 18 : 12,
+  },
+  guessComposerStage: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  guessComposerBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.58)',
+  },
+  guessComposerSheet: {
+    borderWidth: 1,
+    borderRadius: 24,
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 14,
+    gap: 10,
+  },
+  guessComposerEyebrow: {
+    fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 0.3,
+    letterSpacing: 1.3,
+    textTransform: 'uppercase',
+  },
+  guessComposerTitle: {
+    fontSize: 20,
+    lineHeight: 26,
+    fontWeight: '800',
+  },
+  guessComposerHint: {
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '500',
+  },
+  guessComposerInputWrap: {
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  guessComposerInput: {
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '500',
+  },
+  guessComposerActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  guessComposerPrimary: {
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+  },
+  guessComposerPrimaryText: {
+    color: Colors.light.background,
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  guessComposerSecondary: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+  },
+  guessComposerSecondaryText: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
 
   imageTagPill: {
@@ -3446,6 +4380,17 @@ const stylesStatic = StyleSheet.create({
     width: 88,
     height: 88,
   },
+  storyAvatarPlaceholder: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  storyAvatarInitials: {
+    fontSize: 28,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    color: '#fff',
+  },
   storyTextCol: {
     paddingHorizontal: 8,
   },
@@ -3471,6 +4416,13 @@ const stylesStatic = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
   },
+  trustRowCentered: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'center',
+    marginTop: 10,
+  },
   storyChipsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -3495,6 +4447,23 @@ const stylesStatic = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 14,
     marginBottom: 16,
+  },
+  trustRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  trustChip: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  trustChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -3551,22 +4520,36 @@ const stylesStatic = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  fabDock: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.14,
+    shadowRadius: 18,
+    elevation: 8,
   },
   fabWrap: {
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.18,
-    shadowRadius: 16,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    elevation: 5,
   },
   fab: {
-    minWidth: 44,
-    height: 44,
-    borderRadius: 22,
+    minWidth: 42,
+    height: 42,
+    borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     flexDirection: 'row',
     gap: 8,
   },
@@ -3672,3 +4655,5 @@ const stylesStatic = StyleSheet.create({
     letterSpacing: 0.4,
   },
 });
+
+

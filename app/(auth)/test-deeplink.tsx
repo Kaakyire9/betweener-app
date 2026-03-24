@@ -1,8 +1,16 @@
+import { canAccessInternalTools } from "@/lib/internal-tools";
 import { useEffect } from "react";
+import { Redirect } from "expo-router";
 import { Alert, Linking, Pressable, Text, View } from "react-native";
 
 export default function TestDeepLink() {
+  const internalToolsEnabled = canAccessInternalTools();
+
   useEffect(() => {
+    if (!internalToolsEnabled) {
+      return;
+    }
+
     const handleUrl = (url: string) => {
       console.log("Deep link received:", url);
       Alert.alert("Deep Link", `Received URL: ${url}`);
@@ -21,7 +29,11 @@ export default function TestDeepLink() {
     });
 
     return () => subscription?.remove();
-  }, []);
+  }, [internalToolsEnabled]);
+
+  if (!internalToolsEnabled) {
+    return <Redirect href="/(auth)/welcome" />;
+  }
 
   const testDeepLink = () => {
     const testUrl = "betweenerapp://auth/callback?code=test123";

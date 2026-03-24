@@ -1,5 +1,4 @@
 import { useAppFonts } from "@/constants/fonts";
-import { Colors } from "@/constants/theme";
 import Notice from "@/components/ui/Notice";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
@@ -17,11 +16,9 @@ import {
     ActivityIndicator,
     Alert,
     Animated,
-    Dimensions,
     Image,
     KeyboardAvoidingView,
     Platform,
-    Pressable,
     ScrollView,
     StyleSheet,
     Text,
@@ -31,10 +28,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-const { width: screenWidth } = Dimensions.get('window');
-
 const BRAND_TEAL = '#0C6E7A';
-const BRAND_OAT = '#F6F1E8';
 const BRAND_LILAC = '#C9A7FF';
 const BRAND_INK = '#0F172A';
 
@@ -165,7 +159,7 @@ export default function Onboarding() {
   const pickImage = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: 'images',
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
@@ -180,7 +174,7 @@ export default function Onboarding() {
         setImage(manipulatedImage.uri);
         setErrors((prev) => ({ ...prev, profilePic: "" }));
       }
-    } catch (error) {
+    } catch (_error) {
       Alert.alert("Error", "Failed to pick image");
     }
   };
@@ -392,21 +386,6 @@ export default function Onboarding() {
         imageUrl = data.publicUrl;
       }
 
-      // 3. Create/update profile using auth context
-      const profilePreview = {
-        fullName: form.fullName,
-        age: form.age,
-        gender: form.gender,
-        bio: form.bio,
-        occupation:
-          form.occupation === "Other" && customOccupation.trim()
-            ? customOccupation.trim()
-            : form.occupation,
-        region: form.region,
-        tribe: form.tribe,
-        religion: form.religion
-      };
-      
       // Safety check for gender field
       if (!form.gender || form.gender.trim() === '') {
         Alert.alert("Error", "Please select your gender before continuing.");
@@ -502,28 +481,6 @@ export default function Onboarding() {
         ? prev.interests.filter((i) => i !== interest)
         : [...prev.interests, interest],
     }));
-  };
-
-  const handleSignOut = () => {
-    Alert.alert(
-      "Sign Out",
-      "Are you sure you want to sign out? You'll need to log in again to complete your profile.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Sign Out",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await signOut();
-              router.replace("/(auth)/login");
-            } catch (error) {
-              Alert.alert("Error", "Failed to sign out. Please try again.");
-            }
-          },
-        },
-      ]
-    );
   };
 
   // Animation effects
@@ -734,14 +691,21 @@ export default function Onboarding() {
       </View>
       
       <View style={styles.headerCenter}>
-        <Text style={styles.stepTitle}>{ONBOARDING_STEPS[currentStep].title}</Text>
-        <Text style={styles.stepSubtitle}>{ONBOARDING_STEPS[currentStep].subtitle}</Text>
+        {currentStep === 0 ? (
+          <>
+            <Text style={styles.stepKicker}>Akwaaba</Text>
+            <Text style={styles.stepTitle}>{ONBOARDING_STEPS[currentStep].title}</Text>
+            <Text style={styles.stepSubtitle}>{ONBOARDING_STEPS[currentStep].subtitle}</Text>
+          </>
+        ) : (
+          <>
+            <Text style={styles.stepTitle}>{ONBOARDING_STEPS[currentStep].title}</Text>
+            <Text style={styles.stepSubtitle}>{ONBOARDING_STEPS[currentStep].subtitle}</Text>
+          </>
+        )}
       </View>
       
       <View style={styles.headerRight}>
-        <TouchableOpacity style={styles.signOutButton} onPress={signOut} accessibilityLabel="Sign out">
-          <Text style={styles.signOutText}>Sign out</Text>
-        </TouchableOpacity>
       </View>
     </View>
   );
@@ -806,6 +770,14 @@ export default function Onboarding() {
             <Text style={styles.featureChipText}>Intentional, real connections</Text>
           </View>
         </View>
+
+        <TouchableOpacity
+          style={styles.welcomeSignOutLink}
+          onPress={signOut}
+          accessibilityLabel="Sign out"
+        >
+          <Text style={styles.welcomeSignOutText}>Using the wrong account? Sign out</Text>
+        </TouchableOpacity>
       </View>
     </Animated.View>
   );
@@ -1453,6 +1425,15 @@ const styles = StyleSheet.create({
     color: BRAND_INK,
     textAlign: 'center',
   },
+  stepKicker: {
+    fontSize: 11,
+    fontFamily: 'Manrope_700Bold',
+    color: BRAND_TEAL,
+    textAlign: 'center',
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
   stepSubtitle: {
     fontSize: 14,
     fontFamily: 'Manrope_400Regular',
@@ -1621,6 +1602,17 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Archivo_700Bold',
     color: '#2f3a45',
+  },
+  welcomeSignOutLink: {
+    marginTop: 18,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  welcomeSignOutText: {
+    fontSize: 13,
+    fontFamily: 'Manrope_600SemiBold',
+    color: '#5A6772',
+    textAlign: 'center',
   },
 
   // Form Elements

@@ -5,6 +5,17 @@ type MatchScoreInputs = {
   interestOverlapRatio?: number | null;
 };
 
+type ConversationSignalRow = {
+  sender_id: string;
+  created_at: string;
+};
+
+type ConversationSignalInputs = MatchScoreInputs & {
+  rows?: ConversationSignalRow[] | null;
+  userId: string;
+  peerId: string;
+};
+
 const clampPercent = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 
 const messageCountScore = (count: number) => {
@@ -20,6 +31,47 @@ const replyTimeScore = (hours: number) => {
   return 10;
 };
 
+const sortRows = (rows: ConversationSignalRow[]) =>
+  [...rows].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+const computeTurnSwitchCount = (rows: ConversationSignalRow[]) => {
+  if (rows.length <= 1) return 0;
+  let switches = 0;
+  for (let index = 1; index < rows.length; index += 1) {
+    if (rows[index]?.sender_id && rows[index - 1]?.sender_id && rows[index].sender_id !== rows[index - 1].sender_id) {
+      switches += 1;
+    }
+  }
+  return switches;
+};
+
+const computeRecentMessageCount = (rows: ConversationSignalRow[], days: number) => {
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  return rows.filter((row) => {
+    const timestamp = new Date(row.created_at).getTime();
+    return Number.isFinite(timestamp) && timestamp >= cutoff;
+  }).length;
+};
+
+const computeActiveDayCount = (rows: ConversationSignalRow[]) => {
+  const days = new Set<string>();
+  rows.forEach((row) => {
+    const date = new Date(row.created_at);
+    if (Number.isFinite(date.getTime())) {
+      days.add(date.toISOString().slice(0, 10));
+    }
+  });
+  return days.size;
+};
+
+const computeReciprocityRatio = (rows: ConversationSignalRow[], userId: string, peerId: string) => {
+  const sentByUser = rows.filter((row) => row.sender_id === userId).length;
+  const sentByPeer = rows.filter((row) => row.sender_id === peerId).length;
+  const maxCount = Math.max(sentByUser, sentByPeer);
+  if (!maxCount) return 0;
+  return Math.min(sentByUser, sentByPeer) / maxCount;
+};
+
 export const computeInterestOverlapRatio = (a: string[], b: string[]) => {
   if (!a.length || !b.length) return null;
   const shared = a.filter((item) => b.includes(item)).length;
@@ -29,7 +81,7 @@ export const computeInterestOverlapRatio = (a: string[], b: string[]) => {
 };
 
 export const computeFirstReplyHours = (
-  rows: Array<{ sender_id: string; created_at: string }>,
+  rows: { sender_id: string; created_at: string }[],
   userId: string,
   peerId: string,
 ) => {
@@ -82,4 +134,42 @@ export const computeMatchScorePercent = (inputs: MatchScoreInputs) => {
   return clampPercent((score / totalWeight) * 100);
 };
 
-export type { MatchScoreInputs };
+export const computeConversationSignalLabel = (inputs: ConversationSignalInputs) => {
+  const rows = sortRows(inputs.rows ?? []);
+  const totalMessages =
+    typeof inputs.messageCount === 'number' ? Math.max(inputs.messageCount, rows.length) : rows.length;
+
+  if (totalMessages < 4 || rows.length < 4) return null;
+
+  const turnSwitches = computeTurnSwitchCount(rows);
+  const recentMessages = computeRecentMessageCount(rows, 7);
+  const activeDays = computeActiveDayCount(rows);
+  const reciprocityRatio = computeReciprocityRatio(rows, inputs.userId, inputs.peerId);
+  const score =
+    computeMatchScorePercent({
+      messageCount: inputs.messageCount,
+      firstReplyHours: inputs.firstReplyHours,
+      bothVerified: inputs.bothVerified,
+      interestOverlapRatio: inputs.interestOverlapRatio,
+    }) ?? 0;
+
+  if (activeDays >= 3 && turnSwitches >= 6 && reciprocityRatio >= 0.58 && score >= 60) {
+    return 'Consistent chemistry';
+  }
+
+  if (recentMessages >= 8 && turnSwitches >= 5 && reciprocityRatio >= 0.5) {
+    return 'Strong momentum';
+  }
+
+  if (reciprocityRatio >= 0.68 && totalMessages >= 8) {
+    return 'High reciprocity';
+  }
+
+  if (turnSwitches >= 4 && (typeof inputs.firstReplyHours !== 'number' || inputs.firstReplyHours <= 24)) {
+    return 'Great flow';
+  }
+
+  return null;
+};
+
+export type { ConversationSignalInputs, MatchScoreInputs };
