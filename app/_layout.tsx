@@ -50,16 +50,16 @@ function RootLayout() {
   const frameOpacity = useRef(new Animated.Value(0)).current;
 
   // Text animations
-  const textOpacity = useRef(new Animated.Value(0)).current;
-  const textTranslate = useRef(new Animated.Value(22)).current;
+  const textTranslate = useRef(new Animated.Value(56)).current;
+  const textScale = useRef(new Animated.Value(0.82)).current;
 
   // Glow and accent effects
   const glowOpacity = useRef(new Animated.Value(0)).current;
   const glowScale = useRef(new Animated.Value(0.76)).current;
   const shimmerTranslate = useRef(new Animated.Value(-240)).current;
-  const footerOpacity = useRef(new Animated.Value(0)).current;
-  const footerTranslate = useRef(new Animated.Value(18)).current;
-  const footerLineScale = useRef(new Animated.Value(0.3)).current;
+  const footerTranslate = useRef(new Animated.Value(34)).current;
+  const footerScale = useRef(new Animated.Value(0.94)).current;
+  const underlineScale = useRef(new Animated.Value(0.08)).current;
   const orbDrift = useRef(new Animated.Value(0)).current;
 
   // Handle deep links
@@ -208,16 +208,22 @@ function RootLayout() {
   useEffect(() => {
     const timer = setTimeout(() => {
       setAllowRender(true);
-      SplashScreen.hideAsync().catch(() => {});
     }, 1200);
 
     if (fontsLoaded) {
       setAllowRender(true);
-      SplashScreen.hideAsync().catch(() => {});
     }
 
     return () => clearTimeout(timer);
   }, [fontsLoaded]);
+
+  useEffect(() => {
+    if (!allowRender) return;
+    const hideTimer = setTimeout(() => {
+      SplashScreen.hideAsync().catch(() => {});
+    }, 120);
+    return () => clearTimeout(hideTimer);
+  }, [allowRender]);
 
   useEffect(() => {
     if (!allowRender || !showSplash) return;
@@ -257,39 +263,37 @@ function RootLayout() {
         tension: 44,
         useNativeDriver: true,
       }),
-      Animated.timing(textOpacity, {
-        toValue: 1,
-        duration: 680,
-        delay: 420,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
       Animated.timing(textTranslate, {
         toValue: 0,
-        duration: 680,
-        delay: 420,
-        easing: Easing.out(Easing.cubic),
+        duration: 980,
+        delay: 540,
+        easing: Easing.out(Easing.exp),
         useNativeDriver: true,
       }),
-      Animated.timing(footerOpacity, {
+      Animated.spring(textScale, {
         toValue: 1,
-        duration: 620,
-        delay: 760,
+        friction: 9,
+        tension: 36,
+        useNativeDriver: true,
+      }),
+      Animated.timing(underlineScale, {
+        toValue: 1,
+        duration: 760,
+        delay: 1380,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }),
       Animated.timing(footerTranslate, {
         toValue: 0,
-        duration: 620,
-        delay: 760,
-        easing: Easing.out(Easing.cubic),
+        duration: 760,
+        delay: 1280,
+        easing: Easing.out(Easing.exp),
         useNativeDriver: true,
       }),
-      Animated.timing(footerLineScale, {
+      Animated.spring(footerScale, {
         toValue: 1,
-        duration: 720,
-        delay: 620,
-        easing: Easing.out(Easing.cubic),
+        friction: 9,
+        tension: 40,
         useNativeDriver: true,
       }),
     ]);
@@ -378,7 +382,7 @@ function RootLayout() {
           setShowSplash(false);
         }
       });
-    }, 3400);
+    }, 4400);
 
     return () => {
       clearTimeout(exitTimer);
@@ -391,8 +395,7 @@ function RootLayout() {
     ambienceOpacity,
     frameOpacity,
     allowRender,
-    footerLineScale,
-    footerOpacity,
+    footerScale,
     footerTranslate,
     glowOpacity,
     glowScale,
@@ -403,8 +406,9 @@ function RootLayout() {
     showSplash,
     splashOpacity,
     splashShift,
-    textOpacity,
+    textScale,
     textTranslate,
+    underlineScale,
   ]);
 
   if (!allowRender) return null;
@@ -570,8 +574,7 @@ function RootLayout() {
                       style={[
                         styles.brandLockup,
                         {
-                          opacity: textOpacity,
-                          transform: [{ translateY: textTranslate }],
+                          transform: [{ translateY: textTranslate }, { scale: textScale }],
                         },
                       ]}
                     >
@@ -582,7 +585,7 @@ function RootLayout() {
                           style={[
                             styles.underline,
                             {
-                              transform: [{ scaleX: footerLineScale }],
+                              transform: [{ scaleX: underlineScale }],
                             },
                           ]}
                         />
@@ -594,20 +597,14 @@ function RootLayout() {
                     style={[
                       styles.footer,
                       {
-                        opacity: footerOpacity,
-                        transform: [{ translateY: footerTranslate }],
+                        transform: [{ translateY: footerTranslate }, { scale: footerScale }],
                       },
                     ]}
                   >
-                    <Animated.View
-                      style={[
-                        styles.footerLine,
-                        {
-                          transform: [{ scaleX: footerLineScale }],
-                        },
-                      ]}
-                    />
-                    <Text style={styles.footerText}>Nyansapa Ltd, UK</Text>
+                    <View style={styles.footerBadge}>
+                      <View style={styles.footerDot} />
+                      <Text style={styles.footerText}>2026 Nyansapa Ltd</Text>
+                    </View>
                   </Animated.View>
                 </SafeAreaView>
               </Animated.View>
@@ -633,7 +630,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 28,
     paddingTop: 18,
-    paddingBottom: 22,
+    paddingBottom: 26,
   },
 
   heroSpacer: {
@@ -644,6 +641,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    paddingBottom: 8,
   },
 
   glow: {
@@ -680,17 +678,17 @@ const styles = StyleSheet.create({
   },
 
   logoStage: {
-    width: 220,
-    height: 220,
+    width: 208,
+    height: 188,
     alignItems: "center",
     justifyContent: "center",
   },
 
   logoFrame: {
     position: "absolute",
-    width: 212,
-    height: 212,
-    borderRadius: 38,
+    width: 198,
+    height: 198,
+    borderRadius: 34,
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
@@ -712,34 +710,41 @@ const styles = StyleSheet.create({
   },
 
   logo: {
-    width: 176,
-    height: 176,
+    width: 184,
+    height: 184,
   },
 
   brandLockup: {
-    marginTop: 24,
+    marginTop: 4,
     alignItems: "center",
+    minWidth: 280,
   },
 
   nameShadow: {
     position: "absolute",
-    top: 4,
-    color: "rgba(46,196,182,0.2)",
-    fontSize: 46,
+    top: 5,
+    color: "rgba(17,197,198,0.26)",
+    fontSize: 48,
     fontFamily: "PlayfairDisplay_700Bold",
-    letterSpacing: 1.2,
+    letterSpacing: 0.2,
+    lineHeight: 56,
   },
 
   name: {
     color: "#F7F5EF",
-    fontSize: 46,
+    fontSize: 48,
     fontFamily: "PlayfairDisplay_700Bold",
-    letterSpacing: 1.2,
+    letterSpacing: 0.2,
+    lineHeight: 56,
+    textAlign: "center",
+    textShadowColor: "rgba(0,0,0,0.34)",
+    textShadowOffset: { width: 0, height: 10 },
+    textShadowRadius: 22,
   },
 
   underlineWrap: {
-    marginTop: 16,
-    width: 132,
+    marginTop: 8,
+    width: 136,
     alignItems: "center",
   },
 
@@ -753,23 +758,33 @@ const styles = StyleSheet.create({
   footer: {
     alignItems: "center",
     justifyContent: "flex-end",
-    paddingBottom: 4,
+    paddingBottom: 42,
   },
 
-  footerLine: {
-    width: 96,
-    height: 1,
+  footerBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     borderRadius: 999,
-    backgroundColor: "rgba(231,199,141,0.7)",
-    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.16)",
+    backgroundColor: "rgba(12,20,34,0.46)",
+  },
+
+  footerDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(231,199,141,0.82)",
+    marginRight: 8,
   },
 
   footerText: {
-    color: "rgba(255,255,255,0.72)",
+    color: "rgba(244,239,230,0.9)",
     fontSize: 12,
     fontFamily: "Manrope_600SemiBold",
-    letterSpacing: 2.2,
-    textTransform: "uppercase",
+    letterSpacing: 0.9,
   },
 
   envBanner: {
