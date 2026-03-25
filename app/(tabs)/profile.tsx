@@ -114,6 +114,181 @@ const ACCOUNT_RECOVERY_METHOD_OPTIONS = [
   { value: 'other', label: 'Other' },
 ] as const;
 
+const ACCOUNT_DELETION_REASON_OPTIONS = [
+  {
+    value: 'not_enough_matches',
+    section: 'Product fit',
+    label: 'Not enough quality matches',
+    description: 'You are not seeing the kind of people or chemistry you hoped for.',
+  },
+  {
+    value: 'not_feeling_safe',
+    section: 'Trust & safety',
+    label: 'I do not feel safe',
+    description: 'Trust, moderation, or comfort has not felt strong enough.',
+  },
+  {
+    value: 'taking_a_break',
+    section: 'Product fit',
+    label: 'I am taking a break',
+    description: 'You want time away from dating or social discovery for now.',
+  },
+  {
+    value: 'met_someone',
+    section: 'Product fit',
+    label: 'I met someone',
+    description: 'You no longer need Betweener at the moment.',
+  },
+  {
+    value: 'too_many_notifications',
+    section: 'Product fit',
+    label: 'Too many notifications',
+    description: 'The app feels too noisy or demanding.',
+  },
+  {
+    value: 'too_expensive',
+    section: 'Product fit',
+    label: 'It feels too expensive',
+    description: 'Premium value does not feel worth the cost right now.',
+  },
+  {
+    value: 'technical_issues',
+    section: 'Product fit',
+    label: 'Technical issues',
+    description: 'Bugs, speed, or reliability are getting in the way.',
+  },
+  {
+    value: 'privacy_concerns',
+    section: 'Trust & safety',
+    label: 'Privacy concerns',
+    description: 'You are not comfortable with how your data or profile is handled.',
+  },
+  {
+    value: 'not_for_me',
+    section: 'Product fit',
+    label: 'Betweener is not for me',
+    description: 'The product or experience is not the right fit.',
+  },
+  {
+    value: 'other',
+    section: 'Other',
+    label: 'Other',
+    description: 'Something else is making you leave.',
+  },
+] as const;
+
+type DeleteReasonOption = (typeof ACCOUNT_DELETION_REASON_OPTIONS)[number];
+type DeleteReasonKey = DeleteReasonOption['value'];
+type DeleteAlternativeAction = 'take_break' | 'quiet_notifications' | 'hide_profile';
+
+const DELETE_SOFT_OFFRAMP_OPTIONS: Array<{
+  id: DeleteAlternativeAction;
+  title: string;
+  description: string;
+}> = [
+  {
+    id: 'take_break',
+    title: 'Take a break',
+    description: 'Hide your profile and quiet the app for now.',
+  },
+  {
+    id: 'quiet_notifications',
+    title: 'Reduce notifications',
+    description: 'Keep your account, but make Betweener quieter.',
+  },
+  {
+    id: 'hide_profile',
+    title: 'Hide my profile',
+    description: 'Step out of discovery without closing your account.',
+  },
+];
+
+const DELETE_REASON_PRIORITY: DeleteReasonKey[] = [
+  'not_feeling_safe',
+  'privacy_concerns',
+  'taking_a_break',
+  'too_many_notifications',
+  'met_someone',
+  'not_enough_matches',
+  'technical_issues',
+  'too_expensive',
+  'not_for_me',
+  'other',
+];
+
+const DELETE_REASON_SUGGESTIONS: Partial<
+  Record<
+    DeleteReasonKey,
+    {
+      title: string;
+      description: string;
+      cta: string;
+      action: DeleteAlternativeAction;
+    }
+  >
+> = {
+  not_feeling_safe: {
+    title: 'Hide your profile right away',
+    description: 'Step out of discovery first, then decide later if full deletion is still right.',
+    cta: 'Hide profile now',
+    action: 'hide_profile',
+  },
+  privacy_concerns: {
+    title: 'Step back without disappearing fully',
+    description: 'Hide your profile now and keep the option to return with more control.',
+    cta: 'Hide profile now',
+    action: 'hide_profile',
+  },
+  taking_a_break: {
+    title: 'Take a quieter break instead',
+    description: 'Pause your visibility and soften the noise without closing the door completely.',
+    cta: 'Take a break instead',
+    action: 'take_break',
+  },
+  too_many_notifications: {
+    title: 'Keep your account, lose the noise',
+    description: 'Quiet the app first. You may not need to leave entirely.',
+    cta: 'Reduce notifications',
+    action: 'quiet_notifications',
+  },
+  met_someone: {
+    title: 'Keep the door open',
+    description: 'Step back gracefully for now without permanently deleting your Betweener account.',
+    cta: 'Take a break instead',
+    action: 'take_break',
+  },
+  not_enough_matches: {
+    title: 'Pause visibility while you reset',
+    description: 'Hide your profile for now and return when you want fresher momentum.',
+    cta: 'Hide profile instead',
+    action: 'hide_profile',
+  },
+  technical_issues: {
+    title: 'Step back while issues settle',
+    description: 'Hide your profile for now instead of closing your account for good.',
+    cta: 'Hide profile instead',
+    action: 'hide_profile',
+  },
+  too_expensive: {
+    title: 'Keep your place without staying visible',
+    description: 'Hide your profile first so you can come back later without starting over.',
+    cta: 'Hide profile instead',
+    action: 'hide_profile',
+  },
+  not_for_me: {
+    title: 'Step back before you decide',
+    description: 'Hide your profile for now and leave the door open while you think it through.',
+    cta: 'Hide profile instead',
+    action: 'hide_profile',
+  },
+  other: {
+    title: 'A calmer off-ramp exists',
+    description: 'If you just need distance, you can step back without fully closing your account.',
+    cta: 'Take a break instead',
+    action: 'take_break',
+  },
+};
+
 const QUIET_HOURS_PRESETS = [
   { id: 'late', label: '22:00-08:00', start: '22:00:00', end: '08:00:00' },
   { id: 'night', label: '23:00-07:00', start: '23:00:00', end: '07:00:00' },
@@ -347,6 +522,13 @@ export default function ProfileScreen() {
   const [recoverySubmitting, setRecoverySubmitting] = useState(false);
   const [recoveryMessage, setRecoveryMessage] = useState('');
   const [recoveryError, setRecoveryError] = useState('');
+  const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
+  const [deleteReasonKeys, setDeleteReasonKeys] = useState<string[]>([]);
+  const [deleteFeedback, setDeleteFeedback] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [deleteAlternativeMessage, setDeleteAlternativeMessage] = useState('');
+  const [deleteAlternativeAction, setDeleteAlternativeAction] = useState<DeleteAlternativeAction | null>(null);
   const [linkedMethodsBannerDismissed, setLinkedMethodsBannerDismissed] = useState(false);
   const [verificationNudgeDismissed, setVerificationNudgeDismissed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -355,6 +537,24 @@ export default function ProfileScreen() {
   const [userPhotos, setUserPhotos] = useState<string[]>([]);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const promptEditorYRef = useRef(0);
+  const deleteReasonSections = useMemo(() => {
+    const grouped = new Map<string, DeleteReasonOption[]>();
+    for (const option of ACCOUNT_DELETION_REASON_OPTIONS) {
+      const current = grouped.get(option.section) ?? [];
+      grouped.set(option.section, [...current, option]);
+    }
+    return Array.from(grouped.entries());
+  }, []);
+  const primaryDeleteReason = useMemo<DeleteReasonKey | null>(() => {
+    for (const reasonKey of DELETE_REASON_PRIORITY) {
+      if (deleteReasonKeys.includes(reasonKey)) return reasonKey;
+    }
+    return deleteReasonKeys[0] as DeleteReasonKey | undefined ?? null;
+  }, [deleteReasonKeys]);
+  const deleteReasonSuggestion = useMemo(
+    () => (primaryDeleteReason ? DELETE_REASON_SUGGESTIONS[primaryDeleteReason] ?? null : null),
+    [primaryDeleteReason],
+  );
 
   const cacheProfileId = profile?.id ?? user?.id ?? null;
   const promptsCacheKey = useMemo(
@@ -1221,6 +1421,16 @@ export default function ProfileScreen() {
     setShowRecoveryRequestModal(true);
   }, [linkedProviders, user?.email]);
 
+  const openDeleteAccountModal = useCallback(() => {
+    setDeleteError('');
+    setDeleteFeedback('');
+    setDeleteReasonKeys([]);
+    setDeleteAlternativeMessage('');
+    setDeleteAlternativeAction(null);
+    setShowEmailModal(false);
+    setShowDeleteAccountModal(true);
+  }, []);
+
   const handleEmailUpdate = async () => {
     const trimmed = emailInput.trim().toLowerCase();
     setEmailError('');
@@ -1495,6 +1705,124 @@ export default function ProfileScreen() {
     recoveryPreviousMethod,
     user?.email,
   ]);
+
+  const toggleDeleteReason = useCallback((reasonKey: string) => {
+    setDeleteError('');
+    setDeleteAlternativeMessage('');
+    setDeleteReasonKeys((current) =>
+      current.includes(reasonKey)
+        ? current.filter((item) => item !== reasonKey)
+        : [...current, reasonKey],
+    );
+  }, []);
+
+  const applyDeleteAlternative = useCallback(
+    async (action: DeleteAlternativeAction) => {
+      setDeleteError('');
+      setDeleteAlternativeMessage('');
+      setDeleteAlternativeAction(action);
+      try {
+        const triggerReason = primaryDeleteReason ?? null;
+        const { data, error } = await supabase.functions.invoke('account-retention-action', {
+          body: {
+            action,
+            triggerReason,
+          },
+        });
+
+        if (error || !(data as any)?.success) {
+          throw error ?? new Error('Unable to apply that change right now.');
+        }
+
+        const returnedPrefs = (data as any)?.notificationPrefs;
+        if (returnedPrefs && typeof returnedPrefs === 'object') {
+          setNotificationPrefs((current) => ({
+            ...current,
+            ...returnedPrefs,
+          }));
+        }
+
+        if ((data as any)?.profileState) {
+          await refreshProfile();
+        }
+
+        setDeleteAlternativeMessage(
+          String((data as any)?.message || 'Your account settings were updated.')
+        );
+        try {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } catch {
+          // ignore haptics failures
+        }
+      } catch (error: any) {
+        setDeleteError(error?.message ?? 'Unable to apply that change right now.');
+      } finally {
+        setDeleteAlternativeAction(null);
+      }
+    },
+    [primaryDeleteReason, refreshProfile],
+  );
+
+  const submitDeleteAccount = useCallback(async () => {
+    setDeleteError('');
+    if (deleteReasonKeys.length === 0) {
+      setDeleteError('Select at least one reason before deleting your account.');
+      return;
+    }
+
+    setDeletingAccount(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('delete-account', {
+        body: {
+          reasonKeys: deleteReasonKeys,
+          feedback: deleteFeedback.trim() || null,
+        },
+      });
+
+      if (error || !(data as any)?.success) {
+        throw error ?? new Error('Unable to delete your account right now.');
+      }
+
+      setShowDeleteAccountModal(false);
+      try {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch {
+        // ignore haptics failures
+      }
+      await signOut();
+      router.replace('/(auth)/welcome');
+      Alert.alert(
+        'Account deleted',
+        'Your Betweener account has been deleted. Some safety or legal records may be retained where required.',
+      );
+    } catch (error: any) {
+      setDeleteError(error?.message ?? 'Unable to delete your account right now.');
+    } finally {
+      setDeletingAccount(false);
+    }
+  }, [deleteFeedback, deleteReasonKeys, signOut]);
+
+  const confirmDeleteAccount = useCallback(() => {
+    if (deleteReasonKeys.length === 0) {
+      setDeleteError('Select at least one reason before deleting your account.');
+      return;
+    }
+
+    Alert.alert(
+      'Close your account permanently?',
+      'This permanently closes your Betweener account, removes access, and hides your profile right away. This action cannot be undone.',
+      [
+        { text: 'Keep the door open', style: 'cancel' },
+        {
+          text: 'Close permanently',
+          style: 'destructive',
+          onPress: () => {
+            void submitDeleteAccount();
+          },
+        },
+      ],
+    );
+  }, [deleteReasonKeys.length, submitDeleteAccount]);
 
   const persistNotificationPrefs = useCallback(
     async (next: NotificationPrefs) => {
@@ -2261,8 +2589,9 @@ export default function ProfileScreen() {
           <View
             style={[
               styles.emailModalCard,
+              styles.deleteModalCard,
               styles.cardShadow,
-              { backgroundColor: theme.background, borderColor: theme.outline },
+              { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
             ]}
           >
             <View style={styles.emailModalHeader}>
@@ -2271,8 +2600,14 @@ export default function ProfileScreen() {
                 <MaterialCommunityIcons name="close" size={20} color={theme.textMuted} />
               </TouchableOpacity>
             </View>
+            <ScrollView
+              style={styles.emailModalScroll}
+              contentContainerStyle={styles.emailModalScrollContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
             <Text style={[styles.emailModalBody, { color: theme.textMuted }]}>
-              Update the email you use to sign in. We’ll send a confirmation link to your new email.
+              Update the email you use to sign in. We'll send a confirmation link to your new email.
             </Text>
             <TextInput
               value={emailInput}
@@ -2437,7 +2772,242 @@ export default function ProfileScreen() {
                   <Text style={styles.recoveryCardButtonText}>Recover account access</Text>
                 </TouchableOpacity>
               </View>
+
+              <View style={[styles.accountDeletionCard, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
+                <View style={styles.accountDeletionHeaderRow}>
+                  <View style={styles.accountDeletionCopy}>
+                    <Text style={[styles.recoveryCardTitle, { color: theme.text }]}>Leave Betweener</Text>
+                    <Text style={[styles.recoveryCardBody, { color: theme.textMuted }]}>
+                      Tell us why you are leaving, then choose whether to step back or close this account permanently.
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={openDeleteAccountModal}
+                    style={[styles.accountDeletionButton, { borderColor: '#ef4444', backgroundColor: theme.background }]}
+                  >
+                    <Text style={styles.accountDeletionButtonText}>Leave now</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={[styles.accountDeletionFootnote, { color: theme.textMuted }]}>
+                  We'll offer calmer options before anything is closed permanently.
+                </Text>
+              </View>
             </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showDeleteAccountModal}
+        animationType="fade"
+        transparent
+        onRequestClose={() => (!deletingAccount ? setShowDeleteAccountModal(false) : null)}
+      >
+        <View style={[styles.emailModalBackdrop, styles.deleteModalBackdrop]}>
+          <View
+            style={[
+              styles.emailModalCard,
+              styles.cardShadow,
+              { backgroundColor: theme.background, borderColor: theme.outline },
+            ]}
+          >
+            <View style={styles.emailModalHeader}>
+              <Text style={[styles.emailModalTitle, { color: theme.text }]}>Delete account</Text>
+              <TouchableOpacity disabled={deletingAccount} onPress={() => setShowDeleteAccountModal(false)}>
+                <MaterialCommunityIcons name="close" size={20} color={theme.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              style={styles.deleteModalScroll}
+              contentContainerStyle={styles.deleteModalScrollContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              <Text style={[styles.deleteEyebrow, { color: theme.tint }]}>Before you leave Betweener</Text>
+              <Text style={[styles.emailModalBody, { color: theme.textMuted }]}>
+                Step back for now, or close your account fully if you still want to leave.
+              </Text>
+
+              <View style={[styles.deleteAlternativePanel, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
+                <View style={styles.deleteAlternativePanelCopy}>
+                  <Text style={[styles.deleteAlternativePanelTitle, { color: theme.text }]}>A calmer option first</Text>
+                  <Text style={[styles.deleteAlternativePanelBody, { color: theme.textMuted }]}>
+                    Step back, quiet the app, or leave fully if you still want to.
+                  </Text>
+                </View>
+                <View style={styles.deleteAlternativeActions}>
+                  {DELETE_SOFT_OFFRAMP_OPTIONS.map((option) => {
+                    const pending = deleteAlternativeAction === option.id;
+                    return (
+                      <TouchableOpacity
+                        key={option.id}
+                        disabled={deletingAccount || deleteAlternativeAction !== null}
+                        onPress={() => {
+                          void applyDeleteAlternative(option.id);
+                        }}
+                        style={[
+                          styles.deleteAlternativeButton,
+                          {
+                            backgroundColor: theme.background,
+                            borderColor: theme.outline,
+                            opacity: deletingAccount || deleteAlternativeAction !== null ? 0.7 : 1,
+                          },
+                        ]}
+                      >
+                        <View style={styles.deleteAlternativeButtonTextWrap}>
+                        <Text style={[styles.deleteAlternativeButtonTitle, { color: theme.text }]}>
+                          {pending ? 'Applying...' : option.title}
+                        </Text>
+                        <Text style={[styles.deleteAlternativeButtonBody, { color: theme.textMuted }]}>
+                          {option.description}
+                        </Text>
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                {deleteAlternativeMessage ? (
+                  <View style={[styles.deleteAlternativeMessageCard, { backgroundColor: theme.tint + '12', borderColor: theme.tint + '60' }]}>
+                    <Text style={[styles.deleteAlternativeMessageText, { color: theme.text }]}>
+                      {deleteAlternativeMessage}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+
+              {deleteReasonSuggestion ? (
+                <View style={[styles.deleteSuggestionCard, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
+                  <View style={styles.deleteSuggestionCopy}>
+                    <Text style={[styles.deleteSuggestionLabel, { color: theme.tint }]}>Suggested instead</Text>
+                    <Text style={[styles.deleteSuggestionTitle, { color: theme.text }]}>{deleteReasonSuggestion.title}</Text>
+                    <Text style={[styles.deleteSuggestionBody, { color: theme.textMuted }]}>
+                      {deleteReasonSuggestion.description}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    disabled={deletingAccount || deleteAlternativeAction !== null}
+                    onPress={() => {
+                      void applyDeleteAlternative(deleteReasonSuggestion.action);
+                    }}
+                    style={[
+                      styles.deleteSuggestionButton,
+                      {
+                        backgroundColor: theme.tint,
+                        opacity: deletingAccount || deleteAlternativeAction !== null ? 0.7 : 1,
+                      },
+                    ]}
+                  >
+                    <Text style={styles.deleteSuggestionButtonText}>{deleteReasonSuggestion.cta}</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+
+              <View style={styles.deleteReasonList}>
+                {deleteReasonSections.map(([section, options]) => (
+                  <View key={section} style={styles.deleteReasonSection}>
+                    <Text style={[styles.deleteSectionLabel, { color: theme.textMuted }]}>{section}</Text>
+                    <View style={styles.deleteReasonSectionRows}>
+                      {options.map((option) => {
+                        const selected = deleteReasonKeys.includes(option.value);
+                        return (
+                          <TouchableOpacity
+                            key={option.value}
+                            onPress={() => toggleDeleteReason(option.value)}
+                            style={[
+                              styles.deleteReasonRow,
+                              selected && styles.deleteReasonRowSelected,
+                              {
+                                backgroundColor: selected ? theme.tint + '12' : theme.backgroundSubtle,
+                                borderColor: selected ? theme.tint + '88' : theme.outline,
+                              },
+                            ]}
+                          >
+                            <View
+                              style={[
+                                styles.deleteReasonAccent,
+                                { backgroundColor: theme.tint, opacity: selected ? 1 : 0 },
+                              ]}
+                            />
+                            <View
+                              style={[
+                                styles.deleteReasonCheck,
+                                {
+                                  backgroundColor: selected ? theme.tint + '22' : theme.background,
+                                  borderColor: selected ? theme.tint : theme.outline,
+                                },
+                              ]}
+                            >
+                              {selected ? (
+                                <View style={[styles.deleteReasonCheckDot, { backgroundColor: theme.tint }]} />
+                              ) : null}
+                            </View>
+                            <View style={styles.deleteReasonCopy}>
+                              <View style={styles.deleteReasonTitleRow}>
+                                <Text style={[styles.deleteReasonTitle, { color: theme.text }]}>{option.label}</Text>
+                                {selected ? (
+                                  <View style={[styles.deleteReasonSelectedPill, { backgroundColor: theme.tint + '16', borderColor: theme.tint + '55' }]}>
+                                    <Text style={[styles.deleteReasonSelectedText, { color: theme.tint }]}>Selected</Text>
+                                  </View>
+                                ) : null}
+                              </View>
+                              {selected ? (
+                                <Text style={[styles.deleteReasonDescription, { color: theme.textMuted }]}>{option.description}</Text>
+                              ) : null}
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                ))}
+              </View>
+
+              <Text style={[styles.recoveryFieldLabel, { color: theme.text }]}>Anything else you want us to know? (optional)</Text>
+              <TextInput
+                value={deleteFeedback}
+                onChangeText={setDeleteFeedback}
+                placeholder="Optional feedback"
+                placeholderTextColor={theme.textMuted}
+                multiline
+                maxLength={1000}
+                style={[
+                  styles.deleteFeedbackInput,
+                  { color: theme.text, borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
+                ]}
+              />
+
+              {deleteError ? (
+                <Text style={[styles.emailError, { color: '#ef4444' }]}>{deleteError}</Text>
+              ) : null}
+
+              <View style={[styles.deleteFooterCard, { backgroundColor: theme.background, borderColor: theme.outline }]}>
+                <View style={styles.deleteFooterCopy}>
+                  <Text style={[styles.deleteFooterTitle, { color: theme.text }]}>Close my account permanently</Text>
+                  <Text style={[styles.deleteFooterBody, { color: theme.textMuted }]}>
+                    This removes access and closes your place in Betweener right away. If you may come back later, step back instead.
+                  </Text>
+                </View>
+                <View style={styles.deleteActionRow}>
+                  <TouchableOpacity
+                    disabled={deletingAccount}
+                    onPress={() => setShowDeleteAccountModal(false)}
+                    style={[styles.deleteCancelButton, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle }]}
+                  >
+                    <Text style={[styles.deleteCancelButtonText, { color: theme.text }]}>Keep the door open</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    disabled={deletingAccount}
+                    onPress={confirmDeleteAccount}
+                    style={[styles.deleteConfirmButton, { backgroundColor: '#C65263', opacity: deletingAccount ? 0.65 : 1 }]}
+                  >
+                    <Text style={styles.deleteConfirmButtonText}>
+                      {deletingAccount ? 'Closing...' : 'Close permanently'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -3065,7 +3635,7 @@ export default function ProfileScreen() {
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="map-marker" size={16} color={theme.tint} />
                   <Text style={[styles.detailText, { color: theme.text }]}>
-                    {`Currently in ${(profile as any).current_country || 'Unknown'}${(profile as any).current_country === 'Ghana' ? ' 🇬🇭' : ''}`}
+                    {`Currently in ${(profile as any).current_country || 'Unknown'}${(profile as any).current_country === 'Ghana' ? ' (GH)' : ''}`}
                   </Text>
                 </View>
               </View>
@@ -5311,12 +5881,25 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.55)',
     justifyContent: 'center',
     paddingHorizontal: 18,
+    paddingVertical: 32,
+  },
+  deleteModalBackdrop: {
+    justifyContent: 'flex-start',
+    paddingTop: 52,
+    paddingBottom: 20,
   },
   emailModalCard: {
     borderWidth: 1,
     borderRadius: 18,
     paddingVertical: 20,
     paddingHorizontal: 20,
+  },
+  emailModalScroll: {
+    marginTop: 2,
+  },
+  emailModalScrollContent: {
+    gap: 12,
+    paddingBottom: 4,
   },
   emailModalHeader: {
     flexDirection: 'row',
@@ -5481,6 +6064,40 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope_700Bold',
     letterSpacing: 0.2,
   },
+  accountDeletionCard: {
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    gap: 8,
+  },
+  accountDeletionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  accountDeletionCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  accountDeletionButton: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  accountDeletionFootnote: {
+    fontSize: 11.5,
+    lineHeight: 16,
+    fontFamily: 'Manrope_500Medium',
+  },
+  accountDeletionButtonText: {
+    color: '#ef4444',
+    fontSize: 12,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
   recoveryFieldGroup: {
     gap: 8,
     marginTop: 4,
@@ -5513,6 +6130,260 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginTop: 12,
     fontFamily: 'Manrope_500Medium',
+  },
+  deleteModalCard: {
+    maxHeight: '70%',
+    paddingTop: 16,
+    paddingBottom: 14,
+  },
+  deleteModalScroll: {
+    marginTop: 4,
+  },
+  deleteModalScrollContent: {
+    gap: 10,
+    paddingBottom: 8,
+  },
+  deleteEyebrow: {
+    fontSize: 11.5,
+    fontFamily: 'Archivo_600SemiBold',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+  },
+  deleteAlternativePanel: {
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+    gap: 8,
+  },
+  deleteAlternativePanelCopy: {
+    gap: 2,
+  },
+  deleteAlternativePanelTitle: {
+    fontSize: 13,
+    fontFamily: 'Archivo_600SemiBold',
+  },
+  deleteAlternativePanelBody: {
+    fontSize: 11.5,
+    lineHeight: 15,
+    fontFamily: 'Manrope_400Regular',
+  },
+  deleteAlternativeActions: {
+    gap: 5,
+  },
+  deleteAlternativeButton: {
+    borderWidth: 1,
+    borderRadius: 13,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    minHeight: 0,
+  },
+  deleteAlternativeButtonTextWrap: {
+    gap: 2,
+  },
+  deleteAlternativeButtonTitle: {
+    fontSize: 12.5,
+    fontFamily: 'Manrope_700Bold',
+  },
+  deleteAlternativeButtonBody: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontFamily: 'Manrope_400Regular',
+  },
+  deleteAlternativeMessageCard: {
+    borderWidth: 1,
+    borderRadius: 13,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  deleteAlternativeMessageText: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: 'Manrope_600SemiBold',
+  },
+  deleteSuggestionCard: {
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 10,
+  },
+  deleteSuggestionCopy: {
+    gap: 4,
+  },
+  deleteSuggestionLabel: {
+    fontSize: 11.25,
+    fontFamily: 'Archivo_600SemiBold',
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
+  },
+  deleteSuggestionTitle: {
+    fontSize: 13.5,
+    fontFamily: 'Archivo_600SemiBold',
+  },
+  deleteSuggestionBody: {
+    fontSize: 11.75,
+    lineHeight: 16,
+    fontFamily: 'Manrope_400Regular',
+  },
+  deleteSuggestionButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+  },
+  deleteSuggestionButtonText: {
+    color: '#fff',
+    fontSize: 12.5,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
+  deleteReasonList: {
+    gap: 10,
+  },
+  deleteReasonSection: {
+    gap: 5,
+  },
+  deleteSectionLabel: {
+    fontSize: 11.5,
+    fontFamily: 'Archivo_600SemiBold',
+    letterSpacing: 0.9,
+    textTransform: 'uppercase',
+  },
+  deleteReasonSectionRows: {
+    gap: 6,
+  },
+  deleteReasonRow: {
+    position: 'relative',
+    borderWidth: 1,
+    borderRadius: 15,
+    paddingLeft: 16,
+    paddingRight: 12,
+    paddingVertical: 9,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  deleteReasonRowSelected: {
+    shadowColor: '#11C5C6',
+    shadowOpacity: 0.14,
+    shadowRadius: 20,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 3,
+  },
+  deleteReasonAccent: {
+    position: 'absolute',
+    left: 0,
+    top: 8,
+    bottom: 8,
+    width: 4,
+    borderTopLeftRadius: 999,
+    borderBottomLeftRadius: 999,
+  },
+  deleteReasonCheck: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteReasonCheckDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  deleteReasonCopy: {
+    flex: 1,
+    gap: 3,
+  },
+  deleteReasonTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  deleteReasonTitle: {
+    fontSize: 13.25,
+    fontFamily: 'Manrope_700Bold',
+    flex: 1,
+  },
+  deleteReasonSelectedPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  deleteReasonSelectedText: {
+    fontSize: 10.5,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
+  deleteReasonDescription: {
+    fontSize: 11.75,
+    lineHeight: 15,
+    fontFamily: 'Manrope_400Regular',
+  },
+  deleteFeedbackInput: {
+    minHeight: 84,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    fontSize: 14,
+    fontFamily: 'Manrope_500Medium',
+    textAlignVertical: 'top',
+  },
+  deleteActionRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  deleteFooterCard: {
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+    gap: 8,
+  },
+  deleteFooterCopy: {
+    gap: 2,
+  },
+  deleteFooterTitle: {
+    fontSize: 13,
+    fontFamily: 'Archivo_600SemiBold',
+  },
+  deleteFooterBody: {
+    fontSize: 11.5,
+    lineHeight: 15,
+    fontFamily: 'Manrope_400Regular',
+  },
+  deleteCancelButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  deleteCancelButtonText: {
+    fontSize: 13.5,
+    fontFamily: 'Manrope_700Bold',
+  },
+  deleteConfirmButton: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 10,
+    alignItems: 'center',
+    shadowColor: '#C65263',
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 3,
+  },
+  deleteConfirmButtonText: {
+    color: '#fff',
+    fontSize: 13.5,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
   },
   quietHoursHint: {
     fontSize: 12,
