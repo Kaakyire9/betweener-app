@@ -49,6 +49,7 @@ type ConversationType = {
     type: 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location';
     isViewOnce?: boolean;
     isRead: boolean;
+    deliveredAt: Date | null;
     reactionPreview?: {
       emoji: string;
       userId: string;
@@ -69,6 +70,7 @@ type MessageRow = {
   sender_id: string;
   receiver_id: string;
   is_read: boolean;
+  delivered_at?: string | null;
   deleted_for_all?: boolean | null;
   message_type?: ConversationType['lastMessage']['type'] | null;
   is_view_once?: boolean | null;
@@ -90,8 +92,9 @@ const STICKER_TEXT_PREFIX = 'sticker::';
 
 type CachedConversation = Omit<ConversationType, "matchedUser" | "lastMessage" | "matchedAt"> & {
   matchedUser: Omit<ConversationType["matchedUser"], "lastSeen"> & { lastSeen: string };
-  lastMessage: Omit<ConversationType["lastMessage"], "timestamp" | "reactionPreview"> & {
+  lastMessage: Omit<ConversationType["lastMessage"], "timestamp" | "reactionPreview" | "deliveredAt"> & {
     timestamp: string;
+    deliveredAt: string | null;
     reactionPreview?: Omit<NonNullable<ConversationType["lastMessage"]["reactionPreview"]>, "createdAt"> & { createdAt: string };
   };
   matchedAt: string;
@@ -107,6 +110,7 @@ const serializeConversations = (list: ConversationType[]): CachedConversation[] 
     lastMessage: {
       ...c.lastMessage,
       timestamp: c.lastMessage.timestamp instanceof Date ? c.lastMessage.timestamp.toISOString() : new Date().toISOString(),
+      deliveredAt: c.lastMessage.deliveredAt instanceof Date ? c.lastMessage.deliveredAt.toISOString() : null,
       reactionPreview: c.lastMessage.reactionPreview
         ? {
             ...c.lastMessage.reactionPreview,
@@ -136,6 +140,7 @@ const deserializeConversations = (raw: unknown): ConversationType[] => {
       lastMessage: {
         ...lastMessage,
         timestamp: lastMessage?.timestamp ? new Date(lastMessage.timestamp) : new Date(),
+        deliveredAt: lastMessage?.deliveredAt ? new Date(lastMessage.deliveredAt) : null,
         reactionPreview: reaction
           ? {
               ...reaction,
@@ -168,6 +173,20 @@ const parseStickerPreview = (text: string) => {
   } catch {
     return null;
   }
+};
+
+const getConversationReceiptIconState = (
+  lastMessage: ConversationType['lastMessage'],
+  theme: typeof Colors.light,
+  isDark: boolean,
+) => {
+  if (lastMessage.isRead) {
+    return { name: 'check-all' as const, color: isDark ? '#BFFBEA' : '#0B8F89' };
+  }
+  if (lastMessage.deliveredAt) {
+    return { name: 'check-all' as const, color: isDark ? '#F4FBFA' : '#C4CFCE' };
+  }
+  return { name: 'check' as const, color: isDark ? '#AAB8B4' : '#8A9895' };
 };
 
 export default function ChatScreen() {
@@ -426,7 +445,7 @@ export default function ChatScreen() {
     try {
       const { data: messages, error } = await supabase
         .from('messages')
-        .select('id,text,created_at,sender_id,receiver_id,is_read,deleted_for_all,message_type,is_view_once')
+        .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,deleted_for_all,message_type,is_view_once')
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .order('created_at', { ascending: false })
         .limit(300);
@@ -554,6 +573,7 @@ export default function ChatScreen() {
             type: lastType,
             isViewOnce: lastIsViewOnce,
             isRead: last?.is_read ?? false,
+            deliveredAt: last?.delivered_at ? new Date(last.delivered_at) : null,
             reactionPreview: reactionPreviewByUser.get(otherUserId),
           },
           unreadCount: entry?.unread || 0,
@@ -635,6 +655,7 @@ export default function ChatScreen() {
         type: lastType,
         isViewOnce: Boolean(row.is_view_once),
         isRead: row.is_read,
+        deliveredAt: row.delivered_at ? new Date(row.delivered_at) : null,
         reactionPreview: undefined,
       };
 
@@ -681,6 +702,67 @@ export default function ChatScreen() {
           filter: `sender_id=eq.${user.id}`,
         },
         handleInsert
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'messages',
+          filter: `receiver_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const row = payload.new as MessageRow;
+          const otherId = row.sender_id === user.id ? row.receiver_id : row.sender_id;
+          if (!otherId) return;
+          setConversations((prev) =>
+            prev.map((conv) => {
+              if (conv.id !== otherId || conv.lastMessage.id !== row.id) return conv;
+              return {
+                ...conv,
+                unreadCount: row.receiver_id === user.id && !row.is_read ? conv.unreadCount : 0,
+                lastMessage: {
+                  ...conv.lastMessage,
+                  text: getRowPreviewText(row),
+                  type: (row.message_type ?? conv.lastMessage.type) as ConversationType['lastMessage']['type'],
+                  isViewOnce: Boolean(row.is_view_once),
+                  isRead: row.is_read,
+                  deliveredAt: row.delivered_at ? new Date(row.delivered_at) : null,
+                },
+              };
+            }),
+          );
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'messages',
+          filter: `sender_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const row = payload.new as MessageRow;
+          const otherId = row.receiver_id;
+          if (!otherId) return;
+          setConversations((prev) =>
+            prev.map((conv) => {
+              if (conv.id !== otherId || conv.lastMessage.id !== row.id) return conv;
+              return {
+                ...conv,
+                lastMessage: {
+                  ...conv.lastMessage,
+                  text: getRowPreviewText(row),
+                  type: (row.message_type ?? conv.lastMessage.type) as ConversationType['lastMessage']['type'],
+                  isViewOnce: Boolean(row.is_view_once),
+                  isRead: row.is_read,
+                  deliveredAt: row.delivered_at ? new Date(row.delivered_at) : null,
+                },
+              };
+            }),
+          );
+        }
       )
       .subscribe();
 
@@ -970,6 +1052,7 @@ export default function ChatScreen() {
     const isBlocked = Boolean(item.blockStatus);
     const isUnread = item.unreadCount > 0;
     const isMyLastMessage = item.lastMessage.senderId === (user?.id || '');
+    const receiptIcon = isMyLastMessage ? getConversationReceiptIconState(item.lastMessage, theme, isDark) : null;
     const isTyping = !isBlocked && Boolean(typingStatus[item.matchedUser.id]);
     const reactionPreview = getLastMessageReactionPreview(
       item.lastMessage,
@@ -1062,9 +1145,9 @@ export default function ChatScreen() {
                 <View style={styles.lastMessageRow}>
                   {isMyLastMessage && (
                     <MaterialCommunityIcons
-                      name={item.lastMessage.isRead ? 'check-all' : 'check'}
+                      name={receiptIcon?.name || 'check'}
                       size={16}
-                      color={item.lastMessage.isRead ? theme.accent : theme.textMuted}
+                      color={receiptIcon?.color || theme.textMuted}
                       style={styles.readReceiptIcon}
                     />
                   )}

@@ -60,6 +60,7 @@ import {
 import { PinchGestureHandler, State } from "react-native-gesture-handler";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
+import RNSvg, { Path } from "react-native-svg";
 import { WebView } from "react-native-webview";
 import { encodeBase64 } from "tweetnacl-util";
 
@@ -68,6 +69,7 @@ const ATTACHMENT_SHEET_HEIGHT = 300;
 const CHAT_MEDIA_BUCKET = 'chat-media';
 const LOCATION_TEXT_PREFIX = '\u{1F4CD}';
 const LOCATION_LIVE_PREFIX = 'LIVE:';
+const CHAT_BUBBLE_TAIL_PATH = "M1.2 2.4 C3.6 2.1 6.9 3.1 9.6 5.1 C12.1 6.9 13.7 9.3 14.2 12.2 C11.4 11.3 8.5 11.8 5.3 13.7 C2.9 12.6 1.4 10.6 1.1 7.9 Z";
 const DATE_PLAN_TEXT_PREFIX = 'date_plan::';
 const GOOGLE_MAPS_NATIVE_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 const GOOGLE_MAPS_WEB_API_KEY =
@@ -252,6 +254,12 @@ type MessageType = {
   };
   replyToId?: string | null;
   replyTo?: MessageType;
+};
+
+type ReceiptIconState = {
+  name: ComponentProps<typeof MaterialCommunityIcons>['name'];
+  color: string;
+  size: number;
 };
 
 type MessageRow = {
@@ -930,6 +938,19 @@ const withAlpha = (hex: string, alpha: number) => {
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
 };
 
+const getReceiptIconState = (status: MessageType['status'], isDark: boolean): ReceiptIconState => {
+  switch (status) {
+    case 'read':
+      return { name: 'check-all', color: isDark ? '#BFFBEA' : '#D4FFF2', size: 14 };
+    case 'delivered':
+      return { name: 'check-all', color: isDark ? '#F4FBFA' : '#F7FCFB', size: 14 };
+    case 'sent':
+      return { name: 'check', color: isDark ? '#AAB8B4' : '#D0DEDB', size: 14 };
+    default:
+      return { name: 'clock-outline', color: '#C6D7D3', size: 13 };
+  }
+};
+
 const formatFileSize = (bytes?: number | null) => {
   if (bytes == null || Number.isNaN(bytes)) return null;
   if (bytes < 1024) return `${bytes} B`;
@@ -1231,6 +1252,8 @@ const MessageRowItem = memo(
     const isAcceptedDatePlan = item.type === 'date_plan' && datePlanStatus === 'accepted';
     const acceptedLockIn = useRef(new Animated.Value(isAcceptedDatePlan ? 1 : 0)).current;
     const previousDatePlanStatus = useRef(datePlanStatus);
+    const reactionEntrance = useRef(new Animated.Value(item.reactions.length > 0 ? 1 : 0)).current;
+    const previousReactionCount = useRef(item.reactions.length);
     const focusPulseStyle = useMemo(() => ({
       opacity: focusPulse,
       transform: [
@@ -1251,12 +1274,71 @@ const MessageRowItem = memo(
     const focusTintStyle = useMemo(() => ({
       backgroundColor: withAlpha(accent, isMyMessage ? 0.12 : isDark ? 0.16 : 0.1),
     }) as const, [accent, isDark, isMyMessage]);
+    const receiptIcon = isMyMessage ? getReceiptIconState(item.status, isDark) : null;
+    const receiptBadgeToneStyle = useMemo(() => {
+      if (!isMyMessage) return null;
+      switch (item.status) {
+        case 'read':
+          return styles.receiptMetaBadgeRead;
+        case 'delivered':
+          return styles.receiptMetaBadgeDelivered;
+        case 'sent':
+          return styles.receiptMetaBadgeSent;
+        default:
+          return styles.receiptMetaBadgeSent;
+      }
+    }, [isMyMessage, item.status, styles.receiptMetaBadgeDelivered, styles.receiptMetaBadgeRead, styles.receiptMetaBadgeSent]);
+    const mediaReceiptToneStyle = useMemo(() => {
+      if (!isMyMessage) return null;
+      switch (item.status) {
+        case 'read':
+          return styles.mediaMetaOverlayRead;
+        case 'delivered':
+          return styles.mediaMetaOverlayDelivered;
+        case 'sent':
+          return styles.mediaMetaOverlaySent;
+        default:
+          return styles.mediaMetaOverlaySent;
+      }
+    }, [isMyMessage, item.status, styles.mediaMetaOverlayDelivered, styles.mediaMetaOverlayRead, styles.mediaMetaOverlaySent]);
     const rowSpotlightStyle = useMemo(() => ({
       opacity: focusPulse,
     }) as const, [focusPulse]);
     const rowTintStyle = useMemo(() => ({
       backgroundColor: withAlpha(accent, isMyMessage ? 0.06 : isDark ? 0.08 : 0.04),
     }) as const, [accent, isDark, isMyMessage]);
+    const bubbleTailFill = item.deletedForAll
+      ? withAlpha(theme.backgroundSubtle, isDark ? 0.6 : 0.85)
+      : isMyMessage
+        ? theme.tint
+        : theme.backgroundSubtle;
+    const bubbleTailStroke = item.deletedForAll
+      ? withAlpha(theme.text, isDark ? 0.12 : 0.08)
+      : isMyMessage
+        ? withAlpha(Colors.light.background, 0.08)
+        : withAlpha(theme.text, isDark ? 0.08 : 0.05);
+    const bubbleTailStrokeWidth = item.deletedForAll ? 0.75 : 0.45;
+    const textInlineMetaStyle = useMemo(() => ([
+      styles.inlineMetaRowText,
+      isMyMessage ? styles.inlineMetaRowTextMy : styles.inlineMetaRowTextTheir,
+    ]), [isMyMessage, styles.inlineMetaRowText, styles.inlineMetaRowTextMy, styles.inlineMetaRowTextTheir]);
+    const reactionEntranceStyle = useMemo(() => ({
+      opacity: reactionEntrance,
+      transform: [
+        {
+          translateY: reactionEntrance.interpolate({
+            inputRange: [0, 1],
+            outputRange: [10, 0],
+          }),
+        },
+        {
+          scale: reactionEntrance.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.86, 1],
+          }),
+        },
+      ],
+    }) as const, [reactionEntrance]);
     const acceptedLockInHeaderStyle = useMemo(() => ({
       opacity: acceptedLockIn.interpolate({
         inputRange: [0, 1],
@@ -1337,6 +1419,29 @@ const MessageRowItem = memo(
 
       previousDatePlanStatus.current = datePlanStatus;
     }, [acceptedLockIn, datePlanStatus, item.type]);
+
+    useEffect(() => {
+      if (item.reactions.length === 0) {
+        reactionEntrance.setValue(0);
+        previousReactionCount.current = 0;
+        return;
+      }
+
+      if (previousReactionCount.current !== item.reactions.length) {
+        reactionEntrance.stopAnimation();
+        reactionEntrance.setValue(0);
+        Animated.spring(reactionEntrance, {
+          toValue: 1,
+          friction: 8,
+          tension: 68,
+          useNativeDriver: true,
+        }).start();
+      } else {
+        reactionEntrance.setValue(1);
+      }
+
+      previousReactionCount.current = item.reactions.length;
+    }, [item.reactions.length, reactionEntrance]);
     const waveformBars = useMemo(() => {
       if (item.type !== 'voice' || !item.voiceMessage?.waveform) return null;
       if (!isFocused && !isPlaying) return null;
@@ -1367,55 +1472,31 @@ const MessageRowItem = memo(
         .map(([emoji, count]) => ({ emoji, count }))
         .sort((a, b) => b.count - a.count);
       return (
-        <Pressable
+        <Animated.View
+          pointerEvents="box-none"
           style={[
             styles.reactionSummary,
             isMyMessage ? styles.reactionSummaryRight : styles.reactionSummaryLeft,
-          ]}
-          onPress={() => onOpenReactionSheet(item)}
+            reactionEntranceStyle,
+          ] as any}
         >
-          {summary.map(({ emoji, count }) => (
-            <View key={`${emoji}-${count}`} style={styles.reactionSummaryItem}>
-              <Text style={styles.reactionSummaryEmoji}>{emoji}</Text>
-              {count > 1 ? (
-                <Text style={styles.reactionSummaryCount}>{count}</Text>
-              ) : null}
-            </View>
-          ))}
-        </Pressable>
+          <Pressable
+            style={styles.reactionSummaryPressable}
+            onPress={() => onOpenReactionSheet(item)}
+          >
+            {summary.map(({ emoji, count }) => (
+              <View key={`${emoji}-${count}`} style={styles.reactionSummaryItem}>
+                <Text style={styles.reactionSummaryEmoji}>{emoji}</Text>
+                {count > 1 ? (
+                  <Text style={styles.reactionSummaryCount}>{count}</Text>
+                ) : null}
+              </View>
+            ))}
+          </Pressable>
+        </Animated.View>
       );
-    }, [item.deletedForAll, item.reactions, isMyMessage, onOpenReactionSheet, styles]);
-
-    const reactionInlineLabel = useMemo(() => {
-      if (item.deletedForAll) return null;
-      if (!item.reactions.length) return null;
-      const primary = item.reactions.find((reaction) => reaction.userId !== currentUserId) ?? item.reactions[0];
-      if (!primary?.emoji) return null;
-      const name = primary.userId === currentUserId ? 'You' : (peerName || 'Someone');
-      const target = (() => {
-        switch (item.type) {
-          case 'text':
-            return 'message';
-          case 'image':
-            return 'photo';
-          case 'video':
-            return 'video';
-          case 'voice':
-            return 'voice note';
-          case 'document':
-            return 'document';
-          case 'date_plan':
-            return 'date plan';
-          case 'location':
-            return 'location';
-          case 'mood_sticker':
-            return 'sticker';
-          default:
-            return 'message';
-        }
-      })();
-      return `${name} reacted ${primary.emoji} to ${target}`;
-    }, [currentUserId, item.deletedForAll, item.reactions, item.type, peerName]);
+    }, [item.deletedForAll, item.reactions, isMyMessage, onOpenReactionSheet, reactionEntranceStyle, styles]);
+    const hasReactionSummary = !item.deletedForAll && item.reactions.length > 0;
 
     const documentMeta = useMemo(() => {
       if (item.type !== 'document') return null;
@@ -1560,6 +1641,7 @@ const MessageRowItem = memo(
       if (!text) return null;
       const baseStyle = [
         styles.messageText,
+        styles.messageTextInline,
         isMyMessage ? styles.myMessageText : styles.theirMessageText,
         item.deletedForAll && styles.deletedMessageText,
       ];
@@ -1607,7 +1689,12 @@ const MessageRowItem = memo(
     }
 
     return (
-      <View style={styles.messageContainer}>
+      <View
+        style={[
+          styles.messageContainer,
+          hasReactionSummary ? styles.messageContainerWithReaction : null,
+        ]}
+      >
         {isFocused ? (
           <Animated.View
             pointerEvents="none"
@@ -1763,7 +1850,10 @@ const MessageRowItem = memo(
               <View style={styles.textWithMeta}>
                 {messageTextNode}
                 <View
-                  style={styles.inlineMetaRow}
+                  style={[
+                    styles.inlineMetaRow,
+                    textInlineMetaStyle,
+                  ]}
                   pointerEvents={showEdited ? 'auto' : 'none'}
                 >
                   {showEdited ? (
@@ -1785,17 +1875,17 @@ const MessageRowItem = memo(
                   <Text
                     style={[
                       styles.messageMetaText,
-                      isMyMessage ? styles.messageMetaTextMy : styles.messageMetaTextTheir,
+                      isMyMessage ? styles.messageMetaTextInlineMy : styles.messageMetaTextInlineTheir,
                     ]}
                   >
                     {timeLabel}
                   </Text>
                   {isMyMessage && (
                     <MaterialCommunityIcons
-                      name={item.status === 'read' ? 'check-all' : item.status === 'delivered' ? 'check-all' : item.status === 'sent' ? 'check' : 'clock-outline'}
-                      size={12}
-                      color={item.status === 'read' ? theme.secondary : withAlpha(Colors.light.background, 0.8)}
-                      style={styles.inlineMetaIcon}
+                      name={receiptIcon?.name || 'clock-outline'}
+                      size={receiptIcon?.size || 13}
+                      color={receiptIcon?.color || '#C6D7D3'}
+                      style={styles.inlineMetaIconText}
                     />
                   )}
                 </View>
@@ -1868,6 +1958,7 @@ const MessageRowItem = memo(
                     style={[
                       styles.mediaMetaOverlay,
                       isMyMessage ? styles.mediaMetaOverlayMy : styles.mediaMetaOverlayTheir,
+                      isMyMessage ? mediaReceiptToneStyle : null,
                     ]}
                     pointerEvents="none"
                   >
@@ -1881,9 +1972,9 @@ const MessageRowItem = memo(
                     </Text>
                     {isMyMessage && (
                       <MaterialCommunityIcons
-                        name={item.status === 'read' ? 'check-all' : item.status === 'delivered' ? 'check-all' : item.status === 'sent' ? 'check' : 'clock-outline'}
-                        size={11}
-                        color={item.status === 'read' ? theme.secondary : withAlpha(Colors.light.background, 0.9)}
+                        name={receiptIcon?.name || 'clock-outline'}
+                        size={receiptIcon?.size || 13}
+                        color={receiptIcon?.color || '#C6D7D3'}
                         style={styles.mediaMetaIcon}
                       />
                     )}
@@ -1911,6 +2002,7 @@ const MessageRowItem = memo(
                     style={[
                       styles.mediaMetaOverlay,
                       isMyMessage ? styles.mediaMetaOverlayMy : styles.mediaMetaOverlayTheir,
+                      isMyMessage ? mediaReceiptToneStyle : null,
                     ]}
                     pointerEvents="none"
                   >
@@ -1924,9 +2016,9 @@ const MessageRowItem = memo(
                     </Text>
                     {isMyMessage && (
                       <MaterialCommunityIcons
-                        name={item.status === 'read' ? 'check-all' : item.status === 'delivered' ? 'check-all' : item.status === 'sent' ? 'check' : 'clock-outline'}
-                        size={11}
-                        color={item.status === 'read' ? theme.secondary : withAlpha(Colors.light.background, 0.9)}
+                        name={receiptIcon?.name || 'clock-outline'}
+                        size={receiptIcon?.size || 13}
+                        color={receiptIcon?.color || '#C6D7D3'}
                         style={styles.mediaMetaIcon}
                       />
                     )}
@@ -2641,6 +2733,8 @@ const MessageRowItem = memo(
                 style={[
                   styles.messageMetaRow,
                   isMyMessage ? styles.messageMetaRight : styles.messageMetaLeft,
+                  isMyMessage ? styles.receiptMetaBadge : null,
+                  isMyMessage ? receiptBadgeToneStyle : null,
                 ]}
                 pointerEvents="none"
               >
@@ -2654,9 +2748,9 @@ const MessageRowItem = memo(
                 </Text>
                 {isMyMessage && (
                   <MaterialCommunityIcons
-                    name={item.status === 'read' ? 'check-all' : item.status === 'delivered' ? 'check-all' : item.status === 'sent' ? 'check' : 'clock-outline'}
-                    size={12}
-                    color={item.status === 'read' ? theme.secondary : withAlpha(Colors.light.background, 0.8)}
+                    name={receiptIcon?.name || 'clock-outline'}
+                    size={receiptIcon?.size || 13}
+                    color={receiptIcon?.color || '#C6D7D3'}
                     style={styles.messageMetaIcon}
                   />
                 )}
@@ -2664,47 +2758,28 @@ const MessageRowItem = memo(
             )}
 
             {reactionNodes}
-            {reactionInlineLabel ? (
-              <View
-                style={[
-                  styles.reactionInlinePill,
-                  isMyMessage ? styles.reactionInlinePillMy : styles.reactionInlinePillTheir,
-                ]}
-                pointerEvents="none"
-              >
-                <Text
-                  style={[
-                    styles.reactionInlineText,
-                    isMyMessage ? styles.reactionInlineTextMy : styles.reactionInlineTextTheir,
-                    { color: isMyMessage ? Colors.light.background : theme.textMuted },
-                  ]}
-                  numberOfLines={1}
-                >
-                  {reactionInlineLabel}
-                </Text>
-              </View>
-            ) : null}
 
             <View
               pointerEvents="none"
               style={[
                 styles.bubbleTail,
                 isMyMessage ? styles.bubbleTailRight : styles.bubbleTailLeft,
-                {
-                  backgroundColor: item.deletedForAll
-                    ? withAlpha(theme.backgroundSubtle, isDark ? 0.6 : 0.85)
-                    : isMyMessage
-                    ? theme.tint
-                    : theme.backgroundSubtle,
-                  borderWidth: item.deletedForAll ? 1 : isMyMessage ? 0.5 : 1,
-                  borderColor: item.deletedForAll
-                    ? withAlpha(theme.text, isDark ? 0.2 : 0.12)
-                    : isMyMessage
-                    ? withAlpha(Colors.light.background, 0.15)
-                    : withAlpha(theme.text, isDark ? 0.14 : 0.08),
-                },
               ]}
-            />
+            >
+              <RNSvg
+                width="100%"
+                height="100%"
+                viewBox="0 0 16 18"
+                style={!isMyMessage ? styles.bubbleTailSvgLeft : undefined}
+              >
+                <Path
+                  d={CHAT_BUBBLE_TAIL_PATH}
+                  fill={bubbleTailFill}
+                  stroke={bubbleTailStroke}
+                  strokeWidth={bubbleTailStrokeWidth}
+                />
+              </RNSvg>
+            </View>
           </View>
         </Pressable>
 
@@ -3086,6 +3161,9 @@ export default function ConversationScreen() {
   const [reactionSheetEmoji, setReactionSheetEmoji] = useState<string | null>(null);
   const [reactionProfiles, setReactionProfiles] = useState<Record<string, { name: string; avatar?: string | null }>>({});
   const [reactionProfilesLoading, setReactionProfilesLoading] = useState(false);
+  const pendingReadTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const pendingReceiptSyncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const pendingDeliveredHintTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const showLocationLoading = locationLoading && !currentCoords && !locationError;
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
@@ -4307,6 +4385,33 @@ export default function ConversationScreen() {
         replyToId,
         sticker,
       };
+    },
+    [user?.id]
+  );
+
+  const reconcileDeliveredFallback = useCallback(
+    (items: MessageType[]) => {
+      const currentUserId = user?.id ?? '';
+      let latestPeerMessageAt: number | null = null;
+      return items.map((item) => {
+        const isPeerMessage =
+          item.senderId !== currentUserId &&
+          item.type !== 'system' &&
+          !String(item.id).startsWith('system:');
+        if (isPeerMessage) {
+          latestPeerMessageAt = item.timestamp.getTime();
+          return item;
+        }
+        if (
+          item.senderId === currentUserId &&
+          item.status === 'sent' &&
+          latestPeerMessageAt !== null &&
+          item.timestamp.getTime() <= latestPeerMessageAt
+        ) {
+          return { ...item, status: 'delivered' as const };
+        }
+        return item;
+      });
     },
     [user?.id]
   );
@@ -5962,7 +6067,7 @@ export default function ConversationScreen() {
     const ordered = mapped.reverse();
     const systemRows = await fetchSystemMessages();
     const combined = [...ordered, ...systemRows].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-    const linked = linkReplies(combined);
+    const linked = reconcileDeliveredFallback(linkReplies(combined));
     setMessages(linked);
     setMessagesLoaded(true);
     void syncMessageReactions(linked.map((msg) => msg.id).filter((id) => !id.startsWith('system:')));
@@ -5977,14 +6082,124 @@ export default function ConversationScreen() {
       .eq('receiver_id', user.id)
       .eq('sender_id', conversationId)
       .is('delivered_at', null);
+  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, reconcileDeliveredFallback, syncMessageReactions, syncViewOnceStatus, user?.id]);
 
-    await supabase
-      .from('messages')
-      .update({ is_read: true })
-      .eq('receiver_id', user.id)
-      .eq('sender_id', conversationId)
-      .eq('is_read', false);
-  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, syncMessageReactions, syncViewOnceStatus, user?.id]);
+  const clearPendingReadTimer = useCallback((messageId: string) => {
+    const timer = pendingReadTimersRef.current[messageId];
+    if (timer) {
+      clearTimeout(timer);
+      delete pendingReadTimersRef.current[messageId];
+    }
+  }, []);
+
+  const clearPendingReceiptSyncTimer = useCallback((messageId: string) => {
+    const timer = pendingReceiptSyncTimersRef.current[messageId];
+    if (timer) {
+      clearTimeout(timer);
+      delete pendingReceiptSyncTimersRef.current[messageId];
+    }
+  }, []);
+
+  const clearPendingDeliveredHintTimer = useCallback((messageId: string) => {
+    const timer = pendingDeliveredHintTimersRef.current[messageId];
+    if (timer) {
+      clearTimeout(timer);
+      delete pendingDeliveredHintTimersRef.current[messageId];
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      Object.values(pendingReadTimersRef.current).forEach((timer) => clearTimeout(timer));
+      pendingReadTimersRef.current = {};
+      Object.values(pendingReceiptSyncTimersRef.current).forEach((timer) => clearTimeout(timer));
+      pendingReceiptSyncTimersRef.current = {};
+      Object.values(pendingDeliveredHintTimersRef.current).forEach((timer) => clearTimeout(timer));
+      pendingDeliveredHintTimersRef.current = {};
+    };
+  }, []);
+
+  const hintOutgoingDelivered = useCallback(
+    (messageId: string) => {
+      if (pendingDeliveredHintTimersRef.current[messageId]) return;
+      pendingDeliveredHintTimersRef.current[messageId] = setTimeout(() => {
+        delete pendingDeliveredHintTimersRef.current[messageId];
+        setMessages((prev) =>
+          prev.map((msg) => {
+            if (msg.id !== messageId || msg.senderId !== user?.id) return msg;
+            if (msg.status === 'read' || msg.status === 'delivered') return msg;
+            return { ...msg, status: 'delivered' };
+          })
+        );
+      }, 320);
+    },
+    [user?.id]
+  );
+
+  const syncOutgoingReceiptState = useCallback(
+    async (messageId: string): Promise<MessageType['status'] | null> => {
+      if (!user?.id) return null;
+      clearPendingReceiptSyncTimer(messageId);
+      const { data, error } = await supabase
+        .from('messages')
+        .select('id,is_read,delivered_at')
+        .eq('id', messageId)
+        .eq('sender_id', user.id)
+        .maybeSingle();
+      if (error || !data) return null;
+      clearPendingDeliveredHintTimer(messageId);
+      let resolvedStatus: MessageType['status'] | null = null;
+      setMessages((prev) =>
+        prev.map((msg) => {
+          if (msg.id !== messageId || msg.senderId !== user.id) return msg;
+          const nextStatus: MessageType['status'] = data.is_read
+            ? 'read'
+            : data.delivered_at
+              ? 'delivered'
+              : msg.status === 'sending'
+                ? 'sent'
+                : msg.status;
+          resolvedStatus = nextStatus;
+          return {
+            ...msg,
+            status: nextStatus,
+            readAt: data.is_read ? new Date() : msg.readAt,
+          };
+        })
+      );
+      return resolvedStatus;
+    },
+    [clearPendingDeliveredHintTimer, clearPendingReceiptSyncTimer, user?.id]
+  );
+
+  const scheduleOutgoingReceiptStateSync = useCallback(
+    (messageId: string, attempt = 0) => {
+      if (pendingReceiptSyncTimersRef.current[messageId]) return;
+      if (attempt === 0 && peerOnline) {
+        hintOutgoingDelivered(messageId);
+      }
+      pendingReceiptSyncTimersRef.current[messageId] = setTimeout(() => {
+        delete pendingReceiptSyncTimersRef.current[messageId];
+        void syncOutgoingReceiptState(messageId).then((status) => {
+          if ((status === 'sent' || status === 'sending' || status === null) && attempt < 5) {
+            scheduleOutgoingReceiptStateSync(messageId, attempt + 1);
+          }
+        });
+      }, attempt === 0 ? 500 : Math.min(2800, 900 + attempt * 450));
+    },
+    [hintOutgoingDelivered, peerOnline, syncOutgoingReceiptState]
+  );
+
+  const markOutgoingMessagesDelivered = useCallback(() => {
+    setMessages((prev) =>
+      prev.map((msg) => {
+        if (msg.senderId !== user?.id) return msg;
+        if (msg.status === 'read' || msg.status === 'delivered') return msg;
+        clearPendingDeliveredHintTimer(msg.id);
+        return { ...msg, status: 'delivered' };
+      })
+    );
+  }, [clearPendingDeliveredHintTimer, user?.id]);
 
   useEffect(() => {
     if (!messagesLoaded) return;
@@ -6100,7 +6315,7 @@ export default function ConversationScreen() {
           setMessages((prev) => {
             if (hiddenMessageIdsRef.current.has(row.id)) return prev;
             if (prev.some((msg) => msg.id === row.id)) return prev;
-            return linkReplies([...prev, mapRowToMessage(row)]);
+            return reconcileDeliveredFallback(linkReplies([...prev, mapRowToMessage(row)]));
           });
           if (!hiddenMessageIdsRef.current.has(row.id)) {
             void syncMessageReactions([row.id]);
@@ -6114,11 +6329,6 @@ export default function ConversationScreen() {
             .eq('id', row.id)
             .eq('receiver_id', user.id)
             .is('delivered_at', null);
-          void supabase
-            .from('messages')
-            .update({ is_read: true })
-            .eq('id', row.id)
-            .eq('receiver_id', user.id);
         }
       )
       .on(
@@ -6135,11 +6345,13 @@ export default function ConversationScreen() {
           if (hiddenMessageIdsRef.current.has(row.id)) return;
           const nextMessage = mapRowToMessage(row);
           setMessages((prev) =>
-            linkReplies(
+            reconcileDeliveredFallback(
+              linkReplies(
               prev.map((msg) =>
                 msg.id === row.id
                   ? { ...nextMessage, reactions: msg.reactions }
                   : msg
+              )
               )
             )
           );
@@ -6175,15 +6387,18 @@ export default function ConversationScreen() {
             if (tempIndex >= 0) {
               const next = [...prev];
               next[tempIndex] = nextMessage;
-              return linkReplies(next);
+              return reconcileDeliveredFallback(linkReplies(next));
             }
-            return linkReplies([...prev, nextMessage]);
+            return reconcileDeliveredFallback(linkReplies([...prev, nextMessage]));
           });
           if (!hiddenMessageIdsRef.current.has(row.id)) {
             void syncMessageReactions([row.id]);
             if (row.is_view_once) {
               void syncViewOnceStatus([row.id]);
             }
+          }
+          if (!row.is_read && !row.delivered_at) {
+            scheduleOutgoingReceiptStateSync(row.id);
           }
         }
       )
@@ -6201,11 +6416,13 @@ export default function ConversationScreen() {
           if (hiddenMessageIdsRef.current.has(row.id)) return;
           const nextMessage = mapRowToMessage(row);
           setMessages((prev) =>
-            linkReplies(
+            reconcileDeliveredFallback(
+              linkReplies(
               prev.map((msg) =>
                 msg.id === row.id
                   ? { ...nextMessage, reactions: msg.reactions }
                   : msg
+              )
               )
             )
           );
@@ -6251,6 +6468,8 @@ export default function ConversationScreen() {
     linkReplies,
     mapRowToMessage,
     mapSystemRowToMessage,
+    reconcileDeliveredFallback,
+    scheduleOutgoingReceiptStateSync,
     syncMessageReactions,
     syncViewOnceStatus,
     triggerReconnectToast,
@@ -6371,13 +6590,29 @@ export default function ConversationScreen() {
           setPeerLastSeen(new Date());
         }
       })
+      .on('broadcast', { event: 'opened_thread' }, ({ payload }) => {
+        if (!payload || payload.senderId !== conversationId) return;
+        setPeerOnline(true);
+        setPeerLastSeen(null);
+        markOutgoingMessagesDelivered();
+      })
       .on('broadcast', { event: 'typing' }, ({ payload }) => {
         if (!payload || payload.senderId !== conversationId) return;
         setIsTyping(Boolean(payload.typing));
+        if (payload.typing) {
+          setPeerOnline(true);
+          setPeerLastSeen(null);
+          markOutgoingMessagesDelivered();
+        }
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           void presenceChannel.track({ onlineAt: new Date().toISOString(), typing: false });
+          void presenceChannel.send({
+            type: 'broadcast',
+            event: 'opened_thread',
+            payload: { senderId: user.id, threadWith: conversationId, openedAt: new Date().toISOString() },
+          });
         }
       });
 
@@ -6388,7 +6623,7 @@ export default function ConversationScreen() {
         clearTimeout(typingTimeoutRef.current);
       }
     };
-  }, [conversationId, user?.id]);
+  }, [conversationId, markOutgoingMessagesDelivered, user?.id]);
 
   useEffect(() => {
     if (!user?.id || !conversationId) return;
@@ -6409,6 +6644,7 @@ export default function ConversationScreen() {
   const markAsRead = useCallback(
     async (messageId: string) => {
       if (!user?.id || !conversationId) return;
+      clearPendingReadTimer(messageId);
       setMessages((prev) =>
         prev.map((msg) => {
           if (msg.id === messageId && msg.senderId !== user.id) {
@@ -6426,7 +6662,18 @@ export default function ConversationScreen() {
         console.log('[chat] markAsRead error', error);
       }
     },
-    [conversationId, user?.id]
+    [clearPendingReadTimer, conversationId, user?.id]
+  );
+
+  const scheduleMarkAsRead = useCallback(
+    (messageId: string) => {
+      if (pendingReadTimersRef.current[messageId]) return;
+      pendingReadTimersRef.current[messageId] = setTimeout(() => {
+        delete pendingReadTimersRef.current[messageId];
+        void markAsRead(messageId);
+      }, 2400);
+    },
+    [markAsRead]
   );
 
   useEffect(() => {
@@ -6890,6 +7137,7 @@ export default function ConversationScreen() {
           })
         )
       );
+      scheduleOutgoingReceiptStateSync(data.id as string);
     }
 
     setTimeout(() => {
@@ -6957,7 +7205,8 @@ export default function ConversationScreen() {
         )
       )
     );
-  }, [peerResolved, conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
+    scheduleOutgoingReceiptStateSync(data.id as string);
+  }, [peerResolved, conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, scheduleOutgoingReceiptStateSync, user?.id]);
 
   const addReaction = useCallback(async (messageId: string, emoji: string) => {
     if (!user?.id) return;
@@ -7290,6 +7539,7 @@ export default function ConversationScreen() {
             )
           )
         );
+        scheduleOutgoingReceiptStateSync(data.id as string);
       }
     } catch (error) {
       console.log('[chat] voice message error', error);
@@ -7298,7 +7548,7 @@ export default function ConversationScreen() {
     } finally {
       setIsUploadingVoice(false);
     }
-  }, [conversationId, isUploadingVoice, linkReplies, mapRowToMessage, recordingDuration, replyingTo, resetRecordingState, user?.id]);
+  }, [conversationId, isUploadingVoice, linkReplies, mapRowToMessage, recordingDuration, replyingTo, resetRecordingState, scheduleOutgoingReceiptStateSync, user?.id]);
 
   const stopVoicePlayback = useCallback(async () => {
     if (!voiceSoundRef.current) {
@@ -7982,14 +8232,24 @@ export default function ConversationScreen() {
   }, [setImageViewerUrl, setVideoViewerUrl]);
 
   const onViewableItemsChanged = useCallback(
-    ({ viewableItems }: { viewableItems: { item: MessageType }[] }) => {
+    ({
+      viewableItems,
+      changed,
+    }: {
+      viewableItems: { item: MessageType }[];
+      changed?: { item: MessageType; isViewable: boolean }[];
+    }) => {
+      changed?.forEach(({ item, isViewable }) => {
+        if (isViewable) return;
+        clearPendingReadTimer(item.id);
+      });
       viewableItems.forEach(({ item }) => {
         if (item.senderId !== (user?.id || '') && item.status !== 'read') {
-          markAsRead(item.id);
+          scheduleMarkAsRead(item.id);
         }
       });
     },
-    [markAsRead, user?.id]
+    [clearPendingReadTimer, scheduleMarkAsRead, user?.id]
   );
 
   const resetImageScale = useCallback(() => {
@@ -13217,7 +13477,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     messagesList: {
       paddingHorizontal: 16,
-      paddingVertical: 20,
+      paddingVertical: 14,
     },
     daySeparator: {
       alignSelf: 'center',
@@ -13227,7 +13487,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
-      marginBottom: 12,
+      marginBottom: 8,
       marginTop: 2,
     },
     daySeparatorText: {
@@ -13279,8 +13539,11 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
 
     // Messages
     messageContainer: {
-      marginBottom: 16,
+      marginBottom: 6,
       position: 'relative',
+    },
+    messageContainerWithReaction: {
+      marginBottom: 24,
     },
     messageRowSpotlight: {
       position: 'absolute',
@@ -13307,7 +13570,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     messageBubbleContainer: {
       flexDirection: 'row',
       alignItems: 'flex-end',
-      marginBottom: 2,
+      marginBottom: 0,
     },
     myMessageContainer: {
       justifyContent: 'flex-end',
@@ -13320,14 +13583,15 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       height: 28,
       borderRadius: 14,
       marginRight: 8,
-      marginBottom: 4,
+      marginBottom: 2,
     },
     messageBubble: {
-      maxWidth: screenWidth * 0.75,
-      paddingHorizontal: 12,
-      paddingVertical: 8,
+      maxWidth: screenWidth * 0.72,
+      paddingHorizontal: 13,
+      paddingVertical: 7,
       borderRadius: 20,
       position: 'relative',
+      overflow: 'visible',
     },
     messageFocusSpotlight: {
       position: 'absolute',
@@ -13347,26 +13611,73 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     textWithMeta: {
       flexDirection: 'row',
-      flexWrap: 'wrap',
+      flexWrap: 'nowrap',
       alignItems: 'flex-end',
+      maxWidth: '100%',
+    },
+    messageTextInline: {
+      flexShrink: 1,
     },
     inlineMetaRow: {
       flexDirection: 'row',
       alignItems: 'center',
       marginLeft: 4,
     },
+    inlineMetaRowText: {
+      marginLeft: 6,
+      marginBottom: 1,
+      flexShrink: 0,
+    },
+    inlineMetaRowTextMy: {
+      paddingHorizontal: 0,
+      paddingVertical: 0,
+      backgroundColor: 'transparent',
+      borderWidth: 0,
+      shadowOpacity: 0,
+    },
+    inlineMetaRowTextTheir: {
+      paddingHorizontal: 0,
+      paddingVertical: 0,
+    },
+    receiptMetaBadge: {
+      paddingHorizontal: 7,
+      paddingVertical: 3,
+      borderRadius: 999,
+      backgroundColor: 'rgba(6,18,18,0.30)',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(235,255,251,0.18)',
+      shadowColor: '#041212',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.22,
+      shadowRadius: 4,
+    },
+    receiptMetaBadgeSent: {
+      backgroundColor: 'rgba(5,16,16,0.26)',
+      borderColor: 'rgba(230,247,244,0.12)',
+    },
+    receiptMetaBadgeDelivered: {
+      backgroundColor: 'rgba(5,18,18,0.34)',
+      borderColor: 'rgba(244,251,250,0.18)',
+    },
+    receiptMetaBadgeRead: {
+      backgroundColor: 'rgba(4,26,23,0.38)',
+      borderColor: 'rgba(191,251,234,0.28)',
+    },
     inlineMetaIcon: {
+      marginLeft: 4,
+    },
+    inlineMetaIconText: {
       marginLeft: 2,
     },
     myMessageBubble: {
       backgroundColor: theme.tint,
       shadowColor: theme.tint,
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.08,
-      shadowRadius: 6,
-      elevation: 1,
-      borderWidth: 0.5,
-      borderColor: withAlpha(Colors.light.background, 0.15),
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: isDark ? 0.22 : 0.14,
+      shadowRadius: 16,
+      elevation: 4,
+      borderWidth: 1,
+      borderColor: withAlpha(Colors.light.background, isDark ? 0.18 : 0.22),
     },
     theirMessageBubble: {
       backgroundColor: theme.backgroundSubtle,
@@ -13384,17 +13695,18 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     bubbleTail: {
       position: 'absolute',
-      bottom: 6,
-      width: 12,
-      height: 12,
-      transform: [{ rotate: '45deg' }],
-      borderRadius: 2,
+      bottom: 2,
+      width: 15,
+      height: 14,
     },
     bubbleTailRight: {
-      right: -4,
+      right: -7,
     },
     bubbleTailLeft: {
-      left: -4,
+      left: -7,
+    },
+    bubbleTailSvgLeft: {
+      transform: [{ scaleX: -1 }],
     },
     stickerBubble: {
       backgroundColor: 'transparent',
@@ -13445,7 +13757,21 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontFamily: 'Manrope_400Regular',
     },
     messageMetaTextMy: {
-      color: withAlpha(Colors.light.background, 0.8),
+      color: '#FBFFFE',
+      fontFamily: 'Manrope_600SemiBold',
+      letterSpacing: 0.15,
+    },
+    messageMetaTextInlineMy: {
+      color: withAlpha(Colors.light.background, 0.84),
+      fontFamily: 'Manrope_500Medium',
+      fontSize: 9.5,
+      letterSpacing: 0.08,
+    },
+    messageMetaTextInlineTheir: {
+      color: withAlpha(theme.textMuted, 0.88),
+      fontFamily: 'Manrope_500Medium',
+      fontSize: 9,
+      letterSpacing: 0.06,
     },
     messageMetaTextTheir: {
       color: theme.textMuted,
@@ -13466,7 +13792,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.textMuted,
     },
     messageMetaIcon: {
-      marginLeft: 2,
+      marginLeft: 4,
     },
     messageTime: {
       fontSize: 11,
@@ -13614,11 +13940,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
 
     // Reactions
     reactionSummary: {
-      flexDirection: 'row',
-      alignItems: 'center',
       position: 'absolute',
-      bottom: -14,
-      gap: 6,
+      bottom: -20,
       paddingHorizontal: 6,
       paddingVertical: 4,
       borderRadius: 14,
@@ -13631,11 +13954,16 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       shadowRadius: 4,
       elevation: 3,
     },
+    reactionSummaryPressable: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
     reactionSummaryLeft: {
       left: 8,
     },
     reactionSummaryRight: {
-      right: 8,
+      right: 10,
     },
     reactionSummaryItem: {
       flexDirection: 'row',
@@ -14028,7 +14356,21 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderRadius: 10,
     },
     mediaMetaOverlayMy: {
-      backgroundColor: 'rgba(0,0,0,0.35)',
+      backgroundColor: 'rgba(6,18,18,0.58)',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(235,255,251,0.16)',
+    },
+    mediaMetaOverlaySent: {
+      backgroundColor: 'rgba(6,18,18,0.52)',
+      borderColor: 'rgba(230,247,244,0.12)',
+    },
+    mediaMetaOverlayDelivered: {
+      backgroundColor: 'rgba(6,18,18,0.62)',
+      borderColor: 'rgba(244,251,250,0.18)',
+    },
+    mediaMetaOverlayRead: {
+      backgroundColor: 'rgba(4,26,23,0.68)',
+      borderColor: 'rgba(191,251,234,0.26)',
     },
     mediaMetaOverlayTheir: {
       backgroundColor: 'rgba(0,0,0,0.28)',
@@ -14038,13 +14380,15 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontFamily: 'Manrope_500Medium',
     },
     mediaMetaTextMy: {
-      color: withAlpha(Colors.light.background, 0.92),
+      color: '#FBFFFE',
+      fontFamily: 'Manrope_600SemiBold',
+      letterSpacing: 0.15,
     },
     mediaMetaTextTheir: {
       color: Colors.light.background,
     },
     mediaMetaIcon: {
-      marginLeft: 2,
+      marginLeft: 4,
     },
     documentBubble: {
       paddingHorizontal: 10,

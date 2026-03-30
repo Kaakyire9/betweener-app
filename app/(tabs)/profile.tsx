@@ -14,6 +14,8 @@ import { readCache, writeCache } from "@/lib/persisted-cache";
 import { getProfileInitials, getProfilePlaceholderPalette, hasProfileImage } from "@/lib/profile-placeholders";
 import {
   DEFAULT_GUESS_REVEAL_POLICY,
+  isGuessPrompt,
+  isMultipleChoiceGuess,
   normalizeGuessText,
   sanitizeGuessOptions,
   shuffleOptions,
@@ -2018,8 +2020,55 @@ export default function ProfileScreen() {
         .slice(0, 2),
     [promptAnswers],
   );
-  const featuredPrompt = promptHighlights[0] ?? null;
-  const extraPrompts = promptHighlights.slice(1);
+  const previewFeaturedPrompt = useMemo(() => {
+    const firstPrompt = promptAnswers.find((row) => row.promptTitle?.trim() || row.answer?.trim());
+    if (!firstPrompt) return null;
+    const prompt = PROFILE_PROMPTS.find((item) => item.id === firstPrompt.promptKey);
+    const guessPrompt = isGuessPrompt(firstPrompt.promptType);
+    return {
+      id: firstPrompt.id,
+      title: firstPrompt.promptTitle || prompt?.title || 'Prompt',
+      answer: firstPrompt.answer,
+      eyebrow: guessPrompt ? 'Quick guess' : 'Featured prompt',
+      meta:
+        guessPrompt && firstPrompt.guessMode
+          ? isMultipleChoiceGuess(firstPrompt.guessMode)
+            ? '1 prompt challenge'
+            : 'One clean guess'
+          : null,
+      promptType: firstPrompt.promptType || 'standard',
+      guessMode: firstPrompt.guessMode || null,
+      guessOptions: Array.isArray(firstPrompt.guessOptions)
+        ? firstPrompt.guessOptions.filter((item): item is string => typeof item === 'string')
+        : [],
+      hintText: firstPrompt.hintText || null,
+    };
+  }, [promptAnswers]);
+  const previewFeaturedGuessOptions = useMemo(() => {
+    if (!previewFeaturedPrompt || !isGuessPrompt(previewFeaturedPrompt.promptType) || !isMultipleChoiceGuess(previewFeaturedPrompt.guessMode)) {
+      return [];
+    }
+    return sanitizeGuessOptions(previewFeaturedPrompt.guessOptions, previewFeaturedPrompt.answer).slice(0, 4);
+  }, [previewFeaturedPrompt]);
+  const previewExtraPrompts = useMemo(() => {
+    const standardPrompts = promptAnswers
+      .filter((row) => !isGuessPrompt(row.promptType) && row.answer?.trim())
+      .map((row) => {
+        const prompt = PROFILE_PROMPTS.find((item) => item.id === row.promptKey);
+        return {
+          id: row.id,
+          title: row.promptTitle || prompt?.title || 'Prompt',
+          answer: row.answer,
+          meta: null as string | null,
+        };
+      });
+    if (previewFeaturedPrompt && !isGuessPrompt(previewFeaturedPrompt.promptType)) {
+      return standardPrompts.filter((row) => row.id !== previewFeaturedPrompt.id).slice(0, 2);
+    }
+    return standardPrompts.slice(0, 2);
+  }, [previewFeaturedPrompt, promptAnswers]);
+  const featuredPrompt = isPreviewMode ? previewFeaturedPrompt : promptHighlights[0] ?? null;
+  const extraPrompts = isPreviewMode ? previewExtraPrompts : promptHighlights.slice(1);
 
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
@@ -3526,14 +3575,94 @@ export default function ProfileScreen() {
               <Text style={[styles.featuredPromptTitle, { color: theme.text }]}>
                 {featuredPrompt.title}
               </Text>
-              {featuredPrompt.meta ? (
-                <Text style={[styles.promptMetaText, { color: theme.textMuted }]}>
-                  {featuredPrompt.meta}
-                </Text>
-              ) : null}
-              <Text style={[styles.featuredPromptAnswer, { color: theme.text }]}>
-                {featuredPrompt.answer}
-              </Text>
+              {isPreviewMode && isGuessPrompt(featuredPrompt.promptType) ? (
+                <>
+                  {featuredPrompt.meta ? (
+                    <View style={styles.guessPreviewMetaRow}>
+                      <View
+                        style={[
+                          styles.guessPreviewMetaPill,
+                          { backgroundColor: theme.background, borderColor: theme.outline },
+                        ]}
+                      >
+                        <MaterialCommunityIcons
+                          name="gamepad-variant-outline"
+                          size={14}
+                          color={theme.tint}
+                        />
+                        <Text style={[styles.guessPreviewMetaText, { color: theme.textMuted }]}>
+                          {featuredPrompt.meta}
+                        </Text>
+                      </View>
+                    </View>
+                  ) : null}
+                  <Text style={[styles.guessPreviewHint, { color: theme.textMuted }]}>
+                    {previewFeaturedPrompt?.hintText?.trim()
+                      ? `Hint: ${previewFeaturedPrompt.hintText.trim()}`
+                      : 'Take one clean guess. If they get it right, the moment opens up.'}
+                  </Text>
+                  {isMultipleChoiceGuess(previewFeaturedPrompt?.guessMode) ? (
+                    <View style={styles.guessPreviewOptions}>
+                      {previewFeaturedGuessOptions.length > 0 ? (
+                        previewFeaturedGuessOptions.map((option, index) => (
+                          <View
+                            key={`profile-preview-guess-${index}`}
+                            style={[
+                              styles.guessPreviewOption,
+                              { backgroundColor: theme.background, borderColor: theme.outline },
+                            ]}
+                          >
+                            <Text style={[styles.guessPreviewOptionText, { color: theme.text }]}>
+                              {option}
+                            </Text>
+                          </View>
+                        ))
+                      ) : (
+                        <View
+                          style={[
+                            styles.guessPreviewOption,
+                            { backgroundColor: theme.background, borderColor: theme.outline },
+                          ]}
+                        >
+                          <Text style={[styles.guessPreviewOptionText, { color: theme.textMuted }]}>
+                            Add a correct answer and believable wrong options
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  ) : (
+                    <View
+                      style={[
+                        styles.guessPreviewOption,
+                        { backgroundColor: theme.background, borderColor: theme.outline },
+                      ]}
+                    >
+                      <Text style={[styles.guessPreviewOptionText, { color: theme.textMuted }]}>
+                        Type your guess
+                      </Text>
+                    </View>
+                  )}
+                  <Text style={[styles.guessPreviewFooter, { color: theme.textMuted }]}>
+                    Correct answer stays hidden until they play.
+                  </Text>
+                </>
+              ) : (
+                <>
+                  {featuredPrompt.meta ? (
+                    <Text style={[styles.promptMetaText, { color: theme.textMuted }]}>
+                      {featuredPrompt.meta}
+                    </Text>
+                  ) : null}
+                  <Text
+                    style={[
+                      styles.featuredPromptAnswer,
+                      { color: isPreviewMode ? theme.textMuted : theme.text },
+                    ]}
+                  >
+                    {featuredPrompt.answer}
+                  </Text>
+                </>
+              )}
             </View>
           ) : !isPreviewMode && !promptsLoading ? (
             <View

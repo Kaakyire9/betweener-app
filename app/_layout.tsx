@@ -14,6 +14,7 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 
 import { useAppFonts } from "@/constants/fonts";
 import { AuthProvider } from "@/lib/auth-context";
+import AccountRecoveryNotice from "@/components/AccountRecoveryNotice";
 import InAppToasts from "@/components/InAppToasts";
 import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
 import { SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
@@ -434,6 +435,7 @@ function RootLayout() {
         <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
           <Slot />
           <InAppToasts />
+          <AccountRecoveryNotice />
 
           {!SUPABASE_IS_CONFIGURED && (
             <View style={styles.envBanner} pointerEvents="none">

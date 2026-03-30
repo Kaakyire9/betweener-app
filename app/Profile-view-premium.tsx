@@ -267,9 +267,6 @@ function pickTaggedImages(profile: UserProfile): PremiumImage[] {
 
 function buildSections(profile: UserProfile): PremiumSection[] {
   const chipsFromInterests = (profile.interests || []).slice(0, 6).map((i) => i.name);
-  const lifestyleChips = [profile.exerciseFrequency, profile.smoking, profile.drinking]
-    .filter(Boolean)
-    .map(String);
 
   const premiumCopy = getViewedProfilePremiumCopy(profile.name);
 
@@ -298,7 +295,6 @@ function buildSections(profile: UserProfile): PremiumSection[] {
         .join('\n');
         return text || premiumCopy.lifestyleEmpty;
       })(),
-      chips: lifestyleChips.length ? lifestyleChips : undefined,
     },
     {
       id: 'sec-prompts',

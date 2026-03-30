@@ -633,15 +633,21 @@ export const AdminVerificationDashboard = () => {
             text: statusLabel,
             style: status === "closed" ? "destructive" : "default",
             onPress: async () => {
-              const { data, error: rpcError } = await supabase.rpc("rpc_admin_update_account_recovery_request", {
-                p_request_id: item.id,
-                p_status: status,
-                p_review_notes: null,
-                p_linked_merge_case_id: null,
+              const { data, error } = await supabase.functions.invoke("admin-update-account-recovery-request", {
+                body: {
+                  requestId: item.id,
+                  status,
+                  reviewNotes: null,
+                  linkedMergeCaseId: null,
+                },
               });
-              if (rpcError || !data) {
-                Alert.alert("Admin action failed", rpcError?.message || "Unable to update recovery request.");
+              if (error || !(data as any)?.success) {
+                Alert.alert("Admin action failed", error?.message || "Unable to update recovery request.");
                 return;
+              }
+              const warning = (data as any)?.notifications?.warning;
+              if (status === "resolved" && warning) {
+                Alert.alert("Recovery marked resolved", "Status was updated, but the recovery email could not be sent automatically.");
               }
               void loadDashboard();
             },
@@ -676,19 +682,25 @@ export const AdminVerificationDashboard = () => {
     setRecoveryReviewError(null);
     setRecoveryReviewSubmitting(true);
 
-    const { data, error: rpcError } = await supabase.rpc("rpc_admin_update_account_recovery_request", {
-      p_request_id: recoveryReviewRequest.id,
-      p_status: recoveryReviewStatusDraft,
-      p_review_notes: recoveryReviewNotesDraft.trim() || null,
-      p_linked_merge_case_id: recoveryReviewRequest.linked_merge_case_id,
+    const { data, error } = await supabase.functions.invoke("admin-update-account-recovery-request", {
+      body: {
+        requestId: recoveryReviewRequest.id,
+        status: recoveryReviewStatusDraft,
+        reviewNotes: recoveryReviewNotesDraft.trim() || null,
+        linkedMergeCaseId: recoveryReviewRequest.linked_merge_case_id,
+      },
     });
 
-    if (rpcError || !data) {
+    if (error || !(data as any)?.success) {
       setRecoveryReviewSubmitting(false);
-      setRecoveryReviewError(rpcError?.message || "Unable to save recovery review.");
+      setRecoveryReviewError(error?.message || "Unable to save recovery review.");
       return;
     }
 
+    const warning = (data as any)?.notifications?.warning;
+    if (recoveryReviewStatusDraft === "resolved" && warning) {
+      Alert.alert("Recovery marked resolved", "Status was updated, but the recovery email could not be sent automatically.");
+    }
     closeRecoveryReviewModal();
     void loadDashboard();
   }, [
@@ -2058,4 +2070,3 @@ const withAlpha = (hex: string, alpha: number) => {
   const b = bigint & 255;
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
 };
-

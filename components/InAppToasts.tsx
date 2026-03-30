@@ -744,7 +744,6 @@ export default function InAppToasts() {
 
       let otherName = 'them';
       let otherAvatar: string | null = null;
-      let otherUserId: string | null = null;
 
       try {
         const { data } = await supabase
@@ -755,26 +754,8 @@ export default function InAppToasts() {
         const profileRow = data as any;
         if (profileRow?.full_name) otherName = profileRow.full_name;
         if (profileRow?.avatar_url) otherAvatar = profileRow.avatar_url;
-        if (profileRow?.user_id) otherUserId = profileRow.user_id;
       } catch {
         // best-effort only
-      }
-
-      // Mirror server dedupe: if the user just got "NAME accepted", skip the match toast.
-      if (otherUserId && user?.id) {
-        try {
-          const { data: sm } = await supabase
-            .from('system_messages')
-            .select('id')
-            .eq('user_id', user.id)
-            .eq('peer_user_id', otherUserId)
-            .eq('event_type', 'request_accepted')
-            .gte('created_at', new Date(Date.now() - 30_000).toISOString())
-            .limit(1);
-          if (Array.isArray(sm) && sm.length) return;
-        } catch {
-          // ignore
-        }
       }
 
       pushToast({

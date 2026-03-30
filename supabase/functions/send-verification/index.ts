@@ -18,6 +18,30 @@ interface SendVerificationRequest {
   signupSessionId?: string
 }
 
+const findExistingVerifiedPhoneOwner = async (
+  supabase: any,
+  phoneNumber: string,
+  currentUserId: string | null,
+) => {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('user_id, phone_number, phone_verified')
+    .eq('phone_number', phoneNumber)
+    .eq('phone_verified', true)
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    console.error('Existing verified phone lookup error:', error)
+    return null
+  }
+
+  if (!data?.user_id) return null
+  if (currentUserId && data.user_id === currentUserId) return null
+
+  return data
+}
+
 interface TwilioCarrierInfo {
   name?: string
   type?: string
@@ -166,6 +190,21 @@ serve(async (req) => {
       )
     }
     const effectiveUserId = authedUserId
+
+    const existingOwner = await findExistingVerifiedPhoneOwner(supabase, cleanedPhone, effectiveUserId)
+    if (existingOwner) {
+      return new Response(
+        JSON.stringify({
+          error: 'This number already belongs to an older Betweener account.',
+          code: 'phone_belongs_to_existing_account',
+          phoneNumber: cleanedPhone,
+        }),
+        {
+          status: 409,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        }
+      )
+    }
 
     // Rate limits (defaults)
     const clientIp = getClientIp(req) || 'unknown'
