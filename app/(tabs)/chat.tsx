@@ -490,6 +490,8 @@ export default function ChatScreen() {
             if (!msg || !row?.emoji || !row?.user_id) return;
             const otherId = msg.sender_id === user.id ? msg.receiver_id : msg.sender_id;
             if (!otherId) return;
+            const lastForConversation = convoMap.get(otherId)?.last;
+            if (!lastForConversation?.id || lastForConversation.id !== msg.id) return;
             const createdAt = row.created_at ? new Date(row.created_at) : new Date();
             const existing = reactionPreviewByUser.get(otherId);
             if (existing && existing.createdAt >= createdAt) return;
@@ -795,6 +797,7 @@ export default function ChatScreen() {
       setConversations((prev) =>
         prev.map((conv) => {
           if (conv.id !== otherId) return conv;
+          if (conv.lastMessage.id !== messageRow.id) return conv;
           const existing = conv.lastMessage.reactionPreview;
           if (existing && existing.createdAt >= createdAt) return conv;
           return {
@@ -1052,6 +1055,7 @@ export default function ChatScreen() {
     const isBlocked = Boolean(item.blockStatus);
     const isUnread = item.unreadCount > 0;
     const isMyLastMessage = item.lastMessage.senderId === (user?.id || '');
+    const isOnline = !isBlocked && (presenceOnline[item.id] ?? item.matchedUser.isOnline);
     const receiptIcon = isMyLastMessage ? getConversationReceiptIconState(item.lastMessage, theme, isDark) : null;
     const isTyping = !isBlocked && Boolean(typingStatus[item.matchedUser.id]);
     const reactionPreview = getLastMessageReactionPreview(
@@ -1108,7 +1112,8 @@ export default function ChatScreen() {
       >
         <View style={styles.conversationLeft}>
           <View style={styles.avatarContainer}>
-              {avatarContent}
+            {avatarContent}
+            {isOnline ? <View style={styles.onlineIndicator} /> : null}
             {item.isPinned && (
               <View style={styles.pinIndicator}>
                 <MaterialCommunityIcons name="pin" size={10} color={Colors.light.background} />
@@ -1595,35 +1600,38 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
 
     // Conversations List
     conversationsList: {
-      paddingVertical: 10,
+      paddingVertical: 8,
+      paddingBottom: 92,
     },
     conversationItem: {
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.7 : 0.9),
+      backgroundColor: isDark
+        ? withAlpha(theme.backgroundSubtle, 0.56)
+        : withAlpha('#fffaf5', 0.94),
       marginHorizontal: 16,
-      marginVertical: 6,
-      paddingHorizontal: 16,
-      paddingVertical: 14,
-      borderRadius: 20,
+      marginVertical: 4,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      borderRadius: 18,
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.08),
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.07),
       shadowColor: Colors.dark.background,
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: isDark ? 0.2 : 0.08,
-      shadowRadius: 12,
-      elevation: 4,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: isDark ? 0.16 : 0.05,
+      shadowRadius: 10,
+      elevation: 2,
     },
     conversationItemPressed: {
-      transform: [{ scale: 0.98 }],
-      shadowOpacity: 0.05,
+      transform: [{ scale: 0.992 }],
+      shadowOpacity: 0.04,
     },
     pinnedConversation: {
-      backgroundColor: withAlpha(theme.accent, isDark ? 0.16 : 0.1),
-      borderColor: withAlpha(theme.accent, isDark ? 0.5 : 0.35),
+      backgroundColor: withAlpha(theme.accent, isDark ? 0.13 : 0.08),
+      borderColor: withAlpha(theme.accent, isDark ? 0.34 : 0.2),
       shadowColor: theme.accent,
     },
     unreadConversation: {
-      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.08),
-      borderColor: withAlpha(theme.tint, isDark ? 0.45 : 0.3),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.11 : 0.065),
+      borderColor: withAlpha(theme.tint, isDark ? 0.28 : 0.18),
     },
     conversationLeft: {
       flexDirection: 'row',
@@ -1631,29 +1639,29 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     avatarContainer: {
       position: 'relative',
-      marginRight: 12,
+      marginRight: 11,
     },
     avatarRing: {
       padding: 2,
-      borderRadius: 32,
-      backgroundColor: withAlpha(theme.background, isDark ? 0.6 : 0.8),
+      borderRadius: 30,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.5 : 0.82),
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
     },
     avatarRingUnread: {
       padding: 2,
-      borderRadius: 32,
+      borderRadius: 30,
     },
     avatarRingInner: {
-      borderRadius: 28,
+      borderRadius: 25,
       backgroundColor: theme.background,
       padding: 2,
       overflow: 'hidden',
     },
     conversationAvatar: {
-      width: 52,
-      height: 52,
-      borderRadius: 26,
+      width: 46,
+      height: 46,
+      borderRadius: 23,
     },
     avatarFallback: {
       backgroundColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
@@ -1669,20 +1677,20 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       position: 'absolute',
       bottom: 2,
       right: 2,
-      width: 16,
-      height: 16,
-      borderRadius: 8,
+      width: 12,
+      height: 12,
+      borderRadius: 6,
       backgroundColor: theme.secondary,
       borderWidth: 2,
       borderColor: theme.background,
     },
     pinIndicator: {
       position: 'absolute',
-      top: -2,
-      right: -2,
-      width: 20,
-      height: 20,
-      borderRadius: 10,
+      top: -1,
+      right: -1,
+      width: 18,
+      height: 18,
+      borderRadius: 9,
       backgroundColor: theme.accent,
       justifyContent: 'center',
       alignItems: 'center',
@@ -1695,10 +1703,10 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       justifyContent: 'flex-start',
       alignItems: 'center',
       gap: 8,
-      marginBottom: 2,
+      marginBottom: 4,
     },
     conversationName: {
-      fontSize: 16,
+      fontSize: 15.5,
       fontFamily: 'Archivo_600SemiBold',
       color: theme.text,
       flex: 1,
@@ -1711,8 +1719,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.text,
     },
     conversationTime: {
-      fontSize: 12,
-      fontFamily: 'Manrope_400Regular',
+      fontSize: 11.5,
+      fontFamily: 'Manrope_500Medium',
       color: theme.textMuted,
     },
     lastSeenText: {
@@ -1724,12 +1732,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     conversationPreview: {
       flexDirection: 'row',
       justifyContent: 'space-between',
-      alignItems: 'flex-start',
+      alignItems: 'center',
     },
     conversationMeta: {
       alignItems: 'flex-end',
-      gap: 6,
-      minWidth: 40,
+      gap: 5,
+      minWidth: 44,
+      marginLeft: 10,
     },
     lastMessageRow: {
       flexDirection: 'row',
@@ -1738,12 +1747,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       minWidth: 0,
     },
     lastMessage: {
-      fontSize: 14,
+      fontSize: 13.5,
       fontFamily: 'Manrope_400Regular',
       color: theme.textMuted,
       flex: 1,
       minWidth: 0,
-      marginRight: 8,
+      marginRight: 6,
     },
     lastMessageReaction: {
       fontStyle: 'italic',
@@ -1754,7 +1763,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.accent,
     },
     readReceiptIcon: {
-      marginRight: 6,
+      marginRight: 5,
     },
     unreadMessage: {
       fontFamily: 'Manrope_500Medium',
@@ -1762,15 +1771,15 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     unreadBadge: {
       backgroundColor: theme.tint,
-      borderRadius: 12,
-      minWidth: 24,
-      height: 24,
+      borderRadius: 10,
+      minWidth: 20,
+      height: 20,
       justifyContent: 'center',
       alignItems: 'center',
-      paddingHorizontal: 8,
+      paddingHorizontal: 6,
     },
     unreadCount: {
-      fontSize: 12,
+      fontSize: 11,
       fontFamily: 'Archivo_700Bold',
       color: Colors.light.background,
     },

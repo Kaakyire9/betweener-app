@@ -23,6 +23,25 @@ const getCityOnly = (label?: string) => {
   return parts[0]?.trim() || '';
 };
 
+const looksAdministrative = (label?: string) =>
+  /\b(region|district|province|state|county|municipality)\b/i.test(String(label || '')) ||
+  /^(africa|north america|south america|europe|asia|oceania|middle east)$/i.test(String(label || '').trim());
+
+const pickBetterCityLabel = (incoming?: string, previous?: string) => {
+  const next = getCityOnly(incoming);
+  const prev = getCityOnly(previous);
+  if (!next) return prev;
+  if (!prev) return next;
+  const nextLower = next.toLowerCase();
+  const prevLower = prev.toLowerCase();
+  if (nextLower === prevLower) return next;
+  if (looksAdministrative(next) && !looksAdministrative(prev)) return prev;
+  if (looksAdministrative(prev) && !looksAdministrative(next)) return next;
+  if (nextLower.includes(prevLower) && prev.length <= next.length) return prev;
+  if (prevLower.includes(nextLower) && next.length <= prev.length) return next;
+  return next;
+};
+
 const toFlagEmoji = (code?: string) => {
   if (!code) return '';
   const normalized = String(code).trim().toUpperCase();
@@ -102,25 +121,47 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     () => (isDark ? ["rgba(0,0,0,0)", "rgba(0,0,0,0.7)"] : ["rgba(0,0,0,0)", "rgba(0,0,0,0.55)"] ),
     [isDark]
   );
-  const isManualLocation = (match as any).location_precision === 'CITY';
-  const locationLabel = isManualLocation ? '' : getCityOnly(match.location || match.region || '');
+  const immediateLocationLabel = getCityOnly(
+    (match as any).city ||
+    match.location ||
+    (!looksAdministrative(match.region) ? match.region : '') ||
+    (match as any).current_country ||
+    ''
+  );
+  const [stableLocationLabel, setStableLocationLabel] = useState(immediateLocationLabel);
+  useEffect(() => {
+    setStableLocationLabel(immediateLocationLabel);
+  }, [match.id]);
+  useEffect(() => {
+    if (!immediateLocationLabel) return;
+    setStableLocationLabel((prev) => pickBetterCityLabel(immediateLocationLabel, prev));
+  }, [immediateLocationLabel]);
+  const locationLabel = stableLocationLabel || immediateLocationLabel;
   const distanceLabel = match.distance || '';
   const showDistance = isDistanceLabel(distanceLabel);
   const locationDisplayBase =
-    showDistance && locationLabel && distanceLabel !== locationLabel
+    showDistance && locationLabel && getCityOnly(distanceLabel) !== locationLabel
       ? `${distanceLabel} \u00b7 ${locationLabel}`
-      : distanceLabel || locationLabel;
+      : locationLabel || distanceLabel;
   const resolvedCountryCode = inferCountryCode(
     (match as any).current_country_code,
     (match as any).current_country,
     (match as any).current_country_name,
+    (match as any).city,
     match.region,
     match.location,
   );
-  const countryFlag = toFlagEmoji(resolvedCountryCode);
-  const locationDisplay = locationDisplayBase
-    ? `${locationDisplayBase}${countryFlag ? ` ${countryFlag}` : ''}`
-    : countryFlag;
+  const [stableCountryCode, setStableCountryCode] = useState(resolvedCountryCode);
+  useEffect(() => {
+    setStableCountryCode(resolvedCountryCode);
+  }, [match.id]);
+  useEffect(() => {
+    if (resolvedCountryCode) {
+      setStableCountryCode((prev) => (prev === resolvedCountryCode ? prev : resolvedCountryCode));
+    }
+  }, [resolvedCountryCode]);
+  const countryFlag = toFlagEmoji(stableCountryCode || resolvedCountryCode);
+  const locationDisplay = locationDisplayBase || '';
   const blockedLabels = useMemo(() => {
     const values = new Set<string>();
     const addValue = (value?: string | null) => {
@@ -129,6 +170,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     };
 
     addValue(locationLabel);
+    addValue((match as any).city);
     addValue(getCityOnly(match.location || ''));
     addValue(match.location);
     addValue(match.region);
@@ -136,7 +178,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     addValue((match as any).current_country_name);
 
     return values;
-  }, [locationLabel, match.location, match.region, (match as any).current_country, (match as any).current_country_name]);
+  }, [locationLabel, (match as any).city, match.location, match.region, (match as any).current_country, (match as any).current_country_name]);
   const verificationLevel =
     typeof (match as any).verification_level === 'number'
       ? (match as any).verification_level
@@ -297,11 +339,9 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     const interests = (Array.isArray(match.interests) ? match.interests : []).filter(
       (interest) => !blockedLabels.has(normalizeLabel(String(interest || '')))
     );
-    const personalities = Array.isArray((match as any).personalityTags) ? (match as any).personalityTags : [];
     const lookingFor = (match as any).looking_for || (match as any).lookingFor;
     const loveLanguage = (match as any).love_language || (match as any).loveLanguage;
 
-    if (personalities[0]) chips.push({ label: personalities[0], tone: 'accent' });
     if (commonInterests[0]) {
       chips.push({
         label: commonInterests.length > 1 ? `${commonInterests.length} shared interests` : `Shared: ${commonInterests[0]}`,
@@ -314,7 +354,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     if (loveLanguage && chips.length < 3) chips.push({ label: `Love language: ${loveLanguage}`, tone: 'tint' });
 
     return chips.slice(0, 3);
-  }, [blockedLabels, match.interests, (match as any).commonInterests, (match as any).personalityTags, (match as any).looking_for, (match as any).lookingFor, (match as any).love_language, (match as any).loveLanguage]);
+  }, [blockedLabels, match.interests, (match as any).commonInterests, (match as any).looking_for, (match as any).lookingFor, (match as any).love_language, (match as any).loveLanguage]);
 
   const previewGlowStyle = {
     transform: [
@@ -460,10 +500,11 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
 
           {null}
 
-          {locationDisplay ? (
+          {locationDisplay || countryFlag ? (
             <View style={styles.locationRow}>
               <MaterialCommunityIcons name="map-marker" size={14} color="#fff" />
-              <Text style={styles.location}>{locationDisplay}</Text>
+              {locationDisplay ? <Text style={styles.location}>{locationDisplay}</Text> : null}
+              {countryFlag ? <Text style={styles.locationFlag}>{countryFlag}</Text> : null}
             </View>
           ) : null}
 
@@ -578,6 +619,7 @@ const createStyles = (
     tagline: { color: "#fff", marginBottom: 12, fontSize: 15, fontFamily: 'Manrope_500Medium' },
     locationRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
     location: { color: "#fff", marginLeft: 6, fontFamily: 'Manrope_600SemiBold' },
+    locationFlag: { marginLeft: 6, fontSize: 15 },
     alignmentRow: { marginBottom: 2 },
     alignmentChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
     alignmentChip: {

@@ -183,11 +183,11 @@ type DeleteReasonOption = (typeof ACCOUNT_DELETION_REASON_OPTIONS)[number];
 type DeleteReasonKey = DeleteReasonOption['value'];
 type DeleteAlternativeAction = 'take_break' | 'quiet_notifications' | 'hide_profile';
 
-const DELETE_SOFT_OFFRAMP_OPTIONS: Array<{
+const DELETE_SOFT_OFFRAMP_OPTIONS: {
   id: DeleteAlternativeAction;
   title: string;
   description: string;
-}> = [
+}[] = [
   {
     id: 'take_break',
     title: 'Take a break',
@@ -1336,7 +1336,9 @@ export default function ProfileScreen() {
           id: profile.id,
           name: profile.full_name || profile.id,
           age: profile.age,
-          location: profile.region || profile.location || '',
+          location: profile.location || profile.region || '',
+          city: (profile as any).city,
+          region: profile.region || '',
           avatar_url: profile.avatar_url,
           photos: (profile as any).photos,
           occupation: (profile as any).occupation,
@@ -1344,11 +1346,13 @@ export default function ProfileScreen() {
           bio: profile.bio,
           tribe: (profile as any).tribe,
           religion: (profile as any).religion,
-          distance: profile.region || '',
+          distance: '',
           interests: (profile as any).interests,
           is_active: true,
           compatibility: compatPct,
           verified: !!(profile as any).verification_level,
+          current_country: (profile as any).current_country,
+          current_country_code: (profile as any).current_country_code,
         };
         params.fallbackProfile = encodeURIComponent(JSON.stringify(fallback));
       }
@@ -1928,21 +1932,33 @@ export default function ProfileScreen() {
   const useDefaultBio = !rawBio || isPlaceholderBio;
   const displayBio = useDefaultBio ? defaultHookLines[hookIndex] : rawBio;
 
-  const locationPartsRaw = [
+  const locationSegments = [
     (profile as any)?.city,
-    profile?.region,
     profile?.location,
+    profile?.region,
     (profile as any)?.current_country,
   ]
-    .map((part: string | undefined) => (part || '').trim())
-    .filter(Boolean);
-  const locationParts = locationPartsRaw.filter((part, index, arr) => {
-    const key = part.toLowerCase();
-    return arr.findIndex((p) => p.toLowerCase() === key) === index;
-  });
-  const locationDisplay = locationParts.length
-    ? locationParts.join(', ')
-    : 'Location not set';
+    .flatMap((part: string | undefined) =>
+      String(part || '')
+        .split(',')
+        .map((segment) => segment.trim())
+        .filter(Boolean),
+    )
+    .filter((part, index, arr) => {
+      const key = part.toLowerCase();
+      return arr.findIndex((p) => p.toLowerCase() === key) === index;
+    });
+  const locationCity =
+    String((profile as any)?.city || '').trim() ||
+    locationSegments.find((segment) => segment.toLowerCase() !== String((profile as any)?.current_country || '').trim().toLowerCase()) ||
+    '';
+  const locationCountry = String((profile as any)?.current_country || '').trim();
+  const locationDisplay = [locationCity, locationCountry]
+    .filter((part, index, arr) => {
+      if (!part) return false;
+      return arr.findIndex((candidate) => candidate.toLowerCase() === part.toLowerCase()) === index;
+    })
+    .join(', ') || (locationSegments.length ? locationSegments.join(', ') : 'Location not set');
   const verificationLevel =
     (profile as any)?.verification_level
     ?? (profile as any)?.verificationLevel
@@ -2656,7 +2672,7 @@ export default function ProfileScreen() {
               keyboardShouldPersistTaps="handled"
             >
             <Text style={[styles.emailModalBody, { color: theme.textMuted }]}>
-              Update the email you use to sign in. We'll send a confirmation link to your new email.
+              Update the email you use to sign in. We&apos;ll send a confirmation link to your new email.
             </Text>
             <TextInput
               value={emailInput}
@@ -2838,7 +2854,7 @@ export default function ProfileScreen() {
                   </TouchableOpacity>
                 </View>
                 <Text style={[styles.accountDeletionFootnote, { color: theme.textMuted }]}>
-                  We'll offer calmer options before anything is closed permanently.
+                  We&apos;ll offer calmer options before anything is closed permanently.
                 </Text>
               </View>
             </View>
@@ -2857,11 +2873,14 @@ export default function ProfileScreen() {
           <View
             style={[
               styles.emailModalCard,
+              styles.deleteModalCard,
               styles.cardShadow,
               { backgroundColor: theme.background, borderColor: theme.outline },
             ]}
           >
-            <View style={styles.emailModalHeader}>
+            <View
+              style={styles.emailModalHeader}
+            >
               <Text style={[styles.emailModalTitle, { color: theme.text }]}>Delete account</Text>
               <TouchableOpacity disabled={deletingAccount} onPress={() => setShowDeleteAccountModal(false)}>
                 <MaterialCommunityIcons name="close" size={20} color={theme.textMuted} />
@@ -2872,6 +2891,10 @@ export default function ProfileScreen() {
               contentContainerStyle={styles.deleteModalScrollContent}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+              automaticallyAdjustKeyboardInsets
+              contentInset={{ bottom: Platform.OS === 'ios' ? 28 : 20 }}
+              scrollIndicatorInsets={{ bottom: Platform.OS === 'ios' ? 28 : 20 }}
             >
               <Text style={[styles.deleteEyebrow, { color: theme.tint }]}>Before you leave Betweener</Text>
               <Text style={[styles.emailModalBody, { color: theme.textMuted }]}>
@@ -2905,12 +2928,12 @@ export default function ProfileScreen() {
                         ]}
                       >
                         <View style={styles.deleteAlternativeButtonTextWrap}>
-                        <Text style={[styles.deleteAlternativeButtonTitle, { color: theme.text }]}>
-                          {pending ? 'Applying...' : option.title}
-                        </Text>
-                        <Text style={[styles.deleteAlternativeButtonBody, { color: theme.textMuted }]}>
-                          {option.description}
-                        </Text>
+                          <Text style={[styles.deleteAlternativeButtonTitle, { color: theme.text }]}>
+                            {pending ? 'Applying...' : option.title}
+                          </Text>
+                          <Text style={[styles.deleteAlternativeButtonBody, { color: theme.textMuted }]}>
+                            {option.description}
+                          </Text>
                         </View>
                       </TouchableOpacity>
                     );
@@ -3020,6 +3043,7 @@ export default function ProfileScreen() {
                 placeholderTextColor={theme.textMuted}
                 multiline
                 maxLength={1000}
+                scrollEnabled
                 style={[
                   styles.deleteFeedbackInput,
                   { color: theme.text, borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },

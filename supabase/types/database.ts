@@ -3294,6 +3294,7 @@ export type Database = {
           ai_score: number
           avatar_url: string
           bio: string
+          distance_km: number | null
           full_name: string
           id: string
           is_active: boolean
@@ -3319,6 +3320,7 @@ export type Database = {
           ai_score: number
           avatar_url: string
           bio: string
+          distance_km: number | null
           full_name: string
           id: string
           is_active: boolean

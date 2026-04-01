@@ -7,11 +7,10 @@ import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Svg, { Circle, Path } from 'react-native-svg';
+import RNSvg, { Circle, Path } from 'react-native-svg';
 import { Worklets } from 'react-native-worklets-core';
 import Animated, {
   Easing,
-  interpolate,
   runOnJS,
   useAnimatedProps,
   useAnimatedReaction,
@@ -197,7 +196,7 @@ const buildFaceGuide = (width: number, height: number) => {
   const d = [
     `M ${segments[0][0].x} ${segments[0][0].y}`,
     ...segments.map(
-      ([start, c1, c2, end]) =>
+      ([_start, c1, c2, end]) =>
         `C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${end.x} ${end.y}`,
     ),
   ].join(' ');
@@ -314,6 +313,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const [showLiveLivenessCamera, setShowLiveLivenessCamera] = useState(false);
   const [liveCameraReady, setLiveCameraReady] = useState(false);
   const [liveRecording, setLiveRecording] = useState(false);
+  const [liveCameraIssue, setLiveCameraIssue] = useState<string | null>(null);
   const [liveRecordingProgress, setLiveRecordingProgress] = useState(0);
   const [liveHasFace, setLiveHasFace] = useState(false);
   const [liveFaceCentered, setLiveFaceCentered] = useState(false);
@@ -444,6 +444,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     setShowLiveLivenessCamera(false);
     setLiveCameraReady(false);
     setLiveRecording(false);
+    setLiveCameraIssue(null);
     setLiveRecordingProgress(0);
     setLiveHasFace(false);
     setLiveFaceCentered(false);
@@ -579,12 +580,24 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   };
 
   const openLiveLivenessCamera = async () => {
+    setLiveCameraIssue(null);
     const cameraPermission = await VisionCamera.requestCameraPermission();
 
     if (cameraPermission !== 'granted') {
+      setLiveCameraIssue('Camera permission was not granted.');
       Alert.alert(
         'Permission needed',
         'Camera access is required to record the selfie-liveness challenge.',
+      );
+      return;
+    }
+
+    const microphonePermission = await VisionCamera.requestMicrophonePermission();
+    if (microphonePermission !== 'granted') {
+      setLiveCameraIssue('Microphone permission was not granted.');
+      Alert.alert(
+        'Permission needed',
+        'Microphone access is required so the face-check video can record properly in production builds.',
       );
       return;
     }
@@ -649,8 +662,6 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
 
     const faceLeft = face.bounds.x;
     const faceTop = face.bounds.y;
-    const faceRight = face.bounds.x + face.bounds.width;
-    const faceBottom = face.bounds.y + face.bounds.height;
     const faceCenterX = faceLeft + face.bounds.width / 2;
     const faceCenterY = faceTop + face.bounds.height / 2;
 
@@ -771,10 +782,12 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const beginLiveLivenessRecording = async () => {
     if (liveRecording) return;
     if (!device) {
+      setLiveCameraIssue('The front camera could not be started on this device.');
       Alert.alert('Camera unavailable', 'The front camera could not be started on this device.');
       return;
     }
     if (!cameraRef.current || !liveCameraReady) {
+      setLiveCameraIssue('The camera is still starting.');
       Alert.alert('Camera warming up', 'Please wait a moment for the camera to finish starting.');
       return;
     }
@@ -1019,14 +1032,25 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
               device={device}
               isActive={showLiveLivenessCamera}
               video
+              audio
               preview
               frameProcessor={liveFrameProcessor}
-              onInitialized={() => setLiveCameraReady(true)}
-              onStarted={() => setLiveCameraReady(true)}
-              onPreviewStarted={() => setLiveCameraReady(true)}
+              onInitialized={() => {
+                setLiveCameraIssue(null);
+                setLiveCameraReady(true);
+              }}
+              onStarted={() => {
+                setLiveCameraIssue(null);
+                setLiveCameraReady(true);
+              }}
+              onPreviewStarted={() => {
+                setLiveCameraIssue(null);
+                setLiveCameraReady(true);
+              }}
               onError={(error) => {
                 console.error('Live liveness camera error:', error);
                 setLiveCameraReady(false);
+                setLiveCameraIssue(error?.message || 'The live liveness camera failed to start.');
               }}
             />
           ) : (
@@ -1034,7 +1058,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
               <Ionicons name="videocam-off-outline" size={44} color="#fff" />
               <Text style={styles.liveCameraFallbackTitle}>Front camera unavailable</Text>
               <Text style={styles.liveCameraFallbackText}>
-                This device could not start the live face-check camera.
+                {liveCameraIssue || 'This device could not start the live face-check camera.'}
               </Text>
             </View>
           )}
@@ -1056,7 +1080,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
               </View>
               <View style={styles.liveCameraStatusWrap}>
                 <Text style={styles.liveCameraStatusText}>
-                  {!device ? 'No camera' : liveRecording ? 'Recording' : liveCameraReady ? 'Ready' : 'Starting'}
+                  {!device ? 'No camera' : liveRecording ? 'Recording' : liveCameraIssue ? 'Needs attention' : liveCameraReady ? 'Ready' : 'Starting'}
                 </Text>
               </View>
             </View>
@@ -1067,7 +1091,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                 onLayout={handleLiveGuideLayout}
                 style={[styles.liveRingWrap, liveRingWrapAnimatedStyle]}
               >
-                <Svg width={liveGuideWidth} height={liveGuideHeight}>
+                <RNSvg width={liveGuideWidth} height={liveGuideHeight}>
                   <Path
                     d={liveGuide.d}
                     stroke={`${theme.accent}18`}
@@ -1102,7 +1126,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                     strokeLinejoin="round"
                     strokeLinecap="round"
                   />
-                </Svg>
+                </RNSvg>
                 <View style={styles.liveRingCenter}>
                   <Text style={styles.liveRingPercent}>{liveDisplayedProgress}%</Text>
                   <Text style={styles.liveRingHint}>toward 12:00</Text>
@@ -1141,6 +1165,8 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                 <Text style={styles.liveRecordButtonLabel}>
                   {liveRecording
                     ? 'Recording...'
+                    : liveCameraIssue
+                      ? liveCameraIssue
                     : !liveCameraReady
                       ? 'Camera starting...'
                       : liveChallengeComplete
@@ -1190,7 +1216,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
             </Text>
 
             <View style={styles.livenessRingWrap}>
-              <Svg width={ringSize} height={ringSize}>
+              <RNSvg width={ringSize} height={ringSize}>
                 <Circle
                   cx={ringSize / 2}
                   cy={ringSize / 2}
@@ -1211,7 +1237,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                   strokeLinecap="round"
                   transform={`rotate(-90 ${ringSize / 2} ${ringSize / 2})`}
                 />
-              </Svg>
+              </RNSvg>
               <View style={styles.livenessRingCenter}>
                 <Ionicons name="videocam-outline" size={30} color={theme.tint} />
                 <Text style={[styles.livenessRingPercent, { color: titleColor }]}>3 steps</Text>

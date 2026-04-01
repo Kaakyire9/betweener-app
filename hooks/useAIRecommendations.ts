@@ -1,6 +1,10 @@
 import { supabase } from '@/lib/supabase';
 import { Match } from '@/types/match';
 import { computeCompatibilityPercent } from '@/lib/compat/compatibility-score';
+import {
+  pickBetterLocationValue,
+  pickPreferredLocationLabel,
+} from '@/lib/location/location-display';
 import { readCache, writeCache } from '@/lib/persisted-cache';
 import { addBreadcrumb } from '@/lib/telemetry/sentry';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -13,6 +17,7 @@ const DISTANCE_UNIT_KEY = 'distance_unit';
 const KM_PER_MILE = 1.60934;
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
 const ACTIVE_NOW_MS = 3 * 60 * 1000;
+const getPreferredLocationLabel = pickPreferredLocationLabel;
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
 
@@ -39,6 +44,40 @@ const parseDistanceKmFromLabel = (label?: string | null): number | undefined => 
   return undefined;
 };
 
+const mergePreservingLocationMetadata = (prev: Match[], next: Match[]): Match[] => {
+  if (!prev.length || !next.length) return next;
+  const prevById = new Map(prev.map((item) => [String(item.id), item]));
+  return next.map((item) => {
+    const prior = prevById.get(String(item.id));
+    if (!prior) return item;
+    const mergedCity = pickBetterLocationValue((item as any).city, (prior as any).city, {
+      preferShorter: true,
+      avoidAdministrative: true,
+    });
+    const mergedLocation = pickBetterLocationValue(
+      (item as any).location,
+      (prior as any).location ?? mergedCity,
+      { preferShorter: true, avoidAdministrative: true },
+    );
+    const mergedRegion = pickBetterLocationValue((item as any).region, (prior as any).region, {
+      preferShorter: true,
+      avoidAdministrative: true,
+    });
+    return {
+      ...prior,
+      ...item,
+      city: mergedCity || undefined,
+      location: mergedLocation || undefined,
+      region: mergedRegion || undefined,
+      current_country: (item as any).current_country ?? (prior as any).current_country,
+      current_country_code: (item as any).current_country_code ?? (prior as any).current_country_code,
+      location_precision: (item as any).location_precision ?? (prior as any).location_precision,
+      distanceKm: typeof (item as any).distanceKm === 'number' ? (item as any).distanceKm : (prior as any).distanceKm,
+      distance: (item as any).distance || (prior as any).distance,
+    } as Match;
+  });
+};
+
 // Format distance with sensible rounding and short strings
 function formatDistance(distanceKm?: number | null, fallback?: string, unit: DistanceUnit = 'km') {
   if (distanceKm == null || Number.isNaN(Number(distanceKm))) {
@@ -59,6 +98,19 @@ function formatDistance(distanceKm?: number | null, fallback?: string, unit: Dis
   const rounded = Math.round(value);
   const label = resolvedUnit === 'mi' && rounded === 1 ? unitSingular : unitPlural;
   return `${rounded} ${label} away`;
+}
+
+function computeHaversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const toRad = (v: number) => (v * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
 }
 
 const isActiveNowFromLastActive = (online: boolean | null | undefined, lastActive?: string | null) => {
@@ -229,7 +281,7 @@ export default function useAIRecommendations(
   useEffect(() => {
     setMatches((prev) =>
       prev.map((m) => {
-        const fallback = (m as any).region || (m as any).location || m.distance;
+        const fallback = getPreferredLocationLabel(m as any) || m.distance;
         let distanceKm = (m as any).distanceKm;
         if (typeof distanceKm !== 'number' || Number.isNaN(distanceKm)) {
           distanceKm = parseDistanceKmFromLabel(m.distance);
@@ -485,7 +537,7 @@ export default function useAIRecommendations(
           tagline: profileData.bio || '',
           interests: matchedInterests || [],
           avatar_url: profileData.avatar_url || undefined,
-          distance: profileData.region || '',
+          distance: getPreferredLocationLabel(profileData) || '',
           isActiveNow: false,
           lastActive: null as any,
           verified: false,
@@ -671,6 +723,30 @@ export default function useAIRecommendations(
           return undefined;
         };
 
+        let rpcViewerCoordsLoaded = false;
+        let rpcViewerCoords: { latitude?: number; longitude?: number } | null = null;
+        const loadRpcViewerCoords = async () => {
+          if (rpcViewerCoordsLoaded) return rpcViewerCoords;
+          rpcViewerCoordsLoaded = true;
+          try {
+            const { data: myProfile, error: myErr } = await supabase
+              .from('profiles')
+              .select('latitude, longitude')
+              .eq('id', userId)
+              .limit(1)
+              .single();
+            if (!myErr && myProfile) {
+              rpcViewerCoords = {
+                latitude: toNum((myProfile as any).latitude),
+                longitude: toNum((myProfile as any).longitude),
+              };
+            }
+          } catch {
+            rpcViewerCoords = null;
+          }
+          return rpcViewerCoords;
+        };
+
         const enrichRpcRowsWithInterests = async (rows: any[]) => {
           if (!Array.isArray(rows) || rows.length === 0) return rows;
           const ids = rows.map((row) => row?.id).filter(Boolean);
@@ -681,7 +757,18 @@ export default function useAIRecommendations(
             .map((row) => row?.id)
             .filter(Boolean);
 
-          const genderMap: Record<string, string | null> = {};
+          const profileMetaMap: Record<
+            string,
+            {
+              gender?: string | null;
+              city?: string | null;
+              location?: string | null;
+              region?: string | null;
+              current_country?: string | null;
+              current_country_code?: string | null;
+              location_precision?: string | null;
+            }
+          > = {};
           try {
             const interestsMap: Record<string, string[]> = {};
 
@@ -709,13 +796,21 @@ export default function useAIRecommendations(
 
             const { data: profileRows, error: profileErr } = await supabase
               .from('profiles')
-              .select('id, gender')
+              .select('id, gender, city, location, region, current_country, current_country_code, location_precision')
               .in('id', ids);
 
             if (!profileErr && Array.isArray(profileRows)) {
               for (const row of profileRows as any[]) {
                 if (!row?.id) continue;
-                genderMap[String(row.id)] = row.gender ?? null;
+                profileMetaMap[String(row.id)] = {
+                  gender: row.gender ?? null,
+                  city: row.city ?? null,
+                  location: row.location ?? null,
+                  region: row.region ?? null,
+                  current_country: row.current_country ?? null,
+                  current_country_code: row.current_country_code ?? null,
+                  location_precision: row.location_precision ?? null,
+                };
               }
             }
 
@@ -725,17 +820,46 @@ export default function useAIRecommendations(
                 Array.isArray(row?.interests) && row.interests.length > 0
                   ? row.interests
                   : interestsMap[row?.id] ?? [],
-              gender: row?.gender ?? genderMap[String(row?.id)] ?? null,
+              gender: row?.gender ?? profileMetaMap[String(row?.id)]?.gender ?? null,
+              city: row?.city ?? profileMetaMap[String(row?.id)]?.city ?? null,
+              location: row?.location ?? profileMetaMap[String(row?.id)]?.location ?? null,
+              region: row?.region ?? profileMetaMap[String(row?.id)]?.region ?? null,
+              current_country: row?.current_country ?? profileMetaMap[String(row?.id)]?.current_country ?? null,
+              current_country_code: row?.current_country_code ?? profileMetaMap[String(row?.id)]?.current_country_code ?? null,
+              location_precision: row?.location_precision ?? profileMetaMap[String(row?.id)]?.location_precision ?? null,
             }));
           } catch {
             return rows;
           }
         };
 
-        const mapRpcRow = (p: any, includeDistanceKm: boolean): Match => {
+        const mapRpcRow = (
+          p: any,
+          includeDistanceKm: boolean,
+          fallbackCoords?: { latitude?: number; longitude?: number } | null,
+        ): Match => {
           const interestsArr = Array.isArray(p?.interests) ? p.interests : [];
           const aiScore = toNum(p?.ai_score) ?? toNum(p?.compatibility);
-          const distanceKm = includeDistanceKm ? toNum(p?.distance_km) : undefined;
+          let distanceKm = includeDistanceKm ? toNum(p?.distance_km) : undefined;
+          if (
+            includeDistanceKm &&
+            (typeof distanceKm !== 'number' || Number.isNaN(distanceKm)) &&
+            fallbackCoords?.latitude != null &&
+            fallbackCoords?.longitude != null &&
+            toNum(p?.latitude) != null &&
+            toNum(p?.longitude) != null
+          ) {
+            try {
+              distanceKm = computeHaversineKm(
+                Number(fallbackCoords.latitude),
+                Number(fallbackCoords.longitude),
+                Number(toNum(p?.latitude)),
+                Number(toNum(p?.longitude)),
+              );
+            } catch {
+              distanceKm = undefined;
+            }
+          }
 
           return ({
             id: p.id,
@@ -745,8 +869,8 @@ export default function useAIRecommendations(
             interests: interestsArr,
             avatar_url: p.avatar_url || undefined,
             distance: includeDistanceKm
-              ? formatDistance(distanceKm, p.location || p.region, unitForFormat)
-              : (p.location || p.region || ''),
+              ? formatDistance(distanceKm, getPreferredLocationLabel(p), unitForFormat)
+              : (getPreferredLocationLabel(p) || ''),
             distanceKm: distanceKm,
             isActiveNow: isActiveNowFromLastActive(!!p.online, p.last_active ?? null),
             lastActive: p.last_active ?? null,
@@ -759,6 +883,7 @@ export default function useAIRecommendations(
               : ((p as any).personality_type ? [(p as any).personality_type] : []),
             compatibility: typeof aiScore === 'number' ? aiScore : undefined,
             profileVideo: (p as any).profile_video || undefined,
+            city: p.city || undefined,
             location: p.location || undefined,
             tribe: p.tribe,
             religion: p.religion,
@@ -786,12 +911,23 @@ export default function useAIRecommendations(
             }
             if (!error && Array.isArray(data)) {
               const enriched = await enrichRpcRowsWithInterests(data);
-              const mapped = enriched.map((p: any) => mapRpcRow(p, true));
+              const needsDistanceFallback = enriched.some(
+                (p: any) =>
+                  toNum(p?.distance_km) == null &&
+                  toNum(p?.latitude) != null &&
+                  toNum(p?.longitude) != null,
+              );
+              const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
+              const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
               const filtered = filterDiscoverable(mapped);
-              setMatches(filtered);
+              let mergedFiltered = filtered;
+              setMatches((prev) => {
+                mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
+                return mergedFiltered;
+              });
               setLastError(null);
               setLastFetchedAt(Date.now());
-              void persistMatchesCache(filtered);
+              void persistMatchesCache(mergedFiltered);
               if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] nearby rpc result', { count: mapped.length });
               addBreadcrumb('[recs] fetch_ok', { fetchId, mode, rows: mapped.length });
               return;
@@ -817,12 +953,23 @@ export default function useAIRecommendations(
             }
             if (!error && Array.isArray(data)) {
               const enriched = await enrichRpcRowsWithInterests(data);
-              const mapped = enriched.map((p: any) => mapRpcRow(p, false));
+              const needsDistanceFallback = enriched.some(
+                (p: any) =>
+                  toNum(p?.distance_km) == null &&
+                  toNum(p?.latitude) != null &&
+                  toNum(p?.longitude) != null,
+              );
+              const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
+              const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
               const filtered = filterDiscoverable(mapped);
-              setMatches(filtered);
+              let mergedFiltered = filtered;
+              setMatches((prev) => {
+                mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
+                return mergedFiltered;
+              });
               setLastError(null);
               setLastFetchedAt(Date.now());
-              void persistMatchesCache(filtered);
+              void persistMatchesCache(mergedFiltered);
               if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] active rpc result', { count: mapped.length });
               addBreadcrumb('[recs] fetch_ok', { fetchId, mode, rows: mapped.length });
               return;
@@ -849,12 +996,23 @@ export default function useAIRecommendations(
             }
             if (!error && Array.isArray(data)) {
               const enriched = await enrichRpcRowsWithInterests(data);
-              const mapped = enriched.map((p: any) => mapRpcRow(p, true));
+              const needsDistanceFallback = enriched.some(
+                (p: any) =>
+                  toNum(p?.distance_km) == null &&
+                  toNum(p?.latitude) != null &&
+                  toNum(p?.longitude) != null,
+              );
+              const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
+              const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
               const filtered = filterDiscoverable(mapped);
-              setMatches(filtered);
+              let mergedFiltered = filtered;
+              setMatches((prev) => {
+                mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
+                return mergedFiltered;
+              });
               setLastError(null);
               setLastFetchedAt(Date.now());
-              void persistMatchesCache(filtered);
+              void persistMatchesCache(mergedFiltered);
               if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] forYou rpc result', { count: mapped.length });
               addBreadcrumb('[recs] fetch_ok', { fetchId, mode, rows: mapped.length });
               return;
@@ -947,9 +1105,9 @@ export default function useAIRecommendations(
         // due to missing columns (Postgres error 42703), retry with a
         // minimal safe column list to avoid falling back to mocks.
         const extendedSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
+          'id, user_id, full_name, age, bio, avatar_url, city, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
         const minimalSelect =
-          'id, user_id, full_name, age, bio, avatar_url, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
+          'id, user_id, full_name, age, bio, avatar_url, city, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
 
         let data: any[] | null = null;
         let error: any = null;
@@ -1049,16 +1207,6 @@ export default function useAIRecommendations(
             // ignore profile interests errors
           }
 
-          const haversineKm = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-            const toRad = (v: number) => (v * Math.PI) / 180;
-            const R = 6371; // km
-            const dLat = toRad(lat2 - lat1);
-            const dLon = toRad(lon2 - lon1);
-            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-            return R * c;
-          };
-
           const mapped: Match[] = data.map((p: any) => {
             // build interests: prefer interestsMap, fallback to region/tribe
             let interestsArr: string[] = Array.isArray(interestsMap[p.id]) ? interestsMap[p.id].map((i: any) => (typeof i === 'string' ? i : i?.name || String(i))) : [];
@@ -1068,14 +1216,14 @@ export default function useAIRecommendations(
             let distanceKm: number | undefined;
             if (userCoords && p.latitude != null && p.longitude != null && userCoords.latitude != null && userCoords.longitude != null) {
               try {
-                const km = haversineKm(userCoords.latitude!, userCoords.longitude!, Number(p.latitude), Number(p.longitude));
-                distanceStr = formatDistance(km, p.location || p.region, unitForFormat);
+                const km = computeHaversineKm(userCoords.latitude!, userCoords.longitude!, Number(p.latitude), Number(p.longitude));
+                distanceStr = formatDistance(km, getPreferredLocationLabel(p), unitForFormat);
                 distanceKm = km;
               } catch (_e) {
-                distanceStr = p.location || p.region || '';
+                distanceStr = getPreferredLocationLabel(p) || '';
               }
-            } else if (p.location || p.region) {
-              distanceStr = p.location || p.region || '';
+            } else if (p.location || p.region || p.current_country) {
+              distanceStr = getPreferredLocationLabel(p) || '';
             }
 
             const ptags = Array.isArray(p.personality_tags) ? p.personality_tags.map((t: any) => (typeof t === 'string' ? t : t?.name || String(t))) : [];
@@ -1099,6 +1247,7 @@ export default function useAIRecommendations(
               personalityTags: ptags || [],
               compatibility: typeof compatibility === 'number' ? compatibility : undefined,
               profileVideo: p.profile_video || undefined,
+              city: p.city || undefined,
               location: p.location || undefined,
               tribe: p.tribe,
               religion: p.religion,
@@ -1113,10 +1262,14 @@ export default function useAIRecommendations(
             } as Match);
           });
           const filtered = filterDiscoverable(mapped);
-          setMatches(filtered);
+          let mergedFiltered = filtered;
+          setMatches((prev) => {
+            mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
+            return mergedFiltered;
+          });
           setLastError(null);
           setLastFetchedAt(Date.now());
-          void persistMatchesCache(filtered);
+          void persistMatchesCache(mergedFiltered);
           if (typeof __DEV__ !== 'undefined' && __DEV__) {
             console.log('[useAIRecommendations] fetched matches from server', { count: mapped.length, sample: mapped.slice(0, 3) });
           }
@@ -1173,7 +1326,7 @@ export default function useAIRecommendations(
       // fetch optional profile fields
       const { data: profileData } = await supabase
         .from('profiles')
-              .select('id, profile_video, latitude, longitude, region, tribe, religion, current_country, current_country_code, location_precision, personality_type, online, is_active, last_active, verification_level')
+              .select('id, city, location, profile_video, latitude, longitude, region, tribe, religion, current_country, current_country_code, location_precision, personality_type, online, is_active, last_active, verification_level')
         .eq('id', profileId)
         .limit(1)
         .single();
@@ -1212,15 +1365,17 @@ export default function useAIRecommendations(
             : (m as any).personalityTags || [];
           const interestsFinal = (interestsArr && interestsArr.length > 0) ? interestsArr : ((m as any).interests && (m as any).interests.length > 0 ? (m as any).interests : [profileData?.region, profileData?.tribe].filter(Boolean));
           const commonInterests = computeSharedInterests((m as any).commonInterests ?? [], interestsFinal || []);
-          merged = {
-            ...m,
-            profileVideo: signedProfileVideo || (m as any).profileVideo,
-            personalityTags: personality,
-            interests: interestsFinal,
-            commonInterests,
-            tribe: profileData?.tribe ?? (m as any).tribe,
-            religion: profileData?.religion ?? (m as any).religion,
-            region: profileData?.region ?? (m as any).region,
+            merged = {
+              ...m,
+              profileVideo: signedProfileVideo || (m as any).profileVideo,
+              personalityTags: personality,
+              interests: interestsFinal,
+              commonInterests,
+              city: profileData?.city ?? (m as any).city,
+              location: profileData?.location ?? (m as any).location,
+              tribe: profileData?.tribe ?? (m as any).tribe,
+              religion: profileData?.religion ?? (m as any).religion,
+              region: profileData?.region ?? (m as any).region,
             current_country: profileData?.current_country ?? (m as any).current_country,
             current_country_code: profileData?.current_country_code ?? (m as any).current_country_code,
             location_precision: profileData?.location_precision ?? (m as any).location_precision,

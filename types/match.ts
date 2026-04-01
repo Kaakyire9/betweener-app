@@ -5,6 +5,7 @@ export type Match = {
   tagline?: string;
   bio?: string;
   location?: string;
+  city?: string;
   tribe?: string;
   religion?: string;
   gender?: string;

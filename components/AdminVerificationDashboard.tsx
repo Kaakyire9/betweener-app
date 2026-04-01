@@ -1,4 +1,4 @@
-﻿import { Colors } from "@/constants/theme";
+import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessAdminTools } from "@/lib/internal-tools";

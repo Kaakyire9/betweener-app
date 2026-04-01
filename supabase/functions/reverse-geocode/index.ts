@@ -21,6 +21,74 @@ const buildLocationLabel = (city?: string, region?: string, country?: string) =>
   return region || country || ''
 }
 
+const normalizePlace = (value?: string | null) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+
+const stripAdministrativeSuffix = (value?: string | null) => {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  const cleaned = raw
+    .replace(/\bmetropolitan municipality\b/gi, '')
+    .replace(/\bmetropolitan district\b/gi, '')
+    .replace(/\bmunicipal district\b/gi, '')
+    .replace(/\bmetropolitan\b/gi, '')
+    .replace(/\bmunicipality\b/gi, '')
+    .replace(/\bdistrict\b/gi, '')
+    .replace(/\bcounty\b/gi, '')
+    .replace(/\bregion\b/gi, '')
+    .replace(/\bprovince\b/gi, '')
+    .replace(/\bstate\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[,\-–]+$/g, '')
+    .trim()
+
+  return cleaned || raw
+}
+
+const resolveLocality = (address: Record<string, unknown>) => {
+  const coarseRegion = String(address.state || address.region || '').trim()
+  const coarseCountry = String(address.country || '').trim()
+  const coarseSet = new Set(
+    [coarseRegion, coarseCountry]
+      .map(normalizePlace)
+      .filter(Boolean),
+  )
+
+  const candidates = [
+    address.city,
+    address.town,
+    address.village,
+    address.municipality,
+    address.county,
+    address.state_district,
+    address.city_district,
+    address.suburb,
+    address.neighbourhood,
+    address.hamlet,
+  ]
+
+  for (const candidate of candidates) {
+    const trimmed = String(candidate || '').trim()
+    if (!trimmed) continue
+    const normalized = normalizePlace(trimmed)
+    if (coarseSet.has(normalized)) continue
+
+    const cleaned = stripAdministrativeSuffix(trimmed)
+    const normalizedCleaned = normalizePlace(cleaned)
+    if (normalizedCleaned && !coarseSet.has(normalizedCleaned)) {
+      return cleaned
+    }
+
+    return trimmed
+  }
+
+  return ''
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -83,15 +151,7 @@ serve(async (req) => {
 
     const data = await geoRes.json()
     const address = data?.address || {}
-    const city =
-      address.city ||
-      address.town ||
-      address.village ||
-      address.municipality ||
-      address.city_district ||
-      address.suburb ||
-      address.neighbourhood ||
-      address.hamlet
+    const city = resolveLocality(address)
     const region = address.state || address.region || address.county
     const country = address.country
     const countryCode = address.country_code ? String(address.country_code).toUpperCase() : null

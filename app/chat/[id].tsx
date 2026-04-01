@@ -59,7 +59,7 @@ import {
 } from "react-native";
 import { PinchGestureHandler, State } from "react-native-gesture-handler";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import RNSvg, { Path } from "react-native-svg";
 import { WebView } from "react-native-webview";
 import { encodeBase64 } from "tweetnacl-util";
@@ -75,8 +75,8 @@ const GOOGLE_MAPS_NATIVE_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 const GOOGLE_MAPS_WEB_API_KEY =
   process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY || GOOGLE_MAPS_NATIVE_API_KEY;
 const GOOGLE_MAPS_MAP_ID = process.env.EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID;
-const LOCATION_PREVIEW_WIDTH = Math.min(screenWidth * 0.72, 320);
-const LOCATION_PREVIEW_HEIGHT = 180;
+const LOCATION_PREVIEW_WIDTH = Math.min(screenWidth * 0.68, 296);
+const LOCATION_PREVIEW_HEIGHT = 164;
 const LIVE_LOCATION_PRESETS = [15, 60, 480] as const;
 const FALLBACK_BETWEENER_DATE_PICKS = [
   {
@@ -878,6 +878,10 @@ type MessageRowItemProps = {
   item: MessageType;
   isMyMessage: boolean;
   showAvatar: boolean;
+  showAvatarSpacer: boolean;
+  isGroupedWithPrev: boolean;
+  isGroupedWithNext: boolean;
+  shouldAnimateEntry: boolean;
   isPlaying: boolean;
   isReactionOpen: boolean;
   isFocused: boolean;
@@ -936,6 +940,13 @@ const withAlpha = (hex: string, alpha: number) => {
   const g = (bigint >> 8) & 255;
   const b = bigint & 255;
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+};
+
+const formatVoiceDuration = (seconds: number) => {
+  const safeSeconds = Math.max(0, Math.round(seconds || 0));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remaining = `${safeSeconds % 60}`.padStart(2, '0');
+  return `${minutes}:${remaining}`;
 };
 
 const getReceiptIconState = (status: MessageType['status'], isDark: boolean): ReceiptIconState => {
@@ -1152,6 +1163,10 @@ const MessageRowItem = memo(
     item,
     isMyMessage,
     showAvatar,
+    showAvatarSpacer,
+    isGroupedWithPrev,
+    isGroupedWithNext,
+    shouldAnimateEntry,
     isPlaying,
     isReactionOpen,
     isFocused,
@@ -1254,6 +1269,10 @@ const MessageRowItem = memo(
     const previousDatePlanStatus = useRef(datePlanStatus);
     const reactionEntrance = useRef(new Animated.Value(item.reactions.length > 0 ? 1 : 0)).current;
     const previousReactionCount = useRef(item.reactions.length);
+    const entryAnim = useRef(new Animated.Value(shouldAnimateEntry ? 0 : 1)).current;
+    const receiptPulse = useRef(new Animated.Value(1)).current;
+    const reactionBubblePulse = useRef(new Animated.Value(1)).current;
+    const previousReceiptStatus = useRef(item.status);
     const focusPulseStyle = useMemo(() => ({
       opacity: focusPulse,
       transform: [
@@ -1339,6 +1358,39 @@ const MessageRowItem = memo(
         },
       ],
     }) as const, [reactionEntrance]);
+    const rowEntranceStyle = useMemo(() => ({
+      opacity: entryAnim,
+      transform: [
+        {
+          translateY: entryAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [12, 0],
+          }),
+        },
+        {
+          translateX: entryAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [isMyMessage ? 10 : -10, 0],
+          }),
+        },
+        {
+          scale: entryAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.985, 1],
+          }),
+        },
+      ],
+    }) as const, [entryAnim, isMyMessage]);
+    const receiptPulseStyle = useMemo(() => ({
+      transform: [{ scale: receiptPulse }],
+      opacity: receiptPulse.interpolate({
+        inputRange: [0.94, 1, 1.08],
+        outputRange: [0.88, 1, 1],
+      }),
+    }) as const, [receiptPulse]);
+    const reactionBubblePulseStyle = useMemo(() => ({
+      transform: [{ scale: reactionBubblePulse }],
+    }) as const, [reactionBubblePulse]);
     const acceptedLockInHeaderStyle = useMemo(() => ({
       opacity: acceptedLockIn.interpolate({
         inputRange: [0, 1],
@@ -1379,6 +1431,21 @@ const MessageRowItem = memo(
     );
 
     useEffect(() => {
+      if (!shouldAnimateEntry) {
+        entryAnim.setValue(1);
+        return;
+      }
+      entryAnim.stopAnimation();
+      entryAnim.setValue(0);
+      Animated.spring(entryAnim, {
+        toValue: 1,
+        friction: 9,
+        tension: 84,
+        useNativeDriver: true,
+      }).start();
+    }, [entryAnim, shouldAnimateEntry]);
+
+    useEffect(() => {
       if (!isFocused) return;
       focusPulse.stopAnimation();
       focusPulse.setValue(0);
@@ -1395,6 +1462,31 @@ const MessageRowItem = memo(
         }),
       ]).start();
     }, [focusPulse, focusToken, isFocused]);
+
+    useEffect(() => {
+      if (!isMyMessage) {
+        previousReceiptStatus.current = item.status;
+        return;
+      }
+      if (previousReceiptStatus.current === item.status) return;
+      receiptPulse.stopAnimation();
+      receiptPulse.setValue(0.94);
+      Animated.sequence([
+        Animated.timing(receiptPulse, {
+          toValue: 1.08,
+          duration: 140,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(receiptPulse, {
+          toValue: 1,
+          duration: 180,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
+      previousReceiptStatus.current = item.status;
+    }, [isMyMessage, item.status, receiptPulse]);
 
     useEffect(() => {
       const previousStatus = previousDatePlanStatus.current;
@@ -1423,6 +1515,7 @@ const MessageRowItem = memo(
     useEffect(() => {
       if (item.reactions.length === 0) {
         reactionEntrance.setValue(0);
+        reactionBubblePulse.setValue(1);
         previousReactionCount.current = 0;
         return;
       }
@@ -1430,21 +1523,37 @@ const MessageRowItem = memo(
       if (previousReactionCount.current !== item.reactions.length) {
         reactionEntrance.stopAnimation();
         reactionEntrance.setValue(0);
+        reactionBubblePulse.stopAnimation();
+        reactionBubblePulse.setValue(0.985);
         Animated.spring(reactionEntrance, {
           toValue: 1,
           friction: 8,
           tension: 68,
           useNativeDriver: true,
         }).start();
+        Animated.sequence([
+          Animated.timing(reactionBubblePulse, {
+            toValue: 1.028,
+            duration: 120,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(reactionBubblePulse, {
+            toValue: 1,
+            duration: 170,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]).start();
       } else {
         reactionEntrance.setValue(1);
+        reactionBubblePulse.setValue(1);
       }
 
       previousReactionCount.current = item.reactions.length;
-    }, [item.reactions.length, reactionEntrance]);
+    }, [item.reactions.length, reactionBubblePulse, reactionEntrance]);
     const waveformBars = useMemo(() => {
       if (item.type !== 'voice' || !item.voiceMessage?.waveform) return null;
-      if (!isFocused && !isPlaying) return null;
       return item.voiceMessage.waveform.map((height, idx) => (
         <Animated.View
           key={idx}
@@ -1454,7 +1563,7 @@ const MessageRowItem = memo(
               height: height * 20,
               backgroundColor: isPlaying
                 ? (isMyMessage ? Colors.light.background : theme.tint)
-                : (isMyMessage ? withAlpha(Colors.light.background, 0.5) : withAlpha(theme.text, isDark ? 0.35 : 0.25)),
+                : (isMyMessage ? withAlpha(Colors.light.background, 0.62) : withAlpha(theme.text, isDark ? 0.42 : 0.28)),
             },
           ]}
         />
@@ -1689,10 +1798,12 @@ const MessageRowItem = memo(
     }
 
     return (
-      <View
+      <Animated.View
         style={[
           styles.messageContainer,
+          isGroupedWithNext ? styles.messageContainerGrouped : null,
           hasReactionSummary ? styles.messageContainerWithReaction : null,
+          rowEntranceStyle,
         ]}
       >
         {isFocused ? (
@@ -1749,16 +1860,24 @@ const MessageRowItem = memo(
             isMyMessage ? styles.myMessageContainer : styles.theirMessageContainer,
           ]}
         >
-        {showAvatar && (
+        {showAvatar ? (
           <Image
             source={{ uri: userAvatar }}
             style={styles.messageAvatar}
           />
-          )}
+          ) : showAvatarSpacer ? (
+            <View style={styles.messageAvatarSpacer} />
+          ) : null}
 
-          <View style={[
+          <Animated.View style={[
             styles.messageBubble,
             isMyMessage ? styles.myMessageBubble : styles.theirMessageBubble,
+            isMyMessage
+              ? (isGroupedWithPrev ? styles.myMessageBubbleGroupedTop : null)
+              : (isGroupedWithPrev ? styles.theirMessageBubbleGroupedTop : null),
+            isMyMessage
+              ? (isGroupedWithNext ? styles.myMessageBubbleGroupedBottom : null)
+              : (isGroupedWithNext ? styles.theirMessageBubbleGroupedBottom : null),
             item.deletedForAll && styles.deletedMessageBubble,
             item.type === 'mood_sticker' && styles.stickerBubble,
             item.type === 'voice' && styles.voiceBubble,
@@ -1768,6 +1887,7 @@ const MessageRowItem = memo(
             item.type === 'date_plan' && (isMyMessage ? styles.datePlanBubbleMy : styles.datePlanBubbleTheir),
             item.type === 'date_plan' && styles.datePlanBubble,
             item.type === 'location' && styles.locationBubble,
+            reactionBubblePulseStyle,
           ]}>
             {isFocused ? (
               <Animated.View
@@ -1881,12 +2001,14 @@ const MessageRowItem = memo(
                     {timeLabel}
                   </Text>
                   {isMyMessage && (
-                    <MaterialCommunityIcons
-                      name={receiptIcon?.name || 'clock-outline'}
-                      size={receiptIcon?.size || 13}
-                      color={receiptIcon?.color || '#C6D7D3'}
-                      style={styles.inlineMetaIconText}
-                    />
+                    <Animated.View style={receiptPulseStyle}>
+                      <MaterialCommunityIcons
+                        name={receiptIcon?.name || 'clock-outline'}
+                        size={receiptIcon?.size || 13}
+                        color={receiptIcon?.color || '#C6D7D3'}
+                        style={styles.inlineMetaIconText}
+                      />
+                    </Animated.View>
                   )}
                 </View>
               </View>
@@ -1927,7 +2049,11 @@ const MessageRowItem = memo(
             ) : item.type === 'voice' ? (
               <View style={styles.voiceMessageContainer}>
                 <TouchableOpacity
-                  style={[styles.voicePlayButton, { backgroundColor: isMyMessage ? Colors.light.background : theme.tint }]}
+                  style={[
+                    styles.voicePlayButton,
+                    isMyMessage ? styles.voicePlayButtonMy : styles.voicePlayButtonTheir,
+                    isPlaying && (isMyMessage ? styles.voicePlayButtonMyActive : styles.voicePlayButtonTheirActive),
+                  ]}
                   onPress={() => onToggleVoice(item.id)}
                 >
                   <MaterialCommunityIcons
@@ -1937,16 +2063,35 @@ const MessageRowItem = memo(
                   />
                 </TouchableOpacity>
 
-                <View style={styles.voiceWaveform}>
-                  {waveformBars}
+                <View
+                  style={[
+                    styles.voiceWaveformCard,
+                    isMyMessage ? styles.voiceWaveformCardMy : styles.voiceWaveformCardTheir,
+                    isPlaying && (isMyMessage ? styles.voiceWaveformCardMyActive : styles.voiceWaveformCardTheirActive),
+                  ]}
+                >
+                  <View style={styles.voiceWaveform}>
+                    {waveformBars}
+                  </View>
+                  <View
+                    style={[
+                      styles.voiceDurationPill,
+                      isMyMessage ? styles.voiceDurationPillMy : styles.voiceDurationPillTheir,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.voiceDuration,
+                        isMyMessage ? styles.voiceDurationMy : styles.voiceDurationTheir,
+                      ]}
+                    >
+                      {formatVoiceDuration(item.voiceMessage?.duration || 0)}
+                    </Text>
+                  </View>
                 </View>
-
-                <Text style={[styles.voiceDuration, { color: isMyMessage ? Colors.light.background : theme.textMuted }]}>
-                  {Math.floor(item.voiceMessage?.duration || 0)}s
-                </Text>
               </View>
               ) : item.type === 'image' ? (
-                <View style={styles.imageMessageContainer}>
+                <View style={[styles.imageMessageContainer, styles.mediaSurface]}>
                   <Image
                     source={{ uri: item.imageUrl }}
                     style={[
@@ -1954,11 +2099,12 @@ const MessageRowItem = memo(
                       imageSize ? { width: imageSize.width, height: imageSize.height } : null,
                     ]}
                   />
-                  <View
+                  <Animated.View
                     style={[
                       styles.mediaMetaOverlay,
                       isMyMessage ? styles.mediaMetaOverlayMy : styles.mediaMetaOverlayTheir,
                       isMyMessage ? mediaReceiptToneStyle : null,
+                      isMyMessage ? receiptPulseStyle : null,
                     ]}
                     pointerEvents="none"
                   >
@@ -1978,18 +2124,25 @@ const MessageRowItem = memo(
                         style={styles.mediaMetaIcon}
                       />
                     )}
-                  </View>
+                  </Animated.View>
                   {item.text && (
-                    <Text style={[
-                      styles.imageCaption,
-                      isMyMessage ? styles.myMessageText : styles.theirMessageText,
-                    ]}>
-                      {item.text}
-                    </Text>
+                    <View
+                      style={[
+                        styles.mediaCaptionCard,
+                        isMyMessage ? styles.mediaCaptionCardMy : styles.mediaCaptionCardTheir,
+                      ]}
+                    >
+                      <Text style={[
+                        styles.imageCaption,
+                        isMyMessage ? styles.myMessageText : styles.theirMessageText,
+                      ]}>
+                        {item.text}
+                      </Text>
+                    </View>
                   )}
                 </View>
               ) : item.type === 'video' ? (
-                <View style={styles.videoMessageContainer}>
+                <View style={[styles.videoMessageContainer, styles.mediaSurface]}>
                   {item.videoUrl && (
                     <VideoPreview
                       url={item.videoUrl}
@@ -1998,11 +2151,12 @@ const MessageRowItem = memo(
                       onSize={handleVideoSize}
                     />
                   )}
-                  <View
+                  <Animated.View
                     style={[
                       styles.mediaMetaOverlay,
                       isMyMessage ? styles.mediaMetaOverlayMy : styles.mediaMetaOverlayTheir,
                       isMyMessage ? mediaReceiptToneStyle : null,
+                      isMyMessage ? receiptPulseStyle : null,
                     ]}
                     pointerEvents="none"
                   >
@@ -2022,14 +2176,21 @@ const MessageRowItem = memo(
                         style={styles.mediaMetaIcon}
                       />
                     )}
-                  </View>
+                  </Animated.View>
                   {item.text && (
-                    <Text style={[
-                      styles.imageCaption,
-                      isMyMessage ? styles.myMessageText : styles.theirMessageText,
-                    ]}>
-                      {item.text}
-                    </Text>
+                    <View
+                      style={[
+                        styles.mediaCaptionCard,
+                        isMyMessage ? styles.mediaCaptionCardMy : styles.mediaCaptionCardTheir,
+                      ]}
+                    >
+                      <Text style={[
+                        styles.imageCaption,
+                        isMyMessage ? styles.myMessageText : styles.theirMessageText,
+                      ]}>
+                        {item.text}
+                      </Text>
+                    </View>
                   )}
                 </View>
               ) : item.type === 'date_plan' ? (
@@ -2580,115 +2741,129 @@ const MessageRowItem = memo(
                 </View>
               ) : item.type === 'location' ? (
                 <View style={styles.locationMessageContainer}>
-                  {item.location?.mapUrl ? (
-                    <Image
-                      source={{ uri: item.location.mapUrl }}
-                      style={styles.locationMapImage}
-                    />
-                  ) : (
-                    <View style={styles.locationMapPlaceholder}>
-                      <MaterialCommunityIcons name="map-outline" size={28} color={theme.textMuted} />
-                      <Text style={[styles.locationPlaceholderText, { color: theme.textMuted }]}>
-                        Map preview
-                      </Text>
-                    </View>
-                  )}
-                  <View style={styles.locationInfoRow}>
-                    <View style={[styles.locationIconBadge, { backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.15) : withAlpha(theme.tint, 0.14) }]}>
-                      <MaterialCommunityIcons
-                        name={item.location?.live ? "map-marker-radius-outline" : "map-marker-outline"}
-                        size={16}
-                        color={isMyMessage ? Colors.light.background : theme.tint}
+                  <View style={styles.locationMapFrame}>
+                    {item.location?.mapUrl ? (
+                      <Image
+                        source={{ uri: item.location.mapUrl }}
+                        style={styles.locationMapImage}
                       />
-                    </View>
-                    <View style={styles.locationTextBlock}>
-                      <Text
-                        style={[
-                          styles.locationLabelText,
-                          { color: isMyMessage ? Colors.light.background : theme.text },
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {item.location?.label || 'Shared location'}
-                      </Text>
-                      {item.location?.address ? (
+                    ) : (
+                      <View style={styles.locationMapPlaceholder}>
+                        <MaterialCommunityIcons name="map-outline" size={28} color={theme.textMuted} />
+                        <Text style={[styles.locationPlaceholderText, { color: theme.textMuted }]}>
+                          Map preview
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                  <View
+                    style={[
+                      styles.locationDetailsCard,
+                      isMyMessage ? styles.locationDetailsCardMy : styles.locationDetailsCardTheir,
+                    ]}
+                  >
+                    <View style={styles.locationInfoRow}>
+                      <View style={[styles.locationIconBadge, { backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.15) : withAlpha(theme.tint, 0.14) }]}>
+                        <MaterialCommunityIcons
+                          name={item.location?.live ? "map-marker-radius-outline" : "map-marker-outline"}
+                          size={16}
+                          color={isMyMessage ? Colors.light.background : theme.tint}
+                        />
+                      </View>
+                      <View style={styles.locationTextBlock}>
                         <Text
                           style={[
-                            styles.locationAddressText,
-                            { color: isMyMessage ? withAlpha(Colors.light.background, 0.75) : theme.textMuted },
+                            styles.locationLabelText,
+                            { color: isMyMessage ? Colors.light.background : theme.text },
                           ]}
                           numberOfLines={1}
                         >
-                          {item.location.address}
+                          {item.location?.label || 'Shared location'}
                         </Text>
-                      ) : null}
+                        {item.location?.address ? (
+                          <Text
+                            style={[
+                              styles.locationAddressText,
+                              { color: isMyMessage ? withAlpha(Colors.light.background, 0.75) : theme.textMuted },
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {item.location.address}
+                          </Text>
+                        ) : null}
+                      </View>
                     </View>
-                  </View>
-                  <View style={styles.locationRouteRow}>
-                    <MaterialCommunityIcons
-                      name="navigation-variant-outline"
-                      size={12}
-                      color={isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted}
-                    />
-                    <Text
+                    <View
                       style={[
-                        styles.locationRouteText,
-                        { color: isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted },
+                        styles.locationRouteRow,
+                        isMyMessage ? styles.locationRoutePillMy : styles.locationRoutePillTheir,
                       ]}
                     >
-                      Tap for directions
-                    </Text>
-                    <MaterialCommunityIcons
-                      name="chevron-right"
-                      size={14}
-                      color={isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted}
-                    />
-                  </View>
-                  {item.location?.live && (
-                    <View style={styles.locationLiveRow}>
-                      <View style={[styles.locationLiveBadge, { backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.18) : withAlpha(theme.secondary, 0.18) }]}>
-                        <Text
-                          style={[
-                            styles.locationLiveBadgeText,
-                            { color: isMyMessage ? Colors.light.background : theme.secondary },
-                          ]}
-                        >
-                          Live
-                        </Text>
-                      </View>
+                      <MaterialCommunityIcons
+                        name="navigation-variant-outline"
+                        size={12}
+                        color={isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted}
+                      />
                       <Text
                         style={[
-                          styles.locationLiveText,
+                          styles.locationRouteText,
                           { color: isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted },
                         ]}
                       >
-                        {locationRemaining || 'Live'}
+                        Tap for directions
                       </Text>
-                      {isMyMessage && locationIsActive && (
-                        <TouchableOpacity
-                          style={[
-                            styles.locationStopButton,
-                            { borderColor: isMyMessage ? withAlpha(Colors.light.background, 0.45) : withAlpha(theme.text, 0.2) },
-                          ]}
-                          onPress={(event) => {
-                            if (event?.stopPropagation) {
-                              event.stopPropagation();
-                            }
-                            onStopLiveShare(item.id);
-                          }}
-                        >
+                      <MaterialCommunityIcons
+                        name="chevron-right"
+                        size={14}
+                        color={isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted}
+                      />
+                    </View>
+                    {item.location?.live && (
+                      <View style={styles.locationLiveRow}>
+                        <View style={[styles.locationLiveBadge, { backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.18) : withAlpha(theme.secondary, 0.18) }]}>
                           <Text
                             style={[
-                              styles.locationStopText,
-                              { color: isMyMessage ? Colors.light.background : theme.text },
+                              styles.locationLiveBadgeText,
+                              { color: isMyMessage ? Colors.light.background : theme.secondary },
                             ]}
                           >
-                            Stop sharing
+                            Live
                           </Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  )}
+                        </View>
+                        <Text
+                          style={[
+                            styles.locationLiveText,
+                            { color: isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted },
+                          ]}
+                        >
+                          {locationRemaining || 'Live'}
+                        </Text>
+                        {isMyMessage && locationIsActive && (
+                          <TouchableOpacity
+                            style={[
+                              styles.locationStopButton,
+                              { borderColor: isMyMessage ? withAlpha(Colors.light.background, 0.45) : withAlpha(theme.text, 0.2) },
+                            ]}
+                            onPress={(event) => {
+                              if (event?.stopPropagation) {
+                                event.stopPropagation();
+                              }
+                              onStopLiveShare(item.id);
+                            }}
+                          >
+                            <Text
+                              style={[
+                                styles.locationStopText,
+                                { color: isMyMessage ? Colors.light.background : theme.text },
+                              ]}
+                            >
+                              Stop sharing
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    )}
+                  </View>
                 </View>
               ) : item.type === 'document' ? (
                 <View style={styles.documentMessageContainer}>
@@ -2714,10 +2889,22 @@ const MessageRowItem = memo(
                     >
                       {item.document?.name || 'Document'}
                     </Text>
-                    <Text style={[styles.documentHint, { color: isMyMessage ? withAlpha(Colors.light.background, 0.7) : theme.textMuted }]}>
-                      {documentMeta || 'Tap to open'}
-                    </Text>
+                    <View
+                      style={[
+                        styles.documentMetaPill,
+                        isMyMessage ? styles.documentMetaPillMy : styles.documentMetaPillTheir,
+                      ]}
+                    >
+                      <Text style={[styles.documentHint, { color: isMyMessage ? withAlpha(Colors.light.background, 0.78) : theme.textMuted }]}>
+                        {documentMeta || 'Tap to open'}
+                      </Text>
+                    </View>
                   </View>
+                  <MaterialCommunityIcons
+                    name="chevron-right"
+                    size={18}
+                    color={isMyMessage ? withAlpha(Colors.light.background, 0.76) : theme.textMuted}
+                  />
                 </View>
               ) : item.type === 'mood_sticker' ? (
                 <View style={[styles.moodStickerContainer, { backgroundColor: withAlpha(item.sticker?.color || theme.tint, 0.12) }]}>
@@ -2729,12 +2916,13 @@ const MessageRowItem = memo(
               ) : null}
 
             {item.type !== 'text' && item.type !== 'video' && item.type !== 'image' && (
-              <View
+              <Animated.View
                 style={[
                   styles.messageMetaRow,
                   isMyMessage ? styles.messageMetaRight : styles.messageMetaLeft,
                   isMyMessage ? styles.receiptMetaBadge : null,
                   isMyMessage ? receiptBadgeToneStyle : null,
+                  isMyMessage ? receiptPulseStyle : null,
                 ]}
                 pointerEvents="none"
               >
@@ -2754,33 +2942,35 @@ const MessageRowItem = memo(
                     style={styles.messageMetaIcon}
                   />
                 )}
-              </View>
+              </Animated.View>
             )}
 
             {reactionNodes}
 
-            <View
-              pointerEvents="none"
-              style={[
-                styles.bubbleTail,
-                isMyMessage ? styles.bubbleTailRight : styles.bubbleTailLeft,
-              ]}
-            >
-              <RNSvg
-                width="100%"
-                height="100%"
-                viewBox="0 0 16 18"
-                style={!isMyMessage ? styles.bubbleTailSvgLeft : undefined}
+            {!isGroupedWithNext ? (
+              <View
+                pointerEvents="none"
+                style={[
+                  styles.bubbleTail,
+                  isMyMessage ? styles.bubbleTailRight : styles.bubbleTailLeft,
+                ]}
               >
-                <Path
-                  d={CHAT_BUBBLE_TAIL_PATH}
-                  fill={bubbleTailFill}
-                  stroke={bubbleTailStroke}
-                  strokeWidth={bubbleTailStrokeWidth}
-                />
-              </RNSvg>
-            </View>
-          </View>
+                <RNSvg
+                  width="100%"
+                  height="100%"
+                  viewBox="0 0 16 18"
+                  style={!isMyMessage ? styles.bubbleTailSvgLeft : undefined}
+                >
+                  <Path
+                    d={CHAT_BUBBLE_TAIL_PATH}
+                    fill={bubbleTailFill}
+                    stroke={bubbleTailStroke}
+                    strokeWidth={bubbleTailStrokeWidth}
+                  />
+                </RNSvg>
+              </View>
+            ) : null}
+          </Animated.View>
         </Pressable>
 
         {isReactionOpen && (
@@ -2875,13 +3065,17 @@ const MessageRowItem = memo(
             </TouchableOpacity>
           </View>
         )}
-      </View>
+      </Animated.View>
     );
   },
   (prev, next) =>
     prev.item === next.item &&
     prev.isMyMessage === next.isMyMessage &&
     prev.showAvatar === next.showAvatar &&
+    prev.showAvatarSpacer === next.showAvatarSpacer &&
+    prev.isGroupedWithPrev === next.isGroupedWithPrev &&
+    prev.isGroupedWithNext === next.isGroupedWithNext &&
+    prev.shouldAnimateEntry === next.shouldAnimateEntry &&
     prev.isPlaying === next.isPlaying &&
     prev.isReactionOpen === next.isReactionOpen &&
     prev.isFocused === next.isFocused &&
@@ -2920,6 +3114,7 @@ const MessageRowItem = memo(
 MessageRowItem.displayName = "MessageRowItem";
 
 export default function ConversationScreen() {
+  const insets = useSafeAreaInsets();
   const { user, profile } = useAuth();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
@@ -3079,6 +3274,8 @@ export default function ConversationScreen() {
   useEffect(() => {
     // When switching threads, allow the safety prompt to re-evaluate (but it will still be deduped via AsyncStorage).
     setMessagesLoaded(false);
+    seededMessageAnimationsRef.current = false;
+    animatedMessageIdsRef.current.clear();
   }, [routeId]);
 
   useEffect(() => {
@@ -3100,6 +3297,7 @@ export default function ConversationScreen() {
   const [isRecordingPaused, setIsRecordingPaused] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [isUploadingVoice, setIsUploadingVoice] = useState(false);
+  const [isInputFocused, setIsInputFocused] = useState(false);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [showImagePicker, setShowImagePicker] = useState(false);
   const [replyingTo, setReplyingTo] = useState<MessageType | null>(null);
@@ -3597,6 +3795,8 @@ export default function ConversationScreen() {
   
   const messagesRef = useRef<MessageType[]>([]);
   const flatListRef = useRef<FlatList>(null);
+  const animatedMessageIdsRef = useRef<Set<string>>(new Set());
+  const seededMessageAnimationsRef = useRef(false);
   const imageScaleBase = useRef(new Animated.Value(1)).current;
   const imagePinchScale = useRef(new Animated.Value(1)).current;
   const imageScaleRef = useRef(1);
@@ -6020,10 +6220,15 @@ export default function ConversationScreen() {
   }, [closeLocationModal, liveDurationMinutes, selectedPlace, sendLocationMessage, startLiveLocationUpdates]);
 
   const handleInputFocus = useCallback(() => {
+    setIsInputFocused(true);
     if (showImagePicker) {
       closeAttachmentSheet();
     }
   }, [closeAttachmentSheet, showImagePicker]);
+
+  const handleInputBlur = useCallback(() => {
+    setIsInputFocused(false);
+  }, []);
 
   const fetchSystemMessages = useCallback(async () => {
     if (!user?.id || !conversationId) return [] as MessageType[];
@@ -7923,6 +8128,7 @@ export default function ConversationScreen() {
           style={styles.typingAvatar} 
         />
         <View style={styles.typingBubble}>
+          <Text style={styles.typingLabel}>{userName || 'Your match'} is typing</Text>
           <Animated.View style={styles.typingDots}>
             {[0, 1, 2].map((index) => (
               <Animated.View
@@ -8075,6 +8281,12 @@ export default function ConversationScreen() {
   }, []);
 
   messagesRef.current = renderedMessages;
+
+  useEffect(() => {
+    if (!messagesLoaded || seededMessageAnimationsRef.current) return;
+    animatedMessageIdsRef.current = new Set(renderedMessages.map((message) => message.id));
+    seededMessageAnimationsRef.current = true;
+  }, [messagesLoaded, renderedMessages]);
 
   useEffect(() => {
     if (visibleDatePlanIds.length === 0) {
@@ -8617,8 +8829,35 @@ export default function ConversationScreen() {
       const isSystemMessage = item.type === 'system' || item.isSystem;
       const isMyMessage = !isSystemMessage && item.senderId === (user?.id || '');
       const prevMessage = messagesRef.current[index - 1];
-      const prevSenderId = prevMessage?.senderId;
-      const showAvatar = !isSystemMessage && !isMyMessage && !isChatBlocked && (index === 0 || prevSenderId !== item.senderId);
+      const nextMessage = messagesRef.current[index + 1];
+      const prevIsSystemMessage = prevMessage?.type === 'system' || prevMessage?.isSystem;
+      const nextIsSystemMessage = nextMessage?.type === 'system' || nextMessage?.isSystem;
+      const isGroupedWithPrev =
+        !isSystemMessage &&
+        Boolean(
+          prevMessage &&
+            !prevIsSystemMessage &&
+            prevMessage.senderId === item.senderId &&
+            isSameDay(prevMessage.timestamp, item.timestamp)
+        );
+      const isGroupedWithNext =
+        !isSystemMessage &&
+        Boolean(
+          nextMessage &&
+            !nextIsSystemMessage &&
+            nextMessage.senderId === item.senderId &&
+            isSameDay(nextMessage.timestamp, item.timestamp)
+        );
+      const showAvatar =
+        !isSystemMessage && !isMyMessage && !isChatBlocked && !isGroupedWithNext;
+      const showAvatarSpacer =
+        !isSystemMessage && !isMyMessage && !isChatBlocked && isGroupedWithNext;
+      const shouldAnimateEntry =
+        seededMessageAnimationsRef.current &&
+        !animatedMessageIdsRef.current.has(item.id);
+      if (shouldAnimateEntry) {
+        animatedMessageIdsRef.current.add(item.id);
+      }
       const isPlaying = playingVoiceId === item.id;
       const isReactionOpen = showReactions === item.id;
       const isFocused = focusedMessageId === item.id;
@@ -8643,6 +8882,10 @@ export default function ConversationScreen() {
             item={item}
             isMyMessage={isMyMessage}
             showAvatar={showAvatar}
+            showAvatarSpacer={showAvatarSpacer}
+            isGroupedWithPrev={isGroupedWithPrev}
+            isGroupedWithNext={isGroupedWithNext}
+            shouldAnimateEntry={shouldAnimateEntry}
             isPlaying={isPlaying}
             isReactionOpen={isReactionOpen}
             isFocused={isFocused}
@@ -10793,7 +11036,7 @@ export default function ConversationScreen() {
             </PinchGestureHandler>
           )}
           <TouchableOpacity
-            style={styles.imageViewerClose}
+            style={[styles.imageViewerClose, { top: Math.max(insets.top + 10, 18), right: 16 }]}
             onPress={closeImageViewer}
           >
             <MaterialCommunityIcons name="close" size={20} color={Colors.light.background} />
@@ -10819,7 +11062,7 @@ export default function ConversationScreen() {
             />
           )}
           <TouchableOpacity
-            style={styles.imageViewerClose}
+            style={[styles.imageViewerClose, { top: Math.max(insets.top + 10, 18), right: 16 }]}
             onPress={closeVideoViewer}
           >
             <MaterialCommunityIcons name="close" size={20} color={Colors.light.background} />
@@ -10845,7 +11088,7 @@ export default function ConversationScreen() {
             />
           )}
           <TouchableOpacity
-            style={styles.imageViewerClose}
+            style={[styles.imageViewerClose, { top: Math.max(insets.top + 10, 18), right: 16 }]}
             onPress={closeDocumentViewer}
           >
             <MaterialCommunityIcons name="close" size={20} color={Colors.light.background} />
@@ -11350,142 +11593,151 @@ export default function ConversationScreen() {
           <>
             {/* Enhanced Input Area */}
             <View style={[styles.inputContainer, showImagePicker && styles.inputContainerRaised]}>
-              {/* Left Actions */}
-              <View style={styles.inputLeftActions}>
-                <TouchableOpacity 
-                  style={styles.inputActionButton}
-                  onPress={() => {
-                    if (showImagePicker) {
-                      closeAttachmentSheet();
-                      requestAnimationFrame(() => inputRef.current?.focus());
-                    } else {
-                      openAttachmentSheet();
-                    }
-                  }}
-                >
-                  <MaterialCommunityIcons
-                    name={showImagePicker ? "keyboard-outline" : "plus"}
-                    size={22}
-                    color={theme.textMuted}
-                  />
-                </TouchableOpacity>
-                
-                <TouchableOpacity 
-                  style={styles.inputActionButton}
-                  onPress={() => {
-                    if (showImagePicker) {
-                      closeAttachmentSheet();
-                    }
-                    setShowMoodStickers((prev) => !prev);
-                  }}
-                >
-                  <MaterialCommunityIcons 
-                    name="emoticon-happy" 
-                    size={22} 
-                    color={showMoodStickers ? theme.tint : theme.textMuted} 
-                  />
-                </TouchableOpacity>
-              </View>
-              
-              {/* Text Input */}
-              <TextInput
-                ref={inputRef}
-                style={styles.textInput}
-                value={inputText}
-                onChangeText={handleInputChange}
-                onFocus={handleInputFocus}
-                placeholder={isRecording ? "Recording voice..." : replyingTo ? "Reply..." : "Type a message..."}
-                placeholderTextColor={withAlpha(theme.textMuted, 0.7)}
-                multiline
-                maxLength={500}
-                editable={!isRecording}
-              />
-              
-              {/* Right Actions */}
-              <View style={styles.inputRightActions}>
-                {/* Voice Recording Button */}
-                {!inputText.trim() && !isRecording && (
-                  <Animated.View style={{ transform: [{ scale: voiceButtonScale }] }}>
-                    <Pressable
-                      style={[
-                        styles.voiceButton,
-                      ]}
-                      onPress={startVoiceRecording}
-                    >
-                      <Animated.View
-                        style={[
-                          styles.voiceButtonInner,
-                          {
-                            opacity: recordingAnimation.interpolate({
-                              inputRange: [0, 1],
-                              outputRange: [1, 0.3],
-                            }),
-                          },
-                        ]}
-                      >
-                        <MaterialCommunityIcons 
-                          name="microphone"
-                          size={20} 
-                          color={Colors.light.background} 
-                        />
-                      </Animated.View>
-                    </Pressable>
-                  </Animated.View>
-                )}
-
-                {!inputText.trim() && isRecording && (
-                  <View style={styles.recordingControls}>
-                    <TouchableOpacity
-                      style={[styles.recordingControlButton, styles.recordingControlDanger]}
-                      onPress={discardVoiceRecording}
-                      disabled={isUploadingVoice}
-                    >
-                      <MaterialCommunityIcons name="trash-can-outline" size={18} color={Colors.light.background} />
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[styles.recordingControlButton, styles.recordingControlPause]}
-                      onPress={isRecordingPaused ? resumeVoiceRecording : pauseVoiceRecording}
-                      disabled={isUploadingVoice}
-                    >
-                      <MaterialCommunityIcons
-                        name={isRecordingPaused ? "play" : "pause"}
-                        size={18}
-                        color={Colors.light.background}
-                      />
-                    </TouchableOpacity>
-
-                    <View style={styles.recordingTimerPill}>
-                      <Text style={styles.recordingTimerText}>
-                        {Math.floor(recordingDuration / 60)}:{`${Math.floor(recordingDuration % 60)}`.padStart(2, '0')}
-                      </Text>
-                    </View>
-
-                    <TouchableOpacity
-                      style={[
-                        styles.recordingControlButton,
-                        styles.recordingControlSend,
-                        isUploadingVoice && styles.recordingControlDisabled,
-                      ]}
-                      onPress={sendVoiceRecording}
-                      disabled={isUploadingVoice}
-                    >
-                      <MaterialCommunityIcons name="send" size={16} color={Colors.light.background} />
-                    </TouchableOpacity>
-                  </View>
-                )}
-                
-                {/* Send Button */}
-                {inputText.trim() && (
+              <View
+                style={[
+                  styles.composerShell,
+                  isInputFocused && styles.composerShellFocused,
+                  showMoodStickers && styles.composerShellAccent,
+                ]}
+              >
+                {/* Left Actions */}
+                <View style={styles.inputLeftActions}>
                   <TouchableOpacity 
                     style={[
-                      styles.sendButtonActive,
+                      styles.inputActionButton,
+                      showImagePicker && styles.inputActionButtonActive,
                     ]}
-                    onPress={sendMessage}
+                    onPress={() => {
+                      if (showImagePicker) {
+                        closeAttachmentSheet();
+                        requestAnimationFrame(() => inputRef.current?.focus());
+                      } else {
+                        openAttachmentSheet();
+                      }
+                    }}
                   >
-                    <MaterialCommunityIcons name="send" size={20} color={Colors.light.background} />
+                    <MaterialCommunityIcons
+                      name={showImagePicker ? "keyboard-outline" : "plus"}
+                      size={20}
+                      color={showImagePicker ? Colors.light.background : theme.textMuted}
+                    />
                   </TouchableOpacity>
-                )}
+                  
+                  <TouchableOpacity 
+                    style={[
+                      styles.inputActionButton,
+                      showMoodStickers && styles.inputActionButtonSecondaryActive,
+                    ]}
+                    onPress={() => {
+                      if (showImagePicker) {
+                        closeAttachmentSheet();
+                      }
+                      setShowMoodStickers((prev) => !prev);
+                    }}
+                  >
+                    <MaterialCommunityIcons 
+                      name="emoticon-happy" 
+                      size={20} 
+                      color={showMoodStickers ? theme.tint : theme.textMuted} 
+                    />
+                  </TouchableOpacity>
+                </View>
+                
+                {/* Text Input */}
+                <TextInput
+                  ref={inputRef}
+                  style={styles.textInput}
+                  value={inputText}
+                  onChangeText={handleInputChange}
+                  onFocus={handleInputFocus}
+                  onBlur={handleInputBlur}
+                  placeholder={isRecording ? "Recording voice..." : replyingTo ? "Reply..." : "Say something thoughtful..."}
+                  placeholderTextColor={withAlpha(theme.textMuted, isDark ? 0.66 : 0.72)}
+                  multiline
+                  maxLength={500}
+                  editable={!isRecording}
+                />
+                
+                {/* Right Actions */}
+                <View style={styles.inputRightActions}>
+                  {!inputText.trim() && !isRecording && (
+                    <Animated.View style={{ transform: [{ scale: voiceButtonScale }] }}>
+                      <Pressable
+                        style={styles.voiceButton}
+                        onPress={startVoiceRecording}
+                      >
+                        <Animated.View
+                          style={[
+                            styles.voiceButtonInner,
+                            {
+                              opacity: recordingAnimation.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [1, 0.3],
+                              }),
+                            },
+                          ]}
+                        >
+                          <MaterialCommunityIcons 
+                            name="microphone"
+                            size={19} 
+                            color={Colors.light.background} 
+                          />
+                        </Animated.View>
+                      </Pressable>
+                    </Animated.View>
+                  )}
+
+                  {!inputText.trim() && isRecording && (
+                    <View style={styles.recordingControls}>
+                      <TouchableOpacity
+                        style={[styles.recordingControlButton, styles.recordingControlDanger]}
+                        onPress={discardVoiceRecording}
+                        disabled={isUploadingVoice}
+                      >
+                        <MaterialCommunityIcons name="trash-can-outline" size={18} color={Colors.light.background} />
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.recordingControlButton, styles.recordingControlPause]}
+                        onPress={isRecordingPaused ? resumeVoiceRecording : pauseVoiceRecording}
+                        disabled={isUploadingVoice}
+                      >
+                        <MaterialCommunityIcons
+                          name={isRecordingPaused ? "play" : "pause"}
+                          size={18}
+                          color={Colors.light.background}
+                        />
+                      </TouchableOpacity>
+
+                      <View style={styles.recordingTimerPill}>
+                        <Text style={styles.recordingTimerText}>
+                          {Math.floor(recordingDuration / 60)}:{`${Math.floor(recordingDuration % 60)}`.padStart(2, '0')}
+                        </Text>
+                      </View>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.recordingControlButton,
+                          styles.recordingControlSend,
+                          isUploadingVoice && styles.recordingControlDisabled,
+                        ]}
+                        onPress={sendVoiceRecording}
+                        disabled={isUploadingVoice}
+                      >
+                        <MaterialCommunityIcons name="send" size={16} color={Colors.light.background} />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  
+                  {inputText.trim() && (
+                    <TouchableOpacity 
+                      style={styles.sendButtonActive}
+                      onPress={sendMessage}
+                    >
+                      <MaterialCommunityIcons name="send" size={19} color={Colors.light.background} />
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
             </View>
           </>
@@ -13542,6 +13794,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       marginBottom: 6,
       position: 'relative',
     },
+    messageContainerGrouped: {
+      marginBottom: 2,
+    },
     messageContainerWithReaction: {
       marginBottom: 24,
     },
@@ -13584,6 +13839,10 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderRadius: 14,
       marginRight: 8,
       marginBottom: 2,
+    },
+    messageAvatarSpacer: {
+      width: 36,
+      alignSelf: 'stretch',
     },
     messageBubble: {
       maxWidth: screenWidth * 0.72,
@@ -13679,6 +13938,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderWidth: 1,
       borderColor: withAlpha(Colors.light.background, isDark ? 0.18 : 0.22),
     },
+    myMessageBubbleGroupedTop: {
+      borderTopRightRadius: 10,
+    },
+    myMessageBubbleGroupedBottom: {
+      borderBottomRightRadius: 10,
+    },
     theirMessageBubble: {
       backgroundColor: theme.backgroundSubtle,
       shadowColor: Colors.dark.background,
@@ -13688,6 +13953,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       elevation: 0,
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+    },
+    theirMessageBubbleGroupedTop: {
+      borderTopLeftRadius: 10,
+    },
+    theirMessageBubbleGroupedBottom: {
+      borderBottomLeftRadius: 10,
     },
     deletedMessageBubble: {
       backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.6 : 0.85),
@@ -14086,7 +14357,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'flex-end',
       paddingHorizontal: 16,
-      marginBottom: 16,
+      marginBottom: 12,
     },
     typingAvatar: {
       width: 28,
@@ -14096,18 +14367,25 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       marginBottom: 4,
     },
     typingBubble: {
-      backgroundColor: theme.background,
-      borderRadius: 20,
-      borderBottomLeftRadius: 6,
-      paddingHorizontal: 16,
-      paddingVertical: 12,
+      backgroundColor: isDark ? withAlpha(theme.backgroundSubtle, 0.92) : withAlpha('#fffaf5', 0.96),
+      borderRadius: 18,
+      borderBottomLeftRadius: 8,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
       shadowColor: Colors.dark.background,
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.1,
-      shadowRadius: 4,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.08,
+      shadowRadius: 10,
       elevation: 2,
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      gap: 6,
+    },
+    typingLabel: {
+      fontSize: 10.5,
+      fontFamily: 'Manrope_600SemiBold',
+      letterSpacing: 0.4,
+      color: theme.textMuted,
     },
     typingDots: {
       flexDirection: 'row',
@@ -14117,7 +14395,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       width: 6,
       height: 6,
       borderRadius: 3,
-      backgroundColor: theme.textMuted,
+      backgroundColor: theme.tint,
     },
 
     // Mood Stickers Panel
@@ -14183,14 +14461,36 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
 
     // Input Area
     inputContainer: {
-      flexDirection: 'row',
-      alignItems: 'flex-end',
       paddingHorizontal: 16,
-      paddingVertical: 12,
+      paddingTop: 10,
+      paddingBottom: 12,
       backgroundColor: theme.background,
       borderTopWidth: 1,
       borderTopColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
-      gap: 12,
+    },
+    composerShell: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      gap: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: 26,
+      backgroundColor: isDark ? withAlpha(theme.backgroundSubtle, 0.92) : withAlpha('#fffaf5', 0.96),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: isDark ? 0.16 : 0.08,
+      shadowRadius: 16,
+      elevation: 3,
+    },
+    composerShellFocused: {
+      borderColor: withAlpha(theme.tint, isDark ? 0.46 : 0.3),
+      shadowColor: theme.tint,
+      shadowOpacity: isDark ? 0.18 : 0.12,
+    },
+    composerShellAccent: {
+      borderColor: withAlpha(theme.tint, isDark ? 0.34 : 0.22),
     },
     blockedInput: {
       flexDirection: 'row',
@@ -14224,24 +14524,30 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     textInput: {
       flex: 1,
-      backgroundColor: theme.backgroundSubtle,
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
-      borderRadius: 20,
-      paddingHorizontal: 16,
-      paddingVertical: 12,
-      fontSize: 16,
+      minHeight: 40,
+      paddingHorizontal: 4,
+      paddingTop: 9,
+      paddingBottom: 8,
+      fontSize: 15.5,
       fontFamily: 'Manrope_400Regular',
       color: theme.text,
       maxHeight: 100,
+      lineHeight: 21,
     },
     sendButtonActive: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
+      width: 42,
+      height: 42,
+      borderRadius: 21,
       backgroundColor: theme.tint,
       justifyContent: 'center',
       alignItems: 'center',
+      borderWidth: 1,
+      borderColor: withAlpha(Colors.light.background, isDark ? 0.18 : 0.22),
+      shadowColor: theme.tint,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: isDark ? 0.22 : 0.16,
+      shadowRadius: 14,
+      elevation: 4,
     },
     sendButtonViewOnce: {
       backgroundColor: theme.secondary,
@@ -14267,21 +14573,70 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
 
     // Voice Messages
     voiceBubble: {
-      paddingHorizontal: 12,
-      paddingVertical: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 9,
     },
     voiceMessageContainer: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 12,
-      minWidth: 160,
+      gap: 10,
+      minWidth: 188,
     },
     voicePlayButton: {
-      width: 32,
-      height: 32,
-      borderRadius: 16,
+      width: 34,
+      height: 34,
+      borderRadius: 17,
       justifyContent: 'center',
       alignItems: 'center',
+      borderWidth: 1,
+      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.12,
+      shadowRadius: 8,
+      elevation: 2,
+    },
+    voicePlayButtonMy: {
+      backgroundColor: Colors.light.background,
+      borderColor: withAlpha(Colors.light.background, 0.38),
+      shadowColor: Colors.light.background,
+    },
+    voicePlayButtonTheir: {
+      backgroundColor: theme.tint,
+      borderColor: withAlpha(theme.tint, isDark ? 0.24 : 0.18),
+      shadowColor: theme.tint,
+    },
+    voicePlayButtonMyActive: {
+      transform: [{ scale: 1.02 }],
+    },
+    voicePlayButtonTheirActive: {
+      transform: [{ scale: 1.02 }],
+    },
+    voiceWaveformCard: {
+      flex: 1,
+      minHeight: 34,
+      paddingLeft: 2,
+      paddingRight: 6,
+      paddingVertical: 4,
+      borderRadius: 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      borderWidth: 1,
+    },
+    voiceWaveformCardMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.08),
+      borderColor: withAlpha(Colors.light.background, 0.16),
+    },
+    voiceWaveformCardTheir: {
+      backgroundColor: withAlpha(theme.text, isDark ? 0.06 : 0.035),
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+    },
+    voiceWaveformCardMyActive: {
+      backgroundColor: withAlpha(Colors.light.background, 0.12),
+      borderColor: withAlpha(Colors.light.background, 0.24),
+    },
+    voiceWaveformCardTheirActive: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.08),
+      borderColor: withAlpha(theme.tint, isDark ? 0.22 : 0.14),
     },
     voiceWaveform: {
       flex: 1,
@@ -14295,9 +14650,29 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderRadius: 1,
       minHeight: 4,
     },
+    voiceDurationPill: {
+      paddingHorizontal: 8,
+      height: 22,
+      borderRadius: 11,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    voiceDurationPillMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.12),
+    },
+    voiceDurationPillTheir: {
+      backgroundColor: withAlpha(theme.background, isDark ? 0.46 : 0.72),
+    },
     voiceDuration: {
-      fontSize: 12,
-      fontFamily: 'Manrope_400Regular',
+      fontSize: 11,
+      fontFamily: 'Manrope_700Bold',
+      letterSpacing: 0.2,
+    },
+    voiceDurationMy: {
+      color: withAlpha(Colors.light.background, 0.92),
+    },
+    voiceDurationTheir: {
+      color: theme.textMuted,
     },
 
     // Image Messages
@@ -14308,6 +14683,16 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     imageMessageContainer: {
       borderRadius: 16,
       overflow: 'hidden',
+    },
+    mediaSurface: {
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      backgroundColor: withAlpha(theme.background, isDark ? 0.14 : 0.5),
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: isDark ? 0.12 : 0.05,
+      shadowRadius: 10,
+      elevation: 2,
     },
     messageImage: {
       width: Math.min(screenWidth * 0.72, 340),
@@ -14351,9 +14736,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'center',
       gap: 4,
-      paddingHorizontal: 6,
-      paddingVertical: 3,
-      borderRadius: 10,
+      paddingHorizontal: 7,
+      paddingVertical: 4,
+      borderRadius: 11,
     },
     mediaMetaOverlayMy: {
       backgroundColor: 'rgba(6,18,18,0.58)',
@@ -14698,50 +15083,85 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       gap: 10,
       minWidth: 180,
       maxWidth: screenWidth * 0.6,
+      paddingHorizontal: 2,
+      paddingVertical: 2,
     },
     documentIcon: {
-      width: 36,
-      height: 36,
-      borderRadius: 12,
+      width: 38,
+      height: 38,
+      borderRadius: 13,
       alignItems: 'center',
       justifyContent: 'center',
     },
     documentInfo: {
       flex: 1,
-      gap: 2,
+      gap: 5,
     },
     documentName: {
       fontSize: 14,
       fontFamily: 'Manrope_600SemiBold',
     },
+    documentMetaPill: {
+      alignSelf: 'flex-start',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 999,
+      borderWidth: 1,
+    },
+    documentMetaPillMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.1),
+      borderColor: withAlpha(Colors.light.background, 0.16),
+    },
+    documentMetaPillTheir: {
+      backgroundColor: withAlpha(theme.text, isDark ? 0.05 : 0.035),
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+    },
     documentHint: {
-      fontSize: 12,
-      fontFamily: 'Manrope_400Regular',
+      fontSize: 11,
+      fontFamily: 'Manrope_600SemiBold',
     },
     // Location Messages
     locationBubble: {
-      padding: 10,
-      width: LOCATION_PREVIEW_WIDTH + 20,
+      padding: 8,
+      width: LOCATION_PREVIEW_WIDTH + 16,
     },
     locationMessageContainer: {
-      gap: 10,
+      gap: 8,
+    },
+    locationMapFrame: {
+      borderRadius: 14,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      backgroundColor: theme.backgroundSubtle,
     },
     locationMapImage: {
       width: LOCATION_PREVIEW_WIDTH,
       height: LOCATION_PREVIEW_HEIGHT,
-      borderRadius: 12,
       backgroundColor: theme.backgroundSubtle,
     },
     locationMapPlaceholder: {
       width: LOCATION_PREVIEW_WIDTH,
       height: LOCATION_PREVIEW_HEIGHT,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
       backgroundColor: theme.backgroundSubtle,
       alignItems: 'center',
       justifyContent: 'center',
       gap: 6,
+    },
+    locationDetailsCard: {
+      borderRadius: 14,
+      paddingHorizontal: 10,
+      paddingVertical: 10,
+      gap: 8,
+      borderWidth: 1,
+    },
+    locationDetailsCardMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.08),
+      borderColor: withAlpha(Colors.light.background, 0.12),
+    },
+    locationDetailsCardTheir: {
+      backgroundColor: withAlpha(theme.text, isDark ? 0.05 : 0.03),
+      borderColor: withAlpha(theme.text, isDark ? 0.1 : 0.08),
     },
     locationPlaceholderText: {
       fontSize: 12,
@@ -14775,7 +15195,19 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      marginLeft: 36,
+      alignSelf: 'flex-start',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+      borderWidth: 1,
+    },
+    locationRoutePillMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.08),
+      borderColor: withAlpha(Colors.light.background, 0.14),
+    },
+    locationRoutePillTheir: {
+      backgroundColor: withAlpha(theme.text, isDark ? 0.05 : 0.03),
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
     },
     locationRouteText: {
       fontSize: 11,
@@ -14817,11 +15249,19 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.text,
     },
     imageCaption: {
-      padding: 12,
-      paddingTop: 8,
-      fontSize: 14,
-      lineHeight: 20,
+      fontSize: 13.5,
+      lineHeight: 19,
       color: theme.text,
+    },
+    mediaCaptionCard: {
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+    },
+    mediaCaptionCardMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.08),
+    },
+    mediaCaptionCardTheir: {
+      backgroundColor: withAlpha(theme.text, isDark ? 0.04 : 0.025),
     },
     imageViewerBackdrop: {
       flex: 1,
@@ -14844,14 +15284,14 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     imageViewerClose: {
       position: 'absolute',
-      top: 24,
-      right: 20,
-      width: 36,
-      height: 36,
-      borderRadius: 18,
+      width: 42,
+      height: 42,
+      borderRadius: 21,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: 'rgba(0,0,0,0.35)',
+      backgroundColor: 'rgba(0,0,0,0.42)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.12)',
     },
     locationViewerContainer: {
       flex: 1,
@@ -15274,35 +15714,41 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     replyChip: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      borderRadius: 14,
-      marginBottom: 8,
+      gap: 9,
+      paddingHorizontal: 11,
+      paddingVertical: 9,
+      borderRadius: 16,
+      marginBottom: 9,
       borderWidth: 1,
+      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.08,
+      shadowRadius: 10,
+      elevation: 1,
     },
     replyChipMy: {
-      backgroundColor: withAlpha(Colors.light.background, 0.14),
-      borderColor: withAlpha(Colors.light.background, 0.3),
+      backgroundColor: withAlpha(Colors.light.background, 0.13),
+      borderColor: withAlpha(Colors.light.background, 0.24),
+      shadowColor: Colors.light.background,
     },
     replyChipTheir: {
-      backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.05),
-      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      backgroundColor: withAlpha(theme.text, isDark ? 0.07 : 0.04),
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.09),
+      shadowColor: Colors.dark.background,
     },
     replyChipLine: {
-      width: 2,
-      height: 28,
-      borderRadius: 2,
+      width: 3,
+      height: 30,
+      borderRadius: 3,
     },
     replyChipLineMy: {
-      backgroundColor: withAlpha(Colors.light.background, 0.7),
+      backgroundColor: withAlpha(Colors.light.background, 0.74),
     },
     replyChipLineTheir: {
-      backgroundColor: withAlpha(theme.text, 0.35),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.45 : 0.34),
     },
     replyChipContent: {
       flex: 1,
-      gap: 4,
+      gap: 3,
     },
     replyChipHeader: {
       flexDirection: 'row',
@@ -15310,43 +15756,46 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       gap: 6,
     },
     replyChipIconWrap: {
-      width: 20,
-      height: 20,
-      borderRadius: 10,
+      width: 22,
+      height: 22,
+      borderRadius: 11,
       alignItems: 'center',
       justifyContent: 'center',
     },
     replyChipIconWrapMy: {
-      backgroundColor: withAlpha(Colors.light.background, 0.2),
+      backgroundColor: withAlpha(Colors.light.background, 0.18),
     },
     replyChipIconWrapTheir: {
-      backgroundColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.08),
     },
     replyChipLabel: {
       flexShrink: 1,
-      fontSize: 12,
+      fontSize: 10.5,
       fontFamily: 'Manrope_600SemiBold',
-      color: theme.text,
+      color: theme.textMuted,
+      textTransform: 'uppercase',
+      letterSpacing: 0.55,
     },
     replyChipLabelMy: {
-      color: Colors.light.background,
+      color: withAlpha(Colors.light.background, 0.76),
     },
     replyChipTime: {
       marginLeft: 'auto',
-      fontSize: 10,
+      fontSize: 9.5,
       fontFamily: 'Manrope_500Medium',
-      color: theme.textMuted,
+      color: withAlpha(theme.textMuted, 0.86),
     },
     replyChipTimeMy: {
-      color: withAlpha(Colors.light.background, 0.7),
+      color: withAlpha(Colors.light.background, 0.62),
     },
     replyChipPreview: {
-      fontSize: 12,
-      fontFamily: 'Manrope_400Regular',
-      color: theme.textMuted,
+      fontSize: 12.5,
+      lineHeight: 16,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.text,
     },
     replyChipPreviewMy: {
-      color: withAlpha(Colors.light.background, 0.85),
+      color: withAlpha(Colors.light.background, 0.92),
     },
     replyPreview: {
       backgroundColor: theme.backgroundSubtle,
@@ -15442,19 +15891,32 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     inputLeftActions: {
       flexDirection: 'row',
       gap: 8,
+      alignItems: 'flex-end',
+      paddingBottom: 1,
     },
     inputRightActions: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
+      paddingBottom: 1,
     },
     inputActionButton: {
-      width: 36,
-      height: 36,
-      borderRadius: 18,
-      backgroundColor: theme.backgroundSubtle,
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      backgroundColor: isDark ? withAlpha(theme.background, 0.48) : withAlpha(theme.background, 0.86),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
       justifyContent: 'center',
       alignItems: 'center',
+    },
+    inputActionButtonActive: {
+      backgroundColor: theme.tint,
+      borderColor: theme.tint,
+    },
+    inputActionButtonSecondaryActive: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.12),
+      borderColor: withAlpha(theme.tint, isDark ? 0.3 : 0.18),
     },
     viewOnceToggle: {
       width: 34,
@@ -15473,13 +15935,20 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
 
     // Voice Recording
     voiceButton: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
+      width: 42,
+      height: 42,
+      borderRadius: 21,
       backgroundColor: theme.tint,
       justifyContent: 'center',
       alignItems: 'center',
       position: 'relative',
+      borderWidth: 1,
+      borderColor: withAlpha(Colors.light.background, isDark ? 0.18 : 0.22),
+      shadowColor: theme.tint,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: isDark ? 0.2 : 0.14,
+      shadowRadius: 14,
+      elevation: 4,
     },
     voiceButtonRecording: {
       backgroundColor: withAlpha(theme.tint, 0.85),

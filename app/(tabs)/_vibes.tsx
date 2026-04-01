@@ -184,12 +184,8 @@ export default function ExploreScreen() {
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isSavingLocation, setIsSavingLocation] = useState(false);
   const [filtersVisible, setFiltersVisible] = useState(false);
+  const [filtersPanel, setFiltersPanel] = useState<'main' | 'location'>('main');
   const [introVisible, setIntroVisible] = useState(false);
-  // Some platforms behave inconsistently when stacking multiple RN <Modal />s.
-  // If the user opens manual city entry from within the Filters modal, we close Filters first,
-  // show the manual modal, then optionally reopen Filters afterward (keeping draft state).
-  const reopenFiltersAfterManualLocationRef = useRef(false);
-  const suppressDraftSyncOnNextFiltersOpenRef = useRef(false);
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [hasVideoOnly, setHasVideoOnly] = useState(false);
   const [activeOnly, setActiveOnly] = useState(false);
@@ -424,13 +420,25 @@ export default function ExploreScreen() {
   }, [resolvedDistanceUnit]);
 
   const distinctReligions = useMemo(() => {
-    const set = new Set<string>();
-    matchList.forEach((m) => {
-      if ((m as any).religion) set.add(String((m as any).religion));
-    });
-    set.add('Muslim'); // ensure common option is always available
-    return Array.from(set).slice(0, 8);
-  }, [matchList]);
+    const source = poolProfiles.length > 0 ? poolProfiles : matchList;
+    const preferred = ['Christian', 'Muslim'];
+    const normalizedSeen = new Set<string>();
+    const collected: string[] = [];
+
+    const pushReligion = (value: unknown) => {
+      const trimmed = String(value || '').trim();
+      if (!trimmed) return;
+      const normalized = trimmed.toLowerCase();
+      if (normalizedSeen.has(normalized)) return;
+      normalizedSeen.add(normalized);
+      collected.push(trimmed);
+    };
+
+    preferred.forEach(pushReligion);
+    source.forEach((m) => pushReligion((m as any).religion));
+
+    return collected.slice(0, 8);
+  }, [matchList, poolProfiles]);
 
   const myMomentUser = useMemo(() => momentUsers.find((u) => u.isOwn), [momentUsers]);
   const momentUserIdSet = useMemo(() => new Set(matchList.map((m) => String(m.id))), [matchList]);
@@ -520,11 +528,6 @@ export default function ExploreScreen() {
 
   const closeManualLocationModal = useCallback(() => {
     setManualLocationModalVisible(false);
-    if (reopenFiltersAfterManualLocationRef.current) {
-      reopenFiltersAfterManualLocationRef.current = false;
-      // Let the first modal dismiss cleanly before re-opening Filters.
-      setTimeout(() => setFiltersVisible(true), 250);
-    }
   }, []);
 
   const openManualLocationModal = useCallback(() => {
@@ -535,12 +538,11 @@ export default function ExploreScreen() {
   }, [manualCountryCode, profile?.location, profileCountryCode]);
 
   const openManualLocationModalFromFilters = useCallback(() => {
-    // Preserve current draft values on reopen by skipping the "sync from applied" step once.
-    suppressDraftSyncOnNextFiltersOpenRef.current = true;
-    reopenFiltersAfterManualLocationRef.current = true;
-    setFiltersVisible(false);
-    setTimeout(() => openManualLocationModal(), 250);
-  }, [openManualLocationModal]);
+    setLocationError(null);
+    setManualLocation(profile?.location || "");
+    setManualCountryCode(profileCountryCode || manualCountryCode || "");
+    setFiltersPanel('location');
+  }, [manualCountryCode, profile?.location, profileCountryCode]);
 
   const handleSaveManualLocation = async () => {
     if (!profile?.id) return;
@@ -555,7 +557,11 @@ export default function ExploreScreen() {
     if (!res.ok) {
       setLocationError('error' in res ? res.error : 'Unable to save location');
     } else {
-      closeManualLocationModal();
+      if (filtersVisible) {
+        setFiltersPanel('main');
+      } else {
+        closeManualLocationModal();
+      }
       await refreshProfile();
       await refreshMatches();
     }
@@ -613,14 +619,14 @@ export default function ExploreScreen() {
 
   useEffect(() => {
     if (filtersVisible) {
-      // Premium UX: treat the modal controls as "draft" until Apply is pressed.
-      if (suppressDraftSyncOnNextFiltersOpenRef.current) {
-        suppressDraftSyncOnNextFiltersOpenRef.current = false;
-        return;
+      if (filtersPanel === 'main') {
+        // Premium UX: treat the modal controls as "draft" until Apply is pressed.
+        syncFilterDraftFromApplied();
       }
-      syncFilterDraftFromApplied();
+      return;
     }
-  }, [filtersVisible, syncFilterDraftFromApplied]);
+    setFiltersPanel('main');
+  }, [filtersPanel, filtersVisible, syncFilterDraftFromApplied]);
 
   const resetAllFilters = useCallback(() => {
     setVerifiedOnly(false);
@@ -716,10 +722,15 @@ export default function ExploreScreen() {
     ],
   );
 
+  const previewBaseProfiles = useMemo(() => {
+    if (poolProfiles.length > 0) return poolProfiles;
+    return matchList;
+  }, [matchList, poolProfiles]);
+
   const draftPreviewCount = useMemo(() => {
     if (!filtersVisible) return null;
     try {
-      return applyVibesFilters(poolProfiles ?? [], draftFiltersForPreview, {
+      return applyVibesFilters(previewBaseProfiles ?? [], draftFiltersForPreview, {
         segment: vibesSegment,
         momentUserIds: momentBoostIds,
         viewerInterests,
@@ -727,7 +738,7 @@ export default function ExploreScreen() {
     } catch {
       return null;
     }
-  }, [draftFiltersForPreview, filtersVisible, momentBoostIds, poolProfiles, vibesSegment, viewerInterests]);
+  }, [draftFiltersForPreview, filtersVisible, momentBoostIds, previewBaseProfiles, vibesSegment, viewerInterests]);
 
   const appliedFilterCount = useMemo(() => {
     if (!appliedFilters) return 0;
@@ -743,86 +754,6 @@ export default function ExploreScreen() {
     if (appliedFilters.locationQuery && appliedFilters.locationQuery.trim()) n += 1;
     return n;
   }, [appliedFilters]);
-
-  const commitFilters = useCallback(
-    (patch: Partial<{
-      verifiedOnly: boolean;
-      hasVideoOnly: boolean;
-      activeOnly: boolean;
-      distanceFilterKm: number | null;
-      minAge: number;
-      maxAge: number;
-      religionFilter: string | null;
-      minVibeScore: number | null;
-      minSharedInterests: number;
-      locationQuery: string;
-    }>) => {
-      const base = appliedFilters ?? {
-        verifiedOnly,
-        hasVideoOnly,
-        activeOnly,
-        distanceFilterKm,
-        minAge,
-        maxAge,
-        religionFilter,
-        minVibeScore,
-        minSharedInterests,
-        locationQuery,
-      };
-      const next = { ...base, ...patch };
-
-      setVerifiedOnly(Boolean(next.verifiedOnly));
-      setHasVideoOnly(Boolean(next.hasVideoOnly));
-      setActiveOnly(Boolean(next.activeOnly));
-      setDistanceFilterKm(next.distanceFilterKm ?? null);
-      setMinAge(typeof next.minAge === 'number' ? next.minAge : 18);
-      setMaxAge(typeof next.maxAge === 'number' ? next.maxAge : 60);
-      setReligionFilter(typeof next.religionFilter === 'string' ? next.religionFilter : null);
-      setMinVibeScore(typeof next.minVibeScore === 'number' ? next.minVibeScore : null);
-      setMinSharedInterests(typeof next.minSharedInterests === 'number' ? next.minSharedInterests : 0);
-      setLocationQuery(typeof next.locationQuery === 'string' ? next.locationQuery : '');
-
-      applyFilters(next);
-      setCurrentIndex(0);
-      if (filtersStorageKey) {
-        AsyncStorage.setItem(filtersStorageKey, JSON.stringify(next)).catch(() => {});
-      }
-    },
-    [
-      activeOnly,
-      appliedFilters,
-      applyFilters,
-      distanceFilterKm,
-      filtersStorageKey,
-      hasVideoOnly,
-      locationQuery,
-      maxAge,
-      minAge,
-      minSharedInterests,
-      minVibeScore,
-      religionFilter,
-      verifiedOnly,
-    ],
-  );
-
-  const appliedFilterChips = useMemo(() => {
-    if (!appliedFilters) return [];
-    const chips: { key: string; label: string; onClear: () => void }[] = [];
-
-    if (appliedFilters.verifiedOnly) chips.push({ key: 'verified', label: 'Verified', onClear: () => commitFilters({ verifiedOnly: false }) });
-    if (appliedFilters.hasVideoOnly) chips.push({ key: 'video', label: 'Video', onClear: () => commitFilters({ hasVideoOnly: false }) });
-    if (appliedFilters.activeOnly) chips.push({ key: 'active', label: 'Active', onClear: () => commitFilters({ activeOnly: false }) });
-    if (appliedFilters.minVibeScore != null) chips.push({ key: 'vibe', label: `Vibe ${appliedFilters.minVibeScore}%+`, onClear: () => commitFilters({ minVibeScore: null }) });
-    if ((appliedFilters.minSharedInterests || 0) > 0) chips.push({ key: 'shared', label: `${appliedFilters.minSharedInterests}+ shared`, onClear: () => commitFilters({ minSharedInterests: 0 }) });
-    if (appliedFilters.distanceFilterKm != null) chips.push({ key: 'distance', label: `<= ${formatDistanceLabel(appliedFilters.distanceFilterKm)}`, onClear: () => commitFilters({ distanceFilterKm: null }) });
-    if (appliedFilters.minAge !== 18 || appliedFilters.maxAge !== 60) chips.push({ key: 'age', label: `${appliedFilters.minAge}-${appliedFilters.maxAge}`, onClear: () => commitFilters({ minAge: 18, maxAge: 60 }) });
-    if (appliedFilters.religionFilter) chips.push({ key: 'religion', label: String(appliedFilters.religionFilter), onClear: () => commitFilters({ religionFilter: null }) });
-    if (appliedFilters.locationQuery && appliedFilters.locationQuery.trim()) {
-      chips.push({ key: 'loc', label: `City: ${appliedFilters.locationQuery.trim()}`, onClear: () => commitFilters({ locationQuery: '' }) });
-    }
-
-    return chips;
-  }, [appliedFilters, commitFilters, formatDistanceLabel]);
 
   // Reset index if data changes
   useEffect(() => {
@@ -843,11 +774,12 @@ export default function ExploreScreen() {
           if (!m) break;
           // skip if it already has the optional fields
           const hasVideo = !!((m as any).profileVideo);
-          const hasPersonality = Array.isArray((m as any).personalityTags) && (m as any).personalityTags.length > 0;
           const hasInterests = Array.isArray((m as any).interests) && (m as any).interests.length > 0;
+          const hasCountryCode = !!String((m as any).current_country_code || '').trim();
+          const hasUsefulCity = !!String((m as any).city || '').trim();
           const id = String(m.id);
           if ((prefetchedDetailsRef.current.has(id) || prefetchInFlightRef.current.has(id))) continue;
-          if (!hasVideo || !hasPersonality || !hasInterests) {
+          if (!hasVideo || !hasInterests || !hasCountryCode || !hasUsefulCity) {
             prefetchInFlightRef.current.add(id);
             try {
               // call fetchProfileDetails to merge optional fields into matches
@@ -882,48 +814,64 @@ export default function ExploreScreen() {
 
     return (
       <Animated.View style={[{ transform: [{ translateY: noMoreTranslate }], opacity: noMoreOpacity }, styles.emptyStateContainer]}>
-        <View style={styles.emptyCard}>
-          {filtersAreTight ? (
-            <View style={styles.emptyBadge}>
-              <Text style={styles.emptyBadgeText}>{appliedFilterCount} active filters</Text>
+        {filtersAreTight ? (
+          <View style={styles.emptyHintCard}>
+            <View style={styles.emptyHintBadge}>
+              <Text style={styles.emptyHintBadgeText}>{appliedFilterCount} active filters</Text>
             </View>
-          ) : null}
-          <Text style={styles.emptyTitle}>
-            {filtersAreTight ? 'Your filters are narrowing the room' : 'No fresh profiles right now'}
-          </Text>
-          <Text style={styles.emptySubtitle}>
-            {filtersAreTight
-              ? 'Open things up a little and you will likely see more people worth considering.'
-              : 'You have reached the edge of this round. Refresh for a new set or browse nearby again.'}
-          </Text>
-          <View style={styles.emptyActions}>
-            <TouchableOpacity
-              style={[styles.primaryButton]}
-              onPress={() => {
-                if (filtersAreTight) {
+            <Text style={styles.emptyHintTitle}>Your room is tighter right now</Text>
+            <Text style={styles.emptyHintSubtitle}>
+              Open things up a little and you will likely see more people worth considering.
+            </Text>
+            <View style={styles.emptyHintActions}>
+              <TouchableOpacity
+                style={styles.emptyHintPrimary}
+                onPress={() => {
                   resetAllFilters();
-                } else {
+                  setCurrentIndex(0);
+                }}
+                activeOpacity={0.88}
+              >
+                <Text style={styles.emptyHintPrimaryText}>Clear filters</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.emptyHintGhost}
+                onPress={() => {
                   void refreshMatches();
-                }
-                setCurrentIndex(0);
-              }}
-            >
-              <Text style={styles.primaryButtonText}>{filtersAreTight ? 'Clear filters' : 'Refresh Vibes'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.ghostButton}
-              onPress={() => {
-                if (filtersAreTight) {
-                  void refreshMatches();
-                } else {
-                  setActiveTab('nearby');
-                }
-              }}
-            >
-              <Text style={styles.ghostButtonText}>{filtersAreTight ? 'Refresh anyway' : 'Browse Nearby'}</Text>
-            </TouchableOpacity>
+                }}
+                activeOpacity={0.88}
+              >
+                <Text style={styles.emptyHintGhostText}>Refresh anyway</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
+        ) : (
+          <View style={styles.emptyCard}>
+            <Text style={styles.emptyTitle}>No fresh profiles right now</Text>
+            <Text style={styles.emptySubtitle}>
+              You have reached the edge of this round. Refresh for a new set or browse nearby again.
+            </Text>
+            <View style={styles.emptyActions}>
+              <TouchableOpacity
+                style={[styles.primaryButton]}
+                onPress={() => {
+                  void refreshMatches();
+                  setCurrentIndex(0);
+                }}
+              >
+                <Text style={styles.primaryButtonText}>Refresh Vibes</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.ghostButton}
+                onPress={() => {
+                  setActiveTab('nearby');
+                }}
+              >
+                <Text style={styles.ghostButtonText}>Browse Nearby</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </Animated.View>
     );
   }
@@ -998,7 +946,7 @@ export default function ExploreScreen() {
             id: m.id,
             name: (m as any).name,
             age: (m as any).age,
-            location: (m as any).region || (m as any).location || '',
+            location: (m as any).city || (m as any).location || (m as any).region || '',
             avatar_url: (m as any).avatar_url,
             photos: (m as any).photos,
             occupation: (m as any).occupation,
@@ -1101,62 +1049,17 @@ export default function ExploreScreen() {
           onPressFilter={() => setFiltersVisible(true)}
           filterCount={appliedFilterCount}
           rightAccessory={(
-            <View style={{ flexDirection: 'row', gap: 10 }}>
-              <TouchableOpacity
-                style={styles.headerRefreshButton}
-                onPress={() => setIntroVisible(true)}
-                activeOpacity={0.85}
-              >
-                <MaterialCommunityIcons name="help-circle-outline" size={18} color={theme.tint} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.headerRefreshButton}
-                onPress={handleRefreshVibes}
-                activeOpacity={0.85}
-              >
-                <MaterialCommunityIcons name="refresh" size={18} color={theme.tint} />
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity
+              style={styles.headerRefreshButton}
+              onPress={() => setIntroVisible(true)}
+              activeOpacity={0.85}
+            >
+              <MaterialCommunityIcons name="help-circle-outline" size={18} color={theme.tint} />
+            </TouchableOpacity>
           )}
         />
 
         <VibesIntroModal visible={introVisible} onClose={closeIntro} />
-
-        {appliedFilterChips.length > 0 ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.appliedFiltersBar}
-          >
-            {appliedFilterChips.map((chip) => (
-              <TouchableOpacity
-                key={chip.key}
-                style={styles.appliedFilterChip}
-                onPress={chip.onClear}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.appliedFilterChipText}>{chip.label}</Text>
-                <MaterialCommunityIcons name="close" size={14} color={theme.textMuted} />
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity
-              style={styles.appliedFilterChipEdit}
-              onPress={() => setFiltersVisible(true)}
-              activeOpacity={0.85}
-            >
-              <MaterialCommunityIcons name="tune-vertical" size={14} color={theme.tint} />
-              <Text style={styles.appliedFilterChipEditText}>Edit</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.appliedFilterChipEdit}
-              onPress={resetAllFilters}
-              activeOpacity={0.85}
-            >
-              <MaterialCommunityIcons name="refresh" size={14} color={theme.tint} />
-              <Text style={styles.appliedFilterChipEditText}>Clear</Text>
-            </TouchableOpacity>
-          </ScrollView>
-        ) : null}
 
         <Animated.ScrollView
           onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
@@ -1381,6 +1284,10 @@ export default function ExploreScreen() {
           transparent
           animationType="slide"
           onRequestClose={() => {
+            if (filtersPanel === 'location') {
+              setFiltersPanel('main');
+              return;
+            }
             syncFilterDraftFromApplied();
             setFiltersVisible(false);
           }}
@@ -1389,40 +1296,132 @@ export default function ExploreScreen() {
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={{ flex: 1 }}
           >
-            <View style={styles.modalBackdrop}>
-              <View style={styles.modalCard}>
+            <View style={[styles.modalBackdrop, { paddingTop: Math.max(insets.top + 12, 16) }]}>
+              <View style={[styles.modalCard, { paddingBottom: Math.max(insets.bottom + 16, 20), marginTop: 8 }]}>
                 <View style={styles.modalTitleRow}>
-                  <Text style={styles.modalTitle}>Filters</Text>
-                  <TouchableOpacity style={styles.modalResetButton} onPress={resetAllFilters} activeOpacity={0.85}>
-                    <Text style={styles.modalResetText}>Reset</Text>
+                  <View style={styles.modalTitleCopy}>
+                    <Text style={styles.modalEyebrow}>BETWEENER VIBES</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.modalResetButton}
+                    onPress={filtersPanel === 'location' ? () => setFiltersPanel('main') : resetAllFilters}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.modalResetText}>{filtersPanel === 'location' ? 'Back' : 'Reset'}</Text>
                   </TouchableOpacity>
                 </View>
-                <Text style={styles.modalSubtitle}>Refine your vibes.</Text>
-                <ScrollView showsVerticalScrollIndicator={false}>
-                  {activeFilterChips.length > 0 ? (
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.activeFiltersRow}>
-                      {activeFilterChips.map((chip) => (
-                        <TouchableOpacity
-                          key={chip.key}
-                          style={styles.activeFilterChip}
-                          onPress={chip.onClear}
-                          activeOpacity={0.85}
-                        >
-                          <Text style={styles.activeFilterChipText}>{chip.label}</Text>
-                          <MaterialCommunityIcons name="close" size={14} color={theme.textMuted} />
-                        </TouchableOpacity>
-                      ))}
-                    </ScrollView>
-                  ) : (
-                    <Text style={styles.activeFiltersEmpty}>No filters applied.</Text>
-                  )}
+                <Text style={styles.modalSubtitle}>
+                  {filtersPanel === 'location'
+                    ? 'Keep your city private, or use precise location when you want distance to do the work.'
+                    : 'Set a mood, tighten the pool, and preview the shift before you apply it.'}
+                </Text>
+                <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent} showsVerticalScrollIndicator={false}>
+                  {filtersPanel === 'location' ? (
+                    <>
+                      <View style={styles.filterSectionCard}>
+                        <View style={styles.filterSectionHeader}>
+                          <Text style={styles.filterSectionEyebrow}>Location</Text>
+                          <Text style={styles.filterSectionTitle}>Set your city</Text>
+                          <Text style={styles.filterSectionBody}>
+                            City-only keeps your location private. You can switch back to precise location any time.
+                          </Text>
+                        </View>
 
-                  <View style={styles.filterSection}>
-                    <Text style={styles.filterLabel}>Premium presets</Text>
-                    <Text style={styles.filterHint}>One tap to set a mood.</Text>
+                        <View style={styles.filterFieldGroup}>
+                          <Text style={styles.modalLabel}>Country</Text>
+                          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.countryChips}>
+                            {COUNTRY_OPTIONS.map((c) => {
+                              const active = manualCountryCode === c.code;
+                              return (
+                                <TouchableOpacity
+                                  key={c.code}
+                                  style={[styles.countryChip, active && styles.countryChipActive]}
+                                  onPress={() => setManualCountryCode(c.code)}
+                                  activeOpacity={0.85}
+                                >
+                                  <Text style={[styles.countryChipText, active && styles.countryChipTextActive]}>{c.label}</Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </ScrollView>
+                        </View>
+
+                        <View style={styles.filterFieldGroup}>
+                          <Text style={styles.modalLabel}>City</Text>
+                          <TextInput
+                            style={styles.modalInput}
+                            placeholder="e.g., Bristol"
+                            placeholderTextColor={theme.textMuted}
+                            value={manualLocation}
+                            onChangeText={setManualLocation}
+                            autoCapitalize="words"
+                          />
+                          {locationError ? <Text style={styles.locationError}>{locationError}</Text> : null}
+                        </View>
+                      </View>
+
+                      <View style={styles.modalActions}>
+                        <TouchableOpacity
+                          style={[styles.locationButton, styles.locationGhost, { flex: 1 }]}
+                          onPress={() => setFiltersPanel('main')}
+                        >
+                          <Text style={styles.locationGhostText}>Back to filters</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.locationButton, styles.locationPrimary, { flex: 1 }]}
+                          onPress={handleSaveManualLocation}
+                          disabled={isSavingLocation}
+                        >
+                          <Text style={styles.locationPrimaryText}>{isSavingLocation ? 'Saving...' : 'Save city'}</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </>
+                  ) : (
+                    <>
+                  <View style={styles.filterHeroCard}>
+                    <View style={styles.filterHeroBadge}>
+                      <Gem size={14} color={theme.tint} />
+                      <Text style={styles.filterHeroBadgeText}>Premium curation</Text>
+                    </View>
+                    <Text style={styles.filterHeroTitle}>Shape the room before you swipe.</Text>
+                    <Text style={styles.filterHeroBody}>
+                      Tune chemistry, trust, and momentum so the next people feel closer to your pace.
+                    </Text>
+                  </View>
+
+                  <View style={styles.activeFiltersCard}>
+                    <View style={styles.filterSectionHeader}>
+                      <Text style={styles.filterSectionEyebrow}>Current mood</Text>
+                      <Text style={styles.filterSectionTitle}>Active filters</Text>
+                    </View>
+                    {activeFilterChips.length > 0 ? (
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.activeFiltersRow}>
+                        {activeFilterChips.map((chip) => (
+                          <TouchableOpacity
+                            key={chip.key}
+                            style={styles.activeFilterChip}
+                            onPress={chip.onClear}
+                            activeOpacity={0.85}
+                          >
+                            <Text style={styles.activeFilterChipText}>{chip.label}</Text>
+                            <MaterialCommunityIcons name="close" size={14} color={theme.textMuted} />
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                    ) : (
+                      <Text style={styles.activeFiltersEmpty}>No filters applied yet. Keep it open, or shape the room below.</Text>
+                    )}
+                  </View>
+
+                  <View style={styles.filterSectionCard}>
+                    <View style={styles.filterSectionHeader}>
+                      <Text style={styles.filterSectionEyebrow}>Premium presets</Text>
+                      <Text style={styles.filterSectionTitle}>One tap moods</Text>
+                      <Text style={styles.filterSectionBody}>Fast ways to bias the room toward trust, energy, or richer chemistry.</Text>
+                    </View>
                     <View style={styles.filterChipsRowWrap}>
                       <TouchableOpacity
-                        style={[styles.filterChip, minVibeScore === 70 && minSharedInterests === 2 && styles.filterChipActive]}
+                        style={[styles.filterChip, styles.filterPresetChip, minVibeScore === 70 && minSharedInterests === 2 && styles.filterChipActive]}
                         onPress={() => {
                           setMinVibeScore(70);
                           setMinSharedInterests(2);
@@ -1432,21 +1431,21 @@ export default function ExploreScreen() {
                         <Text style={[styles.filterChipText, minVibeScore === 70 && minSharedInterests === 2 && styles.filterChipTextActive]}>High Vibe</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={[styles.filterChip, verifiedOnly && styles.filterChipActive]}
+                        style={[styles.filterChip, styles.filterPresetChip, verifiedOnly && styles.filterChipActive]}
                         onPress={() => setVerifiedOnly(true)}
                         activeOpacity={0.85}
                       >
                         <Text style={[styles.filterChipText, verifiedOnly && styles.filterChipTextActive]}>Verified</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={[styles.filterChip, hasVideoOnly && styles.filterChipActive]}
+                        style={[styles.filterChip, styles.filterPresetChip, hasVideoOnly && styles.filterChipActive]}
                         onPress={() => setHasVideoOnly(true)}
                         activeOpacity={0.85}
                       >
                         <Text style={[styles.filterChipText, hasVideoOnly && styles.filterChipTextActive]}>Video</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={[styles.filterChip, activeOnly && styles.filterChipActive]}
+                        style={[styles.filterChip, styles.filterPresetChip, activeOnly && styles.filterChipActive]}
                         onPress={() => setActiveOnly(true)}
                         activeOpacity={0.85}
                       >
@@ -1455,45 +1454,65 @@ export default function ExploreScreen() {
                     </View>
                   </View>
 
-                  <View style={styles.filterSection}>
-                    <Text style={styles.filterLabel}>Show only verified</Text>
+                  <View style={styles.filterSectionCard}>
+                    <View style={styles.filterSectionHeader}>
+                      <Text style={styles.filterSectionEyebrow}>Trust signals</Text>
+                      <Text style={styles.filterSectionTitle}>Who should rise first?</Text>
+                    </View>
+                    <View style={styles.filterToggleStack}>
                     <TouchableOpacity
                       style={[styles.filterToggle, verifiedOnly && styles.filterToggleActive]}
                       onPress={() => setVerifiedOnly((v) => !v)}
                       activeOpacity={0.85}
                     >
-                      <View style={[styles.filterToggleKnob, verifiedOnly && styles.filterToggleKnobActive]} />
-                      <Text style={[styles.filterToggleText, verifiedOnly && styles.filterToggleTextActive]}>{verifiedOnly ? 'On' : 'Off'}</Text>
+                      <View style={styles.filterToggleCopy}>
+                        <Text style={styles.filterLabel}>Show only verified</Text>
+                        <Text style={styles.filterHint}>Keep the room tighter around trusted profiles.</Text>
+                      </View>
+                      <View style={styles.filterToggleMeta}>
+                        <Text style={[styles.filterToggleText, verifiedOnly && styles.filterToggleTextActive]}>{verifiedOnly ? 'On' : 'Off'}</Text>
+                        <View style={[styles.filterToggleKnob, verifiedOnly && styles.filterToggleKnobActive]} />
+                      </View>
                     </TouchableOpacity>
-                  </View>
 
-                  <View style={styles.filterSection}>
-                    <Text style={styles.filterLabel}>Intro video</Text>
-                    <Text style={styles.filterHint}>Show profiles that have a video.</Text>
                     <TouchableOpacity
                       style={[styles.filterToggle, hasVideoOnly && styles.filterToggleActive]}
                       onPress={() => setHasVideoOnly((v) => !v)}
                       activeOpacity={0.85}
                     >
-                      <View style={[styles.filterToggleKnob, hasVideoOnly && styles.filterToggleKnobActive]} />
-                      <Text style={[styles.filterToggleText, hasVideoOnly && styles.filterToggleTextActive]}>{hasVideoOnly ? 'On' : 'Off'}</Text>
+                      <View style={styles.filterToggleCopy}>
+                        <Text style={styles.filterLabel}>Intro video</Text>
+                        <Text style={styles.filterHint}>Surface people who have shown a little more presence.</Text>
+                      </View>
+                      <View style={styles.filterToggleMeta}>
+                        <Text style={[styles.filterToggleText, hasVideoOnly && styles.filterToggleTextActive]}>{hasVideoOnly ? 'On' : 'Off'}</Text>
+                        <View style={[styles.filterToggleKnob, hasVideoOnly && styles.filterToggleKnobActive]} />
+                      </View>
                     </TouchableOpacity>
-                  </View>
 
-                  <View style={styles.filterSection}>
-                    <Text style={styles.filterLabel}>Active recently</Text>
-                    <Text style={styles.filterHint}>Prioritize people who are online or recently active.</Text>
                     <TouchableOpacity
                       style={[styles.filterToggle, activeOnly && styles.filterToggleActive]}
                       onPress={() => setActiveOnly((v) => !v)}
                       activeOpacity={0.85}
                     >
-                      <View style={[styles.filterToggleKnob, activeOnly && styles.filterToggleKnobActive]} />
-                      <Text style={[styles.filterToggleText, activeOnly && styles.filterToggleTextActive]}>{activeOnly ? 'On' : 'Off'}</Text>
+                      <View style={styles.filterToggleCopy}>
+                        <Text style={styles.filterLabel}>Active recently</Text>
+                        <Text style={styles.filterHint}>Prioritize people who are online or recently active.</Text>
+                      </View>
+                      <View style={styles.filterToggleMeta}>
+                        <Text style={[styles.filterToggleText, activeOnly && styles.filterToggleTextActive]}>{activeOnly ? 'On' : 'Off'}</Text>
+                        <View style={[styles.filterToggleKnob, activeOnly && styles.filterToggleKnobActive]} />
+                      </View>
                     </TouchableOpacity>
+                    </View>
                   </View>
 
-                  <View style={styles.filterSection}>
+                  <View style={styles.filterSectionCard}>
+                    <View style={styles.filterSectionHeader}>
+                      <Text style={styles.filterSectionEyebrow}>Compatibility</Text>
+                      <Text style={styles.filterSectionTitle}>Raise the bar</Text>
+                    </View>
+                    <View style={styles.filterFieldGroup}>
                     <Text style={styles.filterLabel}>Vibe level</Text>
                     <Text style={styles.filterHint}>Minimum compatibility score.</Text>
                     <View style={styles.filterChipsRowWrap}>
@@ -1515,9 +1534,8 @@ export default function ExploreScreen() {
                         <Text style={[styles.filterChipText, minVibeScore == null && styles.filterChipTextActive]}>Any</Text>
                       </TouchableOpacity>
                     </View>
-                  </View>
-
-                  <View style={styles.filterSection}>
+                    </View>
+                    <View style={styles.filterFieldGroup}>
                     <Text style={styles.filterLabel}>Shared interests</Text>
                     <Text style={styles.filterHint}>
                       {viewerInterests.length > 0 ? 'Match on common interests.' : 'Add interests in your profile to use this.'}
@@ -1542,12 +1560,18 @@ export default function ExploreScreen() {
                         <Text style={[styles.filterChipText, minSharedInterests === 0 && styles.filterChipTextActive]}>Any</Text>
                       </TouchableOpacity>
                     </View>
+                    </View>
                   </View>
 
-                  <View style={styles.filterSection}>
+                  <View style={styles.filterSectionCard}>
+                    <View style={styles.filterSectionHeader}>
+                      <Text style={styles.filterSectionEyebrow}>Reach</Text>
+                      <Text style={styles.filterSectionTitle}>Distance and age</Text>
+                    </View>
+                    <View style={styles.filterFieldGroup}>
                     <Text style={styles.filterLabel}>Distance</Text>
                     <Text style={styles.filterHint}>{activeTab === 'nearby' ? 'Nearby tab only' : 'Switch to Nearby to use distance'}</Text>
-                    <View style={styles.filterChipsRow}>
+                    <View style={styles.filterChipsRowWrap}>
                       {distanceChipOptions.map((option) => (
                         <TouchableOpacity
                           key={option.label}
@@ -1584,9 +1608,8 @@ export default function ExploreScreen() {
                         <Text style={[styles.filterChipText, distanceFilterKm == null && styles.filterChipTextActive]}>Any</Text>
                       </TouchableOpacity>
                     </View>
-                  </View>
-
-                  <View style={styles.filterSection}>
+                    </View>
+                    <View style={styles.filterFieldGroup}>
                     <Text style={styles.filterLabel}>Age range</Text>
                     <View style={styles.ageTopRow}>
                       <View style={styles.ageRangePill}>
@@ -1640,10 +1663,14 @@ export default function ExploreScreen() {
                         );
                       })}
                     </View>
+                    </View>
                   </View>
 
-                  <View style={styles.filterSection}>
-                    <Text style={styles.filterLabel}>Religion</Text>
+                  <View style={styles.filterSectionCard}>
+                    <View style={styles.filterSectionHeader}>
+                      <Text style={styles.filterSectionEyebrow}>Preferences</Text>
+                      <Text style={styles.filterSectionTitle}>Religion</Text>
+                    </View>
                     <View style={styles.filterChipsRowWrap}>
                       {distinctReligions.length === 0 ? <Text style={styles.filterHint}>No data yet</Text> : null}
                       {distinctReligions.map((r) => (
@@ -1666,15 +1693,18 @@ export default function ExploreScreen() {
                     </View>
                   </View>
 
-                  <View style={styles.filterSection}>
-                    <Text style={styles.filterLabel}>Location settings</Text>
-                    <Text style={styles.filterHint}>
+                  <View style={styles.filterSectionCard}>
+                    <View style={styles.filterSectionHeader}>
+                    <Text style={styles.filterSectionEyebrow}>Location</Text>
+                    <Text style={styles.filterSectionTitle}>Control how your city is used</Text>
+                    <Text style={styles.filterSectionBody}>
                       {hasPreciseCoords
                         ? 'Using precise location for distance.'
                         : hasCityOnly
                         ? 'City-only location is set.'
                         : 'Location not set yet.'}
                     </Text>
+                    </View>
                     <View style={[styles.locationActions, { marginTop: 10 }]}
                     >
                       <TouchableOpacity
@@ -1699,23 +1729,22 @@ export default function ExploreScreen() {
                     {locationError ? (
                       <Text style={[styles.locationError, { marginTop: 8 }]}>{locationError}</Text>
                     ) : null}
-                  </View>
-
-                  <View style={styles.filterSection}>
-                    <Text style={styles.filterLabel}>Location</Text>
-                    <Text style={styles.filterHint}>Type a city (e.g., Accra, Ghana)</Text>
+                    <View style={styles.filterFieldGroup}>
+                    <Text style={styles.filterLabel}>Type a city</Text>
+                    <Text style={styles.filterHint}>e.g., Accra, Ghana</Text>
                     <TextInput
                       style={[styles.filterInput, { marginTop: 8 }]}
                       placeholder="e.g., Accra, Ghana"
                       value={locationQuery}
                       onChangeText={setLocationQuery}
                     />
+                    </View>
                   </View>
 
                   <View style={styles.modalPreviewRow}>
                     <Text style={styles.modalPreviewText}>
                       Preview: {draftPreviewCount ?? 0} result{(draftPreviewCount ?? 0) === 1 ? '' : 's'}
-                      {poolProfiles?.length ? ` (from ${poolProfiles.length} loaded)` : ''}
+                      {previewBaseProfiles.length ? ` (from ${previewBaseProfiles.length} loaded)` : ''}
                     </Text>
                   </View>
 
@@ -1730,11 +1759,11 @@ export default function ExploreScreen() {
                       <Text style={styles.locationGhostText}>Close</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={[styles.locationButton, styles.locationPrimary, { flex: 1 }]} onPress={handleApplyFilters}>
-                      <Text style={styles.locationPrimaryText}>
-                        Apply{draftPreviewCount != null ? ` (${draftPreviewCount})` : ''}
-                      </Text>
+                      <Text style={styles.locationPrimaryText}>Apply</Text>
                     </TouchableOpacity>
                   </View>
+                    </>
+                  )}
                 </ScrollView>
               </View>
             </View>
@@ -2377,6 +2406,80 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       alignItems: 'center',
       justifyContent: 'center',
     },
+    emptyHintCard: {
+      width: '88%',
+      borderRadius: 22,
+      paddingHorizontal: 18,
+      paddingVertical: 18,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: isDark ? 0.16 : 0.07,
+      shadowRadius: 18,
+      elevation: 8,
+      gap: 10,
+    },
+    emptyHintBadge: {
+      alignSelf: 'flex-start',
+      paddingHorizontal: 11,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: isDark ? 'rgba(17,197,198,0.12)' : 'rgba(17,197,198,0.09)',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(17,197,198,0.22)' : 'rgba(11,107,105,0.12)',
+    },
+    emptyHintBadgeText: {
+      color: theme.tint,
+      fontSize: 11.5,
+      fontWeight: '800',
+      letterSpacing: 0.2,
+    },
+    emptyHintTitle: {
+      fontSize: 22,
+      lineHeight: 28,
+      fontWeight: '800',
+      color: theme.text,
+    },
+    emptyHintSubtitle: {
+      fontSize: 13.5,
+      lineHeight: 19,
+      color: theme.textMuted,
+    },
+    emptyHintActions: {
+      flexDirection: 'row',
+      gap: 10,
+      marginTop: 2,
+    },
+    emptyHintPrimary: {
+      flex: 1,
+      borderRadius: 14,
+      paddingVertical: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.tint,
+    },
+    emptyHintPrimaryText: {
+      color: '#fff',
+      fontSize: 13,
+      fontWeight: '800',
+    },
+    emptyHintGhost: {
+      flex: 1,
+      borderRadius: 14,
+      paddingVertical: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: outline,
+      backgroundColor: ghostBg,
+    },
+    emptyHintGhostText: {
+      color: theme.text,
+      fontSize: 13,
+      fontWeight: '700',
+    },
     emptyCard: {
       width: '86%',
       backgroundColor: surface,
@@ -2439,14 +2542,19 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     },
     modalCard: {
       backgroundColor: surface,
-      borderTopLeftRadius: 16,
-      borderTopRightRadius: 16,
-      padding: 20,
+      borderTopLeftRadius: 24,
+      borderTopRightRadius: 24,
+      paddingHorizontal: 18,
+      paddingTop: 18,
+      paddingBottom: 20,
+      maxHeight: '88%',
       borderWidth: 1,
       borderColor: cardBorder,
     },
-    modalTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    modalTitle: { fontSize: 18, fontWeight: '700', color: theme.text, marginBottom: 6 },
+    modalTitleRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
+    modalTitleCopy: { flex: 1, gap: 4 },
+    modalEyebrow: { fontSize: 11, fontWeight: '800', letterSpacing: 1.2, color: theme.tint },
+    modalTitle: { fontSize: 20, lineHeight: 24, fontWeight: '700', color: theme.text },
     modalResetButton: {
       paddingHorizontal: 10,
       paddingVertical: 6,
@@ -2456,8 +2564,42 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       backgroundColor: chipBg,
     },
     modalResetText: { fontSize: 12, fontWeight: '800', color: theme.text },
-    modalSubtitle: { fontSize: 13, color: theme.textMuted, marginBottom: 14 },
-    activeFiltersRow: { paddingBottom: 4, gap: 8, paddingRight: 6 },
+    modalSubtitle: { fontSize: 13, lineHeight: 19, color: theme.textMuted, marginTop: 10, marginBottom: 16 },
+    modalScroll: { marginHorizontal: -2 },
+    modalScrollContent: { paddingBottom: 6, gap: 14 },
+    filterHeroCard: {
+      borderRadius: 22,
+      paddingHorizontal: 16,
+      paddingVertical: 16,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#f6efe7',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)',
+    },
+    filterHeroBadge: {
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: isDark ? 'rgba(17,197,198,0.12)' : 'rgba(17,197,198,0.10)',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(17,197,198,0.22)' : 'rgba(17,197,198,0.18)',
+      marginBottom: 10,
+    },
+    filterHeroBadgeText: { fontSize: 11.5, fontWeight: '800', color: theme.text },
+    filterHeroTitle: { fontSize: 19, lineHeight: 24, fontWeight: '700', color: theme.text, marginBottom: 6 },
+    filterHeroBody: { fontSize: 13, lineHeight: 19, color: theme.textMuted },
+    activeFiltersCard: {
+      borderRadius: 20,
+      paddingHorizontal: 14,
+      paddingVertical: 14,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#fff',
+    },
+    activeFiltersRow: { paddingTop: 4, paddingBottom: 4, gap: 8, paddingRight: 6 },
     activeFilterChip: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -2467,10 +2609,10 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       borderRadius: 999,
       borderWidth: 1,
       borderColor: outline,
-      backgroundColor: ghostBg,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#fbf8f3',
     },
     activeFilterChipText: { fontSize: 12, fontWeight: '700', color: theme.text },
-    activeFiltersEmpty: { fontSize: 12, color: theme.textMuted, marginTop: -6, marginBottom: 6 },
+    activeFiltersEmpty: { fontSize: 12.5, lineHeight: 18, color: theme.textMuted, marginTop: 4 },
     modalInput: {
       borderWidth: 1,
       borderColor: outline,
@@ -2495,24 +2637,50 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     countryChipActive: { backgroundColor: chipActiveBg, borderColor: theme.tint },
     countryChipText: { fontSize: 13, fontWeight: '600', color: theme.text },
     countryChipTextActive: { color: theme.tint },
-    modalPreviewRow: { marginTop: 14, paddingHorizontal: 2 },
-    modalPreviewText: { fontSize: 12, fontWeight: '700', color: theme.textMuted, textAlign: 'center' },
-    modalActions: { flexDirection: 'row', marginTop: 16 },
+    modalPreviewRow: {
+      marginTop: 2,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#fff',
+    },
+    modalPreviewText: { fontSize: 12.5, fontWeight: '700', color: theme.textMuted, textAlign: 'center' },
+    modalActions: { flexDirection: 'row', marginTop: 2 },
     filterSection: { marginTop: 12, marginBottom: 10 },
+    filterSectionCard: {
+      borderRadius: 20,
+      paddingHorizontal: 14,
+      paddingVertical: 14,
+      borderWidth: 1,
+      borderColor: cardBorder,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#fff',
+      gap: 12,
+    },
+    filterSectionHeader: { gap: 3 },
+    filterSectionEyebrow: { fontSize: 11, fontWeight: '800', letterSpacing: 1.1, color: theme.tint, textTransform: 'uppercase' },
+    filterSectionTitle: { fontSize: 17, lineHeight: 21, fontWeight: '700', color: theme.text },
+    filterSectionBody: { fontSize: 12.5, lineHeight: 18, color: theme.textMuted },
+    filterFieldGroup: { gap: 6 },
     filterLabel: { fontSize: 14, fontWeight: '700', color: theme.text },
     filterHint: { fontSize: 12, color: theme.textMuted, marginTop: 2 },
     filterChipsRow: { flexDirection: 'row', marginTop: 8 },
-    filterChipsRowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 },
-    filterChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: outline, marginRight: 8, backgroundColor: chipBg },
+    filterChipsRowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 6, gap: 8 },
+    filterChip: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 14, borderWidth: 1, borderColor: outline, marginRight: 0, backgroundColor: chipBg },
+    filterPresetChip: { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#fbf8f3' },
     filterChipActive: { backgroundColor: theme.tint, borderColor: theme.tint },
     filterChipDisabled: { opacity: 0.5 },
     filterChipText: { fontWeight: '700', color: theme.text },
     filterChipTextActive: { color: '#fff' },
-    filterToggle: { marginTop: 8, padding: 10, borderRadius: 12, borderWidth: 1, borderColor: outline, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: chipBg },
-    filterToggleActive: { borderColor: theme.tint, backgroundColor: chipActiveBg },
+    filterToggleStack: { gap: 10 },
+    filterToggle: { padding: 12, borderRadius: 16, borderWidth: 1, borderColor: outline, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: chipBg, gap: 12 },
+    filterToggleActive: { borderColor: theme.tint, backgroundColor: isDark ? 'rgba(17,197,198,0.12)' : 'rgba(17,197,198,0.08)' },
+    filterToggleCopy: { flex: 1, gap: 2 },
+    filterToggleMeta: { alignItems: 'center', gap: 8, minWidth: 48 },
     filterToggleKnob: { width: 22, height: 22, borderRadius: 11, backgroundColor: toggleKnob },
     filterToggleKnobActive: { backgroundColor: theme.tint },
-    filterToggleText: { marginLeft: 10, fontWeight: '700', color: theme.text },
+    filterToggleText: { fontWeight: '700', color: theme.textMuted },
     filterToggleTextActive: { color: theme.tint },
     filterInputsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
     filterInputWrapper: { flex: 1 },
@@ -2531,35 +2699,5 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       justifyContent: 'center',
       backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f8fafc',
     },
-    appliedFiltersBar: {
-      paddingHorizontal: 16,
-      paddingTop: 8,
-      paddingBottom: 2,
-      gap: 8,
-    },
-    appliedFilterChip: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: outline,
-      backgroundColor: ghostBg,
-    },
-    appliedFilterChipText: { fontSize: 12, fontWeight: '700', color: theme.text },
-    appliedFilterChipEdit: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: outline,
-      backgroundColor: chipBg,
-    },
-    appliedFilterChipEditText: { fontSize: 12, fontWeight: '800', color: theme.text },
   });
 }

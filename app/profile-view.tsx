@@ -127,12 +127,21 @@ function formatDistanceKm(distanceKm?: number) {
   return `${Math.round(distanceKm)} km away`;
 }
 
+function isDistanceLabel(label?: string | null) {
+  if (!label) return false;
+  const lower = String(label).toLowerCase();
+  return lower.includes('away') || /\b(km|mi|mile|miles)\b/.test(lower) || /<\s*1/.test(lower);
+}
+
 function buildLocationLine(profile: UserProfile) {
   const distanceLabel = profile.distance?.trim() || '';
   const distanceFromKm = formatDistanceKm(profile.distanceKm);
-  const distance = distanceFromKm || distanceLabel;
-
-  const base = (profile.location || profile.city || profile.region || '').trim();
+  const distance = distanceFromKm || (isDistanceLabel(distanceLabel) ? distanceLabel : '');
+  const city = String(profile.city || profile.location || profile.region || '')
+    .split(',')
+    .map((part) => part.trim())
+    .find(Boolean) || '';
+  const base = city;
   const combined = distance
     ? base && distance !== base
       ? `${distance} - ${base}`
