@@ -14,6 +14,48 @@ export type Database = {
   }
   public: {
     Tables: {
+      account_deletion_requests: {
+        Row: {
+          completed_at: string | null
+          contact_email: string | null
+          failure_reason: string | null
+          feedback: string | null
+          id: string
+          metadata: Json
+          profile_id: string | null
+          reason_keys: string[]
+          requested_at: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          completed_at?: string | null
+          contact_email?: string | null
+          failure_reason?: string | null
+          feedback?: string | null
+          id?: string
+          metadata?: Json
+          profile_id?: string | null
+          reason_keys: string[]
+          requested_at?: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          completed_at?: string | null
+          contact_email?: string | null
+          failure_reason?: string | null
+          feedback?: string | null
+          id?: string
+          metadata?: Json
+          profile_id?: string | null
+          reason_keys?: string[]
+          requested_at?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       account_merge_cases: {
         Row: {
           candidate_reason: string | null
@@ -298,6 +340,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      account_retention_events: {
+        Row: {
+          action: string
+          created_at: string
+          id: string
+          metadata: Json
+          profile_id: string | null
+          source: string
+          trigger_reason: string | null
+          user_id: string
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          id?: string
+          metadata?: Json
+          profile_id?: string | null
+          source?: string
+          trigger_reason?: string | null
+          user_id: string
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          id?: string
+          metadata?: Json
+          profile_id?: string | null
+          source?: string
+          trigger_reason?: string | null
+          user_id?: string
+        }
+        Relationships: []
       }
       betweener_venues: {
         Row: {
@@ -1911,6 +1986,8 @@ export type Database = {
       }
       profiles: {
         Row: {
+          account_state: string
+          account_state_updated_at: string
           age: number | null
           ai_score: number | null
           ai_score_updated_at: string | null
@@ -1949,6 +2026,8 @@ export type Database = {
           occupation: string | null
           onboarding_step: number
           online: boolean
+          pause_reason: string | null
+          paused_at: string | null
           personality_type: string | null
           pets: string | null
           phone_number: string | null
@@ -1973,6 +2052,8 @@ export type Database = {
           years_in_diaspora: number | null
         }
         Insert: {
+          account_state?: string
+          account_state_updated_at?: string
           age?: number | null
           ai_score?: number | null
           ai_score_updated_at?: string | null
@@ -2011,6 +2092,8 @@ export type Database = {
           occupation?: string | null
           onboarding_step?: number
           online?: boolean
+          pause_reason?: string | null
+          paused_at?: string | null
           personality_type?: string | null
           pets?: string | null
           phone_number?: string | null
@@ -2035,6 +2118,8 @@ export type Database = {
           years_in_diaspora?: number | null
         }
         Update: {
+          account_state?: string
+          account_state_updated_at?: string
           age?: number | null
           ai_score?: number | null
           ai_score_updated_at?: string | null
@@ -2073,6 +2158,8 @@ export type Database = {
           occupation?: string | null
           onboarding_step?: number
           online?: boolean
+          pause_reason?: string | null
+          paused_at?: string | null
           personality_type?: string | null
           pets?: string | null
           phone_number?: string | null
@@ -3294,7 +3381,7 @@ export type Database = {
           ai_score: number
           avatar_url: string
           bio: string
-          distance_km: number | null
+          distance_km: number
           full_name: string
           id: string
           is_active: boolean
@@ -3320,7 +3407,7 @@ export type Database = {
           ai_score: number
           avatar_url: string
           bio: string
-          distance_km: number | null
+          distance_km: number
           full_name: string
           id: string
           is_active: boolean
