@@ -101,7 +101,10 @@ export function usePremiumState() {
   }, [refresh]);
 
   const revenueCatPlan = useMemo(() => derivePlanFromCustomerInfo(customerInfo), [customerInfo]);
-  const currentPlan = revenueCatPlan !== "FREE" ? revenueCatPlan : serverState.plan;
+  const currentPlan = useMemo(() => {
+    const rank = { FREE: 0, SILVER: 1, GOLD: 2 } as const;
+    return rank[serverState.plan] >= rank[revenueCatPlan] ? serverState.plan : revenueCatPlan;
+  }, [revenueCatPlan, serverState.plan]);
 
   return {
     loading,
