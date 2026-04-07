@@ -154,6 +154,48 @@ export function derivePlanFromCustomerInfo(customerInfo: CustomerInfo | null): P
   return "FREE";
 }
 
+function productMatchesPlan(productId: string | null | undefined, plan: Exclude<PremiumPlan, "FREE">) {
+  const normalizedProductId = String(productId || "").toLowerCase();
+  const planTag = plan.toLowerCase();
+  const productHints = Object.values(PRODUCT_HINTS[plan]).flat();
+  return (
+    normalizedProductId.includes(planTag) ||
+    productHints.some((hint) => Boolean(hint) && normalizedProductId.includes(hint))
+  );
+}
+
+function entitlementMatchesPlan(
+  entitlementId: string,
+  productId: string | null | undefined,
+  plan: Exclude<PremiumPlan, "FREE">,
+) {
+  const normalizedEntitlementId = entitlementId.toLowerCase();
+  const entitlementHint = plan === "GOLD" ? GOLD_ENTITLEMENT : SILVER_ENTITLEMENT;
+  return normalizedEntitlementId.includes(entitlementHint) || productMatchesPlan(productId, plan);
+}
+
+export function getPlanEndsAtFromCustomerInfo(customerInfo: CustomerInfo | null, plan: PremiumPlan) {
+  if (!customerInfo || plan === "FREE") return null;
+
+  const activeEntitlement = Object.entries(customerInfo.entitlements.active || {}).find(([entitlementId, entitlement]) => (
+    entitlement.isActive && entitlementMatchesPlan(entitlementId, entitlement.productIdentifier, plan)
+  ));
+  if (activeEntitlement?.[1]?.expirationDate) {
+    return activeEntitlement[1].expirationDate;
+  }
+
+  const activeProductId = (customerInfo.activeSubscriptions || []).find((productId) => productMatchesPlan(productId, plan));
+  if (activeProductId) {
+    return (
+      customerInfo.subscriptionsByProductIdentifier?.[activeProductId]?.expiresDate ??
+      customerInfo.allExpirationDates?.[activeProductId] ??
+      null
+    );
+  }
+
+  return derivePlanFromCustomerInfo(customerInfo) === plan ? customerInfo.latestExpirationDate : null;
+}
+
 export function getPlanIntervalFromPackage(pkg: PurchasesPackage): PremiumPlanInterval | null {
   const subscriptionPeriod = String(pkg.product.subscriptionPeriod || "").toUpperCase();
   const packageId = (pkg.identifier || "").toLowerCase();

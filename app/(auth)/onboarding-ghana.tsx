@@ -159,7 +159,7 @@ export default function Onboarding() {
   const pickImage = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: 'images',
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
@@ -409,7 +409,10 @@ export default function Onboarding() {
         phone_verified: true,
         min_age_interest: Number(form.minAgeInterest),
         max_age_interest: Number(form.maxAgeInterest),
-        current_country: "Ghana, Africa",
+        city: null,
+        location: "Ghana",
+        current_country: "Ghana",
+        current_country_code: "GH",
         years_in_diaspora: 0,
         profile_completed: true,
       };

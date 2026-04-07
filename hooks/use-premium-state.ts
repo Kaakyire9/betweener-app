@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase";
 import {
   PremiumPlan,
   derivePlanFromCustomerInfo,
+  getPlanEndsAtFromCustomerInfo,
   loadRevenueCatState,
 } from "@/lib/subscriptions";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -105,12 +106,23 @@ export function usePremiumState() {
     const rank = { FREE: 0, SILVER: 1, GOLD: 2 } as const;
     return rank[serverState.plan] >= rank[revenueCatPlan] ? serverState.plan : revenueCatPlan;
   }, [revenueCatPlan, serverState.plan]);
+  const currentPlanEndsAt = useMemo(() => {
+    if (currentPlan === "FREE") return null;
+    const rank = { FREE: 0, SILVER: 1, GOLD: 2 } as const;
+    const revenueCatPlanEndsAt = getPlanEndsAtFromCustomerInfo(customerInfo, revenueCatPlan);
+
+    if (rank[revenueCatPlan] >= rank[serverState.plan]) {
+      return revenueCatPlanEndsAt ?? serverState.ends_at;
+    }
+
+    return serverState.ends_at ?? revenueCatPlanEndsAt;
+  }, [currentPlan, customerInfo, revenueCatPlan, serverState.ends_at, serverState.plan]);
 
   return {
     loading,
     error,
     currentPlan,
-    currentPlanEndsAt: serverState.ends_at,
+    currentPlanEndsAt,
     hasPaidPlan: currentPlan !== "FREE",
     hasActiveBoost: serverState.has_active_boost,
     activeBoostEndsAt: serverState.active_boost_ends_at,

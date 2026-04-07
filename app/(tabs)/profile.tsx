@@ -41,7 +41,6 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -79,6 +78,36 @@ const mergeAuthParamsFromUrl = (target: AuthCallbackParams, url: string) => {
       target[key] = value;
     });
   }
+};
+
+const HeroVideo = ({ uri }: { uri: string }) => {
+  const player = useVideoPlayer(uri, (p) => {
+    p.loop = true;
+    p.muted = true;
+    try {
+      p.play();
+    } catch {}
+  });
+
+  useEffect(() => {
+    try {
+      player.play();
+    } catch {}
+    return () => {
+      try {
+        player.pause();
+      } catch {}
+    };
+  }, [player]);
+
+  return (
+    <VideoView
+      style={StyleSheet.absoluteFillObject}
+      player={player}
+      contentFit="cover"
+      nativeControls={false}
+    />
+  );
 };
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
@@ -297,8 +326,35 @@ const QUIET_HOURS_PRESETS = [
   { id: 'deep', label: '00:00-06:00', start: '00:00:00', end: '06:00:00' },
 ];
 
+const NOTIFICATION_CORE_OPTIONS = [
+  { key: 'messages', label: 'Messages', body: 'Keep the main connection thread alive.', icon: 'message-text-outline' },
+  { key: 'message_reactions', label: 'Message reactions', body: 'See the small signals inside chat.', icon: 'sticker-emoji' },
+  { key: 'reactions', label: 'Reactions', body: 'Catch quick responses across the app.', icon: 'heart-outline' },
+  { key: 'likes', label: 'Likes', body: 'Know when interest lands on your profile.', icon: 'cards-heart-outline' },
+  { key: 'superlikes', label: 'Superlikes', body: 'Separate stronger signals from casual ones.', icon: 'star-four-points-outline' },
+  { key: 'matches', label: 'Matches', body: 'Do not miss a fresh mutual opening.', icon: 'account-heart-outline' },
+] as const;
+
+const NOTIFICATION_CONTROL_OPTIONS = [
+  { key: 'push_enabled', label: 'Push notifications', body: 'Allow Betweener to reach you outside the app.', icon: 'bell-ring-outline' },
+  { key: 'inapp_enabled', label: 'In-app notifications', body: 'Keep activity visible while you are inside.', icon: 'gesture-tap-button' },
+  { key: 'preview_text', label: 'Preview message text', body: 'Show message content directly in alerts.', icon: 'text-box-search-outline' },
+] as const;
+
+const NOTIFICATION_OPTIONAL_OPTIONS = [
+  { key: 'moments', label: 'Moments', body: 'Stay close to comments and reactions on your posts.', icon: 'image-multiple-outline' },
+  { key: 'verification', label: 'Verification updates', body: 'Get trust and review progress privately.', icon: 'shield-check-outline' },
+  { key: 'announcements', label: 'Announcements', body: 'Hear about meaningful product changes and releases.', icon: 'bullhorn-outline' },
+] as const;
+
 // Settings menu items
 const SETTINGS_MENU_ITEMS = [
+  {
+    id: 'appearance',
+    title: 'Appearance',
+    icon: 'theme-light-dark',
+    color: Colors.light.tint
+  },
   {
     id: 'notifications',
     title: 'Notifications',
@@ -319,8 +375,8 @@ const SETTINGS_MENU_ITEMS = [
   },
   {
     id: 'preferences',
-    title: 'Dating Preferences',
-    icon: 'heart',
+    title: 'Relationship Compass',
+    icon: 'compass-outline',
     color: Colors.light.tint
   },
   {
@@ -460,7 +516,7 @@ export default function ProfileScreen() {
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = colorScheme === 'dark';
   const params = useLocalSearchParams();
-  const { refreshStatus } = useVerificationStatus(profile?.id);
+  const { refreshStatus } = useVerificationStatus(profile?.user_id);
   const { preference: themePreference, setPreference: setThemePreference } = useColorSchemePreference();
   
   const [selectedPrompts, setSelectedPrompts] = useState<Record<string, number>>({
@@ -504,6 +560,7 @@ export default function ProfileScreen() {
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showAppearanceModal, setShowAppearanceModal] = useState(false);
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [emailInput, setEmailInput] = useState('');
@@ -1043,8 +1100,6 @@ export default function ProfileScreen() {
   // Animation values
   const scrollY = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  const dropdownAnim = useRef(new Animated.Value(0)).current;
-  const backdropAnim = useRef(new Animated.Value(0)).current;
 
   // Load user interests and photos when component mounts or profile changes
   useEffect(() => {
@@ -1365,29 +1420,16 @@ export default function ProfileScreen() {
   };
 
   const toggleSettingsDropdown = () => {
-    const toValue = showSettingsDropdown ? 0 : 1;
-    
-    setShowSettingsDropdown(!showSettingsDropdown);
-    
-    Animated.parallel([
-      Animated.timing(dropdownAnim, {
-        toValue,
-        duration: 200,
-        useNativeDriver: true,
-      }),
-      Animated.timing(backdropAnim, {
-        toValue,
-        duration: 200,
-        useNativeDriver: true,
-      }),
-    ]).start();
+    setShowSettingsDropdown((current) => !current);
   };
 
   const handleSettingsItemPress = (itemId: string) => {
-    toggleSettingsDropdown();
+    setShowSettingsDropdown(false);
     
     if (itemId === 'logout') {
       handleSignOut();
+    } else if (itemId === 'appearance') {
+      setShowAppearanceModal(true);
     } else if (itemId === 'admin') {
       if (!canSeeAdminTools) return;
       router.push('/admin');
@@ -1397,6 +1439,8 @@ export default function ProfileScreen() {
       setShowNotificationsModal(true);
     } else if (itemId === 'privacy') {
       router.push('/trust-center');
+    } else if (itemId === 'preferences') {
+      router.push('/relationship-compass');
     } else if (itemId === 'help') {
       router.push('/support-center');
     } else if (itemId === 'premium') {
@@ -1406,6 +1450,14 @@ export default function ProfileScreen() {
       console.log(`Navigate to ${itemId}`);
     }
   };
+
+  const handleThemeChoice = useCallback(
+    (value: 'light' | 'dark' | 'system') => {
+      setThemePreference(value);
+      void Haptics.selectionAsync().catch(() => undefined);
+    },
+    [setThemePreference],
+  );
 
   const openEmailAccountModal = useCallback(() => {
     setEmailMessage('');
@@ -1816,7 +1868,7 @@ export default function ProfileScreen() {
 
     Alert.alert(
       'Close your account permanently?',
-      'This permanently closes your Betweener account, removes access, and hides your profile right away. This action cannot be undone.',
+      'This permanently closes your Betweener account, removes access, and hides your profile right away. This action cannot be undone. If you have an active App Store subscription, you must cancel it separately in Apple subscription settings.',
       [
         { text: 'Keep the door open', style: 'cancel' },
         {
@@ -2165,40 +2217,9 @@ export default function ProfileScreen() {
     };
   }, [heroVideoSource]);
 
-  const HeroVideo = ({ uri }: { uri: string }) => {
-    const player = useVideoPlayer(uri, (p) => {
-      p.loop = true;
-      p.muted = true;
-      try {
-        p.play();
-      } catch {}
-    });
-
-    useEffect(() => {
-      try {
-        player.play();
-      } catch {}
-      return () => {
-        try {
-          player.pause();
-        } catch {}
-      };
-    }, [player]);
-
-    return (
-      <VideoView
-        style={StyleSheet.absoluteFillObject}
-        player={player}
-        contentFit="cover"
-        nativeControls={false}
-      />
-    );
-  };
-
-
   const closeDropdown = () => {
     if (showSettingsDropdown) {
-      toggleSettingsDropdown();
+      setShowSettingsDropdown(false);
     }
   };
 
@@ -2218,7 +2239,9 @@ export default function ProfileScreen() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: theme.background }]}>
       {/* Verification Notifications */}
-      {Boolean(profile?.id) && <VerificationNotifications />}
+      {Boolean(profile?.id) && (
+        <VerificationNotifications onOpenVerification={() => setIsVerificationModalVisible(true)} />
+      )}
       
       {/* Animated Header */}
       <Animated.View
@@ -2287,119 +2310,110 @@ export default function ProfileScreen() {
         </View>
       </Animated.View>
 
-      {/* Settings Dropdown Overlay */}
+      {/* Settings Sheet */}
       {showSettingsDropdown && (
-        <>
-          <Animated.View 
-            style={[
-              styles.dropdownBackdrop,
-              {
-                opacity: backdropAnim,
-              }
-            ]}
-          >
-            <TouchableOpacity 
-              style={styles.backdropTouchable}
-              onPress={closeDropdown}
+        <Modal
+          visible={showSettingsDropdown}
+          animationType="fade"
+          transparent
+          onRequestClose={closeDropdown}
+        >
+          <View style={styles.notificationModalBackdrop}>
+            <TouchableOpacity
               activeOpacity={1}
+              onPress={closeDropdown}
+              style={StyleSheet.absoluteFill}
             />
-          </Animated.View>
-          
-          <Animated.View
-            style={[
-              styles.settingsDropdown,
-              { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-              {
-                opacity: dropdownAnim,
-                transform: [
-                  {
-                    translateY: dropdownAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [-10, 0],
-                    }),
-                  },
-                  {
-                    scale: dropdownAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0.95, 1],
-                    }),
-                  },
-                ],
-              },
-            ]}
-          >
-            <View style={styles.themeSection}>
-              <Text style={[styles.themeLabel, { color: theme.textMuted }]}>Theme</Text>
-              <View style={styles.themePillRow}>
-                {([
-                  { id: 'light', label: 'Light' },
-                  { id: 'dark', label: 'Dark' },
-                  { id: 'system', label: 'System' },
-                ] as const).map((option) => {
-                  const active = themePreference === option.id;
+
+            <View
+              style={[
+                styles.settingsSheet,
+                styles.cardShadow,
+                { backgroundColor: theme.background, borderColor: theme.outline },
+              ]}
+            >
+              <View style={styles.notificationModalHeader}>
+                <View style={styles.appearanceHeaderCopy}>
+                  <Text style={[styles.notificationModalTitle, { color: theme.text }]}>Settings</Text>
+                  <Text style={[styles.appearanceHeaderBody, { color: theme.textMuted }]}>
+                    Adjust the parts of Betweener that shape your account, privacy, and experience.
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={closeDropdown}>
+                  <MaterialCommunityIcons name="close" size={22} color={theme.textMuted} />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.settingsSheetContent}
+              >
+                {SETTINGS_MENU_ITEMS.filter((item) => {
+                  if (item.adminOnly) return canSeeAdminTools;
+                  return true;
+                }).map((item) => {
+                  if (item.type === 'divider') {
+                    return <View key={item.id} style={[styles.dropdownDivider, { backgroundColor: theme.outline }]} />;
+                  }
+
+                  const helperText =
+                    item.id === 'appearance'
+                      ? 'Switch light, dark, or follow your device.'
+                      : item.id === 'notifications'
+                        ? 'Choose what reaches you and when.'
+                        : item.id === 'email'
+                          ? 'Manage sign-in methods and recovery.'
+                          : item.id === 'privacy'
+                            ? 'Safety tools, blocks, and trust controls.'
+                            : item.id === 'preferences'
+                              ? 'Guide who enters your dating room.'
+                              : item.id === 'premium'
+                                ? 'Review plans, pricing, and benefits.'
+                                : item.id === 'help'
+                                  ? 'Support, answers, and product guidance.'
+                                  : item.id === 'admin'
+                                    ? 'Internal moderation and operations tools.'
+                                    : item.id === 'logout'
+                                      ? 'Sign out of this account on this device.'
+                                      : '';
+
                   return (
                     <TouchableOpacity
-                      key={option.id}
+                      key={item.id}
                       style={[
-                        styles.themePill,
-                        { backgroundColor: theme.background, borderColor: theme.outline },
-                        active && { backgroundColor: theme.tint + '20', borderColor: theme.tint },
+                        styles.settingsSheetItem,
+                        { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+                        item.id === 'logout' && { backgroundColor: theme.tint + '10', borderColor: theme.tint + '30' },
                       ]}
-                      onPress={() => setThemePreference(option.id)}
+                      activeOpacity={0.9}
+                      onPress={() => handleSettingsItemPress(item.id)}
                     >
-                      <Text
-                        style={[
-                          styles.themePillText,
-                          { color: theme.text },
-                          active && { color: theme.tint },
-                        ]}
-                      >
-                        {option.label}
-                      </Text>
+                      <View style={[styles.settingsSheetIcon, { backgroundColor: theme.background }]}>
+                        <MaterialCommunityIcons
+                          name={item.icon as any}
+                          size={18}
+                          color={item.id === 'logout' ? theme.tint : item.color}
+                        />
+                      </View>
+                      <View style={styles.settingsSheetCopy}>
+                        <Text
+                          style={[
+                            styles.settingsSheetTitle,
+                            { color: item.id === 'logout' ? theme.tint : theme.text },
+                          ]}
+                        >
+                          {item.title}
+                        </Text>
+                        <Text style={[styles.settingsSheetBody, { color: theme.textMuted }]}>{helperText}</Text>
+                      </View>
+                      <MaterialCommunityIcons name="chevron-right" size={18} color={theme.textMuted} />
                     </TouchableOpacity>
                   );
                 })}
-              </View>
-              <View style={[styles.dropdownDivider, { backgroundColor: theme.outline }]} />
+              </ScrollView>
             </View>
-
-            {SETTINGS_MENU_ITEMS.filter((item) => {
-              if (item.adminOnly) return canSeeAdminTools;
-              return true;
-            }).map((item) => {
-              if (item.type === 'divider') {
-                return <View key={item.id} style={styles.dropdownDivider} />;
-              }
-              
-              return (
-                <TouchableOpacity
-                  key={item.id}
-                  style={[
-                    styles.dropdownItem,
-                        { backgroundColor: theme.background },
-                        item.id === 'logout' && { backgroundColor: theme.tint + '15' }
-                  ]}
-                  onPress={() => handleSettingsItemPress(item.id)}
-                >
-                  <MaterialCommunityIcons 
-                    name={item.icon as any} 
-                    size={20} 
-                    color={item.color} 
-                  />
-                  <Text 
-                    style={[
-                      styles.dropdownItemText,
-                      { color: theme.text },
-                      item.id === 'logout' && { color: theme.tint }
-                    ]}
-                  >
-                    {item.title}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </Animated.View>
-        </>
+          </View>
+        </Modal>
       )}
 
       {shouldShowLinkedMethodsBanner ? (
@@ -2440,12 +2454,17 @@ export default function ProfileScreen() {
       ) : null}
 
       <Modal
-        visible={showNotificationsModal}
+        visible={showAppearanceModal}
         animationType="fade"
         transparent
-        onRequestClose={() => setShowNotificationsModal(false)}
+        onRequestClose={() => setShowAppearanceModal(false)}
       >
         <View style={styles.notificationModalBackdrop}>
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={() => setShowAppearanceModal(false)}
+            style={StyleSheet.absoluteFill}
+          />
           <View
             style={[
               styles.notificationModalCard,
@@ -2454,186 +2473,368 @@ export default function ProfileScreen() {
             ]}
           >
             <View style={styles.notificationModalHeader}>
-              <Text style={[styles.notificationModalTitle, { color: theme.text }]}>Notifications</Text>
+              <View style={styles.appearanceHeaderCopy}>
+                <Text style={[styles.notificationModalTitle, { color: theme.text }]}>Appearance</Text>
+                <Text style={[styles.appearanceHeaderBody, { color: theme.textMuted }]}>
+                  Choose how Betweener should feel when you open it.
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowAppearanceModal(false)}>
+                <MaterialCommunityIcons name="close" size={22} color={theme.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <View
+              style={[
+                styles.appearancePreviewCard,
+                { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+              ]}
+            >
+              <LinearGradient
+                colors={
+                  isDark
+                    ? ['rgba(18,53,53,0.96)', 'rgba(15,26,26,0.98)']
+                    : ['#F7EFE4', '#E8F8F5', '#FFF6D8']
+                }
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.appearancePreviewGradient}
+              >
+                <Text style={[styles.appearancePreviewEyebrow, { color: isDark ? '#F5D36B' : '#946A08' }]}>
+                  Betweener mood
+                </Text>
+                <Text style={[styles.appearancePreviewTitle, { color: theme.text }]}>
+                  {themePreference === 'system' ? 'Following your device' : themePreference === 'dark' ? 'Dark mode is active' : 'Light mode is active'}
+                </Text>
+                <Text style={[styles.appearancePreviewBody, { color: theme.textMuted }]}>
+                  {themePreference === 'system'
+                    ? `Right now your device is using ${colorScheme}. Betweener will follow automatically.`
+                    : 'Your choice applies across the app immediately.'}
+                </Text>
+                <View style={styles.appearancePreviewChipRow}>
+                  <View
+                    style={[
+                      styles.appearancePreviewChip,
+                      { backgroundColor: theme.background, borderColor: theme.outline },
+                    ]}
+                  >
+                    <MaterialCommunityIcons name="theme-light-dark" size={13} color={theme.tint} />
+                    <Text style={[styles.appearancePreviewChipText, { color: theme.text }]}>
+                      {themePreference === 'system' ? 'Follow device' : themePreference === 'dark' ? 'Dark mode' : 'Light mode'}
+                    </Text>
+                  </View>
+                </View>
+              </LinearGradient>
+            </View>
+
+            <View style={styles.appearanceOptionList}>
+              {([
+                {
+                  id: 'light',
+                  title: 'Light',
+                  body: 'Warm, bright, and polished across Betweener.',
+                  icon: 'white-balance-sunny',
+                },
+                {
+                  id: 'dark',
+                  title: 'Dark',
+                  body: 'Calmer at night and stronger around photos and media.',
+                  icon: 'weather-night',
+                },
+                {
+                  id: 'system',
+                  title: 'Follow device',
+                  body: 'Stay aligned with your phone automatically.',
+                  icon: 'cellphone-cog',
+                },
+              ] as const).map((option) => {
+                const active = themePreference === option.id;
+                return (
+                  <TouchableOpacity
+                    key={option.id}
+                    style={[
+                      styles.appearanceOptionCard,
+                      { backgroundColor: theme.backgroundSubtle, borderColor: active ? theme.tint : theme.outline },
+                      active && [styles.cardShadowSoft, { shadowColor: theme.tint }],
+                    ]}
+                    activeOpacity={0.9}
+                    onPress={() => handleThemeChoice(option.id)}
+                  >
+                    <View
+                      style={[
+                        styles.appearanceOptionIcon,
+                        { backgroundColor: active ? `${theme.tint}18` : theme.background },
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name={option.icon}
+                        size={18}
+                        color={active ? theme.tint : theme.textMuted}
+                      />
+                    </View>
+                    <View style={styles.appearanceOptionCopy}>
+                      <View style={styles.appearanceOptionTitleRow}>
+                        <Text style={[styles.appearanceOptionTitle, { color: theme.text }]}>{option.title}</Text>
+                        {active ? (
+                          <View
+                            style={[
+                              styles.appearanceActivePill,
+                              { backgroundColor: `${theme.tint}14`, borderColor: `${theme.tint}3a` },
+                            ]}
+                          >
+                            <Text style={[styles.appearanceActivePillText, { color: theme.tint }]}>Active</Text>
+                          </View>
+                        ) : null}
+                      </View>
+                      <Text style={[styles.appearanceOptionBody, { color: theme.textMuted }]}>{option.body}</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showNotificationsModal}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setShowNotificationsModal(false)}
+      >
+        <View style={styles.notificationModalBackdrop}>
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={() => setShowNotificationsModal(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <View
+            style={[
+              styles.notificationModalCard,
+              styles.cardShadow,
+              styles.notificationStudioCard,
+              { backgroundColor: theme.background, borderColor: theme.outline },
+            ]}
+          >
+            <View style={styles.notificationModalHeader}>
+              <View style={styles.appearanceHeaderCopy}>
+                <Text style={[styles.notificationModalTitle, { color: theme.text }]}>Notifications</Text>
+                <Text style={[styles.appearanceHeaderBody, { color: theme.textMuted }]}>
+                  Shape the signal you want Betweener to carry, surface, or keep quiet.
+                </Text>
+              </View>
               <TouchableOpacity onPress={() => setShowNotificationsModal(false)}>
                 <MaterialCommunityIcons name="close" size={22} color={theme.textMuted} />
               </TouchableOpacity>
             </View>
 
-            <ScrollView contentContainerStyle={styles.notificationModalContent}>
-              <View style={styles.notificationSection}>
-                <Text style={[styles.notificationSectionTitle, { color: theme.text }]}>Core</Text>
-                <NotificationToggle
-                  label="Messages"
-                  value={notificationPrefs.messages}
-                  onValueChange={(val) => updateNotificationPref('messages', val)}
-                  theme={theme}
-                />
-                <NotificationToggle
-                  label="Message reactions"
-                  value={notificationPrefs.message_reactions}
-                  onValueChange={(val) => updateNotificationPref('message_reactions', val)}
-                  theme={theme}
-                />
-                <NotificationToggle
-                  label="Reactions"
-                  value={notificationPrefs.reactions}
-                  onValueChange={(val) => updateNotificationPref('reactions', val)}
-                  theme={theme}
-                />
-                <NotificationToggle
-                  label="Likes"
-                  value={notificationPrefs.likes}
-                  onValueChange={(val) => updateNotificationPref('likes', val)}
-                  theme={theme}
-                />
-                <NotificationToggle
-                  label="Superlikes"
-                  value={notificationPrefs.superlikes}
-                  onValueChange={(val) => updateNotificationPref('superlikes', val)}
-                  theme={theme}
-                />
-                <NotificationToggle
-                  label="Matches"
-                  value={notificationPrefs.matches}
-                  onValueChange={(val) => updateNotificationPref('matches', val)}
-                  theme={theme}
-                />
+            <ScrollView contentContainerStyle={styles.notificationStudioContent} showsVerticalScrollIndicator={false}>
+              <View
+                style={[
+                  styles.notificationHeroCard,
+                  { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+                ]}
+              >
+                <LinearGradient
+                  colors={
+                    isDark
+                      ? ['rgba(18,53,53,0.96)', 'rgba(27,32,27,0.98)', 'rgba(58,46,18,0.94)']
+                      : ['#FFF6E8', '#E8F8F5', '#FFF1D2']
+                  }
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.notificationHeroGradient}
+                >
+                  <View style={styles.notificationHeroArtwork} pointerEvents="none">
+                    <View style={[styles.notificationHeroRingLarge, { borderColor: isDark ? 'rgba(245,211,107,0.16)' : 'rgba(15,118,110,0.12)' }]} />
+                    <View style={[styles.notificationHeroRingSmall, { borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(15,118,110,0.1)' }]} />
+                    <View style={[styles.notificationHeroPulseDot, { backgroundColor: isDark ? '#F5D36B' : '#0F766E' }]} />
+                    <View style={[styles.notificationHeroOrbitDot, { backgroundColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(15,118,110,0.18)' }]} />
+                  </View>
+                  <Text style={[styles.notificationHeroEyebrow, { color: isDark ? '#F5D36B' : '#946A08' }]}>
+                    Private signal room
+                  </Text>
+                  <Text style={[styles.notificationHeroTitle, { color: theme.text }]}>
+                    {notificationPrefs.push_enabled ? 'You are fully reachable' : 'Signals stay mostly inside the app'}
+                  </Text>
+                  <Text style={[styles.notificationHeroBody, { color: theme.textMuted }]}>
+                    {notificationPrefs.quiet_hours_enabled
+                      ? `Quiet hours protect ${quietHoursLabel(notificationPrefs.quiet_hours_start)}-${quietHoursLabel(notificationPrefs.quiet_hours_end)}.`
+                      : 'You can soften nights with quiet hours whenever you want.'}
+                  </Text>
+                  <View style={styles.notificationHeroChipRow}>
+                    <View style={[styles.notificationHeroChip, { backgroundColor: theme.background, borderColor: theme.outline }]}>
+                      <MaterialCommunityIcons name="bell-ring-outline" size={13} color={theme.tint} />
+                      <Text style={[styles.notificationHeroChipText, { color: theme.text }]}>
+                        {notificationPrefs.push_enabled ? 'Push on' : 'Push off'}
+                      </Text>
+                    </View>
+                    <View style={[styles.notificationHeroChip, { backgroundColor: theme.background, borderColor: theme.outline }]}>
+                      <MaterialCommunityIcons name="theme-light-dark" size={13} color={theme.tint} />
+                      <Text style={[styles.notificationHeroChipText, { color: theme.text }]}>
+                        {notificationPrefs.preview_text ? 'Preview visible' : 'Preview hidden'}
+                      </Text>
+                    </View>
+                  </View>
+                </LinearGradient>
               </View>
 
               <View style={styles.notificationSection}>
-                <Text style={[styles.notificationSectionTitle, { color: theme.text }]}>Control</Text>
-                <NotificationToggle
-                  label="Push notifications"
-                  value={notificationPrefs.push_enabled}
-                  onValueChange={(val) => updateNotificationPref('push_enabled', val)}
-                  theme={theme}
-                />
-                <NotificationToggle
-                  label="In-app notifications"
-                  value={notificationPrefs.inapp_enabled}
-                  onValueChange={(val) => updateNotificationPref('inapp_enabled', val)}
-                  theme={theme}
-                />
-                <NotificationToggle
-                  label="Preview message text"
-                  value={notificationPrefs.preview_text}
-                  onValueChange={(val) => updateNotificationPref('preview_text', val)}
-                  theme={theme}
-                />
+                <Text style={[styles.notificationSectionTitle, { color: theme.text }]}>Core signals</Text>
+                <View style={styles.notificationCardGrid}>
+                  {NOTIFICATION_CORE_OPTIONS.map((item) => (
+                    <NotificationToggle
+                      key={item.key}
+                      label={item.label}
+                      description={item.body}
+                      icon={item.icon}
+                      value={notificationPrefs[item.key]}
+                      onValueChange={(val) => updateNotificationPref(item.key, val)}
+                      theme={theme}
+                    />
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.notificationSection}>
+                <Text style={[styles.notificationSectionTitle, { color: theme.text }]}>Control room</Text>
+                <View style={styles.notificationCardGrid}>
+                  {NOTIFICATION_CONTROL_OPTIONS.map((item) => (
+                    <NotificationToggle
+                      key={item.key}
+                      label={item.label}
+                      description={item.body}
+                      icon={item.icon}
+                      value={notificationPrefs[item.key]}
+                      onValueChange={(val) => updateNotificationPref(item.key, val)}
+                      theme={theme}
+                    />
+                  ))}
+                </View>
               </View>
 
               <View style={styles.notificationSection}>
                 <Text style={[styles.notificationSectionTitle, { color: theme.text }]}>Quiet hours</Text>
-                <NotificationToggle
-                  label="Silence pushes"
-                  value={notificationPrefs.quiet_hours_enabled}
-                  onValueChange={(val) =>
-                    updateQuietHours(val, notificationPrefs.quiet_hours_start, notificationPrefs.quiet_hours_end)
-                  }
-                  theme={theme}
-                />
-                {notificationPrefs.quiet_hours_enabled ? (
-                  <>
-                    <Text style={[styles.quietHoursHint, { color: theme.textMuted }]}>
-                      {`Window: ${quietHoursLabel(notificationPrefs.quiet_hours_start)}-${quietHoursLabel(notificationPrefs.quiet_hours_end)}`}
-                    </Text>
-                    {quietHoursPreview ? (
-                      <Text style={[styles.quietHoursHint, { color: theme.textMuted }]}>
-                        {quietHoursPreview}
-                      </Text>
-                    ) : null}
-                    <View style={styles.quietHoursPills}>
-                      {QUIET_HOURS_PRESETS.map((preset) => {
-                        const active = activeQuietPreset?.id === preset.id;
-                        return (
-                          <TouchableOpacity
-                            key={preset.id}
-                            style={[
-                              styles.quietHoursPill,
-                              { backgroundColor: theme.background, borderColor: theme.outline },
-                              active && { backgroundColor: theme.tint, borderColor: theme.tint },
-                            ]}
-                            onPress={() => updateQuietHours(true, preset.start, preset.end)}
-                          >
-                            <Text
+                <View
+                  style={[
+                    styles.quietHoursStudioCard,
+                    { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+                  ]}
+                >
+                  <NotificationToggle
+                    label="Silence pushes"
+                    description="Hold alerts back when the day should go still."
+                    icon="weather-night"
+                    value={notificationPrefs.quiet_hours_enabled}
+                    onValueChange={(val) =>
+                      updateQuietHours(val, notificationPrefs.quiet_hours_start, notificationPrefs.quiet_hours_end)
+                    }
+                    theme={theme}
+                  />
+                  {notificationPrefs.quiet_hours_enabled ? (
+                    <>
+                      <View style={styles.quietHoursSummaryRow}>
+                        <View style={[styles.quietHoursSummaryPill, { backgroundColor: theme.background, borderColor: theme.outline }]}>
+                          <MaterialCommunityIcons name="clock-time-four-outline" size={13} color={theme.tint} />
+                          <Text style={[styles.quietHoursSummaryText, { color: theme.text }]}>
+                            {`${quietHoursLabel(notificationPrefs.quiet_hours_start)}-${quietHoursLabel(notificationPrefs.quiet_hours_end)}`}
+                          </Text>
+                        </View>
+                        {quietHoursPreview ? (
+                          <Text style={[styles.quietHoursSummaryMeta, { color: theme.textMuted }]}>{quietHoursPreview}</Text>
+                        ) : null}
+                      </View>
+                      <View style={styles.quietHoursPills}>
+                        {QUIET_HOURS_PRESETS.map((preset) => {
+                          const active = activeQuietPreset?.id === preset.id;
+                          return (
+                            <TouchableOpacity
+                              key={preset.id}
                               style={[
-                                styles.quietHoursPillText,
-                                { color: theme.text },
-                                active && { color: '#fff' },
+                                styles.quietHoursPill,
+                                { backgroundColor: theme.background, borderColor: theme.outline },
+                                active && { backgroundColor: theme.tint, borderColor: theme.tint },
                               ]}
+                              onPress={() => updateQuietHours(true, preset.start, preset.end)}
                             >
-                              {preset.label}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </View>
-                    <View style={styles.quietHoursCustomRow}>
-                      <TouchableOpacity
-                        style={[
-                          styles.quietHoursInput,
-                          { borderColor: theme.outline, backgroundColor: theme.background },
-                        ]}
-                        onPress={() => setShowStartPicker(true)}
-                      >
-                        <Text style={[styles.quietHoursInputText, { color: theme.text }]}>
-                          {quietHoursLabel(notificationPrefs.quiet_hours_start)}
-                        </Text>
-                      </TouchableOpacity>
-                      <Text style={[styles.quietHoursDash, { color: theme.textMuted }]}>to</Text>
-                      <TouchableOpacity
-                        style={[
-                          styles.quietHoursInput,
-                          { borderColor: theme.outline, backgroundColor: theme.background },
-                        ]}
-                        onPress={() => setShowEndPicker(true)}
-                      >
-                        <Text style={[styles.quietHoursInputText, { color: theme.text }]}>
-                          {quietHoursLabel(notificationPrefs.quiet_hours_end)}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                    {showStartPicker ? (
-                      <DateTimePicker
-                        mode="time"
-                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                        value={timeStringToDate(notificationPrefs.quiet_hours_start)}
-                        onChange={handleStartChange}
-                      />
-                    ) : null}
-                    {showEndPicker ? (
-                      <DateTimePicker
-                        mode="time"
-                        display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                        value={timeStringToDate(notificationPrefs.quiet_hours_end)}
-                        onChange={handleEndChange}
-                      />
-                    ) : null}
-                  </>
-                ) : null}
+                              <Text
+                                style={[
+                                  styles.quietHoursPillText,
+                                  { color: theme.text },
+                                  active && { color: '#fff' },
+                                ]}
+                              >
+                                {preset.label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                      <View style={styles.quietHoursCustomRow}>
+                        <TouchableOpacity
+                          style={[
+                            styles.quietHoursInput,
+                            { borderColor: theme.outline, backgroundColor: theme.background },
+                          ]}
+                          onPress={() => setShowStartPicker(true)}
+                        >
+                          <Text style={[styles.quietHoursInputText, { color: theme.text }]}>
+                            {quietHoursLabel(notificationPrefs.quiet_hours_start)}
+                          </Text>
+                        </TouchableOpacity>
+                        <Text style={[styles.quietHoursDash, { color: theme.textMuted }]}>to</Text>
+                        <TouchableOpacity
+                          style={[
+                            styles.quietHoursInput,
+                            { borderColor: theme.outline, backgroundColor: theme.background },
+                          ]}
+                          onPress={() => setShowEndPicker(true)}
+                        >
+                          <Text style={[styles.quietHoursInputText, { color: theme.text }]}>
+                            {quietHoursLabel(notificationPrefs.quiet_hours_end)}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                      {showStartPicker ? (
+                        <DateTimePicker
+                          mode="time"
+                          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                          value={timeStringToDate(notificationPrefs.quiet_hours_start)}
+                          onChange={handleStartChange}
+                        />
+                      ) : null}
+                      {showEndPicker ? (
+                        <DateTimePicker
+                          mode="time"
+                          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                          value={timeStringToDate(notificationPrefs.quiet_hours_end)}
+                          onChange={handleEndChange}
+                        />
+                      ) : null}
+                    </>
+                  ) : (
+                    <Text style={[styles.quietHoursSummaryMeta, { color: theme.textMuted }]}>
+                      Quiet hours are off. Betweener can still respect your push and preview choices above.
+                    </Text>
+                  )}
+                </View>
               </View>
 
               <View style={styles.notificationSection}>
-                <Text style={[styles.notificationSectionTitle, { color: theme.text }]}>Optional</Text>
-                <NotificationToggle
-                  label="Moments"
-                  value={notificationPrefs.moments}
-                  onValueChange={(val) => updateNotificationPref('moments', val)}
-                  theme={theme}
-                />
-                <NotificationToggle
-                  label="Verification updates"
-                  value={notificationPrefs.verification}
-                  onValueChange={(val) => updateNotificationPref('verification', val)}
-                  theme={theme}
-                />
-                <NotificationToggle
-                  label="Announcements"
-                  value={notificationPrefs.announcements}
-                  onValueChange={(val) => updateNotificationPref('announcements', val)}
-                  theme={theme}
-                />
+                <Text style={[styles.notificationSectionTitle, { color: theme.text }]}>Optional signals</Text>
+                <View style={styles.notificationCardGrid}>
+                  {NOTIFICATION_OPTIONAL_OPTIONS.map((item) => (
+                    <NotificationToggle
+                      key={item.key}
+                      label={item.label}
+                      description={item.body}
+                      icon={item.icon}
+                      value={notificationPrefs[item.key]}
+                      onValueChange={(val) => updateNotificationPref(item.key, val)}
+                      theme={theme}
+                    />
+                  ))}
+                </View>
               </View>
 
               {!notificationPrefsLoaded ? (
@@ -3059,6 +3260,9 @@ export default function ProfileScreen() {
                   <Text style={[styles.deleteFooterTitle, { color: theme.text }]}>Close my account permanently</Text>
                   <Text style={[styles.deleteFooterBody, { color: theme.textMuted }]}>
                     This removes access and closes your place in Betweener right away. If you may come back later, step back instead.
+                  </Text>
+                  <Text style={[styles.deleteFooterBody, { color: theme.textMuted }]}>
+                    Active App Store subscriptions are managed by Apple and must be cancelled separately in Apple subscription settings.
                   </Text>
                 </View>
                 <View style={styles.deleteActionRow}>
@@ -4674,25 +4878,64 @@ export default function ProfileScreen() {
 
 function NotificationToggle({
   label,
+  description,
+  icon,
   value,
   onValueChange,
   theme,
 }: {
   label: string;
+  description: string;
+  icon: string;
   value: boolean;
   onValueChange: (value: boolean) => void;
   theme: typeof Colors.light;
 }) {
   return (
-    <View style={styles.notificationToggleRow}>
-      <Text style={[styles.notificationToggleLabel, { color: theme.text }]}>{label}</Text>
-      <Switch
-        value={value}
-        onValueChange={onValueChange}
-        trackColor={{ false: theme.outline, true: theme.tint }}
-        thumbColor={Colors.light.background}
-      />
-    </View>
+    <TouchableOpacity
+      activeOpacity={0.92}
+      onPress={() => onValueChange(!value)}
+      style={[
+        styles.notificationToggleCard,
+        { backgroundColor: theme.backgroundSubtle, borderColor: value ? theme.tint : theme.outline },
+      ]}
+    >
+      <View style={[styles.notificationToggleIcon, { backgroundColor: value ? `${theme.tint}18` : theme.background }]}>
+        <MaterialCommunityIcons name={icon as any} size={18} color={value ? theme.tint : theme.textMuted} />
+      </View>
+      <View style={styles.notificationToggleCopy}>
+        <View style={styles.notificationToggleTitleRow}>
+          <Text style={[styles.notificationToggleLabel, { color: theme.text }]}>{label}</Text>
+        </View>
+        <Text style={[styles.notificationToggleDescription, { color: theme.textMuted }]}>{description}</Text>
+      </View>
+      <View
+        style={[
+          styles.notificationToggleControl,
+          {
+            backgroundColor: value ? `${theme.tint}14` : theme.background,
+            borderColor: value ? `${theme.tint}3a` : theme.outline,
+          },
+        ]}
+      >
+        <Text style={[styles.notificationToggleControlText, { color: value ? theme.tint : theme.textMuted }]}>
+          {value ? 'Live' : 'Mute'}
+        </Text>
+        <View
+          style={[
+            styles.notificationToggleControlTrack,
+            { backgroundColor: value ? theme.tint : theme.outline },
+          ]}
+        >
+          <View
+            style={[
+              styles.notificationToggleControlThumb,
+              value ? styles.notificationToggleControlThumbOn : styles.notificationToggleControlThumbOff,
+            ]}
+          />
+        </View>
+      </View>
+    </TouchableOpacity>
   );
 }
 
@@ -5790,48 +6033,46 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   
-  // Settings Dropdown
-  dropdownBackdrop: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.25)',
-    zIndex: 998,
-  },
-  backdropTouchable: {
-    flex: 1,
-  },
-  settingsDropdown: {
-    position: 'absolute',
-    top: 80,
-    right: 20,
-    backgroundColor: 'transparent',
-    borderRadius: 16,
-    paddingVertical: 8,
-    minWidth: 200,
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.18,
-    shadowRadius: 24,
-    elevation: 14,
-    zIndex: 999,
+  // Settings sheet
+  settingsSheet: {
     borderWidth: 1,
-    borderColor: 'transparent',
+    borderRadius: 22,
+    maxHeight: '82%',
+    paddingVertical: 18,
+    paddingHorizontal: 18,
   },
-  dropdownItem: {
+  settingsSheetContent: {
+    gap: 10,
+    paddingBottom: 8,
+  },
+  settingsSheetItem: {
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 13,
+    paddingVertical: 13,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
     gap: 12,
   },
-  dropdownItemText: {
-    fontSize: 16,
-    fontFamily: 'Manrope_500Medium',
-    color: '#374151',
+  settingsSheetIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  settingsSheetCopy: {
     flex: 1,
+    gap: 3,
+  },
+  settingsSheetTitle: {
+    fontSize: 14,
+    fontFamily: 'Manrope_700Bold',
+  },
+  settingsSheetBody: {
+    fontSize: 11.75,
+    lineHeight: 16,
+    fontFamily: 'Manrope_400Regular',
   },
   dropdownDivider: {
     height: 1,
@@ -5839,36 +6080,109 @@ const styles = StyleSheet.create({
     marginVertical: 4,
     marginHorizontal: 12,
   },
-  themeSection: {
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 6,
-    gap: 8,
-  },
-  themeLabel: {
-    fontSize: 13,
-    fontFamily: 'Manrope_600SemiBold',
-    color: '#6b7280',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  themePillRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  themePill: {
+  appearanceHeaderCopy: {
     flex: 1,
-    paddingVertical: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    alignItems: 'center',
-    backgroundColor: '#f9fafb',
+    paddingRight: 12,
   },
-  themePillText: {
+  appearanceHeaderBody: {
+    marginTop: 4,
+    fontSize: 12.5,
+    lineHeight: 18,
+    fontFamily: 'Manrope_400Regular',
+  },
+  appearancePreviewCard: {
+    borderWidth: 1,
+    borderRadius: 18,
+    overflow: 'hidden',
+    marginBottom: 14,
+  },
+  appearancePreviewGradient: {
+    paddingHorizontal: 16,
+    paddingVertical: 15,
+  },
+  appearancePreviewEyebrow: {
+    fontSize: 11,
+    fontFamily: 'Archivo_600SemiBold',
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+  },
+  appearancePreviewTitle: {
+    marginTop: 6,
+    fontSize: 17,
+    fontFamily: 'Archivo_600SemiBold',
+  },
+  appearancePreviewBody: {
+    marginTop: 4,
+    fontSize: 12.5,
+    lineHeight: 18,
+    fontFamily: 'Manrope_400Regular',
+  },
+  appearancePreviewChipRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+  },
+  appearancePreviewChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  appearancePreviewChipText: {
+    fontSize: 11.5,
+    fontFamily: 'Manrope_700Bold',
+  },
+  appearanceOptionList: {
+    gap: 10,
+  },
+  appearanceOptionCard: {
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 13,
+    paddingVertical: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  appearanceOptionIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  appearanceOptionCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  appearanceOptionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  appearanceOptionTitle: {
     fontSize: 14,
-    fontFamily: 'Manrope_600SemiBold',
-    color: '#111827',
+    fontFamily: 'Manrope_700Bold',
+    flex: 1,
+  },
+  appearanceOptionBody: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: 'Manrope_400Regular',
+  },
+  appearanceActivePill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  appearanceActivePillText: {
+    fontSize: 10.5,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
   },
   
   // Profile Details Styles
@@ -5930,6 +6244,10 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
     paddingHorizontal: 18,
   },
+  notificationStudioCard: {
+    borderRadius: 24,
+    overflow: 'hidden',
+  },
   notificationModalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -5944,30 +6262,208 @@ const styles = StyleSheet.create({
   notificationModalContent: {
     paddingBottom: 12,
   },
+  notificationStudioContent: {
+    gap: 18,
+    paddingBottom: 12,
+  },
+  notificationHeroCard: {
+    borderWidth: 1,
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  notificationHeroGradient: {
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    overflow: 'hidden',
+  },
+  notificationHeroArtwork: {
+    position: 'absolute',
+    top: 10,
+    right: 12,
+    width: 88,
+    height: 88,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notificationHeroRingLarge: {
+    position: 'absolute',
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    borderWidth: 1,
+  },
+  notificationHeroRingSmall: {
+    position: 'absolute',
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1,
+  },
+  notificationHeroPulseDot: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    top: 18,
+    right: 18,
+  },
+  notificationHeroOrbitDot: {
+    position: 'absolute',
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    bottom: 18,
+    left: 16,
+  },
+  notificationHeroEyebrow: {
+    fontSize: 11,
+    fontFamily: 'Archivo_600SemiBold',
+    letterSpacing: 1.1,
+    textTransform: 'uppercase',
+  },
+  notificationHeroTitle: {
+    marginTop: 6,
+    fontSize: 18,
+    fontFamily: 'Archivo_600SemiBold',
+  },
+  notificationHeroBody: {
+    marginTop: 5,
+    fontSize: 12.5,
+    lineHeight: 18,
+    fontFamily: 'Manrope_400Regular',
+  },
+  notificationHeroChipRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  notificationHeroChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  notificationHeroChipText: {
+    fontSize: 11.5,
+    fontFamily: 'Manrope_700Bold',
+  },
   notificationSection: {
-    marginBottom: 18,
+    gap: 14,
   },
   notificationSectionTitle: {
     fontSize: 13,
     fontWeight: '700',
     letterSpacing: 0.4,
     textTransform: 'uppercase',
-    marginBottom: 10,
   },
-  notificationToggleRow: {
+  notificationCardGrid: {
+    gap: 12,
+  },
+  notificationToggleCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
+    gap: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 20,
+    paddingHorizontal: 13,
+    paddingVertical: 13,
+  },
+  notificationToggleIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notificationToggleCopy: {
+    flex: 1,
+    gap: 3,
+  },
+  notificationToggleTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   notificationToggleLabel: {
     fontSize: 14,
-    fontWeight: '600',
+    fontFamily: 'Manrope_700Bold',
     letterSpacing: 0.1,
+    flexShrink: 1,
+  },
+  notificationToggleDescription: {
+    fontSize: 11.5,
+    lineHeight: 16,
+    fontFamily: 'Manrope_400Regular',
+  },
+  notificationToggleControl: {
+    minWidth: 80,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 16,
+    paddingHorizontal: 7,
+    paddingVertical: 6,
+    alignItems: 'center',
+    gap: 5,
+  },
+  notificationToggleControlText: {
+    fontSize: 10.5,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.25,
+  },
+  notificationToggleControlTrack: {
+    width: 40,
+    height: 22,
+    borderRadius: 999,
+    paddingHorizontal: 3,
+    justifyContent: 'center',
+  },
+  notificationToggleControlThumb: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+  },
+  notificationToggleControlThumbOn: {
+    alignSelf: 'flex-end',
+  },
+  notificationToggleControlThumbOff: {
+    alignSelf: 'flex-start',
   },
   notificationLoading: {
     fontSize: 12,
     marginTop: 8,
+  },
+  quietHoursStudioCard: {
+    borderWidth: 1,
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 12,
+  },
+  quietHoursSummaryRow: {
+    gap: 8,
+  },
+  quietHoursSummaryPill: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  quietHoursSummaryText: {
+    fontSize: 11.5,
+    fontFamily: 'Manrope_700Bold',
+  },
+  quietHoursSummaryMeta: {
+    fontSize: 11.75,
+    lineHeight: 17,
+    fontFamily: 'Manrope_400Regular',
   },
   linkedMethodsBanner: {
     marginHorizontal: 20,

@@ -241,7 +241,10 @@ export default function ActivityScreen() {
           return;
         }
         if (item.type === "MOMENT_REACTION" || item.type === "MOMENT_COMMENT") {
-          openMoments(actorId, item.entity_id ?? null);
+          const momentOwnerId = typeof (item.metadata as any)?.moment_owner_user_id === "string"
+            ? String((item.metadata as any).moment_owner_user_id)
+            : user?.id ?? null;
+          openMoments(momentOwnerId, item.entity_id ?? null);
           return;
         }
         if (actorId) {
@@ -276,7 +279,10 @@ export default function ActivityScreen() {
               label: "View Moment",
               onPress: () => {
                 handleMarkRead(item);
-                openMoments(actorId, item.entity_id ?? null);
+                const momentOwnerId = typeof (item.metadata as any)?.moment_owner_user_id === "string"
+                  ? String((item.metadata as any).moment_owner_user_id)
+                  : user?.id ?? null;
+                openMoments(momentOwnerId, item.entity_id ?? null);
               },
             };
           case "MOMENT_COMMENT":
@@ -284,7 +290,10 @@ export default function ActivityScreen() {
               label: "Reply",
               onPress: () => {
                 handleMarkRead(item);
-                openMoments(actorId, item.entity_id ?? null);
+                const momentOwnerId = typeof (item.metadata as any)?.moment_owner_user_id === "string"
+                  ? String((item.metadata as any).moment_owner_user_id)
+                  : user?.id ?? null;
+                openMoments(momentOwnerId, item.entity_id ?? null);
               },
             };
           case "GIFT_RECEIVED":
@@ -343,7 +352,10 @@ export default function ActivityScreen() {
               label: "View",
               onPress: () => {
                 handleMarkRead(item);
-                openMoments(actorId, item.entity_id ?? null);
+                const momentOwnerId = typeof (item.metadata as any)?.moment_owner_user_id === "string"
+                  ? String((item.metadata as any).moment_owner_user_id)
+                  : user?.id ?? null;
+                openMoments(momentOwnerId, item.entity_id ?? null);
               },
             };
           case "GIFT_RECEIVED":

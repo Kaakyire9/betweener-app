@@ -153,6 +153,19 @@ function RootLayout() {
             }
           }
 
+          if (pushType === "moment_reaction" || pushType === "moment_comment") {
+            const startUserId = data?.start_user_id || data?.moment_owner_user_id || data?.user_id;
+            const momentId = data?.moment_id || data?.momentId;
+            router.push({
+              pathname: "/moments",
+              params: {
+                startUserId: startUserId ? String(startUserId) : "",
+                startMomentId: momentId ? String(momentId) : "",
+              },
+            });
+            return;
+          }
+
           // Intent reminders: route to the Intent inbox (actionable view) so users can accept/pass quickly.
           if (pushType === "intent_expiring_soon" || pushType === "intent_last_chance") {
             const requestId = data?.request_id || data?.requestId;

@@ -3,6 +3,7 @@ import type { Match } from '@/types/match';
 import { getSupabaseNetEvents, supabase } from '@/lib/supabase';
 import { captureMessage } from '@/lib/telemetry/sentry';
 import { buildLocationSearchText, isRecentlyActive, parseDistanceKm, rerankVibesSegment, type VibesSegment } from '@/lib/vibes/discovery-logic';
+import type { RelationshipCompass } from '@/lib/relationship-compass';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export type VibesFilters = {
@@ -26,6 +27,8 @@ type UseVibesFeedParams = {
   momentUserIds?: Set<string>;
   viewerInterests?: string[];
   viewerGender?: string | null;
+  viewerProfile?: any;
+  relationshipCompass?: RelationshipCompass | null;
   initialFilters?: Partial<VibesFilters>;
 };
 
@@ -73,10 +76,12 @@ export function applyVibesFilters(
     segment: VibesSegment;
     momentUserIds?: Set<string>;
     viewerInterests?: string[];
+    relationshipCompass?: RelationshipCompass | null;
+    viewerProfile?: any;
   },
 ): Match[] {
   let out = list.slice();
-  const { segment, momentUserIds, viewerInterests } = opts;
+  const { segment, momentUserIds, viewerInterests, relationshipCompass, viewerProfile } = opts;
 
   if (filters.hasVideoOnly) {
     out = out.filter((m) => Boolean((m as any).profileVideo));
@@ -141,7 +146,7 @@ export function applyVibesFilters(
     });
   }
 
-  return rerankVibesSegment(out, segment, viewerInterests, momentUserIds);
+  return rerankVibesSegment(out, segment, viewerInterests, momentUserIds, relationshipCompass, viewerProfile);
 }
 
 export default function useVibesFeed({
@@ -152,6 +157,8 @@ export default function useVibesFeed({
   momentUserIds,
   viewerInterests,
   viewerGender,
+  viewerProfile,
+  relationshipCompass,
   initialFilters,
 }: UseVibesFeedParams) {
   const [filters, setFilters] = useState<VibesFilters>({ ...DEFAULT_FILTERS, ...initialFilters });
@@ -397,8 +404,14 @@ export default function useVibesFeed({
   }, [matches, blockedIds, swipedTodayIds, pendingIntentPeerIds, acceptedMatchPeerIds, viewerInterests, viewerGender]);
 
   const filteredProfiles = useMemo(() => {
-    return applyVibesFilters(poolProfiles, filters, { segment, momentUserIds, viewerInterests });
-  }, [filters, momentUserIds, poolProfiles, segment, viewerInterests]);
+    return applyVibesFilters(poolProfiles, filters, {
+      segment,
+      momentUserIds,
+      viewerInterests,
+      relationshipCompass,
+      viewerProfile,
+    });
+  }, [filters, momentUserIds, poolProfiles, relationshipCompass, segment, viewerInterests, viewerProfile]);
 
   return {
     segment,

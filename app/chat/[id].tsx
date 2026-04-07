@@ -171,7 +171,38 @@ const MAP_STYLE_DARK = [
   { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#142020' }] },
   { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0B1414' }] },
 ];
-const getPickerMediaTypesAll = (): ImagePicker.MediaTypeOptions => ImagePicker.MediaTypeOptions.All;
+const PICKER_MEDIA_TYPES_ALL: ImagePicker.MediaType[] = ['images', 'videos'];
+const CHAT_MEDIA_UPLOAD_RETRIES = 2;
+const CHAT_MEDIA_UPLOAD_RETRY_DELAY_MS = 900;
+
+const encodeStoragePath = (path: string) =>
+  path
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isRetryableUploadError = (error: unknown) => {
+  const message = String((error as any)?.message || error || '').toLowerCase();
+  const status = Number((error as any)?.status || (error as any)?.statusCode || 0);
+  return (
+    message.includes('timeout') ||
+    message.includes('network') ||
+    message.includes('abort') ||
+    status === 408 ||
+    status === 429 ||
+    status >= 500
+  );
+};
+
+const getAttachmentUploadErrorMessage = (error: unknown) => {
+  const message = String((error as any)?.message || error || '').toLowerCase();
+  if (message.includes('timeout') || message.includes('network')) {
+    return 'The upload timed out. Try again on a stronger connection or send a smaller video.';
+  }
+  return 'Unable to upload this file.';
+};
 
 // Message type definition
 type DatePlanStatus = 'pending' | 'accepted' | 'declined' | 'cancelled' | 'countered';
@@ -289,6 +320,28 @@ type MessageRow = {
   encrypted_media_alg?: string | null;
   encrypted_media_mime?: string | null;
   encrypted_media_size?: number | null;
+};
+
+type MediaUploadStatus = {
+  id: number;
+  title: string;
+  subtitle: string;
+  icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
+};
+
+const getReportEvidencePreview = (message?: MessageType | null) => {
+  if (!message) return null;
+  if (message.deletedForAll) return 'Deleted message';
+  if (message.isViewOnce) return 'View-once message';
+  if (message.type === 'text') return message.text || 'Text message';
+  if (message.type === 'image') return 'Image message';
+  if (message.type === 'video') return 'Video message';
+  if (message.type === 'voice') return 'Voice message';
+  if (message.type === 'document') return message.document?.name ? `Document: ${message.document.name}` : 'Document message';
+  if (message.type === 'location') return message.location?.label ? `Location: ${message.location.label}` : 'Location message';
+  if (message.type === 'date_plan') return message.dateInvite?.placeName ? `Date plan: ${message.dateInvite.placeName}` : 'Date plan message';
+  if (message.type === 'mood_sticker') return message.sticker?.name ? `Sticker: ${message.sticker.name}` : 'Sticker message';
+  return 'Message evidence';
 };
 
 type SystemMessageRow = {
@@ -643,6 +696,20 @@ const dedupeMessagesById = (items: MessageType[]) => {
   return deduped;
 };
 
+const areReactionListsEqual = (
+  current: MessageType['reactions'] | undefined,
+  next: MessageType['reactions'] | undefined,
+) => {
+  const currentList = current ?? [];
+  const nextList = next ?? [];
+  if (currentList.length !== nextList.length) return false;
+  return currentList.every(
+    (reaction, index) =>
+      reaction.userId === nextList[index]?.userId &&
+      reaction.emoji === nextList[index]?.emoji,
+  );
+};
+
 const buildDateQuickSlots = (baseNow: Date) => {
   const tonight = new Date(baseNow);
   tonight.setHours(baseNow.getHours() < 18 ? 19 : 20, 0, 0, 0);
@@ -891,7 +958,6 @@ type MessageRowItemProps = {
   currentUserId: string;
   peerName: string;
   imageSize?: { width: number; height: number };
-  videoSize?: { width: number; height: number };
   theme: typeof Colors.light;
   isDark: boolean;
   styles: ReturnType<typeof createStyles>;
@@ -911,7 +977,6 @@ type MessageRowItemProps = {
   onOpenReactionSheet: (message: MessageType) => void;
   onViewImage: (url: string) => void;
   onViewVideo: (url: string) => void;
-  onVideoSize: (url: string, width: number, height: number) => void;
   onOpenDocument: (doc?: MessageType['document']) => void;
   onOpenLocation: (message: MessageType) => void;
   onStopLiveShare: (messageId: string) => void;
@@ -1051,10 +1116,7 @@ const normalizeHeicImage = async (
 };
 
 type VideoPreviewProps = {
-  url: string;
-  size?: { width: number; height: number };
   styles: ReturnType<typeof createStyles>;
-  onSize: (width: number, height: number) => void;
 };
 
 type ReplyMeta = {
@@ -1065,67 +1127,24 @@ type ReplyMeta = {
   canJump: boolean;
 };
 
-const VideoPreview = ({ url, size, styles, onSize }: VideoPreviewProps) => {
-  const player = useVideoPlayer(url, (p) => {
-    p.loop = false;
-    p.muted = true;
-  });
-
-  useEffect(() => {
-    try {
-      player.pause();
-    } catch {}
-  }, [player]);
-
-  useEffect(() => {
-    if (!url || size) return;
-
-    const handleSize = (width?: number, height?: number) => {
-      if (!width || !height) return;
-      onSize(width, height);
-    };
-
-    const trackSub =
-      (player as any).addListener?.('videoTrackChange', ({ videoTrack }: any) => {
-      handleSize(videoTrack?.size?.width, videoTrack?.size?.height);
-      }) ??
-      (player as any).addEventListener?.('videoTrackChange', ({ videoTrack }: any) => {
-        handleSize(videoTrack?.size?.width, videoTrack?.size?.height);
-      });
-
-    const sourceSub =
-      (player as any).addListener?.('sourceLoad', ({ availableVideoTracks }: any) => {
-      const track = availableVideoTracks?.[0];
-      handleSize(track?.size?.width, track?.size?.height);
-      }) ??
-      (player as any).addEventListener?.('sourceLoad', ({ availableVideoTracks }: any) => {
-        const track = availableVideoTracks?.[0];
-        handleSize(track?.size?.width, track?.size?.height);
-      });
-
-    return () => {
-      try { trackSub?.remove?.(); } catch {}
-      try { sourceSub?.remove?.(); } catch {}
-    };
-  }, [player, size, onSize, url]);
-
+const VideoPreview = memo(({ styles }: VideoPreviewProps) => {
   return (
     <View style={styles.videoPreviewWrap}>
-      <VideoView
-        player={player}
-        style={[
-          styles.messageVideo,
-          size ? { width: size.width, height: size.height } : null,
-        ]}
-        contentFit="cover"
-        nativeControls={false}
+      <LinearGradient
+        colors={['rgba(8, 22, 22, 0.92)', 'rgba(11, 45, 45, 0.88)', 'rgba(3, 12, 12, 0.95)']}
+        start={[0, 0]}
+        end={[1, 1]}
+        style={styles.messageVideo}
       />
       <View style={styles.videoOverlay}>
         <MaterialCommunityIcons name="play-circle" size={34} color={Colors.light.background} />
+        <Text style={styles.videoOverlayLabel}>Video</Text>
       </View>
     </View>
   );
-};
+});
+
+VideoPreview.displayName = "VideoPreview";
 
 type VideoViewerProps = {
   url: string;
@@ -1176,7 +1195,6 @@ const MessageRowItem = memo(
     currentUserId,
     peerName,
     imageSize,
-    videoSize,
     theme,
     isDark,
     styles,
@@ -1196,7 +1214,6 @@ const MessageRowItem = memo(
     onOpenReactionSheet,
     onViewImage,
     onViewVideo,
-    onVideoSize,
     onOpenDocument,
     onOpenLocation,
     onStopLiveShare,
@@ -1737,14 +1754,6 @@ const MessageRowItem = memo(
       };
     }, [currentUserId, item.replyTo, item.replyToId, peerName]);
 
-    const handleVideoSize = useCallback(
-      (width: number, height: number) => {
-        if (!item.videoUrl) return;
-        onVideoSize(item.videoUrl, width, height);
-      },
-      [item.videoUrl, onVideoSize]
-    );
-
     const messageTextNode = useMemo(() => {
       const text = item.text || '';
       if (!text) return null;
@@ -2145,10 +2154,7 @@ const MessageRowItem = memo(
                 <View style={[styles.videoMessageContainer, styles.mediaSurface]}>
                   {item.videoUrl && (
                     <VideoPreview
-                      url={item.videoUrl}
-                      size={videoSize}
                       styles={styles}
-                      onSize={handleVideoSize}
                     />
                   )}
                   <Animated.View
@@ -3106,8 +3112,6 @@ const MessageRowItem = memo(
     prev.onHighlightPress === next.onHighlightPress &&
     prev.imageSize?.width === next.imageSize?.width &&
     prev.imageSize?.height === next.imageSize?.height &&
-    prev.videoSize?.width === next.videoSize?.width &&
-    prev.videoSize?.height === next.videoSize?.height &&
     prev.now === next.now
 );
 
@@ -3290,6 +3294,8 @@ export default function ConversationScreen() {
   const [reportModalVisible, setReportModalVisible] = useState(false);
   const [reportReasonId, setReportReasonId] = useState<string | null>(null);
   const [reportDetails, setReportDetails] = useState('');
+  const [reportShouldBlock, setReportShouldBlock] = useState(false);
+  const [reportEvidenceMessage, setReportEvidenceMessage] = useState<MessageType | null>(null);
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [blockStatus, setBlockStatus] = useState<string | null>(null);
   const [showMoodStickers, setShowMoodStickers] = useState(false);
@@ -3297,6 +3303,7 @@ export default function ConversationScreen() {
   const [isRecordingPaused, setIsRecordingPaused] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [isUploadingVoice, setIsUploadingVoice] = useState(false);
+  const [mediaUploadStatus, setMediaUploadStatus] = useState<MediaUploadStatus | null>(null);
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [showImagePicker, setShowImagePicker] = useState(false);
@@ -3318,7 +3325,7 @@ export default function ConversationScreen() {
   const [videoViewerUrl, setVideoViewerUrl] = useState<string | null>(null);
   const [documentViewerUrl, setDocumentViewerUrl] = useState<string | null>(null);
   const [imageSizes, setImageSizes] = useState<Record<string, { width: number; height: number }>>({});
-  const [videoSizes, setVideoSizes] = useState<Record<string, { width: number; height: number }>>({});
+  const measuredImageUrlsRef = useRef<Set<string>>(new Set());
   const [locationModalVisible, setLocationModalVisible] = useState(false);
   const [locationViewerMessageId, setLocationViewerMessageId] = useState<string | null>(null);
   const [locationSearchQuery, setLocationSearchQuery] = useState('');
@@ -3689,6 +3696,17 @@ export default function ConversationScreen() {
   }, [betweenerVenues, peerProfile?.city, peerProfile?.location, peerProfile?.region]);
 
   const renderedMessages = useMemo(() => dedupeMessagesById(messages), [messages]);
+  const hasActiveLiveLocationMessage = useMemo(
+    () =>
+      renderedMessages.some((message) => {
+      if (message.type !== 'location' || !message.location?.live || !message.location.expiresAt) {
+        return false;
+      }
+      return message.location.expiresAt.getTime() > nowTick;
+      }),
+    [nowTick, renderedMessages],
+  );
+  const messageListNow = hasActiveLiveLocationMessage ? nowTick : null;
   const chatMessageCount = useMemo(
     () => renderedMessages.filter((message) => !message.isSystem).length,
     [renderedMessages],
@@ -3795,6 +3813,7 @@ export default function ConversationScreen() {
   
   const messagesRef = useRef<MessageType[]>([]);
   const flatListRef = useRef<FlatList>(null);
+  const messageListViewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
   const animatedMessageIdsRef = useRef<Set<string>>(new Set());
   const seededMessageAnimationsRef = useRef(false);
   const imageScaleBase = useRef(new Animated.Value(1)).current;
@@ -3923,11 +3942,12 @@ export default function ConversationScreen() {
   };
 
   useEffect(() => {
+    if (!hasActiveLiveLocationMessage) return;
     const interval = setInterval(() => {
       setNowTick(Date.now());
     }, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [hasActiveLiveLocationMessage]);
 
   useEffect(() => {
     if (!locationModalVisible) {
@@ -4041,11 +4061,17 @@ export default function ConversationScreen() {
       }
     });
     const idSet = new Set(uniqueIds);
-    setMessages((prev) =>
-      prev.map((msg) =>
-        idSet.has(msg.id) ? { ...msg, reactions: grouped.get(msg.id) ?? [] } : msg
-      )
-    );
+    setMessages((prev) => {
+      let changed = false;
+      const next = prev.map((msg) => {
+        if (!idSet.has(msg.id)) return msg;
+        const nextReactions = grouped.get(msg.id) ?? [];
+        if (areReactionListsEqual(msg.reactions, nextReactions)) return msg;
+        changed = true;
+        return { ...msg, reactions: nextReactions };
+      });
+      return changed ? next : prev;
+    });
   }, [user?.id]);
 
   const syncViewOnceStatus = useCallback(async (messageIds: string[]) => {
@@ -4642,6 +4668,18 @@ export default function ConversationScreen() {
     });
   }, []);
 
+  const replaceMessageById = useCallback((
+    items: MessageType[],
+    messageId: string,
+    replacement: MessageType
+  ) => {
+    const index = items.findIndex((msg) => msg.id === messageId);
+    if (index === -1) return items;
+    const next = items.slice();
+    next[index] = replacement;
+    return next;
+  }, []);
+
   const fetchPinnedMessages = useCallback(async () => {
     if (!user?.id || !conversationId) return;
     const { data, error } = await supabase
@@ -4707,6 +4745,22 @@ export default function ConversationScreen() {
       !actionMessage.id.startsWith('temp-')
     );
   }, [actionMessage, user?.id]);
+
+  const canReportActionMessage = useMemo(() => {
+    if (!actionMessage || !user?.id) return false;
+    return (
+      actionMessage.senderId !== user.id &&
+      actionMessage.type !== 'system' &&
+      !actionMessage.isSystem &&
+      !actionMessage.deletedForAll &&
+      !actionMessage.id.startsWith('temp-')
+    );
+  }, [actionMessage, user?.id]);
+
+  const reportEvidencePreview = useMemo(
+    () => getReportEvidencePreview(reportEvidenceMessage),
+    [reportEvidenceMessage]
+  );
 
   const reactionSheetMessage = useMemo(() => {
     if (!reactionSheetMessageId) return null;
@@ -4933,6 +4987,15 @@ export default function ConversationScreen() {
     },
     [],
   );
+  const handleSuggestAnotherTime = useCallback((invite: MessageType['dateInvite']) => {
+    openCounterDatePlanner(invite, 'counter_time');
+  }, [openCounterDatePlanner]);
+  const handleSuggestAnotherPlace = useCallback((invite: MessageType['dateInvite']) => {
+    openCounterDatePlanner(invite, 'counter_place');
+  }, [openCounterDatePlanner]);
+  const handleSuggestBoth = useCallback((invite: MessageType['dateInvite']) => {
+    openCounterDatePlanner(invite, 'counter_both');
+  }, [openCounterDatePlanner]);
 
   const openRescheduleDatePlanner = useCallback((invite: MessageType['dateInvite']) => {
     if (!invite?.planId) return;
@@ -5428,25 +5491,62 @@ export default function ConversationScreen() {
   }) => {
     // Ensure we have an auth session for storage RLS
     const { data: sessionData } = await supabase.auth.getSession();
-    if (!sessionData.session) {
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) {
       throw new Error('unauthenticated_storage');
     }
     const filePath = `${user?.id ?? 'anon'}/${Date.now()}-${fileName}`;
-    const response = await fetch(uri);
-    const arrayBuffer = await response.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-    const { error: uploadError } = await supabase
-      .storage
-      .from(CHAT_MEDIA_BUCKET)
-      .upload(filePath, uint8Array, { contentType, upsert: true });
-    if (uploadError) {
-      console.log('[chat] upload media error', uploadError);
-      throw uploadError;
+    const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+    const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error('missing_supabase_upload_config');
     }
-    const { data } = supabase.storage
-      .from(CHAT_MEDIA_BUCKET)
-      .getPublicUrl(filePath);
-    return { publicUrl: data.publicUrl, filePath };
+
+    const uploadUrl = `${supabaseUrl}/storage/v1/object/${CHAT_MEDIA_BUCKET}/${encodeStoragePath(filePath)}?upsert=true`;
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt <= CHAT_MEDIA_UPLOAD_RETRIES; attempt += 1) {
+      try {
+        const task = FileSystem.createUploadTask(uploadUrl, uri, {
+          httpMethod: 'POST',
+          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+          headers: {
+            'Content-Type': contentType,
+            Authorization: `Bearer ${accessToken}`,
+            apikey: supabaseAnonKey,
+            'x-upsert': 'true',
+          },
+        });
+        const result = await task.uploadAsync();
+        if (!result) {
+          throw new Error('Upload failed (no response)');
+        }
+        if (result.status >= 200 && result.status < 300) {
+          const { data } = supabase.storage
+            .from(CHAT_MEDIA_BUCKET)
+            .getPublicUrl(filePath);
+          return { publicUrl: data.publicUrl, filePath };
+        }
+
+        let message = result.body || `Upload failed (HTTP ${result.status})`;
+        try {
+          const parsed = JSON.parse(result.body || '{}');
+          if (parsed?.message) message = String(parsed.message);
+        } catch {}
+        const uploadError = new Error(message);
+        (uploadError as any).status = result.status;
+        throw uploadError;
+      } catch (error) {
+        lastError = error;
+        if (attempt >= CHAT_MEDIA_UPLOAD_RETRIES || !isRetryableUploadError(error)) {
+          console.log('[chat] upload media error', error);
+          throw error;
+        }
+        await wait(CHAT_MEDIA_UPLOAD_RETRY_DELAY_MS * (attempt + 1));
+      }
+    }
+
+    throw lastError ?? new Error('upload_failed');
   }, [user?.id]);
 
   const uploadEncryptedChatMedia = useCallback(async ({
@@ -5575,15 +5675,14 @@ export default function ConversationScreen() {
         )
       );
     } else {
+      const nextMessage = mapRowToMessage(data as MessageRow);
       setMessages((prev) =>
-        linkReplies(
-          prev.map((msg) =>
-            msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
-          )
-        )
+        replyingTo
+          ? linkReplies(replaceMessageById(prev, tempId, nextMessage))
+          : replaceMessageById(prev, tempId, nextMessage)
       );
     }
-  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
+  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replaceMessageById, replyingTo, user?.id]);
 
   const sendImageAttachment = useCallback(async ({
     imageUrl,
@@ -5666,15 +5765,14 @@ export default function ConversationScreen() {
       console.log('[chat] send image error', error);
       setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
     } else {
+      const nextMessage = mapRowToMessage(data as MessageRow);
       setMessages((prev) =>
-        linkReplies(
-          prev.map((msg) =>
-            msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
-          )
-        )
+        replyingTo
+          ? linkReplies(replaceMessageById(prev, tempId, nextMessage))
+          : replaceMessageById(prev, tempId, nextMessage)
       );
     }
-  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
+  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replaceMessageById, replyingTo, user?.id]);
 
   const sendEncryptedMediaAttachment = useCallback(async ({
     uri,
@@ -5759,10 +5857,11 @@ export default function ConversationScreen() {
         console.log('[chat] send encrypted view-once error', error);
         setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
       } else {
+        const nextMessage = mapRowToMessage(data as MessageRow);
         setMessages((prev) =>
-          linkReplies(
-            prev.map((msg) => (msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg))
-          )
+          replyingTo
+            ? linkReplies(replaceMessageById(prev, tempId, nextMessage))
+            : replaceMessageById(prev, tempId, nextMessage)
         );
       }
     } catch (err) {
@@ -5770,7 +5869,7 @@ export default function ConversationScreen() {
       Alert.alert('View once', 'Unable to send encrypted media.');
       setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
     }
-  }, [conversationId, ensureViewOnceKeys, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, uploadEncryptedChatMedia, user?.id]);
+  }, [conversationId, ensureViewOnceKeys, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replaceMessageById, replyingTo, uploadEncryptedChatMedia, user?.id]);
 
   const sendVideoAttachment = useCallback(async ({
     videoUrl,
@@ -5853,15 +5952,14 @@ export default function ConversationScreen() {
       console.log('[chat] send video error', error);
       setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
     } else {
+      const nextMessage = mapRowToMessage(data as MessageRow);
       setMessages((prev) =>
-        linkReplies(
-          prev.map((msg) =>
-            msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
-          )
-        )
+        replyingTo
+          ? linkReplies(replaceMessageById(prev, tempId, nextMessage))
+          : replaceMessageById(prev, tempId, nextMessage)
       );
     }
-  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
+  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replaceMessageById, replyingTo, user?.id]);
 
   const sendLocationMessage = useCallback(async ({
     lat,
@@ -6153,6 +6251,31 @@ export default function ConversationScreen() {
     });
   }, [attachmentAnim, isBlockedByMe, isChatBlocked]);
 
+  const beginMediaUploadStatus = useCallback((
+    title: string,
+    subtitle: string,
+    icon: MediaUploadStatus['icon'] = 'cloud-upload-outline'
+  ) => {
+    const id = Date.now();
+    setMediaUploadStatus({ id, title, subtitle, icon });
+    return id;
+  }, []);
+
+  const updateMediaUploadStatus = useCallback((
+    id: number,
+    title: string,
+    subtitle: string,
+    icon: MediaUploadStatus['icon'] = 'cloud-upload-outline'
+  ) => {
+    setMediaUploadStatus((current) =>
+      current?.id === id ? { id, title, subtitle, icon } : current
+    );
+  }, []);
+
+  const clearMediaUploadStatus = useCallback((id: number) => {
+    setMediaUploadStatus((current) => (current?.id === id ? null : current));
+  }, []);
+
   const openLocationModal = useCallback(() => {
     closeAttachmentSheet();
     setLiveDurationMinutes(60);
@@ -6329,13 +6452,16 @@ export default function ConversationScreen() {
       if (pendingDeliveredHintTimersRef.current[messageId]) return;
       pendingDeliveredHintTimersRef.current[messageId] = setTimeout(() => {
         delete pendingDeliveredHintTimersRef.current[messageId];
-        setMessages((prev) =>
-          prev.map((msg) => {
+        setMessages((prev) => {
+          let changed = false;
+          const next = prev.map((msg) => {
             if (msg.id !== messageId || msg.senderId !== user?.id) return msg;
             if (msg.status === 'read' || msg.status === 'delivered') return msg;
-            return { ...msg, status: 'delivered' };
-          })
-        );
+            changed = true;
+            return { ...msg, status: 'delivered' as const };
+          });
+          return changed ? next : prev;
+        });
       }, 320);
     },
     [user?.id]
@@ -6354,8 +6480,9 @@ export default function ConversationScreen() {
       if (error || !data) return null;
       clearPendingDeliveredHintTimer(messageId);
       let resolvedStatus: MessageType['status'] | null = null;
-      setMessages((prev) =>
-        prev.map((msg) => {
+      setMessages((prev) => {
+        let changed = false;
+        const next = prev.map((msg) => {
           if (msg.id !== messageId || msg.senderId !== user.id) return msg;
           const nextStatus: MessageType['status'] = data.is_read
             ? 'read'
@@ -6365,13 +6492,17 @@ export default function ConversationScreen() {
                 ? 'sent'
                 : msg.status;
           resolvedStatus = nextStatus;
+          const nextReadAt = data.is_read ? (msg.readAt ?? new Date()) : msg.readAt;
+          if (msg.status === nextStatus && msg.readAt === nextReadAt) return msg;
+          changed = true;
           return {
             ...msg,
             status: nextStatus,
-            readAt: data.is_read ? new Date() : msg.readAt,
+            readAt: nextReadAt,
           };
-        })
-      );
+        });
+        return changed ? next : prev;
+      });
       return resolvedStatus;
     },
     [clearPendingDeliveredHintTimer, clearPendingReceiptSyncTimer, user?.id]
@@ -6396,14 +6527,17 @@ export default function ConversationScreen() {
   );
 
   const markOutgoingMessagesDelivered = useCallback(() => {
-    setMessages((prev) =>
-      prev.map((msg) => {
+    setMessages((prev) => {
+      let changed = false;
+      const next = prev.map((msg) => {
         if (msg.senderId !== user?.id) return msg;
         if (msg.status === 'read' || msg.status === 'delivered') return msg;
         clearPendingDeliveredHintTimer(msg.id);
-        return { ...msg, status: 'delivered' };
-      })
-    );
+        changed = true;
+        return { ...msg, status: 'delivered' as const };
+      });
+      return changed ? next : prev;
+    });
   }, [clearPendingDeliveredHintTimer, user?.id]);
 
   useEffect(() => {
@@ -6850,14 +6984,18 @@ export default function ConversationScreen() {
     async (messageId: string) => {
       if (!user?.id || !conversationId) return;
       clearPendingReadTimer(messageId);
-      setMessages((prev) =>
-        prev.map((msg) => {
+      setMessages((prev) => {
+        let changed = false;
+        const next = prev.map((msg) => {
           if (msg.id === messageId && msg.senderId !== user.id) {
-            return { ...msg, status: 'read', readAt: new Date() };
+            if (msg.status === 'read' && msg.readAt) return msg;
+            changed = true;
+            return { ...msg, status: 'read' as const, readAt: new Date() };
           }
           return msg;
-        })
-      );
+        });
+        return changed ? next : prev;
+      });
       const { error } = await supabase
         .from('messages')
         .update({ is_read: true })
@@ -7821,20 +7959,31 @@ export default function ConversationScreen() {
   }, [playingVoiceId, stopVoicePlayback]);
 
   const handleCameraPress = useCallback(async () => {
+    if (mediaUploadStatus) {
+      Alert.alert('Upload in progress', 'Please wait for the current media upload to finish.');
+      return;
+    }
     const cameraStatus = await ImagePicker.requestCameraPermissionsAsync();
     if (!cameraStatus.granted) {
       Alert.alert('Camera access', 'Enable camera access to take photos or videos.');
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: getPickerMediaTypesAll(),
+      mediaTypes: PICKER_MEDIA_TYPES_ALL,
       quality: 0.85,
+      videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
       videoMaxDuration: 30,
     });
     if (result.canceled) return;
     closeAttachmentSheet();
     const asset = result.assets?.[0];
     if (!asset?.uri) return;
+    const mediaKind = asset.type === 'video' ? 'video' : 'photo';
+    const uploadStatusId = beginMediaUploadStatus(
+      viewOnceMode ? `Securing private ${mediaKind}...` : `Uploading ${mediaKind}...`,
+      'Keep this chat open while Betweener prepares your message.',
+      viewOnceMode ? 'shield-lock-outline' : 'cloud-upload-outline'
+    );
     try {
       const fallbackName = asset.fileName ?? asset.uri.split('/').pop() ?? `camera-${Date.now()}`;
       const baseContentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
@@ -7844,6 +7993,12 @@ export default function ConversationScreen() {
           : { uri: asset.uri, fileName: fallbackName, contentType: baseContentType };
 
       if (viewOnceMode) {
+        updateMediaUploadStatus(
+          uploadStatusId,
+          `Securing private ${mediaKind}...`,
+          'Encrypting and uploading this media for one-time viewing.',
+          'shield-lock-outline'
+        );
         await sendEncryptedMediaAttachment({
           uri: normalized.uri,
           fileName: normalized.fileName,
@@ -7851,36 +8006,72 @@ export default function ConversationScreen() {
           kind: asset.type === 'video' ? 'video' : 'image',
         });
       } else {
+        updateMediaUploadStatus(
+          uploadStatusId,
+          `Uploading ${mediaKind}...`,
+          'This can take a moment on larger videos.',
+          'cloud-upload-outline'
+        );
         const { publicUrl } = await uploadChatMedia({
           uri: normalized.uri,
           fileName: normalized.fileName,
           contentType: normalized.contentType,
         });
+        updateMediaUploadStatus(
+          uploadStatusId,
+          `Sending ${mediaKind}...`,
+          'Almost done.',
+          'send-outline'
+        );
         if (asset.type === 'image') {
           await sendImageAttachment({ imageUrl: publicUrl });
         } else {
           await sendVideoAttachment({ videoUrl: publicUrl });
         }
       }
-    } catch (_error) {
-      Alert.alert('Attachment', 'Unable to upload this file.');
+    } catch (error) {
+      Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
+    } finally {
+      clearMediaUploadStatus(uploadStatusId);
     }
-  }, [closeAttachmentSheet, sendEncryptedMediaAttachment, sendImageAttachment, sendVideoAttachment, uploadChatMedia, viewOnceMode]);
+  }, [
+    beginMediaUploadStatus,
+    clearMediaUploadStatus,
+    closeAttachmentSheet,
+    mediaUploadStatus,
+    sendEncryptedMediaAttachment,
+    sendImageAttachment,
+    sendVideoAttachment,
+    updateMediaUploadStatus,
+    uploadChatMedia,
+    viewOnceMode,
+  ]);
 
   const handleLibraryPress = useCallback(async () => {
+    if (mediaUploadStatus) {
+      Alert.alert('Upload in progress', 'Please wait for the current media upload to finish.');
+      return;
+    }
     const libraryStatus = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!libraryStatus.granted) {
       Alert.alert('Photos access', 'Enable photo access to share media.');
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: getPickerMediaTypesAll(),
+      mediaTypes: PICKER_MEDIA_TYPES_ALL,
       quality: 0.85,
+      videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
     });
     if (result.canceled) return;
     closeAttachmentSheet();
     const asset = result.assets?.[0];
     if (!asset?.uri) return;
+    const mediaKind = asset.type === 'video' ? 'video' : 'photo';
+    const uploadStatusId = beginMediaUploadStatus(
+      viewOnceMode ? `Securing private ${mediaKind}...` : `Uploading ${mediaKind}...`,
+      'Keep this chat open while Betweener prepares your message.',
+      viewOnceMode ? 'shield-lock-outline' : 'cloud-upload-outline'
+    );
     try {
       const fallbackName = asset.fileName ?? asset.uri.split('/').pop() ?? `library-${Date.now()}`;
       const baseContentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
@@ -7890,6 +8081,12 @@ export default function ConversationScreen() {
           : { uri: asset.uri, fileName: fallbackName, contentType: baseContentType };
 
       if (viewOnceMode) {
+        updateMediaUploadStatus(
+          uploadStatusId,
+          `Securing private ${mediaKind}...`,
+          'Encrypting and uploading this media for one-time viewing.',
+          'shield-lock-outline'
+        );
         await sendEncryptedMediaAttachment({
           uri: normalized.uri,
           fileName: normalized.fileName,
@@ -7897,40 +8094,85 @@ export default function ConversationScreen() {
           kind: asset.type === 'video' ? 'video' : 'image',
         });
       } else {
+        updateMediaUploadStatus(
+          uploadStatusId,
+          `Uploading ${mediaKind}...`,
+          'This can take a moment on larger videos.',
+          'cloud-upload-outline'
+        );
         const { publicUrl } = await uploadChatMedia({
           uri: normalized.uri,
           fileName: normalized.fileName,
           contentType: normalized.contentType,
         });
+        updateMediaUploadStatus(
+          uploadStatusId,
+          `Sending ${mediaKind}...`,
+          'Almost done.',
+          'send-outline'
+        );
         if (asset.type === 'image') {
           await sendImageAttachment({ imageUrl: publicUrl });
         } else {
           await sendVideoAttachment({ videoUrl: publicUrl });
         }
       }
-    } catch (_error) {
-      Alert.alert('Attachment', 'Unable to upload this file.');
+    } catch (error) {
+      Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
+    } finally {
+      clearMediaUploadStatus(uploadStatusId);
     }
-  }, [closeAttachmentSheet, sendEncryptedMediaAttachment, sendImageAttachment, sendVideoAttachment, uploadChatMedia, viewOnceMode]);
+  }, [
+    beginMediaUploadStatus,
+    clearMediaUploadStatus,
+    closeAttachmentSheet,
+    mediaUploadStatus,
+    sendEncryptedMediaAttachment,
+    sendImageAttachment,
+    sendVideoAttachment,
+    updateMediaUploadStatus,
+    uploadChatMedia,
+    viewOnceMode,
+  ]);
 
   const handleDocumentPress = useCallback(async () => {
+    if (mediaUploadStatus) {
+      Alert.alert('Upload in progress', 'Please wait for the current media upload to finish.');
+      return;
+    }
     const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
     if (result.canceled) return;
     closeAttachmentSheet();
     const asset = result.assets?.[0];
     if (!asset?.uri) return;
+    const uploadStatusId = beginMediaUploadStatus(
+      'Uploading file...',
+      asset.name ? `Preparing ${asset.name}` : 'Keep this chat open while Betweener prepares your file.',
+      'file-upload-outline'
+    );
     try {
       const fileName = asset.name ?? asset.uri.split('/').pop() ?? `file-${Date.now()}`;
       const contentType = asset.mimeType ?? 'application/octet-stream';
       const { publicUrl } = await uploadChatMedia({ uri: asset.uri, fileName, contentType });
+      updateMediaUploadStatus(uploadStatusId, 'Sending file...', 'Almost done.', 'send-outline');
       const sizeLabel = formatFileSize(asset.size);
       const typeLabel = getFileTypeLabel(contentType, fileName);
       const labelParts = [fileName, sizeLabel, typeLabel].filter(Boolean);
       await sendAttachmentText(`${DOCUMENT_TEXT_PREFIX} ${labelParts.join(' | ')}\n${publicUrl}`);
-    } catch (_error) {
-      Alert.alert('Attachment', 'Unable to upload this file.');
+    } catch (error) {
+      Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
+    } finally {
+      clearMediaUploadStatus(uploadStatusId);
     }
-  }, [closeAttachmentSheet, sendAttachmentText, uploadChatMedia]);
+  }, [
+    beginMediaUploadStatus,
+    clearMediaUploadStatus,
+    closeAttachmentSheet,
+    mediaUploadStatus,
+    sendAttachmentText,
+    updateMediaUploadStatus,
+    uploadChatMedia,
+  ]);
 
   const handleLocationPress = useCallback(() => {
     if (isChatBlocked) {
@@ -8152,37 +8394,6 @@ export default function ConversationScreen() {
     );
   };
 
-  const handleScroll = (event: any) => {
-    if (!hasAutoScrolledRef.current) return;
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    listMetricsRef.current = {
-      contentHeight: contentSize.height,
-      layoutHeight: layoutMeasurement.height,
-      offsetY: contentOffset.y,
-    };
-    if (Date.now() < lockAutoScrollUntilRef.current) {
-      shouldAutoScrollRef.current = true;
-      wasAtBottomRef.current = true;
-      updateJumpToBottomVisibility(0);
-      return;
-    }
-    const distanceToBottom =
-      contentSize.height - (contentOffset.y + layoutMeasurement.height);
-    const paddingToBottom = keyboardVisibleRef.current ? 200 : 60;
-    shouldAutoScrollRef.current =
-      distanceToBottom <= paddingToBottom;
-    wasAtBottomRef.current = distanceToBottom <= paddingToBottom;
-    updateJumpToBottomVisibility(distanceToBottom);
-
-    if (contentOffset.y <= 24 && hasMore && !loadingEarlier) {
-      const now = Date.now();
-      if (now - lastLoadTriggerRef.current > 800) {
-        lastLoadTriggerRef.current = now;
-        loadEarlier();
-      }
-    }
-  };
-
   const getDistanceToBottom = useCallback(() => {
     const { contentHeight, layoutHeight, offsetY } = listMetricsRef.current;
     return Math.max(0, contentHeight - (offsetY + layoutHeight));
@@ -8220,6 +8431,37 @@ export default function ConversationScreen() {
       setShowJumpToBottom(shouldShow);
     }
   }, []);
+
+  const handleScroll = useCallback((event: any) => {
+    if (!hasAutoScrolledRef.current) return;
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    listMetricsRef.current = {
+      contentHeight: contentSize.height,
+      layoutHeight: layoutMeasurement.height,
+      offsetY: contentOffset.y,
+    };
+    if (Date.now() < lockAutoScrollUntilRef.current) {
+      shouldAutoScrollRef.current = true;
+      wasAtBottomRef.current = true;
+      updateJumpToBottomVisibility(0);
+      return;
+    }
+    const distanceToBottom =
+      contentSize.height - (contentOffset.y + layoutMeasurement.height);
+    const paddingToBottom = keyboardVisibleRef.current ? 200 : 60;
+    shouldAutoScrollRef.current =
+      distanceToBottom <= paddingToBottom;
+    wasAtBottomRef.current = distanceToBottom <= paddingToBottom;
+    updateJumpToBottomVisibility(distanceToBottom);
+
+    if (contentOffset.y <= 24 && hasMore && !loadingEarlier) {
+      const now = Date.now();
+      if (now - lastLoadTriggerRef.current > 800) {
+        lastLoadTriggerRef.current = now;
+        loadEarlier();
+      }
+    }
+  }, [hasMore, loadEarlier, loadingEarlier, updateJumpToBottomVisibility]);
 
   useEffect(() => {
     if (messages.length === 0) return;
@@ -8357,6 +8599,40 @@ export default function ConversationScreen() {
     }
   }, []);
 
+  const keyExtractor = useCallback((item: MessageType) => item.id, []);
+
+  const handleMessagesContentSizeChange = useCallback((_width: number, height: number) => {
+    listMetricsRef.current.contentHeight = height;
+    const paddingToBottom = keyboardVisibleRef.current ? 200 : 60;
+    updateJumpToBottomVisibility(getDistanceToBottom());
+    if (
+      shouldAutoScrollRef.current ||
+      wasAtBottomRef.current ||
+      getDistanceToBottom() <= paddingToBottom
+    ) {
+      maybeScrollToEnd(true);
+    }
+    ensureInitialScrollToBottom();
+  }, [ensureInitialScrollToBottom, getDistanceToBottom, maybeScrollToEnd, updateJumpToBottomVisibility]);
+
+  const handleMessagesLayout = useCallback((event: any) => {
+    listMetricsRef.current.layoutHeight = event.nativeEvent.layout.height;
+    wasAtBottomRef.current = true;
+    updateJumpToBottomVisibility(getDistanceToBottom());
+    if (shouldAutoScrollRef.current) {
+      maybeScrollToEnd(false);
+    }
+    ensureInitialScrollToBottom();
+  }, [ensureInitialScrollToBottom, getDistanceToBottom, maybeScrollToEnd, updateJumpToBottomVisibility]);
+
+  const handleScrollToIndexFailed = useCallback(({ index, averageItemLength }: any) => {
+    const offset = Math.max(0, averageItemLength * index);
+    flatListRef.current?.scrollToOffset({ offset, animated: true });
+    setTimeout(() => {
+      flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+    }, 250);
+  }, []);
+
   const clearFocus = useCallback(() => {
     if (focusTimerRef.current) {
       clearTimeout(focusTimerRef.current);
@@ -8383,44 +8659,59 @@ export default function ConversationScreen() {
     const maxHeight = 420;
     const pending: string[] = [];
     messages.forEach((msg) => {
-      if (msg.type === 'image' && msg.imageUrl && !imageSizes[msg.imageUrl]) {
+      if (
+        msg.type === 'image' &&
+        msg.imageUrl &&
+        !imageSizes[msg.imageUrl] &&
+        !measuredImageUrlsRef.current.has(msg.imageUrl)
+      ) {
+        measuredImageUrlsRef.current.add(msg.imageUrl);
         pending.push(msg.imageUrl);
       }
     });
     if (pending.length === 0) return;
+    const measuredSizes: Record<string, { width: number; height: number }> = {};
+    let remaining = pending.length;
+    let cancelled = false;
+    const commitMeasuredSizes = () => {
+      remaining -= 1;
+      if (cancelled || remaining > 0) return;
+      setImageSizes((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        Object.entries(measuredSizes).forEach(([url, size]) => {
+          if (next[url]) return;
+          next[url] = size;
+          changed = true;
+        });
+        return changed ? next : prev;
+      });
+    };
     pending.forEach((url) => {
       Image.getSize(
         url,
         (width, height) => {
-          if (!width || !height) return;
+          if (!width || !height) {
+            measuredSizes[url] = { width: maxWidth, height: 240 };
+            commitMeasuredSizes();
+            return;
+          }
           const ratio = height / width;
           const scaledHeight = Math.round(maxWidth * ratio);
           const clampedHeight = Math.max(minHeight, Math.min(maxHeight, scaledHeight));
-          setImageSizes((prev) =>
-            prev[url] ? prev : { ...prev, [url]: { width: maxWidth, height: clampedHeight } }
-          );
+          measuredSizes[url] = { width: maxWidth, height: clampedHeight };
+          commitMeasuredSizes();
         },
         () => {
-          setImageSizes((prev) =>
-            prev[url] ? prev : { ...prev, [url]: { width: maxWidth, height: 240 } }
-          );
+          measuredSizes[url] = { width: maxWidth, height: 240 };
+          commitMeasuredSizes();
         }
       );
     });
-  }, [imageSizes, messages]);
-
-  const handleVideoSize = useCallback((url: string, width: number, height: number) => {
-    if (!url || !width || !height) return;
-    const maxWidth = Math.min(screenWidth * 0.72, 340);
-    const minHeight = 180;
-    const maxHeight = 420;
-    const ratio = height / width;
-    const scaledHeight = Math.round(maxWidth * ratio);
-    const clampedHeight = Math.max(minHeight, Math.min(maxHeight, scaledHeight));
-    setVideoSizes((prev) =>
-      prev[url] ? prev : { ...prev, [url]: { width: maxWidth, height: clampedHeight } }
-    );
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [messages]);
 
   const handleOpenDocument = useCallback((doc?: MessageType['document']) => {
     if (!doc?.url) return;
@@ -8865,8 +9156,7 @@ export default function ConversationScreen() {
       const timeLabel = formatTime(item.timestamp);
       const showDateSeparator = !prevMessage || !isSameDay(prevMessage.timestamp, item.timestamp);
       const imageSize = item.type === 'image' && item.imageUrl ? imageSizes[item.imageUrl] : undefined;
-      const videoSize = item.type === 'video' && item.videoUrl ? videoSizes[item.videoUrl] : undefined;
-      const now = item.type === 'location' ? nowTick : null;
+      const now = item.type === 'location' ? messageListNow : null;
       const viewOnceState = viewOnceStatus[item.id];
       const viewOnceViewedByMe = viewOnceState?.viewedByMe ?? false;
       const viewOnceViewedByPeer = viewOnceState?.viewedByPeer ?? false;
@@ -8895,7 +9185,6 @@ export default function ConversationScreen() {
             currentUserId={user?.id || ''}
             peerName={userName}
             imageSize={imageSize}
-            videoSize={videoSize}
             theme={theme}
             isDark={isDark}
             styles={styles}
@@ -8915,15 +9204,14 @@ export default function ConversationScreen() {
             onOpenEditHistory={openEditHistory}
             onViewImage={setImageViewerUrl}
             onViewVideo={setVideoViewerUrl}
-            onVideoSize={handleVideoSize}
             onOpenDocument={handleOpenDocument}
             onOpenLocation={openLocationViewer}
             onStopLiveShare={stopLiveSharing}
             onOpenViewOnce={openViewOnceMessage}
             onAcceptDatePlan={handleAcceptDatePlan}
-            onSuggestAnotherTime={(invite) => openCounterDatePlanner(invite, 'counter_time')}
-            onSuggestAnotherPlace={(invite) => openCounterDatePlanner(invite, 'counter_place')}
-            onSuggestBoth={(invite) => openCounterDatePlanner(invite, 'counter_both')}
+            onSuggestAnotherTime={handleSuggestAnotherTime}
+            onSuggestAnotherPlace={handleSuggestAnotherPlace}
+            onSuggestBoth={handleSuggestBoth}
             onRescheduleDatePlan={openRescheduleDatePlanner}
             onCancelDatePlan={handleCancelDatePlan}
             onRequestDatePlanConcierge={handleRequestDatePlanConcierge}
@@ -8952,7 +9240,6 @@ export default function ConversationScreen() {
       theme,
       isDark,
       imageSizes,
-      videoSizes,
       isChatBlocked,
       handleLongPress,
       toggleVoicePlayback,
@@ -8967,9 +9254,10 @@ export default function ConversationScreen() {
       handleAcceptDatePlan,
       handleCancelDatePlan,
       handleAddDatePlanToCalendar,
-      handleVideoSize,
       handleOpenDocument,
-      openCounterDatePlanner,
+      handleSuggestAnotherTime,
+      handleSuggestAnotherPlace,
+      handleSuggestBoth,
       openRescheduleDatePlanner,
       handleRequestDatePlanConcierge,
       openLocationViewer,
@@ -8983,13 +9271,14 @@ export default function ConversationScreen() {
       openEditHistory,
       jumpToMessage,
       jumpToNextMatch,
-      nowTick,
+      messageListNow,
       focusMessage,
       pinnedMessageIds,
     ]
   );
 
-  const openReportModal = useCallback(() => {
+  const openReportModal = useCallback((message?: MessageType | null) => {
+    setReportEvidenceMessage(message ?? null);
     setReportModalVisible(true);
   }, []);
 
@@ -8997,8 +9286,44 @@ export default function ConversationScreen() {
     setReportModalVisible(false);
     setReportReasonId(null);
     setReportDetails('');
+    setReportShouldBlock(false);
+    setReportEvidenceMessage(null);
     setReportSubmitting(false);
   }, []);
+
+  const performBlockUser = useCallback(async (
+    options: { redirect?: boolean; showSuccessAlert?: boolean } = {}
+  ) => {
+    if (!user?.id || !conversationId) return;
+    const { redirect = true, showSuccessAlert = true } = options;
+    const { error } = await supabase
+      .from('blocks')
+      .insert({ blocker_id: user.id, blocked_id: conversationId });
+
+    if (error) {
+      if (error.code === '23505') {
+        if (showSuccessAlert) {
+          Alert.alert('Blocked', 'This member is already blocked.');
+        }
+        if (redirect) {
+          router.replace('/(tabs)/chat');
+        }
+        return true;
+      }
+      console.log('[chat] block user error', error);
+      Alert.alert('Block user', 'Unable to block this user right now.');
+      return false;
+    }
+
+    setBlockStatus(BLOCKED_BY_ME);
+    if (showSuccessAlert) {
+      Alert.alert('Blocked', 'This member has been blocked. They will not be notified.');
+    }
+    if (redirect) {
+      router.replace('/(tabs)/chat');
+    }
+    return true;
+  }, [conversationId, user?.id]);
 
   const submitReport = useCallback(async () => {
     if (!user?.id || !conversationId) return;
@@ -9012,10 +9337,14 @@ export default function ConversationScreen() {
     const details = reportDetails.trim();
     const reason = details ? `${reasonLabel}: ${details}` : reasonLabel;
 
-    const { error } = await supabase.from('reports').insert({
-      reporter_id: user.id,
-      reported_id: conversationId,
-      reason,
+    const { error } = await supabase.rpc('rpc_submit_report', {
+      p_reported_id: conversationId,
+      p_reason: reason,
+      p_evidence_message_id: reportEvidenceMessage?.id ?? null,
+      p_client_evidence: {
+        entry_point: reportEvidenceMessage ? 'message_options' : 'chat_options',
+        message_type: reportEvidenceMessage?.type ?? null,
+      },
     });
 
     if (error) {
@@ -9025,32 +9354,36 @@ export default function ConversationScreen() {
       return;
     }
 
+    const shouldBlockAfterReport = reportShouldBlock && !isBlockedByMe;
     setReportSubmitting(false);
     closeReportModal();
-    Alert.alert('Report sent', 'Thanks for letting us know.');
-  }, [closeReportModal, conversationId, reportDetails, reportReasonId, user?.id]);
 
-  const blockUser = useCallback(async () => {
-    if (!user?.id || !conversationId) return;
-    const { error } = await supabase
-      .from('blocks')
-      .insert({ blocker_id: user.id, blocked_id: conversationId });
-
-    if (error) {
-      if (error.code === '23505') {
-        Alert.alert('Blocked', 'This user is already blocked.');
-        router.replace('/(tabs)/chat');
-        return;
-      }
-      console.log('[chat] block user error', error);
-      Alert.alert('Block user', 'Unable to block this user right now.');
-      return;
+    let didBlock = false;
+    if (shouldBlockAfterReport) {
+      didBlock = Boolean(await performBlockUser({ redirect: true, showSuccessAlert: false }));
     }
 
-    setBlockStatus(BLOCKED_BY_ME);
-    Alert.alert('Blocked', 'This user has been blocked.');
-    router.replace('/(tabs)/chat');
-  }, [conversationId, user?.id]);
+    Alert.alert(
+      'Report sent',
+      didBlock
+        ? 'We will review this privately. This member is now blocked and will not be notified.'
+        : 'We will review this privately. They will not be notified.'
+    );
+  }, [
+    closeReportModal,
+    conversationId,
+    isBlockedByMe,
+    performBlockUser,
+    reportDetails,
+    reportEvidenceMessage,
+    reportReasonId,
+    reportShouldBlock,
+    user?.id,
+  ]);
+
+  const blockUser = useCallback(async () => {
+    await performBlockUser();
+  }, [performBlockUser]);
 
   const unblockUser = useCallback(async () => {
     if (!user?.id || !conversationId) return;
@@ -9081,6 +9414,13 @@ export default function ConversationScreen() {
 
   const handleCloseHeaderMenu = useCallback(() => {
     setHeaderMenuVisible(false);
+  }, []);
+
+  const runAfterHeaderMenuClose = useCallback((action: () => void) => {
+    setHeaderMenuVisible(false);
+    setTimeout(() => {
+      InteractionManager.runAfterInteractions(action);
+    }, 90);
   }, []);
 
   const closeChatSearch = useCallback(() => {
@@ -9227,11 +9567,20 @@ export default function ConversationScreen() {
     openReportModal();
   }, [conversationId, openReportModal]);
 
-  const handleHeaderLongPress = useCallback(() => {
+  const handleReportMessage = useCallback((message: MessageType) => {
+    if (!conversationId) return;
+    openReportModal(message);
+  }, [conversationId, openReportModal]);
+
+  const handleOpenHeaderMenu = useCallback(() => {
     dismissHeaderHint();
     Haptics.selectionAsync().catch(() => {});
     setHeaderMenuVisible(true);
   }, [dismissHeaderHint]);
+
+  const handleHeaderLongPress = useCallback(() => {
+    handleOpenHeaderMenu();
+  }, [handleOpenHeaderMenu]);
 
 
   const renderMoodStickersPanel = () => {
@@ -9285,6 +9634,7 @@ export default function ConversationScreen() {
     wide,
     destructive,
     badgeLabel,
+    description,
   }: {
     title: string;
     icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
@@ -9292,66 +9642,59 @@ export default function ConversationScreen() {
     wide?: boolean;
     destructive?: boolean;
     badgeLabel?: string | null;
+    description?: string;
   }) => {
-    const scale = useRef(new Animated.Value(1)).current;
-    const colors: [string, string] = destructive
-      ? ['#fecaca', '#fee2e2']
-      : [
-          withAlpha(theme.tint, isDark ? 0.32 : 0.2),
-          withAlpha(theme.accent, isDark ? 0.28 : 0.18),
-        ];
-
-    const handlePressIn = () => {
-      Animated.timing(scale, {
-        toValue: 0.97,
-        duration: 90,
-        useNativeDriver: true,
-      }).start();
-    };
-
-    const handlePressOut = () => {
-      Animated.spring(scale, {
-        toValue: 1,
-        speed: 20,
-        bounciness: 6,
-        useNativeDriver: true,
-      }).start();
-    };
-
     return (
-      <Pressable onPress={onPress} onPressIn={handlePressIn} onPressOut={handlePressOut}>
-        <Animated.View
-          style={[
-            styles.headerMenuCard,
-            wide && styles.headerMenuCardWide,
-            destructive && styles.headerMenuCardDestructive,
-            { transform: [{ scale }] },
-          ]}
-        >
-          <LinearGradient colors={colors} style={styles.headerMenuIconWrap}>
-            <MaterialCommunityIcons
-              name={icon}
-              size={18}
-              color={destructive ? '#b91c1c' : theme.tint}
-            />
-          </LinearGradient>
-          <View style={styles.headerMenuCardTextRow}>
+      <Pressable
+        hitSlop={10}
+        pressRetentionOffset={12}
+        onPress={onPress}
+        android_ripple={{
+          color: withAlpha(destructive ? '#ef4444' : theme.tint, isDark ? 0.18 : 0.12),
+          borderless: false,
+        }}
+        style={({ pressed }) => [
+          styles.headerMenuRow,
+          wide && styles.headerMenuRowProminent,
+          destructive && styles.headerMenuRowDestructive,
+          pressed && styles.headerMenuRowPressed,
+        ]}
+      >
+        <View style={[styles.headerMenuRowIcon, destructive && styles.headerMenuRowIconDestructive]}>
+          <MaterialCommunityIcons
+            name={icon}
+            size={18}
+            color={destructive ? '#fca5a5' : theme.tint}
+          />
+        </View>
+        <View style={styles.headerMenuRowCopy}>
+          <View style={styles.headerMenuRowTextStack}>
             <Text
               style={[
-                styles.headerMenuCardText,
-                destructive && styles.headerMenuCardTextDestructive,
+                styles.headerMenuRowTitle,
+                destructive && styles.headerMenuRowTitleDestructive,
               ]}
-              numberOfLines={2}
+              numberOfLines={1}
             >
               {title}
             </Text>
-            {badgeLabel ? (
-              <View style={styles.headerMenuBadge}>
-                <Text style={styles.headerMenuBadgeText}>{badgeLabel}</Text>
-              </View>
+            {description ? (
+              <Text style={styles.headerMenuRowDescription} numberOfLines={1}>
+                {description}
+              </Text>
             ) : null}
           </View>
-        </Animated.View>
+          {badgeLabel ? (
+            <View style={styles.headerMenuBadge}>
+              <Text style={styles.headerMenuBadgeText}>{badgeLabel}</Text>
+            </View>
+          ) : null}
+        </View>
+        <MaterialCommunityIcons
+          name="chevron-right"
+          size={18}
+          color={withAlpha(theme.text, isDark ? 0.5 : 0.42)}
+        />
       </Pressable>
     );
   };
@@ -9451,8 +9794,8 @@ export default function ConversationScreen() {
             <Text style={styles.headerStatus}>
               {isChatBlocked
                 ? isBlockedByMe
-                  ? 'Blocked'
-                  : 'Unavailable'
+                  ? 'Blocked privately'
+                  : 'Messaging unavailable'
                 : peerOnline
                 ? 'Active now'
                 : peerLastSeen
@@ -9468,7 +9811,23 @@ export default function ConversationScreen() {
           </View>
         </TouchableOpacity>
 
-        
+        <TouchableOpacity
+          style={[
+            styles.headerOptionsButton,
+            isChatBlocked && styles.headerOptionsButtonBlocked,
+          ]}
+          hitSlop={10}
+          onPress={handleOpenHeaderMenu}
+          accessibilityRole="button"
+          accessibilityLabel="Open chat options"
+          activeOpacity={0.82}
+        >
+          <MaterialCommunityIcons
+            name={isChatBlocked ? 'shield-lock-outline' : 'dots-horizontal'}
+            size={22}
+            color={isChatBlocked ? theme.tint : theme.text}
+          />
+        </TouchableOpacity>
       </View>
       {pendingIntentRequest ? (
         <View style={styles.intentBanner}>
@@ -9477,7 +9836,7 @@ export default function ConversationScreen() {
             <Text style={styles.intentBannerSubtitle}>
               {intentTypeLabel(pendingIntentRequest.type)}
               {pendingIntentRequest.expires_at
-                ? ` · Closes in ${intentExpiresIn(pendingIntentRequest.expires_at)}`
+                ? ` - Closes in ${intentExpiresIn(pendingIntentRequest.expires_at)}`
                 : ''}
             </Text>
           </View>
@@ -9576,7 +9935,7 @@ export default function ConversationScreen() {
             },
           ]}
         >
-          <Text style={styles.headerHintText}>Long-press header for options</Text>
+          <Text style={styles.headerHintText}>Use the menu for chat options</Text>
         </Animated.View>
       ) : null}
       <Modal
@@ -10164,121 +10523,126 @@ export default function ConversationScreen() {
       </Modal>
       <Modal
         transparent
+        statusBarTranslucent
         visible={headerMenuVisible}
         animationType="fade"
+        hardwareAccelerated
         onRequestClose={handleCloseHeaderMenu}
       >
-        <Pressable style={styles.headerMenuBackdrop} onPress={handleCloseHeaderMenu} />
-        <View style={styles.headerMenuSheet}>
-          <BlurView
-            intensity={32}
-            tint={isDark ? 'dark' : 'light'}
-            style={styles.headerMenuBlur}
-          />
-          <View style={styles.headerMenuContent}>
-            <Text style={styles.headerMenuTitle}>Chat options</Text>
-            <Text style={styles.headerMenuSectionLabel}>Quick</Text>
-            <View style={styles.headerMenuGrid}>
-              <MenuCard
-                title="View profile"
-                icon="account-outline"
-                onPress={() => {
-                  handleCloseHeaderMenu();
-                  handleViewProfile();
-                }}
-              />
-              <MenuCard
-                title="Search in chat"
-                icon="magnify"
-                onPress={() => {
-                  handleCloseHeaderMenu();
-                  handleSearchInChat();
-                }}
-              />
-              <MenuCard
-                title="Media, links & docs"
-                icon="image-multiple-outline"
-                wide
-                onPress={() => {
-                  handleCloseHeaderMenu();
-                  handleFilterMedia();
-                }}
-              />
-              <MenuCard
-                title="Suggest a date"
-                icon="calendar-heart"
-                wide
-                badgeLabel={canPlanDate ? 'Ready' : 'Locked'}
-                onPress={() => {
-                  handleCloseHeaderMenu();
-                  handleOpenDatePlanner();
-                }}
-              />
-            </View>
-            <Text style={styles.headerMenuSectionLabel}>Controls</Text>
-            <View style={styles.headerMenuGrid}>
-              <MenuCard
-                title={isChatMuted ? 'Unmute chat' : 'Mute chat'}
-                icon={isChatMuted ? 'volume-high' : 'volume-off'}
-                badgeLabel={isChatMuted ? 'On' : null}
-                onPress={() => {
-                  handleCloseHeaderMenu();
-                  handleToggleMute();
-                }}
-              />
-              <MenuCard
-                title={isChatPinned ? 'Unpin chat' : 'Pin chat'}
-                icon={isChatPinned ? 'pin-off-outline' : 'pin-outline'}
-                badgeLabel={isChatPinned ? 'On' : null}
-                onPress={() => {
-                  handleCloseHeaderMenu();
-                  handleTogglePin();
-                }}
-              />
-            </View>
-            <Text style={styles.headerMenuSectionLabel}>Safety</Text>
-            <View style={styles.headerMenuGrid}>
-              <MenuCard
-                title={clearChatLoading ? 'Clearing...' : 'Clear chat'}
-                icon="trash-can-outline"
-                destructive
-                onPress={() => {
-                  if (clearChatLoading) return;
-                  handleCloseHeaderMenu();
-                  handleClearChat();
-                }}
-                badgeLabel={clearChatLoading ? 'Working' : null}
-              />
-              <MenuCard
-                title={isBlockedByMe ? 'Unblock user' : 'Block user'}
-                icon="block-helper"
-                destructive
-                onPress={() => {
-                  handleCloseHeaderMenu();
-                  if (isBlockedByMe) {
-                    confirmUnblockUser();
-                  } else {
-                    handleBlockUser();
-                  }
-                }}
-              />
-              <MenuCard
-                title="Report user"
-                icon="alert-octagon-outline"
-                destructive
-                onPress={() => {
-                  handleCloseHeaderMenu();
-                  handleReportUser();
-                }}
-              />
-            </View>
+        <View style={styles.headerMenuModalRoot}>
+          <Pressable style={styles.headerMenuBackdrop} onPress={handleCloseHeaderMenu} />
+          <View style={[styles.headerMenuSheet, { marginBottom: Math.max(12, insets.bottom + 10) }]}>
+            <View style={styles.headerMenuHandle} />
+            <ScrollView
+              style={styles.headerMenuScroller}
+              contentContainerStyle={styles.headerMenuContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="always"
+              nestedScrollEnabled
+            >
+              <Text style={styles.headerMenuTitle}>Chat options</Text>
+              <Text style={styles.headerMenuSubtitle}>Private controls for this conversation.</Text>
+              <Text style={styles.headerMenuSectionLabel}>Quick</Text>
+              <View style={styles.headerMenuGrid}>
+                <MenuCard
+                  title="View profile"
+                  description="Open trust, photos, and details."
+                  icon="account-outline"
+                  onPress={() => {
+                    runAfterHeaderMenuClose(handleViewProfile);
+                  }}
+                />
+                <MenuCard
+                  title="Search in chat"
+                  description="Find a message in this thread."
+                  icon="magnify"
+                  onPress={() => {
+                    runAfterHeaderMenuClose(handleSearchInChat);
+                  }}
+                />
+                <MenuCard
+                  title="Media, links & docs"
+                  description="Browse shared attachments."
+                  icon="image-multiple-outline"
+                  wide
+                  onPress={() => {
+                    runAfterHeaderMenuClose(handleFilterMedia);
+                  }}
+                />
+                <MenuCard
+                  title="Suggest a date"
+                  description="Turn the chat into a real plan."
+                  icon="calendar-heart"
+                  wide
+                  badgeLabel={canPlanDate ? 'Ready' : 'Locked'}
+                  onPress={() => {
+                    runAfterHeaderMenuClose(handleOpenDatePlanner);
+                  }}
+                />
+              </View>
+              <Text style={styles.headerMenuSectionLabel}>Controls</Text>
+              <View style={styles.headerMenuGrid}>
+                <MenuCard
+                  title={isChatMuted ? 'Unmute chat' : 'Mute chat'}
+                  description={isChatMuted ? 'Notifications are silenced.' : 'Silence notifications for this chat.'}
+                  icon={isChatMuted ? 'volume-high' : 'volume-off'}
+                  badgeLabel={isChatMuted ? 'On' : null}
+                  onPress={() => {
+                    runAfterHeaderMenuClose(handleToggleMute);
+                  }}
+                />
+                <MenuCard
+                  title={isChatPinned ? 'Unpin chat' : 'Pin chat'}
+                  description={isChatPinned ? 'Remove from priority chats.' : 'Keep this chat easy to find.'}
+                  icon={isChatPinned ? 'pin-off-outline' : 'pin-outline'}
+                  badgeLabel={isChatPinned ? 'On' : null}
+                  onPress={() => {
+                    runAfterHeaderMenuClose(handleTogglePin);
+                  }}
+                />
+              </View>
+              <Text style={styles.headerMenuSectionLabel}>Safety</Text>
+              <View style={styles.headerMenuGrid}>
+                <MenuCard
+                  title={clearChatLoading ? 'Clearing...' : 'Clear chat'}
+                  description="Remove this thread from your device."
+                  icon="trash-can-outline"
+                  destructive
+                  onPress={() => {
+                    if (clearChatLoading) return;
+                    runAfterHeaderMenuClose(handleClearChat);
+                  }}
+                  badgeLabel={clearChatLoading ? 'Working' : null}
+                />
+                <MenuCard
+                  title={isBlockedByMe ? 'Unblock user' : 'Block user'}
+                  description={isBlockedByMe ? 'Allow messages again.' : 'They will not be notified.'}
+                  icon="block-helper"
+                  destructive
+                  onPress={() => {
+                    runAfterHeaderMenuClose(isBlockedByMe ? confirmUnblockUser : handleBlockUser);
+                  }}
+                />
+                <MenuCard
+                  title="Report user"
+                  description="Send a private safety report."
+                  icon="alert-octagon-outline"
+                  destructive
+                  onPress={() => {
+                    runAfterHeaderMenuClose(handleReportUser);
+                  }}
+                />
+              </View>
+            </ScrollView>
+            <TouchableOpacity
+              style={[styles.headerMenuItem, styles.headerMenuCancel]}
+              onPress={handleCloseHeaderMenu}
+              activeOpacity={0.8}
+              hitSlop={{ top: 4, bottom: 8, left: 0, right: 0 }}
+            >
+              <Text style={styles.headerMenuCancelText}>Cancel</Text>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity
-            style={[styles.headerMenuItem, styles.headerMenuCancel]}
-            onPress={handleCloseHeaderMenu}
-          >
-            <Text style={styles.headerMenuCancelText}>Cancel</Text>
-          </TouchableOpacity>
         </View>
       </Modal>
 
@@ -10778,6 +11142,27 @@ export default function ConversationScreen() {
                   </View>
                 </TouchableOpacity>
 
+                {canReportActionMessage ? (
+                  <TouchableOpacity
+                    style={[styles.messageActionCard, styles.messageActionDanger]}
+                    onPress={() => {
+                      triggerActionHaptic(Haptics.ImpactFeedbackStyle.Medium);
+                      closeMessageActions();
+                      handleReportMessage(actionMessage);
+                    }}
+                  >
+                    <View style={[styles.messageActionIcon, styles.messageActionIconDanger]}>
+                      <MaterialCommunityIcons name="alert-octagon-outline" size={22} color={Colors.light.background} />
+                    </View>
+                    <View style={styles.messageActionText}>
+                      <Text style={[styles.messageActionLabel, styles.messageActionLabelDanger]}>
+                        Report message
+                      </Text>
+                      <Text style={styles.messageActionHint}>Attach this message for review.</Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : null}
+
                 <TouchableOpacity
                   style={[styles.messageActionCard, styles.messageActionDanger]}
                   onPress={() => {
@@ -10948,10 +11333,27 @@ export default function ConversationScreen() {
             style={styles.reportBlur}
           />
           <View style={styles.reportContent}>
-            <Text style={styles.reportTitle}>Report {userName}</Text>
-            <Text style={styles.reportSubtitle}>
-              Help us understand what happened.
+            <Text style={styles.reportTitle}>
+              {reportEvidenceMessage ? 'Report message' : `Report ${userName}`}
             </Text>
+            <Text style={styles.reportSubtitle}>
+              {reportEvidenceMessage
+                ? 'This message will be attached privately for Betweener review.'
+                : 'Reports are private. Help us understand what happened so Betweener can review it.'}
+            </Text>
+            {reportEvidenceMessage && reportEvidencePreview ? (
+              <View style={styles.reportEvidenceCard}>
+                <View style={styles.reportEvidenceIcon}>
+                  <MaterialCommunityIcons name="message-alert-outline" size={17} color={theme.tint} />
+                </View>
+                <View style={styles.reportEvidenceCopy}>
+                  <Text style={styles.reportEvidenceLabel}>Message evidence</Text>
+                  <Text style={styles.reportEvidenceText} numberOfLines={3}>
+                    {reportEvidencePreview}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
             <View style={styles.reportReasonGrid}>
               {REPORT_REASONS.map((reason) => {
                 const isSelected = reportReasonId === reason.id;
@@ -10986,6 +11388,31 @@ export default function ConversationScreen() {
                 multiline
               />
             </View>
+            {!isBlockedByMe ? (
+              <TouchableOpacity
+                style={[
+                  styles.reportBlockOption,
+                  reportShouldBlock && styles.reportBlockOptionActive,
+                ]}
+                onPress={() => setReportShouldBlock((prev) => !prev)}
+                activeOpacity={0.85}
+              >
+                <View style={[
+                  styles.reportBlockCheck,
+                  reportShouldBlock && styles.reportBlockCheckActive,
+                ]}>
+                  {reportShouldBlock ? (
+                    <MaterialCommunityIcons name="check" size={14} color={Colors.light.background} />
+                  ) : null}
+                </View>
+                <View style={styles.reportBlockCopy}>
+                  <Text style={styles.reportBlockTitle}>Also block this member</Text>
+                  <Text style={styles.reportBlockText}>
+                    They will not be notified, and the chat will move out of your way.
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity
               style={[
                 styles.reportSubmitButton,
@@ -10997,7 +11424,9 @@ export default function ConversationScreen() {
               {reportSubmitting ? (
                 <ActivityIndicator size="small" color={Colors.light.background} />
               ) : (
-                <Text style={styles.reportSubmitText}>Send report</Text>
+                <Text style={styles.reportSubmitText}>
+                  {reportShouldBlock && !isBlockedByMe ? 'Send report & block' : 'Send report'}
+                </Text>
               )}
             </TouchableOpacity>
           </View>
@@ -11494,7 +11923,7 @@ export default function ConversationScreen() {
           ref={flatListRef}
           data={renderedMessages}
           renderItem={renderMessage}
-          keyExtractor={(item) => item.id}
+          keyExtractor={keyExtractor}
           contentContainerStyle={styles.messagesList}
           ListHeaderComponent={renderLoadEarlier}
           initialNumToRender={12}
@@ -11505,44 +11934,29 @@ export default function ConversationScreen() {
           showsVerticalScrollIndicator={false}
           onScroll={handleScroll}
           scrollEventThrottle={16}
-          onContentSizeChange={(_, height) => {
-            listMetricsRef.current.contentHeight = height;
-            const paddingToBottom = keyboardVisibleRef.current ? 200 : 60;
-            updateJumpToBottomVisibility(getDistanceToBottom());
-            if (
-              shouldAutoScrollRef.current ||
-              wasAtBottomRef.current ||
-              getDistanceToBottom() <= paddingToBottom
-            ) {
-              maybeScrollToEnd(true);
-            }
-            ensureInitialScrollToBottom();
-          }}
-          onLayout={(event) => {
-            listMetricsRef.current.layoutHeight = event.nativeEvent.layout.height;
-            wasAtBottomRef.current = true;
-            updateJumpToBottomVisibility(getDistanceToBottom());
-            if (shouldAutoScrollRef.current) {
-              maybeScrollToEnd(false);
-            }
-            ensureInitialScrollToBottom();
-          }}
+          onContentSizeChange={handleMessagesContentSizeChange}
+          onLayout={handleMessagesLayout}
           onScrollBeginDrag={onScrollBeginDrag}
-          onScrollToIndexFailed={({ index, averageItemLength }) => {
-            const offset = Math.max(0, averageItemLength * index);
-            flatListRef.current?.scrollToOffset({ offset, animated: true });
-            setTimeout(() => {
-              flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
-            }, 250);
-          }}
+          onScrollToIndexFailed={handleScrollToIndexFailed}
           onViewableItemsChanged={onViewableItemsChanged}
-          viewabilityConfig={{
-            itemVisiblePercentThreshold: 50,
-          }}
+          viewabilityConfig={messageListViewabilityConfig}
         />
         
         {renderTypingIndicator()}
         {renderMoodStickersPanel()}
+
+        {mediaUploadStatus ? (
+          <View style={styles.mediaUploadNotice}>
+            <View style={styles.mediaUploadIcon}>
+              <MaterialCommunityIcons name={mediaUploadStatus.icon} size={17} color={theme.tint} />
+            </View>
+            <View style={styles.mediaUploadCopy}>
+              <Text style={styles.mediaUploadTitle}>{mediaUploadStatus.title}</Text>
+              <Text style={styles.mediaUploadSubtitle}>{mediaUploadStatus.subtitle}</Text>
+            </View>
+            <ActivityIndicator size="small" color={theme.tint} />
+          </View>
+        ) : null}
 
         {/* Reply Preview */}
         {replyingTo && (
@@ -11579,10 +11993,23 @@ export default function ConversationScreen() {
 
         {isChatBlocked ? (
           <View style={styles.blockedInput}>
-            <MaterialCommunityIcons name="block-helper" size={16} color={theme.textMuted} />
-            <Text style={styles.blockedInputText}>
-              {isBlockedByMe ? 'You blocked this user.' : 'Messaging is unavailable.'}
-            </Text>
+            <View style={styles.blockedInputIcon}>
+              <MaterialCommunityIcons
+                name={isBlockedByMe ? 'shield-lock-outline' : 'lock-alert-outline'}
+                size={18}
+                color={theme.tint}
+              />
+            </View>
+            <View style={styles.blockedInputCopy}>
+              <Text style={styles.blockedInputTitle}>
+                {isBlockedByMe ? 'Blocked privately' : 'Messaging unavailable'}
+              </Text>
+              <Text style={styles.blockedInputText}>
+                {isBlockedByMe
+                  ? 'You blocked this member. They cannot message you, and they were not notified.'
+                  : 'This conversation is paused for safety.'}
+              </Text>
+            </View>
             {isBlockedByMe ? (
               <TouchableOpacity style={styles.blockedInputAction} onPress={confirmUnblockUser}>
                 <Text style={styles.blockedInputActionText}>Unblock</Text>
@@ -11973,6 +12400,21 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flex: 1,
       flexDirection: 'row',
       alignItems: 'center',
+    },
+    headerOptionsButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      marginLeft: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+      backgroundColor: theme.backgroundSubtle,
+    },
+    headerOptionsButtonBlocked: {
+      borderColor: withAlpha(theme.tint, isDark ? 0.36 : 0.24),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.08),
     },
     avatarContainer: {
       position: 'relative',
@@ -12963,118 +13405,150 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     headerMenuBackdrop: {
       ...StyleSheet.absoluteFillObject,
       backgroundColor: withAlpha(Colors.dark.background, 0.55),
+      zIndex: 1,
+      elevation: 1,
+    },
+    headerMenuModalRoot: {
+      flex: 1,
+      justifyContent: 'flex-end',
+      backgroundColor: 'transparent',
+      position: 'relative',
     },
     headerMenuSheet: {
-      position: 'absolute',
-      left: 16,
-      right: 16,
-      bottom: 24,
-      borderRadius: 18,
-      backgroundColor: withAlpha(theme.background, isDark ? 0.78 : 0.94),
+      marginHorizontal: 16,
+      borderRadius: 26,
+      backgroundColor: isDark ? '#0d201f' : '#f7fbf8',
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
       overflow: 'hidden',
       shadowColor: Colors.dark.background,
-      shadowOpacity: 0.16,
-      shadowRadius: 20,
-      shadowOffset: { width: 0, height: 8 },
-      elevation: 6,
+      shadowOpacity: 0.24,
+      shadowRadius: 24,
+      shadowOffset: { width: 0, height: 14 },
+      zIndex: 2,
+      elevation: 12,
     },
-    headerMenuBlur: {
-      ...StyleSheet.absoluteFillObject,
+    headerMenuHandle: {
+      alignSelf: 'center',
+      width: 42,
+      height: 4,
+      borderRadius: 999,
+      marginTop: 10,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.2 : 0.16),
+    },
+    headerMenuScroller: {
+      maxHeight: Math.min(screenHeight * 0.74, 620),
     },
     headerMenuContent: {
+      paddingHorizontal: 14,
       paddingTop: 12,
-      paddingBottom: 8,
+      paddingBottom: 10,
     },
     headerMenuTitle: {
-      fontSize: 12,
-      fontFamily: 'Manrope_600SemiBold',
-      color: theme.textMuted,
-      letterSpacing: 0.3,
+      fontSize: 13,
+      fontFamily: 'Manrope_800ExtraBold',
+      color: theme.text,
+      letterSpacing: 0.8,
       textTransform: 'uppercase',
-      paddingHorizontal: 12,
-      paddingBottom: 6,
+      paddingBottom: 4,
+    },
+    headerMenuSubtitle: {
+      fontSize: 12,
+      lineHeight: 17,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+      paddingBottom: 12,
     },
     headerMenuSectionLabel: {
       fontSize: 11,
-      fontFamily: 'Manrope_600SemiBold',
+      fontFamily: 'Manrope_800ExtraBold',
       color: theme.textMuted,
       letterSpacing: 1,
       textTransform: 'uppercase',
-      paddingHorizontal: 12,
-      paddingBottom: 6,
+      paddingTop: 6,
+      paddingBottom: 8,
     },
     headerMenuGrid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 10,
-      paddingHorizontal: 12,
+      gap: 8,
       paddingBottom: 10,
     },
-    headerMenuCard: {
-      width: '48%',
-      minHeight: 60,
+    headerMenuRow: {
+      minHeight: 54,
       borderRadius: 18,
       paddingHorizontal: 12,
-      paddingVertical: 12,
-      backgroundColor: theme.backgroundSubtle,
+      paddingVertical: 10,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.055 : 0.035),
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
-      shadowColor: Colors.dark.background,
-      shadowOpacity: 0.06,
-      shadowRadius: 6,
-      shadowOffset: { width: 0, height: 4 },
-      elevation: 2,
+      gap: 12,
     },
-    headerMenuCardWide: {
-      width: '100%',
+    headerMenuRowProminent: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.07),
+      borderColor: withAlpha(theme.tint, isDark ? 0.22 : 0.14),
     },
-    headerMenuCardDestructive: {
-      backgroundColor: withAlpha('#ef4444', isDark ? 0.12 : 0.08),
-      borderColor: withAlpha('#ef4444', isDark ? 0.35 : 0.2),
+    headerMenuRowDestructive: {
+      backgroundColor: withAlpha('#ef4444', isDark ? 0.11 : 0.07),
+      borderWidth: 1,
+      borderColor: withAlpha('#ef4444', isDark ? 0.28 : 0.18),
     },
-    headerMenuIconWrap: {
+    headerMenuRowPressed: {
+      opacity: 0.72,
+    },
+    headerMenuRowIcon: {
       width: 34,
       height: 34,
       borderRadius: 17,
       alignItems: 'center',
       justifyContent: 'center',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.11),
       borderWidth: 1,
-      borderColor: withAlpha(theme.tint, isDark ? 0.22 : 0.14),
+      borderColor: withAlpha(theme.tint, isDark ? 0.26 : 0.16),
     },
-    headerMenuCardTextRow: {
+    headerMenuRowIconDestructive: {
+      backgroundColor: withAlpha('#ef4444', isDark ? 0.18 : 0.1),
+      borderColor: withAlpha('#ef4444', isDark ? 0.3 : 0.18),
+    },
+    headerMenuRowCopy: {
       flex: 1,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       gap: 8,
     },
-    headerMenuCardText: {
+    headerMenuRowTextStack: {
+      flex: 1,
+      gap: 2,
+    },
+    headerMenuRowTitle: {
       fontSize: 14,
-      fontFamily: 'Manrope_600SemiBold',
+      fontFamily: 'Manrope_700Bold',
       color: theme.text,
       flexShrink: 1,
     },
-    headerMenuCardTextDestructive: {
-      color: '#ef4444',
+    headerMenuRowTitleDestructive: {
+      color: isDark ? '#fecaca' : '#b91c1c',
+    },
+    headerMenuRowDescription: {
+      fontSize: 11,
+      lineHeight: 15,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
     },
     headerMenuBadge: {
-      paddingHorizontal: 6,
-      paddingVertical: 2,
-      borderRadius: 8,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 999,
       backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
       borderWidth: 1,
       borderColor: withAlpha(theme.tint, isDark ? 0.32 : 0.2),
     },
     headerMenuBadgeText: {
       fontSize: 10,
-      fontFamily: 'Manrope_600SemiBold',
-      color: theme.textMuted,
-      letterSpacing: 0.2,
+      fontFamily: 'Manrope_800ExtraBold',
+      color: isDark ? '#b6f4ee' : theme.tint,
+      letterSpacing: 0.35,
     },
     headerMenuDivider: {
       height: 1,
@@ -13084,12 +13558,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     headerMenuItem: {
       paddingHorizontal: 12,
-      paddingVertical: 12,
-      borderRadius: 12,
+      paddingVertical: 14,
     },
     headerMenuCancel: {
-      marginTop: 4,
-      backgroundColor: theme.backgroundSubtle,
+      borderTopWidth: 1,
+      borderTopColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+      backgroundColor: withAlpha(theme.text, isDark ? 0.035 : 0.025),
     },
     headerMenuCancelText: {
       fontSize: 14,
@@ -13678,6 +14152,86 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontFamily: 'Manrope_400Regular',
       color: theme.text,
       minHeight: 48,
+    },
+    reportEvidenceCard: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.34 : 0.22),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
+    },
+    reportEvidenceIcon: {
+      width: 30,
+      height: 30,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.12),
+    },
+    reportEvidenceCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    reportEvidenceLabel: {
+      fontSize: 11,
+      fontFamily: 'Manrope_800ExtraBold',
+      letterSpacing: 0.4,
+      textTransform: 'uppercase',
+      color: theme.tint,
+    },
+    reportEvidenceText: {
+      fontSize: 12,
+      lineHeight: 17,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    reportBlockOption: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+      backgroundColor: withAlpha(theme.text, isDark ? 0.04 : 0.03),
+    },
+    reportBlockOptionActive: {
+      borderColor: withAlpha(theme.tint, isDark ? 0.58 : 0.42),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.15 : 0.1),
+    },
+    reportBlockCheck: {
+      width: 22,
+      height: 22,
+      borderRadius: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.22 : 0.16),
+      backgroundColor: theme.backgroundSubtle,
+    },
+    reportBlockCheckActive: {
+      borderColor: theme.tint,
+      backgroundColor: theme.tint,
+    },
+    reportBlockCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    reportBlockTitle: {
+      fontSize: 13,
+      fontFamily: 'Manrope_700Bold',
+      color: theme.text,
+    },
+    reportBlockText: {
+      fontSize: 11,
+      lineHeight: 15,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
     },
     reportSubmitButton: {
       paddingVertical: 12,
@@ -14495,22 +15049,44 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     blockedInput: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
+      gap: 12,
       paddingHorizontal: 16,
-      paddingVertical: 14,
-      backgroundColor: theme.background,
-      borderTopWidth: 1,
-      borderTopColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
+      paddingVertical: 12,
+      marginHorizontal: 12,
+      marginBottom: 10,
+      borderRadius: 18,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.1 : 0.07),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.28 : 0.18),
+    },
+    blockedInputIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 13,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.1),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.32 : 0.18),
+    },
+    blockedInputCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    blockedInputTitle: {
+      fontSize: 13,
+      fontFamily: 'Manrope_800ExtraBold',
+      color: theme.text,
     },
     blockedInputText: {
-      flex: 1,
-      fontSize: 13,
+      fontSize: 11,
+      lineHeight: 16,
       fontFamily: 'Manrope_500Medium',
       color: theme.textMuted,
     },
     blockedInputAction: {
       paddingHorizontal: 12,
-      paddingVertical: 6,
+      paddingVertical: 8,
       borderRadius: 999,
       backgroundColor: theme.tint,
     },
@@ -14725,9 +15301,22 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       right: 0,
       bottom: 0,
       left: 0,
+      gap: 6,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: 'rgba(0,0,0,0.18)',
+    },
+    videoOverlayLabel: {
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+      overflow: 'hidden',
+      backgroundColor: 'rgba(255,255,255,0.14)',
+      color: Colors.light.background,
+      fontSize: 11,
+      fontFamily: 'Manrope_800ExtraBold',
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
     },
     mediaMetaOverlay: {
       position: 'absolute',
@@ -15995,6 +16584,44 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontFamily: 'Archivo_700Bold',
       color: theme.text,
       letterSpacing: 0.2,
+    },
+    mediaUploadNotice: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      marginHorizontal: 12,
+      marginBottom: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.34 : 0.22),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.13 : 0.08),
+    },
+    mediaUploadIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 13,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.32 : 0.18),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.1),
+    },
+    mediaUploadCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    mediaUploadTitle: {
+      fontSize: 13,
+      fontFamily: 'Manrope_800ExtraBold',
+      color: theme.text,
+    },
+    mediaUploadSubtitle: {
+      fontSize: 11,
+      lineHeight: 16,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
     },
 
     // Attachment Sheet

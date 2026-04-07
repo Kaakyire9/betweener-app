@@ -27,6 +27,12 @@ const normalizePlace = (value?: string | null) =>
     .toLowerCase()
     .replace(/\s+/g, ' ')
 
+const getFirstLocationPart = (value?: string | null) =>
+  String(value || '').split(',')[0]?.trim() || ''
+
+const looksAdministrative = (value?: string | null) =>
+  /\b(region|district|province|state|county|municipality|metropolitan)\b/i.test(getFirstLocationPart(value))
+
 const stripAdministrativeSuffix = (value?: string | null) => {
   const raw = String(value || '').trim()
   if (!raw) return ''
@@ -125,7 +131,7 @@ serve(async (req) => {
     url.searchParams.set('format', 'jsonv2')
     url.searchParams.set('lat', String(latitude))
     url.searchParams.set('lon', String(longitude))
-    url.searchParams.set('zoom', '12')
+    url.searchParams.set('zoom', '14')
     url.searchParams.set('addressdetails', '1')
 
     const email = Deno.env.get('NOMINATIM_EMAIL')
@@ -173,11 +179,23 @@ serve(async (req) => {
     }
 
     const safeRegion = region || currentProfile?.region || country || 'Unknown'
-    const safeCity = city || currentProfile?.city || null
+    const previousLocationCity = getFirstLocationPart(currentProfile?.location)
+    const previousCity = String(currentProfile?.city || '').trim()
+    const safePreviousCity = previousCity && !looksAdministrative(previousCity)
+      ? previousCity
+      : previousLocationCity && !looksAdministrative(previousLocationCity)
+        ? previousLocationCity
+        : null
+    const safeCity = city || safePreviousCity || null
     const safeCountry = country || currentProfile?.current_country || null
     const safeCountryCode = countryCode || currentProfile?.current_country_code || null
     const fallbackLocation = buildLocationLabel(safeCity || undefined, safeRegion || undefined, safeCountry || undefined)
-    const safeLocation = location || currentProfile?.location || fallbackLocation || null
+    const safeCurrentLocation = currentProfile?.location && !looksAdministrative(currentProfile.location)
+      ? currentProfile.location
+      : null
+    const safeLocation = location && !(looksAdministrative(location) && safeCurrentLocation)
+      ? location
+      : safeCurrentLocation || fallbackLocation || null
 
     const { error: updateError } = await supabase
       .from('profiles')

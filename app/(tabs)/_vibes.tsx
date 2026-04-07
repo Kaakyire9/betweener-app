@@ -4,16 +4,19 @@ import ExploreStack from "@/components/ExploreStack.reanimated";
 import MatchModal from '@/components/MatchModal';
 import MomentCreateModal from '@/components/MomentCreateModal';
 import MomentViewer from '@/components/MomentViewer';
+import PremiumUpsellModal from '@/components/premium/PremiumUpsellModal';
 import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { requestAndSavePreciseLocation, saveManualCityLocation } from "@/hooks/useLocationPreference";
 import { useMoments, type MomentUser } from '@/hooks/useMoments';
+import { usePremiumState } from "@/hooks/use-premium-state";
 import useVibesFeed, { applyVibesFilters, type VibesFilters } from "@/hooks/useVibesFeed";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
 import { canAccessInternalTools } from "@/lib/internal-tools";
 import { recordProfileSignal } from '@/lib/profile-signals';
+import { applyDefaults as applyCompassDefaults, mapToDiscoveryFilters } from "@/lib/relationship-compass";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -42,7 +45,32 @@ const KM_PER_MILE = 1.60934;
 const VIBES_FILTERS_KEY = 'vibes_filters_v2';
 const VIBES_INTRO_SEEN_KEY = 'vibes_intro_seen_v1';
 
+const clearPremiumVibesFilters = (filters: VibesFilters): VibesFilters => ({
+  ...filters,
+  verifiedOnly: false,
+  hasVideoOnly: false,
+  activeOnly: false,
+  distanceFilterKm: null,
+  minVibeScore: null,
+  minSharedInterests: 0,
+});
+
 type DistanceUnit = 'auto' | 'km' | 'mi';
+type PremiumUpsellState = {
+  requiredPlan: 'SILVER' | 'GOLD';
+  title: string;
+  message: string;
+};
+type RoomSummary = {
+  title: string;
+  body: string;
+};
+type PreviewTone = {
+  eyebrow: string;
+  title: string;
+  body: string;
+  cta: string;
+};
 
 const COUNTRY_OPTIONS = [
   { label: 'Ghana', code: 'GH' },
@@ -74,6 +102,139 @@ const resolveAutoUnit = (): 'km' | 'mi' => {
   }
 };
 
+const hasAnyDraftFilters = (filters: VibesFilters) =>
+  Boolean(filters.verifiedOnly) ||
+  Boolean(filters.hasVideoOnly) ||
+  Boolean(filters.activeOnly) ||
+  filters.distanceFilterKm != null ||
+  filters.minVibeScore != null ||
+  (filters.minSharedInterests || 0) > 0 ||
+  filters.minAge !== 18 ||
+  filters.maxAge !== 60 ||
+  Boolean(filters.religionFilter) ||
+  Boolean(filters.locationQuery?.trim());
+
+const deriveActivePresetKey = (filters: VibesFilters): string | null => {
+  if (filters.verifiedOnly && filters.minVibeScore === 60 && (filters.minSharedInterests || 0) >= 2) return 'real-intent';
+  if (filters.minVibeScore === 70 && (filters.minSharedInterests || 0) >= 2 && filters.activeOnly) return 'high-vibe';
+  if (filters.verifiedOnly && !filters.hasVideoOnly && !filters.activeOnly && filters.minVibeScore == null && (filters.minSharedInterests || 0) === 0) return 'verified';
+  if (filters.hasVideoOnly && !filters.verifiedOnly && !filters.activeOnly && filters.minVibeScore == null && (filters.minSharedInterests || 0) === 0) return 'video';
+  if (filters.activeOnly && !filters.verifiedOnly && !filters.hasVideoOnly && filters.minVibeScore == null && (filters.minSharedInterests || 0) === 0) return 'active';
+  return null;
+};
+
+const deriveRoomSummary = (filters: VibesFilters): RoomSummary => {
+  const preset = deriveActivePresetKey(filters);
+  if (!hasAnyDraftFilters(filters)) {
+    return {
+      title: 'Open room - discover freely',
+      body: 'Keep the room open and let chemistry surprise you.',
+    };
+  }
+  if (preset === 'real-intent') {
+    return {
+      title: 'Real-intent room',
+      body: 'Biased toward trust, overlap, and people showing stronger follow-through.',
+    };
+  }
+  if (preset === 'high-vibe') {
+    return {
+      title: 'High-vibe room',
+      body: 'Fewer, stronger profiles ahead with better chemistry and momentum.',
+    };
+  }
+  if (filters.verifiedOnly && filters.activeOnly) {
+    return {
+      title: 'Shaped around trusted, active people',
+      body: 'Less noise, more visible energy, and a tighter pace.',
+    };
+  }
+  if (filters.minVibeScore != null || (filters.minSharedInterests || 0) > 0) {
+    return {
+      title: 'Focused on stronger chemistry',
+      body: 'You are asking for fewer matches, but better overlap and better fit.',
+    };
+  }
+  if (filters.distanceFilterKm != null) {
+    return {
+      title: 'Closer, tighter room',
+      body: 'Discovery is leaning toward people within an easier reach.',
+    };
+  }
+  if (filters.religionFilter || filters.locationQuery?.trim()) {
+    return {
+      title: 'Gently refined room',
+      body: 'A few quiet boundaries are shaping discovery without closing it down too much.',
+    };
+  }
+  if (filters.hasVideoOnly) {
+    return {
+      title: 'Biased toward presence',
+      body: 'The room is leaning toward people who have shown a little more of themselves.',
+    };
+  }
+  return {
+    title: 'Room taking shape',
+    body: 'A calmer, more selective mix is starting to emerge.',
+  };
+};
+
+const deriveCompatibilityHint = (filters: VibesFilters) => {
+  if (filters.minVibeScore == null && (filters.minSharedInterests || 0) === 0) return 'Wide and open';
+  if ((filters.minVibeScore || 0) >= 70 || (filters.minSharedInterests || 0) >= 3) return 'Fewer but stronger matches';
+  if ((filters.minVibeScore || 0) >= 60 || (filters.minSharedInterests || 0) >= 2) return 'Tighter, higher-intent room';
+  return 'Balanced chemistry';
+};
+
+const derivePreviewTone = (previewCount: number | null, filters: VibesFilters, loadedCount: number): PreviewTone => {
+  if (previewCount == null) {
+    return {
+      eyebrow: 'Room preview',
+      title: 'Shape first, then preview',
+      body: 'Your count updates as the room shifts.',
+      cta: 'Apply my room',
+    };
+  }
+  if (previewCount === 0) {
+    return {
+      eyebrow: 'Very selective',
+      title: 'No one matches this room yet',
+      body: 'Ease a few controls and the room will open again.',
+      cta: 'Apply my room',
+    };
+  }
+  if (!hasAnyDraftFilters(filters)) {
+    return {
+      eyebrow: 'Open discovery',
+      title: `Preview: ${previewCount} ${previewCount === 1 ? 'person matches this room' : 'people match this room'}`,
+      body: loadedCount > 0 ? 'Broad, relaxed, and ready for surprise chemistry.' : 'A wide-open room for freer discovery.',
+      cta: 'Apply my room',
+    };
+  }
+  if (previewCount <= 5) {
+    return {
+      eyebrow: 'Highly curated',
+      title: `Preview: ${previewCount} ${previewCount === 1 ? 'person matches this room' : 'people match this room'}`,
+      body: 'Very selective. Fewer profiles ahead, but likely stronger fit.',
+      cta: 'Apply my room',
+    };
+  }
+  if (previewCount <= 15) {
+    return {
+      eyebrow: 'Focused room',
+      title: `Preview: ${previewCount} ${previewCount === 1 ? 'person matches this room' : 'people match this room'}`,
+      body: 'More selective, stronger fit.',
+      cta: 'Apply & preview my room',
+    };
+  }
+  return {
+    eyebrow: 'Balanced room',
+    title: `Preview: ${previewCount} ${previewCount === 1 ? 'person matches this room' : 'people match this room'}`,
+    body: 'A healthy mix of openness and stronger targeting.',
+    cta: 'Apply my room',
+  };
+};
+
 export default function ExploreScreen() {
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
@@ -81,7 +242,14 @@ export default function ExploreScreen() {
   const isDark = (colorScheme ?? 'light') === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const { profile, user, refreshProfile } = useAuth();
+  const { hasAccess } = usePremiumState();
+  const hasAdvancedFilters = hasAccess('SILVER');
   const profileCountryCode = (profile as any)?.current_country_code as string | undefined;
+  const relationshipCompass = useMemo(() => {
+    const raw = (profile as any)?.relationship_compass;
+    if (!raw || typeof raw !== 'object' || Object.keys(raw).length === 0) return null;
+    return applyCompassDefaults(raw);
+  }, [profile]);
 
   const { momentUsers, refresh: refreshMoments } = useMoments({
     currentUserId: user?.id,
@@ -124,6 +292,8 @@ export default function ExploreScreen() {
     momentUserIds: momentBoostIds,
     viewerInterests,
     viewerGender: (profile as any)?.gender ?? null,
+    viewerProfile: profile,
+    relationshipCompass,
   });
 
   const [celebrationMatch, setCelebrationMatch] = useState<any | null>(null);
@@ -183,8 +353,11 @@ export default function ExploreScreen() {
   const [manualCountryCode, setManualCountryCode] = useState(profileCountryCode || "");
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isSavingLocation, setIsSavingLocation] = useState(false);
+  const [premiumUpsell, setPremiumUpsell] = useState<PremiumUpsellState | null>(null);
+  const [reopenFiltersAfterUpsell, setReopenFiltersAfterUpsell] = useState(false);
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [filtersPanel, setFiltersPanel] = useState<'main' | 'location'>('main');
+  const [advancedExpanded, setAdvancedExpanded] = useState(false);
   const [introVisible, setIntroVisible] = useState(false);
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [hasVideoOnly, setHasVideoOnly] = useState(false);
@@ -201,9 +374,14 @@ export default function ExploreScreen() {
   const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRefreshTsRef = useRef<number>(0);
   const scrollY = useRef(new Animated.Value(0)).current;
+  const advancedControlsAnim = useRef(new Animated.Value(0)).current;
   const filtersStorageKey = useMemo(
     () => (profile?.id ? `${VIBES_FILTERS_KEY}:${profile.id}` : null),
     [profile?.id],
+  );
+  const relationshipCompassFilters = useMemo(
+    () => (relationshipCompass ? mapToDiscoveryFilters(relationshipCompass) : {}),
+    [relationshipCompass],
   );
   const filtersLoadedKeyRef = useRef<string | null>(null);
   const introStorageKey = useMemo(
@@ -227,7 +405,43 @@ export default function ExploreScreen() {
     (async () => {
       try {
         const raw = await AsyncStorage.getItem(filtersStorageKey);
-        if (cancelled || !raw) return;
+        if (cancelled) return;
+        if (!raw) {
+          if (Object.keys(relationshipCompassFilters).length === 0) return;
+          const compassDrivenFilters = {
+            verifiedOnly: Boolean(relationshipCompassFilters.verifiedOnly),
+            hasVideoOnly: false,
+            activeOnly: false,
+            distanceFilterKm:
+              typeof relationshipCompassFilters.distanceFilterKm === 'number'
+                ? relationshipCompassFilters.distanceFilterKm
+                : null,
+            minAge: 18,
+            maxAge: 60,
+            religionFilter: null,
+            minVibeScore: null,
+            minSharedInterests:
+              typeof relationshipCompassFilters.minSharedInterests === 'number'
+                ? relationshipCompassFilters.minSharedInterests
+                : 0,
+            locationQuery:
+              typeof relationshipCompassFilters.locationQuery === 'string'
+                ? relationshipCompassFilters.locationQuery
+                : '',
+          };
+          setVerifiedOnly(compassDrivenFilters.verifiedOnly);
+          setHasVideoOnly(compassDrivenFilters.hasVideoOnly);
+          setActiveOnly(compassDrivenFilters.activeOnly);
+          setDistanceFilterKm(compassDrivenFilters.distanceFilterKm);
+          setMinAge(compassDrivenFilters.minAge);
+          setMaxAge(compassDrivenFilters.maxAge);
+          setReligionFilter(compassDrivenFilters.religionFilter);
+          setMinVibeScore(compassDrivenFilters.minVibeScore);
+          setMinSharedInterests(compassDrivenFilters.minSharedInterests);
+          setLocationQuery(compassDrivenFilters.locationQuery);
+          applyFilters(compassDrivenFilters);
+          return;
+        }
         const parsed = JSON.parse(raw);
         if (!parsed || typeof parsed !== 'object') return;
 
@@ -263,7 +477,7 @@ export default function ExploreScreen() {
     return () => {
       cancelled = true;
     };
-  }, [applyFilters, filtersStorageKey]);
+  }, [applyFilters, filtersStorageKey, relationshipCompassFilters]);
 
   const queueRefreshMatches = useCallback(() => {
     if (refreshDebounceRef.current) {
@@ -569,6 +783,18 @@ export default function ExploreScreen() {
   };
 
   const handleApplyFilters = () => {
+    if (!hasAdvancedFilters && (verifiedOnly || hasVideoOnly || activeOnly || distanceFilterKm != null || minVibeScore != null || minSharedInterests > 0)) {
+      setReopenFiltersAfterUpsell(true);
+      setFiltersVisible(false);
+      setTimeout(() => {
+        setPremiumUpsell({
+          requiredPlan: 'SILVER',
+          title: 'Unlock advanced filters',
+          message: 'Advanced Vibes filters are included with Silver and Gold. Upgrade to shape the room more precisely.',
+        });
+      }, 120);
+      return;
+    }
     setFiltersVisible(false);
     const next = {
       verifiedOnly,
@@ -590,6 +816,25 @@ export default function ExploreScreen() {
       AsyncStorage.setItem(filtersStorageKey, JSON.stringify(next)).catch(() => {});
     }
   };
+
+  useEffect(() => {
+    if (hasAdvancedFilters || !appliedFilters) return;
+    const premiumFiltersActive =
+      Boolean(appliedFilters.verifiedOnly) ||
+      Boolean(appliedFilters.hasVideoOnly) ||
+      Boolean(appliedFilters.activeOnly) ||
+      appliedFilters.distanceFilterKm != null ||
+      appliedFilters.minVibeScore != null ||
+      (appliedFilters.minSharedInterests || 0) > 0;
+
+    if (!premiumFiltersActive) return;
+
+    const cleared = clearPremiumVibesFilters(appliedFilters);
+    applyFilters(cleared);
+    if (filtersStorageKey) {
+      AsyncStorage.setItem(filtersStorageKey, JSON.stringify(cleared)).catch(() => {});
+    }
+  }, [appliedFilters, applyFilters, filtersStorageKey, hasAdvancedFilters]);
 
   const syncFilterDraftFromApplied = useCallback(() => {
     const base = appliedFilters ?? {
@@ -622,11 +867,31 @@ export default function ExploreScreen() {
       if (filtersPanel === 'main') {
         // Premium UX: treat the modal controls as "draft" until Apply is pressed.
         syncFilterDraftFromApplied();
+        const shouldExpand = Boolean(
+          appliedFilters?.verifiedOnly ||
+          appliedFilters?.hasVideoOnly ||
+          appliedFilters?.activeOnly ||
+          appliedFilters?.minVibeScore != null ||
+          (appliedFilters?.minSharedInterests || 0) > 0
+        );
+        setAdvancedExpanded(shouldExpand);
+        advancedControlsAnim.setValue(shouldExpand ? 1 : 0);
       }
       return;
     }
     setFiltersPanel('main');
-  }, [filtersPanel, filtersVisible, syncFilterDraftFromApplied]);
+    setAdvancedExpanded(false);
+    advancedControlsAnim.setValue(0);
+  }, [advancedControlsAnim, appliedFilters, filtersPanel, filtersVisible, syncFilterDraftFromApplied]);
+
+  useEffect(() => {
+    Animated.timing(advancedControlsAnim, {
+      toValue: advancedExpanded ? 1 : 0,
+      duration: 240,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [advancedControlsAnim, advancedExpanded]);
 
   const resetAllFilters = useCallback(() => {
     setVerifiedOnly(false);
@@ -722,6 +987,58 @@ export default function ExploreScreen() {
     ],
   );
 
+  const showAdvancedFiltersUpsell = useCallback(() => {
+    setReopenFiltersAfterUpsell(true);
+    setFiltersVisible(false);
+    setTimeout(() => {
+      setPremiumUpsell({
+        requiredPlan: 'SILVER',
+        title: 'Unlock advanced filters',
+        message: 'Advanced Vibes filters are included with Silver and Gold. Upgrade to shape the room by trust, activity, chemistry, and distance.',
+      });
+    }, 120);
+  }, []);
+
+  const showSharedInterestsHint = useCallback(() => {
+    Alert.alert(
+      'Add interests first',
+      'Add interests to your profile before using shared-interest filters.',
+    );
+  }, []);
+
+  const showDistanceNearbyHint = useCallback(() => {
+    Alert.alert(
+      'Use Nearby for distance',
+      'Distance filters work inside the Nearby tab.',
+    );
+  }, []);
+
+  const withAdvancedFilterGuard = useCallback((applyChange: () => void) => {
+    if (!hasAdvancedFilters) {
+      showAdvancedFiltersUpsell();
+      return;
+    }
+    applyChange();
+  }, [hasAdvancedFilters, showAdvancedFiltersUpsell]);
+
+  const handleSharedInterestFilterPress = useCallback((count: number) => {
+    withAdvancedFilterGuard(() => {
+      if (viewerInterests.length === 0) {
+        showSharedInterestsHint();
+        return;
+      }
+      setMinSharedInterests(count);
+    });
+  }, [showSharedInterestsHint, viewerInterests.length, withAdvancedFilterGuard]);
+
+  const handleDistanceFilterPress = useCallback((km: number | null) => {
+    if (activeTab !== 'nearby') {
+      showDistanceNearbyHint();
+      return;
+    }
+    withAdvancedFilterGuard(() => setDistanceFilterKm(km));
+  }, [activeTab, showDistanceNearbyHint, withAdvancedFilterGuard]);
+
   const previewBaseProfiles = useMemo(() => {
     if (poolProfiles.length > 0) return poolProfiles;
     return matchList;
@@ -734,11 +1051,65 @@ export default function ExploreScreen() {
         segment: vibesSegment,
         momentUserIds: momentBoostIds,
         viewerInterests,
+        relationshipCompass,
+        viewerProfile: profile,
       }).length;
     } catch {
       return null;
     }
-  }, [draftFiltersForPreview, filtersVisible, momentBoostIds, previewBaseProfiles, vibesSegment, viewerInterests]);
+  }, [draftFiltersForPreview, filtersVisible, momentBoostIds, previewBaseProfiles, profile, relationshipCompass, vibesSegment, viewerInterests]);
+
+  const roomSummary = useMemo(() => deriveRoomSummary(draftFiltersForPreview), [draftFiltersForPreview]);
+  const compatibilityHint = useMemo(() => deriveCompatibilityHint(draftFiltersForPreview), [draftFiltersForPreview]);
+  const previewTone = useMemo(
+    () => derivePreviewTone(draftPreviewCount, draftFiltersForPreview, previewBaseProfiles.length),
+    [draftFiltersForPreview, draftPreviewCount, previewBaseProfiles.length],
+  );
+  const activePresetKey = useMemo(() => deriveActivePresetKey(draftFiltersForPreview), [draftFiltersForPreview]);
+
+  const applyPreset = useCallback((presetKey: string) => {
+    withAdvancedFilterGuard(() => {
+      if (presetKey === 'high-vibe') {
+        setVerifiedOnly(false);
+        setHasVideoOnly(false);
+        setActiveOnly(true);
+        setMinVibeScore(70);
+        setMinSharedInterests(2);
+        return;
+      }
+      if (presetKey === 'verified') {
+        setVerifiedOnly(true);
+        setHasVideoOnly(false);
+        setActiveOnly(false);
+        setMinVibeScore(null);
+        setMinSharedInterests(0);
+        return;
+      }
+      if (presetKey === 'video') {
+        setVerifiedOnly(false);
+        setHasVideoOnly(true);
+        setActiveOnly(false);
+        setMinVibeScore(null);
+        setMinSharedInterests(0);
+        return;
+      }
+      if (presetKey === 'active') {
+        setVerifiedOnly(false);
+        setHasVideoOnly(false);
+        setActiveOnly(true);
+        setMinVibeScore(null);
+        setMinSharedInterests(0);
+        return;
+      }
+      if (presetKey === 'real-intent') {
+        setVerifiedOnly(true);
+        setHasVideoOnly(false);
+        setActiveOnly(false);
+        setMinVibeScore(60);
+        setMinSharedInterests(2);
+      }
+    });
+  }, [withAdvancedFilterGuard]);
 
   const appliedFilterCount = useMemo(() => {
     if (!appliedFilters) return 0;
@@ -1378,22 +1749,49 @@ export default function ExploreScreen() {
                     </>
                   ) : (
                     <>
-                  <View style={styles.filterHeroCard}>
+                  <LinearGradientSafe
+                    colors={
+                      isDark
+                        ? ['rgba(20,33,46,0.98)', 'rgba(14,23,34,0.98)', 'rgba(10,16,26,0.98)']
+                        : ['#fbf4ec', '#f5eadf', '#efe2d6']
+                    }
+                    start={[0, 0]}
+                    end={[1, 1]}
+                    style={styles.filterHeroCard}
+                  >
+                    <View style={styles.filterHeroGlowPrimary} />
+                    <View style={styles.filterHeroGlowSecondary} />
                     <View style={styles.filterHeroBadge}>
                       <Gem size={14} color={theme.tint} />
-                      <Text style={styles.filterHeroBadgeText}>Premium curation</Text>
+                      <Text style={styles.filterHeroBadgeText}>Free + Silver+ filters</Text>
                     </View>
                     <Text style={styles.filterHeroTitle}>Shape the room before you swipe.</Text>
                     <Text style={styles.filterHeroBody}>
                       Tune chemistry, trust, and momentum so the next people feel closer to your pace.
                     </Text>
-                  </View>
+                    <View style={styles.filterLegendStack}>
+                      <View style={[styles.filterLegendRow, styles.filterLegendRowPremium]}>
+                        <View style={[styles.filterTierPill, styles.filterTierPillPremium]}>
+                          <Text style={[styles.filterTierPillText, styles.filterTierPillTextPremium]}>Silver+</Text>
+                        </View>
+                        <Text style={styles.filterLegendText}>Verified, video, active, vibe, shared-interest, and distance filters</Text>
+                      </View>
+                      <View style={[styles.filterLegendRow, styles.filterLegendRowFree]}>
+                        <View style={[styles.filterTierPill, styles.filterTierPillFree]}>
+                          <Text style={[styles.filterTierPillText, styles.filterTierPillTextFree]}>Free</Text>
+                        </View>
+                        <Text style={styles.filterLegendText}>Age range, religion, and city filters</Text>
+                      </View>
+                    </View>
+                  </LinearGradientSafe>
 
                   <View style={styles.activeFiltersCard}>
                     <View style={styles.filterSectionHeader}>
                       <Text style={styles.filterSectionEyebrow}>Current mood</Text>
                       <Text style={styles.filterSectionTitle}>Active filters</Text>
                     </View>
+                    <Text style={styles.activeFiltersSummaryTitle}>{roomSummary.title}</Text>
+                    <Text style={styles.activeFiltersSummaryBody}>{roomSummary.body}</Text>
                     {activeFilterChips.length > 0 ? (
                       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.activeFiltersRow}>
                         {activeFilterChips.map((chip) => (
@@ -1409,60 +1807,112 @@ export default function ExploreScreen() {
                         ))}
                       </ScrollView>
                     ) : (
-                      <Text style={styles.activeFiltersEmpty}>No filters applied yet. Keep it open, or shape the room below.</Text>
+                      <Text style={styles.activeFiltersEmpty}>Keep it open, or shape the room below.</Text>
                     )}
                   </View>
 
-                  <View style={styles.filterSectionCard}>
+                  <View style={[styles.filterSectionCard, styles.filterSectionCardPremium]}>
                     <View style={styles.filterSectionHeader}>
                       <Text style={styles.filterSectionEyebrow}>Premium presets</Text>
-                      <Text style={styles.filterSectionTitle}>One tap moods</Text>
+                      <View style={styles.filterSectionTitleRow}>
+                        <Text style={styles.filterSectionTitle}>One tap moods</Text>
+                        <View style={[styles.filterTierPill, styles.filterTierPillPremium]}>
+                          <Text style={[styles.filterTierPillText, styles.filterTierPillTextPremium]}>Silver+</Text>
+                        </View>
+                      </View>
                       <Text style={styles.filterSectionBody}>Fast ways to bias the room toward trust, energy, or richer chemistry.</Text>
                     </View>
-                    <View style={styles.filterChipsRowWrap}>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={styles.filterPresetRail}
+                    >
                       <TouchableOpacity
-                        style={[styles.filterChip, styles.filterPresetChip, minVibeScore === 70 && minSharedInterests === 2 && styles.filterChipActive]}
-                        onPress={() => {
-                          setMinVibeScore(70);
-                          setMinSharedInterests(2);
-                        }}
+                        style={[styles.filterChip, styles.filterPresetChip, styles.filterPresetChipRich, activePresetKey === 'high-vibe' && styles.filterChipActive]}
+                        onPress={() => applyPreset('high-vibe')}
                         activeOpacity={0.85}
                       >
-                        <Text style={[styles.filterChipText, minVibeScore === 70 && minSharedInterests === 2 && styles.filterChipTextActive]}>High Vibe</Text>
+                        <MaterialCommunityIcons name="star-four-points-outline" size={15} color={activePresetKey === 'high-vibe' ? '#fff' : theme.tint} />
+                        <Text style={[styles.filterChipText, activePresetKey === 'high-vibe' && styles.filterChipTextActive]}>High Vibe</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={[styles.filterChip, styles.filterPresetChip, verifiedOnly && styles.filterChipActive]}
-                        onPress={() => setVerifiedOnly(true)}
+                        style={[styles.filterChip, styles.filterPresetChip, styles.filterPresetChipRich, activePresetKey === 'verified' && styles.filterChipActive]}
+                        onPress={() => applyPreset('verified')}
                         activeOpacity={0.85}
                       >
-                        <Text style={[styles.filterChipText, verifiedOnly && styles.filterChipTextActive]}>Verified</Text>
+                        <MaterialCommunityIcons name="shield-check-outline" size={15} color={activePresetKey === 'verified' ? '#fff' : theme.tint} />
+                        <Text style={[styles.filterChipText, activePresetKey === 'verified' && styles.filterChipTextActive]}>Verified</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={[styles.filterChip, styles.filterPresetChip, hasVideoOnly && styles.filterChipActive]}
-                        onPress={() => setHasVideoOnly(true)}
+                        style={[styles.filterChip, styles.filterPresetChip, styles.filterPresetChipRich, activePresetKey === 'video' && styles.filterChipActive]}
+                        onPress={() => applyPreset('video')}
                         activeOpacity={0.85}
                       >
-                        <Text style={[styles.filterChipText, hasVideoOnly && styles.filterChipTextActive]}>Video</Text>
+                        <MaterialCommunityIcons name="video-outline" size={15} color={activePresetKey === 'video' ? '#fff' : theme.tint} />
+                        <Text style={[styles.filterChipText, activePresetKey === 'video' && styles.filterChipTextActive]}>Video</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={[styles.filterChip, styles.filterPresetChip, activeOnly && styles.filterChipActive]}
-                        onPress={() => setActiveOnly(true)}
+                        style={[styles.filterChip, styles.filterPresetChip, styles.filterPresetChipRich, activePresetKey === 'active' && styles.filterChipActive]}
+                        onPress={() => applyPreset('active')}
                         activeOpacity={0.85}
                       >
-                        <Text style={[styles.filterChipText, activeOnly && styles.filterChipTextActive]}>Active</Text>
+                        <MaterialCommunityIcons name="lightning-bolt-outline" size={15} color={activePresetKey === 'active' ? '#fff' : theme.tint} />
+                        <Text style={[styles.filterChipText, activePresetKey === 'active' && styles.filterChipTextActive]}>Active</Text>
                       </TouchableOpacity>
-                    </View>
+                      <TouchableOpacity
+                        style={[styles.filterChip, styles.filterPresetChip, styles.filterPresetChipRich, activePresetKey === 'real-intent' && styles.filterChipActive]}
+                        onPress={() => applyPreset('real-intent')}
+                        activeOpacity={0.85}
+                      >
+                        <MaterialCommunityIcons name="handshake-outline" size={15} color={activePresetKey === 'real-intent' ? '#fff' : theme.tint} />
+                        <Text style={[styles.filterChipText, activePresetKey === 'real-intent' && styles.filterChipTextActive]}>Real Intent</Text>
+                      </TouchableOpacity>
+                    </ScrollView>
                   </View>
 
-                  <View style={styles.filterSectionCard}>
+                  <TouchableOpacity
+                    style={styles.expandAdvancedButton}
+                    onPress={() => setAdvancedExpanded((value) => !value)}
+                    activeOpacity={0.88}
+                  >
+                    <View>
+                      <Text style={styles.expandAdvancedEyebrow}>More control</Text>
+                      <Text style={styles.expandAdvancedTitle}>{advancedExpanded ? 'Keep it lighter' : 'Refine more'}</Text>
+                    </View>
+                    <View style={styles.expandAdvancedMeta}>
+                      <Text style={styles.expandAdvancedMetaText}>{advancedExpanded ? 'Less' : 'More controls'}</Text>
+                      <MaterialCommunityIcons name={advancedExpanded ? 'chevron-up' : 'chevron-down'} size={18} color={theme.tint} />
+                    </View>
+                  </TouchableOpacity>
+
+                  <Animated.View
+                    style={[
+                      styles.advancedSectionWrap,
+                      {
+                        opacity: advancedControlsAnim,
+                        maxHeight: advancedControlsAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 820] }),
+                        transform: [
+                          {
+                            translateY: advancedControlsAnim.interpolate({ inputRange: [0, 1], outputRange: [-8, 0] }),
+                          },
+                        ],
+                      },
+                    ]}
+                  >
+                  <View style={[styles.filterSectionCard, styles.filterSectionCardPremium]}>
                     <View style={styles.filterSectionHeader}>
                       <Text style={styles.filterSectionEyebrow}>Trust signals</Text>
-                      <Text style={styles.filterSectionTitle}>Who should rise first?</Text>
+                      <View style={styles.filterSectionTitleRow}>
+                        <Text style={styles.filterSectionTitle}>Who should rise first?</Text>
+                        <View style={[styles.filterTierPill, styles.filterTierPillPremium]}>
+                          <Text style={[styles.filterTierPillText, styles.filterTierPillTextPremium]}>Silver+</Text>
+                        </View>
+                      </View>
                     </View>
                     <View style={styles.filterToggleStack}>
                     <TouchableOpacity
                       style={[styles.filterToggle, verifiedOnly && styles.filterToggleActive]}
-                      onPress={() => setVerifiedOnly((v) => !v)}
+                      onPress={() => withAdvancedFilterGuard(() => setVerifiedOnly((v) => !v))}
                       activeOpacity={0.85}
                     >
                       <View style={styles.filterToggleCopy}>
@@ -1477,7 +1927,7 @@ export default function ExploreScreen() {
 
                     <TouchableOpacity
                       style={[styles.filterToggle, hasVideoOnly && styles.filterToggleActive]}
-                      onPress={() => setHasVideoOnly((v) => !v)}
+                      onPress={() => withAdvancedFilterGuard(() => setHasVideoOnly((v) => !v))}
                       activeOpacity={0.85}
                     >
                       <View style={styles.filterToggleCopy}>
@@ -1492,7 +1942,7 @@ export default function ExploreScreen() {
 
                     <TouchableOpacity
                       style={[styles.filterToggle, activeOnly && styles.filterToggleActive]}
-                      onPress={() => setActiveOnly((v) => !v)}
+                      onPress={() => withAdvancedFilterGuard(() => setActiveOnly((v) => !v))}
                       activeOpacity={0.85}
                     >
                       <View style={styles.filterToggleCopy}>
@@ -1507,10 +1957,16 @@ export default function ExploreScreen() {
                     </View>
                   </View>
 
-                  <View style={styles.filterSectionCard}>
+                  <View style={[styles.filterSectionCard, styles.filterSectionCardPremium]}>
                     <View style={styles.filterSectionHeader}>
                       <Text style={styles.filterSectionEyebrow}>Compatibility</Text>
-                      <Text style={styles.filterSectionTitle}>Raise the bar</Text>
+                      <View style={styles.filterSectionTitleRow}>
+                        <Text style={styles.filterSectionTitle}>Raise the bar</Text>
+                        <View style={[styles.filterTierPill, styles.filterTierPillPremium]}>
+                          <Text style={[styles.filterTierPillText, styles.filterTierPillTextPremium]}>Silver+</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.filterSectionBody}>{compatibilityHint}</Text>
                     </View>
                     <View style={styles.filterFieldGroup}>
                     <Text style={styles.filterLabel}>Vibe level</Text>
@@ -1520,7 +1976,7 @@ export default function ExploreScreen() {
                         <TouchableOpacity
                           key={`vibe-${score}`}
                           style={[styles.filterChip, minVibeScore === score && styles.filterChipActive]}
-                          onPress={() => setMinVibeScore(score)}
+                          onPress={() => withAdvancedFilterGuard(() => setMinVibeScore(score))}
                           activeOpacity={0.85}
                         >
                           <Text style={[styles.filterChipText, minVibeScore === score && styles.filterChipTextActive]}>{`${score}%+`}</Text>
@@ -1528,7 +1984,7 @@ export default function ExploreScreen() {
                       ))}
                       <TouchableOpacity
                         style={[styles.filterChip, minVibeScore == null && styles.filterChipActive]}
-                        onPress={() => setMinVibeScore(null)}
+                        onPress={() => withAdvancedFilterGuard(() => setMinVibeScore(null))}
                         activeOpacity={0.85}
                       >
                         <Text style={[styles.filterChipText, minVibeScore == null && styles.filterChipTextActive]}>Any</Text>
@@ -1545,16 +2001,15 @@ export default function ExploreScreen() {
                         <TouchableOpacity
                           key={`shared-${n}`}
                           style={[styles.filterChip, minSharedInterests === n && styles.filterChipActive]}
-                          onPress={() => setMinSharedInterests(n)}
+                          onPress={() => handleSharedInterestFilterPress(n)}
                           activeOpacity={0.85}
-                          disabled={viewerInterests.length === 0}
                         >
                           <Text style={[styles.filterChipText, minSharedInterests === n && styles.filterChipTextActive]}>{`${n}+`}</Text>
                         </TouchableOpacity>
                       ))}
                       <TouchableOpacity
                         style={[styles.filterChip, minSharedInterests === 0 && styles.filterChipActive]}
-                        onPress={() => setMinSharedInterests(0)}
+                        onPress={() => withAdvancedFilterGuard(() => setMinSharedInterests(0))}
                         activeOpacity={0.85}
                       >
                         <Text style={[styles.filterChipText, minSharedInterests === 0 && styles.filterChipTextActive]}>Any</Text>
@@ -1562,11 +2017,18 @@ export default function ExploreScreen() {
                     </View>
                     </View>
                   </View>
+                  </Animated.View>
 
-                  <View style={styles.filterSectionCard}>
+                  <View style={[styles.filterSectionCard, styles.filterSectionCardMixed]}>
                     <View style={styles.filterSectionHeader}>
                       <Text style={styles.filterSectionEyebrow}>Reach</Text>
-                      <Text style={styles.filterSectionTitle}>Distance and age</Text>
+                      <View style={styles.filterSectionTitleRow}>
+                        <Text style={styles.filterSectionTitle}>Distance and age</Text>
+                        <View style={[styles.filterTierPill, styles.filterTierPillMixed]}>
+                          <Text style={[styles.filterTierPillText, styles.filterTierPillTextMixed]}>Mixed</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.filterSectionBody}>Distance is Silver+. Age range stays free.</Text>
                     </View>
                     <View style={styles.filterFieldGroup}>
                     <Text style={styles.filterLabel}>Distance</Text>
@@ -1580,12 +2042,8 @@ export default function ExploreScreen() {
                             distanceFilterKm === option.km && styles.filterChipActive,
                             activeTab !== 'nearby' && styles.filterChipDisabled,
                           ]}
-                          onPress={() => {
-                            if (activeTab !== 'nearby') return;
-                            setDistanceFilterKm(option.km);
-                          }}
+                          onPress={() => handleDistanceFilterPress(option.km)}
                           activeOpacity={0.85}
-                          disabled={activeTab !== 'nearby'}
                         >
                           <Text style={[styles.filterChipText, distanceFilterKm === option.km && styles.filterChipTextActive]}>
                             {option.label}
@@ -1598,12 +2056,8 @@ export default function ExploreScreen() {
                           distanceFilterKm == null && styles.filterChipActive,
                           activeTab !== 'nearby' && styles.filterChipDisabled,
                         ]}
-                        onPress={() => {
-                          if (activeTab !== 'nearby') return;
-                          setDistanceFilterKm(null);
-                        }}
+                        onPress={() => handleDistanceFilterPress(null)}
                         activeOpacity={0.85}
-                        disabled={activeTab !== 'nearby'}
                       >
                         <Text style={[styles.filterChipText, distanceFilterKm == null && styles.filterChipTextActive]}>Any</Text>
                       </TouchableOpacity>
@@ -1666,10 +2120,15 @@ export default function ExploreScreen() {
                     </View>
                   </View>
 
-                  <View style={styles.filterSectionCard}>
+                  <View style={[styles.filterSectionCard, styles.filterSectionCardFree]}>
                     <View style={styles.filterSectionHeader}>
                       <Text style={styles.filterSectionEyebrow}>Preferences</Text>
-                      <Text style={styles.filterSectionTitle}>Religion</Text>
+                      <View style={styles.filterSectionTitleRow}>
+                        <Text style={styles.filterSectionTitle}>Religion</Text>
+                        <View style={[styles.filterTierPill, styles.filterTierPillFree]}>
+                          <Text style={[styles.filterTierPillText, styles.filterTierPillTextFree]}>Free</Text>
+                        </View>
+                      </View>
                     </View>
                     <View style={styles.filterChipsRowWrap}>
                       {distinctReligions.length === 0 ? <Text style={styles.filterHint}>No data yet</Text> : null}
@@ -1693,10 +2152,15 @@ export default function ExploreScreen() {
                     </View>
                   </View>
 
-                  <View style={styles.filterSectionCard}>
+                  <View style={[styles.filterSectionCard, styles.filterSectionCardFree]}>
                     <View style={styles.filterSectionHeader}>
                     <Text style={styles.filterSectionEyebrow}>Location</Text>
-                    <Text style={styles.filterSectionTitle}>Control how your city is used</Text>
+                    <View style={styles.filterSectionTitleRow}>
+                      <Text style={styles.filterSectionTitle}>Where should we look?</Text>
+                      <View style={[styles.filterTierPill, styles.filterTierPillFree]}>
+                        <Text style={[styles.filterTierPillText, styles.filterTierPillTextFree]}>Free</Text>
+                      </View>
+                    </View>
                     <Text style={styles.filterSectionBody}>
                       {hasPreciseCoords
                         ? 'Using precise location for distance.'
@@ -1742,15 +2206,17 @@ export default function ExploreScreen() {
                   </View>
 
                   <View style={styles.modalPreviewRow}>
-                    <Text style={styles.modalPreviewText}>
-                      Preview: {draftPreviewCount ?? 0} result{(draftPreviewCount ?? 0) === 1 ? '' : 's'}
-                      {previewBaseProfiles.length ? ` (from ${previewBaseProfiles.length} loaded)` : ''}
+                    <Text style={styles.modalPreviewEyebrow}>{previewTone.eyebrow}</Text>
+                    <Text style={styles.modalPreviewTitle}>{previewTone.title}</Text>
+                    <Text style={styles.modalPreviewBody}>
+                      {previewTone.body}
+                      {previewBaseProfiles.length ? ` From ${previewBaseProfiles.length} loaded right now.` : ''}
                     </Text>
                   </View>
 
                   <View style={styles.modalActions}>
                     <TouchableOpacity
-                      style={[styles.locationButton, styles.locationGhost, { flex: 1 }]}
+                      style={[styles.locationButton, styles.locationGhost, styles.modalFooterSecondary]}
                       onPress={() => {
                         syncFilterDraftFromApplied();
                         setFiltersVisible(false);
@@ -1758,8 +2224,8 @@ export default function ExploreScreen() {
                     >
                       <Text style={styles.locationGhostText}>Close</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={[styles.locationButton, styles.locationPrimary, { flex: 1 }]} onPress={handleApplyFilters}>
-                      <Text style={styles.locationPrimaryText}>Apply</Text>
+                    <TouchableOpacity style={[styles.locationButton, styles.locationPrimary, styles.modalApplyButton, styles.modalFooterPrimary]} onPress={handleApplyFilters}>
+                      <Text style={styles.locationPrimaryText}>{previewTone.cta}</Text>
                     </TouchableOpacity>
                   </View>
                     </>
@@ -1769,6 +2235,25 @@ export default function ExploreScreen() {
             </View>
           </KeyboardAvoidingView>
         </Modal>
+
+        <PremiumUpsellModal
+          visible={Boolean(premiumUpsell)}
+          requiredPlan={premiumUpsell?.requiredPlan ?? 'SILVER'}
+          title={premiumUpsell?.title ?? 'Unlock premium'}
+          message={premiumUpsell?.message ?? ''}
+          onClose={() => {
+            setPremiumUpsell(null);
+            if (reopenFiltersAfterUpsell) {
+              setReopenFiltersAfterUpsell(false);
+              setFiltersVisible(true);
+            }
+          }}
+          onViewPlan={() => {
+            setPremiumUpsell(null);
+            setReopenFiltersAfterUpsell(false);
+            router.push('/premium-plans');
+          }}
+        />
 
         {/* Manual city entry should not kick users out of Filters (premium UX). */}
         <Modal
@@ -2531,7 +3016,7 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     locationActions: { flexDirection: 'row', alignItems: 'center' },
     locationButton: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 },
     locationPrimary: { backgroundColor: theme.tint, marginRight: 8 },
-    locationPrimaryText: { color: '#fff', fontWeight: '700' },
+    locationPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 13.5, lineHeight: 16, textAlign: 'center' },
     locationGhost: { borderWidth: 1, borderColor: outline, backgroundColor: ghostBg },
     locationGhostText: { color: theme.text, fontWeight: '600' },
     locationError: { color: '#b91c1c', marginTop: 6, fontSize: 12 },
@@ -2568,12 +3053,36 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     modalScroll: { marginHorizontal: -2 },
     modalScrollContent: { paddingBottom: 6, gap: 14 },
     filterHeroCard: {
+      position: 'relative',
+      overflow: 'hidden',
       borderRadius: 22,
       paddingHorizontal: 16,
       paddingVertical: 16,
-      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#f6efe7',
       borderWidth: 1,
-      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)',
+      borderColor: isDark ? 'rgba(243,199,132,0.18)' : 'rgba(214,178,132,0.28)',
+      shadowColor: isDark ? '#000' : '#b98555',
+      shadowOpacity: isDark ? 0.22 : 0.14,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 8,
+    },
+    filterHeroGlowPrimary: {
+      position: 'absolute',
+      width: 180,
+      height: 180,
+      borderRadius: 999,
+      right: -48,
+      top: -70,
+      backgroundColor: isDark ? 'rgba(17,197,198,0.12)' : 'rgba(255,255,255,0.42)',
+    },
+    filterHeroGlowSecondary: {
+      position: 'absolute',
+      width: 120,
+      height: 120,
+      borderRadius: 999,
+      left: -34,
+      bottom: -52,
+      backgroundColor: isDark ? 'rgba(243,199,132,0.10)' : 'rgba(255,255,255,0.26)',
     },
     filterHeroBadge: {
       alignSelf: 'flex-start',
@@ -2583,21 +3092,45 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       paddingHorizontal: 10,
       paddingVertical: 6,
       borderRadius: 999,
-      backgroundColor: isDark ? 'rgba(17,197,198,0.12)' : 'rgba(17,197,198,0.10)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.58)',
       borderWidth: 1,
-      borderColor: isDark ? 'rgba(17,197,198,0.22)' : 'rgba(17,197,198,0.18)',
+      borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(214,178,132,0.24)',
       marginBottom: 10,
     },
     filterHeroBadgeText: { fontSize: 11.5, fontWeight: '800', color: theme.text },
-    filterHeroTitle: { fontSize: 19, lineHeight: 24, fontWeight: '700', color: theme.text, marginBottom: 6 },
-    filterHeroBody: { fontSize: 13, lineHeight: 19, color: theme.textMuted },
+    filterHeroTitle: { fontSize: 20, lineHeight: 25, fontWeight: '800', color: theme.text, marginBottom: 6, maxWidth: '88%' },
+    filterHeroBody: { fontSize: 13.5, lineHeight: 19, color: theme.textMuted, maxWidth: '94%' },
+    filterLegendStack: { marginTop: 12, gap: 8 },
+    filterLegendRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 9,
+      borderRadius: 16,
+      borderWidth: 1,
+    },
+    filterLegendRowPremium: {
+      backgroundColor: isDark ? 'rgba(17,197,198,0.10)' : 'rgba(255,255,255,0.52)',
+      borderColor: isDark ? 'rgba(17,197,198,0.18)' : 'rgba(214,178,132,0.22)',
+    },
+    filterLegendRowFree: {
+      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.38)',
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.05)',
+    },
+    filterLegendText: { flex: 1, fontSize: 12, lineHeight: 17, color: theme.textMuted },
     activeFiltersCard: {
       borderRadius: 20,
       paddingHorizontal: 14,
       paddingVertical: 14,
       borderWidth: 1,
-      borderColor: cardBorder,
-      backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#fff',
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(214,178,132,0.16)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.035)' : '#fffaf6',
+      shadowColor,
+      shadowOpacity: isDark ? 0.12 : 0.06,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 4,
     },
     activeFiltersRow: { paddingTop: 4, paddingBottom: 4, gap: 8, paddingRight: 6 },
     activeFilterChip: {
@@ -2608,11 +3141,13 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       paddingVertical: 8,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: outline,
-      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#fbf8f3',
+      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(214,178,132,0.18)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#fff',
     },
     activeFilterChipText: { fontSize: 12, fontWeight: '700', color: theme.text },
-    activeFiltersEmpty: { fontSize: 12.5, lineHeight: 18, color: theme.textMuted, marginTop: 4 },
+    activeFiltersSummaryTitle: { fontSize: 18, lineHeight: 22, fontWeight: '800', color: theme.text, marginTop: 4 },
+    activeFiltersSummaryBody: { fontSize: 12.5, lineHeight: 18, color: theme.textMuted, marginTop: 2 },
+    activeFiltersEmpty: { fontSize: 12.5, lineHeight: 18, color: theme.textMuted, marginTop: 6 },
     modalInput: {
       borderWidth: 1,
       borderColor: outline,
@@ -2640,14 +3175,16 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     modalPreviewRow: {
       marginTop: 2,
       paddingHorizontal: 14,
-      paddingVertical: 12,
-      borderRadius: 16,
+      paddingVertical: 14,
+      borderRadius: 18,
       borderWidth: 1,
-      borderColor: cardBorder,
-      backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#fff',
+      borderColor: isDark ? 'rgba(17,197,198,0.14)' : 'rgba(214,178,132,0.18)',
+      backgroundColor: isDark ? 'rgba(12,27,34,0.56)' : '#fffaf5',
     },
-    modalPreviewText: { fontSize: 12.5, fontWeight: '700', color: theme.textMuted, textAlign: 'center' },
-    modalActions: { flexDirection: 'row', marginTop: 2 },
+    modalPreviewEyebrow: { fontSize: 10.5, fontWeight: '800', letterSpacing: 1.1, color: theme.tint, textTransform: 'uppercase', textAlign: 'center' },
+    modalPreviewTitle: { fontSize: 18, lineHeight: 22, fontWeight: '800', color: theme.text, textAlign: 'center', marginTop: 4 },
+    modalPreviewBody: { fontSize: 12.5, lineHeight: 18, fontWeight: '600', color: theme.textMuted, textAlign: 'center', marginTop: 4 },
+    modalActions: { flexDirection: 'row', marginTop: 4, gap: 10 },
     filterSection: { marginTop: 12, marginBottom: 10 },
     filterSectionCard: {
       borderRadius: 20,
@@ -2657,38 +3194,190 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       borderColor: cardBorder,
       backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#fff',
       gap: 12,
+      shadowColor,
+      shadowOpacity: isDark ? 0.1 : 0.05,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 3,
+    },
+    filterSectionCardPremium: {
+      borderColor: isDark ? 'rgba(17,197,198,0.15)' : 'rgba(214,178,132,0.22)',
+      backgroundColor: isDark ? 'rgba(18,36,43,0.34)' : '#fffaf5',
+    },
+    filterSectionCardMixed: {
+      borderColor: isDark ? 'rgba(243,199,132,0.16)' : 'rgba(229,190,138,0.26)',
+      backgroundColor: isDark ? 'rgba(52,44,28,0.30)' : '#fffaf2',
+    },
+    filterSectionCardFree: {
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.05)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.025)' : '#fffefd',
     },
     filterSectionHeader: { gap: 3 },
-    filterSectionEyebrow: { fontSize: 11, fontWeight: '800', letterSpacing: 1.1, color: theme.tint, textTransform: 'uppercase' },
-    filterSectionTitle: { fontSize: 17, lineHeight: 21, fontWeight: '700', color: theme.text },
+    filterSectionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+    filterSectionEyebrow: { fontSize: 11, fontWeight: '800', letterSpacing: 1.2, color: theme.tint, textTransform: 'uppercase' },
+    filterSectionTitle: { fontSize: 17, lineHeight: 21, fontWeight: '800', color: theme.text },
     filterSectionBody: { fontSize: 12.5, lineHeight: 18, color: theme.textMuted },
+    filterTierPill: {
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+      borderWidth: 1,
+      alignSelf: 'flex-start',
+    },
+    filterTierPillPremium: {
+      backgroundColor: isDark ? 'rgba(17,197,198,0.16)' : 'rgba(255,255,255,0.72)',
+      borderColor: isDark ? 'rgba(17,197,198,0.28)' : 'rgba(214,178,132,0.28)',
+    },
+    filterTierPillFree: {
+      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.7)',
+      borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(15,23,42,0.06)',
+    },
+    filterTierPillMixed: {
+      backgroundColor: isDark ? 'rgba(246,196,83,0.14)' : 'rgba(255,250,241,0.88)',
+      borderColor: isDark ? 'rgba(246,196,83,0.24)' : 'rgba(229,190,138,0.28)',
+    },
+    filterTierPillText: { fontSize: 10.5, fontWeight: '800', letterSpacing: 0.4 },
+    filterTierPillTextPremium: { color: isDark ? '#7fe4dc' : '#0b6b69' },
+    filterTierPillTextFree: { color: theme.text },
+    filterTierPillTextMixed: { color: isDark ? '#f3c784' : '#8a5a09' },
     filterFieldGroup: { gap: 6 },
     filterLabel: { fontSize: 14, fontWeight: '700', color: theme.text },
     filterHint: { fontSize: 12, color: theme.textMuted, marginTop: 2 },
     filterChipsRow: { flexDirection: 'row', marginTop: 8 },
     filterChipsRowWrap: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 6, gap: 8 },
-    filterChip: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 14, borderWidth: 1, borderColor: outline, marginRight: 0, backgroundColor: chipBg },
-    filterPresetChip: { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#fbf8f3' },
-    filterChipActive: { backgroundColor: theme.tint, borderColor: theme.tint },
+    filterPresetRail: { paddingTop: 6, paddingBottom: 2, paddingRight: 8, gap: 10 },
+    filterChip: {
+      paddingHorizontal: 13,
+      paddingVertical: 9,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(15,23,42,0.08)',
+      marginRight: 0,
+      backgroundColor: chipBg,
+      shadowColor: shadowColor,
+      shadowOpacity: isDark ? 0.05 : 0.04,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 1,
+    },
+    filterPresetChip: { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff' },
+    filterPresetChipRich: {
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      minHeight: 42,
+      borderColor: isDark ? 'rgba(127,228,220,0.16)' : 'rgba(11,107,105,0.10)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.055)' : '#fffdfb',
+    },
+    filterChipActive: {
+      backgroundColor: theme.tint,
+      borderColor: theme.tint,
+      shadowColor: theme.tint,
+      shadowOpacity: isDark ? 0.18 : 0.14,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 3,
+    },
     filterChipDisabled: { opacity: 0.5 },
     filterChipText: { fontWeight: '700', color: theme.text },
     filterChipTextActive: { color: '#fff' },
     filterToggleStack: { gap: 10 },
-    filterToggle: { padding: 12, borderRadius: 16, borderWidth: 1, borderColor: outline, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: chipBg, gap: 12 },
-    filterToggleActive: { borderColor: theme.tint, backgroundColor: isDark ? 'rgba(17,197,198,0.12)' : 'rgba(17,197,198,0.08)' },
+    filterToggle: {
+      padding: 12,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(15,23,42,0.07)',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.88)',
+      gap: 12,
+      shadowColor,
+      shadowOpacity: isDark ? 0.06 : 0.05,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 2,
+    },
+    filterToggleActive: {
+      borderColor: theme.tint,
+      backgroundColor: isDark ? 'rgba(17,197,198,0.14)' : 'rgba(232,249,246,0.95)',
+      shadowColor: theme.tint,
+      shadowOpacity: isDark ? 0.16 : 0.1,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 3,
+    },
     filterToggleCopy: { flex: 1, gap: 2 },
     filterToggleMeta: { alignItems: 'center', gap: 8, minWidth: 48 },
-    filterToggleKnob: { width: 22, height: 22, borderRadius: 11, backgroundColor: toggleKnob },
-    filterToggleKnobActive: { backgroundColor: theme.tint },
+    filterToggleKnob: {
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      backgroundColor: toggleKnob,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(15,23,42,0.08)',
+    },
+    filterToggleKnobActive: {
+      backgroundColor: theme.tint,
+      borderColor: theme.tint,
+    },
     filterToggleText: { fontWeight: '700', color: theme.textMuted },
     filterToggleTextActive: { color: theme.tint },
+    advancedSectionWrap: { overflow: 'hidden', gap: 14 },
+    expandAdvancedButton: {
+      marginTop: 2,
+      marginBottom: 2,
+      paddingHorizontal: 14,
+      paddingVertical: 13,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.035)' : '#fff',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      shadowColor,
+      shadowOpacity: isDark ? 0.08 : 0.05,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 2,
+    },
+    expandAdvancedEyebrow: { fontSize: 10.5, fontWeight: '800', letterSpacing: 1, textTransform: 'uppercase', color: theme.tint },
+    expandAdvancedTitle: { fontSize: 15, lineHeight: 19, fontWeight: '800', color: theme.text, marginTop: 3 },
+    expandAdvancedMeta: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+    expandAdvancedMetaText: { fontSize: 12.5, fontWeight: '700', color: theme.textMuted },
     filterInputsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
     filterInputWrapper: { flex: 1 },
     filterInput: { borderWidth: 1, borderColor: outline, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontWeight: '700', color: theme.text, backgroundColor: isDark ? '#0b1220' : '#fff', marginTop: 4 },
     ageTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
-    ageRangePill: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: outline, backgroundColor: pillBg },
+    ageRangePill: {
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(214,178,132,0.18)',
+      backgroundColor: isDark ? pillBg : '#fff8f1',
+    },
     ageRangeText: { fontSize: 13, fontWeight: '800', color: theme.text },
     ageAnyChip: { marginRight: 0 },
+    modalApplyButton: {
+      minHeight: 48,
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: theme.tint,
+      shadowOpacity: isDark ? 0.2 : 0.16,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 4,
+    },
+    modalFooterSecondary: {
+      flex: 0.84,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    modalFooterPrimary: {
+      flex: 1.16,
+      paddingHorizontal: 16,
+    },
     headerRefreshButton: {
       width: 34,
       height: 34,

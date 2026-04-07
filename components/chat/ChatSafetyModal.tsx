@@ -58,7 +58,7 @@ export default function ChatSafetyModal({ visible, onGotIt }: Props) {
 
             <View style={styles.content}>
               <Text style={styles.body}>
-                Excited you’re about to start a conversation. For your safety, keep personal details private (phone number,
+                Excited you are about to start a conversation. For your safety, keep personal details private (phone number,
                 bank info, addresses) and avoid sharing explicit content. Take time to get to know each other here before
                 moving off the app.
               </Text>
@@ -161,4 +161,3 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     primaryText: { color: "#fff", fontWeight: "900", fontSize: 15 },
   });
-

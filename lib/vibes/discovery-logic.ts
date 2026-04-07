@@ -1,4 +1,5 @@
 import type { Match } from '@/types/match';
+import { getRelationshipCompassMatchScore, type RelationshipCompass } from '@/lib/relationship-compass';
 
 export type VibesSegment = 'forYou' | 'nearby' | 'activeNow';
 
@@ -106,6 +107,8 @@ export const rerankVibesSegment = (
   segment: VibesSegment,
   viewerInterests?: string[],
   momentUserIds?: Set<string>,
+  relationshipCompass?: RelationshipCompass | null,
+  viewerProfile?: any,
 ) => {
   if (list.length <= 1) return list;
 
@@ -117,6 +120,10 @@ export const rerankVibesSegment = (
     const distanceKm = getDistanceKm(match);
     const nearness = getNearnessScore(match);
     const momentBoost = momentUserIds?.has(String(match.id)) ? 2.4 : 0;
+    const compassBoost = getRelationshipCompassMatchScore(match, relationshipCompass, {
+      viewerProfile,
+      viewerInterests,
+    });
 
     let baseScore = compatibility;
     if (segment === 'forYou') {
@@ -126,14 +133,16 @@ export const rerankVibesSegment = (
         richness * 1.15 +
         freshness * 0.9 +
         nearness * 0.45 +
-        momentBoost;
+        momentBoost +
+        compassBoost;
     } else if (segment === 'nearby') {
       baseScore =
         nearness * 2.3 +
         compatibility * 0.7 +
         sharedInterests * 1.1 +
         freshness * 0.6 +
-        richness * 0.35;
+        richness * 0.35 +
+        compassBoost * 0.75;
     } else {
       const urgency = (match as any).isActiveNow ? 4.8 : isRecentlyActive((match as any).lastActive) ? 2.4 : 0;
       baseScore =
@@ -141,7 +150,8 @@ export const rerankVibesSegment = (
         nearness * 1.6 +
         compatibility * 0.55 +
         sharedInterests * 1.35 +
-        richness * 0.45;
+        richness * 0.45 +
+        compassBoost * 0.65;
     }
 
     return {

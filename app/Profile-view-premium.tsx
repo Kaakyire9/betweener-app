@@ -1,4 +1,5 @@
 import ProfileVideoModal from '@/components/ProfileVideoModal';
+import PremiumUpsellModal from '@/components/premium/PremiumUpsellModal';
 import { VerificationBadge } from '@/components/VerificationBadge';
 import Notice from '@/components/ui/Notice';
 import { Colors } from '@/constants/theme';
@@ -7,6 +8,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
 import { computeCompatibilityPercent } from '@/lib/compat/compatibility-score';
 import { computeFirstReplyHours, computeInterestOverlapRatio, computeMatchScorePercent } from '@/lib/match/match-score';
+import { hasFeatureAccess } from '@/lib/premium-access';
 import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
@@ -76,6 +78,12 @@ type PremiumProfile = {
   distanceKm?: number;
   images: PremiumImage[];
   sections: PremiumSection[];
+};
+
+type PremiumUpsellState = {
+  requiredPlan: 'SILVER' | 'GOLD';
+  title: string;
+  message: string;
 };
 
 const IMAGE_ITEM_HEIGHT = Math.max(220, Math.min(280, Math.round(screenHeight * 0.26)));
@@ -2277,41 +2285,49 @@ function FloatingActions({
   isOwnProfile: boolean;
 }) {
   const insets = useSafeAreaInsets();
-  const { hasAccess } = usePremiumState();
+  const { currentPlan, hasAccess } = usePremiumState();
   const [giftOpen, setGiftOpen] = useState(false);
   const [selectedGift, setSelectedGift] = useState<string | null>(null);
   const [giftSending, setGiftSending] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [noteSending, setNoteSending] = useState(false);
+  const [premiumUpsell, setPremiumUpsell] = useState<PremiumUpsellState | null>(null);
   const noteOpenAtRef = useRef(0);
   const [boostSending, setBoostSending] = useState(false);
   const giftOptions = useMemo(
     () => [
       { id: 'rose', label: 'Rose', icon: 'flower', note: 'Classic and elegant' },
       { id: 'teddy', label: 'Teddy Bear', icon: 'teddy-bear', note: 'Sweet and safe' },
-      { id: 'ring', label: 'Ring', icon: 'ring', note: 'Bold and premium' },
+      { id: 'ring', label: 'Ring', icon: 'ring', note: 'Gold exclusive gesture' },
     ],
     [],
   );
 
   const canSendToProfile = Boolean(currentUserId && profileId && currentUserId !== profileId);
   const canUseBoosts = hasAccess('SILVER');
+  const canSendNotes = hasFeatureAccess(currentPlan, 'profile_notes');
+  const canSendStandardGifts = hasFeatureAccess(currentPlan, 'standard_gifts');
+  const canSendSignatureGifts = hasFeatureAccess(currentPlan, 'signature_gifts');
   const noteLength = noteText.trim().length;
+  const openTierUpsell = (requiredPlan: 'SILVER' | 'GOLD', title: string, message: string) => {
+    setPremiumUpsell({ requiredPlan, title, message });
+  };
   const openBoostUpsell = () => {
-    Alert.alert(
-      'Unlock boosts',
-      'Profile boosts are included with Silver and Gold. Upgrade to activate 30-minute visibility boosts.',
-      [
-        { text: 'Not now', style: 'cancel' },
-        { text: 'View plans', onPress: () => router.push('/premium-plans') },
-      ],
-    );
+    setPremiumUpsell({
+      requiredPlan: 'SILVER',
+      title: 'Unlock boosts',
+      message: 'Profile boosts are included with Silver and Gold. Upgrade to activate 30-minute visibility boosts.',
+    });
   };
 
   const openNote = () => {
     if (!canSendToProfile) {
       Alert.alert('Note unavailable', 'Notes can only be sent to other profiles.');
+      return;
+    }
+    if (!canSendNotes) {
+      openTierUpsell('SILVER', 'Unlock notes', 'Notes are included with Silver and Gold. Upgrade to send a more thoughtful first move.');
       return;
     }
     Haptics.selectionAsync().catch(() => undefined);
@@ -2323,6 +2339,10 @@ function FloatingActions({
       Alert.alert('Gift unavailable', 'Gifts can only be sent to other profiles.');
       return;
     }
+    if (!canSendStandardGifts) {
+      openTierUpsell('SILVER', 'Unlock gifts', 'Gifts are included with Silver and Gold. Upgrade to send a stronger first impression.');
+      return;
+    }
     Haptics.selectionAsync().catch(() => undefined);
     setSelectedGift(null);
     setGiftOpen(true);
@@ -2330,6 +2350,10 @@ function FloatingActions({
   const closeGift = () => setGiftOpen(false);
   const sendGift = async () => {
     if (!selectedGift || !currentUserId) return;
+    if (selectedGift === 'ring' && !canSendSignatureGifts) {
+      openTierUpsell('GOLD', 'Unlock the Ring', 'The Ring is exclusive to Gold. Upgrade for Betweener\'s boldest gesture.');
+      return;
+    }
     setGiftSending(true);
     const { error } = await supabase.from('profile_gifts').insert({
       profile_id: profileId,
@@ -2433,6 +2457,17 @@ function FloatingActions({
           />
         )}
       </View>
+      <PremiumUpsellModal
+        visible={Boolean(premiumUpsell)}
+        requiredPlan={premiumUpsell?.requiredPlan ?? 'SILVER'}
+        title={premiumUpsell?.title ?? 'Unlock premium'}
+        message={premiumUpsell?.message ?? ''}
+        onClose={() => setPremiumUpsell(null)}
+        onViewPlan={() => {
+          setPremiumUpsell(null);
+          router.push('/premium-plans');
+        }}
+      />
       <Modal
         visible={noteOpen}
         transparent
@@ -2512,10 +2547,15 @@ function FloatingActions({
           <View style={stylesStatic.giftGrid}>
             {giftOptions.map((gift) => {
               const isSelected = selectedGift === gift.id;
+              const locked = gift.id === 'ring' && !canSendSignatureGifts;
               return (
                 <Pressable
                   key={gift.id}
                   onPress={() => {
+                    if (locked) {
+                      openTierUpsell('GOLD', 'Unlock the Ring', 'The Ring is exclusive to Gold. Upgrade for Betweener\'s boldest gesture.');
+                      return;
+                    }
                     Haptics.selectionAsync().catch(() => undefined);
                     setSelectedGift(gift.id);
                   }}
@@ -2524,6 +2564,7 @@ function FloatingActions({
                     {
                       borderColor: isSelected ? theme.tint : theme.outline,
                       backgroundColor: theme.backgroundSubtle,
+                      opacity: locked ? 0.58 : 1,
                     },
                   ]}
                 >

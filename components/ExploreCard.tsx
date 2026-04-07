@@ -4,6 +4,7 @@ import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
 import { VerificationBadge } from "@/components/VerificationBadge";
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { pickPreferredLocationLabel } from "@/lib/location/location-display";
 import { getProfileInitials, getProfilePlaceholderPalette, hasProfileImage } from "@/lib/profile-placeholders";
 import type { Match } from "@/types/match";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -24,7 +25,7 @@ const getCityOnly = (label?: string) => {
 };
 
 const looksAdministrative = (label?: string) =>
-  /\b(region|district|province|state|county|municipality)\b/i.test(String(label || '')) ||
+  /\b(region|district|province|state|county|municipality|metropolitan)\b/i.test(String(label || '')) ||
   /^(africa|north america|south america|europe|asia|oceania|middle east)$/i.test(String(label || '').trim());
 
 const pickBetterCityLabel = (incoming?: string, previous?: string) => {
@@ -121,13 +122,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     () => (isDark ? ["rgba(0,0,0,0)", "rgba(0,0,0,0.7)"] : ["rgba(0,0,0,0)", "rgba(0,0,0,0.55)"] ),
     [isDark]
   );
-  const immediateLocationLabel = getCityOnly(
-    (match as any).city ||
-    match.location ||
-    (!looksAdministrative(match.region) ? match.region : '') ||
-    (match as any).current_country ||
-    ''
-  );
+  const immediateLocationLabel = getCityOnly(pickPreferredLocationLabel(match as any));
   const [stableLocationLabel, setStableLocationLabel] = useState(immediateLocationLabel);
   useEffect(() => {
     setStableLocationLabel(immediateLocationLabel);

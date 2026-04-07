@@ -866,6 +866,8 @@ export default function useAIRecommendations(
             name: p.full_name || p.user_id || String(p.id),
             age: p.age,
             tagline: p.bio || '',
+            bio: p.bio || '',
+            lookingFor: p.looking_for ?? undefined,
             interests: interestsArr,
             avatar_url: p.avatar_url || undefined,
             distance: includeDistanceKm
@@ -887,6 +889,9 @@ export default function useAIRecommendations(
             location: p.location || undefined,
             tribe: p.tribe,
             religion: p.religion,
+            wantsChildren: (p as any).wants_children ?? undefined,
+            smoking: (p as any).smoking ?? undefined,
+            loveLanguage: (p as any).love_language ?? undefined,
             gender: (p as any).gender ?? undefined,
             region: p.region,
             current_country: (p as any).current_country,
@@ -1235,6 +1240,8 @@ export default function useAIRecommendations(
               name: p.full_name || p.user_id || String(p.id),
               age: p.age,
               tagline: p.bio || '',
+              bio: p.bio || '',
+              lookingFor: p.looking_for ?? undefined,
               interests: interestsArr || [],
               commonInterests,
               avatar_url: p.avatar_url || undefined,
@@ -1251,6 +1258,9 @@ export default function useAIRecommendations(
               location: p.location || undefined,
               tribe: p.tribe,
               religion: p.religion,
+              wantsChildren: p.wants_children ?? undefined,
+              smoking: p.smoking ?? undefined,
+              loveLanguage: p.love_language ?? undefined,
               gender: p.gender ?? undefined,
               region: p.region,
               current_country: p.current_country,
@@ -1365,17 +1375,30 @@ export default function useAIRecommendations(
             : (m as any).personalityTags || [];
           const interestsFinal = (interestsArr && interestsArr.length > 0) ? interestsArr : ((m as any).interests && (m as any).interests.length > 0 ? (m as any).interests : [profileData?.region, profileData?.tribe].filter(Boolean));
           const commonInterests = computeSharedInterests((m as any).commonInterests ?? [], interestsFinal || []);
+          const mergedCity = pickBetterLocationValue(profileData?.city, (m as any).city, {
+            preferShorter: true,
+            avoidAdministrative: true,
+          });
+          const mergedLocation = pickBetterLocationValue(
+            profileData?.location,
+            (m as any).location ?? mergedCity,
+            { preferShorter: true, avoidAdministrative: true },
+          );
+          const mergedRegion = pickBetterLocationValue(profileData?.region, (m as any).region, {
+            preferShorter: true,
+            avoidAdministrative: true,
+          });
             merged = {
               ...m,
               profileVideo: signedProfileVideo || (m as any).profileVideo,
               personalityTags: personality,
               interests: interestsFinal,
               commonInterests,
-              city: profileData?.city ?? (m as any).city,
-              location: profileData?.location ?? (m as any).location,
+              city: mergedCity || undefined,
+              location: mergedLocation || undefined,
               tribe: profileData?.tribe ?? (m as any).tribe,
               religion: profileData?.religion ?? (m as any).religion,
-              region: profileData?.region ?? (m as any).region,
+              region: mergedRegion || undefined,
             current_country: profileData?.current_country ?? (m as any).current_country,
             current_country_code: profileData?.current_country_code ?? (m as any).current_country_code,
             location_precision: profileData?.location_precision ?? (m as any).location_precision,

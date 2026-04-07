@@ -213,7 +213,7 @@ export default function Onboarding() {
   const pickImage = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: 'images',
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
@@ -468,6 +468,8 @@ export default function Onboarding() {
         phone_verified: true,
         min_age_interest: Number(form.minAgeInterest),
         max_age_interest: Number(form.maxAgeInterest),
+        city: null,
+        location: form.currentCountry,
         current_country: form.currentCountry,
         current_country_code: COUNTRY_NAME_TO_CODE[String(form.currentCountry || '').trim().toLowerCase()] || null,
         years_in_diaspora: 0,

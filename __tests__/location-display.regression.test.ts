@@ -19,6 +19,39 @@ test('pickPreferredLocationLabel prefers city over coarse region', () => {
   assert.equal(value, 'Oforikrom');
 });
 
+test('pickPreferredLocationLabel prefers precise location over administrative city', () => {
+  const value = pickPreferredLocationLabel({
+    city: 'Ashanti Region',
+    location: 'Asokwa, Ashanti Region',
+    region: 'Ashanti Region',
+    current_country: 'Ghana',
+  });
+
+  assert.equal(value, 'Asokwa');
+});
+
+test('pickPreferredLocationLabel uses country location before onboarding region metadata', () => {
+  const value = pickPreferredLocationLabel({
+    city: null,
+    location: 'Ghana',
+    region: 'Ashanti',
+    current_country: 'Ghana',
+  });
+
+  assert.equal(value, 'Ghana');
+});
+
+test('pickPreferredLocationLabel uses global country before broad continent metadata', () => {
+  const value = pickPreferredLocationLabel({
+    city: null,
+    location: 'United Kingdom',
+    region: 'Europe',
+    current_country: 'United Kingdom',
+  });
+
+  assert.equal(value, 'United Kingdom');
+});
+
 test('pickPreferredLocationLabel falls back to country when region is broad continent label', () => {
   const value = pickPreferredLocationLabel({
     city: null,
@@ -37,6 +70,15 @@ test('pickBetterLocationValue keeps shorter non-administrative city over adminis
   });
 
   assert.equal(value, 'Oforikrom');
+});
+
+test('pickBetterLocationValue keeps non-administrative city over administrative region', () => {
+  const value = pickBetterLocationValue('Ashanti Region', 'Asokwa', {
+    preferShorter: true,
+    avoidAdministrative: true,
+  });
+
+  assert.equal(value, 'Asokwa');
 });
 
 test('helper basics stay stable for comma-separated location values', () => {
