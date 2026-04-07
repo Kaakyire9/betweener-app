@@ -3,15 +3,16 @@ import { useColorScheme as useAppColorScheme } from '@/hooks/use-color-scheme';
 import { useVerificationStatus } from '@/hooks/use-verification-status';
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Svg, { Circle, Path } from 'react-native-svg';
+import RNSvg, { Circle, Path } from 'react-native-svg';
 import { Worklets } from 'react-native-worklets-core';
 import Animated, {
   Easing,
-  interpolate,
   runOnJS,
   useAnimatedProps,
   useAnimatedReaction,
@@ -25,13 +26,16 @@ import { useFaceDetector, type Face, type FrameFaceDetectionOptions } from 'reac
 import { Camera as VisionCamera, runAsync, useCameraDevice, useFrameProcessor } from 'react-native-vision-camera';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-    Alert,
     Dimensions,
+    KeyboardAvoidingView,
     LayoutChangeEvent,
+    Linking,
     Modal,
+    Platform,
     ScrollView,
     StyleSheet,
     Text,
+    TextInput,
     TouchableOpacity,
   View
 } from 'react-native';
@@ -97,6 +101,14 @@ interface DiasporaVerificationProps {
   onVerificationUpdate: (level: number) => void;
 }
 
+type VerificationFlowMessage = {
+  tone: 'success' | 'error' | 'info';
+  title: string;
+  body: string;
+  actionLabel?: string;
+  action?: () => void;
+};
+
 type VerificationMethod = {
   id: 'passport' | 'residence' | 'social' | 'workplace' | 'selfie_liveness';
   title: string;
@@ -113,6 +125,16 @@ type VerificationMethod = {
   isRecommended?: boolean;
   challengeType?: string;
 };
+
+type SocialPlatform = 'instagram' | 'tiktok' | 'facebook' | 'linkedin' | 'other';
+
+const SOCIAL_PROOF_PLATFORMS: { id: SocialPlatform; label: string; icon: string }[] = [
+  { id: 'instagram', label: 'Instagram', icon: 'logo-instagram' },
+  { id: 'tiktok', label: 'TikTok', icon: 'musical-notes-outline' },
+  { id: 'facebook', label: 'Facebook', icon: 'logo-facebook' },
+  { id: 'linkedin', label: 'LinkedIn', icon: 'logo-linkedin' },
+  { id: 'other', label: 'Other', icon: 'link-outline' },
+];
 
 const LIVENESS_GUIDE_STEPS = [
   {
@@ -197,7 +219,7 @@ const buildFaceGuide = (width: number, height: number) => {
   const d = [
     `M ${segments[0][0].x} ${segments[0][0].y}`,
     ...segments.map(
-      ([start, c1, c2, end]) =>
+      ([_start, c1, c2, end]) =>
         `C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${end.x} ${end.y}`,
     ),
   ].join(' ');
@@ -310,10 +332,14 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const isDark = colorScheme === 'dark';
   const [loading, setLoading] = useState(false);
   const [selectedMethod, setSelectedMethod] = useState<string | null>('selfie_liveness');
+  const [socialPlatform, setSocialPlatform] = useState<SocialPlatform>('instagram');
+  const [socialProfileEvidence, setSocialProfileEvidence] = useState('');
+  const [flowMessage, setFlowMessage] = useState<VerificationFlowMessage | null>(null);
   const [showLivenessGuide, setShowLivenessGuide] = useState(false);
   const [showLiveLivenessCamera, setShowLiveLivenessCamera] = useState(false);
   const [liveCameraReady, setLiveCameraReady] = useState(false);
   const [liveRecording, setLiveRecording] = useState(false);
+  const [liveCameraIssue, setLiveCameraIssue] = useState<string | null>(null);
   const [liveRecordingProgress, setLiveRecordingProgress] = useState(0);
   const [liveHasFace, setLiveHasFace] = useState(false);
   const [liveFaceCentered, setLiveFaceCentered] = useState(false);
@@ -321,10 +347,11 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const [liveBlinkComplete, setLiveBlinkComplete] = useState(false);
   const [liveChallengeReady, setLiveChallengeReady] = useState(false);
   const [liveGuideLayout, setLiveGuideLayout] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
-  const { status: verificationStatus, refreshStatus } = useVerificationStatus(profile?.id);
+  const { status: verificationStatus, refreshStatus } = useVerificationStatus(profile?.user_id);
   const insets = useSafeAreaInsets();
   const cameraRef = useRef<VisionCamera | null>(null);
   const liveGuideRef = useRef<View | null>(null);
+  const verificationScrollRef = useRef<ScrollView | null>(null);
   const liveSignalRef = useRef({
     center: 0,
     turn: 0,
@@ -336,6 +363,137 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const windowSize = useMemo(() => Dimensions.get('window'), []);
   const stopRecordingTriggeredRef = useRef(false);
   const recordingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recordingStartedAtRef = useRef<number | null>(null);
+
+  const currentVerificationLevel =
+    verificationStatus.verificationLevel
+    || profile?.verification_level
+    || 0;
+  const freshReviewRequired = Boolean(
+    verificationStatus.freshReviewRequired
+    || profile?.verification_refresh_required,
+  );
+  const freshReviewTargetLevel = Math.min(
+    2,
+    Math.max(
+      1,
+      verificationStatus.freshReviewTargetLevel
+        || profile?.verification_refresh_target_level
+        || currentVerificationLevel
+        || 1,
+    ),
+  );
+  const freshReviewReason =
+    verificationStatus.freshReviewReason
+    || profile?.verification_refresh_reason
+    || 'Betweener needs a quick fresh check to keep your trust signal current.';
+
+  const statusStory = useMemo(() => {
+    if (verificationStatus.pendingRequest) {
+      return {
+        eyebrow: 'Review in motion',
+        title: 'Your trust signal is already under review',
+        body: 'You do not need to resubmit right now. We will update your profile the moment review is complete.',
+      };
+    }
+
+    if (verificationStatus.hasRejection) {
+      return {
+        eyebrow: 'Another pass',
+        title: 'You are close. Tighten the proof and try again',
+        body:
+          verificationStatus.rejectionReason
+          || 'One submission was not strong enough yet. A clearer document or a steadier selfie check should move this forward.',
+      };
+    }
+
+    if (freshReviewRequired) {
+      return {
+        eyebrow: 'Fresh check requested',
+        title: 'Betweener needs a quick trust refresh',
+        body: freshReviewReason,
+      };
+    }
+
+    if (currentVerificationLevel >= 2) {
+      return {
+        eyebrow: 'Trust confirmed',
+        title: 'Your profile already carries Betweener verification',
+        body: 'You have a stronger trust signal in the room now. No extra proof is needed unless Betweener asks for a fresh review later.',
+      };
+    }
+
+    if (currentVerificationLevel === 1) {
+      return {
+        eyebrow: 'Verified foundation',
+        title: 'You already have a trust signal. Add a stronger one',
+        body: 'A document or selfie liveness pass gives your profile a more reassuring, higher-confidence mark.',
+      };
+    }
+
+    return {
+      eyebrow: 'Shape your trust mark',
+      title: 'Help serious matches feel safer, faster',
+      body: 'Verification lowers hesitation, signals intention, and makes your profile feel more real before the first message.',
+    };
+  }, [currentVerificationLevel, freshReviewReason, freshReviewRequired, verificationStatus]);
+
+  const readAssetBytes = async (uri: string) => {
+    const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+    const byteCharacters = atob(base64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i += 1) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    return new Uint8Array(byteNumbers);
+  };
+
+  const normalizeSocialEvidence = useCallback((platform: SocialPlatform, value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    if (/^https?:\/\//i.test(trimmed)) {
+      return {
+        profileUrl: trimmed,
+        handle: trimmed.split('/').filter(Boolean).pop()?.replace(/^@/, '') || null,
+      };
+    }
+
+    const handle = trimmed
+      .replace(/^@/, '')
+      .replace(/^www\./i, '')
+      .replace(/^instagram\.com\//i, '')
+      .replace(/^tiktok\.com\/@?/i, '')
+      .replace(/^facebook\.com\//i, '')
+      .replace(/^linkedin\.com\/in\//i, '')
+      .replace(/\/+$/, '');
+
+    if (!handle || handle.length < 2) return null;
+
+    const encodedHandle = encodeURIComponent(handle);
+    const profileUrl = (() => {
+      switch (platform) {
+        case 'instagram':
+          return `https://www.instagram.com/${encodedHandle}`;
+        case 'tiktok':
+          return `https://www.tiktok.com/@${encodedHandle}`;
+        case 'facebook':
+          return `https://www.facebook.com/${encodedHandle}`;
+        case 'linkedin':
+          return `https://www.linkedin.com/in/${encodedHandle}`;
+        default:
+          return trimmed.includes('.') ? `https://${trimmed.replace(/^https?:\/\//i, '')}` : null;
+      }
+    })();
+
+    return { profileUrl, handle };
+  }, []);
+
+  const scrollToVerificationAction = useCallback(() => {
+    setTimeout(() => {
+      verificationScrollRef.current?.scrollToEnd({ animated: true });
+    }, 120);
+  }, []);
 
   const verificationMethods: VerificationMethod[] = [
     {
@@ -369,15 +527,15 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     {
       id: 'social',
       title: 'Social Media',
-      description: 'Link your social media showing location history',
+      description: 'Share a public profile link or handle with visible location history',
       level: 1,
       icon: 'logo-instagram',
       color: '#E91E63',
       capture: 'library',
       mediaType: 'image',
-      submitLabel: 'Upload Verification Document',
+      submitLabel: 'Submit Social Link',
       category: 'fast',
-      helperLabel: 'Lightweight trust signal',
+      helperLabel: 'Best for a lightweight linked-account trust signal',
       reviewLabel: 'Manual review',
     },
     {
@@ -412,6 +570,12 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     },
   ];
   const featuredMethod = verificationMethods.find((method) => method.id === 'selfie_liveness') ?? verificationMethods[0];
+  const activeMethod = verificationMethods.find((method) => method.id === selectedMethod) ?? featuredMethod;
+  const activeMethodSatisfiesFreshReview = freshReviewRequired && activeMethod.level >= freshReviewTargetLevel;
+  const activeMethodCanUpgrade = activeMethod.level > currentVerificationLevel || activeMethodSatisfiesFreshReview;
+  const activeMethodCovered = verificationStatus.canResubmit && !activeMethodCanUpgrade;
+  const activeMethodBlockedByPending = !verificationStatus.canResubmit;
+  const canSubmitActiveMethod = verificationStatus.canResubmit && activeMethodCanUpgrade;
   const fastMethods = verificationMethods.filter(
     (method) => method.category === 'fast' && method.id !== featuredMethod.id,
   );
@@ -439,11 +603,18 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     };
   }, [stopListeners]);
 
+  useEffect(() => {
+    if (!visible) {
+      setFlowMessage(null);
+    }
+  }, [visible]);
+
   const resetLivenessGuide = () => {
     setShowLivenessGuide(false);
     setShowLiveLivenessCamera(false);
     setLiveCameraReady(false);
     setLiveRecording(false);
+    setLiveCameraIssue(null);
     setLiveRecordingProgress(0);
     setLiveHasFace(false);
     setLiveFaceCentered(false);
@@ -459,6 +630,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     };
     liveMissingFaceSinceRef.current = null;
     stopRecordingTriggeredRef.current = false;
+    recordingStartedAtRef.current = null;
     if (recordingTimeoutRef.current) {
       clearTimeout(recordingTimeoutRef.current);
       recordingTimeoutRef.current = null;
@@ -475,14 +647,18 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
       width?: number;
       height?: number;
     },
-  ) => {
-    if (method.mediaType === 'image') {
-      const isValidImage = await validateImageQuality(asset);
-      if (!isValidImage.valid) {
-        Alert.alert('Image Quality Issue', isValidImage.message);
-        return false;
+    ) => {
+      if (method.mediaType === 'image') {
+        const isValidImage = await validateImageQuality(asset);
+        if (!isValidImage.valid) {
+          setFlowMessage({
+            tone: 'error',
+            title: 'Use a clearer file',
+            body: isValidImage.message,
+          });
+          return false;
+        }
       }
-    }
 
     const mimeType =
       asset.mimeType ??
@@ -493,27 +669,27 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
       }
       if (mimeType === 'video/quicktime') return 'mov';
       if (mimeType === 'video/mp4') return 'mp4';
+      if (mimeType === 'application/pdf') return 'pdf';
       if (mimeType === 'image/png') return 'png';
       return method.mediaType === 'video' ? 'mp4' : 'jpg';
     })();
     const fileName = `verification_${method.id}_${Date.now()}.${extension}`;
-    const formData = new FormData();
-    formData.append('file', {
-      uri: asset.uri,
-      type: mimeType,
-      name: fileName,
-    } as any);
+    const fileBytes = await readAssetBytes(asset.uri);
 
     const { data, error } = await supabase.storage
       .from('verification-docs')
-      .upload(`${profile.user_id}/${fileName}`, formData);
+      .upload(`${profile.user_id}/${fileName}`, fileBytes, {
+        contentType: mimeType,
+        upsert: false,
+      });
 
     if (error) throw error;
 
     let requestError: unknown = null;
+    let alreadyPending = false;
 
     if (method.id === 'selfie_liveness') {
-      const { error: rpcError } = await supabase.rpc(
+      const { data: rpcData, error: rpcError } = await supabase.rpc(
         'rpc_submit_selfie_liveness_verification',
         {
           p_profile_id: profile.id,
@@ -523,54 +699,71 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
           p_reference_asset_path: null,
         },
       );
+      alreadyPending = Boolean(rpcData?.[0]?.already_pending);
       requestError = rpcError;
     } else {
       const autoScore = await calculateAutomatedScore(method.id, asset);
-      const { error: insertError } = await supabase
-        .from('verification_requests')
-        .insert({
-          user_id: profile.user_id,
-          profile_id: profile.id,
-          verification_type: method.id,
-          document_url: data.path,
-          auto_verification_score: autoScore.confidence,
-          status: 'pending',
-          reviewer_notes: `Pending review: ${autoScore.reason}`,
-        });
-      requestError = insertError;
+      const { data: rpcData, error: rpcError } = await supabase.rpc(
+        'rpc_submit_manual_verification_request',
+        {
+          p_profile_id: profile.id,
+          p_verification_type: method.id,
+          p_document_path: data.path,
+          p_auto_verification_score: autoScore.confidence,
+          p_auto_verification_reason: autoScore.reason,
+          p_reference_asset_path: null,
+        },
+      );
+      alreadyPending = Boolean(rpcData?.[0]?.already_pending);
+      requestError = rpcError;
     }
 
     if (requestError) throw requestError;
 
-    Alert.alert(
-      'Verification Submitted!',
-      method.id === 'selfie_liveness'
-        ? 'Your face-check video was submitted for review. You will be notified once it is approved.'
-        : `Your ${method.title} verification is being reviewed. You'll be notified once approved.`
-    );
-    
-    refreshStatus();
-    onVerificationUpdate(profile?.verification_level || 0);
-    onClose();
+    await refreshStatus();
+    setFlowMessage({
+      tone: 'success',
+      title: alreadyPending
+        ? method.id === 'selfie_liveness'
+          ? 'Face check already in review'
+          : `${method.title} already in review`
+        : method.id === 'selfie_liveness'
+          ? 'Face check submitted'
+          : `${method.title} submitted`,
+      body:
+        alreadyPending
+          ? method.id === 'selfie_liveness'
+            ? 'Your latest face check is already with Betweener. We will update your badge as soon as that review clears.'
+            : `Your latest ${method.title.toLowerCase()} proof is already with Betweener. We will update your badge as soon as that review clears.`
+          : method.id === 'selfie_liveness'
+            ? 'Your short face-check is in review now. We will update your badge as soon as it clears.'
+            : `Your ${method.title.toLowerCase()} proof is in review now. We will update your badge once it is approved.`,
+    });
+    onVerificationUpdate(currentVerificationLevel);
     return true;
   };
 
-  const captureAndSubmitVerification = async (method: VerificationMethod) => {
+  const pickPhotoProof = async (method: VerificationMethod) => {
     const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
     if (permissionResult.status !== 'granted') {
-      Alert.alert(
-        'Permission needed',
-        'Please allow access to your photos.',
-      );
+      setFlowMessage({
+        tone: 'info',
+        title: 'Photo access is needed',
+        body: 'Allow photo access in Settings, then return here to choose your document or proof image.',
+        actionLabel: 'Open Settings',
+        action: () => {
+          void Linking.openSettings();
+        },
+      });
+      scrollToVerificationAction();
       return;
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [4, 3],
-      quality: 0.8,
+      mediaTypes: ['images'],
+      allowsEditing: false,
+      quality: 1,
     });
 
     if (result.canceled) return;
@@ -578,14 +771,84 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     await submitVerificationAsset(method, result.assets[0]);
   };
 
+  const pickFileProof = async (method: VerificationMethod) => {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ['image/*', 'application/pdf'],
+      copyToCacheDirectory: true,
+      multiple: false,
+    });
+
+    if (result.canceled || !result.assets?.[0]) return;
+
+    const asset = result.assets[0];
+    await submitVerificationAsset(method, {
+      uri: asset.uri,
+      mimeType: asset.mimeType ?? 'application/octet-stream',
+      fileName: asset.name,
+      fileSize: asset.size ?? null,
+    });
+  };
+
+  const captureAndSubmitVerification = async (method: VerificationMethod) => {
+    await pickFileProof(method);
+  };
+
+  const submitSocialLinkVerification = async () => {
+    const evidence = normalizeSocialEvidence(socialPlatform, socialProfileEvidence);
+
+    if (!evidence || (!evidence.profileUrl && !evidence.handle)) {
+      setFlowMessage({
+        tone: 'info',
+        title: 'Add a public social proof',
+        body: 'Enter a public profile link or handle that shows enough account history for manual review.',
+      });
+      return;
+    }
+
+    const { data: rpcData, error: rpcError } = await supabase.rpc(
+      'rpc_submit_manual_verification_request',
+      {
+        p_profile_id: profile.id,
+        p_verification_type: 'social',
+        p_document_path: null,
+        p_auto_verification_score: 0.8,
+        p_auto_verification_reason: 'Social profile link ready for manual review',
+        p_reference_asset_path: null,
+        p_social_platform: socialPlatform,
+        p_social_profile_url: evidence.profileUrl,
+        p_social_handle: evidence.handle,
+      },
+    );
+
+    if (rpcError) throw rpcError;
+
+    const alreadyPending = Boolean(rpcData?.[0]?.already_pending);
+    await refreshStatus();
+    setFlowMessage({
+      tone: 'success',
+      title: alreadyPending ? 'Social proof already in review' : 'Social proof submitted',
+      body: alreadyPending
+        ? 'Your latest social proof is already with Betweener. We will update your badge as soon as that review clears.'
+        : 'Your public social proof is in manual review now. We will update your badge once it is approved.',
+    });
+    onVerificationUpdate(currentVerificationLevel);
+  };
+
   const openLiveLivenessCamera = async () => {
+    setLiveCameraIssue(null);
     const cameraPermission = await VisionCamera.requestCameraPermission();
 
     if (cameraPermission !== 'granted') {
-      Alert.alert(
-        'Permission needed',
-        'Camera access is required to record the selfie-liveness challenge.',
-      );
+      setLiveCameraIssue('Camera permission was not granted.');
+      setFlowMessage({
+        tone: 'info',
+        title: 'Camera access is needed',
+        body: 'Turn on camera access so Betweener can record your guided face check.',
+        actionLabel: 'Open Settings',
+        action: () => {
+          void Linking.openSettings();
+        },
+      });
       return;
     }
 
@@ -649,8 +912,6 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
 
     const faceLeft = face.bounds.x;
     const faceTop = face.bounds.y;
-    const faceRight = face.bounds.x + face.bounds.width;
-    const faceBottom = face.bounds.y + face.bounds.height;
     const faceCenterX = faceLeft + face.bounds.width / 2;
     const faceCenterY = faceTop + face.bounds.height / 2;
 
@@ -771,25 +1032,32 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const beginLiveLivenessRecording = async () => {
     if (liveRecording) return;
     if (!device) {
-      Alert.alert('Camera unavailable', 'The front camera could not be started on this device.');
+      setLiveCameraIssue('The front camera could not be started on this device.');
       return;
     }
     if (!cameraRef.current || !liveCameraReady) {
-      Alert.alert('Camera warming up', 'Please wait a moment for the camera to finish starting.');
+      setLiveCameraIssue('The camera is still starting.');
       return;
     }
     if (!liveHasFace) {
-      Alert.alert('Face not ready', 'Bring your face back into the guide ring before recording.');
+      setLiveCameraIssue('Bring your face back into the guide ring before recording.');
       return;
     }
     if (!liveChallengeReady) {
-      Alert.alert('Finish the challenge first', 'Turn slightly left and blink once before recording the face check.');
+      setLiveCameraIssue('Complete the practice turn and blink before recording.');
       return;
     }
 
     try {
       setLiveRecording(true);
-      setLiveRecordingProgress(1);
+      setLiveCameraIssue(null);
+      setLiveTurnComplete(false);
+      setLiveBlinkComplete(false);
+      setLiveChallengeReady(false);
+      setLiveRecordingProgress(0.28);
+      liveSignalRef.current.turn = 0;
+      liveSignalRef.current.blink = 0;
+      recordingStartedAtRef.current = Date.now();
       stopRecordingTriggeredRef.current = false;
 
       recordingTimeoutRef.current = setTimeout(() => {
@@ -797,7 +1065,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
           stopRecordingTriggeredRef.current = true;
           void cameraRef.current?.stopRecording();
         }
-      }, 4000);
+      }, 7000);
 
       cameraRef.current.startRecording({
         fileType: 'mp4',
@@ -807,6 +1075,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
             recordingTimeoutRef.current = null;
           }
           setLiveRecording(false);
+          recordingStartedAtRef.current = null;
           setLoading(true);
           try {
             const success = await submitVerificationAsset(featuredMethod, {
@@ -830,16 +1099,35 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
             recordingTimeoutRef.current = null;
           }
           setLiveRecording(false);
+          recordingStartedAtRef.current = null;
           console.error('Live liveness recording error:', error);
-          Alert.alert('Recording Failed', 'Please try the face check again.');
+          setLiveCameraIssue('Recording failed. Please try the face check again.');
         },
       });
     } catch (error) {
       setLiveRecording(false);
+      recordingStartedAtRef.current = null;
       console.error('Live liveness recording error:', error);
-      Alert.alert('Recording Failed', 'Please try the face check again.');
+      setLiveCameraIssue('Recording failed. Please try the face check again.');
     }
   };
+
+  useEffect(() => {
+    if (!liveRecording || !liveChallengeReady || stopRecordingTriggeredRef.current) return;
+
+    const elapsed = recordingStartedAtRef.current ? Date.now() - recordingStartedAtRef.current : 0;
+    const finishDelay = Math.max(450, 1400 - elapsed);
+    const timeout = setTimeout(() => {
+      if (!stopRecordingTriggeredRef.current) {
+        stopRecordingTriggeredRef.current = true;
+        void cameraRef.current?.stopRecording();
+      }
+    }, finishDelay);
+
+    return () => {
+      clearTimeout(timeout);
+    };
+  }, [liveChallengeReady, liveRecording]);
 
   useEffect(() => {
     return () => {
@@ -850,12 +1138,27 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   }, []);
 
   const handleImageUpload = async (methodId: string) => {
-    try {
-      setLoading(true);
+      try {
+        setLoading(true);
+        setFlowMessage(null);
 
-      const method = verificationMethods.find(item => item.id === methodId);
-      if (!method) {
-        Alert.alert('Verification Error', 'Unknown verification method.');
+        const method = verificationMethods.find(item => item.id === methodId);
+        if (!method) {
+          setFlowMessage({
+            tone: 'error',
+            title: 'Verification method unavailable',
+            body: 'That trust method could not be loaded. Please close this sheet and try again.',
+          });
+          return;
+        }
+
+      const methodSatisfiesFreshReview = freshReviewRequired && method.level >= freshReviewTargetLevel;
+      if (currentVerificationLevel >= method.level && !methodSatisfiesFreshReview) {
+        setFlowMessage({
+          tone: 'info',
+          title: 'This trust layer is already complete',
+          body: 'Your current Betweener verification already covers this method. No extra proof is needed right now.',
+        });
         return;
       }
 
@@ -863,14 +1166,26 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
         setShowLivenessGuide(true);
         return;
       }
+      if (method.id === 'social') {
+        await submitSocialLinkVerification();
+        return;
+      }
       await captureAndSubmitVerification(method);
 
-    } catch (error) {
-      console.error('Verification upload error:', error);
-      Alert.alert('Upload Failed', 'Please try again later');
-    } finally {
-      setLoading(false);
-    }
+      } catch (error) {
+        console.error('Verification upload error:', error);
+        const message =
+          error instanceof Error && error.message
+            ? error.message
+            : 'Please try again in a moment.';
+        setFlowMessage({
+          tone: 'error',
+          title: 'Submission did not go through',
+          body: message,
+        });
+      } finally {
+        setLoading(false);
+      }
   };
 
   const getVerificationBadge = (level: number) => {
@@ -884,7 +1199,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     return badges.find(b => b.level === level) || badges[0];
   };
 
-  const currentBadge = getVerificationBadge(profile?.verification_level || 0);
+  const currentBadge = getVerificationBadge(currentVerificationLevel);
   const ringSize = 220;
   const ringStroke = 12;
   const ringRadius = (ringSize - ringStroke) / 2;
@@ -909,7 +1224,13 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
             ? 'Hold steady and finish strong'
             : 'Challenge complete. Record your clip';
   const livePromptBody = liveRecording
-    ? 'Follow the motion smoothly while the ring fills around you.'
+    ? liveChallengeComplete
+      ? 'Captured. Hold steady for one more moment while we secure the clip.'
+      : !liveTurnComplete
+        ? 'Now turn slightly left while the recording is running.'
+        : !liveBlinkComplete
+          ? 'Good. Blink once while staying inside the guide ring.'
+          : 'Hold steady while Betweener secures the clip.'
     : liveChallengeComplete
       ? 'Your face check is ready. Record one short clip and complete the movement in a single take.'
       : !liveHasFace
@@ -921,8 +1242,8 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
             : 'Blink once while staying in frame to finish the challenge.';
   const liveChecklist = [
     { key: 'center', icon: 'scan-outline', label: 'Face centered', completed: liveChallengeComplete || (liveHasFace && liveFaceCentered) },
-    { key: 'turn', icon: 'refresh-circle-outline', label: 'Turn left', completed: liveChallengeComplete || liveTurnComplete },
-    { key: 'blink', icon: 'eye-outline', label: 'Blink', completed: liveChallengeComplete || liveBlinkComplete },
+    { key: 'turn', icon: 'refresh-circle-outline', label: liveRecording ? 'Turn recorded' : 'Turn left', completed: liveChallengeComplete || liveTurnComplete },
+    { key: 'blink', icon: 'eye-outline', label: liveRecording ? 'Blink recorded' : 'Blink', completed: liveChallengeComplete || liveBlinkComplete },
   ] as const;
   const [liveDisplayedProgress, setLiveDisplayedProgress] = useState(Math.round(liveRingProgress * 100));
   const liveAnimatedProgress = useSharedValue(liveRingProgress);
@@ -967,6 +1288,16 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
       easing: Easing.out(Easing.cubic),
     });
   }, [livePrompt, livePromptBody, livePromptReveal]);
+
+  useEffect(() => {
+    const recoverableIssue =
+      liveCameraIssue === 'Bring your face back into the guide ring before recording.' ||
+      liveCameraIssue === 'Complete the practice turn and blink before recording.';
+
+    if (recoverableIssue && (liveChallengeComplete || (liveHasFace && liveFaceCentered))) {
+      setLiveCameraIssue(null);
+    }
+  }, [liveCameraIssue, liveChallengeComplete, liveFaceCentered, liveHasFace]);
 
   useEffect(() => {
     if (liveChallengeComplete && !liveCompletedRef.current) {
@@ -1021,12 +1352,22 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
               video
               preview
               frameProcessor={liveFrameProcessor}
-              onInitialized={() => setLiveCameraReady(true)}
-              onStarted={() => setLiveCameraReady(true)}
-              onPreviewStarted={() => setLiveCameraReady(true)}
+              onInitialized={() => {
+                setLiveCameraIssue(null);
+                setLiveCameraReady(true);
+              }}
+              onStarted={() => {
+                setLiveCameraIssue(null);
+                setLiveCameraReady(true);
+              }}
+              onPreviewStarted={() => {
+                setLiveCameraIssue(null);
+                setLiveCameraReady(true);
+              }}
               onError={(error) => {
                 console.error('Live liveness camera error:', error);
                 setLiveCameraReady(false);
+                setLiveCameraIssue(error?.message || 'The live liveness camera failed to start.');
               }}
             />
           ) : (
@@ -1034,7 +1375,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
               <Ionicons name="videocam-off-outline" size={44} color="#fff" />
               <Text style={styles.liveCameraFallbackTitle}>Front camera unavailable</Text>
               <Text style={styles.liveCameraFallbackText}>
-                This device could not start the live face-check camera.
+                {liveCameraIssue || 'This device could not start the live face-check camera.'}
               </Text>
             </View>
           )}
@@ -1056,7 +1397,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
               </View>
               <View style={styles.liveCameraStatusWrap}>
                 <Text style={styles.liveCameraStatusText}>
-                  {!device ? 'No camera' : liveRecording ? 'Recording' : liveCameraReady ? 'Ready' : 'Starting'}
+                  {!device ? 'No camera' : liveRecording ? 'Recording' : liveCameraIssue ? 'Needs attention' : liveCameraReady ? 'Ready' : 'Starting'}
                 </Text>
               </View>
             </View>
@@ -1067,7 +1408,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                 onLayout={handleLiveGuideLayout}
                 style={[styles.liveRingWrap, liveRingWrapAnimatedStyle]}
               >
-                <Svg width={liveGuideWidth} height={liveGuideHeight}>
+                <RNSvg width={liveGuideWidth} height={liveGuideHeight}>
                   <Path
                     d={liveGuide.d}
                     stroke={`${theme.accent}18`}
@@ -1102,7 +1443,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                     strokeLinejoin="round"
                     strokeLinecap="round"
                   />
-                </Svg>
+                </RNSvg>
                 <View style={styles.liveRingCenter}>
                   <Text style={styles.liveRingPercent}>{liveDisplayedProgress}%</Text>
                   <Text style={styles.liveRingHint}>toward 12:00</Text>
@@ -1141,6 +1482,8 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                 <Text style={styles.liveRecordButtonLabel}>
                   {liveRecording
                     ? 'Recording...'
+                    : liveCameraIssue
+                      ? liveCameraIssue
                     : !liveCameraReady
                       ? 'Camera starting...'
                       : liveChallengeComplete
@@ -1186,11 +1529,11 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
             <Text style={[styles.livenessEyebrow, { color: theme.accent }]}>Before you record</Text>
             <Text style={[styles.livenessTitle, { color: titleColor }]}>Get ready for a quick face check</Text>
             <Text style={[styles.livenessSubtitle, { color: bodyColor }]}>
-              Use the front camera, keep your face in frame, then turn slightly left and blink once. The live camera screen will track the real challenge for you.
+              Use the front camera, keep your face in frame, then rehearse the turn and blink once. When you tap record, Betweener will capture that same movement in the final clip.
             </Text>
 
             <View style={styles.livenessRingWrap}>
-              <Svg width={ringSize} height={ringSize}>
+              <RNSvg width={ringSize} height={ringSize}>
                 <Circle
                   cx={ringSize / 2}
                   cy={ringSize / 2}
@@ -1211,7 +1554,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                   strokeLinecap="round"
                   transform={`rotate(-90 ${ringSize / 2} ${ringSize / 2})`}
                 />
-              </Svg>
+              </RNSvg>
               <View style={styles.livenessRingCenter}>
                 <Ionicons name="videocam-outline" size={30} color={theme.tint} />
                 <Text style={[styles.livenessRingPercent, { color: titleColor }]}>3 steps</Text>
@@ -1224,7 +1567,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                 <Text style={[styles.livenessStepTitle, { color: titleColor }]}>What you will do on camera</Text>
               </View>
               <Text style={[styles.livenessStepBody, { color: bodyColor }]}>
-                The live camera will only unlock recording after it sees your face centered, your slight left turn, and one blink.
+                The live camera unlocks recording after a short practice pass, then asks you to repeat the turn and blink while the clip is being captured.
               </Text>
             </View>
 
@@ -1265,7 +1608,11 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
-        <View style={[styles.container, { backgroundColor: theme.background }]}>
+        <KeyboardAvoidingView
+          style={[styles.container, { backgroundColor: theme.background }]}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? Math.max(insets.top, 16) : 0}
+        >
           <View style={[styles.header, { borderBottomColor: sectionBorder, backgroundColor: sheetSurface }]}>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
               <Ionicons name="close" size={24} color={titleColor} />
@@ -1274,65 +1621,77 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
             <View style={styles.placeholder} />
           </View>
 
-          <ScrollView style={[styles.content, { backgroundColor: theme.background }]}>
-          {/* Rejection Status Alert */}
-          {verificationStatus.hasRejection && (
-            <View style={[styles.rejectionAlert, { backgroundColor: isDark ? '#2a1718' : '#ffebee' }]}>
-              <View style={styles.rejectionHeader}>
-                <Ionicons name="close-circle" size={24} color="#f44336" />
-                <Text style={styles.rejectionTitle}>Verification Rejected</Text>
-              </View>
-              <Text style={styles.rejectionReason}>
-                {verificationStatus.rejectionReason || 'Your verification was rejected. Please try again with better documentation.'}
-              </Text>
-              {verificationStatus.lastRejectedAt && (
-                <Text style={styles.rejectionDate}>
-                  Rejected on {new Date(verificationStatus.lastRejectedAt).toLocaleDateString()}
+          <ScrollView
+            ref={verificationScrollRef}
+            style={[styles.content, { backgroundColor: theme.background }]}
+            contentContainerStyle={[styles.contentContainer, { paddingBottom: insets.bottom + 128 }]}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          >
+            {/* Rejection Status Alert */}
+            {verificationStatus.hasRejection && (
+              <View style={[styles.rejectionAlert, { backgroundColor: isDark ? '#2a1718' : '#fff2ef', borderColor: '#e8907f' }]}>
+                <View style={styles.rejectionHeader}>
+                  <Ionicons name="refresh-circle-outline" size={24} color="#d95f47" />
+                  <Text style={styles.rejectionTitle}>Ready for another pass</Text>
+                </View>
+                <Text style={styles.rejectionReason}>
+                  {verificationStatus.rejectionReason || 'Your last submission was not strong enough yet. A clearer proof usually fixes this quickly.'}
                 </Text>
-              )}
-              {!verificationStatus.canResubmit && (
+                {verificationStatus.lastRejectedAt && (
+                  <Text style={styles.rejectionDate}>
+                    Reviewed on {new Date(verificationStatus.lastRejectedAt).toLocaleDateString()}
+                  </Text>
+                )}
+                {!verificationStatus.canResubmit && (
+                  <Text style={styles.pendingText}>
+                    Another review is already in motion. Wait for that one to finish before sending more.
+                  </Text>
+                )}
+              </View>
+            )}
+
+            {/* Pending Status Alert */}
+            {verificationStatus.pendingRequest && !verificationStatus.hasRejection && (
+              <View style={[styles.pendingAlert, { backgroundColor: isDark ? '#1f2421' : '#eef9f4', borderColor: '#72b796' }]}>
+                <View style={styles.pendingHeader}>
+                  <Ionicons name="time-outline" size={24} color="#1b8a5a" />
+                  <Text style={styles.pendingTitle}>Review in progress</Text>
+                </View>
                 <Text style={styles.pendingText}>
-                  You have a pending verification request. Please wait for review.
+                  Your {verificationStatus.pendingRequest.type.replace(/_/g, ' ')} submission is already moving through review.
                 </Text>
-              )}
-            </View>
-          )}
-
-          {/* Pending Status Alert */}
-          {verificationStatus.pendingRequest && !verificationStatus.hasRejection && (
-            <View style={[styles.pendingAlert, { backgroundColor: isDark ? '#2a2416' : '#fff3e0' }]}>
-              <View style={styles.pendingHeader}>
-                <Ionicons name="time" size={24} color="#FF9800" />
-                <Text style={styles.pendingTitle}>Verification Pending</Text>
-              </View>
-              <Text style={styles.pendingText}>
-                Your {verificationStatus.pendingRequest.type} verification is being reviewed.
-              </Text>
-              <Text style={styles.pendingDate}>
-                Submitted on {new Date(verificationStatus.pendingRequest.submittedAt).toLocaleDateString()}
-              </Text>
-            </View>
-          )}
-
-          {/* Current Status */}
-          <View style={[styles.statusCard, { backgroundColor: elevatedSurface, borderColor: sectionBorder }]}>
-            <View style={styles.statusHeader}>
-              <Ionicons 
-                name={currentBadge.icon as any} 
-                size={32} 
-                color={currentBadge.color} 
-              />
-              <View style={styles.statusText}>
-                <Text style={[styles.statusLevel, { color: titleColor }]}>{currentBadge.label} Verified</Text>
-                <Text style={[styles.statusDescription, { color: bodyColor }]}>
-                  {profile?.verification_level === 0 && "Start verification to build trust"}
-                  {profile?.verification_level === 1 && "Basic verification completed"}
-                  {profile?.verification_level === 2 && "Fully verified diaspora member"}
-                  {profile?.verification_level === 3 && "Premium verified member"}
+                <Text style={styles.pendingDate}>
+                  Submitted on {new Date(verificationStatus.pendingRequest.submittedAt).toLocaleDateString()}
                 </Text>
               </View>
+            )}
+
+            {/* Current Status */}
+            <View style={[styles.statusCard, { backgroundColor: elevatedSurface, borderColor: sectionBorder }]}>
+              <Text style={[styles.statusEyebrow, { color: theme.accent }]}>{statusStory.eyebrow}</Text>
+              <View style={styles.statusHeader}>
+                <Ionicons
+                  name={currentBadge.icon as any}
+                  size={32}
+                  color={currentBadge.color}
+                />
+                <View style={styles.statusText}>
+                  <Text style={[styles.statusLevel, { color: titleColor }]}>{statusStory.title}</Text>
+                  <Text style={[styles.statusDescription, { color: bodyColor }]}>{statusStory.body}</Text>
+                </View>
+              </View>
+              <View style={styles.statusMetaRow}>
+                <View style={[styles.statusMetaPill, { backgroundColor: softTintSurface, borderColor: `${theme.tint}22` }]}>
+                  <Text style={[styles.statusMetaPillText, { color: theme.tint }]}>Current level {currentVerificationLevel}</Text>
+                </View>
+                <View style={[styles.statusMetaPill, { backgroundColor: softAccentSurface, borderColor: `${theme.accent}22` }]}>
+                  <Text style={[styles.statusMetaPillText, { color: theme.accent }]}>
+                    {verificationStatus.pendingRequest ? 'We will notify you' : 'Private review only'}
+                  </Text>
+                </View>
+              </View>
             </View>
-          </View>
 
           {/* Why Verify */}
           <View style={styles.section}>
@@ -1509,43 +1868,239 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
             </View>
           </View>
 
-          {/* Action Button */}
-          {selectedMethod && (
-            <View style={styles.submitSection}>
-              <Text style={[styles.submitHelper, { color: bodyColor }]}>
-                {verificationMethods.find((method) => method.id === selectedMethod)?.helperLabel}
-              </Text>
-              <TouchableOpacity
-                style={[
-                  styles.submitButton,
-                  { backgroundColor: theme.tint },
-                  (loading || !verificationStatus.canResubmit) && styles.submitButtonDisabled
-                ]}
-                onPress={() => handleImageUpload(selectedMethod)}
-                disabled={loading || !verificationStatus.canResubmit}
-              >
-                <Text style={styles.submitButtonText}>
-                  {loading 
-                    ? 'Uploading...' 
-                    : !verificationStatus.canResubmit 
-                      ? 'Verification Pending Review'
-                      : verificationMethods.find(method => method.id === selectedMethod)?.submitLabel ?? 'Upload Verification Document'
-                  }
+            {/* Action Button */}
+            {selectedMethod && (
+              <View style={[styles.submitSection, { backgroundColor: elevatedSurface, borderColor: sectionBorder }]}>
+                <Text style={[styles.submitEyebrow, { color: theme.accent }]}>Next step</Text>
+                <Text style={[styles.submitTitle, { color: titleColor }]}>
+                  {canSubmitActiveMethod
+                    ? freshReviewRequired
+                      ? `Use ${activeMethod.title} for your fresh trust check`
+                      : `Use ${activeMethod.title} to strengthen your profile`
+                    : activeMethodBlockedByPending
+                      ? 'Face check in review'
+                      : 'This trust layer is already complete'}
                 </Text>
-              </TouchableOpacity>
-            </View>
-          )}
+                <Text style={[styles.submitHelper, { color: bodyColor }]}>
+                  {canSubmitActiveMethod
+                    ? freshReviewRequired
+                      ? `This method satisfies the private refresh Betweener requested for Trust level ${freshReviewTargetLevel}.`
+                      : activeMethod.helperLabel
+                    : activeMethodBlockedByPending
+                      ? 'Betweener is already reviewing your latest submission. Your place in the trust queue is secure.'
+                      : 'Your profile already carries this level of Betweener trust. You do not need to send another proof for this method.'}
+                </Text>
+                <View style={styles.submitMetaRow}>
+                  <View style={[styles.submitMetaPill, { backgroundColor: softAccentSurface, borderColor: `${theme.accent}22` }]}>
+                    <Text style={[styles.submitMetaText, { color: theme.accent }]}>{activeMethod.reviewLabel}</Text>
+                  </View>
+                  <View style={[styles.submitMetaPill, { backgroundColor: softTintSurface, borderColor: `${theme.tint}22` }]}>
+                    <Text style={[styles.submitMetaText, { color: theme.tint }]}>Trust level {activeMethod.level}</Text>
+                  </View>
+                </View>
+                {flowMessage ? (
+                  <View
+                    style={[
+                      styles.flowMessageCard,
+                      flowMessage.tone === 'success'
+                        ? { backgroundColor: isDark ? '#173126' : '#effaf3', borderColor: '#69b68b' }
+                        : flowMessage.tone === 'error'
+                          ? { backgroundColor: isDark ? '#2a1718' : '#fff3f1', borderColor: '#e8907f' }
+                          : { backgroundColor: isDark ? '#1f2430' : '#f4f7fb', borderColor: '#b8c7db' },
+                    ]}
+                  >
+                    <View style={styles.flowMessageHeader}>
+                      <Ionicons
+                        name={
+                          flowMessage.tone === 'success'
+                            ? 'checkmark-circle-outline'
+                            : flowMessage.tone === 'error'
+                              ? 'alert-circle-outline'
+                              : 'information-circle-outline'
+                        }
+                        size={20}
+                        color={
+                          flowMessage.tone === 'success'
+                            ? '#1b8a5a'
+                            : flowMessage.tone === 'error'
+                              ? '#d95f47'
+                              : '#5b6f8d'
+                        }
+                      />
+                      <Text style={[styles.flowMessageTitle, { color: titleColor }]}>{flowMessage.title}</Text>
+                    </View>
+                    <Text style={[styles.flowMessageBody, { color: bodyColor }]}>{flowMessage.body}</Text>
+                    {flowMessage.actionLabel && flowMessage.action ? (
+                      <TouchableOpacity
+                        style={[styles.flowMessageAction, { backgroundColor: theme.tint }]}
+                        onPress={flowMessage.action}
+                        activeOpacity={0.86}
+                      >
+                        <Ionicons name="settings-outline" size={15} color="#fff" />
+                        <Text style={styles.flowMessageActionText}>{flowMessage.actionLabel}</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                ) : null}
+                {canSubmitActiveMethod && activeMethod.id === 'social' ? (
+                  <View style={[styles.socialProofPanel, { backgroundColor: softAccentSurface, borderColor: `${theme.accent}24` }]}>
+                    <View style={styles.socialProofHeader}>
+                      <View style={[styles.socialProofIcon, { backgroundColor: `${activeMethod.color}18` }]}>
+                        <Ionicons name="link-outline" size={18} color={activeMethod.color} />
+                      </View>
+                      <View style={styles.socialProofHeaderCopy}>
+                        <Text style={[styles.socialProofTitle, { color: titleColor }]}>Connect a visible profile</Text>
+                        <Text style={[styles.socialProofBody, { color: bodyColor }]}>
+                          Share a public account with location history, travel context, or consistent identity signals.
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.socialPlatformRow}>
+                      {SOCIAL_PROOF_PLATFORMS.map((platform) => {
+                        const isSelected = socialPlatform === platform.id;
+                        return (
+                          <TouchableOpacity
+                            key={platform.id}
+                            style={[
+                              styles.socialPlatformChip,
+                              {
+                                backgroundColor: isSelected ? theme.tint : elevatedSurface,
+                                borderColor: isSelected ? theme.tint : sectionBorder,
+                              },
+                            ]}
+                            onPress={() => setSocialPlatform(platform.id)}
+                            disabled={loading}
+                            activeOpacity={0.85}
+                          >
+                            <Ionicons
+                              name={platform.icon as any}
+                              size={14}
+                              color={isSelected ? '#fff' : bodyColor}
+                            />
+                            <Text style={[styles.socialPlatformText, { color: isSelected ? '#fff' : bodyColor }]}>
+                              {platform.label}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                    <TextInput
+                      value={socialProfileEvidence}
+                      onChangeText={setSocialProfileEvidence}
+                      onFocus={scrollToVerificationAction}
+                      placeholder="@handle or public profile link"
+                      placeholderTextColor={`${bodyColor}88`}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardType="url"
+                      returnKeyType="done"
+                      style={[
+                        styles.socialProofInput,
+                        {
+                          backgroundColor: elevatedSurface,
+                          borderColor: sectionBorder,
+                          color: titleColor,
+                        },
+                      ]}
+                    />
+                  </View>
+                ) : null}
+                {canSubmitActiveMethod && activeMethod.category === 'document' ? (
+                  <View style={styles.proofSourceGrid}>
+                    <TouchableOpacity
+                      style={[styles.proofSourceButton, { backgroundColor: theme.tint }]}
+                      onPress={() => void pickFileProof(activeMethod)}
+                      disabled={loading}
+                      activeOpacity={0.88}
+                    >
+                      <Ionicons name="document-attach-outline" size={18} color="#fff" />
+                      <View style={styles.proofSourceCopy}>
+                        <Text style={styles.proofSourceTitle}>Choose PDF or file</Text>
+                        <Text style={styles.proofSourceBody}>Best for original documents</Text>
+                      </View>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.proofSourceButtonSecondary, { backgroundColor: elevatedSurface, borderColor: sectionBorder }]}
+                      onPress={() => void pickPhotoProof(activeMethod)}
+                      disabled={loading}
+                      activeOpacity={0.88}
+                    >
+                      <Ionicons name="images-outline" size={18} color={theme.tint} />
+                      <View style={styles.proofSourceCopy}>
+                        <Text style={[styles.proofSourceTitle, { color: titleColor }]}>Choose photo</Text>
+                        <Text style={[styles.proofSourceBody, { color: bodyColor }]}>No crop or edits applied</Text>
+                      </View>
+                    </TouchableOpacity>
+                  </View>
+                ) : canSubmitActiveMethod ? (
+                  <TouchableOpacity
+                    style={[
+                      styles.submitButton,
+                      { backgroundColor: theme.tint },
+                      (loading || (activeMethod.id === 'social' && !socialProfileEvidence.trim())) && styles.submitButtonDisabled
+                  ]}
+                  onPress={() => handleImageUpload(selectedMethod)}
+                    disabled={loading || (activeMethod.id === 'social' && !socialProfileEvidence.trim())}
+                  >
+                    <Text style={styles.submitButtonText}>
+                      {loading
+                        ? 'Submitting your trust signal...'
+                        : activeMethod.submitLabel
+                      }
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View
+                    style={[
+                      styles.reviewStatusShell,
+                      {
+                        backgroundColor: activeMethodCovered ? softAccentSurface : softTintSurface,
+                        borderColor: activeMethodCovered ? `${theme.accent}26` : `${theme.tint}26`,
+                      },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.reviewStatusIcon,
+                        {
+                          backgroundColor: activeMethodCovered ? `${theme.accent}18` : `${theme.tint}18`,
+                          borderColor: activeMethodCovered ? `${theme.accent}2e` : `${theme.tint}2e`,
+                        },
+                      ]}
+                    >
+                      <Ionicons
+                        name={activeMethodCovered ? 'shield-checkmark-outline' : 'time-outline'}
+                        size={18}
+                        color={activeMethodCovered ? theme.accent : theme.tint}
+                      />
+                    </View>
+                    <View style={styles.reviewStatusContent}>
+                      <Text style={[styles.reviewStatusTitle, { color: titleColor }]}>
+                        {activeMethodCovered ? 'Already covered by your trust level' : 'Review in progress'}
+                      </Text>
+                      <Text style={[styles.reviewStatusBody, { color: bodyColor }]}>
+                        {activeMethodCovered
+                          ? 'No extra submission is needed. Keep this proof private unless Betweener asks for a fresh review later.'
+                          : 'No action is needed from you right now. We will update your profile as soon as the check clears.'}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+                <Text style={[styles.submitNote, { color: bodyColor }]}>
+                  Your proof stays private and review-only. Most trust checks are resolved within 1-2 business days.
+                </Text>
+              </View>
+            )}
 
-          {/* Disclaimer */}
-          <View style={[styles.disclaimer, { backgroundColor: elevatedSurface }]}>
-            <Ionicons name="information-circle-outline" size={16} color={bodyColor} />
-            <Text style={[styles.disclaimerText, { color: bodyColor }]}>
-              Your documents are securely stored and only used for verification purposes. 
-              Most reviews are completed within 1-2 business days.
-            </Text>
-          </View>
+            {/* Disclaimer */}
+            <View style={[styles.disclaimer, { backgroundColor: elevatedSurface }]}>
+              <Ionicons name="information-circle-outline" size={16} color={bodyColor} />
+              <Text style={[styles.disclaimerText, { color: bodyColor }]}>
+                Verification is server-managed on Betweener. Sensitive files stay access-controlled and are never exposed as public profile media.
+              </Text>
+            </View>
           </ScrollView>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
   );
 };
@@ -1992,17 +2547,28 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 20,
   },
+  contentContainer: {
+    flexGrow: 1,
+  },
   statusCard: {
-    backgroundColor: '#f8f9fa',
-    borderRadius: 12,
-    padding: 20,
-    marginBottom: 24,
-  },
-  statusHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  statusText: {
+      backgroundColor: '#f8f9fa',
+      borderRadius: 18,
+      borderWidth: 1,
+      padding: 20,
+      marginBottom: 24,
+    },
+    statusEyebrow: {
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
+      marginBottom: 10,
+    },
+    statusHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    statusText: {
     marginLeft: 16,
     flex: 1,
   },
@@ -2011,11 +2577,66 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#333',
   },
-  statusDescription: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 4,
-  },
+    statusDescription: {
+      fontSize: 14,
+      color: '#666',
+      marginTop: 4,
+      lineHeight: 20,
+    },
+    statusMetaRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+      marginTop: 16,
+    },
+    statusMetaPill: {
+      borderRadius: 999,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderWidth: 1,
+    },
+    statusMetaPillText: {
+      fontSize: 11.5,
+      fontWeight: '700',
+      letterSpacing: 0.2,
+    },
+    flowMessageCard: {
+      borderWidth: 1,
+      borderRadius: 16,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      marginBottom: 18,
+    },
+    flowMessageHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 6,
+    },
+    flowMessageTitle: {
+      fontSize: 15,
+      fontWeight: '700',
+      flex: 1,
+    },
+    flowMessageBody: {
+      fontSize: 13.5,
+      lineHeight: 19,
+    },
+    flowMessageAction: {
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      borderRadius: 999,
+      paddingHorizontal: 13,
+      paddingVertical: 9,
+      marginTop: 12,
+    },
+    flowMessageActionText: {
+      color: '#fff',
+      fontSize: 12.5,
+      fontWeight: '700',
+    },
   section: {
     marginBottom: 24,
   },
@@ -2272,38 +2893,197 @@ const styles = StyleSheet.create({
     color: '#2563eb',
     fontWeight: '700',
   },
-  submitSection: {
-    marginBottom: 24,
-  },
-  submitHelper: {
-    fontSize: 13,
-    color: '#666',
-    marginBottom: 10,
-    lineHeight: 18,
-  },
-  submitButton: {
-    backgroundColor: '#7C4DFF',
-    borderRadius: 14,
-    paddingVertical: 16,
-    paddingHorizontal: 18,
-    alignItems: 'center',
-  },
-  submitButtonDisabled: {
-    backgroundColor: '#ccc',
-  },
-  submitButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  disclaimer: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#f8f9fa',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 24,
-  },
+    submitSection: {
+      marginBottom: 24,
+      borderRadius: 20,
+      borderWidth: 1,
+      padding: 18,
+    },
+    submitEyebrow: {
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
+      marginBottom: 8,
+    },
+    submitTitle: {
+      fontSize: 18,
+      fontWeight: '700',
+      lineHeight: 24,
+      marginBottom: 8,
+    },
+    submitHelper: {
+      fontSize: 13,
+      color: '#666',
+      marginBottom: 10,
+      lineHeight: 18,
+    },
+    submitMetaRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+      marginBottom: 14,
+    },
+    submitMetaPill: {
+      borderRadius: 999,
+      borderWidth: 1,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+    },
+    submitMetaText: {
+      fontSize: 11.5,
+      fontWeight: '700',
+      letterSpacing: 0.2,
+    },
+    submitButton: {
+      backgroundColor: '#7C4DFF',
+      borderRadius: 14,
+      paddingVertical: 16,
+      paddingHorizontal: 18,
+      alignItems: 'center',
+    },
+    submitButtonDisabled: {
+      backgroundColor: '#ccc',
+    },
+    proofSourceGrid: {
+      gap: 10,
+    },
+    proofSourceButton: {
+      borderRadius: 16,
+      paddingHorizontal: 15,
+      paddingVertical: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    proofSourceButtonSecondary: {
+      borderRadius: 16,
+      borderWidth: 1,
+      paddingHorizontal: 15,
+      paddingVertical: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    proofSourceCopy: {
+      flex: 1,
+    },
+    proofSourceTitle: {
+      color: '#fff',
+      fontSize: 14.5,
+      fontWeight: '700',
+      marginBottom: 2,
+    },
+    proofSourceBody: {
+      color: 'rgba(255,255,255,0.78)',
+      fontSize: 12.5,
+      lineHeight: 17,
+    },
+    socialProofPanel: {
+      borderRadius: 18,
+      borderWidth: 1,
+      padding: 14,
+      marginBottom: 14,
+      gap: 12,
+    },
+    socialProofHeader: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 12,
+    },
+    socialProofIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    socialProofHeaderCopy: {
+      flex: 1,
+    },
+    socialProofTitle: {
+      fontSize: 14.5,
+      fontWeight: '700',
+      marginBottom: 4,
+    },
+    socialProofBody: {
+      fontSize: 12.5,
+      lineHeight: 18,
+    },
+    socialPlatformRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    socialPlatformChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      borderWidth: 1,
+      borderRadius: 999,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+    },
+    socialPlatformText: {
+      fontSize: 11.5,
+      fontWeight: '700',
+    },
+    socialProofInput: {
+      borderWidth: 1,
+      borderRadius: 14,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    reviewStatusShell: {
+      borderRadius: 16,
+      borderWidth: 1,
+      paddingHorizontal: 14,
+      paddingVertical: 14,
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 12,
+    },
+    reviewStatusIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      borderWidth: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: 1,
+    },
+    reviewStatusContent: {
+      flex: 1,
+    },
+    reviewStatusTitle: {
+      fontSize: 14.5,
+      fontWeight: '700',
+      marginBottom: 4,
+    },
+    reviewStatusBody: {
+      fontSize: 12.5,
+      lineHeight: 18,
+    },
+    submitButtonText: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: '#fff',
+    },
+    submitNote: {
+      fontSize: 12.5,
+      lineHeight: 18,
+      marginTop: 12,
+    },
+    disclaimer: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      backgroundColor: '#f8f9fa',
+      padding: 16,
+      borderRadius: 14,
+      marginBottom: 24,
+    },
   disclaimerText: {
     fontSize: 12,
     color: '#666',
@@ -2311,25 +3091,25 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   // Rejection status styles
-  rejectionAlert: {
-    backgroundColor: '#ffebee',
-    borderColor: '#f44336',
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-  },
+    rejectionAlert: {
+      backgroundColor: '#ffebee',
+      borderColor: '#f44336',
+      borderWidth: 1,
+      borderRadius: 16,
+      padding: 16,
+      marginBottom: 16,
+    },
   rejectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 8,
   },
-  rejectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#f44336',
-    marginLeft: 8,
-  },
+    rejectionTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: '#d95f47',
+      marginLeft: 8,
+    },
   rejectionReason: {
     fontSize: 14,
     color: '#d32f2f',
@@ -2342,30 +3122,31 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   // Pending status styles
-  pendingAlert: {
-    backgroundColor: '#fff3e0',
-    borderColor: '#FF9800',
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-  },
+    pendingAlert: {
+      backgroundColor: '#fff3e0',
+      borderColor: '#FF9800',
+      borderWidth: 1,
+      borderRadius: 16,
+      padding: 16,
+      marginBottom: 16,
+    },
   pendingHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 8,
   },
-  pendingTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FF9800',
-    marginLeft: 8,
-  },
-  pendingText: {
-    fontSize: 14,
-    color: '#e65100',
-    marginBottom: 4,
-  },
+    pendingTitle: {
+      fontSize: 16,
+      fontWeight: '600',
+      color: '#1b8a5a',
+      marginLeft: 8,
+    },
+    pendingText: {
+      fontSize: 14,
+      color: '#25674a',
+      marginBottom: 4,
+      lineHeight: 20,
+    },
   pendingDate: {
     fontSize: 12,
     color: '#666',

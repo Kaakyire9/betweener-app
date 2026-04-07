@@ -173,7 +173,7 @@
         // If we have a token_hash but no session yet, complete verification via Supabase
         if (tokenHash && tokenType && !hasAccessToken) {
           const verifyUrl =
-            "https://auth.getbetweener.com/auth/v1/verify" +
+            "https://jbyblhithbqwojhwlenv.supabase.co/auth/v1/verify" +
             "?token_hash=" + encodeURIComponent(tokenHash) +
             "&type=" + encodeURIComponent(tokenType) +
             "&redirect_to=" + encodeURIComponent("https://getbetweener.com/auth/callback");

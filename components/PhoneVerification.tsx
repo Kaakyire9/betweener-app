@@ -28,6 +28,7 @@ interface PhoneVerificationProps {
   userId?: string | null;
   allowAnonymous?: boolean;
   onPhoneVerified?: (phoneNumber: string) => void;
+  onRecoveryRequired?: (details: { phoneNumber: string; code?: string; error?: string }) => void | Promise<void>;
   signupSessionId?: string | null;
   countryLabel?: string;
   dialCode?: string;
@@ -40,6 +41,7 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
   userId,
   allowAnonymous = false,
   onPhoneVerified,
+  onRecoveryRequired,
   signupSessionId,
   countryLabel = 'Ghana',
   dialCode = '+233',
@@ -52,6 +54,15 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
   const [selectedCountry, setSelectedCountry] = useState({
     label: countryLabel,
     dial: dialCode,
+  });
+  const [recoveryPrompt, setRecoveryPrompt] = useState<{
+    visible: boolean;
+    phoneNumber: string | null;
+    error?: string;
+    code?: string;
+  }>({
+    visible: false,
+    phoneNumber: null,
   });
   const [step, setStep] = useState<'phone' | 'code'>('phone');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -254,6 +265,8 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
           'Code Sent',
           `A verification code has been sent to ${result.phoneNumber || fullNumber}`
         );
+      } else if (result.code === 'phone_belongs_to_existing_account') {
+        promptExistingAccountRecovery(fullNumber, result.error, result.code);
       } else {
         Alert.alert('Error', result.error || 'Failed to send verification code');
       }
@@ -308,6 +321,8 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
           // best-effort only
         }
         onVerificationComplete(true, result.confidenceScore || 0);
+      } else if (result.code === 'phone_belongs_to_existing_account') {
+        promptExistingAccountRecovery(fullNumber, result.error, result.code);
       } else {
         Alert.alert('Error', result.error || 'Invalid verification code');
         setVerificationCode('');
@@ -320,6 +335,40 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
   };
 
   const formatPhoneNumber = (text: string) => text.replace(/[^\d]/g, '');
+
+  const closeRecoveryPrompt = () => {
+    setRecoveryPrompt({ visible: false, phoneNumber: null });
+  };
+
+  const handleUseDifferentNumber = () => {
+    setVerificationCode('');
+    setStep('phone');
+    closeRecoveryPrompt();
+  };
+
+  const handleRecoverAccount = () => {
+    const fullNumber = recoveryPrompt.phoneNumber;
+    setVerificationCode('');
+    setStep('phone');
+    closeRecoveryPrompt();
+    if (!fullNumber) return;
+    void Promise.resolve(
+      onRecoveryRequired?.({
+        phoneNumber: fullNumber,
+        code: recoveryPrompt.code,
+        error: recoveryPrompt.error,
+      })
+    );
+  };
+
+  const promptExistingAccountRecovery = (fullNumber: string, error?: string, code?: string) => {
+    setRecoveryPrompt({
+      visible: true,
+      phoneNumber: fullNumber,
+      error,
+      code,
+    });
+  };
 
 
   return (
@@ -510,6 +559,78 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
           )}
         </ScrollView>
       </View>
+      <Modal
+        visible={recoveryPrompt.visible}
+        transparent
+        animationType="fade"
+        presentationStyle="overFullScreen"
+        statusBarTranslucent
+        onRequestClose={closeRecoveryPrompt}
+      >
+        <View style={styles.modalRoot}>
+          <TouchableWithoutFeedback onPress={closeRecoveryPrompt}>
+            <View style={[styles.modalBackdrop, styles.recoveryBackdrop]} />
+          </TouchableWithoutFeedback>
+          <KeyboardAvoidingView
+            style={styles.modalKeyboard}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
+            <View style={styles.recoverySheetShadow} />
+            <View style={styles.recoverySheet}>
+              <LinearGradient
+                colors={['rgba(18, 28, 27, 0.985)', 'rgba(17, 25, 25, 0.975)', 'rgba(15, 21, 21, 0.985)']}
+                start={{ x: 0.1, y: 0 }}
+                end={{ x: 0.9, y: 1 }}
+                style={styles.recoverySheetGradient}
+              >
+                <View style={[styles.recoveryHalo, { backgroundColor: 'rgba(15, 186, 181, 0.14)' }]} />
+                <View style={[styles.recoveryHaloSecondary, { backgroundColor: 'rgba(255, 214, 153, 0.14)' }]} />
+                <View style={styles.recoverySpark} />
+                <View style={styles.recoverySparkSecondary} />
+                <View style={styles.recoveryTopBar} />
+                <View style={[styles.recoveryIconWrap, { backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.14)' }]}>
+                  <LinearGradient
+                    colors={['rgba(255,255,255,0.08)', 'rgba(255,255,255,0.02)']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.recoveryIconInner}
+                  >
+                    <Ionicons name="shield-checkmark-outline" size={22} color="#A8F1EE" />
+                  </LinearGradient>
+                </View>
+                <Text style={styles.recoveryEyebrow}>ACCOUNT FOUND</Text>
+                <Text style={styles.recoveryTitle}>This number is already in Betweener</Text>
+                <Text style={styles.recoveryBody}>
+                  It looks like this number is already protecting an older Betweener account. Recover that account or use a different number to create a new one.
+                </Text>
+
+                <TouchableOpacity style={styles.recoveryPrimaryWrap} onPress={handleRecoverAccount} activeOpacity={0.92}>
+                  <LinearGradient
+                    colors={['#2AD9D4', '#16C7C3', '#1797B1']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.recoveryPrimaryButton}
+                  >
+                    <Text style={styles.recoveryPrimaryText}>Recover account</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.recoverySecondaryButton, { borderColor: 'rgba(255,255,255,0.13)', backgroundColor: 'rgba(255,255,255,0.055)' }]}
+                  onPress={handleUseDifferentNumber}
+                  activeOpacity={0.9}
+                >
+                  <Text style={styles.recoverySecondaryText}>Use a different number</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.recoveryTertiaryButton} onPress={closeRecoveryPrompt} activeOpacity={0.8}>
+                  <Text style={styles.recoveryTertiaryText}>Not now</Text>
+                </TouchableOpacity>
+              </LinearGradient>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
       <Modal
         visible={countryModalVisible}
         transparent
@@ -828,6 +949,159 @@ const styles = StyleSheet.create({
   },
   modalKeyboard: {
     justifyContent: 'flex-end',
+  },
+  recoveryBackdrop: {
+    backgroundColor: 'rgba(6, 14, 14, 0.58)',
+  },
+  recoverySheetShadow: {
+    position: 'absolute',
+    left: 14,
+    right: 14,
+    bottom: 14,
+    top: 0,
+    backgroundColor: 'rgba(4, 12, 12, 0.28)',
+    borderRadius: 30,
+    opacity: 0.48,
+  },
+  recoverySheet: {
+    marginHorizontal: 14,
+    marginBottom: 14,
+    borderRadius: 30,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.09)',
+  },
+  recoverySheetGradient: {
+    borderRadius: 30,
+    paddingHorizontal: 24,
+    paddingTop: 24,
+    paddingBottom: 18,
+  },
+  recoveryHalo: {
+    position: 'absolute',
+    top: -10,
+    left: -16,
+    width: 180,
+    height: 180,
+    borderRadius: 999,
+  },
+  recoveryHaloSecondary: {
+    position: 'absolute',
+    right: -22,
+    top: 60,
+    width: 140,
+    height: 140,
+    borderRadius: 999,
+  },
+  recoverySpark: {
+    position: 'absolute',
+    right: 28,
+    top: 22,
+    width: 54,
+    height: 54,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 224, 179, 0.16)',
+    backgroundColor: 'rgba(255, 224, 179, 0.05)',
+  },
+  recoverySparkSecondary: {
+    position: 'absolute',
+    right: 44,
+    top: 38,
+    width: 10,
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255, 236, 204, 0.58)',
+  },
+  recoveryTopBar: {
+    width: 44,
+    height: 4,
+    borderRadius: 999,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    marginBottom: 18,
+  },
+  recoveryIconWrap: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+    overflow: 'hidden',
+  },
+  recoveryIconInner: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recoveryEyebrow: {
+    color: '#A8F1EE',
+    fontSize: 12,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 1.2,
+    marginBottom: 10,
+  },
+  recoveryTitle: {
+    color: '#FBF6F1',
+    fontSize: 29,
+    lineHeight: 34,
+    fontFamily: 'Archivo_700Bold',
+    letterSpacing: -0.55,
+    marginBottom: 12,
+  },
+  recoveryBody: {
+    color: 'rgba(245, 239, 232, 0.8)',
+    fontSize: 15.5,
+    lineHeight: 24,
+    fontFamily: 'Manrope_500Medium',
+    marginBottom: 26,
+  },
+  recoveryPrimaryWrap: {
+    borderRadius: 18,
+    overflow: 'hidden',
+    marginBottom: 12,
+    shadowColor: '#18c8c3',
+    shadowOpacity: 0.26,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 8,
+  },
+  recoveryPrimaryButton: {
+    minHeight: 58,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  recoveryPrimaryText: {
+    color: '#FFFFFF',
+    fontSize: 16.5,
+    fontFamily: 'Manrope_700Bold',
+  },
+  recoverySecondaryButton: {
+    minHeight: 55,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    marginBottom: 8,
+  },
+  recoverySecondaryText: {
+    color: '#F8F4EF',
+    fontSize: 15,
+    fontFamily: 'Manrope_700Bold',
+  },
+  recoveryTertiaryButton: {
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recoveryTertiaryText: {
+    color: 'rgba(244, 239, 232, 0.62)',
+    fontSize: 14,
+    fontFamily: 'Manrope_600SemiBold',
   },
   modalCard: {
     borderTopLeftRadius: 18,

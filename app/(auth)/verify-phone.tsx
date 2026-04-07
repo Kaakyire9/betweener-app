@@ -2,6 +2,7 @@ import { PhoneVerification } from "@/components/PhoneVerification";
 import {
   captureSignupContext,
   clearSignupSession,
+  consumeSignupMetadata,
   finalizeSignupPhoneVerification,
   getOrCreateSignupSessionId,
   getSignupPhoneState,
@@ -19,6 +20,17 @@ import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { logger } from "@/lib/telemetry/logger";
+
+const normalizeRecoveryMethod = (value?: string | null) => {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) return "email";
+  if (normalized === "google" || normalized === "apple" || normalized === "email" || normalized === "magic_link") {
+    return normalized;
+  }
+  if (normalized === "oauth") return "email";
+  if (normalized === "otp") return "email";
+  return "email";
+};
 
 export default function VerifyPhoneScreen() {
   const router = useRouter();
@@ -171,6 +183,27 @@ export default function VerifyPhoneScreen() {
     );
   };
 
+  const handleRecoveryRequired = async ({ phoneNumber }: { phoneNumber: string }) => {
+    const metadata = await consumeSignupMetadata();
+    const metadataMethod =
+      metadata.auth_method === "oauth"
+        ? metadata.oauth_provider
+        : metadata.auth_method;
+    const providerMethod =
+      typeof user?.app_metadata?.provider === "string" ? user.app_metadata.provider : null;
+    const currentMethod = normalizeRecoveryMethod(metadataMethod || providerMethod || (user?.email ? "email" : null));
+
+    router.push({
+      pathname: "/(auth)/account-recovery",
+      params: {
+        phoneNumber,
+        currentMethod,
+        next: nextRoute ?? "",
+        reason: reason ?? "",
+      },
+    });
+  };
+
   return (
     <LinearGradient
       colors={[Colors.light.tint, Colors.light.accent, Colors.light.background]}
@@ -192,6 +225,7 @@ export default function VerifyPhoneScreen() {
               setVerifiedPhoneNumber(phone);
               await setSignupPhoneNumber(phone);
             }}
+            onRecoveryRequired={handleRecoveryRequired}
             onVerificationComplete={async (success) => {
               if (!success) return;
 

@@ -4,9 +4,17 @@ export type Match = {
   age: number;
   tagline?: string;
   bio?: string;
+  lookingFor?: string;
   location?: string;
+  city?: string;
   tribe?: string;
   religion?: string;
+  occupation?: string;
+  education?: string;
+  hasChildren?: string;
+  wantsChildren?: string;
+  smoking?: string;
+  loveLanguage?: string;
   gender?: string;
   interests: string[];
   commonInterests?: string[];

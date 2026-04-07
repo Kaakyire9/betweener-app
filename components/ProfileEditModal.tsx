@@ -39,7 +39,7 @@ const MAX_PROFILE_VIDEO_DURATION_MS = 30_000;
 // We preflight locally to avoid long uploads that will fail server-side.
 const MAX_PROFILE_VIDEO_BYTES = 25 * 1024 * 1024; // 25MB
 const COMPRESS_TARGET_MAX_SIZE = 720; // 720p-ish (max height portrait / max width landscape)
-const COMPRESS_WHEN_OVER_BYTES = 10 * 1024 * 1024; // 10MB (premium "fast upload" threshold)
+const COMPRESS_WHEN_OVER_BYTES = 8 * 1024 * 1024; // 8MB (premium "fast upload" threshold)
 
 const DISTANCE_UNIT_OPTIONS: { value: DistanceUnit; label: string; subtitle?: string }[] = [
   { value: 'auto', label: 'Auto', subtitle: 'Recommended' },
@@ -261,7 +261,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
-  const { status: verificationStatus } = useVerificationStatus(profile?.id);
+  const { status: verificationStatus } = useVerificationStatus(profile?.user_id);
   const isGhanaProfile = useMemo(() => {
     const currentCountry = (profile as any)?.current_country;
     const countryCode = (profile as any)?.current_country_code;
@@ -397,6 +397,17 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         subtitle: 'Your latest verification is under review. Track it here or add another method later.',
         action: 'Status',
         icon: 'progress-clock' as const,
+      };
+    }
+
+    if (verificationStatus.freshReviewRequired) {
+      return {
+        title: 'Fresh check requested',
+        subtitle: verificationStatus.freshReviewReason
+          ? `${verificationStatus.freshReviewReason} Your current badge stays in place.`
+          : 'Betweener asked for a quick private trust refresh. Your current badge stays in place.',
+        action: 'Refresh',
+        icon: 'shield-refresh-outline' as const,
       };
     }
 
@@ -922,8 +933,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: 'videos',
       videoMaxDuration: 30,
-      allowsEditing: true,
-      // Best-effort compression on iOS. Android behavior depends on the picker app.
+      // Video editing/trim support is inconsistent across picker apps, especially on Android.
+      // We optimize the selected file ourselves before upload instead of relying on the picker UI.
+      allowsEditing: Platform.OS === 'ios',
       videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
       videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
     });
@@ -943,7 +955,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: 'videos',
       videoMaxDuration: 30,
-      allowsEditing: true,
+      allowsEditing: Platform.OS === 'ios',
       videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
       videoExportPreset: ImagePicker.VideoExportPreset.H264_1280x720,
     });
@@ -956,11 +968,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const pickProfileVideo = async () => {
     try {
       Alert.alert(
-        'Select Video',
-        'Choose how you want to add a profile video (max 30s)',
+        'Add intro video',
+        'Record a fresh 30-second clip, or choose one from your library. Betweener will optimize it before upload.',
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Record 30s (Recommended)', onPress: () => void openVideoCamera() },
+          { text: 'Record optimized clip', onPress: () => void openVideoCamera() },
           { text: 'Choose from library', onPress: () => void openVideoLibrary() },
         ]
       );
@@ -1058,7 +1070,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           `Your video is ${seconds}s. Please trim it to 30 seconds or less and try again.`,
           [
             { text: 'OK' },
-            { text: 'Record 30s (Recommended)', onPress: () => void openVideoCamera() },
+            { text: 'Record optimized clip', onPress: () => void openVideoCamera() },
           ]
         );
         return;
@@ -1090,17 +1102,16 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         // If we can't read size (platform URI quirks), proceed and let the upload error surface.
       }
 
-      // Premium: compress on-device when needed (especially Android) and show progress.
+      // Premium: compress on-device when needed and show progress.
       // Note: react-native-compressor requires a dev-client / EAS build (not Expo Go).
       let uploadUri = uri;
       const shouldTryCompression =
-        Platform.OS === 'android' &&
-        (originalSizeBytes == null ||
-          originalSizeBytes > COMPRESS_WHEN_OVER_BYTES ||
-          originalSizeBytes > MAX_PROFILE_VIDEO_BYTES);
+        originalSizeBytes == null ||
+        originalSizeBytes > COMPRESS_WHEN_OVER_BYTES ||
+        originalSizeBytes > MAX_PROFILE_VIDEO_BYTES;
 
       if (shouldTryCompression) {
-        setVideoUploadStage('Compressing video...');
+        setVideoUploadStage('Optimizing video...');
         setVideoUploadProgress(0);
         try {
           const compressed = await VideoCompressor.compress(
@@ -1139,10 +1150,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           const mb = (size / (1024 * 1024)).toFixed(1);
           Alert.alert(
             'Video too large',
-            `Your video is ${mb}MB. Please trim it shorter or record in lower quality and try again.`,
+            `We optimized the clip, but it is still ${mb}MB. Record a fresh 30-second clip in the app or choose a smaller library video.`,
             [
-              { text: 'Choose Again' },
-              { text: 'Record 30s (Recommended)', onPress: () => void openVideoCamera() },
+              { text: 'Choose another' },
+              { text: 'Record optimized clip', onPress: () => void openVideoCamera() },
             ]
           );
           return;
@@ -2464,8 +2475,14 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             </View>
 
             <Text style={styles.photoHint}>
-              Add a short intro video (max 30s). We optimize it when possible to upload faster.
+              Add up to 30 seconds. We optimize the clip before upload instead of relying on a platform cropper.
             </Text>
+            <View style={styles.videoGuidanceCard}>
+              <MaterialCommunityIcons name="creation-outline" size={16} color={theme.tint} />
+              <Text style={styles.videoGuidanceText}>
+                Best result: record in-app, or choose a library video and let Betweener prepare it privately.
+              </Text>
+            </View>
 
             {formData.profile_video ? (
               <View style={styles.videoRow}>
@@ -3279,6 +3296,25 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontSize: 12,
       color: theme.textMuted,
       marginBottom: 16,
+    },
+    videoGuidanceCard: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 14,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: withAlpha(theme.tint, isDark ? 0.28 : 0.18),
+      marginBottom: 14,
+    },
+    videoGuidanceText: {
+      flex: 1,
+      color: theme.text,
+      fontSize: 12,
+      lineHeight: 17,
+      fontFamily: 'Manrope_500Medium',
     },
     photosGrid: {
       flexDirection: 'row',

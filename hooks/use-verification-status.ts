@@ -37,15 +37,51 @@ interface VerificationStatus {
   
   // Resubmission eligibility
   canResubmit: boolean;
+
+  // Admin-requested fresh review
+  freshReviewRequired: boolean;
+  freshReviewReason?: string;
+  freshReviewTargetLevel?: number;
   
   // Loading state
   loading: boolean;
 }
 
+type VerificationRequestRow = {
+  id: string;
+  verification_type: string;
+  status: string;
+  created_at?: string;
+  submitted_at?: string;
+  reviewed_at?: string;
+  reviewer_notes?: string;
+};
+
+const getVerificationRequestTargetLevel = (verificationType?: string | null) => {
+  switch ((verificationType || '').toLowerCase()) {
+    case 'social':
+      return 1;
+    case 'passport':
+    case 'residence':
+    case 'workplace':
+    case 'selfie_liveness':
+      return 2;
+    default:
+      return 1;
+  }
+};
+
+const getVerificationRequestTimestamp = (request?: Partial<VerificationRequestRow> | null) => {
+  const value = request?.reviewed_at || request?.created_at || request?.submitted_at || null;
+  if (!value) return 0;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
 /**
  * Hook to get and manage user verification status
  * 
- * @param userId - User ID to check verification status for
+ * @param userId - Auth user ID to check verification status for
  * @returns Verification status object and refresh function
  */
 export const useVerificationStatus = (userId?: string) => {
@@ -55,6 +91,7 @@ export const useVerificationStatus = (userId?: string) => {
     hasPendingRequest: false,
     hasRejection: false,
     canResubmit: true,
+    freshReviewRequired: false,
     loading: true,
   });
 
@@ -70,7 +107,7 @@ export const useVerificationStatus = (userId?: string) => {
       // Get user's verification level from profile
       const { data: profileData, error: profileError } = await supabase
         .from('profiles')
-        .select('verification_level')
+        .select('verification_level, verification_refresh_required, verification_refresh_reason, verification_refresh_target_level')
         .eq('user_id', userId)
         .single();
 
@@ -91,18 +128,36 @@ export const useVerificationStatus = (userId?: string) => {
         return;
       }
 
-      const requests = requestsData || [];
+      const requests = (requestsData || []) as VerificationRequestRow[];
       const verificationLevel = profileData?.verification_level || 0;
+      const freshReviewRequired = Boolean(profileData?.verification_refresh_required);
+      const freshReviewTargetLevel = Math.min(
+        2,
+        Math.max(1, profileData?.verification_refresh_target_level || verificationLevel || 1),
+      );
       
-      // Find pending request
       const pendingRequest = requests.find(req => req.status === 'pending');
       
-      // Find most recent rejection
       const rejectedRequests = requests.filter(req => req.status === 'rejected');
-      const lastRejection = rejectedRequests[0]; // Most recent due to ordering
+      const lastRejection = rejectedRequests[0];
+      const hasNewerPendingThanRejection =
+        Boolean(pendingRequest) &&
+        Boolean(lastRejection) &&
+        getVerificationRequestTimestamp(pendingRequest) >= getVerificationRequestTimestamp(lastRejection);
+      const rejectionTargetLevel = getVerificationRequestTargetLevel(lastRejection?.verification_type);
+      const rejectionIsFreshReviewRetry =
+        freshReviewRequired &&
+        Boolean(lastRejection) &&
+        rejectionTargetLevel >= freshReviewTargetLevel;
+      const rejectionAlreadyCovered =
+        Boolean(lastRejection) &&
+        verificationLevel >= rejectionTargetLevel &&
+        !rejectionIsFreshReviewRetry;
+      const activeRejection =
+        lastRejection && !hasNewerPendingThanRejection && !rejectionAlreadyCovered
+          ? lastRejection
+          : undefined;
       
-      // Determine if user can resubmit
-      // Can resubmit if: no pending request OR last request was rejected
       const canResubmit = !pendingRequest;
 
       setStatus({
@@ -114,10 +169,13 @@ export const useVerificationStatus = (userId?: string) => {
           type: pendingRequest.verification_type,
           submittedAt: pendingRequest.created_at,
         } : undefined,
-        hasRejection: !!lastRejection,
-        rejectionReason: lastRejection?.reviewer_notes || undefined,
-        lastRejectedAt: lastRejection?.reviewed_at || undefined,
+        hasRejection: Boolean(activeRejection),
+        rejectionReason: activeRejection?.reviewer_notes || undefined,
+        lastRejectedAt: activeRejection?.reviewed_at || undefined,
         canResubmit,
+        freshReviewRequired,
+        freshReviewReason: profileData?.verification_refresh_reason || undefined,
+        freshReviewTargetLevel,
         loading: false,
       });
 

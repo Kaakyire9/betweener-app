@@ -59,7 +59,8 @@ import {
 } from "react-native";
 import { PinchGestureHandler, State } from "react-native-gesture-handler";
 import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import RNSvg, { Path } from "react-native-svg";
 import { WebView } from "react-native-webview";
 import { encodeBase64 } from "tweetnacl-util";
 
@@ -68,13 +69,14 @@ const ATTACHMENT_SHEET_HEIGHT = 300;
 const CHAT_MEDIA_BUCKET = 'chat-media';
 const LOCATION_TEXT_PREFIX = '\u{1F4CD}';
 const LOCATION_LIVE_PREFIX = 'LIVE:';
+const CHAT_BUBBLE_TAIL_PATH = "M1.2 2.4 C3.6 2.1 6.9 3.1 9.6 5.1 C12.1 6.9 13.7 9.3 14.2 12.2 C11.4 11.3 8.5 11.8 5.3 13.7 C2.9 12.6 1.4 10.6 1.1 7.9 Z";
 const DATE_PLAN_TEXT_PREFIX = 'date_plan::';
 const GOOGLE_MAPS_NATIVE_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 const GOOGLE_MAPS_WEB_API_KEY =
   process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY || GOOGLE_MAPS_NATIVE_API_KEY;
 const GOOGLE_MAPS_MAP_ID = process.env.EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID;
-const LOCATION_PREVIEW_WIDTH = Math.min(screenWidth * 0.72, 320);
-const LOCATION_PREVIEW_HEIGHT = 180;
+const LOCATION_PREVIEW_WIDTH = Math.min(screenWidth * 0.68, 296);
+const LOCATION_PREVIEW_HEIGHT = 164;
 const LIVE_LOCATION_PRESETS = [15, 60, 480] as const;
 const FALLBACK_BETWEENER_DATE_PICKS = [
   {
@@ -169,7 +171,38 @@ const MAP_STYLE_DARK = [
   { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#142020' }] },
   { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0B1414' }] },
 ];
-const getPickerMediaTypesAll = (): ImagePicker.MediaTypeOptions => ImagePicker.MediaTypeOptions.All;
+const PICKER_MEDIA_TYPES_ALL: ImagePicker.MediaType[] = ['images', 'videos'];
+const CHAT_MEDIA_UPLOAD_RETRIES = 2;
+const CHAT_MEDIA_UPLOAD_RETRY_DELAY_MS = 900;
+
+const encodeStoragePath = (path: string) =>
+  path
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isRetryableUploadError = (error: unknown) => {
+  const message = String((error as any)?.message || error || '').toLowerCase();
+  const status = Number((error as any)?.status || (error as any)?.statusCode || 0);
+  return (
+    message.includes('timeout') ||
+    message.includes('network') ||
+    message.includes('abort') ||
+    status === 408 ||
+    status === 429 ||
+    status >= 500
+  );
+};
+
+const getAttachmentUploadErrorMessage = (error: unknown) => {
+  const message = String((error as any)?.message || error || '').toLowerCase();
+  if (message.includes('timeout') || message.includes('network')) {
+    return 'The upload timed out. Try again on a stronger connection or send a smaller video.';
+  }
+  return 'Unable to upload this file.';
+};
 
 // Message type definition
 type DatePlanStatus = 'pending' | 'accepted' | 'declined' | 'cancelled' | 'countered';
@@ -254,6 +287,12 @@ type MessageType = {
   replyTo?: MessageType;
 };
 
+type ReceiptIconState = {
+  name: ComponentProps<typeof MaterialCommunityIcons>['name'];
+  color: string;
+  size: number;
+};
+
 type MessageRow = {
   id: string;
   text: string;
@@ -281,6 +320,28 @@ type MessageRow = {
   encrypted_media_alg?: string | null;
   encrypted_media_mime?: string | null;
   encrypted_media_size?: number | null;
+};
+
+type MediaUploadStatus = {
+  id: number;
+  title: string;
+  subtitle: string;
+  icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
+};
+
+const getReportEvidencePreview = (message?: MessageType | null) => {
+  if (!message) return null;
+  if (message.deletedForAll) return 'Deleted message';
+  if (message.isViewOnce) return 'View-once message';
+  if (message.type === 'text') return message.text || 'Text message';
+  if (message.type === 'image') return 'Image message';
+  if (message.type === 'video') return 'Video message';
+  if (message.type === 'voice') return 'Voice message';
+  if (message.type === 'document') return message.document?.name ? `Document: ${message.document.name}` : 'Document message';
+  if (message.type === 'location') return message.location?.label ? `Location: ${message.location.label}` : 'Location message';
+  if (message.type === 'date_plan') return message.dateInvite?.placeName ? `Date plan: ${message.dateInvite.placeName}` : 'Date plan message';
+  if (message.type === 'mood_sticker') return message.sticker?.name ? `Sticker: ${message.sticker.name}` : 'Sticker message';
+  return 'Message evidence';
 };
 
 type SystemMessageRow = {
@@ -635,6 +696,20 @@ const dedupeMessagesById = (items: MessageType[]) => {
   return deduped;
 };
 
+const areReactionListsEqual = (
+  current: MessageType['reactions'] | undefined,
+  next: MessageType['reactions'] | undefined,
+) => {
+  const currentList = current ?? [];
+  const nextList = next ?? [];
+  if (currentList.length !== nextList.length) return false;
+  return currentList.every(
+    (reaction, index) =>
+      reaction.userId === nextList[index]?.userId &&
+      reaction.emoji === nextList[index]?.emoji,
+  );
+};
+
 const buildDateQuickSlots = (baseNow: Date) => {
   const tonight = new Date(baseNow);
   tonight.setHours(baseNow.getHours() < 18 ? 19 : 20, 0, 0, 0);
@@ -870,6 +945,10 @@ type MessageRowItemProps = {
   item: MessageType;
   isMyMessage: boolean;
   showAvatar: boolean;
+  showAvatarSpacer: boolean;
+  isGroupedWithPrev: boolean;
+  isGroupedWithNext: boolean;
+  shouldAnimateEntry: boolean;
   isPlaying: boolean;
   isReactionOpen: boolean;
   isFocused: boolean;
@@ -879,7 +958,6 @@ type MessageRowItemProps = {
   currentUserId: string;
   peerName: string;
   imageSize?: { width: number; height: number };
-  videoSize?: { width: number; height: number };
   theme: typeof Colors.light;
   isDark: boolean;
   styles: ReturnType<typeof createStyles>;
@@ -899,7 +977,6 @@ type MessageRowItemProps = {
   onOpenReactionSheet: (message: MessageType) => void;
   onViewImage: (url: string) => void;
   onViewVideo: (url: string) => void;
-  onVideoSize: (url: string, width: number, height: number) => void;
   onOpenDocument: (doc?: MessageType['document']) => void;
   onOpenLocation: (message: MessageType) => void;
   onStopLiveShare: (messageId: string) => void;
@@ -928,6 +1005,26 @@ const withAlpha = (hex: string, alpha: number) => {
   const g = (bigint >> 8) & 255;
   const b = bigint & 255;
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+};
+
+const formatVoiceDuration = (seconds: number) => {
+  const safeSeconds = Math.max(0, Math.round(seconds || 0));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remaining = `${safeSeconds % 60}`.padStart(2, '0');
+  return `${minutes}:${remaining}`;
+};
+
+const getReceiptIconState = (status: MessageType['status'], isDark: boolean): ReceiptIconState => {
+  switch (status) {
+    case 'read':
+      return { name: 'check-all', color: isDark ? '#BFFBEA' : '#D4FFF2', size: 14 };
+    case 'delivered':
+      return { name: 'check-all', color: isDark ? '#F4FBFA' : '#F7FCFB', size: 14 };
+    case 'sent':
+      return { name: 'check', color: isDark ? '#AAB8B4' : '#D0DEDB', size: 14 };
+    default:
+      return { name: 'clock-outline', color: '#C6D7D3', size: 13 };
+  }
 };
 
 const formatFileSize = (bytes?: number | null) => {
@@ -1019,10 +1116,7 @@ const normalizeHeicImage = async (
 };
 
 type VideoPreviewProps = {
-  url: string;
-  size?: { width: number; height: number };
   styles: ReturnType<typeof createStyles>;
-  onSize: (width: number, height: number) => void;
 };
 
 type ReplyMeta = {
@@ -1033,67 +1127,24 @@ type ReplyMeta = {
   canJump: boolean;
 };
 
-const VideoPreview = ({ url, size, styles, onSize }: VideoPreviewProps) => {
-  const player = useVideoPlayer(url, (p) => {
-    p.loop = false;
-    p.muted = true;
-  });
-
-  useEffect(() => {
-    try {
-      player.pause();
-    } catch {}
-  }, [player]);
-
-  useEffect(() => {
-    if (!url || size) return;
-
-    const handleSize = (width?: number, height?: number) => {
-      if (!width || !height) return;
-      onSize(width, height);
-    };
-
-    const trackSub =
-      (player as any).addListener?.('videoTrackChange', ({ videoTrack }: any) => {
-      handleSize(videoTrack?.size?.width, videoTrack?.size?.height);
-      }) ??
-      (player as any).addEventListener?.('videoTrackChange', ({ videoTrack }: any) => {
-        handleSize(videoTrack?.size?.width, videoTrack?.size?.height);
-      });
-
-    const sourceSub =
-      (player as any).addListener?.('sourceLoad', ({ availableVideoTracks }: any) => {
-      const track = availableVideoTracks?.[0];
-      handleSize(track?.size?.width, track?.size?.height);
-      }) ??
-      (player as any).addEventListener?.('sourceLoad', ({ availableVideoTracks }: any) => {
-        const track = availableVideoTracks?.[0];
-        handleSize(track?.size?.width, track?.size?.height);
-      });
-
-    return () => {
-      try { trackSub?.remove?.(); } catch {}
-      try { sourceSub?.remove?.(); } catch {}
-    };
-  }, [player, size, onSize, url]);
-
+const VideoPreview = memo(({ styles }: VideoPreviewProps) => {
   return (
     <View style={styles.videoPreviewWrap}>
-      <VideoView
-        player={player}
-        style={[
-          styles.messageVideo,
-          size ? { width: size.width, height: size.height } : null,
-        ]}
-        contentFit="cover"
-        nativeControls={false}
+      <LinearGradient
+        colors={['rgba(8, 22, 22, 0.92)', 'rgba(11, 45, 45, 0.88)', 'rgba(3, 12, 12, 0.95)']}
+        start={[0, 0]}
+        end={[1, 1]}
+        style={styles.messageVideo}
       />
       <View style={styles.videoOverlay}>
         <MaterialCommunityIcons name="play-circle" size={34} color={Colors.light.background} />
+        <Text style={styles.videoOverlayLabel}>Video</Text>
       </View>
     </View>
   );
-};
+});
+
+VideoPreview.displayName = "VideoPreview";
 
 type VideoViewerProps = {
   url: string;
@@ -1131,6 +1182,10 @@ const MessageRowItem = memo(
     item,
     isMyMessage,
     showAvatar,
+    showAvatarSpacer,
+    isGroupedWithPrev,
+    isGroupedWithNext,
+    shouldAnimateEntry,
     isPlaying,
     isReactionOpen,
     isFocused,
@@ -1140,7 +1195,6 @@ const MessageRowItem = memo(
     currentUserId,
     peerName,
     imageSize,
-    videoSize,
     theme,
     isDark,
     styles,
@@ -1160,7 +1214,6 @@ const MessageRowItem = memo(
     onOpenReactionSheet,
     onViewImage,
     onViewVideo,
-    onVideoSize,
     onOpenDocument,
     onOpenLocation,
     onStopLiveShare,
@@ -1231,6 +1284,12 @@ const MessageRowItem = memo(
     const isAcceptedDatePlan = item.type === 'date_plan' && datePlanStatus === 'accepted';
     const acceptedLockIn = useRef(new Animated.Value(isAcceptedDatePlan ? 1 : 0)).current;
     const previousDatePlanStatus = useRef(datePlanStatus);
+    const reactionEntrance = useRef(new Animated.Value(item.reactions.length > 0 ? 1 : 0)).current;
+    const previousReactionCount = useRef(item.reactions.length);
+    const entryAnim = useRef(new Animated.Value(shouldAnimateEntry ? 0 : 1)).current;
+    const receiptPulse = useRef(new Animated.Value(1)).current;
+    const reactionBubblePulse = useRef(new Animated.Value(1)).current;
+    const previousReceiptStatus = useRef(item.status);
     const focusPulseStyle = useMemo(() => ({
       opacity: focusPulse,
       transform: [
@@ -1251,12 +1310,104 @@ const MessageRowItem = memo(
     const focusTintStyle = useMemo(() => ({
       backgroundColor: withAlpha(accent, isMyMessage ? 0.12 : isDark ? 0.16 : 0.1),
     }) as const, [accent, isDark, isMyMessage]);
+    const receiptIcon = isMyMessage ? getReceiptIconState(item.status, isDark) : null;
+    const receiptBadgeToneStyle = useMemo(() => {
+      if (!isMyMessage) return null;
+      switch (item.status) {
+        case 'read':
+          return styles.receiptMetaBadgeRead;
+        case 'delivered':
+          return styles.receiptMetaBadgeDelivered;
+        case 'sent':
+          return styles.receiptMetaBadgeSent;
+        default:
+          return styles.receiptMetaBadgeSent;
+      }
+    }, [isMyMessage, item.status, styles.receiptMetaBadgeDelivered, styles.receiptMetaBadgeRead, styles.receiptMetaBadgeSent]);
+    const mediaReceiptToneStyle = useMemo(() => {
+      if (!isMyMessage) return null;
+      switch (item.status) {
+        case 'read':
+          return styles.mediaMetaOverlayRead;
+        case 'delivered':
+          return styles.mediaMetaOverlayDelivered;
+        case 'sent':
+          return styles.mediaMetaOverlaySent;
+        default:
+          return styles.mediaMetaOverlaySent;
+      }
+    }, [isMyMessage, item.status, styles.mediaMetaOverlayDelivered, styles.mediaMetaOverlayRead, styles.mediaMetaOverlaySent]);
     const rowSpotlightStyle = useMemo(() => ({
       opacity: focusPulse,
     }) as const, [focusPulse]);
     const rowTintStyle = useMemo(() => ({
       backgroundColor: withAlpha(accent, isMyMessage ? 0.06 : isDark ? 0.08 : 0.04),
     }) as const, [accent, isDark, isMyMessage]);
+    const bubbleTailFill = item.deletedForAll
+      ? withAlpha(theme.backgroundSubtle, isDark ? 0.6 : 0.85)
+      : isMyMessage
+        ? theme.tint
+        : theme.backgroundSubtle;
+    const bubbleTailStroke = item.deletedForAll
+      ? withAlpha(theme.text, isDark ? 0.12 : 0.08)
+      : isMyMessage
+        ? withAlpha(Colors.light.background, 0.08)
+        : withAlpha(theme.text, isDark ? 0.08 : 0.05);
+    const bubbleTailStrokeWidth = item.deletedForAll ? 0.75 : 0.45;
+    const textInlineMetaStyle = useMemo(() => ([
+      styles.inlineMetaRowText,
+      isMyMessage ? styles.inlineMetaRowTextMy : styles.inlineMetaRowTextTheir,
+    ]), [isMyMessage, styles.inlineMetaRowText, styles.inlineMetaRowTextMy, styles.inlineMetaRowTextTheir]);
+    const reactionEntranceStyle = useMemo(() => ({
+      opacity: reactionEntrance,
+      transform: [
+        {
+          translateY: reactionEntrance.interpolate({
+            inputRange: [0, 1],
+            outputRange: [10, 0],
+          }),
+        },
+        {
+          scale: reactionEntrance.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.86, 1],
+          }),
+        },
+      ],
+    }) as const, [reactionEntrance]);
+    const rowEntranceStyle = useMemo(() => ({
+      opacity: entryAnim,
+      transform: [
+        {
+          translateY: entryAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [12, 0],
+          }),
+        },
+        {
+          translateX: entryAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [isMyMessage ? 10 : -10, 0],
+          }),
+        },
+        {
+          scale: entryAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.985, 1],
+          }),
+        },
+      ],
+    }) as const, [entryAnim, isMyMessage]);
+    const receiptPulseStyle = useMemo(() => ({
+      transform: [{ scale: receiptPulse }],
+      opacity: receiptPulse.interpolate({
+        inputRange: [0.94, 1, 1.08],
+        outputRange: [0.88, 1, 1],
+      }),
+    }) as const, [receiptPulse]);
+    const reactionBubblePulseStyle = useMemo(() => ({
+      transform: [{ scale: reactionBubblePulse }],
+    }) as const, [reactionBubblePulse]);
     const acceptedLockInHeaderStyle = useMemo(() => ({
       opacity: acceptedLockIn.interpolate({
         inputRange: [0, 1],
@@ -1297,6 +1448,21 @@ const MessageRowItem = memo(
     );
 
     useEffect(() => {
+      if (!shouldAnimateEntry) {
+        entryAnim.setValue(1);
+        return;
+      }
+      entryAnim.stopAnimation();
+      entryAnim.setValue(0);
+      Animated.spring(entryAnim, {
+        toValue: 1,
+        friction: 9,
+        tension: 84,
+        useNativeDriver: true,
+      }).start();
+    }, [entryAnim, shouldAnimateEntry]);
+
+    useEffect(() => {
       if (!isFocused) return;
       focusPulse.stopAnimation();
       focusPulse.setValue(0);
@@ -1313,6 +1479,31 @@ const MessageRowItem = memo(
         }),
       ]).start();
     }, [focusPulse, focusToken, isFocused]);
+
+    useEffect(() => {
+      if (!isMyMessage) {
+        previousReceiptStatus.current = item.status;
+        return;
+      }
+      if (previousReceiptStatus.current === item.status) return;
+      receiptPulse.stopAnimation();
+      receiptPulse.setValue(0.94);
+      Animated.sequence([
+        Animated.timing(receiptPulse, {
+          toValue: 1.08,
+          duration: 140,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(receiptPulse, {
+          toValue: 1,
+          duration: 180,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
+      previousReceiptStatus.current = item.status;
+    }, [isMyMessage, item.status, receiptPulse]);
 
     useEffect(() => {
       const previousStatus = previousDatePlanStatus.current;
@@ -1337,9 +1528,49 @@ const MessageRowItem = memo(
 
       previousDatePlanStatus.current = datePlanStatus;
     }, [acceptedLockIn, datePlanStatus, item.type]);
+
+    useEffect(() => {
+      if (item.reactions.length === 0) {
+        reactionEntrance.setValue(0);
+        reactionBubblePulse.setValue(1);
+        previousReactionCount.current = 0;
+        return;
+      }
+
+      if (previousReactionCount.current !== item.reactions.length) {
+        reactionEntrance.stopAnimation();
+        reactionEntrance.setValue(0);
+        reactionBubblePulse.stopAnimation();
+        reactionBubblePulse.setValue(0.985);
+        Animated.spring(reactionEntrance, {
+          toValue: 1,
+          friction: 8,
+          tension: 68,
+          useNativeDriver: true,
+        }).start();
+        Animated.sequence([
+          Animated.timing(reactionBubblePulse, {
+            toValue: 1.028,
+            duration: 120,
+            easing: Easing.out(Easing.quad),
+            useNativeDriver: true,
+          }),
+          Animated.timing(reactionBubblePulse, {
+            toValue: 1,
+            duration: 170,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
+        ]).start();
+      } else {
+        reactionEntrance.setValue(1);
+        reactionBubblePulse.setValue(1);
+      }
+
+      previousReactionCount.current = item.reactions.length;
+    }, [item.reactions.length, reactionBubblePulse, reactionEntrance]);
     const waveformBars = useMemo(() => {
       if (item.type !== 'voice' || !item.voiceMessage?.waveform) return null;
-      if (!isFocused && !isPlaying) return null;
       return item.voiceMessage.waveform.map((height, idx) => (
         <Animated.View
           key={idx}
@@ -1349,7 +1580,7 @@ const MessageRowItem = memo(
               height: height * 20,
               backgroundColor: isPlaying
                 ? (isMyMessage ? Colors.light.background : theme.tint)
-                : (isMyMessage ? withAlpha(Colors.light.background, 0.5) : withAlpha(theme.text, isDark ? 0.35 : 0.25)),
+                : (isMyMessage ? withAlpha(Colors.light.background, 0.62) : withAlpha(theme.text, isDark ? 0.42 : 0.28)),
             },
           ]}
         />
@@ -1367,55 +1598,31 @@ const MessageRowItem = memo(
         .map(([emoji, count]) => ({ emoji, count }))
         .sort((a, b) => b.count - a.count);
       return (
-        <Pressable
+        <Animated.View
+          pointerEvents="box-none"
           style={[
             styles.reactionSummary,
             isMyMessage ? styles.reactionSummaryRight : styles.reactionSummaryLeft,
-          ]}
-          onPress={() => onOpenReactionSheet(item)}
+            reactionEntranceStyle,
+          ] as any}
         >
-          {summary.map(({ emoji, count }) => (
-            <View key={`${emoji}-${count}`} style={styles.reactionSummaryItem}>
-              <Text style={styles.reactionSummaryEmoji}>{emoji}</Text>
-              {count > 1 ? (
-                <Text style={styles.reactionSummaryCount}>{count}</Text>
-              ) : null}
-            </View>
-          ))}
-        </Pressable>
+          <Pressable
+            style={styles.reactionSummaryPressable}
+            onPress={() => onOpenReactionSheet(item)}
+          >
+            {summary.map(({ emoji, count }) => (
+              <View key={`${emoji}-${count}`} style={styles.reactionSummaryItem}>
+                <Text style={styles.reactionSummaryEmoji}>{emoji}</Text>
+                {count > 1 ? (
+                  <Text style={styles.reactionSummaryCount}>{count}</Text>
+                ) : null}
+              </View>
+            ))}
+          </Pressable>
+        </Animated.View>
       );
-    }, [item.deletedForAll, item.reactions, isMyMessage, onOpenReactionSheet, styles]);
-
-    const reactionInlineLabel = useMemo(() => {
-      if (item.deletedForAll) return null;
-      if (!item.reactions.length) return null;
-      const primary = item.reactions.find((reaction) => reaction.userId !== currentUserId) ?? item.reactions[0];
-      if (!primary?.emoji) return null;
-      const name = primary.userId === currentUserId ? 'You' : (peerName || 'Someone');
-      const target = (() => {
-        switch (item.type) {
-          case 'text':
-            return 'message';
-          case 'image':
-            return 'photo';
-          case 'video':
-            return 'video';
-          case 'voice':
-            return 'voice note';
-          case 'document':
-            return 'document';
-          case 'date_plan':
-            return 'date plan';
-          case 'location':
-            return 'location';
-          case 'mood_sticker':
-            return 'sticker';
-          default:
-            return 'message';
-        }
-      })();
-      return `${name} reacted ${primary.emoji} to ${target}`;
-    }, [currentUserId, item.deletedForAll, item.reactions, item.type, peerName]);
+    }, [item.deletedForAll, item.reactions, isMyMessage, onOpenReactionSheet, reactionEntranceStyle, styles]);
+    const hasReactionSummary = !item.deletedForAll && item.reactions.length > 0;
 
     const documentMeta = useMemo(() => {
       if (item.type !== 'document') return null;
@@ -1547,19 +1754,12 @@ const MessageRowItem = memo(
       };
     }, [currentUserId, item.replyTo, item.replyToId, peerName]);
 
-    const handleVideoSize = useCallback(
-      (width: number, height: number) => {
-        if (!item.videoUrl) return;
-        onVideoSize(item.videoUrl, width, height);
-      },
-      [item.videoUrl, onVideoSize]
-    );
-
     const messageTextNode = useMemo(() => {
       const text = item.text || '';
       if (!text) return null;
       const baseStyle = [
         styles.messageText,
+        styles.messageTextInline,
         isMyMessage ? styles.myMessageText : styles.theirMessageText,
         item.deletedForAll && styles.deletedMessageText,
       ];
@@ -1607,7 +1807,14 @@ const MessageRowItem = memo(
     }
 
     return (
-      <View style={styles.messageContainer}>
+      <Animated.View
+        style={[
+          styles.messageContainer,
+          isGroupedWithNext ? styles.messageContainerGrouped : null,
+          hasReactionSummary ? styles.messageContainerWithReaction : null,
+          rowEntranceStyle,
+        ]}
+      >
         {isFocused ? (
           <Animated.View
             pointerEvents="none"
@@ -1662,16 +1869,24 @@ const MessageRowItem = memo(
             isMyMessage ? styles.myMessageContainer : styles.theirMessageContainer,
           ]}
         >
-        {showAvatar && (
+        {showAvatar ? (
           <Image
             source={{ uri: userAvatar }}
             style={styles.messageAvatar}
           />
-          )}
+          ) : showAvatarSpacer ? (
+            <View style={styles.messageAvatarSpacer} />
+          ) : null}
 
-          <View style={[
+          <Animated.View style={[
             styles.messageBubble,
             isMyMessage ? styles.myMessageBubble : styles.theirMessageBubble,
+            isMyMessage
+              ? (isGroupedWithPrev ? styles.myMessageBubbleGroupedTop : null)
+              : (isGroupedWithPrev ? styles.theirMessageBubbleGroupedTop : null),
+            isMyMessage
+              ? (isGroupedWithNext ? styles.myMessageBubbleGroupedBottom : null)
+              : (isGroupedWithNext ? styles.theirMessageBubbleGroupedBottom : null),
             item.deletedForAll && styles.deletedMessageBubble,
             item.type === 'mood_sticker' && styles.stickerBubble,
             item.type === 'voice' && styles.voiceBubble,
@@ -1681,6 +1896,7 @@ const MessageRowItem = memo(
             item.type === 'date_plan' && (isMyMessage ? styles.datePlanBubbleMy : styles.datePlanBubbleTheir),
             item.type === 'date_plan' && styles.datePlanBubble,
             item.type === 'location' && styles.locationBubble,
+            reactionBubblePulseStyle,
           ]}>
             {isFocused ? (
               <Animated.View
@@ -1763,7 +1979,10 @@ const MessageRowItem = memo(
               <View style={styles.textWithMeta}>
                 {messageTextNode}
                 <View
-                  style={styles.inlineMetaRow}
+                  style={[
+                    styles.inlineMetaRow,
+                    textInlineMetaStyle,
+                  ]}
                   pointerEvents={showEdited ? 'auto' : 'none'}
                 >
                   {showEdited ? (
@@ -1785,18 +2004,20 @@ const MessageRowItem = memo(
                   <Text
                     style={[
                       styles.messageMetaText,
-                      isMyMessage ? styles.messageMetaTextMy : styles.messageMetaTextTheir,
+                      isMyMessage ? styles.messageMetaTextInlineMy : styles.messageMetaTextInlineTheir,
                     ]}
                   >
                     {timeLabel}
                   </Text>
                   {isMyMessage && (
-                    <MaterialCommunityIcons
-                      name={item.status === 'read' ? 'check-all' : item.status === 'delivered' ? 'check-all' : item.status === 'sent' ? 'check' : 'clock-outline'}
-                      size={12}
-                      color={item.status === 'read' ? theme.secondary : withAlpha(Colors.light.background, 0.8)}
-                      style={styles.inlineMetaIcon}
-                    />
+                    <Animated.View style={receiptPulseStyle}>
+                      <MaterialCommunityIcons
+                        name={receiptIcon?.name || 'clock-outline'}
+                        size={receiptIcon?.size || 13}
+                        color={receiptIcon?.color || '#C6D7D3'}
+                        style={styles.inlineMetaIconText}
+                      />
+                    </Animated.View>
                   )}
                 </View>
               </View>
@@ -1837,7 +2058,11 @@ const MessageRowItem = memo(
             ) : item.type === 'voice' ? (
               <View style={styles.voiceMessageContainer}>
                 <TouchableOpacity
-                  style={[styles.voicePlayButton, { backgroundColor: isMyMessage ? Colors.light.background : theme.tint }]}
+                  style={[
+                    styles.voicePlayButton,
+                    isMyMessage ? styles.voicePlayButtonMy : styles.voicePlayButtonTheir,
+                    isPlaying && (isMyMessage ? styles.voicePlayButtonMyActive : styles.voicePlayButtonTheirActive),
+                  ]}
                   onPress={() => onToggleVoice(item.id)}
                 >
                   <MaterialCommunityIcons
@@ -1847,16 +2072,35 @@ const MessageRowItem = memo(
                   />
                 </TouchableOpacity>
 
-                <View style={styles.voiceWaveform}>
-                  {waveformBars}
+                <View
+                  style={[
+                    styles.voiceWaveformCard,
+                    isMyMessage ? styles.voiceWaveformCardMy : styles.voiceWaveformCardTheir,
+                    isPlaying && (isMyMessage ? styles.voiceWaveformCardMyActive : styles.voiceWaveformCardTheirActive),
+                  ]}
+                >
+                  <View style={styles.voiceWaveform}>
+                    {waveformBars}
+                  </View>
+                  <View
+                    style={[
+                      styles.voiceDurationPill,
+                      isMyMessage ? styles.voiceDurationPillMy : styles.voiceDurationPillTheir,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.voiceDuration,
+                        isMyMessage ? styles.voiceDurationMy : styles.voiceDurationTheir,
+                      ]}
+                    >
+                      {formatVoiceDuration(item.voiceMessage?.duration || 0)}
+                    </Text>
+                  </View>
                 </View>
-
-                <Text style={[styles.voiceDuration, { color: isMyMessage ? Colors.light.background : theme.textMuted }]}>
-                  {Math.floor(item.voiceMessage?.duration || 0)}s
-                </Text>
               </View>
               ) : item.type === 'image' ? (
-                <View style={styles.imageMessageContainer}>
+                <View style={[styles.imageMessageContainer, styles.mediaSurface]}>
                   <Image
                     source={{ uri: item.imageUrl }}
                     style={[
@@ -1864,10 +2108,12 @@ const MessageRowItem = memo(
                       imageSize ? { width: imageSize.width, height: imageSize.height } : null,
                     ]}
                   />
-                  <View
+                  <Animated.View
                     style={[
                       styles.mediaMetaOverlay,
                       isMyMessage ? styles.mediaMetaOverlayMy : styles.mediaMetaOverlayTheir,
+                      isMyMessage ? mediaReceiptToneStyle : null,
+                      isMyMessage ? receiptPulseStyle : null,
                     ]}
                     pointerEvents="none"
                   >
@@ -1881,36 +2127,42 @@ const MessageRowItem = memo(
                     </Text>
                     {isMyMessage && (
                       <MaterialCommunityIcons
-                        name={item.status === 'read' ? 'check-all' : item.status === 'delivered' ? 'check-all' : item.status === 'sent' ? 'check' : 'clock-outline'}
-                        size={11}
-                        color={item.status === 'read' ? theme.secondary : withAlpha(Colors.light.background, 0.9)}
+                        name={receiptIcon?.name || 'clock-outline'}
+                        size={receiptIcon?.size || 13}
+                        color={receiptIcon?.color || '#C6D7D3'}
                         style={styles.mediaMetaIcon}
                       />
                     )}
-                  </View>
+                  </Animated.View>
                   {item.text && (
-                    <Text style={[
-                      styles.imageCaption,
-                      isMyMessage ? styles.myMessageText : styles.theirMessageText,
-                    ]}>
-                      {item.text}
-                    </Text>
+                    <View
+                      style={[
+                        styles.mediaCaptionCard,
+                        isMyMessage ? styles.mediaCaptionCardMy : styles.mediaCaptionCardTheir,
+                      ]}
+                    >
+                      <Text style={[
+                        styles.imageCaption,
+                        isMyMessage ? styles.myMessageText : styles.theirMessageText,
+                      ]}>
+                        {item.text}
+                      </Text>
+                    </View>
                   )}
                 </View>
               ) : item.type === 'video' ? (
-                <View style={styles.videoMessageContainer}>
+                <View style={[styles.videoMessageContainer, styles.mediaSurface]}>
                   {item.videoUrl && (
                     <VideoPreview
-                      url={item.videoUrl}
-                      size={videoSize}
                       styles={styles}
-                      onSize={handleVideoSize}
                     />
                   )}
-                  <View
+                  <Animated.View
                     style={[
                       styles.mediaMetaOverlay,
                       isMyMessage ? styles.mediaMetaOverlayMy : styles.mediaMetaOverlayTheir,
+                      isMyMessage ? mediaReceiptToneStyle : null,
+                      isMyMessage ? receiptPulseStyle : null,
                     ]}
                     pointerEvents="none"
                   >
@@ -1924,20 +2176,27 @@ const MessageRowItem = memo(
                     </Text>
                     {isMyMessage && (
                       <MaterialCommunityIcons
-                        name={item.status === 'read' ? 'check-all' : item.status === 'delivered' ? 'check-all' : item.status === 'sent' ? 'check' : 'clock-outline'}
-                        size={11}
-                        color={item.status === 'read' ? theme.secondary : withAlpha(Colors.light.background, 0.9)}
+                        name={receiptIcon?.name || 'clock-outline'}
+                        size={receiptIcon?.size || 13}
+                        color={receiptIcon?.color || '#C6D7D3'}
                         style={styles.mediaMetaIcon}
                       />
                     )}
-                  </View>
+                  </Animated.View>
                   {item.text && (
-                    <Text style={[
-                      styles.imageCaption,
-                      isMyMessage ? styles.myMessageText : styles.theirMessageText,
-                    ]}>
-                      {item.text}
-                    </Text>
+                    <View
+                      style={[
+                        styles.mediaCaptionCard,
+                        isMyMessage ? styles.mediaCaptionCardMy : styles.mediaCaptionCardTheir,
+                      ]}
+                    >
+                      <Text style={[
+                        styles.imageCaption,
+                        isMyMessage ? styles.myMessageText : styles.theirMessageText,
+                      ]}>
+                        {item.text}
+                      </Text>
+                    </View>
                   )}
                 </View>
               ) : item.type === 'date_plan' ? (
@@ -2488,115 +2747,129 @@ const MessageRowItem = memo(
                 </View>
               ) : item.type === 'location' ? (
                 <View style={styles.locationMessageContainer}>
-                  {item.location?.mapUrl ? (
-                    <Image
-                      source={{ uri: item.location.mapUrl }}
-                      style={styles.locationMapImage}
-                    />
-                  ) : (
-                    <View style={styles.locationMapPlaceholder}>
-                      <MaterialCommunityIcons name="map-outline" size={28} color={theme.textMuted} />
-                      <Text style={[styles.locationPlaceholderText, { color: theme.textMuted }]}>
-                        Map preview
-                      </Text>
-                    </View>
-                  )}
-                  <View style={styles.locationInfoRow}>
-                    <View style={[styles.locationIconBadge, { backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.15) : withAlpha(theme.tint, 0.14) }]}>
-                      <MaterialCommunityIcons
-                        name={item.location?.live ? "map-marker-radius-outline" : "map-marker-outline"}
-                        size={16}
-                        color={isMyMessage ? Colors.light.background : theme.tint}
+                  <View style={styles.locationMapFrame}>
+                    {item.location?.mapUrl ? (
+                      <Image
+                        source={{ uri: item.location.mapUrl }}
+                        style={styles.locationMapImage}
                       />
-                    </View>
-                    <View style={styles.locationTextBlock}>
-                      <Text
-                        style={[
-                          styles.locationLabelText,
-                          { color: isMyMessage ? Colors.light.background : theme.text },
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {item.location?.label || 'Shared location'}
-                      </Text>
-                      {item.location?.address ? (
+                    ) : (
+                      <View style={styles.locationMapPlaceholder}>
+                        <MaterialCommunityIcons name="map-outline" size={28} color={theme.textMuted} />
+                        <Text style={[styles.locationPlaceholderText, { color: theme.textMuted }]}>
+                          Map preview
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                  <View
+                    style={[
+                      styles.locationDetailsCard,
+                      isMyMessage ? styles.locationDetailsCardMy : styles.locationDetailsCardTheir,
+                    ]}
+                  >
+                    <View style={styles.locationInfoRow}>
+                      <View style={[styles.locationIconBadge, { backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.15) : withAlpha(theme.tint, 0.14) }]}>
+                        <MaterialCommunityIcons
+                          name={item.location?.live ? "map-marker-radius-outline" : "map-marker-outline"}
+                          size={16}
+                          color={isMyMessage ? Colors.light.background : theme.tint}
+                        />
+                      </View>
+                      <View style={styles.locationTextBlock}>
                         <Text
                           style={[
-                            styles.locationAddressText,
-                            { color: isMyMessage ? withAlpha(Colors.light.background, 0.75) : theme.textMuted },
+                            styles.locationLabelText,
+                            { color: isMyMessage ? Colors.light.background : theme.text },
                           ]}
                           numberOfLines={1}
                         >
-                          {item.location.address}
+                          {item.location?.label || 'Shared location'}
                         </Text>
-                      ) : null}
+                        {item.location?.address ? (
+                          <Text
+                            style={[
+                              styles.locationAddressText,
+                              { color: isMyMessage ? withAlpha(Colors.light.background, 0.75) : theme.textMuted },
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {item.location.address}
+                          </Text>
+                        ) : null}
+                      </View>
                     </View>
-                  </View>
-                  <View style={styles.locationRouteRow}>
-                    <MaterialCommunityIcons
-                      name="navigation-variant-outline"
-                      size={12}
-                      color={isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted}
-                    />
-                    <Text
+                    <View
                       style={[
-                        styles.locationRouteText,
-                        { color: isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted },
+                        styles.locationRouteRow,
+                        isMyMessage ? styles.locationRoutePillMy : styles.locationRoutePillTheir,
                       ]}
                     >
-                      Tap for directions
-                    </Text>
-                    <MaterialCommunityIcons
-                      name="chevron-right"
-                      size={14}
-                      color={isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted}
-                    />
-                  </View>
-                  {item.location?.live && (
-                    <View style={styles.locationLiveRow}>
-                      <View style={[styles.locationLiveBadge, { backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.18) : withAlpha(theme.secondary, 0.18) }]}>
-                        <Text
-                          style={[
-                            styles.locationLiveBadgeText,
-                            { color: isMyMessage ? Colors.light.background : theme.secondary },
-                          ]}
-                        >
-                          Live
-                        </Text>
-                      </View>
+                      <MaterialCommunityIcons
+                        name="navigation-variant-outline"
+                        size={12}
+                        color={isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted}
+                      />
                       <Text
                         style={[
-                          styles.locationLiveText,
+                          styles.locationRouteText,
                           { color: isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted },
                         ]}
                       >
-                        {locationRemaining || 'Live'}
+                        Tap for directions
                       </Text>
-                      {isMyMessage && locationIsActive && (
-                        <TouchableOpacity
-                          style={[
-                            styles.locationStopButton,
-                            { borderColor: isMyMessage ? withAlpha(Colors.light.background, 0.45) : withAlpha(theme.text, 0.2) },
-                          ]}
-                          onPress={(event) => {
-                            if (event?.stopPropagation) {
-                              event.stopPropagation();
-                            }
-                            onStopLiveShare(item.id);
-                          }}
-                        >
+                      <MaterialCommunityIcons
+                        name="chevron-right"
+                        size={14}
+                        color={isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted}
+                      />
+                    </View>
+                    {item.location?.live && (
+                      <View style={styles.locationLiveRow}>
+                        <View style={[styles.locationLiveBadge, { backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.18) : withAlpha(theme.secondary, 0.18) }]}>
                           <Text
                             style={[
-                              styles.locationStopText,
-                              { color: isMyMessage ? Colors.light.background : theme.text },
+                              styles.locationLiveBadgeText,
+                              { color: isMyMessage ? Colors.light.background : theme.secondary },
                             ]}
                           >
-                            Stop sharing
+                            Live
                           </Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  )}
+                        </View>
+                        <Text
+                          style={[
+                            styles.locationLiveText,
+                            { color: isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted },
+                          ]}
+                        >
+                          {locationRemaining || 'Live'}
+                        </Text>
+                        {isMyMessage && locationIsActive && (
+                          <TouchableOpacity
+                            style={[
+                              styles.locationStopButton,
+                              { borderColor: isMyMessage ? withAlpha(Colors.light.background, 0.45) : withAlpha(theme.text, 0.2) },
+                            ]}
+                            onPress={(event) => {
+                              if (event?.stopPropagation) {
+                                event.stopPropagation();
+                              }
+                              onStopLiveShare(item.id);
+                            }}
+                          >
+                            <Text
+                              style={[
+                                styles.locationStopText,
+                                { color: isMyMessage ? Colors.light.background : theme.text },
+                              ]}
+                            >
+                              Stop sharing
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    )}
+                  </View>
                 </View>
               ) : item.type === 'document' ? (
                 <View style={styles.documentMessageContainer}>
@@ -2622,10 +2895,22 @@ const MessageRowItem = memo(
                     >
                       {item.document?.name || 'Document'}
                     </Text>
-                    <Text style={[styles.documentHint, { color: isMyMessage ? withAlpha(Colors.light.background, 0.7) : theme.textMuted }]}>
-                      {documentMeta || 'Tap to open'}
-                    </Text>
+                    <View
+                      style={[
+                        styles.documentMetaPill,
+                        isMyMessage ? styles.documentMetaPillMy : styles.documentMetaPillTheir,
+                      ]}
+                    >
+                      <Text style={[styles.documentHint, { color: isMyMessage ? withAlpha(Colors.light.background, 0.78) : theme.textMuted }]}>
+                        {documentMeta || 'Tap to open'}
+                      </Text>
+                    </View>
                   </View>
+                  <MaterialCommunityIcons
+                    name="chevron-right"
+                    size={18}
+                    color={isMyMessage ? withAlpha(Colors.light.background, 0.76) : theme.textMuted}
+                  />
                 </View>
               ) : item.type === 'mood_sticker' ? (
                 <View style={[styles.moodStickerContainer, { backgroundColor: withAlpha(item.sticker?.color || theme.tint, 0.12) }]}>
@@ -2637,10 +2922,13 @@ const MessageRowItem = memo(
               ) : null}
 
             {item.type !== 'text' && item.type !== 'video' && item.type !== 'image' && (
-              <View
+              <Animated.View
                 style={[
                   styles.messageMetaRow,
                   isMyMessage ? styles.messageMetaRight : styles.messageMetaLeft,
+                  isMyMessage ? styles.receiptMetaBadge : null,
+                  isMyMessage ? receiptBadgeToneStyle : null,
+                  isMyMessage ? receiptPulseStyle : null,
                 ]}
                 pointerEvents="none"
               >
@@ -2654,58 +2942,41 @@ const MessageRowItem = memo(
                 </Text>
                 {isMyMessage && (
                   <MaterialCommunityIcons
-                    name={item.status === 'read' ? 'check-all' : item.status === 'delivered' ? 'check-all' : item.status === 'sent' ? 'check' : 'clock-outline'}
-                    size={12}
-                    color={item.status === 'read' ? theme.secondary : withAlpha(Colors.light.background, 0.8)}
+                    name={receiptIcon?.name || 'clock-outline'}
+                    size={receiptIcon?.size || 13}
+                    color={receiptIcon?.color || '#C6D7D3'}
                     style={styles.messageMetaIcon}
                   />
                 )}
-              </View>
+              </Animated.View>
             )}
 
             {reactionNodes}
-            {reactionInlineLabel ? (
+
+            {!isGroupedWithNext ? (
               <View
-                style={[
-                  styles.reactionInlinePill,
-                  isMyMessage ? styles.reactionInlinePillMy : styles.reactionInlinePillTheir,
-                ]}
                 pointerEvents="none"
+                style={[
+                  styles.bubbleTail,
+                  isMyMessage ? styles.bubbleTailRight : styles.bubbleTailLeft,
+                ]}
               >
-                <Text
-                  style={[
-                    styles.reactionInlineText,
-                    isMyMessage ? styles.reactionInlineTextMy : styles.reactionInlineTextTheir,
-                    { color: isMyMessage ? Colors.light.background : theme.textMuted },
-                  ]}
-                  numberOfLines={1}
+                <RNSvg
+                  width="100%"
+                  height="100%"
+                  viewBox="0 0 16 18"
+                  style={!isMyMessage ? styles.bubbleTailSvgLeft : undefined}
                 >
-                  {reactionInlineLabel}
-                </Text>
+                  <Path
+                    d={CHAT_BUBBLE_TAIL_PATH}
+                    fill={bubbleTailFill}
+                    stroke={bubbleTailStroke}
+                    strokeWidth={bubbleTailStrokeWidth}
+                  />
+                </RNSvg>
               </View>
             ) : null}
-
-            <View
-              pointerEvents="none"
-              style={[
-                styles.bubbleTail,
-                isMyMessage ? styles.bubbleTailRight : styles.bubbleTailLeft,
-                {
-                  backgroundColor: item.deletedForAll
-                    ? withAlpha(theme.backgroundSubtle, isDark ? 0.6 : 0.85)
-                    : isMyMessage
-                    ? theme.tint
-                    : theme.backgroundSubtle,
-                  borderWidth: item.deletedForAll ? 1 : isMyMessage ? 0.5 : 1,
-                  borderColor: item.deletedForAll
-                    ? withAlpha(theme.text, isDark ? 0.2 : 0.12)
-                    : isMyMessage
-                    ? withAlpha(Colors.light.background, 0.15)
-                    : withAlpha(theme.text, isDark ? 0.14 : 0.08),
-                },
-              ]}
-            />
-          </View>
+          </Animated.View>
         </Pressable>
 
         {isReactionOpen && (
@@ -2800,13 +3071,17 @@ const MessageRowItem = memo(
             </TouchableOpacity>
           </View>
         )}
-      </View>
+      </Animated.View>
     );
   },
   (prev, next) =>
     prev.item === next.item &&
     prev.isMyMessage === next.isMyMessage &&
     prev.showAvatar === next.showAvatar &&
+    prev.showAvatarSpacer === next.showAvatarSpacer &&
+    prev.isGroupedWithPrev === next.isGroupedWithPrev &&
+    prev.isGroupedWithNext === next.isGroupedWithNext &&
+    prev.shouldAnimateEntry === next.shouldAnimateEntry &&
     prev.isPlaying === next.isPlaying &&
     prev.isReactionOpen === next.isReactionOpen &&
     prev.isFocused === next.isFocused &&
@@ -2837,14 +3112,13 @@ const MessageRowItem = memo(
     prev.onHighlightPress === next.onHighlightPress &&
     prev.imageSize?.width === next.imageSize?.width &&
     prev.imageSize?.height === next.imageSize?.height &&
-    prev.videoSize?.width === next.videoSize?.width &&
-    prev.videoSize?.height === next.videoSize?.height &&
     prev.now === next.now
 );
 
 MessageRowItem.displayName = "MessageRowItem";
 
 export default function ConversationScreen() {
+  const insets = useSafeAreaInsets();
   const { user, profile } = useAuth();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
@@ -3004,6 +3278,8 @@ export default function ConversationScreen() {
   useEffect(() => {
     // When switching threads, allow the safety prompt to re-evaluate (but it will still be deduped via AsyncStorage).
     setMessagesLoaded(false);
+    seededMessageAnimationsRef.current = false;
+    animatedMessageIdsRef.current.clear();
   }, [routeId]);
 
   useEffect(() => {
@@ -3018,6 +3294,8 @@ export default function ConversationScreen() {
   const [reportModalVisible, setReportModalVisible] = useState(false);
   const [reportReasonId, setReportReasonId] = useState<string | null>(null);
   const [reportDetails, setReportDetails] = useState('');
+  const [reportShouldBlock, setReportShouldBlock] = useState(false);
+  const [reportEvidenceMessage, setReportEvidenceMessage] = useState<MessageType | null>(null);
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [blockStatus, setBlockStatus] = useState<string | null>(null);
   const [showMoodStickers, setShowMoodStickers] = useState(false);
@@ -3025,6 +3303,8 @@ export default function ConversationScreen() {
   const [isRecordingPaused, setIsRecordingPaused] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [isUploadingVoice, setIsUploadingVoice] = useState(false);
+  const [mediaUploadStatus, setMediaUploadStatus] = useState<MediaUploadStatus | null>(null);
+  const [isInputFocused, setIsInputFocused] = useState(false);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [showImagePicker, setShowImagePicker] = useState(false);
   const [replyingTo, setReplyingTo] = useState<MessageType | null>(null);
@@ -3045,7 +3325,7 @@ export default function ConversationScreen() {
   const [videoViewerUrl, setVideoViewerUrl] = useState<string | null>(null);
   const [documentViewerUrl, setDocumentViewerUrl] = useState<string | null>(null);
   const [imageSizes, setImageSizes] = useState<Record<string, { width: number; height: number }>>({});
-  const [videoSizes, setVideoSizes] = useState<Record<string, { width: number; height: number }>>({});
+  const measuredImageUrlsRef = useRef<Set<string>>(new Set());
   const [locationModalVisible, setLocationModalVisible] = useState(false);
   const [locationViewerMessageId, setLocationViewerMessageId] = useState<string | null>(null);
   const [locationSearchQuery, setLocationSearchQuery] = useState('');
@@ -3086,6 +3366,9 @@ export default function ConversationScreen() {
   const [reactionSheetEmoji, setReactionSheetEmoji] = useState<string | null>(null);
   const [reactionProfiles, setReactionProfiles] = useState<Record<string, { name: string; avatar?: string | null }>>({});
   const [reactionProfilesLoading, setReactionProfilesLoading] = useState(false);
+  const pendingReadTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const pendingReceiptSyncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const pendingDeliveredHintTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const showLocationLoading = locationLoading && !currentCoords && !locationError;
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
@@ -3413,6 +3696,17 @@ export default function ConversationScreen() {
   }, [betweenerVenues, peerProfile?.city, peerProfile?.location, peerProfile?.region]);
 
   const renderedMessages = useMemo(() => dedupeMessagesById(messages), [messages]);
+  const hasActiveLiveLocationMessage = useMemo(
+    () =>
+      renderedMessages.some((message) => {
+      if (message.type !== 'location' || !message.location?.live || !message.location.expiresAt) {
+        return false;
+      }
+      return message.location.expiresAt.getTime() > nowTick;
+      }),
+    [nowTick, renderedMessages],
+  );
+  const messageListNow = hasActiveLiveLocationMessage ? nowTick : null;
   const chatMessageCount = useMemo(
     () => renderedMessages.filter((message) => !message.isSystem).length,
     [renderedMessages],
@@ -3519,6 +3813,9 @@ export default function ConversationScreen() {
   
   const messagesRef = useRef<MessageType[]>([]);
   const flatListRef = useRef<FlatList>(null);
+  const messageListViewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
+  const animatedMessageIdsRef = useRef<Set<string>>(new Set());
+  const seededMessageAnimationsRef = useRef(false);
   const imageScaleBase = useRef(new Animated.Value(1)).current;
   const imagePinchScale = useRef(new Animated.Value(1)).current;
   const imageScaleRef = useRef(1);
@@ -3645,11 +3942,12 @@ export default function ConversationScreen() {
   };
 
   useEffect(() => {
+    if (!hasActiveLiveLocationMessage) return;
     const interval = setInterval(() => {
       setNowTick(Date.now());
     }, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [hasActiveLiveLocationMessage]);
 
   useEffect(() => {
     if (!locationModalVisible) {
@@ -3763,11 +4061,17 @@ export default function ConversationScreen() {
       }
     });
     const idSet = new Set(uniqueIds);
-    setMessages((prev) =>
-      prev.map((msg) =>
-        idSet.has(msg.id) ? { ...msg, reactions: grouped.get(msg.id) ?? [] } : msg
-      )
-    );
+    setMessages((prev) => {
+      let changed = false;
+      const next = prev.map((msg) => {
+        if (!idSet.has(msg.id)) return msg;
+        const nextReactions = grouped.get(msg.id) ?? [];
+        if (areReactionListsEqual(msg.reactions, nextReactions)) return msg;
+        changed = true;
+        return { ...msg, reactions: nextReactions };
+      });
+      return changed ? next : prev;
+    });
   }, [user?.id]);
 
   const syncViewOnceStatus = useCallback(async (messageIds: string[]) => {
@@ -4311,6 +4615,33 @@ export default function ConversationScreen() {
     [user?.id]
   );
 
+  const reconcileDeliveredFallback = useCallback(
+    (items: MessageType[]) => {
+      const currentUserId = user?.id ?? '';
+      let latestPeerMessageAt: number | null = null;
+      return items.map((item) => {
+        const isPeerMessage =
+          item.senderId !== currentUserId &&
+          item.type !== 'system' &&
+          !String(item.id).startsWith('system:');
+        if (isPeerMessage) {
+          latestPeerMessageAt = item.timestamp.getTime();
+          return item;
+        }
+        if (
+          item.senderId === currentUserId &&
+          item.status === 'sent' &&
+          latestPeerMessageAt !== null &&
+          item.timestamp.getTime() <= latestPeerMessageAt
+        ) {
+          return { ...item, status: 'delivered' as const };
+        }
+        return item;
+      });
+    },
+    [user?.id]
+  );
+
   const mapSystemRowToMessage = useCallback((row: SystemMessageRow): MessageType => {
     return {
       id: `system:${row.id}`,
@@ -4335,6 +4666,18 @@ export default function ConversationScreen() {
       if (msg.replyTo && msg.replyTo.id === target.id) return msg;
       return { ...msg, replyTo: target };
     });
+  }, []);
+
+  const replaceMessageById = useCallback((
+    items: MessageType[],
+    messageId: string,
+    replacement: MessageType
+  ) => {
+    const index = items.findIndex((msg) => msg.id === messageId);
+    if (index === -1) return items;
+    const next = items.slice();
+    next[index] = replacement;
+    return next;
   }, []);
 
   const fetchPinnedMessages = useCallback(async () => {
@@ -4402,6 +4745,22 @@ export default function ConversationScreen() {
       !actionMessage.id.startsWith('temp-')
     );
   }, [actionMessage, user?.id]);
+
+  const canReportActionMessage = useMemo(() => {
+    if (!actionMessage || !user?.id) return false;
+    return (
+      actionMessage.senderId !== user.id &&
+      actionMessage.type !== 'system' &&
+      !actionMessage.isSystem &&
+      !actionMessage.deletedForAll &&
+      !actionMessage.id.startsWith('temp-')
+    );
+  }, [actionMessage, user?.id]);
+
+  const reportEvidencePreview = useMemo(
+    () => getReportEvidencePreview(reportEvidenceMessage),
+    [reportEvidenceMessage]
+  );
 
   const reactionSheetMessage = useMemo(() => {
     if (!reactionSheetMessageId) return null;
@@ -4628,6 +4987,15 @@ export default function ConversationScreen() {
     },
     [],
   );
+  const handleSuggestAnotherTime = useCallback((invite: MessageType['dateInvite']) => {
+    openCounterDatePlanner(invite, 'counter_time');
+  }, [openCounterDatePlanner]);
+  const handleSuggestAnotherPlace = useCallback((invite: MessageType['dateInvite']) => {
+    openCounterDatePlanner(invite, 'counter_place');
+  }, [openCounterDatePlanner]);
+  const handleSuggestBoth = useCallback((invite: MessageType['dateInvite']) => {
+    openCounterDatePlanner(invite, 'counter_both');
+  }, [openCounterDatePlanner]);
 
   const openRescheduleDatePlanner = useCallback((invite: MessageType['dateInvite']) => {
     if (!invite?.planId) return;
@@ -5123,25 +5491,62 @@ export default function ConversationScreen() {
   }) => {
     // Ensure we have an auth session for storage RLS
     const { data: sessionData } = await supabase.auth.getSession();
-    if (!sessionData.session) {
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) {
       throw new Error('unauthenticated_storage');
     }
     const filePath = `${user?.id ?? 'anon'}/${Date.now()}-${fileName}`;
-    const response = await fetch(uri);
-    const arrayBuffer = await response.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-    const { error: uploadError } = await supabase
-      .storage
-      .from(CHAT_MEDIA_BUCKET)
-      .upload(filePath, uint8Array, { contentType, upsert: true });
-    if (uploadError) {
-      console.log('[chat] upload media error', uploadError);
-      throw uploadError;
+    const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+    const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error('missing_supabase_upload_config');
     }
-    const { data } = supabase.storage
-      .from(CHAT_MEDIA_BUCKET)
-      .getPublicUrl(filePath);
-    return { publicUrl: data.publicUrl, filePath };
+
+    const uploadUrl = `${supabaseUrl}/storage/v1/object/${CHAT_MEDIA_BUCKET}/${encodeStoragePath(filePath)}?upsert=true`;
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt <= CHAT_MEDIA_UPLOAD_RETRIES; attempt += 1) {
+      try {
+        const task = FileSystem.createUploadTask(uploadUrl, uri, {
+          httpMethod: 'POST',
+          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+          headers: {
+            'Content-Type': contentType,
+            Authorization: `Bearer ${accessToken}`,
+            apikey: supabaseAnonKey,
+            'x-upsert': 'true',
+          },
+        });
+        const result = await task.uploadAsync();
+        if (!result) {
+          throw new Error('Upload failed (no response)');
+        }
+        if (result.status >= 200 && result.status < 300) {
+          const { data } = supabase.storage
+            .from(CHAT_MEDIA_BUCKET)
+            .getPublicUrl(filePath);
+          return { publicUrl: data.publicUrl, filePath };
+        }
+
+        let message = result.body || `Upload failed (HTTP ${result.status})`;
+        try {
+          const parsed = JSON.parse(result.body || '{}');
+          if (parsed?.message) message = String(parsed.message);
+        } catch {}
+        const uploadError = new Error(message);
+        (uploadError as any).status = result.status;
+        throw uploadError;
+      } catch (error) {
+        lastError = error;
+        if (attempt >= CHAT_MEDIA_UPLOAD_RETRIES || !isRetryableUploadError(error)) {
+          console.log('[chat] upload media error', error);
+          throw error;
+        }
+        await wait(CHAT_MEDIA_UPLOAD_RETRY_DELAY_MS * (attempt + 1));
+      }
+    }
+
+    throw lastError ?? new Error('upload_failed');
   }, [user?.id]);
 
   const uploadEncryptedChatMedia = useCallback(async ({
@@ -5270,15 +5675,14 @@ export default function ConversationScreen() {
         )
       );
     } else {
+      const nextMessage = mapRowToMessage(data as MessageRow);
       setMessages((prev) =>
-        linkReplies(
-          prev.map((msg) =>
-            msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
-          )
-        )
+        replyingTo
+          ? linkReplies(replaceMessageById(prev, tempId, nextMessage))
+          : replaceMessageById(prev, tempId, nextMessage)
       );
     }
-  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
+  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replaceMessageById, replyingTo, user?.id]);
 
   const sendImageAttachment = useCallback(async ({
     imageUrl,
@@ -5361,15 +5765,14 @@ export default function ConversationScreen() {
       console.log('[chat] send image error', error);
       setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
     } else {
+      const nextMessage = mapRowToMessage(data as MessageRow);
       setMessages((prev) =>
-        linkReplies(
-          prev.map((msg) =>
-            msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
-          )
-        )
+        replyingTo
+          ? linkReplies(replaceMessageById(prev, tempId, nextMessage))
+          : replaceMessageById(prev, tempId, nextMessage)
       );
     }
-  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
+  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replaceMessageById, replyingTo, user?.id]);
 
   const sendEncryptedMediaAttachment = useCallback(async ({
     uri,
@@ -5454,10 +5857,11 @@ export default function ConversationScreen() {
         console.log('[chat] send encrypted view-once error', error);
         setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
       } else {
+        const nextMessage = mapRowToMessage(data as MessageRow);
         setMessages((prev) =>
-          linkReplies(
-            prev.map((msg) => (msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg))
-          )
+          replyingTo
+            ? linkReplies(replaceMessageById(prev, tempId, nextMessage))
+            : replaceMessageById(prev, tempId, nextMessage)
         );
       }
     } catch (err) {
@@ -5465,7 +5869,7 @@ export default function ConversationScreen() {
       Alert.alert('View once', 'Unable to send encrypted media.');
       setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
     }
-  }, [conversationId, ensureViewOnceKeys, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, uploadEncryptedChatMedia, user?.id]);
+  }, [conversationId, ensureViewOnceKeys, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replaceMessageById, replyingTo, uploadEncryptedChatMedia, user?.id]);
 
   const sendVideoAttachment = useCallback(async ({
     videoUrl,
@@ -5548,15 +5952,14 @@ export default function ConversationScreen() {
       console.log('[chat] send video error', error);
       setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
     } else {
+      const nextMessage = mapRowToMessage(data as MessageRow);
       setMessages((prev) =>
-        linkReplies(
-          prev.map((msg) =>
-            msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
-          )
-        )
+        replyingTo
+          ? linkReplies(replaceMessageById(prev, tempId, nextMessage))
+          : replaceMessageById(prev, tempId, nextMessage)
       );
     }
-  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
+  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replaceMessageById, replyingTo, user?.id]);
 
   const sendLocationMessage = useCallback(async ({
     lat,
@@ -5848,6 +6251,31 @@ export default function ConversationScreen() {
     });
   }, [attachmentAnim, isBlockedByMe, isChatBlocked]);
 
+  const beginMediaUploadStatus = useCallback((
+    title: string,
+    subtitle: string,
+    icon: MediaUploadStatus['icon'] = 'cloud-upload-outline'
+  ) => {
+    const id = Date.now();
+    setMediaUploadStatus({ id, title, subtitle, icon });
+    return id;
+  }, []);
+
+  const updateMediaUploadStatus = useCallback((
+    id: number,
+    title: string,
+    subtitle: string,
+    icon: MediaUploadStatus['icon'] = 'cloud-upload-outline'
+  ) => {
+    setMediaUploadStatus((current) =>
+      current?.id === id ? { id, title, subtitle, icon } : current
+    );
+  }, []);
+
+  const clearMediaUploadStatus = useCallback((id: number) => {
+    setMediaUploadStatus((current) => (current?.id === id ? null : current));
+  }, []);
+
   const openLocationModal = useCallback(() => {
     closeAttachmentSheet();
     setLiveDurationMinutes(60);
@@ -5915,10 +6343,15 @@ export default function ConversationScreen() {
   }, [closeLocationModal, liveDurationMinutes, selectedPlace, sendLocationMessage, startLiveLocationUpdates]);
 
   const handleInputFocus = useCallback(() => {
+    setIsInputFocused(true);
     if (showImagePicker) {
       closeAttachmentSheet();
     }
   }, [closeAttachmentSheet, showImagePicker]);
+
+  const handleInputBlur = useCallback(() => {
+    setIsInputFocused(false);
+  }, []);
 
   const fetchSystemMessages = useCallback(async () => {
     if (!user?.id || !conversationId) return [] as MessageType[];
@@ -5962,7 +6395,7 @@ export default function ConversationScreen() {
     const ordered = mapped.reverse();
     const systemRows = await fetchSystemMessages();
     const combined = [...ordered, ...systemRows].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-    const linked = linkReplies(combined);
+    const linked = reconcileDeliveredFallback(linkReplies(combined));
     setMessages(linked);
     setMessagesLoaded(true);
     void syncMessageReactions(linked.map((msg) => msg.id).filter((id) => !id.startsWith('system:')));
@@ -5977,14 +6410,135 @@ export default function ConversationScreen() {
       .eq('receiver_id', user.id)
       .eq('sender_id', conversationId)
       .is('delivered_at', null);
+  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, reconcileDeliveredFallback, syncMessageReactions, syncViewOnceStatus, user?.id]);
 
-    await supabase
-      .from('messages')
-      .update({ is_read: true })
-      .eq('receiver_id', user.id)
-      .eq('sender_id', conversationId)
-      .eq('is_read', false);
-  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, syncMessageReactions, syncViewOnceStatus, user?.id]);
+  const clearPendingReadTimer = useCallback((messageId: string) => {
+    const timer = pendingReadTimersRef.current[messageId];
+    if (timer) {
+      clearTimeout(timer);
+      delete pendingReadTimersRef.current[messageId];
+    }
+  }, []);
+
+  const clearPendingReceiptSyncTimer = useCallback((messageId: string) => {
+    const timer = pendingReceiptSyncTimersRef.current[messageId];
+    if (timer) {
+      clearTimeout(timer);
+      delete pendingReceiptSyncTimersRef.current[messageId];
+    }
+  }, []);
+
+  const clearPendingDeliveredHintTimer = useCallback((messageId: string) => {
+    const timer = pendingDeliveredHintTimersRef.current[messageId];
+    if (timer) {
+      clearTimeout(timer);
+      delete pendingDeliveredHintTimersRef.current[messageId];
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      Object.values(pendingReadTimersRef.current).forEach((timer) => clearTimeout(timer));
+      pendingReadTimersRef.current = {};
+      Object.values(pendingReceiptSyncTimersRef.current).forEach((timer) => clearTimeout(timer));
+      pendingReceiptSyncTimersRef.current = {};
+      Object.values(pendingDeliveredHintTimersRef.current).forEach((timer) => clearTimeout(timer));
+      pendingDeliveredHintTimersRef.current = {};
+    };
+  }, []);
+
+  const hintOutgoingDelivered = useCallback(
+    (messageId: string) => {
+      if (pendingDeliveredHintTimersRef.current[messageId]) return;
+      pendingDeliveredHintTimersRef.current[messageId] = setTimeout(() => {
+        delete pendingDeliveredHintTimersRef.current[messageId];
+        setMessages((prev) => {
+          let changed = false;
+          const next = prev.map((msg) => {
+            if (msg.id !== messageId || msg.senderId !== user?.id) return msg;
+            if (msg.status === 'read' || msg.status === 'delivered') return msg;
+            changed = true;
+            return { ...msg, status: 'delivered' as const };
+          });
+          return changed ? next : prev;
+        });
+      }, 320);
+    },
+    [user?.id]
+  );
+
+  const syncOutgoingReceiptState = useCallback(
+    async (messageId: string): Promise<MessageType['status'] | null> => {
+      if (!user?.id) return null;
+      clearPendingReceiptSyncTimer(messageId);
+      const { data, error } = await supabase
+        .from('messages')
+        .select('id,is_read,delivered_at')
+        .eq('id', messageId)
+        .eq('sender_id', user.id)
+        .maybeSingle();
+      if (error || !data) return null;
+      clearPendingDeliveredHintTimer(messageId);
+      let resolvedStatus: MessageType['status'] | null = null;
+      setMessages((prev) => {
+        let changed = false;
+        const next = prev.map((msg) => {
+          if (msg.id !== messageId || msg.senderId !== user.id) return msg;
+          const nextStatus: MessageType['status'] = data.is_read
+            ? 'read'
+            : data.delivered_at
+              ? 'delivered'
+              : msg.status === 'sending'
+                ? 'sent'
+                : msg.status;
+          resolvedStatus = nextStatus;
+          const nextReadAt = data.is_read ? (msg.readAt ?? new Date()) : msg.readAt;
+          if (msg.status === nextStatus && msg.readAt === nextReadAt) return msg;
+          changed = true;
+          return {
+            ...msg,
+            status: nextStatus,
+            readAt: nextReadAt,
+          };
+        });
+        return changed ? next : prev;
+      });
+      return resolvedStatus;
+    },
+    [clearPendingDeliveredHintTimer, clearPendingReceiptSyncTimer, user?.id]
+  );
+
+  const scheduleOutgoingReceiptStateSync = useCallback(
+    (messageId: string, attempt = 0) => {
+      if (pendingReceiptSyncTimersRef.current[messageId]) return;
+      if (attempt === 0 && peerOnline) {
+        hintOutgoingDelivered(messageId);
+      }
+      pendingReceiptSyncTimersRef.current[messageId] = setTimeout(() => {
+        delete pendingReceiptSyncTimersRef.current[messageId];
+        void syncOutgoingReceiptState(messageId).then((status) => {
+          if ((status === 'sent' || status === 'sending' || status === null) && attempt < 5) {
+            scheduleOutgoingReceiptStateSync(messageId, attempt + 1);
+          }
+        });
+      }, attempt === 0 ? 500 : Math.min(2800, 900 + attempt * 450));
+    },
+    [hintOutgoingDelivered, peerOnline, syncOutgoingReceiptState]
+  );
+
+  const markOutgoingMessagesDelivered = useCallback(() => {
+    setMessages((prev) => {
+      let changed = false;
+      const next = prev.map((msg) => {
+        if (msg.senderId !== user?.id) return msg;
+        if (msg.status === 'read' || msg.status === 'delivered') return msg;
+        clearPendingDeliveredHintTimer(msg.id);
+        changed = true;
+        return { ...msg, status: 'delivered' as const };
+      });
+      return changed ? next : prev;
+    });
+  }, [clearPendingDeliveredHintTimer, user?.id]);
 
   useEffect(() => {
     if (!messagesLoaded) return;
@@ -6100,7 +6654,7 @@ export default function ConversationScreen() {
           setMessages((prev) => {
             if (hiddenMessageIdsRef.current.has(row.id)) return prev;
             if (prev.some((msg) => msg.id === row.id)) return prev;
-            return linkReplies([...prev, mapRowToMessage(row)]);
+            return reconcileDeliveredFallback(linkReplies([...prev, mapRowToMessage(row)]));
           });
           if (!hiddenMessageIdsRef.current.has(row.id)) {
             void syncMessageReactions([row.id]);
@@ -6114,11 +6668,6 @@ export default function ConversationScreen() {
             .eq('id', row.id)
             .eq('receiver_id', user.id)
             .is('delivered_at', null);
-          void supabase
-            .from('messages')
-            .update({ is_read: true })
-            .eq('id', row.id)
-            .eq('receiver_id', user.id);
         }
       )
       .on(
@@ -6135,11 +6684,13 @@ export default function ConversationScreen() {
           if (hiddenMessageIdsRef.current.has(row.id)) return;
           const nextMessage = mapRowToMessage(row);
           setMessages((prev) =>
-            linkReplies(
+            reconcileDeliveredFallback(
+              linkReplies(
               prev.map((msg) =>
                 msg.id === row.id
                   ? { ...nextMessage, reactions: msg.reactions }
                   : msg
+              )
               )
             )
           );
@@ -6175,15 +6726,18 @@ export default function ConversationScreen() {
             if (tempIndex >= 0) {
               const next = [...prev];
               next[tempIndex] = nextMessage;
-              return linkReplies(next);
+              return reconcileDeliveredFallback(linkReplies(next));
             }
-            return linkReplies([...prev, nextMessage]);
+            return reconcileDeliveredFallback(linkReplies([...prev, nextMessage]));
           });
           if (!hiddenMessageIdsRef.current.has(row.id)) {
             void syncMessageReactions([row.id]);
             if (row.is_view_once) {
               void syncViewOnceStatus([row.id]);
             }
+          }
+          if (!row.is_read && !row.delivered_at) {
+            scheduleOutgoingReceiptStateSync(row.id);
           }
         }
       )
@@ -6201,11 +6755,13 @@ export default function ConversationScreen() {
           if (hiddenMessageIdsRef.current.has(row.id)) return;
           const nextMessage = mapRowToMessage(row);
           setMessages((prev) =>
-            linkReplies(
+            reconcileDeliveredFallback(
+              linkReplies(
               prev.map((msg) =>
                 msg.id === row.id
                   ? { ...nextMessage, reactions: msg.reactions }
                   : msg
+              )
               )
             )
           );
@@ -6251,6 +6807,8 @@ export default function ConversationScreen() {
     linkReplies,
     mapRowToMessage,
     mapSystemRowToMessage,
+    reconcileDeliveredFallback,
+    scheduleOutgoingReceiptStateSync,
     syncMessageReactions,
     syncViewOnceStatus,
     triggerReconnectToast,
@@ -6371,13 +6929,29 @@ export default function ConversationScreen() {
           setPeerLastSeen(new Date());
         }
       })
+      .on('broadcast', { event: 'opened_thread' }, ({ payload }) => {
+        if (!payload || payload.senderId !== conversationId) return;
+        setPeerOnline(true);
+        setPeerLastSeen(null);
+        markOutgoingMessagesDelivered();
+      })
       .on('broadcast', { event: 'typing' }, ({ payload }) => {
         if (!payload || payload.senderId !== conversationId) return;
         setIsTyping(Boolean(payload.typing));
+        if (payload.typing) {
+          setPeerOnline(true);
+          setPeerLastSeen(null);
+          markOutgoingMessagesDelivered();
+        }
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           void presenceChannel.track({ onlineAt: new Date().toISOString(), typing: false });
+          void presenceChannel.send({
+            type: 'broadcast',
+            event: 'opened_thread',
+            payload: { senderId: user.id, threadWith: conversationId, openedAt: new Date().toISOString() },
+          });
         }
       });
 
@@ -6388,7 +6962,7 @@ export default function ConversationScreen() {
         clearTimeout(typingTimeoutRef.current);
       }
     };
-  }, [conversationId, user?.id]);
+  }, [conversationId, markOutgoingMessagesDelivered, user?.id]);
 
   useEffect(() => {
     if (!user?.id || !conversationId) return;
@@ -6409,14 +6983,19 @@ export default function ConversationScreen() {
   const markAsRead = useCallback(
     async (messageId: string) => {
       if (!user?.id || !conversationId) return;
-      setMessages((prev) =>
-        prev.map((msg) => {
+      clearPendingReadTimer(messageId);
+      setMessages((prev) => {
+        let changed = false;
+        const next = prev.map((msg) => {
           if (msg.id === messageId && msg.senderId !== user.id) {
-            return { ...msg, status: 'read', readAt: new Date() };
+            if (msg.status === 'read' && msg.readAt) return msg;
+            changed = true;
+            return { ...msg, status: 'read' as const, readAt: new Date() };
           }
           return msg;
-        })
-      );
+        });
+        return changed ? next : prev;
+      });
       const { error } = await supabase
         .from('messages')
         .update({ is_read: true })
@@ -6426,7 +7005,18 @@ export default function ConversationScreen() {
         console.log('[chat] markAsRead error', error);
       }
     },
-    [conversationId, user?.id]
+    [clearPendingReadTimer, conversationId, user?.id]
+  );
+
+  const scheduleMarkAsRead = useCallback(
+    (messageId: string) => {
+      if (pendingReadTimersRef.current[messageId]) return;
+      pendingReadTimersRef.current[messageId] = setTimeout(() => {
+        delete pendingReadTimersRef.current[messageId];
+        void markAsRead(messageId);
+      }, 2400);
+    },
+    [markAsRead]
   );
 
   useEffect(() => {
@@ -6890,6 +7480,7 @@ export default function ConversationScreen() {
           })
         )
       );
+      scheduleOutgoingReceiptStateSync(data.id as string);
     }
 
     setTimeout(() => {
@@ -6957,7 +7548,8 @@ export default function ConversationScreen() {
         )
       )
     );
-  }, [peerResolved, conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
+    scheduleOutgoingReceiptStateSync(data.id as string);
+  }, [peerResolved, conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, scheduleOutgoingReceiptStateSync, user?.id]);
 
   const addReaction = useCallback(async (messageId: string, emoji: string) => {
     if (!user?.id) return;
@@ -7290,6 +7882,7 @@ export default function ConversationScreen() {
             )
           )
         );
+        scheduleOutgoingReceiptStateSync(data.id as string);
       }
     } catch (error) {
       console.log('[chat] voice message error', error);
@@ -7298,7 +7891,7 @@ export default function ConversationScreen() {
     } finally {
       setIsUploadingVoice(false);
     }
-  }, [conversationId, isUploadingVoice, linkReplies, mapRowToMessage, recordingDuration, replyingTo, resetRecordingState, user?.id]);
+  }, [conversationId, isUploadingVoice, linkReplies, mapRowToMessage, recordingDuration, replyingTo, resetRecordingState, scheduleOutgoingReceiptStateSync, user?.id]);
 
   const stopVoicePlayback = useCallback(async () => {
     if (!voiceSoundRef.current) {
@@ -7366,20 +7959,31 @@ export default function ConversationScreen() {
   }, [playingVoiceId, stopVoicePlayback]);
 
   const handleCameraPress = useCallback(async () => {
+    if (mediaUploadStatus) {
+      Alert.alert('Upload in progress', 'Please wait for the current media upload to finish.');
+      return;
+    }
     const cameraStatus = await ImagePicker.requestCameraPermissionsAsync();
     if (!cameraStatus.granted) {
       Alert.alert('Camera access', 'Enable camera access to take photos or videos.');
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: getPickerMediaTypesAll(),
+      mediaTypes: PICKER_MEDIA_TYPES_ALL,
       quality: 0.85,
+      videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
       videoMaxDuration: 30,
     });
     if (result.canceled) return;
     closeAttachmentSheet();
     const asset = result.assets?.[0];
     if (!asset?.uri) return;
+    const mediaKind = asset.type === 'video' ? 'video' : 'photo';
+    const uploadStatusId = beginMediaUploadStatus(
+      viewOnceMode ? `Securing private ${mediaKind}...` : `Uploading ${mediaKind}...`,
+      'Keep this chat open while Betweener prepares your message.',
+      viewOnceMode ? 'shield-lock-outline' : 'cloud-upload-outline'
+    );
     try {
       const fallbackName = asset.fileName ?? asset.uri.split('/').pop() ?? `camera-${Date.now()}`;
       const baseContentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
@@ -7389,6 +7993,12 @@ export default function ConversationScreen() {
           : { uri: asset.uri, fileName: fallbackName, contentType: baseContentType };
 
       if (viewOnceMode) {
+        updateMediaUploadStatus(
+          uploadStatusId,
+          `Securing private ${mediaKind}...`,
+          'Encrypting and uploading this media for one-time viewing.',
+          'shield-lock-outline'
+        );
         await sendEncryptedMediaAttachment({
           uri: normalized.uri,
           fileName: normalized.fileName,
@@ -7396,36 +8006,72 @@ export default function ConversationScreen() {
           kind: asset.type === 'video' ? 'video' : 'image',
         });
       } else {
+        updateMediaUploadStatus(
+          uploadStatusId,
+          `Uploading ${mediaKind}...`,
+          'This can take a moment on larger videos.',
+          'cloud-upload-outline'
+        );
         const { publicUrl } = await uploadChatMedia({
           uri: normalized.uri,
           fileName: normalized.fileName,
           contentType: normalized.contentType,
         });
+        updateMediaUploadStatus(
+          uploadStatusId,
+          `Sending ${mediaKind}...`,
+          'Almost done.',
+          'send-outline'
+        );
         if (asset.type === 'image') {
           await sendImageAttachment({ imageUrl: publicUrl });
         } else {
           await sendVideoAttachment({ videoUrl: publicUrl });
         }
       }
-    } catch (_error) {
-      Alert.alert('Attachment', 'Unable to upload this file.');
+    } catch (error) {
+      Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
+    } finally {
+      clearMediaUploadStatus(uploadStatusId);
     }
-  }, [closeAttachmentSheet, sendEncryptedMediaAttachment, sendImageAttachment, sendVideoAttachment, uploadChatMedia, viewOnceMode]);
+  }, [
+    beginMediaUploadStatus,
+    clearMediaUploadStatus,
+    closeAttachmentSheet,
+    mediaUploadStatus,
+    sendEncryptedMediaAttachment,
+    sendImageAttachment,
+    sendVideoAttachment,
+    updateMediaUploadStatus,
+    uploadChatMedia,
+    viewOnceMode,
+  ]);
 
   const handleLibraryPress = useCallback(async () => {
+    if (mediaUploadStatus) {
+      Alert.alert('Upload in progress', 'Please wait for the current media upload to finish.');
+      return;
+    }
     const libraryStatus = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!libraryStatus.granted) {
       Alert.alert('Photos access', 'Enable photo access to share media.');
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: getPickerMediaTypesAll(),
+      mediaTypes: PICKER_MEDIA_TYPES_ALL,
       quality: 0.85,
+      videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
     });
     if (result.canceled) return;
     closeAttachmentSheet();
     const asset = result.assets?.[0];
     if (!asset?.uri) return;
+    const mediaKind = asset.type === 'video' ? 'video' : 'photo';
+    const uploadStatusId = beginMediaUploadStatus(
+      viewOnceMode ? `Securing private ${mediaKind}...` : `Uploading ${mediaKind}...`,
+      'Keep this chat open while Betweener prepares your message.',
+      viewOnceMode ? 'shield-lock-outline' : 'cloud-upload-outline'
+    );
     try {
       const fallbackName = asset.fileName ?? asset.uri.split('/').pop() ?? `library-${Date.now()}`;
       const baseContentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
@@ -7435,6 +8081,12 @@ export default function ConversationScreen() {
           : { uri: asset.uri, fileName: fallbackName, contentType: baseContentType };
 
       if (viewOnceMode) {
+        updateMediaUploadStatus(
+          uploadStatusId,
+          `Securing private ${mediaKind}...`,
+          'Encrypting and uploading this media for one-time viewing.',
+          'shield-lock-outline'
+        );
         await sendEncryptedMediaAttachment({
           uri: normalized.uri,
           fileName: normalized.fileName,
@@ -7442,40 +8094,85 @@ export default function ConversationScreen() {
           kind: asset.type === 'video' ? 'video' : 'image',
         });
       } else {
+        updateMediaUploadStatus(
+          uploadStatusId,
+          `Uploading ${mediaKind}...`,
+          'This can take a moment on larger videos.',
+          'cloud-upload-outline'
+        );
         const { publicUrl } = await uploadChatMedia({
           uri: normalized.uri,
           fileName: normalized.fileName,
           contentType: normalized.contentType,
         });
+        updateMediaUploadStatus(
+          uploadStatusId,
+          `Sending ${mediaKind}...`,
+          'Almost done.',
+          'send-outline'
+        );
         if (asset.type === 'image') {
           await sendImageAttachment({ imageUrl: publicUrl });
         } else {
           await sendVideoAttachment({ videoUrl: publicUrl });
         }
       }
-    } catch (_error) {
-      Alert.alert('Attachment', 'Unable to upload this file.');
+    } catch (error) {
+      Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
+    } finally {
+      clearMediaUploadStatus(uploadStatusId);
     }
-  }, [closeAttachmentSheet, sendEncryptedMediaAttachment, sendImageAttachment, sendVideoAttachment, uploadChatMedia, viewOnceMode]);
+  }, [
+    beginMediaUploadStatus,
+    clearMediaUploadStatus,
+    closeAttachmentSheet,
+    mediaUploadStatus,
+    sendEncryptedMediaAttachment,
+    sendImageAttachment,
+    sendVideoAttachment,
+    updateMediaUploadStatus,
+    uploadChatMedia,
+    viewOnceMode,
+  ]);
 
   const handleDocumentPress = useCallback(async () => {
+    if (mediaUploadStatus) {
+      Alert.alert('Upload in progress', 'Please wait for the current media upload to finish.');
+      return;
+    }
     const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
     if (result.canceled) return;
     closeAttachmentSheet();
     const asset = result.assets?.[0];
     if (!asset?.uri) return;
+    const uploadStatusId = beginMediaUploadStatus(
+      'Uploading file...',
+      asset.name ? `Preparing ${asset.name}` : 'Keep this chat open while Betweener prepares your file.',
+      'file-upload-outline'
+    );
     try {
       const fileName = asset.name ?? asset.uri.split('/').pop() ?? `file-${Date.now()}`;
       const contentType = asset.mimeType ?? 'application/octet-stream';
       const { publicUrl } = await uploadChatMedia({ uri: asset.uri, fileName, contentType });
+      updateMediaUploadStatus(uploadStatusId, 'Sending file...', 'Almost done.', 'send-outline');
       const sizeLabel = formatFileSize(asset.size);
       const typeLabel = getFileTypeLabel(contentType, fileName);
       const labelParts = [fileName, sizeLabel, typeLabel].filter(Boolean);
       await sendAttachmentText(`${DOCUMENT_TEXT_PREFIX} ${labelParts.join(' | ')}\n${publicUrl}`);
-    } catch (_error) {
-      Alert.alert('Attachment', 'Unable to upload this file.');
+    } catch (error) {
+      Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
+    } finally {
+      clearMediaUploadStatus(uploadStatusId);
     }
-  }, [closeAttachmentSheet, sendAttachmentText, uploadChatMedia]);
+  }, [
+    beginMediaUploadStatus,
+    clearMediaUploadStatus,
+    closeAttachmentSheet,
+    mediaUploadStatus,
+    sendAttachmentText,
+    updateMediaUploadStatus,
+    uploadChatMedia,
+  ]);
 
   const handleLocationPress = useCallback(() => {
     if (isChatBlocked) {
@@ -7673,6 +8370,7 @@ export default function ConversationScreen() {
           style={styles.typingAvatar} 
         />
         <View style={styles.typingBubble}>
+          <Text style={styles.typingLabel}>{userName || 'Your match'} is typing</Text>
           <Animated.View style={styles.typingDots}>
             {[0, 1, 2].map((index) => (
               <Animated.View
@@ -7694,37 +8392,6 @@ export default function ConversationScreen() {
         </View>
       </View>
     );
-  };
-
-  const handleScroll = (event: any) => {
-    if (!hasAutoScrolledRef.current) return;
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    listMetricsRef.current = {
-      contentHeight: contentSize.height,
-      layoutHeight: layoutMeasurement.height,
-      offsetY: contentOffset.y,
-    };
-    if (Date.now() < lockAutoScrollUntilRef.current) {
-      shouldAutoScrollRef.current = true;
-      wasAtBottomRef.current = true;
-      updateJumpToBottomVisibility(0);
-      return;
-    }
-    const distanceToBottom =
-      contentSize.height - (contentOffset.y + layoutMeasurement.height);
-    const paddingToBottom = keyboardVisibleRef.current ? 200 : 60;
-    shouldAutoScrollRef.current =
-      distanceToBottom <= paddingToBottom;
-    wasAtBottomRef.current = distanceToBottom <= paddingToBottom;
-    updateJumpToBottomVisibility(distanceToBottom);
-
-    if (contentOffset.y <= 24 && hasMore && !loadingEarlier) {
-      const now = Date.now();
-      if (now - lastLoadTriggerRef.current > 800) {
-        lastLoadTriggerRef.current = now;
-        loadEarlier();
-      }
-    }
   };
 
   const getDistanceToBottom = useCallback(() => {
@@ -7764,6 +8431,37 @@ export default function ConversationScreen() {
       setShowJumpToBottom(shouldShow);
     }
   }, []);
+
+  const handleScroll = useCallback((event: any) => {
+    if (!hasAutoScrolledRef.current) return;
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    listMetricsRef.current = {
+      contentHeight: contentSize.height,
+      layoutHeight: layoutMeasurement.height,
+      offsetY: contentOffset.y,
+    };
+    if (Date.now() < lockAutoScrollUntilRef.current) {
+      shouldAutoScrollRef.current = true;
+      wasAtBottomRef.current = true;
+      updateJumpToBottomVisibility(0);
+      return;
+    }
+    const distanceToBottom =
+      contentSize.height - (contentOffset.y + layoutMeasurement.height);
+    const paddingToBottom = keyboardVisibleRef.current ? 200 : 60;
+    shouldAutoScrollRef.current =
+      distanceToBottom <= paddingToBottom;
+    wasAtBottomRef.current = distanceToBottom <= paddingToBottom;
+    updateJumpToBottomVisibility(distanceToBottom);
+
+    if (contentOffset.y <= 24 && hasMore && !loadingEarlier) {
+      const now = Date.now();
+      if (now - lastLoadTriggerRef.current > 800) {
+        lastLoadTriggerRef.current = now;
+        loadEarlier();
+      }
+    }
+  }, [hasMore, loadEarlier, loadingEarlier, updateJumpToBottomVisibility]);
 
   useEffect(() => {
     if (messages.length === 0) return;
@@ -7825,6 +8523,12 @@ export default function ConversationScreen() {
   }, []);
 
   messagesRef.current = renderedMessages;
+
+  useEffect(() => {
+    if (!messagesLoaded || seededMessageAnimationsRef.current) return;
+    animatedMessageIdsRef.current = new Set(renderedMessages.map((message) => message.id));
+    seededMessageAnimationsRef.current = true;
+  }, [messagesLoaded, renderedMessages]);
 
   useEffect(() => {
     if (visibleDatePlanIds.length === 0) {
@@ -7895,6 +8599,40 @@ export default function ConversationScreen() {
     }
   }, []);
 
+  const keyExtractor = useCallback((item: MessageType) => item.id, []);
+
+  const handleMessagesContentSizeChange = useCallback((_width: number, height: number) => {
+    listMetricsRef.current.contentHeight = height;
+    const paddingToBottom = keyboardVisibleRef.current ? 200 : 60;
+    updateJumpToBottomVisibility(getDistanceToBottom());
+    if (
+      shouldAutoScrollRef.current ||
+      wasAtBottomRef.current ||
+      getDistanceToBottom() <= paddingToBottom
+    ) {
+      maybeScrollToEnd(true);
+    }
+    ensureInitialScrollToBottom();
+  }, [ensureInitialScrollToBottom, getDistanceToBottom, maybeScrollToEnd, updateJumpToBottomVisibility]);
+
+  const handleMessagesLayout = useCallback((event: any) => {
+    listMetricsRef.current.layoutHeight = event.nativeEvent.layout.height;
+    wasAtBottomRef.current = true;
+    updateJumpToBottomVisibility(getDistanceToBottom());
+    if (shouldAutoScrollRef.current) {
+      maybeScrollToEnd(false);
+    }
+    ensureInitialScrollToBottom();
+  }, [ensureInitialScrollToBottom, getDistanceToBottom, maybeScrollToEnd, updateJumpToBottomVisibility]);
+
+  const handleScrollToIndexFailed = useCallback(({ index, averageItemLength }: any) => {
+    const offset = Math.max(0, averageItemLength * index);
+    flatListRef.current?.scrollToOffset({ offset, animated: true });
+    setTimeout(() => {
+      flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
+    }, 250);
+  }, []);
+
   const clearFocus = useCallback(() => {
     if (focusTimerRef.current) {
       clearTimeout(focusTimerRef.current);
@@ -7921,44 +8659,59 @@ export default function ConversationScreen() {
     const maxHeight = 420;
     const pending: string[] = [];
     messages.forEach((msg) => {
-      if (msg.type === 'image' && msg.imageUrl && !imageSizes[msg.imageUrl]) {
+      if (
+        msg.type === 'image' &&
+        msg.imageUrl &&
+        !imageSizes[msg.imageUrl] &&
+        !measuredImageUrlsRef.current.has(msg.imageUrl)
+      ) {
+        measuredImageUrlsRef.current.add(msg.imageUrl);
         pending.push(msg.imageUrl);
       }
     });
     if (pending.length === 0) return;
+    const measuredSizes: Record<string, { width: number; height: number }> = {};
+    let remaining = pending.length;
+    let cancelled = false;
+    const commitMeasuredSizes = () => {
+      remaining -= 1;
+      if (cancelled || remaining > 0) return;
+      setImageSizes((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        Object.entries(measuredSizes).forEach(([url, size]) => {
+          if (next[url]) return;
+          next[url] = size;
+          changed = true;
+        });
+        return changed ? next : prev;
+      });
+    };
     pending.forEach((url) => {
       Image.getSize(
         url,
         (width, height) => {
-          if (!width || !height) return;
+          if (!width || !height) {
+            measuredSizes[url] = { width: maxWidth, height: 240 };
+            commitMeasuredSizes();
+            return;
+          }
           const ratio = height / width;
           const scaledHeight = Math.round(maxWidth * ratio);
           const clampedHeight = Math.max(minHeight, Math.min(maxHeight, scaledHeight));
-          setImageSizes((prev) =>
-            prev[url] ? prev : { ...prev, [url]: { width: maxWidth, height: clampedHeight } }
-          );
+          measuredSizes[url] = { width: maxWidth, height: clampedHeight };
+          commitMeasuredSizes();
         },
         () => {
-          setImageSizes((prev) =>
-            prev[url] ? prev : { ...prev, [url]: { width: maxWidth, height: 240 } }
-          );
+          measuredSizes[url] = { width: maxWidth, height: 240 };
+          commitMeasuredSizes();
         }
       );
     });
-  }, [imageSizes, messages]);
-
-  const handleVideoSize = useCallback((url: string, width: number, height: number) => {
-    if (!url || !width || !height) return;
-    const maxWidth = Math.min(screenWidth * 0.72, 340);
-    const minHeight = 180;
-    const maxHeight = 420;
-    const ratio = height / width;
-    const scaledHeight = Math.round(maxWidth * ratio);
-    const clampedHeight = Math.max(minHeight, Math.min(maxHeight, scaledHeight));
-    setVideoSizes((prev) =>
-      prev[url] ? prev : { ...prev, [url]: { width: maxWidth, height: clampedHeight } }
-    );
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [messages]);
 
   const handleOpenDocument = useCallback((doc?: MessageType['document']) => {
     if (!doc?.url) return;
@@ -7982,14 +8735,24 @@ export default function ConversationScreen() {
   }, [setImageViewerUrl, setVideoViewerUrl]);
 
   const onViewableItemsChanged = useCallback(
-    ({ viewableItems }: { viewableItems: { item: MessageType }[] }) => {
+    ({
+      viewableItems,
+      changed,
+    }: {
+      viewableItems: { item: MessageType }[];
+      changed?: { item: MessageType; isViewable: boolean }[];
+    }) => {
+      changed?.forEach(({ item, isViewable }) => {
+        if (isViewable) return;
+        clearPendingReadTimer(item.id);
+      });
       viewableItems.forEach(({ item }) => {
         if (item.senderId !== (user?.id || '') && item.status !== 'read') {
-          markAsRead(item.id);
+          scheduleMarkAsRead(item.id);
         }
       });
     },
-    [markAsRead, user?.id]
+    [clearPendingReadTimer, scheduleMarkAsRead, user?.id]
   );
 
   const resetImageScale = useCallback(() => {
@@ -8357,8 +9120,35 @@ export default function ConversationScreen() {
       const isSystemMessage = item.type === 'system' || item.isSystem;
       const isMyMessage = !isSystemMessage && item.senderId === (user?.id || '');
       const prevMessage = messagesRef.current[index - 1];
-      const prevSenderId = prevMessage?.senderId;
-      const showAvatar = !isSystemMessage && !isMyMessage && !isChatBlocked && (index === 0 || prevSenderId !== item.senderId);
+      const nextMessage = messagesRef.current[index + 1];
+      const prevIsSystemMessage = prevMessage?.type === 'system' || prevMessage?.isSystem;
+      const nextIsSystemMessage = nextMessage?.type === 'system' || nextMessage?.isSystem;
+      const isGroupedWithPrev =
+        !isSystemMessage &&
+        Boolean(
+          prevMessage &&
+            !prevIsSystemMessage &&
+            prevMessage.senderId === item.senderId &&
+            isSameDay(prevMessage.timestamp, item.timestamp)
+        );
+      const isGroupedWithNext =
+        !isSystemMessage &&
+        Boolean(
+          nextMessage &&
+            !nextIsSystemMessage &&
+            nextMessage.senderId === item.senderId &&
+            isSameDay(nextMessage.timestamp, item.timestamp)
+        );
+      const showAvatar =
+        !isSystemMessage && !isMyMessage && !isChatBlocked && !isGroupedWithNext;
+      const showAvatarSpacer =
+        !isSystemMessage && !isMyMessage && !isChatBlocked && isGroupedWithNext;
+      const shouldAnimateEntry =
+        seededMessageAnimationsRef.current &&
+        !animatedMessageIdsRef.current.has(item.id);
+      if (shouldAnimateEntry) {
+        animatedMessageIdsRef.current.add(item.id);
+      }
       const isPlaying = playingVoiceId === item.id;
       const isReactionOpen = showReactions === item.id;
       const isFocused = focusedMessageId === item.id;
@@ -8366,8 +9156,7 @@ export default function ConversationScreen() {
       const timeLabel = formatTime(item.timestamp);
       const showDateSeparator = !prevMessage || !isSameDay(prevMessage.timestamp, item.timestamp);
       const imageSize = item.type === 'image' && item.imageUrl ? imageSizes[item.imageUrl] : undefined;
-      const videoSize = item.type === 'video' && item.videoUrl ? videoSizes[item.videoUrl] : undefined;
-      const now = item.type === 'location' ? nowTick : null;
+      const now = item.type === 'location' ? messageListNow : null;
       const viewOnceState = viewOnceStatus[item.id];
       const viewOnceViewedByMe = viewOnceState?.viewedByMe ?? false;
       const viewOnceViewedByPeer = viewOnceState?.viewedByPeer ?? false;
@@ -8383,6 +9172,10 @@ export default function ConversationScreen() {
             item={item}
             isMyMessage={isMyMessage}
             showAvatar={showAvatar}
+            showAvatarSpacer={showAvatarSpacer}
+            isGroupedWithPrev={isGroupedWithPrev}
+            isGroupedWithNext={isGroupedWithNext}
+            shouldAnimateEntry={shouldAnimateEntry}
             isPlaying={isPlaying}
             isReactionOpen={isReactionOpen}
             isFocused={isFocused}
@@ -8392,7 +9185,6 @@ export default function ConversationScreen() {
             currentUserId={user?.id || ''}
             peerName={userName}
             imageSize={imageSize}
-            videoSize={videoSize}
             theme={theme}
             isDark={isDark}
             styles={styles}
@@ -8412,15 +9204,14 @@ export default function ConversationScreen() {
             onOpenEditHistory={openEditHistory}
             onViewImage={setImageViewerUrl}
             onViewVideo={setVideoViewerUrl}
-            onVideoSize={handleVideoSize}
             onOpenDocument={handleOpenDocument}
             onOpenLocation={openLocationViewer}
             onStopLiveShare={stopLiveSharing}
             onOpenViewOnce={openViewOnceMessage}
             onAcceptDatePlan={handleAcceptDatePlan}
-            onSuggestAnotherTime={(invite) => openCounterDatePlanner(invite, 'counter_time')}
-            onSuggestAnotherPlace={(invite) => openCounterDatePlanner(invite, 'counter_place')}
-            onSuggestBoth={(invite) => openCounterDatePlanner(invite, 'counter_both')}
+            onSuggestAnotherTime={handleSuggestAnotherTime}
+            onSuggestAnotherPlace={handleSuggestAnotherPlace}
+            onSuggestBoth={handleSuggestBoth}
             onRescheduleDatePlan={openRescheduleDatePlanner}
             onCancelDatePlan={handleCancelDatePlan}
             onRequestDatePlanConcierge={handleRequestDatePlanConcierge}
@@ -8449,7 +9240,6 @@ export default function ConversationScreen() {
       theme,
       isDark,
       imageSizes,
-      videoSizes,
       isChatBlocked,
       handleLongPress,
       toggleVoicePlayback,
@@ -8464,9 +9254,10 @@ export default function ConversationScreen() {
       handleAcceptDatePlan,
       handleCancelDatePlan,
       handleAddDatePlanToCalendar,
-      handleVideoSize,
       handleOpenDocument,
-      openCounterDatePlanner,
+      handleSuggestAnotherTime,
+      handleSuggestAnotherPlace,
+      handleSuggestBoth,
       openRescheduleDatePlanner,
       handleRequestDatePlanConcierge,
       openLocationViewer,
@@ -8480,13 +9271,14 @@ export default function ConversationScreen() {
       openEditHistory,
       jumpToMessage,
       jumpToNextMatch,
-      nowTick,
+      messageListNow,
       focusMessage,
       pinnedMessageIds,
     ]
   );
 
-  const openReportModal = useCallback(() => {
+  const openReportModal = useCallback((message?: MessageType | null) => {
+    setReportEvidenceMessage(message ?? null);
     setReportModalVisible(true);
   }, []);
 
@@ -8494,8 +9286,44 @@ export default function ConversationScreen() {
     setReportModalVisible(false);
     setReportReasonId(null);
     setReportDetails('');
+    setReportShouldBlock(false);
+    setReportEvidenceMessage(null);
     setReportSubmitting(false);
   }, []);
+
+  const performBlockUser = useCallback(async (
+    options: { redirect?: boolean; showSuccessAlert?: boolean } = {}
+  ) => {
+    if (!user?.id || !conversationId) return;
+    const { redirect = true, showSuccessAlert = true } = options;
+    const { error } = await supabase
+      .from('blocks')
+      .insert({ blocker_id: user.id, blocked_id: conversationId });
+
+    if (error) {
+      if (error.code === '23505') {
+        if (showSuccessAlert) {
+          Alert.alert('Blocked', 'This member is already blocked.');
+        }
+        if (redirect) {
+          router.replace('/(tabs)/chat');
+        }
+        return true;
+      }
+      console.log('[chat] block user error', error);
+      Alert.alert('Block user', 'Unable to block this user right now.');
+      return false;
+    }
+
+    setBlockStatus(BLOCKED_BY_ME);
+    if (showSuccessAlert) {
+      Alert.alert('Blocked', 'This member has been blocked. They will not be notified.');
+    }
+    if (redirect) {
+      router.replace('/(tabs)/chat');
+    }
+    return true;
+  }, [conversationId, user?.id]);
 
   const submitReport = useCallback(async () => {
     if (!user?.id || !conversationId) return;
@@ -8509,10 +9337,14 @@ export default function ConversationScreen() {
     const details = reportDetails.trim();
     const reason = details ? `${reasonLabel}: ${details}` : reasonLabel;
 
-    const { error } = await supabase.from('reports').insert({
-      reporter_id: user.id,
-      reported_id: conversationId,
-      reason,
+    const { error } = await supabase.rpc('rpc_submit_report', {
+      p_reported_id: conversationId,
+      p_reason: reason,
+      p_evidence_message_id: reportEvidenceMessage?.id ?? null,
+      p_client_evidence: {
+        entry_point: reportEvidenceMessage ? 'message_options' : 'chat_options',
+        message_type: reportEvidenceMessage?.type ?? null,
+      },
     });
 
     if (error) {
@@ -8522,32 +9354,36 @@ export default function ConversationScreen() {
       return;
     }
 
+    const shouldBlockAfterReport = reportShouldBlock && !isBlockedByMe;
     setReportSubmitting(false);
     closeReportModal();
-    Alert.alert('Report sent', 'Thanks for letting us know.');
-  }, [closeReportModal, conversationId, reportDetails, reportReasonId, user?.id]);
 
-  const blockUser = useCallback(async () => {
-    if (!user?.id || !conversationId) return;
-    const { error } = await supabase
-      .from('blocks')
-      .insert({ blocker_id: user.id, blocked_id: conversationId });
-
-    if (error) {
-      if (error.code === '23505') {
-        Alert.alert('Blocked', 'This user is already blocked.');
-        router.replace('/(tabs)/chat');
-        return;
-      }
-      console.log('[chat] block user error', error);
-      Alert.alert('Block user', 'Unable to block this user right now.');
-      return;
+    let didBlock = false;
+    if (shouldBlockAfterReport) {
+      didBlock = Boolean(await performBlockUser({ redirect: true, showSuccessAlert: false }));
     }
 
-    setBlockStatus(BLOCKED_BY_ME);
-    Alert.alert('Blocked', 'This user has been blocked.');
-    router.replace('/(tabs)/chat');
-  }, [conversationId, user?.id]);
+    Alert.alert(
+      'Report sent',
+      didBlock
+        ? 'We will review this privately. This member is now blocked and will not be notified.'
+        : 'We will review this privately. They will not be notified.'
+    );
+  }, [
+    closeReportModal,
+    conversationId,
+    isBlockedByMe,
+    performBlockUser,
+    reportDetails,
+    reportEvidenceMessage,
+    reportReasonId,
+    reportShouldBlock,
+    user?.id,
+  ]);
+
+  const blockUser = useCallback(async () => {
+    await performBlockUser();
+  }, [performBlockUser]);
 
   const unblockUser = useCallback(async () => {
     if (!user?.id || !conversationId) return;
@@ -8578,6 +9414,13 @@ export default function ConversationScreen() {
 
   const handleCloseHeaderMenu = useCallback(() => {
     setHeaderMenuVisible(false);
+  }, []);
+
+  const runAfterHeaderMenuClose = useCallback((action: () => void) => {
+    setHeaderMenuVisible(false);
+    setTimeout(() => {
+      InteractionManager.runAfterInteractions(action);
+    }, 90);
   }, []);
 
   const closeChatSearch = useCallback(() => {
@@ -8724,11 +9567,20 @@ export default function ConversationScreen() {
     openReportModal();
   }, [conversationId, openReportModal]);
 
-  const handleHeaderLongPress = useCallback(() => {
+  const handleReportMessage = useCallback((message: MessageType) => {
+    if (!conversationId) return;
+    openReportModal(message);
+  }, [conversationId, openReportModal]);
+
+  const handleOpenHeaderMenu = useCallback(() => {
     dismissHeaderHint();
     Haptics.selectionAsync().catch(() => {});
     setHeaderMenuVisible(true);
   }, [dismissHeaderHint]);
+
+  const handleHeaderLongPress = useCallback(() => {
+    handleOpenHeaderMenu();
+  }, [handleOpenHeaderMenu]);
 
 
   const renderMoodStickersPanel = () => {
@@ -8782,6 +9634,7 @@ export default function ConversationScreen() {
     wide,
     destructive,
     badgeLabel,
+    description,
   }: {
     title: string;
     icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
@@ -8789,66 +9642,59 @@ export default function ConversationScreen() {
     wide?: boolean;
     destructive?: boolean;
     badgeLabel?: string | null;
+    description?: string;
   }) => {
-    const scale = useRef(new Animated.Value(1)).current;
-    const colors: [string, string] = destructive
-      ? ['#fecaca', '#fee2e2']
-      : [
-          withAlpha(theme.tint, isDark ? 0.32 : 0.2),
-          withAlpha(theme.accent, isDark ? 0.28 : 0.18),
-        ];
-
-    const handlePressIn = () => {
-      Animated.timing(scale, {
-        toValue: 0.97,
-        duration: 90,
-        useNativeDriver: true,
-      }).start();
-    };
-
-    const handlePressOut = () => {
-      Animated.spring(scale, {
-        toValue: 1,
-        speed: 20,
-        bounciness: 6,
-        useNativeDriver: true,
-      }).start();
-    };
-
     return (
-      <Pressable onPress={onPress} onPressIn={handlePressIn} onPressOut={handlePressOut}>
-        <Animated.View
-          style={[
-            styles.headerMenuCard,
-            wide && styles.headerMenuCardWide,
-            destructive && styles.headerMenuCardDestructive,
-            { transform: [{ scale }] },
-          ]}
-        >
-          <LinearGradient colors={colors} style={styles.headerMenuIconWrap}>
-            <MaterialCommunityIcons
-              name={icon}
-              size={18}
-              color={destructive ? '#b91c1c' : theme.tint}
-            />
-          </LinearGradient>
-          <View style={styles.headerMenuCardTextRow}>
+      <Pressable
+        hitSlop={10}
+        pressRetentionOffset={12}
+        onPress={onPress}
+        android_ripple={{
+          color: withAlpha(destructive ? '#ef4444' : theme.tint, isDark ? 0.18 : 0.12),
+          borderless: false,
+        }}
+        style={({ pressed }) => [
+          styles.headerMenuRow,
+          wide && styles.headerMenuRowProminent,
+          destructive && styles.headerMenuRowDestructive,
+          pressed && styles.headerMenuRowPressed,
+        ]}
+      >
+        <View style={[styles.headerMenuRowIcon, destructive && styles.headerMenuRowIconDestructive]}>
+          <MaterialCommunityIcons
+            name={icon}
+            size={18}
+            color={destructive ? '#fca5a5' : theme.tint}
+          />
+        </View>
+        <View style={styles.headerMenuRowCopy}>
+          <View style={styles.headerMenuRowTextStack}>
             <Text
               style={[
-                styles.headerMenuCardText,
-                destructive && styles.headerMenuCardTextDestructive,
+                styles.headerMenuRowTitle,
+                destructive && styles.headerMenuRowTitleDestructive,
               ]}
-              numberOfLines={2}
+              numberOfLines={1}
             >
               {title}
             </Text>
-            {badgeLabel ? (
-              <View style={styles.headerMenuBadge}>
-                <Text style={styles.headerMenuBadgeText}>{badgeLabel}</Text>
-              </View>
+            {description ? (
+              <Text style={styles.headerMenuRowDescription} numberOfLines={1}>
+                {description}
+              </Text>
             ) : null}
           </View>
-        </Animated.View>
+          {badgeLabel ? (
+            <View style={styles.headerMenuBadge}>
+              <Text style={styles.headerMenuBadgeText}>{badgeLabel}</Text>
+            </View>
+          ) : null}
+        </View>
+        <MaterialCommunityIcons
+          name="chevron-right"
+          size={18}
+          color={withAlpha(theme.text, isDark ? 0.5 : 0.42)}
+        />
       </Pressable>
     );
   };
@@ -8948,8 +9794,8 @@ export default function ConversationScreen() {
             <Text style={styles.headerStatus}>
               {isChatBlocked
                 ? isBlockedByMe
-                  ? 'Blocked'
-                  : 'Unavailable'
+                  ? 'Blocked privately'
+                  : 'Messaging unavailable'
                 : peerOnline
                 ? 'Active now'
                 : peerLastSeen
@@ -8965,7 +9811,23 @@ export default function ConversationScreen() {
           </View>
         </TouchableOpacity>
 
-        
+        <TouchableOpacity
+          style={[
+            styles.headerOptionsButton,
+            isChatBlocked && styles.headerOptionsButtonBlocked,
+          ]}
+          hitSlop={10}
+          onPress={handleOpenHeaderMenu}
+          accessibilityRole="button"
+          accessibilityLabel="Open chat options"
+          activeOpacity={0.82}
+        >
+          <MaterialCommunityIcons
+            name={isChatBlocked ? 'shield-lock-outline' : 'dots-horizontal'}
+            size={22}
+            color={isChatBlocked ? theme.tint : theme.text}
+          />
+        </TouchableOpacity>
       </View>
       {pendingIntentRequest ? (
         <View style={styles.intentBanner}>
@@ -8974,7 +9836,7 @@ export default function ConversationScreen() {
             <Text style={styles.intentBannerSubtitle}>
               {intentTypeLabel(pendingIntentRequest.type)}
               {pendingIntentRequest.expires_at
-                ? ` · Closes in ${intentExpiresIn(pendingIntentRequest.expires_at)}`
+                ? ` - Closes in ${intentExpiresIn(pendingIntentRequest.expires_at)}`
                 : ''}
             </Text>
           </View>
@@ -9073,7 +9935,7 @@ export default function ConversationScreen() {
             },
           ]}
         >
-          <Text style={styles.headerHintText}>Long-press header for options</Text>
+          <Text style={styles.headerHintText}>Use the menu for chat options</Text>
         </Animated.View>
       ) : null}
       <Modal
@@ -9661,121 +10523,126 @@ export default function ConversationScreen() {
       </Modal>
       <Modal
         transparent
+        statusBarTranslucent
         visible={headerMenuVisible}
         animationType="fade"
+        hardwareAccelerated
         onRequestClose={handleCloseHeaderMenu}
       >
-        <Pressable style={styles.headerMenuBackdrop} onPress={handleCloseHeaderMenu} />
-        <View style={styles.headerMenuSheet}>
-          <BlurView
-            intensity={32}
-            tint={isDark ? 'dark' : 'light'}
-            style={styles.headerMenuBlur}
-          />
-          <View style={styles.headerMenuContent}>
-            <Text style={styles.headerMenuTitle}>Chat options</Text>
-            <Text style={styles.headerMenuSectionLabel}>Quick</Text>
-            <View style={styles.headerMenuGrid}>
-              <MenuCard
-                title="View profile"
-                icon="account-outline"
-                onPress={() => {
-                  handleCloseHeaderMenu();
-                  handleViewProfile();
-                }}
-              />
-              <MenuCard
-                title="Search in chat"
-                icon="magnify"
-                onPress={() => {
-                  handleCloseHeaderMenu();
-                  handleSearchInChat();
-                }}
-              />
-              <MenuCard
-                title="Media, links & docs"
-                icon="image-multiple-outline"
-                wide
-                onPress={() => {
-                  handleCloseHeaderMenu();
-                  handleFilterMedia();
-                }}
-              />
-              <MenuCard
-                title="Suggest a date"
-                icon="calendar-heart"
-                wide
-                badgeLabel={canPlanDate ? 'Ready' : 'Locked'}
-                onPress={() => {
-                  handleCloseHeaderMenu();
-                  handleOpenDatePlanner();
-                }}
-              />
-            </View>
-            <Text style={styles.headerMenuSectionLabel}>Controls</Text>
-            <View style={styles.headerMenuGrid}>
-              <MenuCard
-                title={isChatMuted ? 'Unmute chat' : 'Mute chat'}
-                icon={isChatMuted ? 'volume-high' : 'volume-off'}
-                badgeLabel={isChatMuted ? 'On' : null}
-                onPress={() => {
-                  handleCloseHeaderMenu();
-                  handleToggleMute();
-                }}
-              />
-              <MenuCard
-                title={isChatPinned ? 'Unpin chat' : 'Pin chat'}
-                icon={isChatPinned ? 'pin-off-outline' : 'pin-outline'}
-                badgeLabel={isChatPinned ? 'On' : null}
-                onPress={() => {
-                  handleCloseHeaderMenu();
-                  handleTogglePin();
-                }}
-              />
-            </View>
-            <Text style={styles.headerMenuSectionLabel}>Safety</Text>
-            <View style={styles.headerMenuGrid}>
-              <MenuCard
-                title={clearChatLoading ? 'Clearing...' : 'Clear chat'}
-                icon="trash-can-outline"
-                destructive
-                onPress={() => {
-                  if (clearChatLoading) return;
-                  handleCloseHeaderMenu();
-                  handleClearChat();
-                }}
-                badgeLabel={clearChatLoading ? 'Working' : null}
-              />
-              <MenuCard
-                title={isBlockedByMe ? 'Unblock user' : 'Block user'}
-                icon="block-helper"
-                destructive
-                onPress={() => {
-                  handleCloseHeaderMenu();
-                  if (isBlockedByMe) {
-                    confirmUnblockUser();
-                  } else {
-                    handleBlockUser();
-                  }
-                }}
-              />
-              <MenuCard
-                title="Report user"
-                icon="alert-octagon-outline"
-                destructive
-                onPress={() => {
-                  handleCloseHeaderMenu();
-                  handleReportUser();
-                }}
-              />
-            </View>
+        <View style={styles.headerMenuModalRoot}>
+          <Pressable style={styles.headerMenuBackdrop} onPress={handleCloseHeaderMenu} />
+          <View style={[styles.headerMenuSheet, { marginBottom: Math.max(12, insets.bottom + 10) }]}>
+            <View style={styles.headerMenuHandle} />
+            <ScrollView
+              style={styles.headerMenuScroller}
+              contentContainerStyle={styles.headerMenuContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="always"
+              nestedScrollEnabled
+            >
+              <Text style={styles.headerMenuTitle}>Chat options</Text>
+              <Text style={styles.headerMenuSubtitle}>Private controls for this conversation.</Text>
+              <Text style={styles.headerMenuSectionLabel}>Quick</Text>
+              <View style={styles.headerMenuGrid}>
+                <MenuCard
+                  title="View profile"
+                  description="Open trust, photos, and details."
+                  icon="account-outline"
+                  onPress={() => {
+                    runAfterHeaderMenuClose(handleViewProfile);
+                  }}
+                />
+                <MenuCard
+                  title="Search in chat"
+                  description="Find a message in this thread."
+                  icon="magnify"
+                  onPress={() => {
+                    runAfterHeaderMenuClose(handleSearchInChat);
+                  }}
+                />
+                <MenuCard
+                  title="Media, links & docs"
+                  description="Browse shared attachments."
+                  icon="image-multiple-outline"
+                  wide
+                  onPress={() => {
+                    runAfterHeaderMenuClose(handleFilterMedia);
+                  }}
+                />
+                <MenuCard
+                  title="Suggest a date"
+                  description="Turn the chat into a real plan."
+                  icon="calendar-heart"
+                  wide
+                  badgeLabel={canPlanDate ? 'Ready' : 'Locked'}
+                  onPress={() => {
+                    runAfterHeaderMenuClose(handleOpenDatePlanner);
+                  }}
+                />
+              </View>
+              <Text style={styles.headerMenuSectionLabel}>Controls</Text>
+              <View style={styles.headerMenuGrid}>
+                <MenuCard
+                  title={isChatMuted ? 'Unmute chat' : 'Mute chat'}
+                  description={isChatMuted ? 'Notifications are silenced.' : 'Silence notifications for this chat.'}
+                  icon={isChatMuted ? 'volume-high' : 'volume-off'}
+                  badgeLabel={isChatMuted ? 'On' : null}
+                  onPress={() => {
+                    runAfterHeaderMenuClose(handleToggleMute);
+                  }}
+                />
+                <MenuCard
+                  title={isChatPinned ? 'Unpin chat' : 'Pin chat'}
+                  description={isChatPinned ? 'Remove from priority chats.' : 'Keep this chat easy to find.'}
+                  icon={isChatPinned ? 'pin-off-outline' : 'pin-outline'}
+                  badgeLabel={isChatPinned ? 'On' : null}
+                  onPress={() => {
+                    runAfterHeaderMenuClose(handleTogglePin);
+                  }}
+                />
+              </View>
+              <Text style={styles.headerMenuSectionLabel}>Safety</Text>
+              <View style={styles.headerMenuGrid}>
+                <MenuCard
+                  title={clearChatLoading ? 'Clearing...' : 'Clear chat'}
+                  description="Remove this thread from your device."
+                  icon="trash-can-outline"
+                  destructive
+                  onPress={() => {
+                    if (clearChatLoading) return;
+                    runAfterHeaderMenuClose(handleClearChat);
+                  }}
+                  badgeLabel={clearChatLoading ? 'Working' : null}
+                />
+                <MenuCard
+                  title={isBlockedByMe ? 'Unblock user' : 'Block user'}
+                  description={isBlockedByMe ? 'Allow messages again.' : 'They will not be notified.'}
+                  icon="block-helper"
+                  destructive
+                  onPress={() => {
+                    runAfterHeaderMenuClose(isBlockedByMe ? confirmUnblockUser : handleBlockUser);
+                  }}
+                />
+                <MenuCard
+                  title="Report user"
+                  description="Send a private safety report."
+                  icon="alert-octagon-outline"
+                  destructive
+                  onPress={() => {
+                    runAfterHeaderMenuClose(handleReportUser);
+                  }}
+                />
+              </View>
+            </ScrollView>
+            <TouchableOpacity
+              style={[styles.headerMenuItem, styles.headerMenuCancel]}
+              onPress={handleCloseHeaderMenu}
+              activeOpacity={0.8}
+              hitSlop={{ top: 4, bottom: 8, left: 0, right: 0 }}
+            >
+              <Text style={styles.headerMenuCancelText}>Cancel</Text>
+            </TouchableOpacity>
           </View>
-          <TouchableOpacity
-            style={[styles.headerMenuItem, styles.headerMenuCancel]}
-            onPress={handleCloseHeaderMenu}
-          >
-            <Text style={styles.headerMenuCancelText}>Cancel</Text>
-          </TouchableOpacity>
         </View>
       </Modal>
 
@@ -10275,6 +11142,27 @@ export default function ConversationScreen() {
                   </View>
                 </TouchableOpacity>
 
+                {canReportActionMessage ? (
+                  <TouchableOpacity
+                    style={[styles.messageActionCard, styles.messageActionDanger]}
+                    onPress={() => {
+                      triggerActionHaptic(Haptics.ImpactFeedbackStyle.Medium);
+                      closeMessageActions();
+                      handleReportMessage(actionMessage);
+                    }}
+                  >
+                    <View style={[styles.messageActionIcon, styles.messageActionIconDanger]}>
+                      <MaterialCommunityIcons name="alert-octagon-outline" size={22} color={Colors.light.background} />
+                    </View>
+                    <View style={styles.messageActionText}>
+                      <Text style={[styles.messageActionLabel, styles.messageActionLabelDanger]}>
+                        Report message
+                      </Text>
+                      <Text style={styles.messageActionHint}>Attach this message for review.</Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : null}
+
                 <TouchableOpacity
                   style={[styles.messageActionCard, styles.messageActionDanger]}
                   onPress={() => {
@@ -10445,10 +11333,27 @@ export default function ConversationScreen() {
             style={styles.reportBlur}
           />
           <View style={styles.reportContent}>
-            <Text style={styles.reportTitle}>Report {userName}</Text>
-            <Text style={styles.reportSubtitle}>
-              Help us understand what happened.
+            <Text style={styles.reportTitle}>
+              {reportEvidenceMessage ? 'Report message' : `Report ${userName}`}
             </Text>
+            <Text style={styles.reportSubtitle}>
+              {reportEvidenceMessage
+                ? 'This message will be attached privately for Betweener review.'
+                : 'Reports are private. Help us understand what happened so Betweener can review it.'}
+            </Text>
+            {reportEvidenceMessage && reportEvidencePreview ? (
+              <View style={styles.reportEvidenceCard}>
+                <View style={styles.reportEvidenceIcon}>
+                  <MaterialCommunityIcons name="message-alert-outline" size={17} color={theme.tint} />
+                </View>
+                <View style={styles.reportEvidenceCopy}>
+                  <Text style={styles.reportEvidenceLabel}>Message evidence</Text>
+                  <Text style={styles.reportEvidenceText} numberOfLines={3}>
+                    {reportEvidencePreview}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
             <View style={styles.reportReasonGrid}>
               {REPORT_REASONS.map((reason) => {
                 const isSelected = reportReasonId === reason.id;
@@ -10483,6 +11388,31 @@ export default function ConversationScreen() {
                 multiline
               />
             </View>
+            {!isBlockedByMe ? (
+              <TouchableOpacity
+                style={[
+                  styles.reportBlockOption,
+                  reportShouldBlock && styles.reportBlockOptionActive,
+                ]}
+                onPress={() => setReportShouldBlock((prev) => !prev)}
+                activeOpacity={0.85}
+              >
+                <View style={[
+                  styles.reportBlockCheck,
+                  reportShouldBlock && styles.reportBlockCheckActive,
+                ]}>
+                  {reportShouldBlock ? (
+                    <MaterialCommunityIcons name="check" size={14} color={Colors.light.background} />
+                  ) : null}
+                </View>
+                <View style={styles.reportBlockCopy}>
+                  <Text style={styles.reportBlockTitle}>Also block this member</Text>
+                  <Text style={styles.reportBlockText}>
+                    They will not be notified, and the chat will move out of your way.
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity
               style={[
                 styles.reportSubmitButton,
@@ -10494,7 +11424,9 @@ export default function ConversationScreen() {
               {reportSubmitting ? (
                 <ActivityIndicator size="small" color={Colors.light.background} />
               ) : (
-                <Text style={styles.reportSubmitText}>Send report</Text>
+                <Text style={styles.reportSubmitText}>
+                  {reportShouldBlock && !isBlockedByMe ? 'Send report & block' : 'Send report'}
+                </Text>
               )}
             </TouchableOpacity>
           </View>
@@ -10533,7 +11465,7 @@ export default function ConversationScreen() {
             </PinchGestureHandler>
           )}
           <TouchableOpacity
-            style={styles.imageViewerClose}
+            style={[styles.imageViewerClose, { top: Math.max(insets.top + 10, 18), right: 16 }]}
             onPress={closeImageViewer}
           >
             <MaterialCommunityIcons name="close" size={20} color={Colors.light.background} />
@@ -10559,7 +11491,7 @@ export default function ConversationScreen() {
             />
           )}
           <TouchableOpacity
-            style={styles.imageViewerClose}
+            style={[styles.imageViewerClose, { top: Math.max(insets.top + 10, 18), right: 16 }]}
             onPress={closeVideoViewer}
           >
             <MaterialCommunityIcons name="close" size={20} color={Colors.light.background} />
@@ -10585,7 +11517,7 @@ export default function ConversationScreen() {
             />
           )}
           <TouchableOpacity
-            style={styles.imageViewerClose}
+            style={[styles.imageViewerClose, { top: Math.max(insets.top + 10, 18), right: 16 }]}
             onPress={closeDocumentViewer}
           >
             <MaterialCommunityIcons name="close" size={20} color={Colors.light.background} />
@@ -10991,7 +11923,7 @@ export default function ConversationScreen() {
           ref={flatListRef}
           data={renderedMessages}
           renderItem={renderMessage}
-          keyExtractor={(item) => item.id}
+          keyExtractor={keyExtractor}
           contentContainerStyle={styles.messagesList}
           ListHeaderComponent={renderLoadEarlier}
           initialNumToRender={12}
@@ -11002,44 +11934,29 @@ export default function ConversationScreen() {
           showsVerticalScrollIndicator={false}
           onScroll={handleScroll}
           scrollEventThrottle={16}
-          onContentSizeChange={(_, height) => {
-            listMetricsRef.current.contentHeight = height;
-            const paddingToBottom = keyboardVisibleRef.current ? 200 : 60;
-            updateJumpToBottomVisibility(getDistanceToBottom());
-            if (
-              shouldAutoScrollRef.current ||
-              wasAtBottomRef.current ||
-              getDistanceToBottom() <= paddingToBottom
-            ) {
-              maybeScrollToEnd(true);
-            }
-            ensureInitialScrollToBottom();
-          }}
-          onLayout={(event) => {
-            listMetricsRef.current.layoutHeight = event.nativeEvent.layout.height;
-            wasAtBottomRef.current = true;
-            updateJumpToBottomVisibility(getDistanceToBottom());
-            if (shouldAutoScrollRef.current) {
-              maybeScrollToEnd(false);
-            }
-            ensureInitialScrollToBottom();
-          }}
+          onContentSizeChange={handleMessagesContentSizeChange}
+          onLayout={handleMessagesLayout}
           onScrollBeginDrag={onScrollBeginDrag}
-          onScrollToIndexFailed={({ index, averageItemLength }) => {
-            const offset = Math.max(0, averageItemLength * index);
-            flatListRef.current?.scrollToOffset({ offset, animated: true });
-            setTimeout(() => {
-              flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
-            }, 250);
-          }}
+          onScrollToIndexFailed={handleScrollToIndexFailed}
           onViewableItemsChanged={onViewableItemsChanged}
-          viewabilityConfig={{
-            itemVisiblePercentThreshold: 50,
-          }}
+          viewabilityConfig={messageListViewabilityConfig}
         />
         
         {renderTypingIndicator()}
         {renderMoodStickersPanel()}
+
+        {mediaUploadStatus ? (
+          <View style={styles.mediaUploadNotice}>
+            <View style={styles.mediaUploadIcon}>
+              <MaterialCommunityIcons name={mediaUploadStatus.icon} size={17} color={theme.tint} />
+            </View>
+            <View style={styles.mediaUploadCopy}>
+              <Text style={styles.mediaUploadTitle}>{mediaUploadStatus.title}</Text>
+              <Text style={styles.mediaUploadSubtitle}>{mediaUploadStatus.subtitle}</Text>
+            </View>
+            <ActivityIndicator size="small" color={theme.tint} />
+          </View>
+        ) : null}
 
         {/* Reply Preview */}
         {replyingTo && (
@@ -11076,10 +11993,23 @@ export default function ConversationScreen() {
 
         {isChatBlocked ? (
           <View style={styles.blockedInput}>
-            <MaterialCommunityIcons name="block-helper" size={16} color={theme.textMuted} />
-            <Text style={styles.blockedInputText}>
-              {isBlockedByMe ? 'You blocked this user.' : 'Messaging is unavailable.'}
-            </Text>
+            <View style={styles.blockedInputIcon}>
+              <MaterialCommunityIcons
+                name={isBlockedByMe ? 'shield-lock-outline' : 'lock-alert-outline'}
+                size={18}
+                color={theme.tint}
+              />
+            </View>
+            <View style={styles.blockedInputCopy}>
+              <Text style={styles.blockedInputTitle}>
+                {isBlockedByMe ? 'Blocked privately' : 'Messaging unavailable'}
+              </Text>
+              <Text style={styles.blockedInputText}>
+                {isBlockedByMe
+                  ? 'You blocked this member. They cannot message you, and they were not notified.'
+                  : 'This conversation is paused for safety.'}
+              </Text>
+            </View>
             {isBlockedByMe ? (
               <TouchableOpacity style={styles.blockedInputAction} onPress={confirmUnblockUser}>
                 <Text style={styles.blockedInputActionText}>Unblock</Text>
@@ -11090,142 +12020,151 @@ export default function ConversationScreen() {
           <>
             {/* Enhanced Input Area */}
             <View style={[styles.inputContainer, showImagePicker && styles.inputContainerRaised]}>
-              {/* Left Actions */}
-              <View style={styles.inputLeftActions}>
-                <TouchableOpacity 
-                  style={styles.inputActionButton}
-                  onPress={() => {
-                    if (showImagePicker) {
-                      closeAttachmentSheet();
-                      requestAnimationFrame(() => inputRef.current?.focus());
-                    } else {
-                      openAttachmentSheet();
-                    }
-                  }}
-                >
-                  <MaterialCommunityIcons
-                    name={showImagePicker ? "keyboard-outline" : "plus"}
-                    size={22}
-                    color={theme.textMuted}
-                  />
-                </TouchableOpacity>
-                
-                <TouchableOpacity 
-                  style={styles.inputActionButton}
-                  onPress={() => {
-                    if (showImagePicker) {
-                      closeAttachmentSheet();
-                    }
-                    setShowMoodStickers((prev) => !prev);
-                  }}
-                >
-                  <MaterialCommunityIcons 
-                    name="emoticon-happy" 
-                    size={22} 
-                    color={showMoodStickers ? theme.tint : theme.textMuted} 
-                  />
-                </TouchableOpacity>
-              </View>
-              
-              {/* Text Input */}
-              <TextInput
-                ref={inputRef}
-                style={styles.textInput}
-                value={inputText}
-                onChangeText={handleInputChange}
-                onFocus={handleInputFocus}
-                placeholder={isRecording ? "Recording voice..." : replyingTo ? "Reply..." : "Type a message..."}
-                placeholderTextColor={withAlpha(theme.textMuted, 0.7)}
-                multiline
-                maxLength={500}
-                editable={!isRecording}
-              />
-              
-              {/* Right Actions */}
-              <View style={styles.inputRightActions}>
-                {/* Voice Recording Button */}
-                {!inputText.trim() && !isRecording && (
-                  <Animated.View style={{ transform: [{ scale: voiceButtonScale }] }}>
-                    <Pressable
-                      style={[
-                        styles.voiceButton,
-                      ]}
-                      onPress={startVoiceRecording}
-                    >
-                      <Animated.View
-                        style={[
-                          styles.voiceButtonInner,
-                          {
-                            opacity: recordingAnimation.interpolate({
-                              inputRange: [0, 1],
-                              outputRange: [1, 0.3],
-                            }),
-                          },
-                        ]}
-                      >
-                        <MaterialCommunityIcons 
-                          name="microphone"
-                          size={20} 
-                          color={Colors.light.background} 
-                        />
-                      </Animated.View>
-                    </Pressable>
-                  </Animated.View>
-                )}
-
-                {!inputText.trim() && isRecording && (
-                  <View style={styles.recordingControls}>
-                    <TouchableOpacity
-                      style={[styles.recordingControlButton, styles.recordingControlDanger]}
-                      onPress={discardVoiceRecording}
-                      disabled={isUploadingVoice}
-                    >
-                      <MaterialCommunityIcons name="trash-can-outline" size={18} color={Colors.light.background} />
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[styles.recordingControlButton, styles.recordingControlPause]}
-                      onPress={isRecordingPaused ? resumeVoiceRecording : pauseVoiceRecording}
-                      disabled={isUploadingVoice}
-                    >
-                      <MaterialCommunityIcons
-                        name={isRecordingPaused ? "play" : "pause"}
-                        size={18}
-                        color={Colors.light.background}
-                      />
-                    </TouchableOpacity>
-
-                    <View style={styles.recordingTimerPill}>
-                      <Text style={styles.recordingTimerText}>
-                        {Math.floor(recordingDuration / 60)}:{`${Math.floor(recordingDuration % 60)}`.padStart(2, '0')}
-                      </Text>
-                    </View>
-
-                    <TouchableOpacity
-                      style={[
-                        styles.recordingControlButton,
-                        styles.recordingControlSend,
-                        isUploadingVoice && styles.recordingControlDisabled,
-                      ]}
-                      onPress={sendVoiceRecording}
-                      disabled={isUploadingVoice}
-                    >
-                      <MaterialCommunityIcons name="send" size={16} color={Colors.light.background} />
-                    </TouchableOpacity>
-                  </View>
-                )}
-                
-                {/* Send Button */}
-                {inputText.trim() && (
+              <View
+                style={[
+                  styles.composerShell,
+                  isInputFocused && styles.composerShellFocused,
+                  showMoodStickers && styles.composerShellAccent,
+                ]}
+              >
+                {/* Left Actions */}
+                <View style={styles.inputLeftActions}>
                   <TouchableOpacity 
                     style={[
-                      styles.sendButtonActive,
+                      styles.inputActionButton,
+                      showImagePicker && styles.inputActionButtonActive,
                     ]}
-                    onPress={sendMessage}
+                    onPress={() => {
+                      if (showImagePicker) {
+                        closeAttachmentSheet();
+                        requestAnimationFrame(() => inputRef.current?.focus());
+                      } else {
+                        openAttachmentSheet();
+                      }
+                    }}
                   >
-                    <MaterialCommunityIcons name="send" size={20} color={Colors.light.background} />
+                    <MaterialCommunityIcons
+                      name={showImagePicker ? "keyboard-outline" : "plus"}
+                      size={20}
+                      color={showImagePicker ? Colors.light.background : theme.textMuted}
+                    />
                   </TouchableOpacity>
-                )}
+                  
+                  <TouchableOpacity 
+                    style={[
+                      styles.inputActionButton,
+                      showMoodStickers && styles.inputActionButtonSecondaryActive,
+                    ]}
+                    onPress={() => {
+                      if (showImagePicker) {
+                        closeAttachmentSheet();
+                      }
+                      setShowMoodStickers((prev) => !prev);
+                    }}
+                  >
+                    <MaterialCommunityIcons 
+                      name="emoticon-happy" 
+                      size={20} 
+                      color={showMoodStickers ? theme.tint : theme.textMuted} 
+                    />
+                  </TouchableOpacity>
+                </View>
+                
+                {/* Text Input */}
+                <TextInput
+                  ref={inputRef}
+                  style={styles.textInput}
+                  value={inputText}
+                  onChangeText={handleInputChange}
+                  onFocus={handleInputFocus}
+                  onBlur={handleInputBlur}
+                  placeholder={isRecording ? "Recording voice..." : replyingTo ? "Reply..." : "Say something thoughtful..."}
+                  placeholderTextColor={withAlpha(theme.textMuted, isDark ? 0.66 : 0.72)}
+                  multiline
+                  maxLength={500}
+                  editable={!isRecording}
+                />
+                
+                {/* Right Actions */}
+                <View style={styles.inputRightActions}>
+                  {!inputText.trim() && !isRecording && (
+                    <Animated.View style={{ transform: [{ scale: voiceButtonScale }] }}>
+                      <Pressable
+                        style={styles.voiceButton}
+                        onPress={startVoiceRecording}
+                      >
+                        <Animated.View
+                          style={[
+                            styles.voiceButtonInner,
+                            {
+                              opacity: recordingAnimation.interpolate({
+                                inputRange: [0, 1],
+                                outputRange: [1, 0.3],
+                              }),
+                            },
+                          ]}
+                        >
+                          <MaterialCommunityIcons 
+                            name="microphone"
+                            size={19} 
+                            color={Colors.light.background} 
+                          />
+                        </Animated.View>
+                      </Pressable>
+                    </Animated.View>
+                  )}
+
+                  {!inputText.trim() && isRecording && (
+                    <View style={styles.recordingControls}>
+                      <TouchableOpacity
+                        style={[styles.recordingControlButton, styles.recordingControlDanger]}
+                        onPress={discardVoiceRecording}
+                        disabled={isUploadingVoice}
+                      >
+                        <MaterialCommunityIcons name="trash-can-outline" size={18} color={Colors.light.background} />
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.recordingControlButton, styles.recordingControlPause]}
+                        onPress={isRecordingPaused ? resumeVoiceRecording : pauseVoiceRecording}
+                        disabled={isUploadingVoice}
+                      >
+                        <MaterialCommunityIcons
+                          name={isRecordingPaused ? "play" : "pause"}
+                          size={18}
+                          color={Colors.light.background}
+                        />
+                      </TouchableOpacity>
+
+                      <View style={styles.recordingTimerPill}>
+                        <Text style={styles.recordingTimerText}>
+                          {Math.floor(recordingDuration / 60)}:{`${Math.floor(recordingDuration % 60)}`.padStart(2, '0')}
+                        </Text>
+                      </View>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.recordingControlButton,
+                          styles.recordingControlSend,
+                          isUploadingVoice && styles.recordingControlDisabled,
+                        ]}
+                        onPress={sendVoiceRecording}
+                        disabled={isUploadingVoice}
+                      >
+                        <MaterialCommunityIcons name="send" size={16} color={Colors.light.background} />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  
+                  {inputText.trim() && (
+                    <TouchableOpacity 
+                      style={styles.sendButtonActive}
+                      onPress={sendMessage}
+                    >
+                      <MaterialCommunityIcons name="send" size={19} color={Colors.light.background} />
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
             </View>
           </>
@@ -11461,6 +12400,21 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flex: 1,
       flexDirection: 'row',
       alignItems: 'center',
+    },
+    headerOptionsButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      marginLeft: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+      backgroundColor: theme.backgroundSubtle,
+    },
+    headerOptionsButtonBlocked: {
+      borderColor: withAlpha(theme.tint, isDark ? 0.36 : 0.24),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.08),
     },
     avatarContainer: {
       position: 'relative',
@@ -12451,118 +13405,150 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     headerMenuBackdrop: {
       ...StyleSheet.absoluteFillObject,
       backgroundColor: withAlpha(Colors.dark.background, 0.55),
+      zIndex: 1,
+      elevation: 1,
+    },
+    headerMenuModalRoot: {
+      flex: 1,
+      justifyContent: 'flex-end',
+      backgroundColor: 'transparent',
+      position: 'relative',
     },
     headerMenuSheet: {
-      position: 'absolute',
-      left: 16,
-      right: 16,
-      bottom: 24,
-      borderRadius: 18,
-      backgroundColor: withAlpha(theme.background, isDark ? 0.78 : 0.94),
+      marginHorizontal: 16,
+      borderRadius: 26,
+      backgroundColor: isDark ? '#0d201f' : '#f7fbf8',
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
       overflow: 'hidden',
       shadowColor: Colors.dark.background,
-      shadowOpacity: 0.16,
-      shadowRadius: 20,
-      shadowOffset: { width: 0, height: 8 },
-      elevation: 6,
+      shadowOpacity: 0.24,
+      shadowRadius: 24,
+      shadowOffset: { width: 0, height: 14 },
+      zIndex: 2,
+      elevation: 12,
     },
-    headerMenuBlur: {
-      ...StyleSheet.absoluteFillObject,
+    headerMenuHandle: {
+      alignSelf: 'center',
+      width: 42,
+      height: 4,
+      borderRadius: 999,
+      marginTop: 10,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.2 : 0.16),
+    },
+    headerMenuScroller: {
+      maxHeight: Math.min(screenHeight * 0.74, 620),
     },
     headerMenuContent: {
+      paddingHorizontal: 14,
       paddingTop: 12,
-      paddingBottom: 8,
+      paddingBottom: 10,
     },
     headerMenuTitle: {
-      fontSize: 12,
-      fontFamily: 'Manrope_600SemiBold',
-      color: theme.textMuted,
-      letterSpacing: 0.3,
+      fontSize: 13,
+      fontFamily: 'Manrope_800ExtraBold',
+      color: theme.text,
+      letterSpacing: 0.8,
       textTransform: 'uppercase',
-      paddingHorizontal: 12,
-      paddingBottom: 6,
+      paddingBottom: 4,
+    },
+    headerMenuSubtitle: {
+      fontSize: 12,
+      lineHeight: 17,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+      paddingBottom: 12,
     },
     headerMenuSectionLabel: {
       fontSize: 11,
-      fontFamily: 'Manrope_600SemiBold',
+      fontFamily: 'Manrope_800ExtraBold',
       color: theme.textMuted,
       letterSpacing: 1,
       textTransform: 'uppercase',
-      paddingHorizontal: 12,
-      paddingBottom: 6,
+      paddingTop: 6,
+      paddingBottom: 8,
     },
     headerMenuGrid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 10,
-      paddingHorizontal: 12,
+      gap: 8,
       paddingBottom: 10,
     },
-    headerMenuCard: {
-      width: '48%',
-      minHeight: 60,
+    headerMenuRow: {
+      minHeight: 54,
       borderRadius: 18,
       paddingHorizontal: 12,
-      paddingVertical: 12,
-      backgroundColor: theme.backgroundSubtle,
+      paddingVertical: 10,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.055 : 0.035),
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
-      shadowColor: Colors.dark.background,
-      shadowOpacity: 0.06,
-      shadowRadius: 6,
-      shadowOffset: { width: 0, height: 4 },
-      elevation: 2,
+      gap: 12,
     },
-    headerMenuCardWide: {
-      width: '100%',
+    headerMenuRowProminent: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.07),
+      borderColor: withAlpha(theme.tint, isDark ? 0.22 : 0.14),
     },
-    headerMenuCardDestructive: {
-      backgroundColor: withAlpha('#ef4444', isDark ? 0.12 : 0.08),
-      borderColor: withAlpha('#ef4444', isDark ? 0.35 : 0.2),
+    headerMenuRowDestructive: {
+      backgroundColor: withAlpha('#ef4444', isDark ? 0.11 : 0.07),
+      borderWidth: 1,
+      borderColor: withAlpha('#ef4444', isDark ? 0.28 : 0.18),
     },
-    headerMenuIconWrap: {
+    headerMenuRowPressed: {
+      opacity: 0.72,
+    },
+    headerMenuRowIcon: {
       width: 34,
       height: 34,
       borderRadius: 17,
       alignItems: 'center',
       justifyContent: 'center',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.11),
       borderWidth: 1,
-      borderColor: withAlpha(theme.tint, isDark ? 0.22 : 0.14),
+      borderColor: withAlpha(theme.tint, isDark ? 0.26 : 0.16),
     },
-    headerMenuCardTextRow: {
+    headerMenuRowIconDestructive: {
+      backgroundColor: withAlpha('#ef4444', isDark ? 0.18 : 0.1),
+      borderColor: withAlpha('#ef4444', isDark ? 0.3 : 0.18),
+    },
+    headerMenuRowCopy: {
       flex: 1,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       gap: 8,
     },
-    headerMenuCardText: {
+    headerMenuRowTextStack: {
+      flex: 1,
+      gap: 2,
+    },
+    headerMenuRowTitle: {
       fontSize: 14,
-      fontFamily: 'Manrope_600SemiBold',
+      fontFamily: 'Manrope_700Bold',
       color: theme.text,
       flexShrink: 1,
     },
-    headerMenuCardTextDestructive: {
-      color: '#ef4444',
+    headerMenuRowTitleDestructive: {
+      color: isDark ? '#fecaca' : '#b91c1c',
+    },
+    headerMenuRowDescription: {
+      fontSize: 11,
+      lineHeight: 15,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
     },
     headerMenuBadge: {
-      paddingHorizontal: 6,
-      paddingVertical: 2,
-      borderRadius: 8,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 999,
       backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
       borderWidth: 1,
       borderColor: withAlpha(theme.tint, isDark ? 0.32 : 0.2),
     },
     headerMenuBadgeText: {
       fontSize: 10,
-      fontFamily: 'Manrope_600SemiBold',
-      color: theme.textMuted,
-      letterSpacing: 0.2,
+      fontFamily: 'Manrope_800ExtraBold',
+      color: isDark ? '#b6f4ee' : theme.tint,
+      letterSpacing: 0.35,
     },
     headerMenuDivider: {
       height: 1,
@@ -12572,12 +13558,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     headerMenuItem: {
       paddingHorizontal: 12,
-      paddingVertical: 12,
-      borderRadius: 12,
+      paddingVertical: 14,
     },
     headerMenuCancel: {
-      marginTop: 4,
-      backgroundColor: theme.backgroundSubtle,
+      borderTopWidth: 1,
+      borderTopColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+      backgroundColor: withAlpha(theme.text, isDark ? 0.035 : 0.025),
     },
     headerMenuCancelText: {
       fontSize: 14,
@@ -13167,6 +14153,86 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.text,
       minHeight: 48,
     },
+    reportEvidenceCard: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.34 : 0.22),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
+    },
+    reportEvidenceIcon: {
+      width: 30,
+      height: 30,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.12),
+    },
+    reportEvidenceCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    reportEvidenceLabel: {
+      fontSize: 11,
+      fontFamily: 'Manrope_800ExtraBold',
+      letterSpacing: 0.4,
+      textTransform: 'uppercase',
+      color: theme.tint,
+    },
+    reportEvidenceText: {
+      fontSize: 12,
+      lineHeight: 17,
+      fontFamily: 'Manrope_600SemiBold',
+      color: theme.text,
+    },
+    reportBlockOption: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+      backgroundColor: withAlpha(theme.text, isDark ? 0.04 : 0.03),
+    },
+    reportBlockOptionActive: {
+      borderColor: withAlpha(theme.tint, isDark ? 0.58 : 0.42),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.15 : 0.1),
+    },
+    reportBlockCheck: {
+      width: 22,
+      height: 22,
+      borderRadius: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.22 : 0.16),
+      backgroundColor: theme.backgroundSubtle,
+    },
+    reportBlockCheckActive: {
+      borderColor: theme.tint,
+      backgroundColor: theme.tint,
+    },
+    reportBlockCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    reportBlockTitle: {
+      fontSize: 13,
+      fontFamily: 'Manrope_700Bold',
+      color: theme.text,
+    },
+    reportBlockText: {
+      fontSize: 11,
+      lineHeight: 15,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
+    },
     reportSubmitButton: {
       paddingVertical: 12,
       borderRadius: 14,
@@ -13217,7 +14283,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     messagesList: {
       paddingHorizontal: 16,
-      paddingVertical: 20,
+      paddingVertical: 14,
     },
     daySeparator: {
       alignSelf: 'center',
@@ -13227,7 +14293,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
-      marginBottom: 12,
+      marginBottom: 8,
       marginTop: 2,
     },
     daySeparatorText: {
@@ -13279,8 +14345,14 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
 
     // Messages
     messageContainer: {
-      marginBottom: 16,
+      marginBottom: 6,
       position: 'relative',
+    },
+    messageContainerGrouped: {
+      marginBottom: 2,
+    },
+    messageContainerWithReaction: {
+      marginBottom: 24,
     },
     messageRowSpotlight: {
       position: 'absolute',
@@ -13307,7 +14379,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     messageBubbleContainer: {
       flexDirection: 'row',
       alignItems: 'flex-end',
-      marginBottom: 2,
+      marginBottom: 0,
     },
     myMessageContainer: {
       justifyContent: 'flex-end',
@@ -13320,14 +14392,19 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       height: 28,
       borderRadius: 14,
       marginRight: 8,
-      marginBottom: 4,
+      marginBottom: 2,
+    },
+    messageAvatarSpacer: {
+      width: 36,
+      alignSelf: 'stretch',
     },
     messageBubble: {
-      maxWidth: screenWidth * 0.75,
-      paddingHorizontal: 12,
-      paddingVertical: 8,
+      maxWidth: screenWidth * 0.72,
+      paddingHorizontal: 13,
+      paddingVertical: 7,
       borderRadius: 20,
       position: 'relative',
+      overflow: 'visible',
     },
     messageFocusSpotlight: {
       position: 'absolute',
@@ -13347,26 +14424,79 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     textWithMeta: {
       flexDirection: 'row',
-      flexWrap: 'wrap',
+      flexWrap: 'nowrap',
       alignItems: 'flex-end',
+      maxWidth: '100%',
+    },
+    messageTextInline: {
+      flexShrink: 1,
     },
     inlineMetaRow: {
       flexDirection: 'row',
       alignItems: 'center',
       marginLeft: 4,
     },
+    inlineMetaRowText: {
+      marginLeft: 6,
+      marginBottom: 1,
+      flexShrink: 0,
+    },
+    inlineMetaRowTextMy: {
+      paddingHorizontal: 0,
+      paddingVertical: 0,
+      backgroundColor: 'transparent',
+      borderWidth: 0,
+      shadowOpacity: 0,
+    },
+    inlineMetaRowTextTheir: {
+      paddingHorizontal: 0,
+      paddingVertical: 0,
+    },
+    receiptMetaBadge: {
+      paddingHorizontal: 7,
+      paddingVertical: 3,
+      borderRadius: 999,
+      backgroundColor: 'rgba(6,18,18,0.30)',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(235,255,251,0.18)',
+      shadowColor: '#041212',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.22,
+      shadowRadius: 4,
+    },
+    receiptMetaBadgeSent: {
+      backgroundColor: 'rgba(5,16,16,0.26)',
+      borderColor: 'rgba(230,247,244,0.12)',
+    },
+    receiptMetaBadgeDelivered: {
+      backgroundColor: 'rgba(5,18,18,0.34)',
+      borderColor: 'rgba(244,251,250,0.18)',
+    },
+    receiptMetaBadgeRead: {
+      backgroundColor: 'rgba(4,26,23,0.38)',
+      borderColor: 'rgba(191,251,234,0.28)',
+    },
     inlineMetaIcon: {
+      marginLeft: 4,
+    },
+    inlineMetaIconText: {
       marginLeft: 2,
     },
     myMessageBubble: {
       backgroundColor: theme.tint,
       shadowColor: theme.tint,
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.08,
-      shadowRadius: 6,
-      elevation: 1,
-      borderWidth: 0.5,
-      borderColor: withAlpha(Colors.light.background, 0.15),
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: isDark ? 0.22 : 0.14,
+      shadowRadius: 16,
+      elevation: 4,
+      borderWidth: 1,
+      borderColor: withAlpha(Colors.light.background, isDark ? 0.18 : 0.22),
+    },
+    myMessageBubbleGroupedTop: {
+      borderTopRightRadius: 10,
+    },
+    myMessageBubbleGroupedBottom: {
+      borderBottomRightRadius: 10,
     },
     theirMessageBubble: {
       backgroundColor: theme.backgroundSubtle,
@@ -13378,23 +14508,30 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
     },
+    theirMessageBubbleGroupedTop: {
+      borderTopLeftRadius: 10,
+    },
+    theirMessageBubbleGroupedBottom: {
+      borderBottomLeftRadius: 10,
+    },
     deletedMessageBubble: {
       backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.6 : 0.85),
       borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
     },
     bubbleTail: {
       position: 'absolute',
-      bottom: 6,
-      width: 12,
-      height: 12,
-      transform: [{ rotate: '45deg' }],
-      borderRadius: 2,
+      bottom: 2,
+      width: 15,
+      height: 14,
     },
     bubbleTailRight: {
-      right: -4,
+      right: -7,
     },
     bubbleTailLeft: {
-      left: -4,
+      left: -7,
+    },
+    bubbleTailSvgLeft: {
+      transform: [{ scaleX: -1 }],
     },
     stickerBubble: {
       backgroundColor: 'transparent',
@@ -13445,7 +14582,21 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontFamily: 'Manrope_400Regular',
     },
     messageMetaTextMy: {
-      color: withAlpha(Colors.light.background, 0.8),
+      color: '#FBFFFE',
+      fontFamily: 'Manrope_600SemiBold',
+      letterSpacing: 0.15,
+    },
+    messageMetaTextInlineMy: {
+      color: withAlpha(Colors.light.background, 0.84),
+      fontFamily: 'Manrope_500Medium',
+      fontSize: 9.5,
+      letterSpacing: 0.08,
+    },
+    messageMetaTextInlineTheir: {
+      color: withAlpha(theme.textMuted, 0.88),
+      fontFamily: 'Manrope_500Medium',
+      fontSize: 9,
+      letterSpacing: 0.06,
     },
     messageMetaTextTheir: {
       color: theme.textMuted,
@@ -13466,7 +14617,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.textMuted,
     },
     messageMetaIcon: {
-      marginLeft: 2,
+      marginLeft: 4,
     },
     messageTime: {
       fontSize: 11,
@@ -13614,11 +14765,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
 
     // Reactions
     reactionSummary: {
-      flexDirection: 'row',
-      alignItems: 'center',
       position: 'absolute',
-      bottom: -14,
-      gap: 6,
+      bottom: -20,
       paddingHorizontal: 6,
       paddingVertical: 4,
       borderRadius: 14,
@@ -13631,11 +14779,16 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       shadowRadius: 4,
       elevation: 3,
     },
+    reactionSummaryPressable: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
     reactionSummaryLeft: {
       left: 8,
     },
     reactionSummaryRight: {
-      right: 8,
+      right: 10,
     },
     reactionSummaryItem: {
       flexDirection: 'row',
@@ -13758,7 +14911,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'flex-end',
       paddingHorizontal: 16,
-      marginBottom: 16,
+      marginBottom: 12,
     },
     typingAvatar: {
       width: 28,
@@ -13768,18 +14921,25 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       marginBottom: 4,
     },
     typingBubble: {
-      backgroundColor: theme.background,
-      borderRadius: 20,
-      borderBottomLeftRadius: 6,
-      paddingHorizontal: 16,
-      paddingVertical: 12,
+      backgroundColor: isDark ? withAlpha(theme.backgroundSubtle, 0.92) : withAlpha('#fffaf5', 0.96),
+      borderRadius: 18,
+      borderBottomLeftRadius: 8,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
       shadowColor: Colors.dark.background,
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.1,
-      shadowRadius: 4,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.08,
+      shadowRadius: 10,
       elevation: 2,
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      gap: 6,
+    },
+    typingLabel: {
+      fontSize: 10.5,
+      fontFamily: 'Manrope_600SemiBold',
+      letterSpacing: 0.4,
+      color: theme.textMuted,
     },
     typingDots: {
       flexDirection: 'row',
@@ -13789,7 +14949,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       width: 6,
       height: 6,
       borderRadius: 3,
-      backgroundColor: theme.textMuted,
+      backgroundColor: theme.tint,
     },
 
     // Mood Stickers Panel
@@ -13855,34 +15015,78 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
 
     // Input Area
     inputContainer: {
-      flexDirection: 'row',
-      alignItems: 'flex-end',
       paddingHorizontal: 16,
-      paddingVertical: 12,
+      paddingTop: 10,
+      paddingBottom: 12,
       backgroundColor: theme.background,
       borderTopWidth: 1,
       borderTopColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
-      gap: 12,
+    },
+    composerShell: {
+      flexDirection: 'row',
+      alignItems: 'flex-end',
+      gap: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: 26,
+      backgroundColor: isDark ? withAlpha(theme.backgroundSubtle, 0.92) : withAlpha('#fffaf5', 0.96),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: isDark ? 0.16 : 0.08,
+      shadowRadius: 16,
+      elevation: 3,
+    },
+    composerShellFocused: {
+      borderColor: withAlpha(theme.tint, isDark ? 0.46 : 0.3),
+      shadowColor: theme.tint,
+      shadowOpacity: isDark ? 0.18 : 0.12,
+    },
+    composerShellAccent: {
+      borderColor: withAlpha(theme.tint, isDark ? 0.34 : 0.22),
     },
     blockedInput: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 10,
+      gap: 12,
       paddingHorizontal: 16,
-      paddingVertical: 14,
-      backgroundColor: theme.background,
-      borderTopWidth: 1,
-      borderTopColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
+      paddingVertical: 12,
+      marginHorizontal: 12,
+      marginBottom: 10,
+      borderRadius: 18,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.1 : 0.07),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.28 : 0.18),
+    },
+    blockedInputIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 13,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.1),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.32 : 0.18),
+    },
+    blockedInputCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    blockedInputTitle: {
+      fontSize: 13,
+      fontFamily: 'Manrope_800ExtraBold',
+      color: theme.text,
     },
     blockedInputText: {
-      flex: 1,
-      fontSize: 13,
+      fontSize: 11,
+      lineHeight: 16,
       fontFamily: 'Manrope_500Medium',
       color: theme.textMuted,
     },
     blockedInputAction: {
       paddingHorizontal: 12,
-      paddingVertical: 6,
+      paddingVertical: 8,
       borderRadius: 999,
       backgroundColor: theme.tint,
     },
@@ -13896,24 +15100,30 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     textInput: {
       flex: 1,
-      backgroundColor: theme.backgroundSubtle,
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
-      borderRadius: 20,
-      paddingHorizontal: 16,
-      paddingVertical: 12,
-      fontSize: 16,
+      minHeight: 40,
+      paddingHorizontal: 4,
+      paddingTop: 9,
+      paddingBottom: 8,
+      fontSize: 15.5,
       fontFamily: 'Manrope_400Regular',
       color: theme.text,
       maxHeight: 100,
+      lineHeight: 21,
     },
     sendButtonActive: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
+      width: 42,
+      height: 42,
+      borderRadius: 21,
       backgroundColor: theme.tint,
       justifyContent: 'center',
       alignItems: 'center',
+      borderWidth: 1,
+      borderColor: withAlpha(Colors.light.background, isDark ? 0.18 : 0.22),
+      shadowColor: theme.tint,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: isDark ? 0.22 : 0.16,
+      shadowRadius: 14,
+      elevation: 4,
     },
     sendButtonViewOnce: {
       backgroundColor: theme.secondary,
@@ -13939,21 +15149,70 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
 
     // Voice Messages
     voiceBubble: {
-      paddingHorizontal: 12,
-      paddingVertical: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 9,
     },
     voiceMessageContainer: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 12,
-      minWidth: 160,
+      gap: 10,
+      minWidth: 188,
     },
     voicePlayButton: {
-      width: 32,
-      height: 32,
-      borderRadius: 16,
+      width: 34,
+      height: 34,
+      borderRadius: 17,
       justifyContent: 'center',
       alignItems: 'center',
+      borderWidth: 1,
+      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.12,
+      shadowRadius: 8,
+      elevation: 2,
+    },
+    voicePlayButtonMy: {
+      backgroundColor: Colors.light.background,
+      borderColor: withAlpha(Colors.light.background, 0.38),
+      shadowColor: Colors.light.background,
+    },
+    voicePlayButtonTheir: {
+      backgroundColor: theme.tint,
+      borderColor: withAlpha(theme.tint, isDark ? 0.24 : 0.18),
+      shadowColor: theme.tint,
+    },
+    voicePlayButtonMyActive: {
+      transform: [{ scale: 1.02 }],
+    },
+    voicePlayButtonTheirActive: {
+      transform: [{ scale: 1.02 }],
+    },
+    voiceWaveformCard: {
+      flex: 1,
+      minHeight: 34,
+      paddingLeft: 2,
+      paddingRight: 6,
+      paddingVertical: 4,
+      borderRadius: 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      borderWidth: 1,
+    },
+    voiceWaveformCardMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.08),
+      borderColor: withAlpha(Colors.light.background, 0.16),
+    },
+    voiceWaveformCardTheir: {
+      backgroundColor: withAlpha(theme.text, isDark ? 0.06 : 0.035),
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+    },
+    voiceWaveformCardMyActive: {
+      backgroundColor: withAlpha(Colors.light.background, 0.12),
+      borderColor: withAlpha(Colors.light.background, 0.24),
+    },
+    voiceWaveformCardTheirActive: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.08),
+      borderColor: withAlpha(theme.tint, isDark ? 0.22 : 0.14),
     },
     voiceWaveform: {
       flex: 1,
@@ -13967,9 +15226,29 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderRadius: 1,
       minHeight: 4,
     },
+    voiceDurationPill: {
+      paddingHorizontal: 8,
+      height: 22,
+      borderRadius: 11,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    voiceDurationPillMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.12),
+    },
+    voiceDurationPillTheir: {
+      backgroundColor: withAlpha(theme.background, isDark ? 0.46 : 0.72),
+    },
     voiceDuration: {
-      fontSize: 12,
-      fontFamily: 'Manrope_400Regular',
+      fontSize: 11,
+      fontFamily: 'Manrope_700Bold',
+      letterSpacing: 0.2,
+    },
+    voiceDurationMy: {
+      color: withAlpha(Colors.light.background, 0.92),
+    },
+    voiceDurationTheir: {
+      color: theme.textMuted,
     },
 
     // Image Messages
@@ -13980,6 +15259,16 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     imageMessageContainer: {
       borderRadius: 16,
       overflow: 'hidden',
+    },
+    mediaSurface: {
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      backgroundColor: withAlpha(theme.background, isDark ? 0.14 : 0.5),
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: isDark ? 0.12 : 0.05,
+      shadowRadius: 10,
+      elevation: 2,
     },
     messageImage: {
       width: Math.min(screenWidth * 0.72, 340),
@@ -14012,9 +15301,22 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       right: 0,
       bottom: 0,
       left: 0,
+      gap: 6,
       alignItems: 'center',
       justifyContent: 'center',
       backgroundColor: 'rgba(0,0,0,0.18)',
+    },
+    videoOverlayLabel: {
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+      overflow: 'hidden',
+      backgroundColor: 'rgba(255,255,255,0.14)',
+      color: Colors.light.background,
+      fontSize: 11,
+      fontFamily: 'Manrope_800ExtraBold',
+      letterSpacing: 0.8,
+      textTransform: 'uppercase',
     },
     mediaMetaOverlay: {
       position: 'absolute',
@@ -14023,12 +15325,26 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'center',
       gap: 4,
-      paddingHorizontal: 6,
-      paddingVertical: 3,
-      borderRadius: 10,
+      paddingHorizontal: 7,
+      paddingVertical: 4,
+      borderRadius: 11,
     },
     mediaMetaOverlayMy: {
-      backgroundColor: 'rgba(0,0,0,0.35)',
+      backgroundColor: 'rgba(6,18,18,0.58)',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(235,255,251,0.16)',
+    },
+    mediaMetaOverlaySent: {
+      backgroundColor: 'rgba(6,18,18,0.52)',
+      borderColor: 'rgba(230,247,244,0.12)',
+    },
+    mediaMetaOverlayDelivered: {
+      backgroundColor: 'rgba(6,18,18,0.62)',
+      borderColor: 'rgba(244,251,250,0.18)',
+    },
+    mediaMetaOverlayRead: {
+      backgroundColor: 'rgba(4,26,23,0.68)',
+      borderColor: 'rgba(191,251,234,0.26)',
     },
     mediaMetaOverlayTheir: {
       backgroundColor: 'rgba(0,0,0,0.28)',
@@ -14038,13 +15354,15 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontFamily: 'Manrope_500Medium',
     },
     mediaMetaTextMy: {
-      color: withAlpha(Colors.light.background, 0.92),
+      color: '#FBFFFE',
+      fontFamily: 'Manrope_600SemiBold',
+      letterSpacing: 0.15,
     },
     mediaMetaTextTheir: {
       color: Colors.light.background,
     },
     mediaMetaIcon: {
-      marginLeft: 2,
+      marginLeft: 4,
     },
     documentBubble: {
       paddingHorizontal: 10,
@@ -14354,50 +15672,85 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       gap: 10,
       minWidth: 180,
       maxWidth: screenWidth * 0.6,
+      paddingHorizontal: 2,
+      paddingVertical: 2,
     },
     documentIcon: {
-      width: 36,
-      height: 36,
-      borderRadius: 12,
+      width: 38,
+      height: 38,
+      borderRadius: 13,
       alignItems: 'center',
       justifyContent: 'center',
     },
     documentInfo: {
       flex: 1,
-      gap: 2,
+      gap: 5,
     },
     documentName: {
       fontSize: 14,
       fontFamily: 'Manrope_600SemiBold',
     },
+    documentMetaPill: {
+      alignSelf: 'flex-start',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 999,
+      borderWidth: 1,
+    },
+    documentMetaPillMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.1),
+      borderColor: withAlpha(Colors.light.background, 0.16),
+    },
+    documentMetaPillTheir: {
+      backgroundColor: withAlpha(theme.text, isDark ? 0.05 : 0.035),
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+    },
     documentHint: {
-      fontSize: 12,
-      fontFamily: 'Manrope_400Regular',
+      fontSize: 11,
+      fontFamily: 'Manrope_600SemiBold',
     },
     // Location Messages
     locationBubble: {
-      padding: 10,
-      width: LOCATION_PREVIEW_WIDTH + 20,
+      padding: 8,
+      width: LOCATION_PREVIEW_WIDTH + 16,
     },
     locationMessageContainer: {
-      gap: 10,
+      gap: 8,
+    },
+    locationMapFrame: {
+      borderRadius: 14,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      backgroundColor: theme.backgroundSubtle,
     },
     locationMapImage: {
       width: LOCATION_PREVIEW_WIDTH,
       height: LOCATION_PREVIEW_HEIGHT,
-      borderRadius: 12,
       backgroundColor: theme.backgroundSubtle,
     },
     locationMapPlaceholder: {
       width: LOCATION_PREVIEW_WIDTH,
       height: LOCATION_PREVIEW_HEIGHT,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
       backgroundColor: theme.backgroundSubtle,
       alignItems: 'center',
       justifyContent: 'center',
       gap: 6,
+    },
+    locationDetailsCard: {
+      borderRadius: 14,
+      paddingHorizontal: 10,
+      paddingVertical: 10,
+      gap: 8,
+      borderWidth: 1,
+    },
+    locationDetailsCardMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.08),
+      borderColor: withAlpha(Colors.light.background, 0.12),
+    },
+    locationDetailsCardTheir: {
+      backgroundColor: withAlpha(theme.text, isDark ? 0.05 : 0.03),
+      borderColor: withAlpha(theme.text, isDark ? 0.1 : 0.08),
     },
     locationPlaceholderText: {
       fontSize: 12,
@@ -14431,7 +15784,19 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      marginLeft: 36,
+      alignSelf: 'flex-start',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+      borderWidth: 1,
+    },
+    locationRoutePillMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.08),
+      borderColor: withAlpha(Colors.light.background, 0.14),
+    },
+    locationRoutePillTheir: {
+      backgroundColor: withAlpha(theme.text, isDark ? 0.05 : 0.03),
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
     },
     locationRouteText: {
       fontSize: 11,
@@ -14473,11 +15838,19 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.text,
     },
     imageCaption: {
-      padding: 12,
-      paddingTop: 8,
-      fontSize: 14,
-      lineHeight: 20,
+      fontSize: 13.5,
+      lineHeight: 19,
       color: theme.text,
+    },
+    mediaCaptionCard: {
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+    },
+    mediaCaptionCardMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.08),
+    },
+    mediaCaptionCardTheir: {
+      backgroundColor: withAlpha(theme.text, isDark ? 0.04 : 0.025),
     },
     imageViewerBackdrop: {
       flex: 1,
@@ -14500,14 +15873,14 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     imageViewerClose: {
       position: 'absolute',
-      top: 24,
-      right: 20,
-      width: 36,
-      height: 36,
-      borderRadius: 18,
+      width: 42,
+      height: 42,
+      borderRadius: 21,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: 'rgba(0,0,0,0.35)',
+      backgroundColor: 'rgba(0,0,0,0.42)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.12)',
     },
     locationViewerContainer: {
       flex: 1,
@@ -14930,35 +16303,41 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     replyChip: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
-      borderRadius: 14,
-      marginBottom: 8,
+      gap: 9,
+      paddingHorizontal: 11,
+      paddingVertical: 9,
+      borderRadius: 16,
+      marginBottom: 9,
       borderWidth: 1,
+      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.08,
+      shadowRadius: 10,
+      elevation: 1,
     },
     replyChipMy: {
-      backgroundColor: withAlpha(Colors.light.background, 0.14),
-      borderColor: withAlpha(Colors.light.background, 0.3),
+      backgroundColor: withAlpha(Colors.light.background, 0.13),
+      borderColor: withAlpha(Colors.light.background, 0.24),
+      shadowColor: Colors.light.background,
     },
     replyChipTheir: {
-      backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.05),
-      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      backgroundColor: withAlpha(theme.text, isDark ? 0.07 : 0.04),
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.09),
+      shadowColor: Colors.dark.background,
     },
     replyChipLine: {
-      width: 2,
-      height: 28,
-      borderRadius: 2,
+      width: 3,
+      height: 30,
+      borderRadius: 3,
     },
     replyChipLineMy: {
-      backgroundColor: withAlpha(Colors.light.background, 0.7),
+      backgroundColor: withAlpha(Colors.light.background, 0.74),
     },
     replyChipLineTheir: {
-      backgroundColor: withAlpha(theme.text, 0.35),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.45 : 0.34),
     },
     replyChipContent: {
       flex: 1,
-      gap: 4,
+      gap: 3,
     },
     replyChipHeader: {
       flexDirection: 'row',
@@ -14966,43 +16345,46 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       gap: 6,
     },
     replyChipIconWrap: {
-      width: 20,
-      height: 20,
-      borderRadius: 10,
+      width: 22,
+      height: 22,
+      borderRadius: 11,
       alignItems: 'center',
       justifyContent: 'center',
     },
     replyChipIconWrapMy: {
-      backgroundColor: withAlpha(Colors.light.background, 0.2),
+      backgroundColor: withAlpha(Colors.light.background, 0.18),
     },
     replyChipIconWrapTheir: {
-      backgroundColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.08),
     },
     replyChipLabel: {
       flexShrink: 1,
-      fontSize: 12,
+      fontSize: 10.5,
       fontFamily: 'Manrope_600SemiBold',
-      color: theme.text,
+      color: theme.textMuted,
+      textTransform: 'uppercase',
+      letterSpacing: 0.55,
     },
     replyChipLabelMy: {
-      color: Colors.light.background,
+      color: withAlpha(Colors.light.background, 0.76),
     },
     replyChipTime: {
       marginLeft: 'auto',
-      fontSize: 10,
+      fontSize: 9.5,
       fontFamily: 'Manrope_500Medium',
-      color: theme.textMuted,
+      color: withAlpha(theme.textMuted, 0.86),
     },
     replyChipTimeMy: {
-      color: withAlpha(Colors.light.background, 0.7),
+      color: withAlpha(Colors.light.background, 0.62),
     },
     replyChipPreview: {
-      fontSize: 12,
-      fontFamily: 'Manrope_400Regular',
-      color: theme.textMuted,
+      fontSize: 12.5,
+      lineHeight: 16,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.text,
     },
     replyChipPreviewMy: {
-      color: withAlpha(Colors.light.background, 0.85),
+      color: withAlpha(Colors.light.background, 0.92),
     },
     replyPreview: {
       backgroundColor: theme.backgroundSubtle,
@@ -15098,19 +16480,32 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     inputLeftActions: {
       flexDirection: 'row',
       gap: 8,
+      alignItems: 'flex-end',
+      paddingBottom: 1,
     },
     inputRightActions: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
+      paddingBottom: 1,
     },
     inputActionButton: {
-      width: 36,
-      height: 36,
-      borderRadius: 18,
-      backgroundColor: theme.backgroundSubtle,
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      backgroundColor: isDark ? withAlpha(theme.background, 0.48) : withAlpha(theme.background, 0.86),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
       justifyContent: 'center',
       alignItems: 'center',
+    },
+    inputActionButtonActive: {
+      backgroundColor: theme.tint,
+      borderColor: theme.tint,
+    },
+    inputActionButtonSecondaryActive: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.12),
+      borderColor: withAlpha(theme.tint, isDark ? 0.3 : 0.18),
     },
     viewOnceToggle: {
       width: 34,
@@ -15129,13 +16524,20 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
 
     // Voice Recording
     voiceButton: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
+      width: 42,
+      height: 42,
+      borderRadius: 21,
       backgroundColor: theme.tint,
       justifyContent: 'center',
       alignItems: 'center',
       position: 'relative',
+      borderWidth: 1,
+      borderColor: withAlpha(Colors.light.background, isDark ? 0.18 : 0.22),
+      shadowColor: theme.tint,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: isDark ? 0.2 : 0.14,
+      shadowRadius: 14,
+      elevation: 4,
     },
     voiceButtonRecording: {
       backgroundColor: withAlpha(theme.tint, 0.85),
@@ -15182,6 +16584,44 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontFamily: 'Archivo_700Bold',
       color: theme.text,
       letterSpacing: 0.2,
+    },
+    mediaUploadNotice: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      marginHorizontal: 12,
+      marginBottom: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.34 : 0.22),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.13 : 0.08),
+    },
+    mediaUploadIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 13,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.32 : 0.18),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.1),
+    },
+    mediaUploadCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    mediaUploadTitle: {
+      fontSize: 13,
+      fontFamily: 'Manrope_800ExtraBold',
+      color: theme.text,
+    },
+    mediaUploadSubtitle: {
+      fontSize: 11,
+      lineHeight: 16,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
     },
 
     // Attachment Sheet

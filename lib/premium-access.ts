@@ -2,6 +2,12 @@ import type { PremiumPlan } from "@/lib/subscriptions";
 
 export type PremiumFeatureKey =
   | "profile_boosts"
+  | "advanced_vibes_filters"
+  | "profile_notes"
+  | "standard_gifts"
+  | "signature_gifts"
+  | "date_plan_initiation"
+  | "date_plan_concierge"
   | "priority_support"
   | "premium_badge"
   | "elite_positioning";
@@ -14,6 +20,12 @@ export const PREMIUM_PLAN_ORDER: Record<PremiumPlan, number> = {
 
 export const PREMIUM_FEATURE_REQUIREMENTS: Record<PremiumFeatureKey, PremiumPlan> = {
   profile_boosts: "SILVER",
+  advanced_vibes_filters: "SILVER",
+  profile_notes: "SILVER",
+  standard_gifts: "SILVER",
+  signature_gifts: "GOLD",
+  date_plan_initiation: "SILVER",
+  date_plan_concierge: "GOLD",
   priority_support: "SILVER",
   premium_badge: "SILVER",
   elite_positioning: "GOLD",

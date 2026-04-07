@@ -21,6 +21,80 @@ const buildLocationLabel = (city?: string, region?: string, country?: string) =>
   return region || country || ''
 }
 
+const normalizePlace = (value?: string | null) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+
+const getFirstLocationPart = (value?: string | null) =>
+  String(value || '').split(',')[0]?.trim() || ''
+
+const looksAdministrative = (value?: string | null) =>
+  /\b(region|district|province|state|county|municipality|metropolitan)\b/i.test(getFirstLocationPart(value))
+
+const stripAdministrativeSuffix = (value?: string | null) => {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  const cleaned = raw
+    .replace(/\bmetropolitan municipality\b/gi, '')
+    .replace(/\bmetropolitan district\b/gi, '')
+    .replace(/\bmunicipal district\b/gi, '')
+    .replace(/\bmetropolitan\b/gi, '')
+    .replace(/\bmunicipality\b/gi, '')
+    .replace(/\bdistrict\b/gi, '')
+    .replace(/\bcounty\b/gi, '')
+    .replace(/\bregion\b/gi, '')
+    .replace(/\bprovince\b/gi, '')
+    .replace(/\bstate\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[,\-–]+$/g, '')
+    .trim()
+
+  return cleaned || raw
+}
+
+const resolveLocality = (address: Record<string, unknown>) => {
+  const coarseRegion = String(address.state || address.region || '').trim()
+  const coarseCountry = String(address.country || '').trim()
+  const coarseSet = new Set(
+    [coarseRegion, coarseCountry]
+      .map(normalizePlace)
+      .filter(Boolean),
+  )
+
+  const candidates = [
+    address.city,
+    address.town,
+    address.village,
+    address.municipality,
+    address.county,
+    address.state_district,
+    address.city_district,
+    address.suburb,
+    address.neighbourhood,
+    address.hamlet,
+  ]
+
+  for (const candidate of candidates) {
+    const trimmed = String(candidate || '').trim()
+    if (!trimmed) continue
+    const normalized = normalizePlace(trimmed)
+    if (coarseSet.has(normalized)) continue
+
+    const cleaned = stripAdministrativeSuffix(trimmed)
+    const normalizedCleaned = normalizePlace(cleaned)
+    if (normalizedCleaned && !coarseSet.has(normalizedCleaned)) {
+      return cleaned
+    }
+
+    return trimmed
+  }
+
+  return ''
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -57,7 +131,7 @@ serve(async (req) => {
     url.searchParams.set('format', 'jsonv2')
     url.searchParams.set('lat', String(latitude))
     url.searchParams.set('lon', String(longitude))
-    url.searchParams.set('zoom', '12')
+    url.searchParams.set('zoom', '14')
     url.searchParams.set('addressdetails', '1')
 
     const email = Deno.env.get('NOMINATIM_EMAIL')
@@ -83,15 +157,7 @@ serve(async (req) => {
 
     const data = await geoRes.json()
     const address = data?.address || {}
-    const city =
-      address.city ||
-      address.town ||
-      address.village ||
-      address.municipality ||
-      address.city_district ||
-      address.suburb ||
-      address.neighbourhood ||
-      address.hamlet
+    const city = resolveLocality(address)
     const region = address.state || address.region || address.county
     const country = address.country
     const countryCode = address.country_code ? String(address.country_code).toUpperCase() : null
@@ -113,11 +179,23 @@ serve(async (req) => {
     }
 
     const safeRegion = region || currentProfile?.region || country || 'Unknown'
-    const safeCity = city || currentProfile?.city || null
+    const previousLocationCity = getFirstLocationPart(currentProfile?.location)
+    const previousCity = String(currentProfile?.city || '').trim()
+    const safePreviousCity = previousCity && !looksAdministrative(previousCity)
+      ? previousCity
+      : previousLocationCity && !looksAdministrative(previousLocationCity)
+        ? previousLocationCity
+        : null
+    const safeCity = city || safePreviousCity || null
     const safeCountry = country || currentProfile?.current_country || null
     const safeCountryCode = countryCode || currentProfile?.current_country_code || null
     const fallbackLocation = buildLocationLabel(safeCity || undefined, safeRegion || undefined, safeCountry || undefined)
-    const safeLocation = location || currentProfile?.location || fallbackLocation || null
+    const safeCurrentLocation = currentProfile?.location && !looksAdministrative(currentProfile.location)
+      ? currentProfile.location
+      : null
+    const safeLocation = location && !(looksAdministrative(location) && safeCurrentLocation)
+      ? location
+      : safeCurrentLocation || fallbackLocation || null
 
     const { error: updateError } = await supabase
       .from('profiles')

@@ -10,6 +10,7 @@
     "web": "expo start --web",
     "lint": "eslint .",
     "lint:expo": "expo lint",
+    "test:vibes-logic": "node --experimental-strip-types --test __tests__/location-display.regression.test.ts __tests__/vibes-discovery.regression.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "supabase:types": "python ./scripts/supabase_gen_types.py",
     "supabase:types:check": "python ./scripts/supabase_gen_types.py --check"

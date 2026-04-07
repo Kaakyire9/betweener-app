@@ -20,6 +20,7 @@ type Slide = {
   bullets: string[];
   gradient: [string, string];
   icon: "sparkles" | "target" | "gem";
+  eyebrow: string;
 };
 
 const Slides: Slide[] = [
@@ -30,6 +31,7 @@ const Slides: Slide[] = [
     bullets: ["Swipe right to like", "Swipe left to pass", "Undo if you slip"],
     gradient: ["#008080", "#4FA7A3"],
     icon: "sparkles",
+    eyebrow: "Fast start",
   },
   {
     key: "filters",
@@ -38,6 +40,7 @@ const Slides: Slide[] = [
     bullets: ["Set your city or use GPS", "Filter by age, distance, and more", "Save your filters automatically"],
     gradient: ["#7D5BA6", "#008080"],
     icon: "target",
+    eyebrow: "Calm control",
   },
   {
     key: "premium",
@@ -46,6 +49,7 @@ const Slides: Slide[] = [
     bullets: ["Send Intent when it matters", "Your visibility stays private in matchmaking mode", "You can reopen this guide anytime"],
     gradient: ["#4FA7A3", "#7D5BA6"],
     icon: "gem",
+    eyebrow: "Intent first",
   },
 ];
 
@@ -88,16 +92,24 @@ function HeroScene({
   const fadeIn = slide.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] });
   const floatY = micro.interpolate({ inputRange: [0, 1], outputRange: [2, -2] });
   const nudge = slide.interpolate({ inputRange: [0, 1], outputRange: [10, 0] });
+  const sceneSurface = isDark ? "rgba(0,0,0,0.22)" : "rgba(255,248,242,0.82)";
+  const sceneBorder = isDark ? "rgba(255,255,255,0.20)" : "rgba(95,74,114,0.14)";
+  const softSurface = isDark ? "rgba(255,255,255,0.12)" : "rgba(95,74,114,0.08)";
+  const softSurfaceStrong = isDark ? "rgba(255,255,255,0.14)" : "rgba(95,74,114,0.1)";
+  const softBar = isDark ? "rgba(255,255,255,0.14)" : "rgba(95,74,114,0.12)";
+  const softBarAlt = isDark ? "rgba(255,255,255,0.18)" : "rgba(95,74,114,0.16)";
+  const softStroke = isDark ? "rgba(255,255,255,0.18)" : "rgba(95,74,114,0.14)";
+  const knobStroke = isDark ? "rgba(255,255,255,0.75)" : "rgba(255,255,255,0.92)";
 
   if (kind === "filters") {
     return (
       <Animated.View style={{ opacity: fadeIn, transform: [{ translateY: nudge }] }}>
         <View style={stylesLocal.sceneRow}>
-          <View style={[stylesLocal.sceneCard, { backgroundColor: isDark ? "rgba(0,0,0,0.20)" : "rgba(255,255,255,0.16)" }]}>
+          <View style={[stylesLocal.sceneCard, { backgroundColor: sceneSurface, borderColor: sceneBorder }]}>
             <View style={stylesLocal.sceneHeader}>
               <View style={[stylesLocal.sceneDot, { backgroundColor: ink }]} />
-              <View style={stylesLocal.sceneLine} />
-              <View style={[stylesLocal.scenePill, { borderColor: "rgba(255,255,255,0.20)" }]}>
+              <View style={[stylesLocal.sceneLine, { backgroundColor: softBar }]} />
+              <View style={[stylesLocal.scenePill, { borderColor: softStroke, backgroundColor: softSurface }]}>
                 <MaterialCommunityIcons name="map-marker-outline" size={14} color={ink} />
                 <Text style={[stylesLocal.scenePillText, { color: ink }]}>City</Text>
               </View>
@@ -108,9 +120,9 @@ function HeroScene({
                 <Text style={[stylesLocal.sliderLabel, { color: ink }]}>Distance</Text>
                 <Text style={[stylesLocal.sliderValue, { color: ink }]}>25 mi</Text>
               </View>
-              <View style={stylesLocal.sliderTrack}>
+              <View style={[stylesLocal.sliderTrack, { backgroundColor: softSurfaceStrong }]}>
                 <View style={[stylesLocal.sliderFill, { backgroundColor: ink, width: "62%" }]} />
-                <Animated.View style={[stylesLocal.sliderKnob, { backgroundColor: ink, transform: [{ translateY: floatY }] }]} />
+                <Animated.View style={[stylesLocal.sliderKnob, { backgroundColor: ink, borderColor: knobStroke, transform: [{ translateY: floatY }] }]} />
               </View>
             </View>
 
@@ -119,20 +131,11 @@ function HeroScene({
                 <Text style={[stylesLocal.sliderLabel, { color: ink }]}>Age</Text>
                 <Text style={[stylesLocal.sliderValue, { color: ink }]}>25-38</Text>
               </View>
-              <View style={stylesLocal.sliderTrack}>
+              <View style={[stylesLocal.sliderTrack, { backgroundColor: softSurfaceStrong }]}>
                 <View style={[stylesLocal.sliderFill, { backgroundColor: ink, width: "54%" }]} />
-                <Animated.View style={[stylesLocal.sliderKnob, { backgroundColor: ink, transform: [{ translateY: floatY }] }]} />
+                <Animated.View style={[stylesLocal.sliderKnob, { backgroundColor: ink, borderColor: knobStroke, transform: [{ translateY: floatY }] }]} />
               </View>
             </View>
-          </View>
-
-          <View style={stylesLocal.sideStack}>
-            <Animated.View style={[stylesLocal.sideChip, { transform: [{ translateY: floatY }] }]}>
-              <MaterialCommunityIcons name="filter-variant" size={14} color={ink} />
-              <Text style={[stylesLocal.sideChipText, { color: ink }]}>Saved</Text>
-            </Animated.View>
-            <View style={stylesLocal.miniCard} />
-            <View style={[stylesLocal.miniCard, { opacity: 0.7 }]} />
           </View>
         </View>
       </Animated.View>
@@ -143,39 +146,30 @@ function HeroScene({
     return (
       <Animated.View style={{ opacity: fadeIn, transform: [{ translateY: nudge }] }}>
         <View style={stylesLocal.sceneRow}>
-          <View style={[stylesLocal.sceneCard, { backgroundColor: isDark ? "rgba(0,0,0,0.20)" : "rgba(255,255,255,0.16)" }]}>
+          <View style={[stylesLocal.sceneCard, { backgroundColor: sceneSurface, borderColor: sceneBorder }]}>
             <View style={stylesLocal.intentHeader}>
-              <View style={[stylesLocal.avatar, { borderColor: "rgba(255,255,255,0.24)" }]} />
+              <View style={[stylesLocal.avatar, { borderColor: softStroke, backgroundColor: softSurfaceStrong }]} />
               <View style={{ flex: 1 }}>
-                <View style={[stylesLocal.nameBar, { backgroundColor: "rgba(255,255,255,0.18)" }]} />
-                <View style={[stylesLocal.subBar, { backgroundColor: "rgba(255,255,255,0.14)" }]} />
+                <View style={[stylesLocal.nameBar, { backgroundColor: softBarAlt }]} />
+                <View style={[stylesLocal.subBar, { backgroundColor: softBar }]} />
               </View>
-              <View style={[stylesLocal.badge, { borderColor: "rgba(255,255,255,0.20)" }]}>
+              <View style={[stylesLocal.badge, { borderColor: softStroke, backgroundColor: softSurface }]}>
                 <MaterialCommunityIcons name="timer-outline" size={14} color={ink} />
                 <Text style={[stylesLocal.badgeText, { color: ink }]}>72h</Text>
               </View>
             </View>
 
             <View style={stylesLocal.bubbleWrap}>
-              <View style={[stylesLocal.bubble, { borderColor: "rgba(255,255,255,0.18)" }]}>
+              <View style={[stylesLocal.bubble, { borderColor: softStroke, backgroundColor: softSurface }]}>
                 <Text style={[stylesLocal.bubbleText, { color: ink }]}>Quick opener suggestion</Text>
               </View>
-              <View style={[stylesLocal.bubble, stylesLocal.bubbleGhost]} />
+              <View style={[stylesLocal.bubble, stylesLocal.bubbleGhost, { backgroundColor: softSurfaceStrong, borderColor: softStroke }]} />
             </View>
 
             <Animated.View style={[stylesLocal.intentBtn, { transform: [{ translateY: floatY }] }]}>
               <MaterialCommunityIcons name="send" size={16} color="#fff" />
               <Text style={stylesLocal.intentBtnText}>Send Intent</Text>
             </Animated.View>
-          </View>
-
-          <View style={stylesLocal.sideStack}>
-            <Animated.View style={[stylesLocal.sideChip, { transform: [{ translateY: floatY }] }]}>
-              <MaterialCommunityIcons name="star-four-points" size={14} color={ink} />
-              <Text style={[stylesLocal.sideChipText, { color: ink }]}>Coach</Text>
-            </Animated.View>
-            <View style={stylesLocal.miniCard} />
-            <View style={[stylesLocal.miniCard, { opacity: 0.7 }]} />
           </View>
         </View>
       </Animated.View>
@@ -186,21 +180,21 @@ function HeroScene({
   return (
     <Animated.View style={{ opacity: fadeIn, transform: [{ translateY: nudge }] }}>
       <View style={stylesLocal.sceneRow}>
-        <View style={[stylesLocal.sceneCard, { backgroundColor: isDark ? "rgba(0,0,0,0.20)" : "rgba(255,255,255,0.16)" }]}>
+        <View style={[stylesLocal.sceneCard, { backgroundColor: sceneSurface, borderColor: sceneBorder }]}>
           <View style={stylesLocal.intentHeader}>
-            <View style={[stylesLocal.avatar, { borderColor: "rgba(255,255,255,0.24)" }]} />
+            <View style={[stylesLocal.avatar, { borderColor: softStroke, backgroundColor: softSurfaceStrong }]} />
             <View style={{ flex: 1 }}>
-              <View style={[stylesLocal.nameBar, { backgroundColor: "rgba(255,255,255,0.18)" }]} />
-              <View style={[stylesLocal.subBar, { backgroundColor: "rgba(255,255,255,0.14)" }]} />
+              <View style={[stylesLocal.nameBar, { backgroundColor: softBarAlt }]} />
+              <View style={[stylesLocal.subBar, { backgroundColor: softBar }]} />
             </View>
-            <View style={[stylesLocal.badge, { borderColor: "rgba(255,255,255,0.20)" }]}>
+            <View style={[stylesLocal.badge, { borderColor: softStroke, backgroundColor: softSurface }]}>
               <MaterialCommunityIcons name="heart-outline" size={14} color={ink} />
               <Text style={[stylesLocal.badgeText, { color: ink }]}>Vibe</Text>
             </View>
           </View>
 
           <View style={stylesLocal.swipeMid}>
-            <View style={[stylesLocal.swipeHint, { borderColor: "rgba(255,255,255,0.18)" }]}>
+            <View style={[stylesLocal.swipeHint, { borderColor: softStroke, backgroundColor: softSurface }]}>
               <MaterialCommunityIcons name="gesture-swipe-right" size={16} color={ink} />
               <Text style={[stylesLocal.swipeHintText, { color: ink }]}>Swipe</Text>
             </View>
@@ -210,25 +204,16 @@ function HeroScene({
           </View>
 
           <View style={stylesLocal.actionRow}>
-            <View style={[stylesLocal.actionBtn, { borderColor: "rgba(255,255,255,0.18)" }]}>
+            <View style={[stylesLocal.actionBtn, { borderColor: softStroke, backgroundColor: softSurface }]}>
               <MaterialCommunityIcons name="close" size={16} color={ink} />
             </View>
-            <View style={[stylesLocal.actionBtn, { borderColor: "rgba(255,255,255,0.18)" }]}>
+            <View style={[stylesLocal.actionBtn, { borderColor: softStroke, backgroundColor: softSurface }]}>
               <MaterialCommunityIcons name="heart" size={16} color={ink} />
             </View>
-            <View style={[stylesLocal.actionBtn, { borderColor: "rgba(255,255,255,0.18)" }]}>
+            <View style={[stylesLocal.actionBtn, { borderColor: softStroke, backgroundColor: softSurface }]}>
               <MaterialCommunityIcons name="undo" size={16} color={ink} />
             </View>
           </View>
-        </View>
-
-        <View style={stylesLocal.sideStack}>
-          <Animated.View style={[stylesLocal.sideChip, { transform: [{ translateY: floatY }] }]}>
-            <MaterialCommunityIcons name="flash-outline" size={14} color={ink} />
-            <Text style={[stylesLocal.sideChipText, { color: ink }]}>Fast</Text>
-          </Animated.View>
-          <View style={stylesLocal.miniCard} />
-          <View style={[stylesLocal.miniCard, { opacity: 0.7 }]} />
         </View>
       </View>
     </Animated.View>
@@ -236,34 +221,16 @@ function HeroScene({
 }
 
 const stylesLocal = StyleSheet.create({
-  sceneRow: { flexDirection: "row", gap: 10, alignItems: "stretch" },
+  sceneRow: { alignItems: "stretch" },
   sceneCard: {
-    flex: 1,
-    borderRadius: 18,
-    padding: 12,
+    borderRadius: 20,
+    padding: 14,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
-  },
-  sideStack: { width: 98, justifyContent: "space-between", gap: 10 },
-  sideChip: {
-    height: 34,
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    backgroundColor: "rgba(255,255,255,0.14)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
-    justifyContent: "center",
-  },
-  sideChipText: { fontSize: 12, fontWeight: "900" },
-  miniCard: {
-    flex: 1,
-    borderRadius: 16,
-    backgroundColor: "rgba(255,255,255,0.12)",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
+    borderColor: "rgba(255,255,255,0.20)",
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
   },
   sceneHeader: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10 },
   sceneDot: { width: 10, height: 10, borderRadius: 6 },
@@ -522,9 +489,8 @@ export default function VibesIntroModal({ visible, onClose }: Props) {
                   </Animated.View>
 
                   <View style={styles.illusMeta}>
-                    <View style={styles.guidePill}>
-                      <Text style={[styles.guidePillText, { color: heroInk }]}>VIBES GUIDE</Text>
-                    </View>
+                    <Text style={[styles.heroEyebrow, { color: heroInk }]}>{current.eyebrow}</Text>
+                    <Text style={[styles.heroStepText, { color: heroInk }]}>Step {step + 1} of {Slides.length}</Text>
 
                     <View style={styles.stepDots} accessibilityLabel={`Step ${step + 1} of ${Slides.length}`}>
                       {Slides.map((_s, i) => (
@@ -601,7 +567,7 @@ export default function VibesIntroModal({ visible, onClose }: Props) {
 
 const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
   const overlay = isDark ? "rgba(0,0,0,0.66)" : "rgba(15,23,42,0.36)";
-  const cardBg = isDark ? "rgba(15,26,26,0.94)" : "rgba(247,236,226,0.92)";
+  const cardBg = isDark ? "rgba(15,26,26,0.94)" : "rgba(246,236,226,0.98)";
   return StyleSheet.create({
     overlay: {
       flex: 1,
@@ -633,66 +599,56 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       paddingTop: 18,
       paddingBottom: 14,
       overflow: "hidden",
+      backgroundColor: isDark ? "transparent" : "#f2e6da",
+      borderBottomWidth: isDark ? 0 : 1,
+      borderBottomColor: "rgba(95,74,114,0.08)",
     },
     illusRow: {
       flexDirection: "row",
-      alignItems: "center",
+      alignItems: "flex-start",
       justifyContent: "space-between",
-      marginBottom: 14,
+      marginBottom: 12,
     },
     heroWrap: {
-      marginTop: 6,
+      marginTop: 2,
     },
     illusIcon: {
-      width: 44,
-      height: 44,
-      borderRadius: 14,
-      backgroundColor: "rgba(255,255,255,0.14)",
+      width: 48,
+      height: 48,
+      borderRadius: 16,
+      backgroundColor: isDark ? "rgba(255,255,255,0.16)" : "rgba(255,248,242,0.88)",
       alignItems: "center",
       justifyContent: "center",
       borderWidth: 1,
-      borderColor: "rgba(255,255,255,0.18)",
+      borderColor: isDark ? "rgba(255,255,255,0.22)" : "rgba(95,74,114,0.12)",
     },
-    illusPills: { flexDirection: "row", gap: 8 },
-    illusMeta: { alignItems: "flex-end", gap: 8 },
-    guidePill: {
-      paddingHorizontal: 10,
-      height: 26,
-      borderRadius: 999,
-      alignItems: "center",
-      justifyContent: "center",
-      backgroundColor: "rgba(255,255,255,0.14)",
-      borderWidth: 1,
-      borderColor: "rgba(255,255,255,0.18)",
+    illusMeta: { alignItems: "flex-end", gap: 6 },
+    heroEyebrow: {
+      fontSize: 11,
+      fontWeight: "900",
+      letterSpacing: 1.1,
+      textTransform: "uppercase",
+      opacity: isDark ? 0.9 : 1,
     },
-    guidePillText: { color: "#fff", fontSize: 11, fontWeight: "900", letterSpacing: 1.0 },
+    heroStepText: {
+      fontSize: 12,
+      fontWeight: "700",
+      opacity: isDark ? 0.8 : 0.88,
+    },
     stepDots: { flexDirection: "row", alignItems: "center", gap: 6 },
     stepDot: {
-      width: 7,
+      width: 6,
       height: 7,
       borderRadius: 4,
-      backgroundColor: "rgba(255,255,255,0.28)",
+      backgroundColor: isDark ? "rgba(255,255,255,0.24)" : "rgba(95,74,114,0.18)",
       borderWidth: 1,
-      borderColor: "rgba(255,255,255,0.22)",
+      borderColor: isDark ? "rgba(255,255,255,0.18)" : "rgba(95,74,114,0.16)",
     },
     stepDotActive: {
-      width: 16,
-      backgroundColor: "rgba(255,255,255,0.92)",
-      borderColor: "rgba(255,255,255,0.45)",
+      width: 14,
+      backgroundColor: isDark ? "rgba(255,255,255,0.92)" : theme.accent,
+      borderColor: isDark ? "rgba(255,255,255,0.34)" : "rgba(95,74,114,0.28)",
     },
-    pill: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-      paddingHorizontal: 10,
-      height: 30,
-      borderRadius: 999,
-      backgroundColor: "rgba(255,255,255,0.18)",
-      borderWidth: 1,
-      borderColor: "rgba(255,255,255,0.2)",
-    },
-    pillGhost: { backgroundColor: "rgba(255,255,255,0.12)" },
-    pillText: { color: "#fff", fontSize: 12, fontWeight: "700" },
     shineWrap: {
       position: "absolute",
       top: -20,
@@ -706,19 +662,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       height: 220,
       transform: [{ rotate: "18deg" }],
     },
-    illusCards: {
-      alignItems: "center",
-      paddingBottom: 6,
-    },
-    fakeCard: {
-      width: "100%",
-      height: 86,
-      borderRadius: 18,
-      backgroundColor: "rgba(255,255,255,0.16)",
-      borderWidth: 1,
-      borderColor: "rgba(255,255,255,0.18)",
-    },
-    content: { paddingHorizontal: 18, paddingTop: 14, paddingBottom: 18 },
+    content: { paddingHorizontal: 18, paddingTop: 16, paddingBottom: 18 },
     title: { fontSize: 22, color: theme.text, fontFamily: "PlayfairDisplay_700Bold" },
     body: {
       marginTop: 8,
@@ -742,7 +686,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       flex: 1,
       height: 8,
       borderRadius: 999,
-      backgroundColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)",
+      backgroundColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(95,74,114,0.10)",
       overflow: "hidden",
     },
     progressFill: {
@@ -757,8 +701,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       height: 44,
       borderRadius: 14,
       borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: isDark ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.6)",
+      borderColor: isDark ? theme.outline : "rgba(95,74,114,0.12)",
+      backgroundColor: isDark ? "rgba(255,255,255,0.04)" : "rgba(255,250,246,0.96)",
       alignItems: "center",
       justifyContent: "center",
     },

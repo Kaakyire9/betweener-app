@@ -14,6 +14,48 @@ export type Database = {
   }
   public: {
     Tables: {
+      account_deletion_requests: {
+        Row: {
+          completed_at: string | null
+          contact_email: string | null
+          failure_reason: string | null
+          feedback: string | null
+          id: string
+          metadata: Json
+          profile_id: string | null
+          reason_keys: string[]
+          requested_at: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          completed_at?: string | null
+          contact_email?: string | null
+          failure_reason?: string | null
+          feedback?: string | null
+          id?: string
+          metadata?: Json
+          profile_id?: string | null
+          reason_keys: string[]
+          requested_at?: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          completed_at?: string | null
+          contact_email?: string | null
+          failure_reason?: string | null
+          feedback?: string | null
+          id?: string
+          metadata?: Json
+          profile_id?: string | null
+          reason_keys?: string[]
+          requested_at?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       account_merge_cases: {
         Row: {
           candidate_reason: string | null
@@ -298,6 +340,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      account_retention_events: {
+        Row: {
+          action: string
+          created_at: string
+          id: string
+          metadata: Json
+          profile_id: string | null
+          source: string
+          trigger_reason: string | null
+          user_id: string
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          id?: string
+          metadata?: Json
+          profile_id?: string | null
+          source?: string
+          trigger_reason?: string | null
+          user_id: string
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          id?: string
+          metadata?: Json
+          profile_id?: string | null
+          source?: string
+          trigger_reason?: string | null
+          user_id?: string
+        }
+        Relationships: []
       }
       betweener_venues: {
         Row: {
@@ -1911,6 +1986,8 @@ export type Database = {
       }
       profiles: {
         Row: {
+          account_state: string
+          account_state_updated_at: string
           age: number | null
           ai_score: number | null
           ai_score_updated_at: string | null
@@ -1949,6 +2026,8 @@ export type Database = {
           occupation: string | null
           onboarding_step: number
           online: boolean
+          pause_reason: string | null
+          paused_at: string | null
           personality_type: string | null
           pets: string | null
           phone_number: string | null
@@ -1959,6 +2038,7 @@ export type Database = {
           profile_video: string | null
           public_key: string | null
           region: string | null
+          relationship_compass: Json
           religion: Database["public"]["Enums"]["religion"] | null
           search_name: string | null
           smoking: string | null
@@ -1969,10 +2049,19 @@ export type Database = {
           user_id: string
           username: string | null
           verification_level: number | null
+          verification_refresh_reason: string | null
+          verification_refresh_requested_at: string | null
+          verification_refresh_requested_by: string | null
+          verification_refresh_required: boolean
+          verification_refresh_resolved_at: string | null
+          verification_refresh_target_level: number | null
+          verification_refresh_user_notified: boolean
           wants_children: string | null
           years_in_diaspora: number | null
         }
         Insert: {
+          account_state?: string
+          account_state_updated_at?: string
           age?: number | null
           ai_score?: number | null
           ai_score_updated_at?: string | null
@@ -2011,6 +2100,8 @@ export type Database = {
           occupation?: string | null
           onboarding_step?: number
           online?: boolean
+          pause_reason?: string | null
+          paused_at?: string | null
           personality_type?: string | null
           pets?: string | null
           phone_number?: string | null
@@ -2021,6 +2112,7 @@ export type Database = {
           profile_video?: string | null
           public_key?: string | null
           region?: string | null
+          relationship_compass?: Json
           religion?: Database["public"]["Enums"]["religion"] | null
           search_name?: string | null
           smoking?: string | null
@@ -2031,10 +2123,19 @@ export type Database = {
           user_id: string
           username?: string | null
           verification_level?: number | null
+          verification_refresh_reason?: string | null
+          verification_refresh_requested_at?: string | null
+          verification_refresh_requested_by?: string | null
+          verification_refresh_required?: boolean
+          verification_refresh_resolved_at?: string | null
+          verification_refresh_target_level?: number | null
+          verification_refresh_user_notified?: boolean
           wants_children?: string | null
           years_in_diaspora?: number | null
         }
         Update: {
+          account_state?: string
+          account_state_updated_at?: string
           age?: number | null
           ai_score?: number | null
           ai_score_updated_at?: string | null
@@ -2073,6 +2174,8 @@ export type Database = {
           occupation?: string | null
           onboarding_step?: number
           online?: boolean
+          pause_reason?: string | null
+          paused_at?: string | null
           personality_type?: string | null
           pets?: string | null
           phone_number?: string | null
@@ -2083,6 +2186,7 @@ export type Database = {
           profile_video?: string | null
           public_key?: string | null
           region?: string | null
+          relationship_compass?: Json
           religion?: Database["public"]["Enums"]["religion"] | null
           search_name?: string | null
           smoking?: string | null
@@ -2093,6 +2197,13 @@ export type Database = {
           user_id?: string
           username?: string | null
           verification_level?: number | null
+          verification_refresh_reason?: string | null
+          verification_refresh_requested_at?: string | null
+          verification_refresh_requested_by?: string | null
+          verification_refresh_required?: boolean
+          verification_refresh_resolved_at?: string | null
+          verification_refresh_target_level?: number | null
+          verification_refresh_user_notified?: boolean
           wants_children?: string | null
           years_in_diaspora?: number | null
         }
@@ -2164,6 +2275,12 @@ export type Database = {
       reports: {
         Row: {
           created_at: string
+          evidence: Json
+          evidence_message_created_at: string | null
+          evidence_message_id: string | null
+          evidence_message_sender_id: string | null
+          evidence_message_text: string | null
+          evidence_message_type: string | null
           id: string
           reason: string
           reported_id: string
@@ -2172,6 +2289,12 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          evidence?: Json
+          evidence_message_created_at?: string | null
+          evidence_message_id?: string | null
+          evidence_message_sender_id?: string | null
+          evidence_message_text?: string | null
+          evidence_message_type?: string | null
           id?: string
           reason: string
           reported_id: string
@@ -2180,13 +2303,27 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          evidence?: Json
+          evidence_message_created_at?: string | null
+          evidence_message_id?: string | null
+          evidence_message_sender_id?: string | null
+          evidence_message_text?: string | null
+          evidence_message_type?: string | null
           id?: string
           reason?: string
           reported_id?: string
           reporter_id?: string
           status?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "reports_evidence_message_id_fkey"
+            columns: ["evidence_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       revenuecat_webhook_events: {
         Row: {
@@ -3294,6 +3431,7 @@ export type Database = {
           ai_score: number
           avatar_url: string
           bio: string
+          distance_km: number
           full_name: string
           id: string
           is_active: boolean
@@ -3319,6 +3457,7 @@ export type Database = {
           ai_score: number
           avatar_url: string
           bio: string
+          distance_km: number
           full_name: string
           id: string
           is_active: boolean
@@ -3495,8 +3634,16 @@ export type Database = {
           status: string
         }[]
       }
+      rpc_ack_verification_refresh: {
+        Args: { p_profile_id: string }
+        Returns: boolean
+      }
       rpc_ack_verification_request: {
         Args: { p_request_id: string }
+        Returns: boolean
+      }
+      rpc_admin_clear_verification_refresh: {
+        Args: { p_profile_id: string }
         Returns: boolean
       }
       rpc_admin_create_account_merge_case: {
@@ -3697,6 +3844,12 @@ export type Database = {
         Args: never
         Returns: {
           created_at: string
+          evidence: Json
+          evidence_message_created_at: string
+          evidence_message_id: string
+          evidence_message_sender_id: string
+          evidence_message_text: string
+          evidence_message_type: string
           id: string
           reason: string
           reported_avatar: string
@@ -3713,6 +3866,7 @@ export type Database = {
       rpc_admin_get_verification_queue: {
         Args: never
         Returns: {
+          auto_verification_data: Json
           auto_verification_score: number
           avatar_url: string
           current_country: string
@@ -3726,12 +3880,24 @@ export type Database = {
           submitted_at: string
           user_id: string
           verification_level: number
+          verification_refresh_reason: string
+          verification_refresh_requested_at: string
+          verification_refresh_required: boolean
+          verification_refresh_target_level: number
           verification_type: string
         }[]
       }
       rpc_admin_preview_account_merge_case: {
         Args: { p_case_id: string }
         Returns: Json
+      }
+      rpc_admin_request_verification_refresh: {
+        Args: {
+          p_profile_id: string
+          p_reason?: string
+          p_target_level?: number
+        }
+        Returns: boolean
       }
       rpc_admin_review_verification_request: {
         Args: { p_decision: string; p_notes?: string; p_request_id: string }
@@ -3951,6 +4117,34 @@ export type Database = {
           p_role: string
         }
         Returns: boolean
+      }
+      rpc_submit_manual_verification_request: {
+        Args: {
+          p_auto_verification_reason?: string
+          p_auto_verification_score?: number
+          p_document_path?: string
+          p_profile_id: string
+          p_reference_asset_path?: string
+          p_social_handle?: string
+          p_social_platform?: string
+          p_social_profile_url?: string
+          p_verification_type: string
+        }
+        Returns: {
+          already_pending: boolean
+          created_at: string
+          request_id: string
+          status: string
+        }[]
+      }
+      rpc_submit_report: {
+        Args: {
+          p_client_evidence?: Json
+          p_evidence_message_id?: string
+          p_reason: string
+          p_reported_id: string
+        }
+        Returns: string
       }
       rpc_submit_selfie_liveness_verification: {
         Args: {

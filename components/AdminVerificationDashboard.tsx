@@ -1,4 +1,4 @@
-﻿import { Colors } from "@/constants/theme";
+import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessAdminTools } from "@/lib/internal-tools";
@@ -10,7 +10,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Image,
+  KeyboardAvoidingView,
+  Linking,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -41,11 +44,16 @@ type VerificationRow = {
   reviewed_at: string | null;
   reviewer_notes: string | null;
   auto_verification_score: number | null;
+  auto_verification_data: Record<string, unknown> | null;
   document_url: string | null;
   full_name: string | null;
   current_country: string | null;
   avatar_url: string | null;
   verification_level: number | null;
+  verification_refresh_required: boolean | null;
+  verification_refresh_reason: string | null;
+  verification_refresh_target_level: number | null;
+  verification_refresh_requested_at: string | null;
 };
 
 type ReportRow = {
@@ -61,6 +69,12 @@ type ReportRow = {
   reported_name: string | null;
   reported_avatar: string | null;
   reported_verification_level: number | null;
+  evidence_message_id: string | null;
+  evidence_message_text: string | null;
+  evidence_message_type: string | null;
+  evidence_message_sender_id: string | null;
+  evidence_message_created_at: string | null;
+  evidence: Record<string, unknown> | null;
 };
 
 type DatePlanConciergeRow = {
@@ -210,6 +224,16 @@ const getVerificationRejectReasons = (item: Pick<VerificationRow, "verification_
         "Please resubmit with a stronger proof",
       ];
   }
+};
+
+const getSocialVerificationEvidence = (item: Pick<VerificationRow, "verification_type" | "auto_verification_data">) => {
+  if ((item.verification_type || "").toLowerCase() !== "social") return null;
+  const data = item.auto_verification_data || {};
+  const platform = typeof data.social_platform === "string" ? data.social_platform : null;
+  const profileUrl = typeof data.social_profile_url === "string" ? data.social_profile_url : null;
+  const handle = typeof data.social_handle === "string" ? data.social_handle : null;
+  if (!platform && !profileUrl && !handle) return null;
+  return { platform, profileUrl, handle };
 };
 
 function VerificationAssetPreview({
@@ -482,6 +506,80 @@ export const AdminVerificationDashboard = () => {
     [loadDashboard]
   );
 
+  const handleRequestFreshReview = useCallback(
+    async (item: VerificationRow) => {
+      if (!item.profile_id) {
+        Alert.alert("Fresh review unavailable", "This verification row is missing a profile id.");
+        return;
+      }
+
+      if (item.verification_refresh_required) {
+        Alert.alert("Fresh review already requested", "This member already has an active private trust refresh.");
+        return;
+      }
+
+      const currentLevel = Math.max(1, Math.min(2, item.verification_level || 1));
+      const formattedType = formatVerificationType(item.verification_type).toLowerCase();
+      const reason = `Betweener needs a fresh ${formattedType} check to keep this trust signal current.`;
+
+      Alert.alert(
+        "Ask for fresh review",
+        `Ask ${item.full_name || "this member"} for a private Trust level ${currentLevel} refresh?\n\nThey keep their current badge while they complete it.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Ask for refresh",
+            onPress: async () => {
+              const { data, error: rpcError } = await supabase.rpc("rpc_admin_request_verification_refresh", {
+                p_profile_id: item.profile_id,
+                p_target_level: currentLevel,
+                p_reason: reason,
+              });
+              if (rpcError || !data) {
+                Alert.alert("Fresh review failed", rpcError?.message || "Unable to request a fresh verification review.");
+                return;
+              }
+              void loadDashboard();
+            },
+          },
+        ],
+      );
+    },
+    [loadDashboard],
+  );
+
+  const handleClearFreshReview = useCallback(
+    async (item: VerificationRow) => {
+      if (!item.profile_id) {
+        Alert.alert("Fresh review unavailable", "This verification row is missing a profile id.");
+        return;
+      }
+
+      Alert.alert(
+        "Cancel fresh review",
+        `Cancel the private trust refresh for ${item.full_name || "this member"}? Their current badge stays unchanged.`,
+        [
+          { text: "Keep request", style: "cancel" },
+          {
+            text: "Cancel request",
+            style: "destructive",
+            onPress: async () => {
+              const { data, error: rpcError } = await supabase.rpc("rpc_admin_clear_verification_refresh", {
+                p_profile_id: item.profile_id,
+              });
+              if (rpcError || !data) {
+                Alert.alert("Fresh review failed", rpcError?.message || "Unable to cancel the fresh verification review.");
+                return;
+              }
+              void loadDashboard();
+            },
+          },
+        ],
+      );
+    },
+    [loadDashboard],
+  );
+
   const handleReportStatus = useCallback(
     async (item: ReportRow, status: "REVIEWING" | "RESOLVED" | "DISMISSED") => {
       const { data, error: rpcError } = await supabase.rpc("rpc_admin_update_report_status", {
@@ -633,15 +731,21 @@ export const AdminVerificationDashboard = () => {
             text: statusLabel,
             style: status === "closed" ? "destructive" : "default",
             onPress: async () => {
-              const { data, error: rpcError } = await supabase.rpc("rpc_admin_update_account_recovery_request", {
-                p_request_id: item.id,
-                p_status: status,
-                p_review_notes: null,
-                p_linked_merge_case_id: null,
+              const { data, error } = await supabase.functions.invoke("admin-update-account-recovery-request", {
+                body: {
+                  requestId: item.id,
+                  status,
+                  reviewNotes: null,
+                  linkedMergeCaseId: null,
+                },
               });
-              if (rpcError || !data) {
-                Alert.alert("Admin action failed", rpcError?.message || "Unable to update recovery request.");
+              if (error || !(data as any)?.success) {
+                Alert.alert("Admin action failed", error?.message || "Unable to update recovery request.");
                 return;
+              }
+              const warning = (data as any)?.notifications?.warning;
+              if (status === "resolved" && warning) {
+                Alert.alert("Recovery marked resolved", "Status was updated, but the recovery email could not be sent automatically.");
               }
               void loadDashboard();
             },
@@ -676,19 +780,25 @@ export const AdminVerificationDashboard = () => {
     setRecoveryReviewError(null);
     setRecoveryReviewSubmitting(true);
 
-    const { data, error: rpcError } = await supabase.rpc("rpc_admin_update_account_recovery_request", {
-      p_request_id: recoveryReviewRequest.id,
-      p_status: recoveryReviewStatusDraft,
-      p_review_notes: recoveryReviewNotesDraft.trim() || null,
-      p_linked_merge_case_id: recoveryReviewRequest.linked_merge_case_id,
+    const { data, error } = await supabase.functions.invoke("admin-update-account-recovery-request", {
+      body: {
+        requestId: recoveryReviewRequest.id,
+        status: recoveryReviewStatusDraft,
+        reviewNotes: recoveryReviewNotesDraft.trim() || null,
+        linkedMergeCaseId: recoveryReviewRequest.linked_merge_case_id,
+      },
     });
 
-    if (rpcError || !data) {
+    if (error || !(data as any)?.success) {
       setRecoveryReviewSubmitting(false);
-      setRecoveryReviewError(rpcError?.message || "Unable to save recovery review.");
+      setRecoveryReviewError(error?.message || "Unable to save recovery review.");
       return;
     }
 
+    const warning = (data as any)?.notifications?.warning;
+    if (recoveryReviewStatusDraft === "resolved" && warning) {
+      Alert.alert("Recovery marked resolved", "Status was updated, but the recovery email could not be sent automatically.");
+    }
     closeRecoveryReviewModal();
     void loadDashboard();
   }, [
@@ -1035,6 +1145,7 @@ export const AdminVerificationDashboard = () => {
                 const isVideoAsset = isVideoVerificationAsset(item, documentUrl);
                 const checklist = getVerificationReviewChecklist(item);
                 const rejectReasons = getVerificationRejectReasons(item);
+                const socialEvidence = getSocialVerificationEvidence(item);
                 const statusTone =
                   item.status === "approved" ? styles.statusApproved : item.status === "rejected" ? styles.statusRejected : styles.statusPending;
                 return (
@@ -1071,6 +1182,41 @@ export const AdminVerificationDashboard = () => {
 
                     {item.reviewer_notes ? <Text style={styles.reviewerNote}>{item.reviewer_notes}</Text> : null}
 
+                    {item.verification_refresh_required ? (
+                      <View style={styles.socialEvidenceCard}>
+                        <Text style={styles.socialEvidenceTitle}>Fresh review requested</Text>
+                        <Text style={styles.socialEvidenceText}>
+                          Target level: {item.verification_refresh_target_level || item.verification_level || 1}
+                        </Text>
+                        {item.verification_refresh_reason ? (
+                          <Text style={styles.socialEvidenceText}>{item.verification_refresh_reason}</Text>
+                        ) : null}
+                      </View>
+                    ) : null}
+
+                    {socialEvidence ? (
+                      <View style={styles.socialEvidenceCard}>
+                        <Text style={styles.socialEvidenceTitle}>Linked social proof</Text>
+                        <Text style={styles.socialEvidenceText}>
+                          Platform: {socialEvidence.platform || "Not specified"}
+                        </Text>
+                        {socialEvidence.handle ? (
+                          <Text style={styles.socialEvidenceText}>Handle: @{socialEvidence.handle}</Text>
+                        ) : null}
+                        {socialEvidence.profileUrl ? (
+                          <Pressable
+                            style={styles.socialEvidenceLink}
+                            onPress={() => void Linking.openURL(socialEvidence.profileUrl as string)}
+                          >
+                            <MaterialCommunityIcons name="open-in-new" size={14} color={theme.tint} />
+                            <Text style={styles.socialEvidenceLinkText} numberOfLines={1}>
+                              {socialEvidence.profileUrl}
+                            </Text>
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    ) : null}
+
                     <View style={styles.reviewChecklistCard}>
                       <Text style={styles.reviewChecklistTitle}>Reviewer checklist</Text>
                       {checklist.map((point) => (
@@ -1081,30 +1227,32 @@ export const AdminVerificationDashboard = () => {
                       ))}
                     </View>
 
-                    <View style={styles.documentCard}>
-                      <Pressable
-                        style={styles.documentPreview}
-                        onPress={() => {
-                          setSelectedVerification(item);
-                          setImageModalVisible(true);
-                        }}
-                      >
-                        <VerificationAssetPreview
-                          uri={documentUrl}
-                          isVideo={isVideoAsset}
-                          style={styles.documentImage}
-                          videoStyle={styles.videoPreview}
-                          placeholderStyle={styles.documentPlaceholder}
-                          placeholderTextStyle={styles.documentPlaceholderText}
-                          videoBadgeStyle={styles.videoPreviewBadge}
-                          videoBadgeTextStyle={styles.videoPreviewBadgeText}
-                          muted
-                          autoPlay
-                          loop
-                          nativeControls={false}
-                        />
-                      </Pressable>
-                    </View>
+                    {item.document_url ? (
+                      <View style={styles.documentCard}>
+                        <Pressable
+                          style={styles.documentPreview}
+                          onPress={() => {
+                            setSelectedVerification(item);
+                            setImageModalVisible(true);
+                          }}
+                        >
+                          <VerificationAssetPreview
+                            uri={documentUrl}
+                            isVideo={isVideoAsset}
+                            style={styles.documentImage}
+                            videoStyle={styles.videoPreview}
+                            placeholderStyle={styles.documentPlaceholder}
+                            placeholderTextStyle={styles.documentPlaceholderText}
+                            videoBadgeStyle={styles.videoPreviewBadge}
+                            videoBadgeTextStyle={styles.videoPreviewBadgeText}
+                            muted
+                            autoPlay
+                            loop
+                            nativeControls={false}
+                          />
+                        </Pressable>
+                      </View>
+                    ) : null}
 
                     {item.status === "pending" ? (
                       <>
@@ -1129,6 +1277,32 @@ export const AdminVerificationDashboard = () => {
                         </View>
                       </>
                     ) : null}
+                    {item.status === "approved" && item.profile_id ? (
+                      <View style={styles.actionRow}>
+                        {item.verification_refresh_required ? (
+                          <>
+                            <View style={[styles.secondaryAction, styles.disabledAction]}>
+                              <Text style={[styles.secondaryActionText, styles.disabledActionText]}>
+                                Refresh requested
+                              </Text>
+                            </View>
+                            <Pressable
+                              style={styles.rejectButton}
+                              onPress={() => void handleClearFreshReview(item)}
+                            >
+                              <Text style={styles.actionButtonText}>Cancel request</Text>
+                            </Pressable>
+                          </>
+                        ) : (
+                          <Pressable
+                            style={styles.secondaryAction}
+                            onPress={() => void handleRequestFreshReview(item)}
+                          >
+                            <Text style={styles.secondaryActionText}>Ask fresh review</Text>
+                          </Pressable>
+                        )}
+                      </View>
+                    ) : null}
                   </View>
                 );
               })
@@ -1145,10 +1319,10 @@ export const AdminVerificationDashboard = () => {
                   <View style={styles.reviewHeader}>
                     <View style={styles.identityCopy}>
                       <Text style={styles.identityName}>
-                        {item.reporter_name || "Unknown reporter"} â†’ {item.reported_name || "Unknown member"}
+                        {item.reporter_name || "Unknown reporter"}{" -> "}{item.reported_name || "Unknown member"}
                       </Text>
                       <Text style={styles.identityMeta}>
-                        {new Date(item.created_at).toLocaleDateString()} â€¢ {item.status}
+                        {new Date(item.created_at).toLocaleDateString()} - {item.status}
                       </Text>
                     </View>
                     <View style={[styles.statusPill, ["PENDING", "REVIEWING"].includes(item.status) ? styles.statusPending : styles.statusApproved]}>
@@ -1157,6 +1331,21 @@ export const AdminVerificationDashboard = () => {
                   </View>
 
                   <Text style={styles.reportReason}>{item.reason}</Text>
+
+                  {item.evidence_message_id ? (
+                    <View style={styles.reportEvidenceCard}>
+                      <View style={styles.reportEvidenceHeader}>
+                        <Text style={styles.reportEvidenceTitle}>Attached message evidence</Text>
+                        <Text style={styles.reportEvidenceMeta}>
+                          {(item.evidence_message_type || "message").toUpperCase()}
+                          {item.evidence_message_created_at ? ` - ${new Date(item.evidence_message_created_at).toLocaleString()}` : ""}
+                        </Text>
+                      </View>
+                      <Text style={styles.reportEvidenceText}>
+                        {item.evidence_message_text || "No text snapshot was available for this message."}
+                      </Text>
+                    </View>
+                  ) : null}
 
                   <View style={styles.metaRow}>
                     <Text style={styles.metaText}>Reporter verified: {item.reporter_verification_level ? "Yes" : "No"}</Text>
@@ -1192,7 +1381,7 @@ export const AdminVerificationDashboard = () => {
                         {(item.creator_name || "Unknown") + " and " + (item.recipient_name || "Unknown")}
                       </Text>
                       <Text style={styles.identityMeta}>
-                        Requested by {item.requested_by_name || "participant"}{" â€¢ "}
+                        Requested by {item.requested_by_name || "participant"}{" - "}
                         {new Date(item.requested_at).toLocaleDateString()}
                       </Text>
                     </View>
@@ -1203,7 +1392,7 @@ export const AdminVerificationDashboard = () => {
                   <Text style={styles.reportReason}>
                     {(item.place_name || "Date plan") +
                       (item.city ? `, ${item.city}` : "") +
-                      (item.scheduled_for ? ` â€¢ ${new Date(item.scheduled_for).toLocaleString()}` : "")}
+                      (item.scheduled_for ? ` - ${new Date(item.scheduled_for).toLocaleString()}` : "")}
                   </Text>
                   {item.request_note ? <Text style={styles.reviewerNote}>{item.request_note}</Text> : null}
                   <View style={styles.metaRow}>
@@ -1253,8 +1442,8 @@ export const AdminVerificationDashboard = () => {
                     <View style={styles.identityCopy}>
                       <Text style={styles.identityName}>{item.requester_name || item.contact_email || "Unknown member"}</Text>
                       <Text style={styles.identityMeta}>
-                        {(item.current_sign_in_method || "unknown").toUpperCase()} â†’ {(item.previous_sign_in_method || "unknown").toUpperCase()}
-                        {" â€¢ "}
+                        {(item.current_sign_in_method || "unknown").toUpperCase()}{" -> "}{(item.previous_sign_in_method || "unknown").toUpperCase()}
+                        {" - "}
                         {new Date(item.created_at).toLocaleDateString()}
                       </Text>
                     </View>
@@ -1339,10 +1528,10 @@ export const AdminVerificationDashboard = () => {
                   <View style={styles.reviewHeader}>
                     <View style={styles.identityCopy}>
                       <Text style={styles.identityName}>
-                        {(item.source_name || "Unknown source") + " â†’ " + (item.target_name || "Unknown target")}
+                        {(item.source_name || "Unknown source") + " -> " + (item.target_name || "Unknown target")}
                       </Text>
                       <Text style={styles.identityMeta}>
-                        {(item.request_channel || "support").toUpperCase()}{" â€¢ "}
+                        {(item.request_channel || "support").toUpperCase()}{" - "}
                         {new Date(item.created_at).toLocaleDateString()}
                       </Text>
                     </View>
@@ -1453,7 +1642,7 @@ export const AdminVerificationDashboard = () => {
                 <Text style={styles.modalInfoLabel}>Review focus</Text>
                 {getVerificationReviewChecklist(selectedVerification).map((point) => (
                   <Text key={`modal:${selectedVerification.id}:${point}`} style={styles.modalInfoMeta}>
-                    â€¢ {point}
+                    * {point}
                   </Text>
                 ))}
               </View>
@@ -1507,7 +1696,7 @@ export const AdminVerificationDashboard = () => {
                       </View>
                     </View>
                     <Text style={styles.identityMeta}>
-                      {(ref.scope || "unknown").toUpperCase()} â€¢ {ref.column || "unknown column"}
+                      {(ref.scope || "unknown").toUpperCase()} - {ref.column || "unknown column"}
                     </Text>
                   </View>
                 ))
@@ -1523,7 +1712,11 @@ export const AdminVerificationDashboard = () => {
         animationType="fade"
         onRequestClose={closeRecoveryReviewModal}
       >
-        <View style={styles.modalBackdrop}>
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 24 : 0}
+        >
           <Pressable style={styles.modalClose} onPress={closeRecoveryReviewModal}>
             <MaterialCommunityIcons name="close" size={22} color="#fff" />
           </Pressable>
@@ -1587,7 +1780,7 @@ export const AdminVerificationDashboard = () => {
               </Pressable>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <Modal
@@ -1596,7 +1789,11 @@ export const AdminVerificationDashboard = () => {
         animationType="fade"
         onRequestClose={() => setCreateMergeModalVisible(false)}
       >
-        <View style={styles.modalBackdrop}>
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 24 : 0}
+        >
           <Pressable style={styles.modalClose} onPress={() => setCreateMergeModalVisible(false)}>
             <MaterialCommunityIcons name="close" size={22} color="#fff" />
           </Pressable>
@@ -1657,7 +1854,7 @@ export const AdminVerificationDashboard = () => {
               </Pressable>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -1814,6 +2011,39 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderRadius: 12,
       padding: 10,
     },
+    socialEvidenceCard: {
+      borderRadius: 14,
+      padding: 12,
+      gap: 6,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.08),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.35 : 0.18),
+    },
+    socialEvidenceTitle: {
+      color: theme.text,
+      fontSize: 12,
+      fontFamily: "Archivo_700Bold",
+      textTransform: "uppercase",
+      letterSpacing: 0.3,
+    },
+    socialEvidenceText: {
+      color: theme.textMuted,
+      fontSize: 12,
+      lineHeight: 17,
+      fontFamily: "Manrope_600SemiBold",
+    },
+    socialEvidenceLink: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 7,
+      marginTop: 2,
+    },
+    socialEvidenceLinkText: {
+      flex: 1,
+      color: theme.tint,
+      fontSize: 12,
+      fontFamily: "Manrope_700Bold",
+    },
     reviewChecklistCard: {
       borderRadius: 14,
       padding: 12,
@@ -1925,10 +2155,50 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
       backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.04),
     },
+    disabledAction: {
+      opacity: 0.72,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
+      borderColor: withAlpha(theme.tint, isDark ? 0.28 : 0.18),
+    },
     actionButtonText: { color: "#fff", fontSize: 12, fontWeight: "700" },
     secondaryActionText: { color: theme.text, fontSize: 12, fontWeight: "600" },
+    disabledActionText: { color: theme.tint },
     emptyText: { color: theme.textMuted, fontSize: 13, lineHeight: 19, fontFamily: "Manrope_500Medium" },
     reportReason: { color: theme.text, fontSize: 12, lineHeight: 18, fontFamily: "Manrope_500Medium" },
+    reportEvidenceCard: {
+      gap: 8,
+      borderRadius: 14,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.34 : 0.2),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
+    },
+    reportEvidenceHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 10,
+    },
+    reportEvidenceTitle: {
+      flex: 1,
+      color: theme.text,
+      fontSize: 12,
+      fontFamily: "Archivo_700Bold",
+      textTransform: "uppercase",
+      letterSpacing: 0.3,
+    },
+    reportEvidenceMeta: {
+      color: theme.tint,
+      fontSize: 10,
+      fontFamily: "Manrope_800ExtraBold",
+      letterSpacing: 0.3,
+    },
+    reportEvidenceText: {
+      color: theme.text,
+      fontSize: 13,
+      lineHeight: 19,
+      fontFamily: "Manrope_600SemiBold",
+    },
     centerState: {
       flex: 1,
       alignItems: "center",
@@ -2058,4 +2328,3 @@ const withAlpha = (hex: string, alpha: number) => {
   const b = bigint & 255;
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
 };
-

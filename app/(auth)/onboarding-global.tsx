@@ -3,7 +3,7 @@ import Notice from "@/components/ui/Notice";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
 import { isLikelyNetworkError } from "@/lib/network";
-import { clearSignupSession, finalizeSignupPhoneVerification, getSignupPhoneState } from "@/lib/signup-tracking";
+import { captureSignupContext, clearSignupSession, finalizeSignupPhoneVerification, getSignupPhoneState } from "@/lib/signup-tracking";
 import { supabase } from "@/lib/supabase";
 import { logger } from "@/lib/telemetry/logger";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -43,6 +43,44 @@ const REGIONS = [
   "Oceania",
   "Middle East",
 ];
+const COUNTRY_OPTIONS = [
+  "Ghana",
+  "United Kingdom",
+  "United States",
+  "Canada",
+  "Nigeria",
+  "South Africa",
+  "Germany",
+  "Netherlands",
+  "France",
+  "Spain",
+  "Italy",
+  "Australia",
+  "United Arab Emirates",
+  "Other",
+];
+const COUNTRY_NAME_TO_CODE: Record<string, string> = {
+  ghana: "GH",
+  "united kingdom": "GB",
+  uk: "GB",
+  "great britain": "GB",
+  england: "GB",
+  scotland: "GB",
+  wales: "GB",
+  "united states": "US",
+  usa: "US",
+  canada: "CA",
+  nigeria: "NG",
+  "south africa": "ZA",
+  germany: "DE",
+  netherlands: "NL",
+  france: "FR",
+  spain: "ES",
+  italy: "IT",
+  australia: "AU",
+  "united arab emirates": "AE",
+  uae: "AE",
+};
 const TRIBES = [
   "African",
   "Caribbean",
@@ -132,6 +170,31 @@ export default function Onboarding() {
   const [submitDebugId, setSubmitDebugId] = useState<string | null>(null);
   const submitAttemptRef = useRef(0);
 
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      if (form.currentCountry) return;
+      try {
+        const context = await captureSignupContext();
+        if (!active) return;
+        const detectedCountry = String(context?.ipInfo?.country || '').trim();
+        if (!detectedCountry) return;
+        const normalizedDetected = detectedCountry.toLowerCase();
+        const exactOption = COUNTRY_OPTIONS.find(
+          (option) => option.toLowerCase() === normalizedDetected
+        );
+        if (exactOption) {
+          setForm((prev) => (prev.currentCountry ? prev : { ...prev, currentCountry: exactOption }));
+        }
+      } catch {
+        // best-effort only
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [form.currentCountry]);
+
   // Animation values
   const progressAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(0)).current;
@@ -150,7 +213,7 @@ export default function Onboarding() {
   const pickImage = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: 'images',
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
@@ -405,7 +468,10 @@ export default function Onboarding() {
         phone_verified: true,
         min_age_interest: Number(form.minAgeInterest),
         max_age_interest: Number(form.maxAgeInterest),
+        city: null,
+        location: form.currentCountry,
         current_country: form.currentCountry,
+        current_country_code: COUNTRY_NAME_TO_CODE[String(form.currentCountry || '').trim().toLowerCase()] || null,
         years_in_diaspora: 0,
         profile_completed: true,
       };
@@ -993,7 +1059,7 @@ export default function Onboarding() {
             </View>
           </View>
           <View style={styles.optionsGrid}>
-            {["United States", "United Kingdom", "Canada", "Germany", "Netherlands", "Australia", "Other"].map((country) => (
+            {COUNTRY_OPTIONS.map((country) => (
               <TouchableOpacity
                 key={country}
                 style={[

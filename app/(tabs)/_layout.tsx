@@ -9,8 +9,8 @@ import { useAuth } from '@/lib/auth-context';
 import { Tabs } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MessageCircle, Sparkles, Target, User, Users } from 'lucide-react-native';
-import { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { AppState, AppStateStatus, StyleSheet, Text, View } from 'react-native';
 import { supabase } from '@/lib/supabase';
 
 export default function TabLayout() {
@@ -21,6 +21,7 @@ export default function TabLayout() {
   const { badgeCount } = useIntentRequests(profileId);
 
   const [unreadChats, setUnreadChats] = useState(0);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   const computeUnreadChats = useMemo(() => {
     return async (pid: string) => {
@@ -78,6 +79,65 @@ export default function TabLayout() {
       supabase.removeChannel(channel);
     };
   }, [computeUnreadChats, user?.id]);
+
+  useEffect(() => {
+    const myUserId = user?.id ?? null;
+    if (!myUserId) return;
+
+    const markDelivered = async (messageId?: string) => {
+      try {
+        let query = supabase
+          .from('messages')
+          .update({ delivered_at: new Date().toISOString() })
+          .eq('receiver_id', myUserId)
+          .neq('sender_id', myUserId)
+          .is('delivered_at', null);
+
+        if (messageId) {
+          query = query.eq('id', messageId);
+        }
+
+        await query;
+      } catch {}
+    };
+
+    const catchUpDelivered = () => {
+      if (appStateRef.current !== 'active') return;
+      void markDelivered();
+    };
+
+    catchUpDelivered();
+
+    const appStateSubscription = AppState.addEventListener('change', (nextState) => {
+      appStateRef.current = nextState;
+      if (nextState === 'active') {
+        catchUpDelivered();
+      }
+    });
+
+    const channel = supabase
+      .channel(`delivery:global:${myUserId}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${myUserId}` },
+        (payload) => {
+          if (appStateRef.current !== 'active') return;
+          const messageId = typeof payload.new?.id === 'string' ? payload.new.id : null;
+          if (!messageId) return;
+          void markDelivered(messageId);
+        },
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          catchUpDelivered();
+        }
+      });
+
+    return () => {
+      appStateSubscription.remove();
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
   
   // Badge component for tab notifications
   const TabBadge = ({ count }: { count: number }) => {

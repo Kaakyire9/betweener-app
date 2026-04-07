@@ -18,13 +18,14 @@ import { openExternalUrl, openSupportEmail } from "@/lib/trust-links";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { PurchasesOfferings, PurchasesPackage } from "react-native-purchases";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 type PaidPlan = Exclude<PremiumPlan, "FREE">;
+type TierPlan = PremiumPlan;
 
 const INTERVALS: PremiumPlanInterval[] = ["monthly", "quarterly", "annual"];
 
@@ -42,7 +43,6 @@ const PLAN_CONFIG: Record<
   {
     label: string;
     eyebrow: string;
-    fallbackPrice: string;
     subtitle: string;
     features: string[];
     accent: string;
@@ -52,13 +52,12 @@ const PLAN_CONFIG: Record<
   SILVER: {
     label: "Silver",
     eyebrow: "Essential tier",
-    fallbackPrice: "Starter premium",
-    subtitle: "For members who want stronger visibility, cleaner trust signals, and more momentum.",
+    subtitle: "Stronger visibility, cleaner trust signals, and more momentum.",
     features: [
-      "30-minute profile boosts from your own profile",
-      "Elevated discovery visibility and a stronger first impression",
-      "Priority support for account and verification issues",
-      "More premium presentation across profile and trust surfaces",
+      "30-minute profile boosts",
+      "Advanced Vibes filters for trust, chemistry, and distance",
+      "Send notes and standard gifts before the chat cools off",
+      "Initiate date plans from chat when the energy is right",
     ],
     accent: "#14B8D4",
     halo: ["rgba(20,184,212,0.28)", "rgba(20,184,212,0.03)"],
@@ -66,13 +65,12 @@ const PLAN_CONFIG: Record<
   GOLD: {
     label: "Gold",
     eyebrow: "Signature tier",
-    fallbackPrice: "Flagship premium",
-    subtitle: "For members who want the strongest premium positioning and priority.",
+    subtitle: "The strongest premium positioning, priority, and polish.",
     features: [
       "Everything in Silver, plus the highest premium placement",
-      "Profile boosts included with the top member tier",
+      "Signature gifts like the Ring",
+      "Betweener concierge help for accepted date plans",
       "The strongest trust framing across core member surfaces",
-      "Priority-first support and premium release access",
     ],
     accent: "#EAB308",
     halo: ["rgba(234,179,8,0.32)", "rgba(234,179,8,0.04)"],
@@ -83,6 +81,61 @@ const PLAN_DEFAULT_INTERVAL: Record<PaidPlan, PremiumPlanInterval> = {
   SILVER: "quarterly",
   GOLD: "annual",
 };
+
+const TIER_MODEL: {
+  plan: TierPlan;
+  eyebrow: string;
+  title: string;
+  summary: string;
+  bullets: string[];
+}[] = [
+  {
+    plan: "FREE",
+    eyebrow: "Open social core",
+    title: "Match, chat, and keep the room alive.",
+    summary: "Free should feel usable before anyone pays.",
+    bullets: [
+      "Create your profile, browse Vibes, match, and chat normally",
+      "Open enough to build chemistry before premium takes over",
+    ],
+  },
+  {
+    plan: "SILVER",
+    eyebrow: "Momentum tier",
+    title: "Get seen faster and open stronger.",
+    summary: "Silver is the value tier for traction and timing.",
+    bullets: [
+      "Profile boosts and stronger discovery visibility",
+      "Advanced filters, notes, gifts, and date-plan initiation",
+    ],
+  },
+  {
+    plan: "GOLD",
+    eyebrow: "Status tier",
+    title: "Get the strongest presence and the smoothest path to a real date.",
+    summary: "Gold is for top priority, polish, and status.",
+    bullets: [
+      "Everything in Silver, plus the highest premium placement",
+      "Concierge help and signature gestures like the Ring",
+    ],
+  },
+];
+
+const FEATURE_MATRIX: {
+  label: string;
+  free: string;
+  silver: string;
+  gold: string;
+}[] = [
+  { label: "Basic matching and chat", free: "Included", silver: "Included", gold: "Included" },
+  { label: "Advanced Vibes filters", free: "No", silver: "Included", gold: "Included" },
+  { label: "Notes and standard gifts", free: "No", silver: "Included", gold: "Included" },
+  { label: "Date-plan initiation", free: "No", silver: "Included", gold: "Included" },
+  { label: "Betweener concierge help", free: "No", silver: "No", gold: "Included" },
+  { label: "Profile boosts", free: "No", silver: "Included", gold: "Included" },
+  { label: "Signature Ring gift", free: "No", silver: "No", gold: "Included" },
+  { label: "Discovery visibility", free: "Standard", silver: "Elevated", gold: "Highest" },
+];
 
 export default function PremiumPlansScreen() {
   const colorScheme = useColorScheme();
@@ -107,6 +160,7 @@ export default function PremiumPlansScreen() {
   const [restoring, setRestoring] = useState(false);
   const [selectedIntervals, setSelectedIntervals] = useState<Record<PaidPlan, PremiumPlanInterval>>(PLAN_DEFAULT_INTERVAL);
   const showDeveloperBillingNotice = __DEV__ && !billingReady && !loading && isRevenueCatConfiguredForPlatform() === false;
+  const formattedCurrentPlanEndsAt = formatMembershipDate(currentPlanEndsAt);
 
   const packageCatalog = useMemo(
     () => ({
@@ -115,6 +169,28 @@ export default function PremiumPlansScreen() {
     }),
     [offerings],
   );
+
+  useEffect(() => {
+    setSelectedIntervals((current) => {
+      let changed = false;
+      const next = { ...current };
+      (Object.keys(PLAN_CONFIG) as PaidPlan[]).forEach((plan) => {
+        if (packageCatalog[plan][current[plan]]) return;
+        const preferred = [
+          PLAN_DEFAULT_INTERVAL[plan],
+          "monthly",
+          "quarterly",
+          "annual",
+        ] as PremiumPlanInterval[];
+        const available = preferred.find((interval) => packageCatalog[plan][interval]);
+        if (available && available !== current[plan]) {
+          next[plan] = available;
+          changed = true;
+        }
+      });
+      return changed ? next : current;
+    });
+  }, [packageCatalog]);
 
   const handlePurchase = async (plan: PaidPlan, interval: PremiumPlanInterval) => {
     const targetPackage = getSelectedPlanPackage(packageCatalog[plan], interval);
@@ -187,20 +263,21 @@ export default function PremiumPlansScreen() {
               </View>
               <Text style={styles.heroTitle}>Choose the premium pace that fits your momentum</Text>
               <Text style={styles.heroBody}>
-                Step into a cleaner, more luxurious membership experience with stronger visibility, priority trust framing, and flexible billing that matches how you date.
+                Basic chat stays open. Premium accelerates what happens next: stronger visibility,
+                cleaner trust, and more momentum toward a real date.
               </Text>
               <View style={styles.heroHighlights}>
                 <View style={styles.heroPill}>
                   <MaterialCommunityIcons name="rocket-launch-outline" size={16} color={theme.tint} />
-                  <Text style={styles.heroPillText}>Boost visibility</Text>
+                  <Text style={styles.heroPillText}>Visibility that converts</Text>
                 </View>
                 <View style={styles.heroPill}>
                   <MaterialCommunityIcons name="shield-check-outline" size={16} color={theme.tint} />
-                  <Text style={styles.heroPillText}>Premium trust</Text>
+                  <Text style={styles.heroPillText}>Trust that reads fast</Text>
                 </View>
                 <View style={styles.heroPill}>
                   <MaterialCommunityIcons name="calendar-clock-outline" size={16} color={theme.tint} />
-                  <Text style={styles.heroPillText}>Flexible billing</Text>
+                  <Text style={styles.heroPillText}>Momentum toward dates</Text>
                 </View>
               </View>
               <View style={styles.statusRow}>
@@ -208,9 +285,11 @@ export default function PremiumPlansScreen() {
                 <Text style={styles.statusValue}>{loading ? "Checking..." : currentPlan}</Text>
               </View>
               <Text style={styles.statusMeta}>
-                {currentPlanEndsAt
-                  ? `Active until ${new Date(currentPlanEndsAt).toLocaleDateString()}`
-                  : "You are currently on the free plan."}
+                {formattedCurrentPlanEndsAt
+                  ? `Active until ${formattedCurrentPlanEndsAt}`
+                  : currentPlan === "FREE"
+                    ? "You are currently on the free plan."
+                    : "Premium is active on this account."}
               </Text>
               <Text style={styles.statusMeta}>
                 {billingReady
@@ -245,6 +324,67 @@ export default function PremiumPlansScreen() {
             </View>
           ) : null}
 
+          <View style={styles.modelCard}>
+            <View style={styles.modelHeader}>
+              <Text style={styles.modelEyebrow}>Betweener Model</Text>
+              <Text style={styles.modelTitle}>Free keeps chat alive. Silver and Gold move faster.</Text>
+              <Text style={styles.modelBody}>
+                Betweener monetizes momentum and status, not the ability to speak.
+              </Text>
+            </View>
+
+            <View style={styles.tierStack}>
+              {TIER_MODEL.map((tier) => {
+                const accent =
+                  tier.plan === "FREE"
+                    ? theme.textMuted
+                    : tier.plan === "SILVER"
+                      ? PLAN_CONFIG.SILVER.accent
+                      : PLAN_CONFIG.GOLD.accent;
+
+                return (
+                  <View key={tier.plan} style={styles.tierCard}>
+                    <Text style={[styles.tierEyebrow, { color: accent }]}>{tier.eyebrow}</Text>
+                    <View style={styles.tierTitleRow}>
+                      <Text style={styles.tierName}>{tier.plan === "FREE" ? "Free" : tier.plan === "SILVER" ? "Silver" : "Gold"}</Text>
+                      <View style={[styles.tierBadge, currentPlan === tier.plan && styles.tierBadgeActive]}>
+                        <Text style={[styles.tierBadgeText, currentPlan === tier.plan && styles.tierBadgeTextActive]}>
+                          {currentPlan === tier.plan ? "Current" : "Tier"}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={styles.tierSummaryTitle}>{tier.title}</Text>
+                    <View style={styles.tierBullets}>
+                      {tier.bullets.map((bullet) => (
+                        <View key={bullet} style={styles.tierBulletRow}>
+                          <MaterialCommunityIcons name="check-circle-outline" size={16} color={accent} />
+                          <Text style={styles.tierBulletText}>{bullet}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+
+            <View style={styles.matrixCard}>
+              <Text style={styles.matrixTitle}>What changes between tiers</Text>
+              {FEATURE_MATRIX.map((row) => (
+                <View key={row.label} style={styles.matrixRow}>
+                  <Text style={styles.matrixFeature}>{row.label}</Text>
+                  <View style={styles.matrixValues}>
+                    <Text style={styles.matrixValue}>{row.free}</Text>
+                    <Text style={styles.matrixValue}>{row.silver}</Text>
+                    <Text style={styles.matrixValue}>{row.gold}</Text>
+                  </View>
+                </View>
+              ))}
+              <View style={styles.matrixLegend}>
+                <Text style={styles.matrixLegendText}>Columns read left to right: Free, Silver, Gold.</Text>
+              </View>
+            </View>
+          </View>
+
           {(Object.keys(PLAN_CONFIG) as PaidPlan[]).map((plan, index) => {
             const config = PLAN_CONFIG[plan];
             const active = currentPlan === plan;
@@ -254,6 +394,7 @@ export default function PremiumPlansScreen() {
             const monthlyPackage = packageMap.monthly;
             const savingsLabel = getSavingsLabel(selectedPackage, monthlyPackage);
             const monthlyEquivalent = formatMonthlyEquivalent(selectedPackage);
+            const selectedPrice = selectedPackage?.product.priceString ?? null;
 
             return (
               <Animated.View key={plan} entering={FadeInDown.delay((index + 1) * 80).duration(Motion.duration.slow)}>
@@ -288,7 +429,7 @@ export default function PremiumPlansScreen() {
                             {intervalMeta.label}
                           </Text>
                           <Text style={[styles.durationChipPrice, selected && styles.durationChipPriceSelected]}>
-                            {pkg?.product.priceString || intervalMeta.short}
+                            {pkg?.product.priceString || (billingReady ? "Unavailable" : "Loading")}
                           </Text>
                           {intervalMeta.spotlight && pkg ? (
                             <View style={[styles.durationSpotlight, selected && styles.durationSpotlightSelected]}>
@@ -312,7 +453,7 @@ export default function PremiumPlansScreen() {
                     />
                     <View style={styles.priceHeroTopline}>
                       <Text style={styles.priceHeroKicker}>
-                        {selectedPackage ? `${INTERVAL_META[selectedInterval].label} billing` : "Membership preview"}
+                        {selectedPackage ? `${INTERVAL_META[selectedInterval].label} billing` : "Local price"}
                       </Text>
                       {INTERVAL_META[selectedInterval].spotlight ? (
                         <View style={[styles.priceHeroBadge, { backgroundColor: withAlpha(config.accent, 0.16) }]}>
@@ -324,11 +465,13 @@ export default function PremiumPlansScreen() {
                     </View>
                   <View style={styles.priceHero}>
                     <View>
-                      <Text style={styles.priceHeroValue}>{selectedPackage?.product.priceString || config.fallbackPrice}</Text>
+                      <Text style={styles.priceHeroValue}>{selectedPrice || (billingReady ? "Unavailable" : "Loading local price")}</Text>
                       <Text style={styles.priceHeroMeta}>
                         {selectedPackage
                           ? `${INTERVAL_META[selectedInterval].label} billing`
-                          : "Pricing is being prepared for this membership option."}
+                          : billingReady
+                            ? "This plan is not available from the App Store for this device right now."
+                            : "Fetching the exact App Store price for your region."}
                       </Text>
                     </View>
                     <View style={styles.priceHeroAside}>
@@ -361,11 +504,15 @@ export default function PremiumPlansScreen() {
                       </Pressable>
                     ) : (
                       <Pressable style={[styles.planButton, styles.planButtonMuted]} disabled>
-                        <Text style={[styles.planButtonText, styles.planButtonTextMuted]}>Launching soon</Text>
+                        <Text style={[styles.planButtonText, styles.planButtonTextMuted]}>
+                          {billingReady ? "Plan unavailable" : "Loading local price"}
+                        </Text>
                       </Pressable>
                     )}
                   </View>
-                  <Text style={styles.planFootnote}>Cancel anytime in your Apple subscription settings.</Text>
+                  <Text style={styles.planFootnote}>
+                    Cancel anytime in your Apple subscription settings.
+                  </Text>
                 </View>
               </Animated.View>
             );
@@ -408,7 +555,7 @@ function getSelectedPlanPackage(
   packageMap: Record<PremiumPlanInterval, PurchasesPackage | null>,
   selectedInterval: PremiumPlanInterval,
 ) {
-  return packageMap[selectedInterval] || packageMap.annual || packageMap.quarterly || packageMap.monthly || null;
+  return packageMap[selectedInterval] || null;
 }
 
 function getMonthsForInterval(interval: PremiumPlanInterval) {
@@ -430,10 +577,9 @@ function getPackagePrice(pkg: PurchasesPackage | null) {
 function formatCurrency(amount: number, pkg: PurchasesPackage) {
   const currencyCode = pkg.product.currencyCode || "USD";
   try {
-    return new Intl.NumberFormat("en-US", {
+    return new Intl.NumberFormat(undefined, {
       style: "currency",
       currency: currencyCode,
-      maximumFractionDigits: amount >= 10 ? 0 : 2,
     }).format(amount);
   } catch {
     return `${currencyCode} ${amount.toFixed(2)}`;
@@ -446,6 +592,18 @@ function formatMonthlyEquivalent(pkg: PurchasesPackage | null) {
   const interval = getPlanIntervalFromPackage(pkg);
   if (price == null || !interval) return null;
   return `${formatCurrency(price / getMonthsForInterval(interval), pkg)}/mo`;
+}
+
+function formatMembershipDate(value: string | null) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(parsed);
 }
 
 function getSavingsLabel(selectedPackage: PurchasesPackage | null, monthlyPackage: PurchasesPackage | null) {
@@ -539,6 +697,88 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     noticeTitle: { color: theme.text, fontSize: 15, fontFamily: "Archivo_700Bold" },
     noticeBody: { color: theme.textMuted, fontSize: 12, lineHeight: 18, fontFamily: "Manrope_500Medium" },
+    modelCard: {
+      borderRadius: 24,
+      padding: 18,
+      gap: 16,
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.3 : 0.76),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+    },
+    modelHeader: { gap: 6 },
+    modelEyebrow: {
+      color: theme.tint,
+      fontSize: 10,
+      fontWeight: "700",
+      letterSpacing: 1.2,
+      textTransform: "uppercase",
+    },
+    modelTitle: { color: theme.text, fontSize: 20, lineHeight: 26, fontFamily: "PlayfairDisplay_700Bold" },
+    modelBody: { color: theme.textMuted, fontSize: 13, lineHeight: 20, fontFamily: "Manrope_500Medium" },
+    tierStack: { gap: 12 },
+    tierCard: {
+      borderRadius: 20,
+      padding: 16,
+      gap: 6,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.38 : 0.94),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+    },
+    tierEyebrow: {
+      fontSize: 10,
+      fontWeight: "700",
+      letterSpacing: 1,
+      textTransform: "uppercase",
+    },
+    tierTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+    tierName: { color: theme.text, fontSize: 19, fontFamily: "Archivo_700Bold" },
+    tierBadge: {
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.34 : 0.92),
+    },
+    tierBadgeActive: { borderColor: theme.tint, backgroundColor: withAlpha(theme.tint, 0.14) },
+    tierBadgeText: { color: theme.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 0.3 },
+    tierBadgeTextActive: { color: theme.tint },
+    tierSummaryTitle: { color: theme.text, fontSize: 14, lineHeight: 20, fontFamily: "Manrope_700Bold" },
+    tierBullets: { gap: 8, marginTop: 4 },
+    tierBulletRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+    tierBulletText: { flex: 1, color: theme.text, fontSize: 12, lineHeight: 18, fontFamily: "Manrope_500Medium" },
+    matrixCard: {
+      borderRadius: 20,
+      padding: 16,
+      gap: 10,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.38 : 0.94),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+    },
+    matrixTitle: { color: theme.text, fontSize: 15, fontFamily: "Archivo_700Bold" },
+    matrixRow: {
+      gap: 8,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: withAlpha(theme.text, isDark ? 0.12 : 0.06),
+    },
+    matrixFeature: { color: theme.text, fontSize: 12, fontFamily: "Manrope_700Bold" },
+    matrixValues: { flexDirection: "row", justifyContent: "space-between", gap: 8 },
+    matrixValue: {
+      flex: 1,
+      color: theme.textMuted,
+      fontSize: 11,
+      lineHeight: 16,
+      fontFamily: "Manrope_600SemiBold",
+      textAlign: "center",
+    },
+    matrixLegend: {
+      marginTop: 4,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: withAlpha(theme.text, isDark ? 0.12 : 0.06),
+    },
+    matrixLegendText: { color: theme.textMuted, fontSize: 11, lineHeight: 16, fontFamily: "Manrope_500Medium" },
     planCard: {
       position: "relative",
       overflow: "hidden",

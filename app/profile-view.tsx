@@ -1,9 +1,11 @@
 import ProfileVideoModal from '@/components/ProfileVideoModal';
+import PremiumUpsellModal from '@/components/premium/PremiumUpsellModal';
 import { VerificationBadge } from '@/components/VerificationBadge';
 import { Colors } from '@/constants/theme';
 import { usePremiumState } from '@/hooks/use-premium-state';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
+import { hasFeatureAccess } from '@/lib/premium-access';
 import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
@@ -82,6 +84,12 @@ type PremiumProfile = {
   sections: PremiumSection[];
 };
 
+type PremiumUpsellState = {
+  requiredPlan: 'SILVER' | 'GOLD';
+  title: string;
+  message: string;
+};
+
 const IMAGE_ITEM_HEIGHT = Math.max(220, Math.min(280, Math.round(screenHeight * 0.26)));
 const IMAGE_ITEM_GAP = 12;
 const COLUMN_GAP = 14;
@@ -127,12 +135,21 @@ function formatDistanceKm(distanceKm?: number) {
   return `${Math.round(distanceKm)} km away`;
 }
 
+function isDistanceLabel(label?: string | null) {
+  if (!label) return false;
+  const lower = String(label).toLowerCase();
+  return lower.includes('away') || /\b(km|mi|mile|miles)\b/.test(lower) || /<\s*1/.test(lower);
+}
+
 function buildLocationLine(profile: UserProfile) {
   const distanceLabel = profile.distance?.trim() || '';
   const distanceFromKm = formatDistanceKm(profile.distanceKm);
-  const distance = distanceFromKm || distanceLabel;
-
-  const base = (profile.location || profile.city || profile.region || '').trim();
+  const distance = distanceFromKm || (isDistanceLabel(distanceLabel) ? distanceLabel : '');
+  const city = String(profile.city || profile.location || profile.region || '')
+    .split(',')
+    .map((part) => part.trim())
+    .find(Boolean) || '';
+  const base = city;
   const combined = distance
     ? base && distance !== base
       ? `${distance} - ${base}`
@@ -276,9 +293,6 @@ function pickTaggedImages(profile: UserProfile): PremiumImage[] {
 
 function buildSections(profile: UserProfile): PremiumSection[] {
   const chipsFromInterests = (profile.interests || []).slice(0, 6).map((i) => i.name);
-  const lifestyleChips = [profile.exerciseFrequency, profile.smoking, profile.drinking]
-    .filter(Boolean)
-    .map(String);
   const allPrompts = profile.promptAnswers || [];
   const topPrompt = allPrompts[0];
   const promptEntries = (profile.promptAnswers || [])
@@ -319,7 +333,6 @@ function buildSections(profile: UserProfile): PremiumSection[] {
         .join('\n');
         return text || premiumCopy.lifestyleEmpty;
       })(),
-      chips: lifestyleChips.length ? lifestyleChips : undefined,
     },
     {
       id: 'sec-values',
@@ -432,6 +445,7 @@ export default function ProfileViewPremiumV2Screen() {
 
   const params = useLocalSearchParams();
   const profileId = String((params as any)?.id ?? (params as any)?.profileId ?? 'preview');
+  const isPreviewReplica = String((params as any)?.isPreview ?? '').toLowerCase() === 'true';
 
   const fallbackProfile = useMemo(() => parseFallbackProfile((params as any)?.fallbackProfile), [params]);
   const [fetchedProfile, setFetchedProfile] = useState<UserProfile | null>(null);
@@ -809,16 +823,23 @@ export default function ProfileViewPremiumV2Screen() {
     () => Boolean(currentProfile?.id && profileId && currentProfile.id === profileId),
     [currentProfile?.id, profileId],
   );
-  const shouldFloatGuessPrompt = Boolean(featuredPrompt && isGuessPrompt(featuredPrompt.promptType) && !isOwnProfile);
+  const shouldFloatGuessPrompt = Boolean(
+    featuredPrompt &&
+      isGuessPrompt(featuredPrompt.promptType) &&
+      (!isOwnProfile || isPreviewReplica),
+  );
+  const previewGuessReplica = isOwnProfile && isPreviewReplica && Boolean(featuredPrompt && isGuessPrompt(featuredPrompt.promptType));
   const standardFeaturedPrompt = featuredPrompt && !isGuessPrompt(featuredPrompt.promptType) ? featuredPrompt : null;
   const guessChallengeLabel = isMultipleChoiceGuess(featuredPrompt?.guessMode) ? '1 prompt challenge' : 'One clean guess';
-  const guessFabLabel = guessResult?.tone === 'correct'
-    ? guessInterestSent
-      ? 'Sent'
-      : 'Know more'
-    : guessResult?.tone === 'wrong'
-      ? 'Try again'
-      : 'Guess';
+  const guessFabLabel = previewGuessReplica
+    ? 'Know more'
+    : guessResult?.tone === 'correct'
+      ? guessInterestSent
+        ? 'Sent'
+        : 'Know more'
+      : guessResult?.tone === 'wrong'
+        ? 'Try again'
+        : 'Guess';
   const guessFabIcon: ComponentProps<typeof MaterialCommunityIcons>['name'] = guessResult?.tone === 'correct'
     ? 'star-four-points'
     : guessResult?.tone === 'wrong'
@@ -2013,16 +2034,16 @@ export default function ProfileViewPremiumV2Screen() {
                         <Pressable
                           key={`${featuredPrompt.id}-${option}`}
                           onPress={() => {
-                            if (guessLocked) return;
+                            if (guessLocked || previewGuessReplica) return;
                             setSelectedGuessOption(option);
                           }}
-                          disabled={guessLocked}
+                          disabled={guessLocked || previewGuessReplica}
                           style={[
                             stylesStatic.guessOptionPill,
                             {
                               backgroundColor: selected ? theme.tint : theme.backgroundSubtle,
                               borderColor: selected ? theme.tint : theme.outline,
-                              opacity: guessLocked ? 0.7 : 1,
+                              opacity: guessLocked || previewGuessReplica ? 0.7 : 1,
                             },
                           ]}
                         >
@@ -2040,12 +2061,16 @@ export default function ProfileViewPremiumV2Screen() {
                   </View>
                 ) : (
                   <Pressable
-                    onPress={guessLocked ? undefined : openGuessComposer}
-                    disabled={guessLocked}
+                    onPress={guessLocked || previewGuessReplica ? undefined : openGuessComposer}
+                    disabled={guessLocked || previewGuessReplica}
                     style={[
                       stylesStatic.guessInputWrap,
                       stylesStatic.guessInputPressable,
-                      { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline, opacity: guessLocked ? 0.7 : 1 },
+                      {
+                        backgroundColor: theme.backgroundSubtle,
+                        borderColor: theme.outline,
+                        opacity: guessLocked || previewGuessReplica ? 0.7 : 1,
+                      },
                     ]}
                   >
                     <Text
@@ -2055,53 +2080,59 @@ export default function ProfileViewPremiumV2Screen() {
                       ]}
                       numberOfLines={1}
                     >
-                      {guessInput.trim() || 'Type your guess'}
+                      {previewGuessReplica ? 'Viewers type a guess here' : guessInput.trim() || 'Type your guess'}
                     </Text>
                     <MaterialCommunityIcons name="pencil-outline" size={16} color={theme.textMuted} />
                   </Pressable>
                 )}
 
-                <View style={stylesStatic.guessActionsRow}>
-                  {!guessLocked ? (
-                    <Pressable
-                      onPress={() => void submitFeaturedGuess()}
-                      disabled={guessSubmitting || !(selectedGuessOption || guessInput.trim())}
-                      style={[
-                        stylesStatic.guessPrimaryButton,
-                        {
-                          backgroundColor:
-                            guessSubmitting || !(selectedGuessOption || guessInput.trim())
-                              ? theme.outline
-                              : theme.tint,
-                        },
-                      ]}
-                    >
-                      <Text style={stylesStatic.guessPrimaryText}>{guessPrimaryLabel}</Text>
-                    </Pressable>
-                  ) : null}
-                  {guessResult ? (
-                    <Pressable
-                      onPress={guessResult.tone === 'correct' ? () => void sendGuessInterest() : openIntentSheet}
-                      disabled={guessResult.tone === 'correct' ? guessInterestSending || guessInterestSent : false}
-                      style={[
-                        stylesStatic.guessSecondaryButton,
-                        { borderColor: guessResult.tone === 'correct' ? theme.tint : theme.outline },
-                        guessResult.tone === 'correct' && (guessInterestSending || guessInterestSent)
-                          ? { opacity: 0.7 }
-                          : null,
-                      ]}
-                    >
-                      <Text
+                {previewGuessReplica ? (
+                  <Text style={[stylesStatic.guessPreviewNotice, { color: theme.textMuted }]}>
+                    In full preview this stays as a floating chip so the rest of your profile remains visible.
+                  </Text>
+                ) : (
+                  <View style={stylesStatic.guessActionsRow}>
+                    {!guessLocked ? (
+                      <Pressable
+                        onPress={() => void submitFeaturedGuess()}
+                        disabled={guessSubmitting || !(selectedGuessOption || guessInput.trim())}
                         style={[
-                          stylesStatic.guessSecondaryText,
-                          { color: guessResult.tone === 'correct' ? theme.accent : theme.textMuted },
+                          stylesStatic.guessPrimaryButton,
+                          {
+                            backgroundColor:
+                              guessSubmitting || !(selectedGuessOption || guessInput.trim())
+                                ? theme.outline
+                                : theme.tint,
+                          },
                         ]}
                       >
-                        {guessSecondaryLabel}
-                      </Text>
-                    </Pressable>
-                  ) : null}
-                </View>
+                        <Text style={stylesStatic.guessPrimaryText}>{guessPrimaryLabel}</Text>
+                      </Pressable>
+                    ) : null}
+                    {guessResult ? (
+                      <Pressable
+                        onPress={guessResult.tone === 'correct' ? () => void sendGuessInterest() : openIntentSheet}
+                        disabled={guessResult.tone === 'correct' ? guessInterestSending || guessInterestSent : false}
+                        style={[
+                          stylesStatic.guessSecondaryButton,
+                          { borderColor: guessResult.tone === 'correct' ? theme.tint : theme.outline },
+                          guessResult.tone === 'correct' && (guessInterestSending || guessInterestSent)
+                            ? { opacity: 0.7 }
+                            : null,
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            stylesStatic.guessSecondaryText,
+                            { color: guessResult.tone === 'correct' ? theme.accent : theme.textMuted },
+                          ]}
+                        >
+                          {guessSecondaryLabel}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                )}
 
                 {guessResult ? (
                   <View
@@ -3060,13 +3091,14 @@ function FloatingActions({
 }) {
   const insets = useSafeAreaInsets();
   const isDark = theme.background === Colors.dark.background;
-  const { hasAccess } = usePremiumState();
+  const { currentPlan, hasAccess } = usePremiumState();
   const [giftOpen, setGiftOpen] = useState(false);
   const [selectedGift, setSelectedGift] = useState<string | null>(null);
   const [giftSending, setGiftSending] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [noteSending, setNoteSending] = useState(false);
+  const [premiumUpsell, setPremiumUpsell] = useState<PremiumUpsellState | null>(null);
   const noteOpenAtRef = useRef(0);
   const [boostSending, setBoostSending] = useState(false);
   const [likeSending, setLikeSending] = useState(false);
@@ -3075,28 +3107,35 @@ function FloatingActions({
     () => [
       { id: 'rose', label: 'Rose', icon: 'flower', note: 'Classic and elegant' },
       { id: 'teddy', label: 'Teddy Bear', icon: 'teddy-bear', note: 'Sweet and safe' },
-      { id: 'ring', label: 'Ring', icon: 'ring', note: 'Bold and premium' },
+      { id: 'ring', label: 'Ring', icon: 'ring', note: 'Gold exclusive gesture' },
     ],
     [],
   );
 
   const canSendToProfile = Boolean(currentUserId && profileId && currentUserId !== profileId);
   const canUseBoosts = hasAccess('SILVER');
+  const canSendNotes = hasFeatureAccess(currentPlan, 'profile_notes');
+  const canSendStandardGifts = hasFeatureAccess(currentPlan, 'standard_gifts');
+  const canSendSignatureGifts = hasFeatureAccess(currentPlan, 'signature_gifts');
   const noteLength = noteText.trim().length;
+  const openTierUpsell = (requiredPlan: 'SILVER' | 'GOLD', title: string, message: string) => {
+    setPremiumUpsell({ requiredPlan, title, message });
+  };
   const openBoostUpsell = () => {
-    Alert.alert(
-      'Unlock boosts',
-      'Profile boosts are included with Silver and Gold. Upgrade to activate 30-minute visibility boosts.',
-      [
-        { text: 'Not now', style: 'cancel' },
-        { text: 'View plans', onPress: () => router.push('/premium-plans') },
-      ],
-    );
+    setPremiumUpsell({
+      requiredPlan: 'SILVER',
+      title: 'Unlock boosts',
+      message: 'Profile boosts are included with Silver and Gold. Upgrade to activate 30-minute visibility boosts.',
+    });
   };
 
   const openNote = () => {
     if (!canSendToProfile) {
       Alert.alert('Note unavailable', 'Notes can only be sent to other profiles.');
+      return;
+    }
+    if (!canSendNotes) {
+      openTierUpsell('SILVER', 'Unlock notes', 'Notes are included with Silver and Gold. Upgrade to send a more thoughtful first move.');
       return;
     }
     Haptics.selectionAsync().catch(() => undefined);
@@ -3108,6 +3147,10 @@ function FloatingActions({
       Alert.alert('Gift unavailable', 'Gifts can only be sent to other profiles.');
       return;
     }
+    if (!canSendStandardGifts) {
+      openTierUpsell('SILVER', 'Unlock gifts', 'Gifts are included with Silver and Gold. Upgrade to send a stronger first impression.');
+      return;
+    }
     Haptics.selectionAsync().catch(() => undefined);
     setSelectedGift(null);
     setGiftOpen(true);
@@ -3115,6 +3158,10 @@ function FloatingActions({
   const closeGift = () => setGiftOpen(false);
   const sendGift = async () => {
     if (!selectedGift || !currentUserId) return;
+    if (selectedGift === 'ring' && !canSendSignatureGifts) {
+      openTierUpsell('GOLD', 'Unlock the Ring', 'The Ring is exclusive to Gold. Upgrade for Betweener\'s boldest gesture.');
+      return;
+    }
     setGiftSending(true);
     const { error } = await supabase.from('profile_gifts').insert({
       profile_id: profileId,
@@ -3327,6 +3374,17 @@ function FloatingActions({
           )}
         </LinearGradient>
       </View>
+      <PremiumUpsellModal
+        visible={Boolean(premiumUpsell)}
+        requiredPlan={premiumUpsell?.requiredPlan ?? 'SILVER'}
+        title={premiumUpsell?.title ?? 'Unlock premium'}
+        message={premiumUpsell?.message ?? ''}
+        onClose={() => setPremiumUpsell(null)}
+        onViewPlan={() => {
+          setPremiumUpsell(null);
+          router.push('/premium-plans');
+        }}
+      />
       <Modal
         visible={noteOpen}
         transparent
@@ -3406,21 +3464,27 @@ function FloatingActions({
           <View style={stylesStatic.giftGrid}>
             {giftOptions.map((gift) => {
               const isSelected = selectedGift === gift.id;
-              return (
-                <Pressable
-                  key={gift.id}
-                  onPress={() => {
-                    Haptics.selectionAsync().catch(() => undefined);
-                    setSelectedGift(gift.id);
-                  }}
-                  style={[
-                    stylesStatic.giftCard,
-                    {
-                      borderColor: isSelected ? theme.tint : theme.outline,
-                      backgroundColor: theme.backgroundSubtle,
-                    },
-                  ]}
-                >
+              const locked = gift.id === 'ring' && !canSendSignatureGifts;
+                return (
+                  <Pressable
+                    key={gift.id}
+                    onPress={() => {
+                      if (locked) {
+                        openTierUpsell('GOLD', 'Unlock the Ring', 'The Ring is exclusive to Gold. Upgrade for Betweener\'s boldest gesture.');
+                        return;
+                      }
+                      Haptics.selectionAsync().catch(() => undefined);
+                      setSelectedGift(gift.id);
+                    }}
+                    style={[
+                      stylesStatic.giftCard,
+                      {
+                        borderColor: isSelected ? theme.tint : theme.outline,
+                        backgroundColor: theme.backgroundSubtle,
+                        opacity: locked ? 0.58 : 1,
+                      },
+                    ]}
+                  >
                   <View style={isSelected ? stylesStatic.giftIconGlow : undefined}>
                     <MaterialCommunityIcons
                       name={gift.icon as any}
@@ -4005,6 +4069,13 @@ const stylesStatic = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.2,
   },
+  guessPreviewNotice: {
+    marginTop: 10,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500',
+    letterSpacing: 0.15,
+  },
   guessResultText: {
     marginTop: 10,
     fontSize: 12.5,
@@ -4016,7 +4087,7 @@ const stylesStatic = StyleSheet.create({
   },
   guessFabAnchor: {
     position: 'absolute',
-    right: 20,
+    left: 20,
     zIndex: 12,
     elevation: 12,
   },
@@ -4655,5 +4726,3 @@ const stylesStatic = StyleSheet.create({
     letterSpacing: 0.4,
   },
 });
-
-

@@ -49,6 +49,7 @@ type ConversationType = {
     type: 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location';
     isViewOnce?: boolean;
     isRead: boolean;
+    deliveredAt: Date | null;
     reactionPreview?: {
       emoji: string;
       userId: string;
@@ -69,6 +70,7 @@ type MessageRow = {
   sender_id: string;
   receiver_id: string;
   is_read: boolean;
+  delivered_at?: string | null;
   deleted_for_all?: boolean | null;
   message_type?: ConversationType['lastMessage']['type'] | null;
   is_view_once?: boolean | null;
@@ -90,8 +92,9 @@ const STICKER_TEXT_PREFIX = 'sticker::';
 
 type CachedConversation = Omit<ConversationType, "matchedUser" | "lastMessage" | "matchedAt"> & {
   matchedUser: Omit<ConversationType["matchedUser"], "lastSeen"> & { lastSeen: string };
-  lastMessage: Omit<ConversationType["lastMessage"], "timestamp" | "reactionPreview"> & {
+  lastMessage: Omit<ConversationType["lastMessage"], "timestamp" | "reactionPreview" | "deliveredAt"> & {
     timestamp: string;
+    deliveredAt: string | null;
     reactionPreview?: Omit<NonNullable<ConversationType["lastMessage"]["reactionPreview"]>, "createdAt"> & { createdAt: string };
   };
   matchedAt: string;
@@ -107,6 +110,7 @@ const serializeConversations = (list: ConversationType[]): CachedConversation[] 
     lastMessage: {
       ...c.lastMessage,
       timestamp: c.lastMessage.timestamp instanceof Date ? c.lastMessage.timestamp.toISOString() : new Date().toISOString(),
+      deliveredAt: c.lastMessage.deliveredAt instanceof Date ? c.lastMessage.deliveredAt.toISOString() : null,
       reactionPreview: c.lastMessage.reactionPreview
         ? {
             ...c.lastMessage.reactionPreview,
@@ -136,6 +140,7 @@ const deserializeConversations = (raw: unknown): ConversationType[] => {
       lastMessage: {
         ...lastMessage,
         timestamp: lastMessage?.timestamp ? new Date(lastMessage.timestamp) : new Date(),
+        deliveredAt: lastMessage?.deliveredAt ? new Date(lastMessage.deliveredAt) : null,
         reactionPreview: reaction
           ? {
               ...reaction,
@@ -168,6 +173,20 @@ const parseStickerPreview = (text: string) => {
   } catch {
     return null;
   }
+};
+
+const getConversationReceiptIconState = (
+  lastMessage: ConversationType['lastMessage'],
+  theme: typeof Colors.light,
+  isDark: boolean,
+) => {
+  if (lastMessage.isRead) {
+    return { name: 'check-all' as const, color: isDark ? '#BFFBEA' : '#0B8F89' };
+  }
+  if (lastMessage.deliveredAt) {
+    return { name: 'check-all' as const, color: isDark ? '#F4FBFA' : '#C4CFCE' };
+  }
+  return { name: 'check' as const, color: isDark ? '#AAB8B4' : '#8A9895' };
 };
 
 export default function ChatScreen() {
@@ -426,7 +445,7 @@ export default function ChatScreen() {
     try {
       const { data: messages, error } = await supabase
         .from('messages')
-        .select('id,text,created_at,sender_id,receiver_id,is_read,deleted_for_all,message_type,is_view_once')
+        .select('id,text,created_at,sender_id,receiver_id,is_read,delivered_at,deleted_for_all,message_type,is_view_once')
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .order('created_at', { ascending: false })
         .limit(300);
@@ -471,6 +490,8 @@ export default function ChatScreen() {
             if (!msg || !row?.emoji || !row?.user_id) return;
             const otherId = msg.sender_id === user.id ? msg.receiver_id : msg.sender_id;
             if (!otherId) return;
+            const lastForConversation = convoMap.get(otherId)?.last;
+            if (!lastForConversation?.id || lastForConversation.id !== msg.id) return;
             const createdAt = row.created_at ? new Date(row.created_at) : new Date();
             const existing = reactionPreviewByUser.get(otherId);
             if (existing && existing.createdAt >= createdAt) return;
@@ -554,6 +575,7 @@ export default function ChatScreen() {
             type: lastType,
             isViewOnce: lastIsViewOnce,
             isRead: last?.is_read ?? false,
+            deliveredAt: last?.delivered_at ? new Date(last.delivered_at) : null,
             reactionPreview: reactionPreviewByUser.get(otherUserId),
           },
           unreadCount: entry?.unread || 0,
@@ -635,6 +657,7 @@ export default function ChatScreen() {
         type: lastType,
         isViewOnce: Boolean(row.is_view_once),
         isRead: row.is_read,
+        deliveredAt: row.delivered_at ? new Date(row.delivered_at) : null,
         reactionPreview: undefined,
       };
 
@@ -682,6 +705,67 @@ export default function ChatScreen() {
         },
         handleInsert
       )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'messages',
+          filter: `receiver_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const row = payload.new as MessageRow;
+          const otherId = row.sender_id === user.id ? row.receiver_id : row.sender_id;
+          if (!otherId) return;
+          setConversations((prev) =>
+            prev.map((conv) => {
+              if (conv.id !== otherId || conv.lastMessage.id !== row.id) return conv;
+              return {
+                ...conv,
+                unreadCount: row.receiver_id === user.id && !row.is_read ? conv.unreadCount : 0,
+                lastMessage: {
+                  ...conv.lastMessage,
+                  text: getRowPreviewText(row),
+                  type: (row.message_type ?? conv.lastMessage.type) as ConversationType['lastMessage']['type'],
+                  isViewOnce: Boolean(row.is_view_once),
+                  isRead: row.is_read,
+                  deliveredAt: row.delivered_at ? new Date(row.delivered_at) : null,
+                },
+              };
+            }),
+          );
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'messages',
+          filter: `sender_id=eq.${user.id}`,
+        },
+        (payload) => {
+          const row = payload.new as MessageRow;
+          const otherId = row.receiver_id;
+          if (!otherId) return;
+          setConversations((prev) =>
+            prev.map((conv) => {
+              if (conv.id !== otherId || conv.lastMessage.id !== row.id) return conv;
+              return {
+                ...conv,
+                lastMessage: {
+                  ...conv.lastMessage,
+                  text: getRowPreviewText(row),
+                  type: (row.message_type ?? conv.lastMessage.type) as ConversationType['lastMessage']['type'],
+                  isViewOnce: Boolean(row.is_view_once),
+                  isRead: row.is_read,
+                  deliveredAt: row.delivered_at ? new Date(row.delivered_at) : null,
+                },
+              };
+            }),
+          );
+        }
+      )
       .subscribe();
 
     return () => {
@@ -713,6 +797,7 @@ export default function ChatScreen() {
       setConversations((prev) =>
         prev.map((conv) => {
           if (conv.id !== otherId) return conv;
+          if (conv.lastMessage.id !== messageRow.id) return conv;
           const existing = conv.lastMessage.reactionPreview;
           if (existing && existing.createdAt >= createdAt) return conv;
           return {
@@ -970,6 +1055,8 @@ export default function ChatScreen() {
     const isBlocked = Boolean(item.blockStatus);
     const isUnread = item.unreadCount > 0;
     const isMyLastMessage = item.lastMessage.senderId === (user?.id || '');
+    const isOnline = !isBlocked && (presenceOnline[item.id] ?? item.matchedUser.isOnline);
+    const receiptIcon = isMyLastMessage ? getConversationReceiptIconState(item.lastMessage, theme, isDark) : null;
     const isTyping = !isBlocked && Boolean(typingStatus[item.matchedUser.id]);
     const reactionPreview = getLastMessageReactionPreview(
       item.lastMessage,
@@ -1025,7 +1112,8 @@ export default function ChatScreen() {
       >
         <View style={styles.conversationLeft}>
           <View style={styles.avatarContainer}>
-              {avatarContent}
+            {avatarContent}
+            {isOnline ? <View style={styles.onlineIndicator} /> : null}
             {item.isPinned && (
               <View style={styles.pinIndicator}>
                 <MaterialCommunityIcons name="pin" size={10} color={Colors.light.background} />
@@ -1062,9 +1150,9 @@ export default function ChatScreen() {
                 <View style={styles.lastMessageRow}>
                   {isMyLastMessage && (
                     <MaterialCommunityIcons
-                      name={item.lastMessage.isRead ? 'check-all' : 'check'}
+                      name={receiptIcon?.name || 'check'}
                       size={16}
-                      color={item.lastMessage.isRead ? theme.accent : theme.textMuted}
+                      color={receiptIcon?.color || theme.textMuted}
                       style={styles.readReceiptIcon}
                     />
                   )}
@@ -1512,35 +1600,38 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
 
     // Conversations List
     conversationsList: {
-      paddingVertical: 10,
+      paddingVertical: 8,
+      paddingBottom: 92,
     },
     conversationItem: {
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.7 : 0.9),
+      backgroundColor: isDark
+        ? withAlpha(theme.backgroundSubtle, 0.56)
+        : withAlpha('#fffaf5', 0.94),
       marginHorizontal: 16,
-      marginVertical: 6,
-      paddingHorizontal: 16,
-      paddingVertical: 14,
-      borderRadius: 20,
+      marginVertical: 4,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      borderRadius: 18,
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.08),
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.07),
       shadowColor: Colors.dark.background,
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: isDark ? 0.2 : 0.08,
-      shadowRadius: 12,
-      elevation: 4,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: isDark ? 0.16 : 0.05,
+      shadowRadius: 10,
+      elevation: 2,
     },
     conversationItemPressed: {
-      transform: [{ scale: 0.98 }],
-      shadowOpacity: 0.05,
+      transform: [{ scale: 0.992 }],
+      shadowOpacity: 0.04,
     },
     pinnedConversation: {
-      backgroundColor: withAlpha(theme.accent, isDark ? 0.16 : 0.1),
-      borderColor: withAlpha(theme.accent, isDark ? 0.5 : 0.35),
+      backgroundColor: withAlpha(theme.accent, isDark ? 0.13 : 0.08),
+      borderColor: withAlpha(theme.accent, isDark ? 0.34 : 0.2),
       shadowColor: theme.accent,
     },
     unreadConversation: {
-      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.08),
-      borderColor: withAlpha(theme.tint, isDark ? 0.45 : 0.3),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.11 : 0.065),
+      borderColor: withAlpha(theme.tint, isDark ? 0.28 : 0.18),
     },
     conversationLeft: {
       flexDirection: 'row',
@@ -1548,29 +1639,29 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     avatarContainer: {
       position: 'relative',
-      marginRight: 12,
+      marginRight: 11,
     },
     avatarRing: {
       padding: 2,
-      borderRadius: 32,
-      backgroundColor: withAlpha(theme.background, isDark ? 0.6 : 0.8),
+      borderRadius: 30,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.5 : 0.82),
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
     },
     avatarRingUnread: {
       padding: 2,
-      borderRadius: 32,
+      borderRadius: 30,
     },
     avatarRingInner: {
-      borderRadius: 28,
+      borderRadius: 25,
       backgroundColor: theme.background,
       padding: 2,
       overflow: 'hidden',
     },
     conversationAvatar: {
-      width: 52,
-      height: 52,
-      borderRadius: 26,
+      width: 46,
+      height: 46,
+      borderRadius: 23,
     },
     avatarFallback: {
       backgroundColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
@@ -1586,20 +1677,20 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       position: 'absolute',
       bottom: 2,
       right: 2,
-      width: 16,
-      height: 16,
-      borderRadius: 8,
+      width: 12,
+      height: 12,
+      borderRadius: 6,
       backgroundColor: theme.secondary,
       borderWidth: 2,
       borderColor: theme.background,
     },
     pinIndicator: {
       position: 'absolute',
-      top: -2,
-      right: -2,
-      width: 20,
-      height: 20,
-      borderRadius: 10,
+      top: -1,
+      right: -1,
+      width: 18,
+      height: 18,
+      borderRadius: 9,
       backgroundColor: theme.accent,
       justifyContent: 'center',
       alignItems: 'center',
@@ -1612,10 +1703,10 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       justifyContent: 'flex-start',
       alignItems: 'center',
       gap: 8,
-      marginBottom: 2,
+      marginBottom: 4,
     },
     conversationName: {
-      fontSize: 16,
+      fontSize: 15.5,
       fontFamily: 'Archivo_600SemiBold',
       color: theme.text,
       flex: 1,
@@ -1628,8 +1719,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.text,
     },
     conversationTime: {
-      fontSize: 12,
-      fontFamily: 'Manrope_400Regular',
+      fontSize: 11.5,
+      fontFamily: 'Manrope_500Medium',
       color: theme.textMuted,
     },
     lastSeenText: {
@@ -1641,12 +1732,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     conversationPreview: {
       flexDirection: 'row',
       justifyContent: 'space-between',
-      alignItems: 'flex-start',
+      alignItems: 'center',
     },
     conversationMeta: {
       alignItems: 'flex-end',
-      gap: 6,
-      minWidth: 40,
+      gap: 5,
+      minWidth: 44,
+      marginLeft: 10,
     },
     lastMessageRow: {
       flexDirection: 'row',
@@ -1655,12 +1747,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       minWidth: 0,
     },
     lastMessage: {
-      fontSize: 14,
+      fontSize: 13.5,
       fontFamily: 'Manrope_400Regular',
       color: theme.textMuted,
       flex: 1,
       minWidth: 0,
-      marginRight: 8,
+      marginRight: 6,
     },
     lastMessageReaction: {
       fontStyle: 'italic',
@@ -1671,7 +1763,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.accent,
     },
     readReceiptIcon: {
-      marginRight: 6,
+      marginRight: 5,
     },
     unreadMessage: {
       fontFamily: 'Manrope_500Medium',
@@ -1679,15 +1771,15 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     unreadBadge: {
       backgroundColor: theme.tint,
-      borderRadius: 12,
-      minWidth: 24,
-      height: 24,
+      borderRadius: 10,
+      minWidth: 20,
+      height: 20,
       justifyContent: 'center',
       alignItems: 'center',
-      paddingHorizontal: 8,
+      paddingHorizontal: 6,
     },
     unreadCount: {
-      fontSize: 12,
+      fontSize: 11,
       fontFamily: 'Archivo_700Bold',
       color: Colors.light.background,
     },

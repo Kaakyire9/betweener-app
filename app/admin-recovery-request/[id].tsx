@@ -167,20 +167,26 @@ export default function AdminRecoveryRequestScreen() {
     if (!requestRow) return;
 
     setSavingReview(true);
-    const { data, error: rpcError } = await supabase.rpc("rpc_admin_update_account_recovery_request", {
-      p_request_id: requestRow.id,
-      p_status: statusDraft,
-      p_review_notes: reviewNotesDraft.trim() || null,
-      p_linked_merge_case_id: requestRow.linked_merge_case_id,
+    const { data, error } = await supabase.functions.invoke("admin-update-account-recovery-request", {
+      body: {
+        requestId: requestRow.id,
+        status: statusDraft,
+        reviewNotes: reviewNotesDraft.trim() || null,
+        linkedMergeCaseId: requestRow.linked_merge_case_id,
+      },
     });
 
     setSavingReview(false);
 
-    if (rpcError || !data) {
-      Alert.alert("Admin action failed", rpcError?.message || "Unable to save the recovery review.");
+    if (error || !(data as any)?.success) {
+      Alert.alert("Admin action failed", error?.message || "Unable to save the recovery review.");
       return;
     }
 
+    const warning = (data as any)?.notifications?.warning;
+    if (statusDraft === "resolved" && warning) {
+      Alert.alert("Recovery marked resolved", "Status was updated, but the recovery email could not be sent automatically.");
+    }
     void loadRequest();
   }, [loadRequest, requestRow, reviewNotesDraft, statusDraft]);
 

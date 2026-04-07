@@ -28,6 +28,7 @@ export interface PhoneVerificationResult {
   verified?: boolean;
   error?: string;
   message?: string;
+  code?: string;
 }
 
 /**
@@ -277,7 +278,8 @@ export class PhoneVerificationService {
         }
         return {
           success: false,
-          error: errorMessage
+          error: errorMessage,
+          code: typeof data?.code === 'string' ? data.code : undefined,
         };
       }
       
@@ -367,7 +369,8 @@ export class PhoneVerificationService {
         }
         return {
           success: false,
-          error: data.error || 'Failed to verify code'
+          error: data.error || 'Failed to verify code',
+          code: typeof data?.code === 'string' ? data.code : undefined,
         };
       }
       

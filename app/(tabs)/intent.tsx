@@ -9,7 +9,9 @@ import { Motion } from '@/lib/motion';
 import { readCache, writeCache } from '@/lib/persisted-cache';
 import { supabase } from '@/lib/supabase';
 import { getViewedProfileTrustChips } from '@/lib/viewed-profile-premium';
+import MatchModal from '@/components/MatchModal';
 import AnimatedPressable from '@/components/motion/AnimatedPressable';
+import type { Match } from '@/types/match';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import * as Haptics from 'expo-haptics';
@@ -705,6 +707,7 @@ export default function IntentScreen() {
   const [intentTarget, setIntentTarget] = useState<{ id: string; name?: string | null } | null>(null);
   const [intentPrefill, setIntentPrefill] = useState<string | null>(null);
   const [intentDefaultType, setIntentDefaultType] = useState<IntentRequestType>('connect');
+  const [celebrationMatch, setCelebrationMatch] = useState<Match | null>(null);
   const [suggestedSend, setSuggestedSend] = useState<{ id: string | null; phase: 'idle' | 'loading' | 'success' }>({
     id: null,
     phase: 'idle',
@@ -1072,6 +1075,28 @@ export default function IntentScreen() {
     });
   }, []);
 
+  const buildIntentCelebrationMatch = useCallback(
+    (item: IntentRequest): Match => {
+      const actor = profiles[item.actor_id];
+      const peerInterests = Array.isArray(interestsByProfile[item.actor_id]) ? interestsByProfile[item.actor_id] : [];
+      const sharedInterests = myInterests.length ? peerInterests.filter((i) => myInterests.includes(i)).slice(0, 3) : [];
+
+      return {
+        id: item.actor_id,
+        name: actor?.full_name || 'Someone',
+        age: actor?.age ?? 0,
+        avatar_url: actor?.avatar_url || undefined,
+        location: actor?.city || actor?.region || actor?.location || undefined,
+        interests: peerInterests,
+        commonInterests: sharedInterests,
+        verified: (actor?.verification_level ?? 0) > 0,
+        verification_level: actor?.verification_level ?? undefined,
+        region: actor?.region ?? undefined,
+      };
+    },
+    [interestsByProfile, myInterests, profiles],
+  );
+
   const ensureMatch = useCallback(async (actorId: string, recipientId: string) => {
     const { data } = await supabase
       .from('matches')
@@ -1121,20 +1146,10 @@ export default function IntentScreen() {
         console.log('[intent] system message error', systemError);
       }
       await ensureMatch(item.actor_id, item.recipient_id);
-      const actor = profiles[item.actor_id];
-      const peerInterests = Array.isArray(interestsByProfile[item.actor_id]) ? interestsByProfile[item.actor_id] : [];
-      const shared = myInterests.length ? peerInterests.filter((i) => myInterests.includes(i)).slice(0, 2) : [];
-      const reply = buildQuickReplyText({
-        name: actor?.full_name || 'Someone',
-        itemType: item.type,
-        note: item.message ?? null,
-        sharedInterests: shared,
-        location: actor?.city || actor?.region || actor?.location || null,
-      });
-      openChat(item.actor_id, actor?.full_name || 'Request', actor?.avatar_url || null, reply);
+      setCelebrationMatch(buildIntentCelebrationMatch(item));
       await refresh();
     },
-    [ensureMatch, interestsByProfile, myInterests, openChat, profiles, refresh, user],
+    [buildIntentCelebrationMatch, ensureMatch, refresh, user],
   );
 
   const passRequest = useCallback(async (item: IntentRequest) => {
@@ -1292,7 +1307,7 @@ export default function IntentScreen() {
           : highlightIncoming
             ? 'Worth a closer look.'
             : 'A calm, promising match.';
-      const singlePhotoSupport = sharedInterests.length > 0
+      const _singlePhotoSupport = sharedInterests.length > 0
         ? sharedInterests.slice(0, 2).join(' · ')
         : sharedInterests.length > 0
           ? `Common: ${sharedInterests.slice(0, 2).join(' · ')}`
@@ -2594,6 +2609,30 @@ export default function IntentScreen() {
         prefillMessage={intentPrefill}
         metadata={{ source: 'intent_suggested', algorithm: 'moves_v1' }}
         onSent={handleIntentSent}
+      />
+
+      <MatchModal
+        visible={!!celebrationMatch}
+        match={celebrationMatch}
+        onClose={() => setCelebrationMatch(null)}
+        onKeepDiscovering={() => setCelebrationMatch(null)}
+        onSendMessage={(match) => {
+          const peerId = match?.id ?? null;
+          const peerName = match?.name ?? 'Request';
+          const peerAvatar = match?.avatar_url ?? null;
+          const peerInterests = peerId && Array.isArray(interestsByProfile[peerId]) ? interestsByProfile[peerId] : [];
+          const sharedInterests = myInterests.length ? peerInterests.filter((i) => myInterests.includes(i)).slice(0, 2) : [];
+          const peerProfile = peerId ? profiles[peerId] : undefined;
+          const reply = buildQuickReplyText({
+            name: peerName,
+            itemType: 'connect',
+            note: null,
+            sharedInterests,
+            location: peerProfile?.city || peerProfile?.region || peerProfile?.location || null,
+          });
+          setCelebrationMatch(null);
+          openChat(peerId, peerName, peerAvatar, reply);
+        }}
       />
 
       <Modal visible={typePickerOpen} transparent animationType="fade" onRequestClose={() => setTypePickerOpen(false)}>
