@@ -2315,7 +2315,15 @@ export type Database = {
           reporter_id?: string
           status?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "reports_evidence_message_id_fkey"
+            columns: ["evidence_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       revenuecat_webhook_events: {
         Row: {
@@ -3626,11 +3634,15 @@ export type Database = {
           status: string
         }[]
       }
+      rpc_ack_verification_refresh: {
+        Args: { p_profile_id: string }
+        Returns: boolean
+      }
       rpc_ack_verification_request: {
         Args: { p_request_id: string }
         Returns: boolean
       }
-      rpc_ack_verification_refresh: {
+      rpc_admin_clear_verification_refresh: {
         Args: { p_profile_id: string }
         Returns: boolean
       }
@@ -3833,11 +3845,11 @@ export type Database = {
         Returns: {
           created_at: string
           evidence: Json
-          evidence_message_created_at: string | null
-          evidence_message_id: string | null
-          evidence_message_sender_id: string | null
-          evidence_message_text: string | null
-          evidence_message_type: string | null
+          evidence_message_created_at: string
+          evidence_message_id: string
+          evidence_message_sender_id: string
+          evidence_message_text: string
+          evidence_message_type: string
           id: string
           reason: string
           reported_avatar: string
@@ -3851,19 +3863,10 @@ export type Database = {
           status: string
         }[]
       }
-      rpc_submit_report: {
-        Args: {
-          p_client_evidence?: Json
-          p_evidence_message_id?: string | null
-          p_reason: string
-          p_reported_id: string
-        }
-        Returns: string
-      }
       rpc_admin_get_verification_queue: {
         Args: never
         Returns: {
-          auto_verification_data: Json | null
+          auto_verification_data: Json
           auto_verification_score: number
           avatar_url: string
           current_country: string
@@ -3877,10 +3880,10 @@ export type Database = {
           submitted_at: string
           user_id: string
           verification_level: number
-          verification_refresh_reason: string | null
-          verification_refresh_requested_at: string | null
+          verification_refresh_reason: string
+          verification_refresh_requested_at: string
           verification_refresh_required: boolean
-          verification_refresh_target_level: number | null
+          verification_refresh_target_level: number
           verification_type: string
         }[]
       }
@@ -3888,20 +3891,16 @@ export type Database = {
         Args: { p_case_id: string }
         Returns: Json
       }
-      rpc_admin_review_verification_request: {
-        Args: { p_decision: string; p_notes?: string; p_request_id: string }
-        Returns: boolean
-      }
       rpc_admin_request_verification_refresh: {
         Args: {
           p_profile_id: string
-          p_reason?: string | null
-          p_target_level?: number | null
+          p_reason?: string
+          p_target_level?: number
         }
         Returns: boolean
       }
-      rpc_admin_clear_verification_refresh: {
-        Args: { p_profile_id: string }
+      rpc_admin_review_verification_request: {
+        Args: { p_decision: string; p_notes?: string; p_request_id: string }
         Returns: boolean
       }
       rpc_admin_update_account_merge_case: {
@@ -4119,13 +4118,17 @@ export type Database = {
         }
         Returns: boolean
       }
-      rpc_submit_selfie_liveness_verification: {
+      rpc_submit_manual_verification_request: {
         Args: {
-          p_capture_mode?: string
-          p_challenge_type?: string
-          p_document_path: string
+          p_auto_verification_reason?: string
+          p_auto_verification_score?: number
+          p_document_path?: string
           p_profile_id: string
           p_reference_asset_path?: string
+          p_social_handle?: string
+          p_social_platform?: string
+          p_social_profile_url?: string
+          p_verification_type: string
         }
         Returns: {
           already_pending: boolean
@@ -4134,17 +4137,22 @@ export type Database = {
           status: string
         }[]
       }
-      rpc_submit_manual_verification_request: {
+      rpc_submit_report: {
         Args: {
-          p_auto_verification_reason?: string
-          p_auto_verification_score?: number
-          p_document_path?: string | null
+          p_client_evidence?: Json
+          p_evidence_message_id?: string
+          p_reason: string
+          p_reported_id: string
+        }
+        Returns: string
+      }
+      rpc_submit_selfie_liveness_verification: {
+        Args: {
+          p_capture_mode?: string
+          p_challenge_type?: string
+          p_document_path: string
           p_profile_id: string
-          p_reference_asset_path?: string | null
-          p_social_handle?: string | null
-          p_social_platform?: string | null
-          p_social_profile_url?: string | null
-          p_verification_type: string
+          p_reference_asset_path?: string
         }
         Returns: {
           already_pending: boolean
