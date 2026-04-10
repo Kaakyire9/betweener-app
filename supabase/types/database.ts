@@ -482,6 +482,33 @@ export type Database = {
         }
         Relationships: []
       }
+      peer_visibility_prefs: {
+        Row: {
+          archived: boolean
+          hidden: boolean
+          id: string
+          peer_user_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          archived?: boolean
+          hidden?: boolean
+          id?: string
+          peer_user_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          archived?: boolean
+          hidden?: boolean
+          id?: string
+          peer_user_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       circle_members: {
         Row: {
           circle_id: string

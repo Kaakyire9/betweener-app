@@ -15,6 +15,13 @@ type Props = {
   onCreated: () => void;
 };
 
+const MOMENT_PROMPTS = [
+  'What changed your mind this week?',
+  'What kind of home are you building?',
+  'What are you ready for now?',
+  'What felt peaceful today?',
+];
+
 export default function MomentCreateModal({ visible, onClose, onCreated }: Props) {
   const colorScheme = useColorScheme();
   const resolvedScheme = (colorScheme ?? 'light') === 'dark' ? 'dark' : 'light';
@@ -170,11 +177,29 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
           </>
         ) : (
           <>
+            <View style={styles.promptSection}>
+              <Text style={styles.promptHeading}>Start with a signal</Text>
+              <Text style={styles.promptCopy}>A thoughtful prompt makes it easier for the right person to reply well.</Text>
+              <View style={styles.promptWrap}>
+                {MOMENT_PROMPTS.map((prompt) => (
+                  <Pressable
+                    key={prompt}
+                    style={styles.promptChip}
+                    onPress={() => {
+                      setTextBody(prompt);
+                      setError(null);
+                    }}
+                  >
+                    <Text style={styles.promptChipText}>{prompt}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
             <TextInput
               value={textBody}
               onChangeText={setTextBody}
               style={styles.textArea}
-              placeholder="Say something..."
+              placeholder="Say something thoughtful..."
               placeholderTextColor={placeholderColor}
               multiline
               maxLength={240}
@@ -246,6 +271,45 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       borderBottomColor: withAlpha(theme.text, isDark ? 0.16 : 0.12),
     },
     optionText: { color: theme.text, fontFamily: 'Manrope_600SemiBold', fontSize: 14 },
+    promptSection: {
+      marginBottom: 12,
+      padding: 14,
+      borderRadius: 16,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.06 : 0.04),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.secondary, isDark ? 0.24 : 0.18),
+    },
+    promptHeading: {
+      color: theme.text,
+      fontFamily: 'Archivo_700Bold',
+      fontSize: 13,
+      marginBottom: 4,
+    },
+    promptCopy: {
+      color: theme.textMuted,
+      fontSize: 12,
+      lineHeight: 17,
+      fontFamily: 'Manrope_500Medium',
+      marginBottom: 10,
+    },
+    promptWrap: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    promptChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.secondary, isDark ? 0.14 : 0.12),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.secondary, isDark ? 0.26 : 0.2),
+    },
+    promptChipText: {
+      color: theme.text,
+      fontSize: 12,
+      fontFamily: 'Manrope_600SemiBold',
+    },
     textArea: {
       minHeight: 120,
       borderRadius: 14,

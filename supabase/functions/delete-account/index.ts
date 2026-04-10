@@ -36,6 +36,83 @@ const chunk = <T,>(items: T[], size: number) => {
   return out;
 };
 
+const STORAGE_BUCKETS_TO_CLEAN = [
+  "profile-photos",
+  "profile-videos",
+  "moments",
+  "chat-media",
+  "verification-docs",
+  "circle-images",
+] as const;
+
+const normalizeStoragePrefix = (prefix: string) => {
+  const cleaned = String(prefix || "").trim().replace(/^\/+|\/+$/g, "");
+  return cleaned ? `${cleaned}/` : "";
+};
+
+const joinStoragePath = (prefix: string, name: string) =>
+  `${normalizeStoragePrefix(prefix)}${String(name || "").trim()}`;
+
+const collectStoragePaths = async (
+  service: ReturnType<typeof createClient>,
+  bucket: string,
+  prefix: string,
+): Promise<string[]> => {
+  const normalizedPrefix = normalizeStoragePrefix(prefix);
+  if (!normalizedPrefix) return [];
+
+  const { data, error } = await service.storage.from(bucket).list(normalizedPrefix, {
+    limit: 100,
+    sortBy: { column: "name", order: "asc" },
+  });
+
+  if (error) {
+    console.warn("delete-account storage list warning", { bucket, prefix: normalizedPrefix, message: error.message });
+    return [];
+  }
+
+  const paths: string[] = [];
+  for (const item of data || []) {
+    const name = String((item as any)?.name || "").trim();
+    if (!name) continue;
+
+    const hasFileMetadata = Boolean((item as any)?.id || (item as any)?.metadata);
+    if (hasFileMetadata) {
+      paths.push(joinStoragePath(normalizedPrefix, name));
+      continue;
+    }
+
+    const nested = await collectStoragePaths(service, bucket, joinStoragePath(normalizedPrefix, name));
+    paths.push(...nested);
+  }
+
+  return paths;
+};
+
+const cleanupOwnedStorage = async (
+  service: ReturnType<typeof createClient>,
+  prefixes: string[],
+) => {
+  const uniquePrefixes = Array.from(new Set(prefixes.map(normalizeStoragePrefix).filter(Boolean)));
+  if (uniquePrefixes.length === 0) return;
+
+  for (const bucket of STORAGE_BUCKETS_TO_CLEAN) {
+    const bucketPaths = new Set<string>();
+
+    for (const prefix of uniquePrefixes) {
+      const paths = await collectStoragePaths(service, bucket, prefix);
+      for (const path of paths) bucketPaths.add(path);
+    }
+
+    for (const batch of chunk(Array.from(bucketPaths), 100)) {
+      const { error } = await service.storage.from(bucket).remove(batch);
+      if (error) {
+        console.warn("delete-account storage remove warning", { bucket, count: batch.length, message: error.message });
+      }
+    }
+  }
+};
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json(405, { error: "Method not allowed" });
@@ -83,7 +160,6 @@ serve(async (req) => {
     }
 
     service = createClient(supabaseUrl, serviceRoleKey);
-    const storageDb = createClient(supabaseUrl, serviceRoleKey, { db: { schema: "storage" } });
 
     const { data: profileRow, error: profileError } = await service
       .from("profiles")
@@ -121,32 +197,7 @@ serve(async (req) => {
 
     requestId = insertedRequest.id;
 
-    const { data: ownedObjects, error: ownedObjectsError } = await storageDb
-      .from("objects")
-      .select("bucket_id,name")
-      .eq("owner_id", user.id);
-
-    if (ownedObjectsError) {
-      throw new Error(`Unable to inspect owned media before deletion: ${ownedObjectsError.message}`);
-    }
-
-    const grouped = new Map<string, string[]>();
-    for (const row of ownedObjects || []) {
-      const bucket = String((row as any).bucket_id || "").trim();
-      const name = String((row as any).name || "").trim();
-      if (!bucket || !name) continue;
-      if (!grouped.has(bucket)) grouped.set(bucket, []);
-      grouped.get(bucket)!.push(name);
-    }
-
-    for (const [bucket, names] of grouped.entries()) {
-      for (const batch of chunk(names, 100)) {
-        const { error: removeError } = await service.storage.from(bucket).remove(batch);
-        if (removeError) {
-          throw new Error(`Unable to remove media from ${bucket}: ${removeError.message}`);
-        }
-      }
-    }
+    await cleanupOwnedStorage(service, [user.id, profileRow?.id ?? ""]);
 
     const nowIso = new Date().toISOString();
 

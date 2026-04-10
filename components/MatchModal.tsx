@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { Animated, Image, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
 import type { Match } from '@/types/match';
 
 const CELEBRATION_SYMBOLS = ['\u2661', '\u2665', '\u2726', '\u2728'] as const;
@@ -19,6 +20,7 @@ export default function MatchModal({
   onClose?: () => void;
 }) {
   const scale = useRef(new Animated.Value(0.94)).current;
+  const safeAvatarUrl = getSafeRemoteImageUri(match?.avatar_url);
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(26)).current;
   const rotate = useRef(new Animated.Value(1)).current;
@@ -263,8 +265,8 @@ export default function MatchModal({
                 ]}
               />
               <LinearGradient colors={['rgba(17,197,198,0.22)', 'rgba(215,166,255,0.18)', 'rgba(230,212,184,0.14)']} style={styles.avatarRing}>
-                {match.avatar_url ? (
-                  <Image source={{ uri: match.avatar_url }} style={styles.avatar} />
+                {safeAvatarUrl ? (
+                  <Image source={{ uri: safeAvatarUrl }} style={styles.avatar} />
                 ) : (
                   <View style={styles.avatarFallback}>
                     <Text style={styles.avatarFallbackText}>{(match.name || 'B').slice(0, 1).toUpperCase()}</Text>

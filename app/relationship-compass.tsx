@@ -32,6 +32,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 
 const VIBES_FILTERS_KEY = "vibes_filters_v2";
 const COMPASS_REFRESH_MS = 24 * 60 * 60 * 1000;
+const COMPASS_NOTIFICATION_STORAGE_PREFIX = "relationship_compass_notification";
 
 type Option = {
   id: string;
@@ -137,6 +138,23 @@ const stableHash = (value: string) => {
     hash = (hash * 31 + value.charCodeAt(index)) % 1000003;
   }
   return hash;
+};
+
+const getCompassReminderStorageKey = (userId: string) =>
+  `${COMPASS_NOTIFICATION_STORAGE_PREFIX}:${userId}`;
+
+const cancelRelationshipCompassReminder = async (userId?: string | null) => {
+  if (!userId) return;
+  try {
+    const storageKey = getCompassReminderStorageKey(userId);
+    const existingId = await AsyncStorage.getItem(storageKey);
+    if (existingId) {
+      await Notifications.cancelScheduledNotificationAsync(existingId);
+      await AsyncStorage.removeItem(storageKey);
+    }
+  } catch {
+    // best-effort only
+  }
 };
 
 const getPreviewAvatar = (profile: CompassPreviewProfile) =>
@@ -550,6 +568,11 @@ export default function RelationshipCompassScreen() {
     setSavedAt(getCompassUpdatedAt(storedCompass));
     setCompass(applyDefaults(storedCompass));
   }, [storedCompass]);
+
+  useEffect(() => {
+    const viewerUserId = profile?.user_id ? String(profile.user_id) : null;
+    void cancelRelationshipCompassReminder(viewerUserId);
+  }, [profile?.user_id]);
 
   useEffect(() => {
     if (!profile?.id) return;

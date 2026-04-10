@@ -42,6 +42,12 @@ interface VerificationStatus {
   freshReviewRequired: boolean;
   freshReviewReason?: string;
   freshReviewTargetLevel?: number;
+
+  methodStates: Record<string, {
+    hasApproved: boolean;
+    hasPending: boolean;
+    hasRejected: boolean;
+  }>;
   
   // Loading state
   loading: boolean;
@@ -92,6 +98,7 @@ export const useVerificationStatus = (userId?: string) => {
     hasRejection: false,
     canResubmit: true,
     freshReviewRequired: false,
+    methodStates: {},
     loading: true,
   });
 
@@ -129,6 +136,17 @@ export const useVerificationStatus = (userId?: string) => {
       }
 
       const requests = (requestsData || []) as VerificationRequestRow[];
+      const methodStates = requests.reduce<VerificationStatus['methodStates']>((acc, req) => {
+        const key = (req.verification_type || '').toLowerCase();
+        if (!key) return acc;
+        const current = acc[key] ?? { hasApproved: false, hasPending: false, hasRejected: false };
+        acc[key] = {
+          hasApproved: current.hasApproved || req.status === 'approved',
+          hasPending: current.hasPending || req.status === 'pending',
+          hasRejected: current.hasRejected || req.status === 'rejected',
+        };
+        return acc;
+      }, {});
       const verificationLevel = profileData?.verification_level || 0;
       const freshReviewRequired = Boolean(profileData?.verification_refresh_required);
       const freshReviewTargetLevel = Math.min(
@@ -176,6 +194,7 @@ export const useVerificationStatus = (userId?: string) => {
         freshReviewRequired,
         freshReviewReason: profileData?.verification_refresh_reason || undefined,
         freshReviewTargetLevel,
+        methodStates,
         loading: false,
       });
 

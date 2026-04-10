@@ -1,8 +1,11 @@
 import { Colors } from "@/constants/theme";
+import { useMoments } from "@/hooks/useMoments";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useResolvedProfileId } from "@/hooks/useResolvedProfileId";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
+import { fetchPeerVisibilityPrefs } from "@/lib/peer-visibility";
+import { getSafeRemoteImageUri, getUserFacingDisplayName } from "@/lib/profile/display-name";
 import { getProfileInitials, getProfilePlaceholderPalette } from "@/lib/profile-placeholders";
 import { getDatePlanPreviewText } from "@/lib/message-preview";
 import { getSupabaseNetEvents, supabase } from "@/lib/supabase";
@@ -14,6 +17,7 @@ import { router, useFocusEffect } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Alert,
   Animated,
   FlatList,
   Image,
@@ -25,6 +29,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { Swipeable } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Notice from "@/components/ui/Notice";
 import { ChatListSkeleton } from "@/components/ui/Skeleton";
@@ -32,6 +37,8 @@ import { ChatListSkeleton } from "@/components/ui/Skeleton";
 // Chat conversation type
 type ConversationType = {
   id: string;
+  isArchived: boolean;
+  peerHasLeft: boolean;
   matchedUser: {
     id: string;
     name: string;
@@ -89,6 +96,13 @@ const CHAT_PREFS_STORAGE_KEY = 'chat_header_prefs_v1';
 const CHAT_LIST_CACHE_TTL_MS = 10 * 60_000;
 const BLOCKED_AVATAR_SOURCE = require('../../assets/images/circle-logo.png');
 const STICKER_TEXT_PREFIX = 'sticker::';
+const QUICK_REPORT_REASONS = [
+  { id: 'spam', label: 'Spam' },
+  { id: 'harassment', label: 'Harassment' },
+  { id: 'inappropriate', label: 'Inappropriate content' },
+  { id: 'scam', label: 'Scam or fraud' },
+  { id: 'other', label: 'Other' },
+] as const;
 
 type CachedConversation = Omit<ConversationType, "matchedUser" | "lastMessage" | "matchedAt"> & {
   matchedUser: Omit<ConversationType["matchedUser"], "lastSeen"> & { lastSeen: string };
@@ -133,6 +147,8 @@ const deserializeConversations = (raw: unknown): ConversationType[] => {
     const reaction = lastMessage?.reactionPreview || undefined;
     return {
       ...c,
+      isArchived: Boolean(c?.isArchived),
+      peerHasLeft: Boolean(c?.peerHasLeft),
       matchedUser: {
         ...matchedUser,
         lastSeen: matchedUser?.lastSeen ? new Date(matchedUser.lastSeen) : new Date(),
@@ -205,11 +221,17 @@ export default function ChatScreen() {
   const lastWatchdogLogAtRef = useRef(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
-  const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'pinned'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'pinned' | 'archived'>('all');
   const [presenceOnline, setPresenceOnline] = useState<Record<string, boolean>>({});
   const [presenceLastSeen, setPresenceLastSeen] = useState<Record<string, Date>>({});
   const [typingStatus, setTypingStatus] = useState<Record<string, boolean>>({});
   const messagedPeerUserIdsRef = useRef<Set<string>>(new Set());
+  const swipeableRefs = useRef<Record<string, Swipeable | null>>({});
+  const swipeActionBusyRef = useRef<Record<string, boolean>>({});
+  const { momentUsers } = useMoments({
+    currentUserId: user?.id,
+    currentUserProfile: profile,
+  });
 
   const chatCacheKey = useMemo(
     () => (user?.id ? `cache:chat_list:v1:${user.id}` : null),
@@ -419,7 +441,7 @@ export default function ChatScreen() {
             userId: peerUserId,
             profileId: String(p.id),
             name: String(p.full_name || 'New match'),
-            avatar_url: p.avatar_url ?? null,
+            avatar_url: getSafeRemoteImageUri(p.avatar_url),
             age: typeof p.age === 'number' ? p.age : null,
             location: loc,
           });
@@ -457,10 +479,29 @@ export default function ChatScreen() {
       }
 
       const rows = (messages || []) as MessageRow[];
+      const rawMessageIds = rows.map((msg) => msg.id).filter(Boolean);
+      let hiddenMessageIdSet = new Set<string>();
+      if (rawMessageIds.length > 0) {
+        const { data: hiddenRows, error: hiddenError } = await supabase
+          .from('message_hides')
+          .select('message_id')
+          .eq('user_id', user.id)
+          .in('message_id', rawMessageIds);
+
+        if (hiddenError) {
+          console.log('[chat] hidden messages fetch error', hiddenError);
+        } else {
+          hiddenMessageIdSet = new Set(
+            ((hiddenRows as { message_id: string }[] | null) ?? []).map((row) => row.message_id),
+          );
+        }
+      }
+
+      const visibleRows = rows.filter((msg) => !hiddenMessageIdSet.has(msg.id));
       const convoMap = new Map<string, { last: MessageRow; unread: number }>();
       const messageById = new Map<string, MessageRow>();
 
-      rows.forEach((msg) => {
+      visibleRows.forEach((msg) => {
         if (msg.id) messageById.set(msg.id, msg);
         const otherId = msg.sender_id === user.id ? msg.receiver_id : msg.sender_id;
         if (!otherId) return;
@@ -474,7 +515,7 @@ export default function ChatScreen() {
       });
 
       const otherUserIds = Array.from(convoMap.keys());
-      const messageIds = rows.map((msg) => msg.id).filter(Boolean);
+      const messageIds = visibleRows.map((msg) => msg.id).filter(Boolean);
       const reactionPreviewByUser = new Map<string, ConversationType['lastMessage']['reactionPreview']>();
       if (messageIds.length > 0) {
         const { data: reactionsData, error: reactionsError } = await supabase
@@ -514,10 +555,10 @@ export default function ChatScreen() {
         return;
       }
 
-      const { data: profilesData, error: profilesError } = await supabase
-        .from('profiles')
-        .select('user_id,full_name,avatar_url,age,online,updated_at')
-        .in('user_id', otherUserIds);
+        const { data: profilesData, error: profilesError } = await supabase
+          .from('profiles')
+          .select('user_id,full_name,avatar_url,age,online,updated_at,account_state,deleted_at')
+          .in('user_id', otherUserIds);
 
       if (profilesError) {
         console.log('[chat] profiles fetch error', profilesError);
@@ -546,10 +587,12 @@ export default function ChatScreen() {
       const profileByUser = new Map(
         (profilesData || []).map((p: any) => [p.user_id, p])
       );
+      const peerVisibilityPrefs = await fetchPeerVisibilityPrefs(user.id, otherUserIds);
 
       const nextConversations: ConversationType[] = otherUserIds.map((otherUserId) => {
         const entry = convoMap.get(otherUserId);
         const profileRow = profileByUser.get(otherUserId);
+        const peerVisibility = peerVisibilityPrefs[otherUserId];
         const last = entry?.last;
         const lastTimestamp = last?.created_at ? new Date(last.created_at) : new Date();
         const lastText = getRowPreviewText(last);
@@ -558,10 +601,12 @@ export default function ChatScreen() {
         const blockStatus = blockStatusByUser.get(otherUserId) ?? null;
         return {
           id: otherUserId,
+          isArchived: Boolean(peerVisibility?.archived) && !Boolean(peerVisibility?.hidden),
+          peerHasLeft: Boolean(profileRow?.deleted_at) || String(profileRow?.account_state || '').toLowerCase() === 'deleted',
           matchedUser: {
             id: otherUserId,
-            name: profileRow?.full_name || 'Unknown',
-            avatar_url: profileRow?.avatar_url || '',
+            name: getUserFacingDisplayName(profileRow, 'Unknown'),
+            avatar_url: getSafeRemoteImageUri(profileRow?.avatar_url) || '',
             age: profileRow?.age || 0,
             isOnline: !!profileRow?.online,
             lastSeen: profileRow?.updated_at ? new Date(profileRow.updated_at) : new Date(),
@@ -583,7 +628,7 @@ export default function ChatScreen() {
           isPinned: false,
           matchedAt: lastTimestamp,
         };
-      });
+      }).filter((conversation) => !peerVisibilityPrefs[conversation.id]?.hidden);
       const serverPrefs = new Map<string, { muted: boolean; pinned: boolean }>();
       const { data: prefsData, error: prefsError } = await supabase
         .from('chat_prefs')
@@ -609,6 +654,435 @@ export default function ChatScreen() {
       setIsLoading(false);
     }
   }, [applyChatPrefs, chatCacheKey, fetchNewMatches, user?.id]);
+
+  const savePeerVisibilityPref = useCallback(
+    async (peerUserId: string, next: { archived: boolean; hidden: boolean }) => {
+      if (!user?.id) return { error: new Error('missing_user') };
+      return supabase
+        .from('peer_visibility_prefs')
+        .upsert(
+          {
+            user_id: user.id,
+            peer_user_id: peerUserId,
+            archived: next.archived,
+            hidden: next.hidden,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'user_id,peer_user_id' },
+        );
+    },
+    [user?.id],
+  );
+
+  const setPeerPinState = useCallback(
+    async (peerUserId: string, pinned: boolean, muted: boolean) => {
+      if (!user?.id) return;
+      const { error } = await supabase
+        .from('chat_prefs')
+        .upsert(
+          {
+            user_id: user.id,
+            peer_id: peerUserId,
+            pinned,
+            muted,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'user_id,peer_id' },
+        );
+      if (error) {
+        console.log('[chat] chat prefs upsert error', error);
+      }
+    },
+    [user?.id],
+  );
+
+  const clearConversationForMe = useCallback(
+    async (peerUserId: string) => {
+      if (!user?.id) return { ok: false };
+
+      const { data: messagesData, error: messagesError } = await supabase
+        .from('messages')
+        .select('id')
+        .or(`and(sender_id.eq.${user.id},receiver_id.eq.${peerUserId}),and(sender_id.eq.${peerUserId},receiver_id.eq.${user.id})`)
+        .limit(1000);
+
+      if (messagesError) {
+        console.log('[chat] clear conversation messages fetch error', messagesError);
+        return { ok: false };
+      }
+
+      const messageIds = ((messagesData as { id: string }[] | null) ?? []).map((row) => row.id).filter(Boolean);
+      if (messageIds.length > 0) {
+        const { data: hiddenRows, error: hiddenError } = await supabase
+          .from('message_hides')
+          .select('message_id')
+          .eq('user_id', user.id)
+          .eq('peer_id', peerUserId);
+
+        if (hiddenError) {
+          console.log('[chat] clear conversation hidden message fetch error', hiddenError);
+          return { ok: false };
+        }
+
+        const hiddenSet = new Set(((hiddenRows as { message_id: string }[] | null) ?? []).map((row) => row.message_id));
+        const idsToHide = messageIds.filter((id) => !hiddenSet.has(id));
+        if (idsToHide.length > 0) {
+          const batchSize = 200;
+          for (let i = 0; i < idsToHide.length; i += batchSize) {
+            const rows = idsToHide.slice(i, i + batchSize).map((id) => ({
+              message_id: id,
+              user_id: user.id,
+              peer_id: peerUserId,
+            }));
+            const { error } = await supabase.from('message_hides').insert(rows);
+            if (error) {
+              console.log('[chat] clear conversation hide insert error', error);
+              return { ok: false };
+            }
+          }
+        }
+      }
+
+      const visibilityResult = await savePeerVisibilityPref(peerUserId, { archived: false, hidden: true });
+      if (visibilityResult.error) {
+        console.log('[chat] peer visibility hide upsert error', visibilityResult.error);
+        return { ok: false };
+      }
+
+      return { ok: true };
+    },
+    [savePeerVisibilityPref, user?.id],
+  );
+
+  const clearMessagesForMe = useCallback(
+    async (peerUserId: string) => {
+      if (!user?.id) return { ok: false };
+
+      const { data: messagesData, error: messagesError } = await supabase
+        .from('messages')
+        .select('id')
+        .or(`and(sender_id.eq.${user.id},receiver_id.eq.${peerUserId}),and(sender_id.eq.${peerUserId},receiver_id.eq.${user.id})`)
+        .limit(1000);
+
+      if (messagesError) {
+        console.log('[chat] clear messages fetch error', messagesError);
+        return { ok: false };
+      }
+
+      const messageIds = ((messagesData as { id: string }[] | null) ?? []).map((row) => row.id).filter(Boolean);
+      if (messageIds.length === 0) return { ok: true };
+
+      const { data: hiddenRows, error: hiddenError } = await supabase
+        .from('message_hides')
+        .select('message_id')
+        .eq('user_id', user.id)
+        .eq('peer_id', peerUserId);
+
+      if (hiddenError) {
+        console.log('[chat] clear messages hidden fetch error', hiddenError);
+        return { ok: false };
+      }
+
+      const hiddenSet = new Set(((hiddenRows as { message_id: string }[] | null) ?? []).map((row) => row.message_id));
+      const idsToHide = messageIds.filter((id) => !hiddenSet.has(id));
+      if (idsToHide.length === 0) return { ok: true };
+
+      const batchSize = 200;
+      for (let i = 0; i < idsToHide.length; i += batchSize) {
+        const rows = idsToHide.slice(i, i + batchSize).map((id) => ({
+          message_id: id,
+          user_id: user.id,
+          peer_id: peerUserId,
+        }));
+        const { error } = await supabase.from('message_hides').insert(rows);
+        if (error) {
+          console.log('[chat] clear messages hide insert error', error);
+          return { ok: false };
+        }
+      }
+
+      return { ok: true };
+    },
+    [user?.id],
+  );
+
+  const toggleMuteConversation = useCallback(
+    async (conversation: ConversationType) => {
+      const nextMuted = !conversation.isMuted;
+      setConversations((prev) =>
+        prev.map((conv) => (conv.id === conversation.id ? { ...conv, isMuted: nextMuted } : conv)),
+      );
+
+      try {
+        const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : {};
+        const current = parsed?.[conversation.id] ?? {};
+        parsed[conversation.id] = {
+          ...current,
+          muted: nextMuted,
+        };
+        await AsyncStorage.setItem(CHAT_PREFS_STORAGE_KEY, JSON.stringify(parsed));
+      } catch {}
+
+      await setPeerPinState(conversation.id, conversation.isPinned, nextMuted);
+      void haptics.tap();
+    },
+    [setPeerPinState],
+  );
+
+  const blockConversationUser = useCallback(
+    async (conversation: ConversationType) => {
+      if (!user?.id) return false;
+      const { error } = await supabase.from('blocks').insert({
+        blocker_id: user.id,
+        blocked_id: conversation.id,
+      });
+      if (error) {
+        console.log('[chat] block user from list error', error);
+        Alert.alert('Block user', 'Unable to block this user right now.');
+        return false;
+      }
+      setConversations((prev) =>
+        prev.map((conv) => (conv.id === conversation.id ? { ...conv, blockStatus: 'blocked_by_me' } : conv)),
+      );
+      void haptics.warning();
+      return true;
+    },
+    [user?.id],
+  );
+
+  const unblockConversationUser = useCallback(
+    async (conversation: ConversationType) => {
+      if (!user?.id) return false;
+      const { error } = await supabase
+        .from('blocks')
+        .delete()
+        .eq('blocker_id', user.id)
+        .eq('blocked_id', conversation.id);
+      if (error) {
+        console.log('[chat] unblock user from list error', error);
+        Alert.alert('Unblock user', 'Unable to unblock this user right now.');
+        return false;
+      }
+      setConversations((prev) =>
+        prev.map((conv) => (conv.id === conversation.id ? { ...conv, blockStatus: null } : conv)),
+      );
+      void haptics.success();
+      return true;
+    },
+    [user?.id],
+  );
+
+  const reportConversationUser = useCallback(
+    async (conversation: ConversationType, reasonId: string) => {
+      const reasonLabel = QUICK_REPORT_REASONS.find((reason) => reason.id === reasonId)?.label ?? reasonId;
+      const { error } = await supabase.rpc('rpc_submit_report', {
+        p_reported_id: conversation.id,
+        p_reason: reasonLabel,
+      });
+      if (error) {
+        console.log('[chat] report user from list error', error);
+        Alert.alert('Report user', 'Unable to send this report right now.');
+        return false;
+      }
+      void haptics.success();
+      Alert.alert('Report sent', 'Thanks. Betweener will review this quietly.');
+      return true;
+    },
+    [],
+  );
+
+  const openReportReasonSheet = useCallback(
+    (conversation: ConversationType) => {
+      Alert.alert(
+        'Report user',
+        'Choose a reason to continue.',
+        [
+          ...QUICK_REPORT_REASONS.map((reason) => ({
+            text: reason.label,
+            onPress: () => {
+              void reportConversationUser(conversation, reason.id);
+            },
+          })),
+          { text: 'Cancel', style: 'cancel' as const },
+        ],
+      );
+    },
+    [reportConversationUser],
+  );
+
+  const openConversationMoreActions = useCallback(
+    (conversation: ConversationType) => {
+      swipeableRefs.current[conversation.id]?.close();
+      Alert.alert(
+        conversation.matchedUser.name,
+        'Choose what you want to do with this chat.',
+        [
+          {
+            text: conversation.isMuted ? 'Unmute chat' : 'Mute chat',
+            onPress: () => {
+              void toggleMuteConversation(conversation);
+            },
+          },
+          {
+            text: 'Clear chat',
+            onPress: () => {
+              Alert.alert(
+                'Clear chat?',
+                'This removes the message history for you only. New messages can still arrive later.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Clear',
+                    style: 'destructive',
+                    onPress: () => {
+                      const previous = conversation;
+                      setConversations((prev) => prev.filter((conv) => conv.id !== conversation.id));
+                      void (async () => {
+                        const result = await clearMessagesForMe(conversation.id);
+                        if (!result.ok) {
+                          setConversations((prev) => {
+                            if (prev.some((conv) => conv.id === previous.id)) return prev;
+                            return [...prev, previous].sort(
+                              (a, b) => b.lastMessage.timestamp.getTime() - a.lastMessage.timestamp.getTime(),
+                            );
+                          });
+                          Alert.alert('Clear chat', 'Unable to clear this chat right now.');
+                          return;
+                        }
+                        void haptics.medium();
+                      })();
+                    },
+                  },
+                ],
+              );
+            },
+          },
+          {
+            text: conversation.blockStatus === 'blocked_by_me' ? 'Unblock user' : 'Block user',
+            style: conversation.blockStatus === 'blocked_by_me' ? 'default' : 'destructive',
+            onPress: () => {
+              if (conversation.blockStatus === 'blocked_by_me') {
+                Alert.alert(
+                  'Unblock user?',
+                  'You will be able to message each other again.',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: 'Unblock',
+                      onPress: () => {
+                        void unblockConversationUser(conversation);
+                      },
+                    },
+                  ],
+                );
+                return;
+              }
+
+              Alert.alert(
+                'Block user?',
+                'They will not be able to message you, and they will not be notified.',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Block',
+                    style: 'destructive',
+                    onPress: () => {
+                      void blockConversationUser(conversation);
+                    },
+                  },
+                ],
+              );
+            },
+          },
+          {
+            text: 'Report user',
+            onPress: () => {
+              openReportReasonSheet(conversation);
+            },
+          },
+          { text: 'Cancel', style: 'cancel' },
+        ],
+      );
+    },
+    [blockConversationUser, clearMessagesForMe, openReportReasonSheet, toggleMuteConversation, unblockConversationUser],
+  );
+
+  const handleArchiveConversation = useCallback(
+    async (conversation: ConversationType) => {
+      swipeableRefs.current[conversation.id]?.close();
+      const nextArchived = !conversation.isArchived;
+
+      setConversations((prev) =>
+        prev.map((conv) =>
+          conv.id === conversation.id
+            ? { ...conv, isArchived: nextArchived, isPinned: nextArchived ? false : conv.isPinned }
+            : conv,
+        ),
+      );
+
+      if (nextArchived && conversation.isPinned) {
+        void setPeerPinState(conversation.id, false, conversation.isMuted);
+      }
+
+      const { error } = await savePeerVisibilityPref(conversation.id, {
+        archived: nextArchived,
+        hidden: false,
+      });
+      if (error) {
+        console.log('[chat] peer visibility archive upsert error', error);
+        setConversations((prev) =>
+          prev.map((conv) =>
+            conv.id === conversation.id
+              ? { ...conv, isArchived: conversation.isArchived, isPinned: conversation.isPinned }
+              : conv,
+          ),
+        );
+        Alert.alert('Archive chat', 'Unable to update this chat right now.');
+        return;
+      }
+
+      void haptics.tap();
+    },
+    [savePeerVisibilityPref, setPeerPinState],
+  );
+
+  const handleRemoveConversation = useCallback(
+    (conversation: ConversationType) => {
+      swipeableRefs.current[conversation.id]?.close();
+      const title = conversation.peerHasLeft ? 'Remove Left Betweener?' : 'Remove conversation?';
+      const message = conversation.peerHasLeft
+        ? 'This removes their old thread and related leftovers from your app.'
+        : 'This removes this conversation from your app only. It does not delete anything for the other person.';
+
+      Alert.alert(title, message, [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: conversation.peerHasLeft ? 'Remove' : 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            const previous = conversation;
+            setConversations((prev) => prev.filter((conv) => conv.id !== conversation.id));
+            void (async () => {
+              const result = await clearConversationForMe(conversation.id);
+              if (!result.ok) {
+                setConversations((prev) => {
+                  if (prev.some((conv) => conv.id === previous.id)) return prev;
+                  return [...prev, previous].sort(
+                    (a, b) => b.lastMessage.timestamp.getTime() - a.lastMessage.timestamp.getTime(),
+                  );
+                });
+                Alert.alert('Remove conversation', 'Unable to remove this conversation right now.');
+                return;
+              }
+              void haptics.medium();
+            })();
+          },
+        },
+      ]);
+    },
+    [clearConversationForMe],
+  );
 
   // Guardrail: avoid "skeleton forever" if a request stalls or state never resolves.
   useEffect(() => {
@@ -674,12 +1148,16 @@ export default function ChatScreen() {
             : current.unreadCount;
         const updated = {
           ...current,
+          isArchived: row.receiver_id === user.id ? false : current.isArchived,
           lastMessage: nextLastMessage,
           unreadCount: nextUnread,
           matchedAt: nextLastMessage.timestamp,
         };
         const next = [...prev];
         next[index] = updated;
+        if (row.receiver_id === user.id && current.isArchived) {
+          void savePeerVisibilityPref(otherId, { archived: false, hidden: false });
+        }
         return next;
       });
     };
@@ -771,7 +1249,7 @@ export default function ChatScreen() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchConversations, user?.id]);
+  }, [fetchConversations, savePeerVisibilityPref, user?.id]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -948,11 +1426,13 @@ export default function ChatScreen() {
       }
       switch (activeTab) {
         case 'unread':
-          return conv.unreadCount > 0;
+          return !conv.isArchived && conv.unreadCount > 0;
         case 'pinned':
-          return conv.isPinned;
+          return !conv.isArchived && conv.isPinned;
+        case 'archived':
+          return conv.isArchived;
         default:
-          return true;
+          return !conv.isArchived;
       }
     })
     .sort((a, b) => {
@@ -961,6 +1441,16 @@ export default function ChatScreen() {
       if (!a.isPinned && b.isPinned) return 1;
       return b.lastMessage.timestamp.getTime() - a.lastMessage.timestamp.getTime();
     });
+  const unreadConversationCount = conversations.filter((conv) => !conv.isArchived && conv.unreadCount > 0).length;
+  const archivedConversationCount = conversations.filter((conv) => conv.isArchived).length;
+  const momentUsersWithContent = useMemo(
+    () => momentUsers.filter((entry) => entry.moments.length > 0),
+    [momentUsers],
+  );
+  const activeMomentPeerUserIds = useMemo(
+    () => new Set(momentUsersWithContent.filter((entry) => !entry.isOwn).map((entry) => String(entry.userId))),
+    [momentUsersWithContent],
+  );
 
   const openConversation = (conversation: ConversationType) => {
     const isOnline =
@@ -1053,7 +1543,9 @@ export default function ChatScreen() {
 
   const renderConversation = ({ item }: { item: ConversationType }) => {
     const isBlocked = Boolean(item.blockStatus);
+    const isLeftBetweener = item.peerHasLeft && !isBlocked;
     const isUnread = item.unreadCount > 0;
+    const hasActiveMoment = activeMomentPeerUserIds.has(String(item.id));
     const isMyLastMessage = item.lastMessage.senderId === (user?.id || '');
     const isOnline = !isBlocked && (presenceOnline[item.id] ?? item.matchedUser.isOnline);
     const receiptIcon = isMyLastMessage ? getConversationReceiptIconState(item.lastMessage, theme, isDark) : null;
@@ -1069,20 +1561,40 @@ export default function ChatScreen() {
       <Image source={{ uri: item.matchedUser.avatar_url }} style={styles.conversationAvatar} />
     ) : (
       <LinearGradient
-        colors={[
-          getProfilePlaceholderPalette(item.matchedUser.id || item.matchedUser.name).start,
-          getProfilePlaceholderPalette(item.matchedUser.id || item.matchedUser.name).end,
-        ]}
+        colors={
+          isLeftBetweener
+            ? [isDark ? '#6E5B4B' : '#A18873', isDark ? '#8B7662' : '#C7B8A5']
+            : [
+                getProfilePlaceholderPalette(item.matchedUser.id || item.matchedUser.name).start,
+                getProfilePlaceholderPalette(item.matchedUser.id || item.matchedUser.name).end,
+              ]
+        }
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={[styles.conversationAvatar, styles.avatarFallback]}
+        style={[
+          styles.conversationAvatar,
+          styles.avatarFallback,
+          isLeftBetweener && styles.avatarFallbackLeft,
+        ]}
       >
         <Text style={styles.avatarFallbackText}>
           {getProfileInitials(item.matchedUser.name)}
         </Text>
       </LinearGradient>
     );
-    const avatarContent = !isBlocked && isUnread ? (
+    const avatarContent = !isBlocked && hasActiveMoment && !isLeftBetweener ? (
+      <LinearGradient
+        colors={['#f59e0b', '#f43f5e', '#22d3ee']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[styles.avatarRingMoment, isUnread && styles.avatarRingMomentUnread]}
+      >
+        <View style={styles.avatarRingMomentInner}>{avatarNode}</View>
+        <View style={styles.momentBadge}>
+          <MaterialCommunityIcons name="star-four-points" size={11} color={Colors.light.background} />
+        </View>
+      </LinearGradient>
+    ) : !isBlocked && isUnread && !isLeftBetweener ? (
       <LinearGradient
         colors={[theme.tint, theme.accent]}
         start={{ x: 0, y: 0 }}
@@ -1092,99 +1604,175 @@ export default function ChatScreen() {
         <View style={styles.avatarRingInner}>{avatarNode}</View>
       </LinearGradient>
     ) : (
-      <View style={styles.avatarRing}>{avatarNode}</View>
+      <View style={[styles.avatarRing, isLeftBetweener && styles.avatarRingLeft]}>{avatarNode}</View>
     );
     
     return (
-      <Pressable
-        style={({ pressed }) => [
-          styles.conversationItem,
-          item.isPinned && styles.pinnedConversation,
-          isUnread && styles.unreadConversation,
-          pressed && styles.conversationItemPressed,
-        ]}
-        onPress={() => {
-          void haptics.tap();
-          void markAsRead(item.id);
-          openConversation(item);
+      <Swipeable
+        ref={(instance) => {
+          swipeableRefs.current[item.id] = instance;
         }}
-        onLongPress={() => togglePin(item.id)}
-      >
-        <View style={styles.conversationLeft}>
-          <View style={styles.avatarContainer}>
-            {avatarContent}
-            {isOnline ? <View style={styles.onlineIndicator} /> : null}
-            {item.isPinned && (
-              <View style={styles.pinIndicator}>
-                <MaterialCommunityIcons name="pin" size={10} color={Colors.light.background} />
-              </View>
-            )}
+        friction={2}
+        leftThreshold={72}
+        rightThreshold={72}
+        overshootLeft={false}
+        overshootRight={false}
+        onSwipeableOpen={(direction) => {
+          if (swipeActionBusyRef.current[item.id]) return;
+          swipeActionBusyRef.current[item.id] = true;
+          if (direction === 'left') {
+            void handleArchiveConversation(item).finally(() => {
+              swipeActionBusyRef.current[item.id] = false;
+            });
+            return;
+          }
+          if (item.peerHasLeft) {
+            handleRemoveConversation(item);
+          } else {
+            openConversationMoreActions(item);
+          }
+          setTimeout(() => {
+            swipeActionBusyRef.current[item.id] = false;
+          }, 500);
+        }}
+        renderLeftActions={() => (
+          <View style={[styles.swipeActionRail, styles.swipeActionRailLeft]}>
+            <Pressable
+              style={[styles.swipeAction, styles.archiveAction]}
+              onPress={() => void handleArchiveConversation(item)}
+            >
+              <MaterialCommunityIcons
+                name={item.isArchived ? 'archive-arrow-up-outline' : 'archive-arrow-down-outline'}
+                size={20}
+                color={Colors.light.background}
+              />
+              <Text style={styles.swipeActionText}>{item.isArchived ? 'Return' : 'Archive'}</Text>
+            </Pressable>
           </View>
-          
-          <View style={styles.conversationContent}>
-            <View style={styles.conversationHeader}>
-              <Text style={[
-                styles.conversationName,
-                isUnread && styles.unreadName
-              ]}>
-                {item.matchedUser.name}
-              </Text>
-              {item.isMuted && (
-                <MaterialCommunityIcons
-                  name="volume-off"
-                  size={14}
-                  color={theme.textMuted}
-                  style={styles.mutedIcon}
-                />
-              )}
+        )}
+        renderRightActions={() => (
+          <View style={[styles.swipeActionRail, styles.swipeActionRailRight]}>
+            <Pressable
+              style={[styles.swipeAction, item.peerHasLeft ? styles.removeAction : styles.moreAction]}
+              onPress={() => (item.peerHasLeft ? handleRemoveConversation(item) : openConversationMoreActions(item))}
+            >
+              <MaterialCommunityIcons
+                name={item.peerHasLeft ? 'trash-can-outline' : 'dots-horizontal-circle-outline'}
+                size={20}
+                color={Colors.light.background}
+              />
+              <Text style={styles.swipeActionText}>{item.peerHasLeft ? 'Remove' : 'More'}</Text>
+            </Pressable>
+          </View>
+        )}
+      >
+        <Pressable
+          style={({ pressed }) => [
+            styles.conversationItem,
+            item.isPinned && styles.pinnedConversation,
+            item.isArchived && styles.archivedConversation,
+            isLeftBetweener && styles.leftConversation,
+            isUnread && styles.unreadConversation,
+            pressed && styles.conversationItemPressed,
+          ]}
+          onPress={() => {
+            void haptics.tap();
+            void markAsRead(item.id);
+            openConversation(item);
+          }}
+          onLongPress={() => {
+            if (!item.isArchived) togglePin(item.id);
+          }}
+        >
+          <View style={styles.conversationLeft}>
+            <View style={styles.avatarContainer}>
+              {avatarContent}
+              {isOnline ? <View style={styles.onlineIndicator} /> : null}
+              {item.isPinned && !item.isArchived ? (
+                <View style={styles.pinIndicator}>
+                  <MaterialCommunityIcons name="pin" size={10} color={Colors.light.background} />
+                </View>
+              ) : null}
+              {item.isArchived ? (
+                <View style={styles.archivedIndicator}>
+                  <MaterialCommunityIcons name="archive-outline" size={10} color={Colors.light.background} />
+                </View>
+              ) : null}
             </View>
 
-            <View style={styles.conversationPreview}>
-              {isTyping ? (
-                <View style={styles.lastMessageRow}>
-                  <Text style={[styles.lastMessage, styles.typingText]} numberOfLines={1}>
-                    Typing...
-                  </Text>
-                </View>
-              ) : (
-                <View style={styles.lastMessageRow}>
-                  {isMyLastMessage && (
+            <View style={styles.conversationContent}>
+              <View style={styles.conversationHeader}>
+                <Text
+                  style={[
+                    styles.conversationName,
+                    isLeftBetweener && styles.leftConversationName,
+                    isUnread && styles.unreadName,
+                  ]}
+                >
+                  {item.matchedUser.name}
+                </Text>
+                <View style={styles.conversationHeaderIcons}>
+                  {isLeftBetweener ? <Text style={styles.leftStateLabel}>No longer on Betweener</Text> : null}
+                  {item.isArchived ? <Text style={styles.archivedMetaLabel}>Archived</Text> : null}
+                  {item.isMuted ? (
                     <MaterialCommunityIcons
-                      name={receiptIcon?.name || 'check'}
-                      size={16}
-                      color={receiptIcon?.color || theme.textMuted}
-                      style={styles.readReceiptIcon}
+                      name="volume-off"
+                      size={14}
+                      color={theme.textMuted}
+                      style={styles.mutedIcon}
                     />
-                  )}
-                  <Text
-                    style={[
+                  ) : null}
+                </View>
+              </View>
+
+              <View style={styles.conversationPreview}>
+                {isTyping ? (
+                  <View style={styles.lastMessageRow}>
+                    <Text style={[styles.lastMessage, styles.typingText]} numberOfLines={1}>
+                      Typing...
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.lastMessageRow}>
+                    {isMyLastMessage ? (
+                      <MaterialCommunityIcons
+                        name={receiptIcon?.name || 'check'}
+                        size={16}
+                        color={receiptIcon?.color || theme.textMuted}
+                        style={styles.readReceiptIcon}
+                      />
+                    ) : null}
+                    <Text
+                      style={[
                       styles.lastMessage,
+                      isLeftBetweener && styles.leftConversationPreviewText,
                       reactionPreview && styles.lastMessageReaction,
                       isUnread && styles.unreadMessage,
                     ]}
-                    numberOfLines={1}
-                  >
-                    {reactionPreview ?? getLastMessagePreview(item.lastMessage)}
-                  </Text>
-                </View>
-              )}
-
-              <View style={styles.conversationMeta}>
-                <Text style={styles.conversationTime}>
-                  {formatLastMessageTime(item.lastMessage.timestamp)}
-                </Text>
-                {item.unreadCount > 0 && (
-                  <View style={styles.unreadBadge}>
-                    <Text style={styles.unreadCount}>
-                      {item.unreadCount > 9 ? '9+' : item.unreadCount}
+                      numberOfLines={1}
+                    >
+                      {reactionPreview ?? getLastMessagePreview(item.lastMessage)}
                     </Text>
                   </View>
                 )}
+
+                <View style={styles.conversationMeta}>
+                  <Text style={styles.conversationTime}>
+                    {formatLastMessageTime(item.lastMessage.timestamp)}
+                  </Text>
+                  {item.unreadCount > 0 ? (
+                    <View style={styles.unreadBadge}>
+                      <Text style={styles.unreadCount}>
+                        {item.unreadCount > 9 ? '9+' : item.unreadCount}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
               </View>
             </View>
           </View>
-        </View>
-      </Pressable>
+        </Pressable>
+      </Swipeable>
     );
   };
 
@@ -1229,9 +1817,13 @@ export default function ChatScreen() {
             <Text style={styles.emptyHeroLine}>A thoughtful hello starts here.</Text>
           </LinearGradient>
         </View>
-        <Text style={styles.emptyStateTitle}>No conversations yet, but the room is ready</Text>
+        <Text style={styles.emptyStateTitle}>
+          {activeTab === 'archived' ? 'No archived chats yet' : 'No conversations yet, but the room is ready'}
+        </Text>
         <Text style={styles.emptyStateText}>
-          Match with someone who feels aligned, then open with something specific enough to be memorable.
+          {activeTab === 'archived'
+            ? 'Archived chats will rest here until you bring them back into your main lounge.'
+            : 'Match with someone who feels aligned, then open with something specific enough to be memorable.'}
         </Text>
         <View style={styles.emptyHighlights}>
           <View style={styles.emptyHighlightCard}>
@@ -1362,7 +1954,7 @@ export default function ChatScreen() {
 
       {/* Filter Tabs */}
       <View style={styles.filterTabs}>
-        {(['all', 'unread', 'pinned'] as const).map((tab) => (
+        {(['all', 'unread', 'pinned', 'archived'] as const).map((tab) => (
           <TouchableOpacity
             key={tab}
             style={[
@@ -1377,10 +1969,15 @@ export default function ChatScreen() {
                 activeTab === tab && styles.activeFilterTabText,
               ]}
             >
-              {tab === 'all' ? 'All' : tab === 'unread' ? 'Unread' : 'Pinned'}
-              {tab === 'unread' && conversations.filter(c => c.unreadCount > 0).length > 0 && (
+              {tab === 'all' ? 'All' : tab === 'unread' ? 'Unread' : tab === 'pinned' ? 'Pinned' : 'Archived'}
+              {tab === 'unread' && unreadConversationCount > 0 && (
                 <Text style={styles.tabBadge}>
-                  {' '}({conversations.filter(c => c.unreadCount > 0).length})
+                  {' '}({unreadConversationCount})
+                </Text>
+              )}
+              {tab === 'archived' && archivedConversationCount > 0 && (
+                <Text style={styles.tabBadge}>
+                  {' '}({archivedConversationCount})
                 </Text>
               )}
             </Text>
@@ -1603,6 +2200,41 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       paddingVertical: 8,
       paddingBottom: 92,
     },
+    swipeActionRail: {
+      justifyContent: 'center',
+      marginVertical: 4,
+    },
+    swipeActionRailLeft: {
+      marginLeft: 16,
+    },
+    swipeActionRailRight: {
+      marginRight: 16,
+      alignItems: 'flex-end',
+    },
+    swipeAction: {
+      minWidth: 94,
+      borderRadius: 18,
+      paddingHorizontal: 14,
+      paddingVertical: 14,
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: 6,
+      alignSelf: 'stretch',
+    },
+    archiveAction: {
+      backgroundColor: theme.accent,
+    },
+    removeAction: {
+      backgroundColor: '#C65A5A',
+    },
+    moreAction: {
+      backgroundColor: withAlpha(theme.tint, 0.82),
+    },
+    swipeActionText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_700Bold',
+      color: Colors.light.background,
+    },
     conversationItem: {
       backgroundColor: isDark
         ? withAlpha(theme.backgroundSubtle, 0.56)
@@ -1624,10 +2256,18 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       transform: [{ scale: 0.992 }],
       shadowOpacity: 0.04,
     },
+    leftConversation: {
+      backgroundColor: isDark ? 'rgba(232, 219, 203, 0.045)' : 'rgba(247, 240, 232, 0.96)',
+      borderColor: isDark ? 'rgba(196, 171, 145, 0.18)' : 'rgba(188, 164, 140, 0.18)',
+    },
     pinnedConversation: {
       backgroundColor: withAlpha(theme.accent, isDark ? 0.13 : 0.08),
       borderColor: withAlpha(theme.accent, isDark ? 0.34 : 0.2),
       shadowColor: theme.accent,
+    },
+    archivedConversation: {
+      backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.035),
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
     },
     unreadConversation: {
       backgroundColor: withAlpha(theme.tint, isDark ? 0.11 : 0.065),
@@ -1648,11 +2288,34 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
     },
+    avatarRingLeft: {
+      backgroundColor: isDark ? 'rgba(196, 171, 145, 0.08)' : 'rgba(255, 249, 242, 0.92)',
+      borderColor: isDark ? 'rgba(196, 171, 145, 0.18)' : 'rgba(188, 164, 140, 0.18)',
+    },
     avatarRingUnread: {
       padding: 2,
       borderRadius: 30,
     },
+    avatarRingMoment: {
+      padding: 2,
+      borderRadius: 30,
+      shadowColor: '#f3c784',
+      shadowOpacity: isDark ? 0.34 : 0.22,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 5 },
+      elevation: 6,
+    },
+    avatarRingMomentUnread: {
+      shadowColor: theme.tint,
+      shadowOpacity: isDark ? 0.42 : 0.28,
+    },
     avatarRingInner: {
+      borderRadius: 25,
+      backgroundColor: theme.background,
+      padding: 2,
+      overflow: 'hidden',
+    },
+    avatarRingMomentInner: {
       borderRadius: 25,
       backgroundColor: theme.background,
       padding: 2,
@@ -1668,10 +2331,27 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
+    avatarFallbackLeft: {
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(248, 236, 221, 0.16)' : 'rgba(143, 112, 84, 0.18)',
+    },
     avatarFallbackText: {
       fontSize: 18,
       fontFamily: 'Archivo_700Bold',
       color: theme.text,
+    },
+    momentBadge: {
+      position: 'absolute',
+      right: -1,
+      top: -1,
+      width: 18,
+      height: 18,
+      borderRadius: 9,
+      backgroundColor: '#f59e0b',
+      borderWidth: 2,
+      borderColor: theme.background,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     onlineIndicator: {
       position: 'absolute',
@@ -1695,6 +2375,17 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       justifyContent: 'center',
       alignItems: 'center',
     },
+    archivedIndicator: {
+      position: 'absolute',
+      top: -1,
+      right: -1,
+      width: 18,
+      height: 18,
+      borderRadius: 9,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.76 : 0.68),
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
     conversationContent: {
       flex: 1,
     },
@@ -1705,14 +2396,37 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       gap: 8,
       marginBottom: 4,
     },
+    conversationHeaderIcons: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginLeft: 8,
+    },
     conversationName: {
       fontSize: 15.5,
       fontFamily: 'Archivo_600SemiBold',
       color: theme.text,
       flex: 1,
     },
+    leftConversationName: {
+      color: theme.text,
+    },
     mutedIcon: {
       marginLeft: 6,
+    },
+    archivedMetaLabel: {
+      fontSize: 10.5,
+      fontFamily: 'Manrope_700Bold',
+      color: theme.textMuted,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    leftStateLabel: {
+      fontSize: 10.5,
+      fontFamily: 'Manrope_700Bold',
+      color: isDark ? '#D6C0AA' : '#8E735A',
+      textTransform: 'uppercase',
+      letterSpacing: 0.4,
     },
     unreadName: {
       fontFamily: 'Archivo_700Bold',
@@ -1753,6 +2467,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flex: 1,
       minWidth: 0,
       marginRight: 6,
+    },
+    leftConversationPreviewText: {
+      color: isDark ? 'rgba(226, 212, 197, 0.72)' : '#887360',
     },
     lastMessageReaction: {
       fontStyle: 'italic',

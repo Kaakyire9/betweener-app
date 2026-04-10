@@ -1,4 +1,5 @@
 import { Colors } from '@/constants/theme';
+import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useState } from 'react';
 import {
@@ -37,6 +38,8 @@ export default function PhotoGallery({
 }: PhotoGalleryProps) {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const insets = useSafeAreaInsets();
+  const safePhotos = photos.map((photo) => getSafeRemoteImageUri(photo)).filter(Boolean) as string[];
+  const safeIntroVideoThumbnail = getSafeRemoteImageUri(introVideoThumbnail) || safePhotos[0] || null;
 
   const handlePhotoPress = (index: number) => {
     setSelectedIndex(index);
@@ -65,7 +68,7 @@ export default function PhotoGallery({
     
     if (direction === 'prev' && selectedIndex > 0) {
       setSelectedIndex(selectedIndex - 1);
-    } else if (direction === 'next' && selectedIndex < photos.length - 1) {
+    } else if (direction === 'next' && selectedIndex < safePhotos.length - 1) {
       setSelectedIndex(selectedIndex + 1);
     }
   };
@@ -77,14 +80,14 @@ export default function PhotoGallery({
   return (
     <View style={styles.container}>
       <View style={styles.grid}>
-          {introVideoUrl ? (
+          {introVideoUrl && safeIntroVideoThumbnail ? (
           <TouchableOpacity
             style={[styles.photoContainer, { width: itemWidth, height: itemHeight }]}
             onPress={onOpenVideo}
             activeOpacity={0.85}
           >
             <Image
-              source={{ uri: introVideoThumbnail || photos[0] || '' }}
+              source={{ uri: safeIntroVideoThumbnail }}
               style={styles.photo}
               resizeMode="cover"
             />
@@ -95,7 +98,7 @@ export default function PhotoGallery({
             <Text style={styles.videoHint}>Tap to play</Text>
           </TouchableOpacity>
         ) : null}
-        {photos.map((photo, index) => (
+        {safePhotos.map((photo, index) => (
           <TouchableOpacity
             key={index}
             style={[styles.photoContainer, { width: itemWidth, height: itemHeight }]}
@@ -152,7 +155,7 @@ export default function PhotoGallery({
               </TouchableOpacity>
               
               <Text style={styles.photoCounter}>
-                {selectedIndex !== null ? selectedIndex + 1 : 0} of {photos.length}
+                {selectedIndex !== null ? selectedIndex + 1 : 0} of {safePhotos.length}
               </Text>
 
               {canEdit && selectedIndex !== null && (
@@ -169,16 +172,16 @@ export default function PhotoGallery({
 
             {/* Photo */}
             <View style={styles.photoWrapper}>
-              {selectedIndex !== null && (
+              {selectedIndex !== null && safePhotos[selectedIndex] ? (
                 <Image
-                  source={{ uri: photos[selectedIndex] }}
+                  source={{ uri: safePhotos[selectedIndex] }}
                   style={styles.fullScreenPhoto}
                   resizeMode="contain"
                 />
-              )}
+              ) : null}
               
               {/* Navigation Buttons */}
-              {photos.length > 1 && (
+              {safePhotos.length > 1 && (
                 <>
                   {selectedIndex !== null && selectedIndex > 0 && (
                     <TouchableOpacity
@@ -189,7 +192,7 @@ export default function PhotoGallery({
                     </TouchableOpacity>
                   )}
                   
-                  {selectedIndex !== null && selectedIndex < photos.length - 1 && (
+                  {selectedIndex !== null && selectedIndex < safePhotos.length - 1 && (
                     <TouchableOpacity
                       style={[styles.navButton, styles.nextButton]}
                       onPress={() => navigatePhoto('next')}
@@ -202,14 +205,14 @@ export default function PhotoGallery({
             </View>
 
             {/* Thumbnail Strip */}
-            {photos.length > 1 && (
+            {safePhotos.length > 1 && (
               <ScrollView
                 horizontal
                 style={styles.thumbnailStrip}
                 contentContainerStyle={styles.thumbnailContent}
                 showsHorizontalScrollIndicator={false}
               >
-                {photos.map((photo, index) => (
+                {safePhotos.map((photo, index) => (
                   <TouchableOpacity
                     key={index}
                     style={[

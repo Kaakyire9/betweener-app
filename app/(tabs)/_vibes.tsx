@@ -38,12 +38,14 @@ import Notice from "@/components/ui/Notice";
 import { ExploreStackSkeleton } from "@/components/ui/Skeleton";
 import { isLikelyNetworkError } from "@/lib/network";
 import { logger } from "@/lib/telemetry/logger";
+import type { MomentRelationshipContext } from "@/types/moment-context";
 
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
 const KM_PER_MILE = 1.60934;
 const VIBES_FILTERS_KEY = 'vibes_filters_v2';
 const VIBES_INTRO_SEEN_KEY = 'vibes_intro_seen_v1';
+const VIBES_MOMENTS_COLLAPSED_KEY = 'vibes:momentsCollapsed';
 
 const clearPremiumVibesFilters = (filters: VibesFilters): VibesFilters => ({
   ...filters,
@@ -303,6 +305,9 @@ export default function ExploreScreen() {
   const [momentCreateVisible, setMomentCreateVisible] = useState(false);
   const [momentStartUserId, setMomentStartUserId] = useState<string | null>(null);
   const [allMomentsVisible, setAllMomentsVisible] = useState(false);
+  const [momentsCollapsed, setMomentsCollapsed] = useState(true);
+  const [momentPriorityProfileIds, setMomentPriorityProfileIds] = useState<Set<string>>(new Set());
+  const [momentRelationshipContextByProfileId, setMomentRelationshipContextByProfileId] = useState<Record<string, MomentRelationshipContext>>({});
   const [intentSheetVisible, setIntentSheetVisible] = useState(false);
   const [intentTarget, setIntentTarget] = useState<{ id: string; name?: string | null } | null>(null);
 
@@ -596,7 +601,11 @@ export default function ExploreScreen() {
   const stackRef = useRef<ExploreStackHandle | null>(null);
   const buttonScale = useRef(new Animated.Value(1)).current;
   const superlikePulse = useRef(new Animated.Value(0)).current;
+  const floatingMomentsOpacity = useRef(new Animated.Value(0)).current;
+  const floatingMomentsTranslateY = useRef(new Animated.Value(-10)).current;
+  const floatingMomentsScale = useRef(new Animated.Value(0.985)).current;
   const [superlikesLeft, setSuperlikesLeft] = useState<number>(3);
+  const [renderFloatingMoments, setRenderFloatingMoments] = useState(false);
   const particles = useRef([
     new Animated.Value(0),
     new Animated.Value(0),
@@ -655,19 +664,279 @@ export default function ExploreScreen() {
   }, [matchList, poolProfiles]);
 
   const myMomentUser = useMemo(() => momentUsers.find((u) => u.isOwn), [momentUsers]);
-  const momentUserIdSet = useMemo(() => new Set(matchList.map((m) => String(m.id))), [matchList]);
+  const prioritizedMomentUsers = useMemo(
+    () =>
+      momentUsers
+        .filter((u) => !u.isOwn && u.moments.length > 0 && u.profileId && momentPriorityProfileIds.has(String(u.profileId))),
+    [momentPriorityProfileIds, momentUsers],
+  );
   const otherMomentUsers = useMemo(
-    () => momentUsers.filter((u) => !u.isOwn && u.moments.length > 0 && momentUserIdSet.has(String(u.userId))),
-    [momentUsers, momentUserIdSet],
+    () =>
+      momentUsers.filter(
+        (u) =>
+          !u.isOwn &&
+          u.moments.length > 0 &&
+          (!u.profileId || !momentPriorityProfileIds.has(String(u.profileId))),
+      ),
+    [momentPriorityProfileIds, momentUsers],
   );
   const momentStripUsers = useMemo(() => {
     const list: MomentUser[] = [];
     if (myMomentUser) list.push(myMomentUser);
-    return [...list, ...otherMomentUsers];
-  }, [myMomentUser, otherMomentUsers]);
+    return [...list, ...prioritizedMomentUsers, ...otherMomentUsers];
+  }, [myMomentUser, otherMomentUsers, prioritizedMomentUsers]);
   const hasMyActiveMoment = (myMomentUser?.moments?.length ?? 0) > 0;
-  const showMomentsEmptyState = otherMomentUsers.length === 0 && !hasMyActiveMoment;
+  const hasOtherActiveMoments = prioritizedMomentUsers.length + otherMomentUsers.length > 0;
+  const showMomentsEmptyState = !hasOtherActiveMoments && !hasMyActiveMoment;
   const momentUsersWithContent = useMemo(() => momentUsers.filter((u) => u.moments.length > 0), [momentUsers]);
+  const shouldShowFloatingMoments = Boolean(user?.id && !showMomentsEmptyState && !momentsCollapsed);
+
+  useEffect(() => {
+    if (shouldShowFloatingMoments) {
+      setRenderFloatingMoments(true);
+      floatingMomentsOpacity.stopAnimation();
+      floatingMomentsTranslateY.stopAnimation();
+      floatingMomentsScale.stopAnimation();
+      floatingMomentsOpacity.setValue(0);
+      floatingMomentsTranslateY.setValue(-10);
+      floatingMomentsScale.setValue(0.985);
+      Animated.parallel([
+        Animated.timing(floatingMomentsOpacity, {
+          toValue: 1,
+          duration: 240,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(floatingMomentsTranslateY, {
+          toValue: 0,
+          duration: 280,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(floatingMomentsScale, {
+          toValue: 1,
+          duration: 280,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
+      return;
+    }
+
+    if (!renderFloatingMoments) return;
+
+    floatingMomentsOpacity.stopAnimation();
+    floatingMomentsTranslateY.stopAnimation();
+    floatingMomentsScale.stopAnimation();
+    Animated.parallel([
+      Animated.timing(floatingMomentsOpacity, {
+        toValue: 0,
+        duration: 170,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(floatingMomentsTranslateY, {
+        toValue: -8,
+        duration: 190,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(floatingMomentsScale, {
+        toValue: 0.985,
+        duration: 190,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(({ finished }) => {
+      if (finished) setRenderFloatingMoments(false);
+    });
+  }, [
+    floatingMomentsOpacity,
+    floatingMomentsScale,
+    floatingMomentsTranslateY,
+    renderFloatingMoments,
+    shouldShowFloatingMoments,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadMomentsCollapsed = async () => {
+      try {
+        const stored = await AsyncStorage.getItem(VIBES_MOMENTS_COLLAPSED_KEY);
+        if (cancelled) return;
+        if (stored === 'true' || stored === 'false') {
+          setMomentsCollapsed(stored === 'true');
+          return;
+        }
+      } catch {
+        // ignore
+      }
+      setMomentsCollapsed(true);
+    };
+    void loadMomentsCollapsed();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    AsyncStorage.setItem(VIBES_MOMENTS_COLLAPSED_KEY, String(momentsCollapsed)).catch(() => {});
+  }, [momentsCollapsed]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadMomentPriorityProfiles = async () => {
+      if (!profile?.id) {
+        setMomentPriorityProfileIds(new Set());
+        setMomentRelationshipContextByProfileId({});
+        return;
+      }
+
+      const positiveSwipeActions = ['LIKE', 'SUPERLIKE'];
+      const next = new Set<string>();
+      const nextContext: Record<string, MomentRelationshipContext> = {};
+      const swipeSignals = new Map<
+        string,
+        {
+          likedYou: boolean;
+          youLiked: boolean;
+          likedYouAt: string | null;
+          youLikedAt: string | null;
+        }
+      >();
+      const intentSignals = new Map<string, MomentRelationshipContext>();
+
+      const getIntentPriority = (cue: string) => {
+        if (cue === 'You matched') return 3;
+        if (cue === 'Door reopened') return 2;
+        return 1;
+      };
+
+      const [{ data: swipeRows, error: swipeError }, { data: intentRows, error: intentError }] = await Promise.all([
+        supabase
+          .from('swipes')
+          .select('swiper_id,target_id,action,created_at')
+          .or(`swiper_id.eq.${profile.id},target_id.eq.${profile.id}`)
+          .in('action', positiveSwipeActions),
+        supabase
+          .from('intent_requests')
+          .select('actor_id,recipient_id,status,created_at')
+          .or(`actor_id.eq.${profile.id},recipient_id.eq.${profile.id}`)
+          .in('status', ['pending', 'accepted', 'matched']),
+      ]);
+
+      if (swipeError) {
+        console.log('[vibes] moment priority swipe fetch error', swipeError);
+      }
+      if (intentError) {
+        console.log('[vibes] moment priority intent fetch error', intentError);
+      }
+
+      ((swipeRows as { swiper_id: string; target_id: string; action: string; created_at: string | null }[] | null) ?? []).forEach((row) => {
+        const peerId = row.swiper_id === profile.id ? row.target_id : row.swiper_id;
+        if (peerId) next.add(String(peerId));
+        if (!peerId) return;
+        const key = String(peerId);
+        const current = swipeSignals.get(key) || {
+          likedYou: false,
+          youLiked: false,
+          likedYouAt: null,
+          youLikedAt: null,
+        };
+        if (row.target_id === profile.id) {
+          current.likedYou = true;
+          current.likedYouAt = row.created_at ?? current.likedYouAt;
+        }
+        if (row.swiper_id === profile.id) {
+          current.youLiked = true;
+          current.youLikedAt = row.created_at ?? current.youLikedAt;
+        }
+        swipeSignals.set(key, current);
+      });
+
+      ((intentRows as { actor_id: string; recipient_id: string; status: string; created_at: string | null }[] | null) ?? []).forEach((row) => {
+        const peerId = row.actor_id === profile.id ? row.recipient_id : row.actor_id;
+        if (peerId) next.add(String(peerId));
+        if (!peerId) return;
+        const key = String(peerId);
+        const status = String(row.status || '').toLowerCase();
+        const cue =
+          status === 'matched'
+            ? 'You matched'
+            : status === 'accepted'
+              ? 'Door reopened'
+              : row.actor_id === profile.id
+                ? 'You reached out'
+                : 'They reached out';
+        const nextSignal: MomentRelationshipContext = {
+          cue,
+          happenedAt: row.created_at,
+          source: 'intent',
+        };
+        const current = intentSignals.get(key);
+        if (!current) {
+          intentSignals.set(key, nextSignal);
+          return;
+        }
+        const currentPriority = getIntentPriority(current.cue);
+        const nextPriority = getIntentPriority(cue);
+        if (nextPriority > currentPriority) {
+          intentSignals.set(key, nextSignal);
+          return;
+        }
+        if (
+          nextPriority === currentPriority &&
+          row.created_at &&
+          (!current.happenedAt || new Date(row.created_at).getTime() > new Date(current.happenedAt).getTime())
+        ) {
+          intentSignals.set(key, nextSignal);
+        }
+      });
+
+      if (!cancelled) {
+        setMomentPriorityProfileIds(next);
+        next.forEach((profileId) => {
+          const key = String(profileId);
+          const intentSignal = intentSignals.get(key);
+          if (intentSignal) {
+            nextContext[key] = intentSignal;
+            return;
+          }
+          const swipeSignal = swipeSignals.get(key);
+          if (!swipeSignal) return;
+          if (swipeSignal.likedYou && swipeSignal.youLiked) {
+            nextContext[key] = {
+              cue: 'You liked each other',
+              happenedAt: swipeSignal.youLikedAt || swipeSignal.likedYouAt,
+              source: 'swipe',
+            };
+            return;
+          }
+          if (swipeSignal.likedYou) {
+            nextContext[key] = {
+              cue: 'Liked you',
+              happenedAt: swipeSignal.likedYouAt,
+              source: 'swipe',
+            };
+            return;
+          }
+          if (swipeSignal.youLiked) {
+            nextContext[key] = {
+              cue: 'You liked them',
+              happenedAt: swipeSignal.youLikedAt,
+              source: 'swipe',
+            };
+          }
+        });
+        setMomentRelationshipContextByProfileId(nextContext);
+      }
+    };
+
+    void loadMomentPriorityProfiles();
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.id]);
 
   const openMomentViewer = (userId: string) => {
     setMomentStartUserId(userId);
@@ -695,6 +964,15 @@ export default function ExploreScreen() {
     },
     []
   );
+  const handleMomentIntent = useCallback((momentUser: MomentUser) => {
+    if (!momentUser.profileId) return;
+    setMomentViewerVisible(false);
+    setMomentStartUserId(null);
+    requestAnimationFrame(() => {
+      setIntentTarget({ id: String(momentUser.profileId), name: momentUser.name });
+      setIntentSheetVisible(true);
+    });
+  }, []);
   const handleMomentsPress = () => {
     setAllMomentsVisible(true);
   };
@@ -1425,7 +1703,7 @@ export default function ExploreScreen() {
               onPress={() => setIntroVisible(true)}
               activeOpacity={0.85}
             >
-              <MaterialCommunityIcons name="help-circle-outline" size={18} color={theme.tint} />
+              <MaterialCommunityIcons name="star-four-points" size={16} color={theme.tint} />
             </TouchableOpacity>
           )}
         />
@@ -1480,18 +1758,36 @@ export default function ExploreScreen() {
               ) : null}
             </View>
           ) : null}
-          {user?.id ? (
+          {user?.id && (showMomentsEmptyState || momentsCollapsed) ? (
             <VibesMomentsStrip
               users={momentStripUsers}
               hasMyActiveMoment={hasMyActiveMoment}
               showEmptyState={showMomentsEmptyState}
+              relationshipContextByProfileId={momentRelationshipContextByProfileId}
               onPressMyMoment={handlePressMyMoment}
               onPressUserMoment={handlePressUserMoment}
               onPressSeeAll={handleMomentsPress}
               onPressPostMoment={handlePressMyMoment}
+              variant="inline"
+              collapsed={momentsCollapsed}
+              onCollapsedChange={setMomentsCollapsed}
+            />
+          ) : user?.id ? (
+            <VibesMomentsStrip
+              users={momentStripUsers}
+              hasMyActiveMoment={hasMyActiveMoment}
+              showEmptyState={showMomentsEmptyState}
+              relationshipContextByProfileId={momentRelationshipContextByProfileId}
+              onPressMyMoment={handlePressMyMoment}
+              onPressUserMoment={handlePressUserMoment}
+              onPressSeeAll={handleMomentsPress}
+              onPressPostMoment={handlePressMyMoment}
+              variant="inline"
+              collapsed={false}
+              onCollapsedChange={setMomentsCollapsed}
+              expandedAsHeaderOnly
             />
           ) : null}
-
           {offlineNotice ? (
             <View>
               <Notice
@@ -1557,6 +1853,36 @@ export default function ExploreScreen() {
             ) : (
               <NoMoreProfiles />
             )}
+            {shouldShowFloatingMoments || renderFloatingMoments ? (
+              <Animated.View
+                pointerEvents="box-none"
+                style={[
+                  styles.momentsFloatingOverlay,
+                  {
+                    opacity: floatingMomentsOpacity,
+                    transform: [
+                      { translateY: floatingMomentsTranslateY },
+                      { scale: floatingMomentsScale },
+                    ],
+                  },
+                ]}
+              >
+                <VibesMomentsStrip
+                  users={momentStripUsers}
+                  hasMyActiveMoment={hasMyActiveMoment}
+                  showEmptyState={showMomentsEmptyState}
+                  relationshipContextByProfileId={momentRelationshipContextByProfileId}
+                  onPressMyMoment={handlePressMyMoment}
+                  onPressUserMoment={handlePressUserMoment}
+                  onPressSeeAll={handleMomentsPress}
+                  onPressPostMoment={handlePressMyMoment}
+                  variant="floating"
+                  collapsed={false}
+                  onCollapsedChange={setMomentsCollapsed}
+                  bodyOnly
+                />
+              </Animated.View>
+            ) : null}
           </View>
         </Animated.ScrollView>
 
@@ -1577,75 +1903,79 @@ export default function ExploreScreen() {
               tint={isDark ? 'dark' : 'light'}
               style={styles.actionFloatingCard}
             >
-            <LinearGradientSafe
-              colors={[theme.backgroundSubtle, theme.background]}
-              style={styles.rejectRing}
-            >
-              <TouchableOpacity
-                style={styles.rejectButton}
-                onPress={() => animateButtonPress(onReject)}
-                activeOpacity={0.85}
-              >
-                <CircleOff size={24} color={theme.textMuted} style={{ marginTop: 1 }} />
-              </TouchableOpacity>
-            </LinearGradientSafe>
+              <View style={styles.actionSecondaryCluster}>
+                <LinearGradientSafe
+                  colors={[theme.backgroundSubtle, theme.background]}
+                  style={styles.rejectRing}
+                >
+                  <TouchableOpacity
+                    style={styles.rejectButton}
+                    onPress={() => animateButtonPress(onReject)}
+                    activeOpacity={0.85}
+                  >
+                    <CircleOff size={21} color={theme.textMuted} style={{ marginTop: 1 }} />
+                  </TouchableOpacity>
+                </LinearGradientSafe>
 
-            <TouchableOpacity
-              style={styles.infoButton}
-              onPress={() => {
-                try {
-                  stackRef.current?.rewind();
-                } catch {}
-                const prev = undoLastSwipe?.();
-                if (prev) setCurrentIndex(Math.max(0, prev.index));
-                try { Haptics.selectionAsync(); } catch {}
-              }}
-              activeOpacity={0.85}
-            >
-              <MaterialCommunityIcons name="undo-variant" size={20} color={theme.tint} />
-            </TouchableOpacity>
-
-            <LinearGradientSafe
-              colors={[theme.tint, theme.accent]}
-              style={styles.requestRing}
-            >
-              <TouchableOpacity
-                style={styles.requestButton}
-                onPress={openIntentSheet}
-                activeOpacity={0.85}
-              >
-                <Target size={24} color={theme.text} strokeWidth={2.6} />
-              </TouchableOpacity>
-            </LinearGradientSafe>
-
-            <View style={styles.superlikeWrap}>
-              {renderSuperlikeBadge()}
-              <LinearGradientSafe
-                colors={[theme.accent, theme.backgroundSubtle]}
-                style={[styles.superlikeButton, !isLinearGradientAvailable() && styles.superlikeFallback]}
-              >
                 <TouchableOpacity
-                  style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}
-                  onPress={() => animateButtonPress(onSuperlike)}
+                  style={styles.infoButton}
+                  onPress={() => {
+                    try {
+                      stackRef.current?.rewind();
+                    } catch {}
+                    const prev = undoLastSwipe?.();
+                    if (prev) setCurrentIndex(Math.max(0, prev.index));
+                    try { Haptics.selectionAsync(); } catch {}
+                  }}
                   activeOpacity={0.85}
                 >
-                  <Gem size={22} color="#fff" style={{ marginTop: 1 }} />
+                  <MaterialCommunityIcons name="undo-variant" size={18} color={theme.tint} />
                 </TouchableOpacity>
-              </LinearGradientSafe>
-            </View>
+              </View>
 
-            <LinearGradientSafe
-              colors={[theme.secondary, theme.tint]}
-              style={styles.likeRing}
-            >
-              <TouchableOpacity
-                style={styles.likeButton}
-                onPress={() => animateButtonPress(onLike)}
-                activeOpacity={0.85}
-              >
-                <Sparkles size={22} color="#fff" style={{ marginTop: 1 }} />
-              </TouchableOpacity>
-            </LinearGradientSafe>
+              <View style={styles.actionPrimaryCluster}>
+                <LinearGradientSafe
+                  colors={[theme.tint, theme.accent]}
+                  style={styles.requestRing}
+                >
+                  <TouchableOpacity
+                    style={styles.requestButton}
+                    onPress={openIntentSheet}
+                    activeOpacity={0.85}
+                  >
+                    <Target size={24} color={theme.text} strokeWidth={2.6} />
+                  </TouchableOpacity>
+                </LinearGradientSafe>
+
+                <View style={styles.superlikeWrap}>
+                  {renderSuperlikeBadge()}
+                  <LinearGradientSafe
+                    colors={[theme.accent, theme.backgroundSubtle]}
+                    style={[styles.superlikeButton, !isLinearGradientAvailable() && styles.superlikeFallback]}
+                  >
+                    <TouchableOpacity
+                      style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}
+                      onPress={() => animateButtonPress(onSuperlike)}
+                      activeOpacity={0.85}
+                    >
+                      <Gem size={20} color="#fff" style={{ marginTop: 1 }} />
+                    </TouchableOpacity>
+                  </LinearGradientSafe>
+                </View>
+
+                <LinearGradientSafe
+                  colors={[theme.secondary, theme.tint]}
+                  style={styles.likeRing}
+                >
+                  <TouchableOpacity
+                    style={styles.likeButton}
+                    onPress={() => animateButtonPress(onLike)}
+                    activeOpacity={0.85}
+                  >
+                    <Sparkles size={23} color="#fff" style={{ marginTop: 1 }} />
+                  </TouchableOpacity>
+                </LinearGradientSafe>
+              </View>
             </BlurViewSafe>
           </Animated.View>
         </View>
@@ -2344,6 +2674,8 @@ export default function ExploreScreen() {
             visible={momentViewerVisible}
             users={momentUsersWithContent}
             startUserId={momentStartUserId}
+            relationshipContextByProfileId={momentRelationshipContextByProfileId}
+            onPressIntent={handleMomentIntent}
             onClose={() => {
               setMomentViewerVisible(false);
               setMomentStartUserId(null);
@@ -2627,11 +2959,21 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     scrollContent: { flexGrow: 1, paddingTop: 8 },
     stackWrapper: {
       flex: 1,
+      position: 'relative',
       alignItems: "center",
       justifyContent: "center",
       paddingHorizontal: 20,
+      marginTop: -2,
       // leave room at the bottom for action buttons
       paddingBottom: 154,
+    },
+    momentsFloatingOverlay: {
+      position: 'absolute',
+      top: -1,
+      left: 20,
+      right: 20,
+      zIndex: 60,
+      elevation: 24,
     },
     momentsStripContainer: {
       overflow: 'hidden',
@@ -2726,9 +3068,9 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 32,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 30,
       backgroundColor: overlayCard,
       borderWidth: 1,
       borderColor: overlayBorder,
@@ -2738,16 +3080,29 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       shadowRadius: 28,
       elevation: 12,
     },
+    actionSecondaryCluster: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginRight: 10,
+      paddingRight: 10,
+      borderRightWidth: 1,
+      borderRightColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)',
+    },
+    actionPrimaryCluster: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
     rejectRing: {
-      width: 54,
-      height: 54,
-      borderRadius: 27,
+      width: 48,
+      height: 48,
+      borderRadius: 24,
       padding: 2,
-      marginRight: 8,
+      marginRight: 6,
     },
     rejectButton: {
       flex: 1,
-      borderRadius: 23,
+      borderRadius: 20,
       backgroundColor: theme.background,
       borderWidth: 1,
       borderColor: outline,
@@ -2760,9 +3115,9 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       alignItems: "center",
     },
     infoButton: {
-      width: 46,
-      height: 46,
-      borderRadius: 23,
+      width: 42,
+      height: 42,
+      borderRadius: 21,
       backgroundColor: infoButtonBg,
       justifyContent: "center",
       alignItems: "center",
@@ -2773,14 +3128,14 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       shadowOpacity: isDark ? 0.16 : 0.08,
       shadowRadius: 10,
       elevation: 4,
-      marginHorizontal: 4,
+      marginHorizontal: 0,
     },
     requestRing: {
-      width: 48,
-      height: 48,
-      borderRadius: 24,
+      width: 52,
+      height: 52,
+      borderRadius: 26,
       padding: 2,
-      marginHorizontal: 4,
+      marginHorizontal: 0,
       shadowColor: theme.tint,
       shadowOffset: { width: 0, height: 6 },
       shadowOpacity: isDark ? 0.25 : 0.2,
@@ -2789,7 +3144,7 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     },
     requestButton: {
       flex: 1,
-      borderRadius: 22,
+      borderRadius: 24,
       backgroundColor: theme.background,
       justifyContent: "center",
       alignItems: "center",
@@ -2797,15 +3152,20 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       borderColor: 'rgba(255,255,255,0.35)',
     },
     likeRing: {
-      width: 54,
-      height: 54,
-      borderRadius: 27,
+      width: 58,
+      height: 58,
+      borderRadius: 29,
       padding: 2,
-      marginLeft: 8,
+      marginLeft: 2,
+      shadowColor: theme.tint,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: isDark ? 0.24 : 0.16,
+      shadowRadius: 14,
+      elevation: 9,
     },
     likeButton: {
       flex: 1,
-      borderRadius: 23,
+      borderRadius: 27,
       backgroundColor: theme.tint,
       borderWidth: 1,
       borderColor: 'rgba(255,255,255,0.25)',
@@ -2818,9 +3178,9 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       alignItems: "center",
     },
     superlikeButton: {
-      width: 54,
-      height: 54,
-      borderRadius: 27,
+      width: 46,
+      height: 46,
+      borderRadius: 23,
       // background will be a gradient via LinearGradientSafe
       borderWidth: 1,
       borderColor: 'rgba(255,255,255,0.3)',
@@ -2832,7 +3192,7 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       justifyContent: "center",
       alignItems: "center",
     },
-    superlikeWrap: { alignItems: 'center', justifyContent: 'center' },
+    superlikeWrap: { alignItems: 'center', justifyContent: 'center', marginHorizontal: 2 },
     superlikeFallback: {
       backgroundColor: theme.accent,
     },
@@ -2855,13 +3215,13 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     },
     superlikeBadgeInline: {
       position: 'absolute',
-      top: -20,
-      right: -6,
+      top: -18,
+      right: -8,
       flexDirection: 'row',
       alignItems: 'center',
       backgroundColor: isDark ? 'rgba(34, 197, 94, 0.08)' : 'rgba(196, 181, 253, 0.2)',
-      paddingHorizontal: 10,
-      paddingVertical: 5,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
       borderRadius: 12,
       borderWidth: 1,
       borderColor: isDark ? 'rgba(196, 181, 253, 0.3)' : 'rgba(168, 85, 247, 0.25)',
@@ -2873,7 +3233,7 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       elevation: 8,
     },
     superlikeBadgeInlineDisabled: { opacity: 0.7 },
-    superlikeBadgeInlineText: { color: theme.accent, fontSize: 12, fontWeight: '700' },
+    superlikeBadgeInlineText: { color: theme.accent, fontSize: 11, fontWeight: '700' },
     headerBadge: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -3379,14 +3739,19 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       paddingHorizontal: 16,
     },
     headerRefreshButton: {
-      width: 34,
-      height: 34,
-      borderRadius: 12,
+      width: 40,
+      height: 40,
+      borderRadius: 13,
       borderWidth: 1,
       borderColor: outline,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f8fafc',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.055)' : 'rgba(248,250,252,0.96)',
+      shadowColor,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: isDark ? 0.1 : 0.06,
+      shadowRadius: 8,
+      elevation: 4,
     },
   });
 }

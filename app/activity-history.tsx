@@ -1,6 +1,8 @@
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/lib/auth-context";
+import { fetchPeerVisibilityPrefs } from "@/lib/peer-visibility";
+import { getUserFacingDisplayName } from "@/lib/profile/display-name";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -26,6 +28,7 @@ type ActivityItem = {
   id: string;
   type: ActivityType;
   actorId: string;
+  actorUserId?: string | null;
   actorName: string;
   actorAvatar?: string | null;
   body: string;
@@ -199,39 +202,57 @@ export default function ActivityHistoryScreen() {
         });
 
         const profileById = new Map<string, any>();
+        let hiddenPeerUserIds = new Set<string>();
         if (actorIds.size) {
           const { data: profilesData } = await supabase
             .from("profiles")
-            .select("id,full_name,avatar_url")
+            .select("id,user_id,full_name,avatar_url,account_state,deleted_at")
             .in("id", Array.from(actorIds));
           (profilesData || []).forEach((p: any) => {
             if (p?.id) profileById.set(p.id, p);
           });
+          const peerUserIds = Array.from(
+            new Set(
+              ((profilesData as any[]) || [])
+                .map((p) => (typeof p?.user_id === "string" ? p.user_id : null))
+                .filter((value): value is string => Boolean(value)),
+            ),
+          );
+          const hiddenPrefs = await fetchPeerVisibilityPrefs(userId, peerUserIds);
+          hiddenPeerUserIds = new Set(
+            Object.entries(hiddenPrefs)
+              .filter(([, pref]) => pref.hidden)
+              .map(([peerUserId]) => peerUserId),
+          );
         }
 
         const activityItems: ActivityItem[] = [];
 
         notes.forEach((row) => {
           const profileRow = profileById.get(row.sender_id);
-          activityItems.push({
-            id: `note-${row.id}`,
-            type: "note",
-            actorId: row.sender_id,
-            actorName: (profileRow?.full_name || "").trim() || "New note",
-            actorAvatar: profileRow?.avatar_url ?? null,
+          if (profileRow?.user_id && hiddenPeerUserIds.has(profileRow.user_id)) return;
+            activityItems.push({
+              id: `note-${row.id}`,
+              type: "note",
+              actorId: row.sender_id,
+              actorUserId: profileRow?.user_id ?? null,
+              actorName: getUserFacingDisplayName(profileRow, "New note"),
+              actorAvatar: profileRow?.avatar_url ?? null,
             body: row.note || "Sent you a note",
             createdAt: row.created_at,
             profileId: row.sender_id,
           });
         });
 
-        gifts.forEach((row) => {
-          const profileRow = profileById.get(row.sender_id);
-          const senderName = (profileRow?.full_name || "").trim() || "New gift";
-          activityItems.push({
+          gifts.forEach((row) => {
+            const profileRow = profileById.get(row.sender_id);
+            if (profileRow?.user_id && hiddenPeerUserIds.has(profileRow.user_id)) return;
+            const senderName = getUserFacingDisplayName(profileRow, "New gift");
+            activityItems.push({
             id: `gift-${row.id}`,
             type: "gift",
             actorId: row.sender_id,
+            actorUserId: profileRow?.user_id ?? null,
             actorName: senderName,
             actorAvatar: profileRow?.avatar_url ?? null,
             body: `Sent you ${giftLabel(row.gift_type)}`,
@@ -242,13 +263,15 @@ export default function ActivityHistoryScreen() {
 
         swipes.forEach((row) => {
           const profileRow = profileById.get(row.swiper_id);
+          if (profileRow?.user_id && hiddenPeerUserIds.has(profileRow.user_id)) return;
           const action = row.action === "SUPERLIKE" ? "superlike" : "like";
-          activityItems.push({
-            id: `swipe-${row.id}`,
-            type: action === "superlike" ? "superlike" : "like",
-            actorId: row.swiper_id,
-            actorName: (profileRow?.full_name || "").trim() || "Someone",
-            actorAvatar: profileRow?.avatar_url ?? null,
+            activityItems.push({
+              id: `swipe-${row.id}`,
+              type: action === "superlike" ? "superlike" : "like",
+              actorId: row.swiper_id,
+              actorUserId: profileRow?.user_id ?? null,
+              actorName: getUserFacingDisplayName(profileRow, "Someone"),
+              actorAvatar: profileRow?.avatar_url ?? null,
             body: action === "superlike" ? "Superliked your profile" : "Liked your profile",
             createdAt: row.created_at,
             profileId: row.swiper_id,
@@ -260,12 +283,14 @@ export default function ActivityHistoryScreen() {
           const otherId = row.user1_id === profileId ? row.user2_id : row.user1_id;
           if (!otherId) return;
           const profileRow = profileById.get(otherId);
-          activityItems.push({
-            id: `match-${row.id}`,
-            type: "match",
-            actorId: otherId,
-            actorName: (profileRow?.full_name || "").trim() || "New match",
-            actorAvatar: profileRow?.avatar_url ?? null,
+          if (profileRow?.user_id && hiddenPeerUserIds.has(profileRow.user_id)) return;
+            activityItems.push({
+              id: `match-${row.id}`,
+              type: "match",
+              actorId: otherId,
+              actorUserId: profileRow?.user_id ?? null,
+              actorName: getUserFacingDisplayName(profileRow, "New match"),
+              actorAvatar: profileRow?.avatar_url ?? null,
             body: "It's a match",
             createdAt: row.created_at,
             profileId: otherId,
@@ -274,13 +299,15 @@ export default function ActivityHistoryScreen() {
 
         profileReactions.forEach((row) => {
           const profileRow = profileById.get(row.reactor_user_id);
+          if (profileRow?.user_id && hiddenPeerUserIds.has(profileRow.user_id)) return;
           const emoji = row.emoji ? ` ${row.emoji}` : "";
-          activityItems.push({
-            id: `profile-react-${row.id}`,
-            type: "profile_reaction",
-            actorId: row.reactor_user_id,
-            actorName: (profileRow?.full_name || "").trim() || "Someone",
-            actorAvatar: profileRow?.avatar_url ?? null,
+            activityItems.push({
+              id: `profile-react-${row.id}`,
+              type: "profile_reaction",
+              actorId: row.reactor_user_id,
+              actorUserId: profileRow?.user_id ?? null,
+              actorName: getUserFacingDisplayName(profileRow, "Someone"),
+              actorAvatar: profileRow?.avatar_url ?? null,
             body: `Reacted to your photo${emoji}`,
             createdAt: row.created_at,
             profileId: row.reactor_user_id,
@@ -289,12 +316,14 @@ export default function ActivityHistoryScreen() {
 
         messages.forEach((row) => {
           const profileRow = profileById.get(row.sender_id);
-          activityItems.push({
-            id: `message-${row.id}`,
-            type: "message",
-            actorId: row.sender_id,
-            actorName: (profileRow?.full_name || "").trim() || "New message",
-            actorAvatar: profileRow?.avatar_url ?? null,
+          if (profileRow?.user_id && hiddenPeerUserIds.has(profileRow.user_id)) return;
+            activityItems.push({
+              id: `message-${row.id}`,
+              type: "message",
+              actorId: row.sender_id,
+              actorUserId: profileRow?.user_id ?? null,
+              actorName: getUserFacingDisplayName(profileRow, "New message"),
+              actorAvatar: profileRow?.avatar_url ?? null,
             body: messagePreview(row),
             createdAt: row.created_at,
             chatId: row.sender_id,
@@ -307,13 +336,15 @@ export default function ActivityHistoryScreen() {
           if (msg.sender_id !== profileId && msg.receiver_id !== profileId) return;
           const otherId = msg.sender_id === profileId ? msg.receiver_id : msg.sender_id;
           const profileRow = profileById.get(row.user_id);
+          if (profileRow?.user_id && hiddenPeerUserIds.has(profileRow.user_id)) return;
           const emoji = row.emoji ? ` ${row.emoji}` : "";
-          activityItems.push({
-            id: `message-react-${row.id}`,
-            type: "message_reaction",
-            actorId: row.user_id,
-            actorName: (profileRow?.full_name || "").trim() || "Someone",
-            actorAvatar: profileRow?.avatar_url ?? null,
+            activityItems.push({
+              id: `message-react-${row.id}`,
+              type: "message_reaction",
+              actorId: row.user_id,
+              actorUserId: profileRow?.user_id ?? null,
+              actorName: getUserFacingDisplayName(profileRow, "Someone"),
+              actorAvatar: profileRow?.avatar_url ?? null,
             body: `Reacted to your message${emoji}`,
             createdAt: row.created_at,
             chatId: otherId,

@@ -1163,6 +1163,13 @@ export default function ProfileScreen() {
     }
   }, [params.returnToPreview]);
 
+  useEffect(() => {
+    if (params.openVerification === 'true') {
+      setIsVerificationModalVisible(true);
+      router.replace('/(tabs)/profile');
+    }
+  }, [params.openVerification]);
+
   const loadDistanceUnit = useCallback(async () => {
     try {
       const stored = await AsyncStorage.getItem(DISTANCE_UNIT_KEY);
@@ -1821,6 +1828,21 @@ export default function ProfileScreen() {
     [primaryDeleteReason, refreshProfile],
   );
 
+  const readFunctionErrorMessage = useCallback(async (error: any, fallback: string) => {
+    try {
+      const response = error?.context;
+      if (response && typeof response.clone === 'function') {
+        const body = await response.clone().json();
+        if (typeof body?.error === 'string' && body.error.trim()) {
+          return body.error.trim();
+        }
+      }
+    } catch {
+      // ignore malformed function error bodies
+    }
+    return error?.message ?? fallback;
+  }, []);
+
   const submitDeleteAccount = useCallback(async () => {
     setDeleteError('');
     if (deleteReasonKeys.length === 0) {
@@ -1837,8 +1859,16 @@ export default function ProfileScreen() {
         },
       });
 
-      if (error || !(data as any)?.success) {
-        throw error ?? new Error('Unable to delete your account right now.');
+      if (error) {
+        throw new Error(await readFunctionErrorMessage(error, 'Unable to delete your account right now.'));
+      }
+
+      if (!(data as any)?.success) {
+        throw new Error(
+          typeof (data as any)?.error === 'string' && (data as any).error.trim()
+            ? (data as any).error.trim()
+            : 'Unable to delete your account right now.',
+        );
       }
 
       setShowDeleteAccountModal(false);
@@ -1858,7 +1888,7 @@ export default function ProfileScreen() {
     } finally {
       setDeletingAccount(false);
     }
-  }, [deleteFeedback, deleteReasonKeys, signOut]);
+  }, [deleteFeedback, deleteReasonKeys, readFunctionErrorMessage, signOut]);
 
   const confirmDeleteAccount = useCallback(() => {
     if (deleteReasonKeys.length === 0) {
