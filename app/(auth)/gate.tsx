@@ -8,6 +8,7 @@ import { ActivityIndicator, Text, View } from "react-native";
 import { supabase } from "@/lib/supabase";
 
 const AUTH_PENDING_TOKENS_KEY = "auth_pending_tokens_v1";
+const RETIRED_DUPLICATE_REDIRECT_KEY = "retired_duplicate_redirect_v1";
 // Disable auth-bootstrap while stabilizing core auth/phone verification routing.
 // It can be re-enabled once the function is proven reliable in production.
 const ENABLE_AUTH_BOOTSTRAP = false;
@@ -33,6 +34,46 @@ export default function AuthGateScreen() {
       ...(email ? { email: email.trim() } : {}),
     },
   });
+
+  const persistRetiredDuplicateRedirect = async (
+    identityStatus: string | null,
+    provider?: string | null,
+    email?: string | null,
+  ) => {
+    try {
+      await AsyncStorage.setItem(
+        RETIRED_DUPLICATE_REDIRECT_KEY,
+        JSON.stringify({
+          status: identityStatus ?? null,
+          method: provider ?? null,
+          email: email?.trim() || null,
+          createdAt: Date.now(),
+        }),
+      );
+    } catch {
+      // best effort only
+    }
+  };
+
+  const consumeRetiredDuplicateRoute = async () => {
+    try {
+      const raw = await AsyncStorage.getItem(RETIRED_DUPLICATE_REDIRECT_KEY);
+      if (!raw) return null;
+      await AsyncStorage.removeItem(RETIRED_DUPLICATE_REDIRECT_KEY);
+      const parsed = JSON.parse(raw) as {
+        status?: string | null;
+        method?: string | null;
+        email?: string | null;
+        createdAt?: number;
+      };
+      if (typeof parsed?.createdAt === "number" && Date.now() - parsed.createdAt > 10 * 60 * 1000) {
+        return null;
+      }
+      return getRetiredDuplicateRoute(parsed?.status ?? null, parsed?.method ?? null, parsed?.email ?? null);
+    } catch {
+      return null;
+    }
+  };
 
   useEffect(() => {
     if (routedRef.current) return;
@@ -97,7 +138,15 @@ export default function AuthGateScreen() {
 
         // If no session, go welcome
         if (!session?.user || !user?.id) {
+          const retiredRoute = await consumeRetiredDuplicateRoute();
           routedRef.current = true;
+          if (retiredRoute) {
+            if (typeof __DEV__ !== "undefined" && __DEV__) {
+              console.log("[auth-gate] hard fallback route", retiredRoute);
+            }
+            router.replace(retiredRoute);
+            return;
+          }
           if (typeof __DEV__ !== "undefined" && __DEV__) {
             console.log("[auth-gate] hard fallback route", "/(auth)/welcome");
           }
@@ -127,6 +176,11 @@ export default function AuthGateScreen() {
 
         if (identityStatus === "recovered_into_existing_account" || identityStatus === "discarded_duplicate") {
           const retiredRoute = getRetiredDuplicateRoute(
+            identityStatus,
+            profile?.last_successful_auth_provider ?? user?.app_metadata?.provider ?? null,
+            user?.email ?? null,
+          );
+          await persistRetiredDuplicateRedirect(
             identityStatus,
             profile?.last_successful_auth_provider ?? user?.app_metadata?.provider ?? null,
             user?.email ?? null,
@@ -253,7 +307,8 @@ export default function AuthGateScreen() {
           if (typeof __DEV__ !== "undefined" && __DEV__) {
             console.log("[auth-gate] no session/user");
           }
-          guardRoute("/(auth)/welcome");
+          const retiredRoute = await consumeRetiredDuplicateRoute();
+          guardRoute(retiredRoute ?? "/(auth)/welcome");
           return;
         }
 
@@ -340,6 +395,14 @@ export default function AuthGateScreen() {
 
         if (identityStatus === "recovered_into_existing_account" || identityStatus === "discarded_duplicate") {
           const retiredRoute = getRetiredDuplicateRoute(
+            identityStatus,
+            authContext.profile?.last_successful_auth_provider ??
+              profile?.last_successful_auth_provider ??
+              userToUse.app_metadata?.provider ??
+              null,
+            userToUse.email ?? null,
+          );
+          await persistRetiredDuplicateRedirect(
             identityStatus,
             authContext.profile?.last_successful_auth_provider ??
               profile?.last_successful_auth_provider ??

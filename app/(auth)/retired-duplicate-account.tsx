@@ -1,9 +1,13 @@
 import { Colors } from "@/constants/theme";
 import { TRUST_LINKS, openSupportEmail } from "@/lib/trust-links";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router, useLocalSearchParams } from "expo-router";
+import { useEffect } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+
+const RETIRED_DUPLICATE_REDIRECT_KEY = "retired_duplicate_redirect_v1";
 
 const methodLabel = (value?: string | null) => {
   switch (String(value || "").trim().toLowerCase()) {
@@ -28,6 +32,10 @@ export default function RetiredDuplicateAccountScreen() {
 
   const retiredMethodLabel = methodLabel(method);
   const retiredEmail = typeof email === "string" && email.trim() ? email.trim() : null;
+
+  useEffect(() => {
+    void AsyncStorage.removeItem(RETIRED_DUPLICATE_REDIRECT_KEY);
+  }, []);
 
   const handleContactSupport = async () => {
     const subject = "Betweener retired duplicate account help";
