@@ -101,6 +101,90 @@ const ensureCategories = async () => {
   } catch {
     // best-effort only
   }
+
+  try {
+    await Notifications.setNotificationCategoryAsync('bt_system_message', [
+      {
+        identifier: 'OPEN_PROFILE',
+        buttonTitle: 'Open',
+        options: { opensAppToForeground: true },
+      },
+    ]);
+  } catch {
+    // best-effort only
+  }
+
+  try {
+    await Notifications.setNotificationCategoryAsync('bt_intent_request', [
+      {
+        identifier: 'OPEN_PROFILE',
+        buttonTitle: 'Open',
+        options: { opensAppToForeground: true },
+      },
+    ]);
+  } catch {
+    // best-effort only
+  }
+
+  try {
+    await Notifications.setNotificationCategoryAsync('bt_verification_outcome', [
+      {
+        identifier: 'OPEN_PROFILE',
+        buttonTitle: 'Review',
+        options: { opensAppToForeground: true },
+      },
+    ]);
+  } catch {
+    // best-effort only
+  }
+
+  try {
+    await Notifications.setNotificationCategoryAsync('bt_relationship_compass_ready', [
+      {
+        identifier: 'OPEN_COMPASS',
+        buttonTitle: 'Open',
+        options: { opensAppToForeground: true },
+      },
+    ]);
+  } catch {
+    // best-effort only
+  }
+
+  try {
+    await Notifications.setNotificationCategoryAsync('bt_moment_post', [
+      {
+        identifier: 'OPEN_MOMENTS',
+        buttonTitle: 'View',
+        options: { opensAppToForeground: true },
+      },
+    ]);
+  } catch {
+    // best-effort only
+  }
+
+  try {
+    await Notifications.setNotificationCategoryAsync('bt_moment_comment', [
+      {
+        identifier: 'OPEN_MOMENTS',
+        buttonTitle: 'Open',
+        options: { opensAppToForeground: true },
+      },
+    ]);
+  } catch {
+    // best-effort only
+  }
+
+  try {
+    await Notifications.setNotificationCategoryAsync('bt_moment_reaction', [
+      {
+        identifier: 'OPEN_MOMENTS',
+        buttonTitle: 'Open',
+        options: { opensAppToForeground: true },
+      },
+    ]);
+  } catch {
+    // best-effort only
+  }
 };
 
 export const initPushNotificationUX = async () => {

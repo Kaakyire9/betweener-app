@@ -16,6 +16,8 @@ import Animated, {
 import ExploreCard from "./ExploreCard";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
+const IS_COMPACT_SCREEN = SCREEN_HEIGHT <= 760 || SCREEN_WIDTH <= 360;
+const CARD_HEIGHT = IS_COMPACT_SCREEN ? SCREEN_HEIGHT * 0.49 : SCREEN_HEIGHT * 0.52;
 
 export type ExploreStackHandle = {
   performSwipe: (dir: "left" | "right" | "superlike") => void;
@@ -318,22 +320,17 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     top: 0,
-    height: SCREEN_HEIGHT * 0.52,
+    height: CARD_HEIGHT,
   },
   card: {
     position: "absolute",
     left: 0,
     right: 0,
     top: 0,
-    height: SCREEN_HEIGHT * 0.52,
+    height: CARD_HEIGHT,
     borderRadius: 28,
-    overflow: "hidden",
-    backgroundColor: "#fff",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.18,
-    shadowRadius: 28,
-    elevation: 16,
+    overflow: "visible",
+    backgroundColor: "transparent",
   },
   feedbackContainer: {
     position: "absolute",

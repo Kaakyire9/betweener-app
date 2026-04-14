@@ -15,6 +15,7 @@ import {
 
 type CallbackParams = Record<string, string | undefined>;
 const AUTH_CALLBACK_LAST_SIG_KEY = "auth_callback_last_sig_v1";
+const PENDING_RECOVERY_EMAIL_CONTEXT_KEY = "pending_recovery_email_context_v1";
 
 const mergeParamsFromUrl = (target: CallbackParams, url: string) => {
   try {
@@ -120,6 +121,12 @@ export default function AuthCallback() {
         const pendingFlow = await getFreshPendingAuthFlow();
         const pendingPurpose = pendingFlow?.purpose ?? null;
         const isPendingPasswordReset = pendingPurpose === "password_reset";
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth-callback] run start", {
+            pendingPurpose,
+            paramsKeys: Object.keys(params ?? {}),
+          });
+        }
 
         const hasExistingSession = await waitForSession(800);
         if (hasExistingSession && !isPendingPasswordReset) {
@@ -129,30 +136,32 @@ export default function AuthCallback() {
 
         const hasPendingFlow = pendingFlow !== null;
         const merged: CallbackParams = {};
-        if (hasPendingFlow) {
-          Object.entries(params).forEach(([key, value]) => {
-            if (typeof value === "string") merged[key] = value;
-            else if (Array.isArray(value) && typeof value[0] === "string") merged[key] = value[0];
-          });
-        }
+        Object.entries(params).forEach(([key, value]) => {
+          if (typeof value === "string") merged[key] = value;
+          else if (Array.isArray(value) && typeof value[0] === "string") merged[key] = value[0];
+        });
 
         const initialUrl = await Linking.getInitialURL();
         if (
-          hasPendingFlow &&
           initialUrl &&
           urlHasAuthPayload(initialUrl) &&
           isTrustedAuthCallbackUrl(initialUrl)
         ) {
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[auth-callback] using initial url", initialUrl);
+          }
           mergeParamsFromUrl(merged, initialUrl);
         }
 
         const storedUrl = await AsyncStorage.getItem(LAST_DEEP_LINK_URL_KEY);
         if (storedUrl) {
           if (
-            hasPendingFlow &&
             urlHasAuthPayload(storedUrl) &&
             isTrustedAuthCallbackUrl(storedUrl)
           ) {
+            if (typeof __DEV__ !== "undefined" && __DEV__) {
+              console.log("[auth-callback] using stored url", storedUrl);
+            }
             mergeParamsFromUrl(merged, storedUrl);
           }
           await AsyncStorage.removeItem(LAST_DEEP_LINK_URL_KEY);
@@ -163,15 +172,83 @@ export default function AuthCallback() {
         const code = merged.code;
         const tokenHash = merged.token_hash;
         const type = merged.type;
+        const callbackError = merged.error;
+        const callbackErrorCode = merged.error_code;
+        const callbackErrorDescription = merged.error_description;
         const isRecoveryFlow = type === "recovery" || isPendingPasswordReset;
         const hasCallbackPayload = !!(accessToken || refreshToken || code || tokenHash || type);
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth-callback] merged payload", {
+            hasPendingFlow,
+            hasAccessToken: !!accessToken,
+            hasRefreshToken: !!refreshToken,
+            hasCode: !!code,
+            hasTokenHash: !!tokenHash,
+            type: type ?? null,
+            isRecoveryFlow,
+            error: callbackError ?? null,
+            errorCode: callbackErrorCode ?? null,
+          });
+        }
 
-        if (hasCallbackPayload && !hasPendingFlow) {
+        if (!hasCallbackPayload && (callbackError || callbackErrorCode || callbackErrorDescription)) {
+          const recoveryMessage = decodeURIComponent(
+            callbackErrorDescription ||
+              callbackError ||
+              "This recovery email link is invalid or has expired. Please request a fresh link.",
+          ).replace(/\+/g, " ");
+
           if (typeof __DEV__ !== "undefined" && __DEV__) {
-            console.warn("[auth-callback] ignored unexpected callback payload");
+            console.warn("[auth-callback] callback error payload", {
+              callbackError,
+              callbackErrorCode,
+              callbackErrorDescription,
+            });
           }
-          router.replace("/(auth)/welcome");
+
+          await clearPendingAuthFlow();
+          const recoveryContextRaw = await AsyncStorage.getItem(PENDING_RECOVERY_EMAIL_CONTEXT_KEY);
+          if (pendingPurpose === "email_link" && recoveryContextRaw) {
+            try {
+              const recoveryContext = JSON.parse(recoveryContextRaw) as {
+                phoneNumber?: string | null;
+                recoveryToken?: string | null;
+                currentMethod?: string | null;
+                nextRoute?: string | null;
+                reason?: string | null;
+              };
+
+              didNavigateRef.current = true;
+              router.replace({
+                pathname: "/(auth)/account-recovery",
+                params: {
+                  ...(recoveryContext.phoneNumber ? { phoneNumber: recoveryContext.phoneNumber } : {}),
+                  ...(recoveryContext.recoveryToken ? { recoveryToken: recoveryContext.recoveryToken } : {}),
+                  ...(recoveryContext.currentMethod ? { currentMethod: recoveryContext.currentMethod } : {}),
+                  ...(recoveryContext.nextRoute ? { next: recoveryContext.nextRoute } : {}),
+                  ...(recoveryContext.reason ? { reason: recoveryContext.reason } : {}),
+                  callbackError: recoveryMessage,
+                },
+              });
+              return;
+            } catch {
+              // fall through to the generic verify-email screen
+            }
+          }
+
+          didNavigateRef.current = true;
+          router.replace({
+            pathname: "/(auth)/verify-email",
+            params: {
+              recovery: "true",
+              error: encodeURIComponent(recoveryMessage),
+            },
+          });
           return;
+        }
+
+        if (hasCallbackPayload && !hasPendingFlow && typeof __DEV__ !== "undefined" && __DEV__) {
+          console.warn("[auth-callback] processing trusted callback payload without pending flow");
         }
 
         const callbackSig = buildCallbackSignature({
@@ -186,12 +263,14 @@ export default function AuthCallback() {
           if (lastSig === callbackSig) {
             await clearPendingAuthFlow();
             if (isRecoveryFlow) {
+              await AsyncStorage.removeItem(PENDING_RECOVERY_EMAIL_CONTEXT_KEY);
               await routeToResetPassword(1800);
               if (!didNavigateRef.current) {
                 didNavigateRef.current = true;
                 router.replace("/(auth)/reset-password");
               }
             } else {
+              await AsyncStorage.removeItem(PENDING_RECOVERY_EMAIL_CONTEXT_KEY);
               await routeToGate(1800);
               if (!didNavigateRef.current) {
                 didNavigateRef.current = true;
@@ -218,12 +297,14 @@ export default function AuthCallback() {
           }
           await clearPendingAuthFlow();
           if (isRecoveryFlow) {
+            await AsyncStorage.removeItem(PENDING_RECOVERY_EMAIL_CONTEXT_KEY);
             await routeToResetPassword(2500);
             if (!didNavigateRef.current) {
               didNavigateRef.current = true;
               router.replace("/(auth)/reset-password");
             }
           } else {
+            await AsyncStorage.removeItem(PENDING_RECOVERY_EMAIL_CONTEXT_KEY);
             didNavigateRef.current = true;
             router.replace("/(auth)/verify-email?verified=true");
           }
@@ -243,8 +324,10 @@ export default function AuthCallback() {
           }
           await clearPendingAuthFlow();
           if (isRecoveryFlow) {
+            await AsyncStorage.removeItem(PENDING_RECOVERY_EMAIL_CONTEXT_KEY);
             await routeToResetPassword(2500);
           } else {
+            await AsyncStorage.removeItem(PENDING_RECOVERY_EMAIL_CONTEXT_KEY);
             await routeToGate();
           }
           return;
@@ -279,12 +362,14 @@ export default function AuthCallback() {
           }
           await clearPendingAuthFlow();
           if (isRecoveryFlow) {
+            await AsyncStorage.removeItem(PENDING_RECOVERY_EMAIL_CONTEXT_KEY);
             await routeToResetPassword(2500);
             if (!didNavigateRef.current) {
               didNavigateRef.current = true;
               router.replace("/(auth)/reset-password");
             }
           } else {
+            await AsyncStorage.removeItem(PENDING_RECOVERY_EMAIL_CONTEXT_KEY);
             // Always hand off to gate; it can recover pending tokens and route correctly.
             if (!didNavigateRef.current) {
               didNavigateRef.current = true;

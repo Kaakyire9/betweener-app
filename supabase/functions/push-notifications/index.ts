@@ -162,8 +162,8 @@ serve(async (req) => {
         sound: 'default',
         title: payload.title,
         body: payload.body,
-        // Make messages feel more "chat-like" on Android by using a dedicated channel.
-        channelId: type === 'message' ? 'messages' : 'default',
+        // Make chat-style notifications feel consistent on Android.
+        channelId: type === 'message' || type === 'message_reaction' ? 'messages' : 'default',
         data,
       }
 

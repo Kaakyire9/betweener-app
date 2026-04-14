@@ -240,6 +240,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const presenceUpdateAtRef = useRef(0);
   const resumeRefreshAtRef = useRef(0);
   const phoneRefreshInFlightRef = useRef(false);
+  const phoneRefreshPromiseRef = useRef<Promise<boolean> | null>(null);
   const profileCacheRef = useRef<{ userId: string; profile: Profile | null; fetchedAt: number } | null>(null);
   const accessTokenRef = useRef<string | null>(null);
 
@@ -258,6 +259,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setSentryUser(user?.id ?? null);
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const provider =
+      user.app_metadata?.provider === "google" || user.app_metadata?.provider === "apple"
+        ? user.app_metadata.provider
+        : "email";
+
+    void (async () => {
+      try {
+        await supabase
+          .from("profiles")
+          .update({ last_successful_auth_provider: provider })
+          .eq("user_id", user.id);
+
+        await supabase
+          .from("profiles")
+          .update({ created_via_provider: provider })
+          .eq("user_id", user.id)
+          .is("created_via_provider", null);
+      } catch {
+        // best effort only
+      }
+    })();
+  }, [user?.app_metadata?.provider, user?.id]);
 
   // Initialize auth state
   const getAccessToken = async () => {
@@ -449,138 +475,144 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const refreshPhoneState = async (): Promise<boolean> => {
-    if (phoneRefreshInFlightRef.current) return phoneVerified;
-    phoneRefreshInFlightRef.current = true;
-    const serverKnownVerified = profile?.phone_verified === true;
-    let cachedVerified = false;
-    let cachedUnverified = false;
-    try {
-      if (typeof __DEV__ !== "undefined" && __DEV__) {
-        console.log("[auth] refreshPhoneState: start", {
-          hasUser: !!user?.id,
-          profilePhoneVerified: profile?.phone_verified ?? null,
-          serverKnownVerified,
-        });
-      }
-      if (!user?.id) {
-        setPhoneVerified(false);
-        if (typeof __DEV__ !== "undefined" && __DEV__) {
-          console.log("[auth] refreshPhoneState: no user -> false");
-        }
-        return false;
-      }
+    if (phoneRefreshInFlightRef.current && phoneRefreshPromiseRef.current) {
+      return await phoneRefreshPromiseRef.current;
+    }
 
-      // Fast-path: if profile already says verified, treat it as source of truth.
-      if (serverKnownVerified) {
-        setPhoneVerified(true);
-        try {
-          await AsyncStorage.setItem(
-            getPhoneVerifiedCacheKey(user.id),
-            JSON.stringify({ verified: true, expiresAt: Date.now() + PHONE_VERIFIED_CACHE_TTL_MS })
-          );
-        } catch {
-          // ignore cache errors
-        }
-        if (typeof __DEV__ !== "undefined" && __DEV__) {
-          console.log("[auth] refreshPhoneState: profile verified fast-path");
-        }
-        return true;
-      }
-
+    const refreshPromise = (async (): Promise<boolean> => {
+      phoneRefreshInFlightRef.current = true;
+      const serverKnownVerified = profile?.phone_verified === true;
+      let cachedVerified = false;
+      let cachedUnverified = false;
       try {
-        const cachedRaw = await AsyncStorage.getItem(getPhoneVerifiedCacheKey(user.id));
-        if (cachedRaw) {
-          const cached = JSON.parse(cachedRaw) as { verified?: boolean; expiresAt?: number };
-          const isFresh = typeof cached.expiresAt === "number" && cached.expiresAt > Date.now();
-          if (!isFresh) {
-            await AsyncStorage.removeItem(getPhoneVerifiedCacheKey(user.id));
-          } else if (cached.verified === true) {
-            cachedVerified = true;
-            if (typeof __DEV__ !== "undefined" && __DEV__) {
-              console.log("[auth] refreshPhoneState: cached verified hint");
-            }
-          } else if (cached.verified === false) {
-            // Cache can be used to avoid repeated network calls, but don't treat it as authoritative
-            // if we later learn otherwise from profile/phone_verifications.
-            cachedUnverified = true;
-            if (typeof __DEV__ !== "undefined" && __DEV__) {
-              console.log("[auth] refreshPhoneState: using cached unverified");
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] refreshPhoneState: start", {
+            hasUser: !!user?.id,
+            profilePhoneVerified: profile?.phone_verified ?? null,
+            serverKnownVerified,
+          });
+        }
+        if (!user?.id) {
+          setPhoneVerified(false);
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[auth] refreshPhoneState: no user -> false");
+          }
+          return false;
+        }
+
+        // Fast-path: if profile already says verified, treat it as source of truth.
+        if (serverKnownVerified) {
+          setPhoneVerified(true);
+          try {
+            await AsyncStorage.setItem(
+              getPhoneVerifiedCacheKey(user.id),
+              JSON.stringify({ verified: true, expiresAt: Date.now() + PHONE_VERIFIED_CACHE_TTL_MS })
+            );
+          } catch {
+            // ignore cache errors
+          }
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[auth] refreshPhoneState: profile verified fast-path");
+          }
+          return true;
+        }
+
+        try {
+          const cachedRaw = await AsyncStorage.getItem(getPhoneVerifiedCacheKey(user.id));
+          if (cachedRaw) {
+            const cached = JSON.parse(cachedRaw) as { verified?: boolean; expiresAt?: number };
+            const isFresh = typeof cached.expiresAt === "number" && cached.expiresAt > Date.now();
+            if (!isFresh) {
+              await AsyncStorage.removeItem(getPhoneVerifiedCacheKey(user.id));
+            } else if (cached.verified === true) {
+              cachedVerified = true;
+              if (typeof __DEV__ !== "undefined" && __DEV__) {
+                console.log("[auth] refreshPhoneState: cached verified hint");
+              }
+            } else if (cached.verified === false) {
+              cachedUnverified = true;
+              if (typeof __DEV__ !== "undefined" && __DEV__) {
+                console.log("[auth] refreshPhoneState: using cached unverified");
+              }
             }
           }
+        } catch {
+          // ignore cache errors
         }
-      } catch {
-        // ignore cache errors
-      }
 
-      // Primary check: profiles.phone_verified (abortable REST).
-      const accessToken = await getAccessToken();
-      const flags = await fetchProfilePhoneFlagsViaRest(user.id, accessToken, 2500);
+        const accessToken = await getAccessToken();
+        const flags = await fetchProfilePhoneFlagsViaRest(user.id, accessToken, 2500);
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] refreshPhoneState: profile flags", {
+            phone_verified: flags?.phone_verified ?? null,
+            has_phone_number: !!flags?.phone_number,
+          });
+        }
+
+        if (flags?.phone_verified === true) {
+          setPhoneVerified(true);
+          try {
+            await AsyncStorage.setItem(
+              getPhoneVerifiedCacheKey(user.id),
+              JSON.stringify({ verified: true, expiresAt: Date.now() + PHONE_VERIFIED_CACHE_TTL_MS })
+            );
+          } catch {
+            // ignore cache errors
+          }
+          return true;
+        }
+
+        if (flags?.phone_verified === false) {
+          setPhoneVerified(false);
+          try {
+            await AsyncStorage.setItem(
+              getPhoneVerifiedCacheKey(user.id),
+              JSON.stringify({ verified: false, expiresAt: Date.now() + PHONE_VERIFIED_CACHE_TTL_MS })
+            );
+          } catch {
+            // ignore cache errors
+          }
+          return false;
+        }
+
+        const verifiedRow = await fetchVerifiedPhoneViaRest(user.id, accessToken, 2500);
+        if (verifiedRow?.status === "verified" || verifiedRow?.is_verified === true) {
+          setPhoneVerified(true);
+          try {
+            await AsyncStorage.setItem(
+              getPhoneVerifiedCacheKey(user.id),
+              JSON.stringify({ verified: true, expiresAt: Date.now() + PHONE_VERIFIED_CACHE_TTL_MS })
+            );
+          } catch {
+            // ignore cache errors
+          }
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[auth] refreshPhoneState: verified via phone_verifications rest");
+          }
+          return true;
+        }
+      } catch (error) {
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth] refreshPhoneState: error", error);
+        }
+      } finally {
+        phoneRefreshInFlightRef.current = false;
+        phoneRefreshPromiseRef.current = null;
+      }
       if (typeof __DEV__ !== "undefined" && __DEV__) {
-        console.log("[auth] refreshPhoneState: profile flags", {
-          phone_verified: flags?.phone_verified ?? null,
-          has_phone_number: !!flags?.phone_number,
+        console.log("[auth] refreshPhoneState: fallback", {
+          serverKnownVerified,
+          cachedVerified,
+          cachedUnverified,
         });
       }
+      const fallbackVerified = serverKnownVerified || cachedVerified;
+      setPhoneVerified(fallbackVerified);
+      return fallbackVerified;
+    })();
 
-      if (flags?.phone_verified === true) {
-        setPhoneVerified(true);
-        try {
-          await AsyncStorage.setItem(
-            getPhoneVerifiedCacheKey(user.id),
-            JSON.stringify({ verified: true, expiresAt: Date.now() + PHONE_VERIFIED_CACHE_TTL_MS })
-          );
-        } catch {
-          // ignore cache errors
-        }
-        return true;
-      }
-
-      if (flags?.phone_verified === false) {
-        setPhoneVerified(false);
-        try {
-          await AsyncStorage.setItem(
-            getPhoneVerifiedCacheKey(user.id),
-            JSON.stringify({ verified: false, expiresAt: Date.now() + PHONE_VERIFIED_CACHE_TTL_MS })
-          );
-        } catch {
-          // ignore cache errors
-        }
-        return false;
-      }
-
-      const verifiedRow = await fetchVerifiedPhoneViaRest(user.id, accessToken, 2500);
-      if (verifiedRow?.status === "verified" || verifiedRow?.is_verified === true) {
-        setPhoneVerified(true);
-        try {
-          await AsyncStorage.setItem(
-            getPhoneVerifiedCacheKey(user.id),
-            JSON.stringify({ verified: true, expiresAt: Date.now() + PHONE_VERIFIED_CACHE_TTL_MS })
-          );
-        } catch {
-          // ignore cache errors
-        }
-        if (typeof __DEV__ !== "undefined" && __DEV__) {
-          console.log("[auth] refreshPhoneState: verified via phone_verifications rest");
-        }
-        return true;
-      }
-    } catch (error) {
-      if (typeof __DEV__ !== "undefined" && __DEV__) {
-        console.log("[auth] refreshPhoneState: error", error);
-      }
-    } finally {
-      phoneRefreshInFlightRef.current = false;
-    }
-    if (typeof __DEV__ !== "undefined" && __DEV__) {
-      console.log("[auth] refreshPhoneState: fallback", {
-        serverKnownVerified,
-        cachedVerified,
-        cachedUnverified,
-      });
-    }
-    const fallbackVerified = serverKnownVerified || cachedVerified;
-    setPhoneVerified(fallbackVerified);
-    return fallbackVerified;
+    phoneRefreshPromiseRef.current = refreshPromise;
+    return await refreshPromise;
   };
 
   const updatePresence = async (nextOnline: boolean) => {

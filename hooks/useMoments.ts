@@ -27,6 +27,7 @@ export type MomentProfile = {
 
 export type MomentUser = {
   userId: string;
+  profileId: string | null;
   name: string;
   avatarUrl: string | null;
   moments: Moment[];
@@ -37,6 +38,7 @@ export type MomentUser = {
 type UseMomentsParams = {
   currentUserId?: string | null;
   currentUserProfile?: {
+    id?: string | null;
     full_name?: string | null;
     avatar_url?: string | null;
   } | null;
@@ -162,6 +164,7 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
       const ownMoments = momentsByUser[currentUserId] || [];
       list.push({
         userId: currentUserId,
+        profileId: currentUserProfile?.id ? String(currentUserProfile.id) : null,
         name: currentUserProfile?.full_name || 'You',
         avatarUrl: currentUserProfile?.avatar_url || null,
         moments: ownMoments,
@@ -177,6 +180,7 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
         const userMoments = momentsByUser[id] || [];
         return {
           userId: id,
+          profileId: profile?.id ? String(profile.id) : null,
           name: profile?.full_name || 'Member',
           avatarUrl: profile?.avatar_url || null,
           moments: userMoments,
@@ -191,7 +195,7 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
       });
 
     return [...list, ...others];
-  }, [currentUserId, currentUserProfile?.avatar_url, currentUserProfile?.full_name, momentsByUser, profilesById]);
+  }, [currentUserId, currentUserProfile?.avatar_url, currentUserProfile?.full_name, currentUserProfile?.id, momentsByUser, profilesById]);
 
   return {
     moments,

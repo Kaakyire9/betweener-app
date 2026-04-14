@@ -1,5 +1,6 @@
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { getSafeRemoteImageUri } from "@/lib/profile/display-name";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import React, { memo, useMemo } from "react";
@@ -48,6 +49,7 @@ const InboxItemCard = memo((props: InboxItemCardProps) => {
   const theme = Colors[resolvedScheme];
   const isDark = resolvedScheme === "dark";
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const safeAvatarUrl = getSafeRemoteImageUri(avatarUrl);
 
   return (
     <Pressable onPress={onPress} style={[styles.card, isUnread && styles.cardUnread]}>
@@ -57,8 +59,8 @@ const InboxItemCard = memo((props: InboxItemCardProps) => {
             <View style={styles.systemAvatar}>
               <MaterialCommunityIcons name={systemIcon as any} size={20} color={theme.tint} />
             </View>
-          ) : avatarUrl ? (
-            <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />
+          ) : safeAvatarUrl ? (
+            <Image source={{ uri: safeAvatarUrl }} style={styles.avatarImage} />
           ) : (
             <View style={styles.avatarFallback}>
               <Text style={styles.avatarFallbackText}>{initials}</Text>

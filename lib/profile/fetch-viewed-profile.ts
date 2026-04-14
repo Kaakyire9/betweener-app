@@ -18,9 +18,9 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
   const { viewedProfileId, viewerProfileId, fallbackDistanceLabel, fallbackDistanceKm } = options;
 
   const selectFull =
-    'id, user_id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, religion, personality_type, height, looking_for, love_language, languages_spoken, current_country, current_country_code, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, verification_level';
+    'id, user_id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, height, looking_for, love_language, languages_spoken, current_country, current_country_code, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, verification_level';
   const selectMinimal =
-    'id, user_id, full_name, age, region, city, location, avatar_url, bio, tribe, religion, personality_type, love_language, is_active, online, verification_level, current_country_code';
+    'id, user_id, full_name, age, region, city, location, avatar_url, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, love_language, is_active, online, verification_level, current_country_code';
 
   let data: any = null;
   let error: any = null;
@@ -143,6 +143,14 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
     locationPrecision: data.location_precision || undefined,
     compatibility: typeof (data as any).compatibility === 'number' ? (data as any).compatibility : 0,
     tribe: data.tribe || undefined,
+    roots:
+      Array.isArray((data as any).roots) && (data as any).roots.length > 0
+        ? (data as any).roots.filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0)
+        : data.tribe
+          ? [String(data.tribe)]
+          : undefined,
+    rootsNote: (data as any).roots_note || undefined,
+    rootsVisibility: (data as any).roots_visibility || undefined,
     religion: data.religion || undefined,
     interests: interestsArr,
     promptAnswers,

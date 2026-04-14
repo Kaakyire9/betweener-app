@@ -2,6 +2,7 @@ import { Colors } from "@/constants/theme";
 import { usePremiumState } from "@/hooks/use-premium-state";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/lib/auth-context";
+import { getSafeRemoteImageUri } from "@/lib/profile/display-name";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
@@ -396,7 +397,7 @@ export default function DashboardScreen() {
 
         const { data: profilesData, error: profilesError } = await supabase
           .from('profiles')
-          .select('id,full_name,avatar_url')
+          .select('id,full_name,avatar_url,account_state,deleted_at')
           .in('id', otherProfileIds);
 
         if (cancelled) return;
@@ -413,14 +414,17 @@ export default function DashboardScreen() {
         const list: DashboardPerson[] = otherProfileIds
           .map((pid) => {
             const p = profileById.get(pid);
-            return {
-              userId: pid,
-              name: (p?.full_name || '').trim() || 'Match',
-              avatarUrl: p?.avatar_url ?? null,
-              unread: 0,
-              lastMessage: '',
-            };
+            const hasLeft = Boolean(p?.deleted_at) || String(p?.account_state || '').toLowerCase() === 'deleted';
+            if (hasLeft) return null as DashboardPerson | null;
+              return {
+                userId: pid,
+                name: (p?.full_name || '').trim() || 'Match',
+                avatarUrl: getSafeRemoteImageUri(p?.avatar_url),
+                unread: 0,
+                lastMessage: '',
+              } as DashboardPerson;
           })
+          .filter((item): item is DashboardPerson => Boolean(item))
           .slice(0, 10);
 
         setMatchesTodayPeople(list);
@@ -573,14 +577,14 @@ export default function DashboardScreen() {
           .map((otherId) => {
             const p = profileByUserId.get(otherId);
             const meta = convoMap.get(otherId);
-            return {
-              userId: otherId,
-              profileId: typeof p?.id === 'string' ? p.id : undefined,
-              name: (p?.full_name || '').trim() || 'Match',
-              avatarUrl: p?.avatar_url ?? null,
-              unread: meta?.unread ?? 0,
-              lastMessage: (meta?.lastText || '').trim(),
-              lastMessageAt: meta?.lastAt,
+              return {
+                userId: otherId,
+                profileId: typeof p?.id === 'string' ? p.id : undefined,
+                name: (p?.full_name || '').trim() || 'Match',
+                avatarUrl: getSafeRemoteImageUri(p?.avatar_url),
+                unread: meta?.unread ?? 0,
+                lastMessage: (meta?.lastText || '').trim(),
+                lastMessageAt: meta?.lastAt,
             };
           })
           .slice(0, 10);
@@ -655,16 +659,16 @@ export default function DashboardScreen() {
         const items: DashboardActivityItem[] = rows
           .map((row) => {
             const profile = profileById.get(row.actor_id);
-            return {
-              id: String(row.id),
-              type: String(row.type || ''),
-              actorId: row.actor_id ?? null,
-              title: (row.title || '').trim() || 'Recent activity',
-              body: (row.body || '').trim() || 'New update',
-              actorAvatar: profile?.avatar_url ?? null,
-              createdAt: row.created_at,
-              readAt: row.read_at ?? null,
-              actionRequired: Boolean(row.action_required),
+              return {
+                id: String(row.id),
+                type: String(row.type || ''),
+                actorId: row.actor_id ?? null,
+                title: (row.title || '').trim() || 'Recent activity',
+                body: (row.body || '').trim() || 'New update',
+                actorAvatar: getSafeRemoteImageUri(profile?.avatar_url),
+                createdAt: row.created_at,
+                readAt: row.read_at ?? null,
+                actionRequired: Boolean(row.action_required),
             };
           })
           .sort((a, b) => {
@@ -1743,5 +1747,3 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       height: 20,
     },
   });
-
-

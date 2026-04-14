@@ -7,6 +7,8 @@ import { useAuth } from "@/lib/auth-context";
 import { decryptMediaBytes, encryptMediaBytes, getOrCreateDeviceKeypair } from "@/lib/e2ee";
 import { computeConversationSignalLabel, computeFirstReplyHours, computeInterestOverlapRatio } from "@/lib/match/match-score";
 import { Motion } from "@/lib/motion";
+import { showOpenSettingsPrompt } from "@/lib/permission-prompts";
+import { getSafeRemoteImageUri, getUserFacingDisplayName, hasLeftBetweener } from "@/lib/profile/display-name";
 import { supabase } from "@/lib/supabase";
 import type { Database } from "@/supabase/types/database";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -954,7 +956,7 @@ type MessageRowItemProps = {
   isFocused: boolean;
   focusToken: number;
   timeLabel: string;
-  userAvatar: string;
+  userAvatar: string | null;
   currentUserId: string;
   peerName: string;
   imageSize?: { width: number; height: number };
@@ -1869,12 +1871,12 @@ const MessageRowItem = memo(
             isMyMessage ? styles.myMessageContainer : styles.theirMessageContainer,
           ]}
         >
-        {showAvatar ? (
-          <Image
-            source={{ uri: userAvatar }}
-            style={styles.messageAvatar}
-          />
-          ) : showAvatarSpacer ? (
+          {showAvatar ? (
+            <Image
+              source={userAvatar ? { uri: userAvatar } : BLOCKED_AVATAR_SOURCE}
+              style={styles.messageAvatar}
+            />
+            ) : showAvatarSpacer ? (
             <View style={styles.messageAvatarSpacer} />
           ) : null}
 
@@ -2219,7 +2221,7 @@ const MessageRowItem = memo(
                         </Text>
                       </View>
                       {userAvatar ? (
-                        <View
+                          <View
                           style={[
                             styles.datePlanPersonChip,
                             {
@@ -2228,7 +2230,7 @@ const MessageRowItem = memo(
                             },
                           ]}
                         >
-                          <Image source={{ uri: userAvatar }} style={styles.datePlanPersonAvatar} />
+                           <Image source={{ uri: userAvatar }} style={styles.datePlanPersonAvatar} />
                           <Text
                             style={[
                               styles.datePlanPersonText,
@@ -3133,7 +3135,7 @@ export default function ConversationScreen() {
   const [peerProfileId, setPeerProfileId] = useState<string>(routeId);
   const [peerResolved, setPeerResolved] = useState(false);
   const userName = params.userName as string;
-  const userAvatar = params.userAvatar as string;
+    const userAvatar = getSafeRemoteImageUri(typeof params.userAvatar === 'string' ? params.userAvatar : null);
   const prefillParam = typeof (params as any)?.prefill === 'string' ? String((params as any).prefill) : '';
   const initialOnline = params.isOnline === 'true';
   const lastSeenParam = params.lastSeen;
@@ -3227,6 +3229,8 @@ export default function ConversationScreen() {
     city?: string | null;
     region?: string | null;
     location?: string | null;
+    account_state?: string | null;
+    deleted_at?: string | null;
   } | null>(null);
   const [peerInterests, setPeerInterests] = useState<string[]>([]);
   const [myInterests, setMyInterests] = useState<string[]>([]);
@@ -3381,7 +3385,7 @@ export default function ConversationScreen() {
       }
       const { data, error } = await supabase
         .from('profiles')
-        .select('id,user_id,verification_level,full_name,city,region,location')
+        .select('id,user_id,verification_level,full_name,city,region,location,account_state,deleted_at')
         .eq('user_id', conversationId)
         .maybeSingle();
       if (error) {
@@ -3925,7 +3929,9 @@ export default function ConversationScreen() {
   const isBlockedByMe = blockStatus === BLOCKED_BY_ME;
   const isBlockedByThem = blockStatus === BLOCKED_BY_THEM;
   const isChatBlocked = isBlockedByMe || isBlockedByThem;
-  const showMoments = peerHasMoment && !isChatBlocked;
+  const peerHasLeftBetweener = hasLeftBetweener(peerProfile);
+  const headerDisplayName = getUserFacingDisplayName(peerProfile, userName || 'Your match');
+  const showMoments = peerHasMoment && !isChatBlocked && !peerHasLeftBetweener;
   const liveStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const liveUpdateRef = useRef<{ lastSentAt: number }>({ lastSentAt: 0 });
 
@@ -3940,6 +3946,17 @@ export default function ConversationScreen() {
     const diffDays = Math.floor(diffHours / 24);
     return `${diffDays}d ago`;
   };
+  const headerStatusLabel = peerHasLeftBetweener
+    ? 'No longer on Betweener'
+    : isChatBlocked
+      ? isBlockedByMe
+        ? 'Blocked privately'
+        : 'Messaging unavailable'
+      : peerOnline
+        ? 'Active now'
+        : peerLastSeen
+          ? `Last seen ${formatLastSeen(peerLastSeen)}`
+          : 'Last seen recently';
 
   useEffect(() => {
     if (!hasActiveLiveLocationMessage) return;
@@ -5334,6 +5351,10 @@ export default function ConversationScreen() {
         setLocationStatus(permission.status);
         if (permission.status !== 'granted') {
           setLocationError('Enable location to show nearby places.');
+          showOpenSettingsPrompt(
+            'Location access',
+            'Turn on location access in Settings so Betweener can show nearby places and share your location.',
+          );
           return;
         }
         const position = await Location.getCurrentPositionAsync({
@@ -6317,16 +6338,36 @@ export default function ConversationScreen() {
   }, [closeLocationModal, selectedPlace, sendLocationMessage]);
 
   const handleSendLiveLocation = useCallback(async () => {
-    if (!selectedPlace) {
-      setLocationError('Choose a place to share.');
+    let coords = currentCoords;
+    if (!coords) {
+      if (locationStatus !== 'granted') {
+        setLocationError('Enable location to share live movement.');
+        return;
+      }
+      try {
+        const position = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        coords = { lat: position.coords.latitude, lng: position.coords.longitude };
+        setCurrentCoords(coords);
+      } catch (error) {
+        console.log('[chat] live location start error', error);
+        setLocationError('Unable to fetch your current location for live sharing.');
+        return;
+      }
+    }
+
+    if (!coords) {
+      setLocationError('Unable to fetch your current location for live sharing.');
       return;
     }
+
     const expiresAt = new Date(Date.now() + liveDurationMinutes * 60000);
     const payload = {
-      lat: selectedPlace.lat,
-      lng: selectedPlace.lng,
-      label: selectedPlace.name,
-      address: selectedPlace.address,
+      lat: coords.lat,
+      lng: coords.lng,
+      label: 'Live location',
+      address: null,
       live: true,
       expiresAt,
     };
@@ -6336,11 +6377,11 @@ export default function ConversationScreen() {
       void startLiveLocationUpdates({
         messageId,
         expiresAt,
-        label: selectedPlace.name,
-        address: selectedPlace.address,
+        label: 'Live location',
+        address: null,
       });
     }
-  }, [closeLocationModal, liveDurationMinutes, selectedPlace, sendLocationMessage, startLiveLocationUpdates]);
+  }, [closeLocationModal, currentCoords, liveDurationMinutes, locationStatus, sendLocationMessage, startLiveLocationUpdates]);
 
   const handleInputFocus = useCallback(() => {
     setIsInputFocused(true);
@@ -7689,7 +7730,10 @@ export default function ConversationScreen() {
     try {
       const permission = await requestRecordingPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Microphone access', 'Enable microphone access to record voice messages.');
+        showOpenSettingsPrompt(
+          'Microphone access',
+          'Turn on microphone access in Settings so Betweener can record voice messages.',
+        );
         return;
       }
       await setAudioModeAsync({
@@ -7965,7 +8009,10 @@ export default function ConversationScreen() {
     }
     const cameraStatus = await ImagePicker.requestCameraPermissionsAsync();
     if (!cameraStatus.granted) {
-      Alert.alert('Camera access', 'Enable camera access to take photos or videos.');
+      showOpenSettingsPrompt(
+        'Camera access',
+        'Turn on camera access in Settings so Betweener can take photos or videos.',
+      );
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
@@ -8054,7 +8101,10 @@ export default function ConversationScreen() {
     }
     const libraryStatus = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!libraryStatus.granted) {
-      Alert.alert('Photos access', 'Enable photo access to share media.');
+      showOpenSettingsPrompt(
+        'Photos access',
+        'Turn on photo access in Settings so Betweener can share media from your library.',
+      );
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({
@@ -8364,11 +8414,11 @@ export default function ConversationScreen() {
     if (!isTyping || isChatBlocked) return null;
 
     return (
-      <View style={styles.typingContainer}>
-        <Image 
-          source={{ uri: userAvatar }} 
-          style={styles.typingAvatar} 
-        />
+        <View style={styles.typingContainer}>
+          <Image
+            source={userAvatar ? { uri: userAvatar } : BLOCKED_AVATAR_SOURCE}
+            style={styles.typingAvatar}
+          />
         <View style={styles.typingBubble}>
           <Text style={styles.typingLabel}>{userName || 'Your match'} is typing</Text>
           <Animated.View style={styles.typingDots}>
@@ -8846,12 +8896,13 @@ export default function ConversationScreen() {
   }, []);
 
   const handleViewProfile = useCallback(() => {
+    if (peerHasLeftBetweener) return;
     if (!peerProfileId) return;
     router.push({
       pathname: '/profile-view',
       params: { profileId: peerProfileId },
     });
-  }, [peerProfileId]);
+  }, [peerHasLeftBetweener, peerProfileId]);
 
   const dismissHeaderHint = useCallback(() => {
     headerHintDismissedRef.current = true;
@@ -8867,7 +8918,7 @@ export default function ConversationScreen() {
   }, [headerHintOpacity, showHeaderHint]);
 
   const handleHeaderPress = useCallback(() => {
-    if (!conversationId || isChatBlocked) return;
+    if (!conversationId || isChatBlocked || peerHasLeftBetweener) return;
     dismissHeaderHint();
     if (peerHasMoment) {
       setMomentViewerUserId(conversationId);
@@ -8875,7 +8926,7 @@ export default function ConversationScreen() {
       return;
     }
     handleViewProfile();
-  }, [conversationId, dismissHeaderHint, handleViewProfile, isChatBlocked, peerHasMoment]);
+  }, [conversationId, dismissHeaderHint, handleViewProfile, isChatBlocked, peerHasLeftBetweener, peerHasMoment]);
 
   const handleCloseMomentViewer = useCallback(() => {
     setMomentViewerVisible(false);
@@ -9042,7 +9093,7 @@ export default function ConversationScreen() {
     setReactionProfilesLoading(true);
     supabase
       .from('profiles')
-      .select('user_id,full_name,avatar_url')
+      .select('user_id,full_name,avatar_url,account_state,deleted_at')
       .in('user_id', missing)
       .then(({ data, error }) => {
         if (!isMounted) return;
@@ -9055,7 +9106,7 @@ export default function ConversationScreen() {
           const next = { ...prev };
           (data || []).forEach((row: any) => {
             next[row.user_id] = {
-              name: row.full_name || 'Unknown',
+              name: getUserFacingDisplayName(row, 'Unknown'),
               avatar: row.avatar_url || null,
             };
           });
@@ -9769,19 +9820,19 @@ export default function ConversationScreen() {
                 style={[styles.avatarRing, styles.avatarRingActive]}
               >
                 <View style={styles.avatarInner}>
-                  <Image
-                    source={isChatBlocked ? BLOCKED_AVATAR_SOURCE : { uri: userAvatar }}
-                    style={styles.headerAvatar}
-                  />
+                    <Image
+                      source={isChatBlocked || !userAvatar ? BLOCKED_AVATAR_SOURCE : { uri: userAvatar }}
+                      style={styles.headerAvatar}
+                    />
                 </View>
               </LinearGradient>
             ) : (
               <View style={styles.avatarRing}>
                 <View style={styles.avatarInner}>
-                  <Image
-                    source={isChatBlocked ? BLOCKED_AVATAR_SOURCE : { uri: userAvatar }}
-                    style={styles.headerAvatar}
-                  />
+                    <Image
+                      source={isChatBlocked || !userAvatar ? BLOCKED_AVATAR_SOURCE : { uri: userAvatar }}
+                      style={styles.headerAvatar}
+                    />
                 </View>
               </View>
             )}
@@ -9790,19 +9841,11 @@ export default function ConversationScreen() {
             )}
           </View>
           <View style={styles.headerInfo}>
-            <Text style={styles.headerName}>{userName}</Text>
-            <Text style={styles.headerStatus}>
-              {isChatBlocked
-                ? isBlockedByMe
-                  ? 'Blocked privately'
-                  : 'Messaging unavailable'
-                : peerOnline
-                ? 'Active now'
-                : peerLastSeen
-                ? `Last seen ${formatLastSeen(peerLastSeen)}`
-                : 'Last seen recently'}
+            <Text style={styles.headerName}>{headerDisplayName}</Text>
+            <Text style={[styles.headerStatus, peerHasLeftBetweener && styles.headerStatusLeft]}>
+              {headerStatusLabel}
             </Text>
-            {matchAccepted && conversationSignal ? (
+            {!peerHasLeftBetweener && matchAccepted && conversationSignal ? (
               <View style={styles.headerMatchRow}>
                 <MaterialCommunityIcons name="heart" size={14} color={theme.tint} />
                 <Text style={styles.headerMatchText}>{conversationSignal}</Text>
@@ -9829,6 +9872,19 @@ export default function ConversationScreen() {
           />
         </TouchableOpacity>
       </View>
+      {peerHasLeftBetweener ? (
+        <View style={styles.leftBetweenerThreadNotice}>
+          <View style={styles.leftBetweenerThreadNoticeIcon}>
+            <MaterialCommunityIcons name="door-closed" size={14} color={theme.tint} />
+          </View>
+          <View style={styles.leftBetweenerThreadNoticeCopy}>
+            <Text style={styles.leftBetweenerThreadNoticeTitle}>Left Betweener</Text>
+            <Text style={styles.leftBetweenerThreadNoticeText}>
+              This member is no longer on Betweener. You can still review the conversation history.
+            </Text>
+          </View>
+        </View>
+      ) : null}
       {pendingIntentRequest ? (
         <View style={styles.intentBanner}>
           <View style={styles.intentBannerText}>
@@ -9966,8 +10022,8 @@ export default function ConversationScreen() {
                   <Text style={styles.datePlannerTitle}>{datePlannerTitle}</Text>
                   <Text style={styles.datePlannerSubtitle}>{datePlannerSubtitle}</Text>
                   {userAvatar ? (
-                    <View style={styles.datePlannerPersonChip}>
-                      <Image source={{ uri: userAvatar }} style={styles.datePlannerPersonAvatar} />
+                      <View style={styles.datePlannerPersonChip}>
+                        <Image source={{ uri: userAvatar }} style={styles.datePlannerPersonAvatar} />
                       <View style={styles.datePlannerPersonText}>
                         <Text style={styles.datePlannerPersonLabel}>Planning for</Text>
                         <Text style={styles.datePlannerPersonName} numberOfLines={1}>
@@ -10544,14 +10600,16 @@ export default function ConversationScreen() {
               <Text style={styles.headerMenuSubtitle}>Private controls for this conversation.</Text>
               <Text style={styles.headerMenuSectionLabel}>Quick</Text>
               <View style={styles.headerMenuGrid}>
-                <MenuCard
-                  title="View profile"
-                  description="Open trust, photos, and details."
-                  icon="account-outline"
-                  onPress={() => {
-                    runAfterHeaderMenuClose(handleViewProfile);
-                  }}
-                />
+                {!peerHasLeftBetweener ? (
+                  <MenuCard
+                    title="View profile"
+                    description="Open trust, photos, and details."
+                    icon="account-outline"
+                    onPress={() => {
+                      runAfterHeaderMenuClose(handleViewProfile);
+                    }}
+                  />
+                ) : null}
                 <MenuCard
                   title="Search in chat"
                   description="Find a message in this thread."
@@ -10569,16 +10627,18 @@ export default function ConversationScreen() {
                     runAfterHeaderMenuClose(handleFilterMedia);
                   }}
                 />
-                <MenuCard
-                  title="Suggest a date"
-                  description="Turn the chat into a real plan."
-                  icon="calendar-heart"
-                  wide
-                  badgeLabel={canPlanDate ? 'Ready' : 'Locked'}
-                  onPress={() => {
-                    runAfterHeaderMenuClose(handleOpenDatePlanner);
-                  }}
-                />
+                {!peerHasLeftBetweener ? (
+                  <MenuCard
+                    title="Suggest a date"
+                    description="Turn the chat into a real plan."
+                    icon="calendar-heart"
+                    wide
+                    badgeLabel={canPlanDate ? 'Ready' : 'Locked'}
+                    onPress={() => {
+                      runAfterHeaderMenuClose(handleOpenDatePlanner);
+                    }}
+                  />
+                ) : null}
               </View>
               <Text style={styles.headerMenuSectionLabel}>Controls</Text>
               <View style={styles.headerMenuGrid}>
@@ -12490,6 +12550,10 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       marginTop: 1,
       flexShrink: 1,
     },
+    headerStatusLeft: {
+      color: isDark ? '#D6C0AA' : '#8E735A',
+      fontFamily: 'Manrope_600SemiBold',
+    },
     headerMatchRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -12500,6 +12564,42 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontSize: 12,
       fontFamily: 'Manrope_600SemiBold',
       color: theme.tint,
+    },
+    leftBetweenerThreadNotice: {
+      marginHorizontal: 16,
+      marginTop: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 11,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(214, 192, 170, 0.16)' : 'rgba(143, 112, 84, 0.14)',
+      backgroundColor: isDark ? 'rgba(214, 192, 170, 0.05)' : 'rgba(248, 242, 235, 0.9)',
+      flexDirection: 'row',
+      gap: 10,
+      alignItems: 'flex-start',
+    },
+    leftBetweenerThreadNoticeIcon: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: isDark ? 'rgba(0,160,160,0.12)' : 'rgba(0,160,160,0.08)',
+    },
+    leftBetweenerThreadNoticeCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    leftBetweenerThreadNoticeTitle: {
+      fontSize: 13,
+      fontFamily: 'Manrope_700Bold',
+      color: theme.text,
+    },
+    leftBetweenerThreadNoticeText: {
+      fontSize: 12,
+      lineHeight: 18,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
     },
     pinnedBanner: {
       marginHorizontal: 16,

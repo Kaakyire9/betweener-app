@@ -26,7 +26,7 @@ const findExistingVerifiedPhoneOwner = async (
 ) => {
   const { data, error } = await supabase
     .from('profiles')
-    .select('user_id, phone_number, phone_verified')
+    .select('id, user_id, phone_number, phone_verified')
     .eq('phone_number', phoneNumber)
     .eq('phone_verified', true)
     .limit(1)
@@ -41,6 +41,37 @@ const findExistingVerifiedPhoneOwner = async (
   if (currentUserId && data.user_id === currentUserId) return null
 
   return data
+}
+
+const createRecoverySession = async (
+  supabase: any,
+  args: {
+    requesterUserId: string
+    phoneNumber: string
+    ownerUserId: string
+    ownerProfileId?: string | null
+  },
+) => {
+  const { data, error } = await supabase
+    .from('account_recovery_sessions')
+    .insert({
+      requester_user_id: args.requesterUserId,
+      conflicting_phone_number: args.phoneNumber,
+      owner_user_id: args.ownerUserId,
+      owner_profile_id: args.ownerProfileId ?? null,
+      metadata: {
+        source: 'verified_phone_conflict',
+      },
+    })
+    .select('recovery_token')
+    .single()
+
+  if (error) {
+    console.error('Recovery session insert error:', error)
+    return null
+  }
+
+  return data?.recovery_token ?? null
 }
 
 interface TwilioVerifyCheckResponse {
@@ -215,11 +246,22 @@ serve(async (req) => {
     if (approved) {
       const existingOwner = await findExistingVerifiedPhoneOwner(supabase, phoneNumber, effectiveUserId)
       if (existingOwner) {
+        const recoveryToken =
+          effectiveUserId
+            ? await createRecoverySession(supabase, {
+                requesterUserId: effectiveUserId,
+                phoneNumber,
+                ownerUserId: existingOwner.user_id,
+                ownerProfileId: existingOwner.id ?? null,
+              })
+            : null
+
         return new Response(
           JSON.stringify({
             error: 'This number already belongs to an older Betweener account.',
             code: 'phone_belongs_to_existing_account',
             phoneNumber,
+            recoveryToken,
           }),
           {
             status: 409,

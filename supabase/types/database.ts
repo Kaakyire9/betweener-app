@@ -56,6 +56,44 @@ export type Database = {
         }
         Relationships: []
       }
+      account_identity_events: {
+        Row: {
+          actor_user_id: string | null
+          created_at: string
+          event_type: string
+          id: string
+          metadata: Json
+          profile_id: string | null
+          user_id: string
+        }
+        Insert: {
+          actor_user_id?: string | null
+          created_at?: string
+          event_type: string
+          id?: string
+          metadata?: Json
+          profile_id?: string | null
+          user_id: string
+        }
+        Update: {
+          actor_user_id?: string | null
+          created_at?: string
+          event_type?: string
+          id?: string
+          metadata?: Json
+          profile_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "account_identity_events_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       account_merge_cases: {
         Row: {
           candidate_reason: string | null
@@ -335,6 +373,62 @@ export type Database = {
           {
             foreignKeyName: "account_recovery_requests_requester_profile_id_fkey"
             columns: ["requester_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      account_recovery_sessions: {
+        Row: {
+          conflicting_phone_number: string
+          consumed_at: string | null
+          created_at: string
+          dispatch_count: number
+          expires_at: string
+          id: string
+          last_dispatched_at: string | null
+          metadata: Json
+          owner_profile_id: string | null
+          owner_user_id: string
+          recovery_token: string
+          requester_user_id: string
+          verified_at: string
+        }
+        Insert: {
+          conflicting_phone_number: string
+          consumed_at?: string | null
+          created_at?: string
+          dispatch_count?: number
+          expires_at?: string
+          id?: string
+          last_dispatched_at?: string | null
+          metadata?: Json
+          owner_profile_id?: string | null
+          owner_user_id: string
+          recovery_token?: string
+          requester_user_id: string
+          verified_at?: string
+        }
+        Update: {
+          conflicting_phone_number?: string
+          consumed_at?: string | null
+          created_at?: string
+          dispatch_count?: number
+          expires_at?: string
+          id?: string
+          last_dispatched_at?: string | null
+          metadata?: Json
+          owner_profile_id?: string | null
+          owner_user_id?: string
+          recovery_token?: string
+          requester_user_id?: string
+          verified_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "account_recovery_sessions_owner_profile_id_fkey"
+            columns: ["owner_profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -1553,6 +1647,33 @@ export type Database = {
         }
         Relationships: []
       }
+      peer_visibility_prefs: {
+        Row: {
+          archived: boolean
+          hidden: boolean
+          id: string
+          peer_user_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          archived?: boolean
+          hidden?: boolean
+          id?: string
+          peer_user_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          archived?: boolean
+          hidden?: boolean
+          id?: string
+          peer_user_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       phone_verifications: {
         Row: {
           attempts: number | null
@@ -1995,11 +2116,13 @@ export type Database = {
           bio: string | null
           city: string | null
           created_at: string
+          created_via_provider: string | null
           current_country: string | null
           current_country_code: string | null
           deleted_at: string | null
           discoverable_in_vibes: boolean
           drinking: string | null
+          duplicate_of_user_id: string | null
           education: string | null
           exercise_frequency: string | null
           full_name: string | null
@@ -2008,10 +2131,16 @@ export type Database = {
           has_children: string | null
           height: string | null
           id: string
+          identity_disabled_at: string | null
+          identity_finalized_at: string | null
+          identity_resolution_reason: string | null
+          identity_status: string
+          identity_status_updated_at: string
           is_active: boolean
           languages_spoken: string[] | null
           last_active: string | null
           last_ghana_visit: string | null
+          last_successful_auth_provider: string | null
           latitude: number | null
           living_situation: string | null
           location: string | null
@@ -2024,6 +2153,7 @@ export type Database = {
           max_age_interest: number | null
           min_age_interest: number | null
           occupation: string | null
+          onboarding_completed_at: string | null
           onboarding_step: number
           online: boolean
           pause_reason: string | null
@@ -2033,13 +2163,18 @@ export type Database = {
           phone_number: string | null
           phone_verification_score: number | null
           phone_verified: boolean | null
+          phone_verified_at: string | null
           photos: string[] | null
           profile_completed: boolean
           profile_video: string | null
           public_key: string | null
+          recovered_to_user_id: string | null
           region: string | null
           relationship_compass: Json
           religion: Database["public"]["Enums"]["religion"] | null
+          roots: string[] | null
+          roots_note: string | null
+          roots_visibility: string
           search_name: string | null
           smoking: string | null
           superlikes_left: number
@@ -2069,11 +2204,13 @@ export type Database = {
           bio?: string | null
           city?: string | null
           created_at?: string
+          created_via_provider?: string | null
           current_country?: string | null
           current_country_code?: string | null
           deleted_at?: string | null
           discoverable_in_vibes?: boolean
           drinking?: string | null
+          duplicate_of_user_id?: string | null
           education?: string | null
           exercise_frequency?: string | null
           full_name?: string | null
@@ -2082,10 +2219,16 @@ export type Database = {
           has_children?: string | null
           height?: string | null
           id?: string
+          identity_disabled_at?: string | null
+          identity_finalized_at?: string | null
+          identity_resolution_reason?: string | null
+          identity_status?: string
+          identity_status_updated_at?: string
           is_active?: boolean
           languages_spoken?: string[] | null
           last_active?: string | null
           last_ghana_visit?: string | null
+          last_successful_auth_provider?: string | null
           latitude?: number | null
           living_situation?: string | null
           location?: string | null
@@ -2098,6 +2241,7 @@ export type Database = {
           max_age_interest?: number | null
           min_age_interest?: number | null
           occupation?: string | null
+          onboarding_completed_at?: string | null
           onboarding_step?: number
           online?: boolean
           pause_reason?: string | null
@@ -2107,13 +2251,18 @@ export type Database = {
           phone_number?: string | null
           phone_verification_score?: number | null
           phone_verified?: boolean | null
+          phone_verified_at?: string | null
           photos?: string[] | null
           profile_completed?: boolean
           profile_video?: string | null
           public_key?: string | null
+          recovered_to_user_id?: string | null
           region?: string | null
           relationship_compass?: Json
           religion?: Database["public"]["Enums"]["religion"] | null
+          roots?: string[] | null
+          roots_note?: string | null
+          roots_visibility?: string
           search_name?: string | null
           smoking?: string | null
           superlikes_left?: number
@@ -2143,11 +2292,13 @@ export type Database = {
           bio?: string | null
           city?: string | null
           created_at?: string
+          created_via_provider?: string | null
           current_country?: string | null
           current_country_code?: string | null
           deleted_at?: string | null
           discoverable_in_vibes?: boolean
           drinking?: string | null
+          duplicate_of_user_id?: string | null
           education?: string | null
           exercise_frequency?: string | null
           full_name?: string | null
@@ -2156,10 +2307,16 @@ export type Database = {
           has_children?: string | null
           height?: string | null
           id?: string
+          identity_disabled_at?: string | null
+          identity_finalized_at?: string | null
+          identity_resolution_reason?: string | null
+          identity_status?: string
+          identity_status_updated_at?: string
           is_active?: boolean
           languages_spoken?: string[] | null
           last_active?: string | null
           last_ghana_visit?: string | null
+          last_successful_auth_provider?: string | null
           latitude?: number | null
           living_situation?: string | null
           location?: string | null
@@ -2172,6 +2329,7 @@ export type Database = {
           max_age_interest?: number | null
           min_age_interest?: number | null
           occupation?: string | null
+          onboarding_completed_at?: string | null
           onboarding_step?: number
           online?: boolean
           pause_reason?: string | null
@@ -2181,13 +2339,18 @@ export type Database = {
           phone_number?: string | null
           phone_verification_score?: number | null
           phone_verified?: boolean | null
+          phone_verified_at?: string | null
           photos?: string[] | null
           profile_completed?: boolean
           profile_video?: string | null
           public_key?: string | null
+          recovered_to_user_id?: string | null
           region?: string | null
           relationship_compass?: Json
           religion?: Database["public"]["Enums"]["religion"] | null
+          roots?: string[] | null
+          roots_note?: string | null
+          roots_visibility?: string
           search_name?: string | null
           smoking?: string | null
           superlikes_left?: number
@@ -2271,6 +2434,44 @@ export type Database = {
           window_seconds?: number
         }
         Relationships: []
+      }
+      relationship_compass_nudges: {
+        Row: {
+          compass_updated_at: string
+          id: string
+          kind: string
+          metadata: Json
+          profile_id: string
+          sent_at: string
+          user_id: string
+        }
+        Insert: {
+          compass_updated_at: string
+          id?: string
+          kind?: string
+          metadata?: Json
+          profile_id: string
+          sent_at?: string
+          user_id: string
+        }
+        Update: {
+          compass_updated_at?: string
+          id?: string
+          kind?: string
+          metadata?: Json
+          profile_id?: string
+          sent_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "relationship_compass_nudges_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       reports: {
         Row: {
@@ -3417,6 +3618,10 @@ export type Database = {
         Args: { p_user_id?: string }
         Returns: Database["public"]["Enums"]["subscription_type"]
       }
+      get_moment_relationship_cue: {
+        Args: { p_peer_profile_id: string; p_profile_id: string }
+        Returns: string
+      }
       get_nearby_users: {
         Args: { p_limit?: number; p_radius_km?: number; p_user_id: string }
         Returns: {
@@ -3979,6 +4184,14 @@ export type Database = {
           status: string
         }[]
       }
+      rpc_get_account_recovery_options: {
+        Args: { p_recovery_token: string }
+        Returns: Json
+      }
+      rpc_get_account_recovery_provider_link_plan: {
+        Args: { p_recovery_token: string }
+        Returns: Json
+      }
       rpc_get_merged_account_redirect: { Args: never; Returns: Json }
       rpc_get_my_premium_state: { Args: never; Returns: Json }
       rpc_get_phone_verification_status: { Args: never; Returns: Json }
@@ -4041,6 +4254,10 @@ export type Database = {
         Args: { p_remind_before?: string; p_window?: string }
         Returns: Json
       }
+      rpc_process_relationship_compass_jobs: {
+        Args: { p_ready_after?: string }
+        Returns: Json
+      }
       rpc_remove_circle_member: {
         Args: { p_circle_id: string; p_member_id: string; p_profile_id: string }
         Returns: boolean
@@ -4063,6 +4280,10 @@ export type Database = {
           plan_id: string
           request_id: string
         }[]
+      }
+      rpc_resolve_recovered_duplicate_shell: {
+        Args: { p_recovery_token: string }
+        Returns: Json
       }
       rpc_send_date_plan:
         | {

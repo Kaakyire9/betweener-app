@@ -37,6 +37,16 @@ export default function MomentsScreen() {
   const params = useLocalSearchParams();
   const startUserIdParam = typeof params.startUserId === 'string' ? params.startUserId : null;
   const startMomentIdParam = typeof params.startMomentId === 'string' ? params.startMomentId : null;
+  const openCommentsParam =
+    typeof params.openComments === 'string'
+      ? ['1', 'true', 'yes'].includes(params.openComments.toLowerCase())
+      : false;
+  const entrySourceParam =
+    typeof params.entrySource === 'string' && (params.entrySource === 'comment' || params.entrySource === 'reaction')
+      ? params.entrySource
+      : null;
+  const highlightCommentIdParam = typeof params.commentId === 'string' ? params.commentId : null;
+  const highlightReactionEmojiParam = typeof params.reactionEmoji === 'string' ? params.reactionEmoji : null;
   const { momentUsers, loading, refresh } = useMoments({
     currentUserId: user?.id,
     currentUserProfile: profile,
@@ -45,6 +55,10 @@ export default function MomentsScreen() {
   const [createVisible, setCreateVisible] = useState(false);
   const [startUserId, setStartUserId] = useState<string | null>(null);
   const [startMomentId, setStartMomentId] = useState<string | null>(null);
+  const [startWithCommentsOpen, setStartWithCommentsOpen] = useState(false);
+  const [startEntrySource, setStartEntrySource] = useState<'comment' | 'reaction' | null>(null);
+  const [startHighlightedCommentId, setStartHighlightedCommentId] = useState<string | null>(null);
+  const [startHighlightedReactionEmoji, setStartHighlightedReactionEmoji] = useState<string | null>(null);
   const [myMoments, setMyMoments] = useState<Moment[]>([]);
   const [myLoading, setMyLoading] = useState(false);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
@@ -87,8 +101,12 @@ export default function MomentsScreen() {
     consumedStartRef.current = startUserIdParam;
     setStartUserId(startUserIdParam);
     setStartMomentId(startMomentIdParam ?? null);
+    setStartWithCommentsOpen(openCommentsParam);
+    setStartEntrySource(entrySourceParam);
+    setStartHighlightedCommentId(highlightCommentIdParam);
+    setStartHighlightedReactionEmoji(highlightReactionEmojiParam);
     setViewerVisible(true);
-  }, [momentUsersWithContent, startMomentIdParam, startUserIdParam]);
+  }, [entrySourceParam, highlightCommentIdParam, highlightReactionEmojiParam, momentUsersWithContent, openCommentsParam, startMomentIdParam, startUserIdParam]);
 
   const fetchMyMoments = useCallback(async () => {
     if (!user?.id) return;
@@ -364,10 +382,18 @@ export default function MomentsScreen() {
         users={momentUsersWithContent}
         startUserId={startUserId}
         startMomentId={startMomentId}
+        startWithCommentsOpen={startWithCommentsOpen}
+        startEntrySource={startEntrySource}
+        startHighlightedCommentId={startHighlightedCommentId}
+        startHighlightedReactionEmoji={startHighlightedReactionEmoji}
         onClose={() => {
           setViewerVisible(false);
           setStartUserId(null);
           setStartMomentId(null);
+          setStartWithCommentsOpen(false);
+          setStartEntrySource(null);
+          setStartHighlightedCommentId(null);
+          setStartHighlightedReactionEmoji(null);
         }}
       />
       <MomentCreateModal

@@ -29,6 +29,7 @@ export interface PhoneVerificationResult {
   error?: string;
   message?: string;
   code?: string;
+  recoveryToken?: string;
 }
 
 /**
@@ -280,6 +281,8 @@ export class PhoneVerificationService {
           success: false,
           error: errorMessage,
           code: typeof data?.code === 'string' ? data.code : undefined,
+          phoneNumber: typeof data?.phoneNumber === 'string' ? data.phoneNumber : cleanedPhone,
+          recoveryToken: typeof data?.recoveryToken === 'string' ? data.recoveryToken : undefined,
         };
       }
       
@@ -371,6 +374,8 @@ export class PhoneVerificationService {
           success: false,
           error: data.error || 'Failed to verify code',
           code: typeof data?.code === 'string' ? data.code : undefined,
+          phoneNumber: typeof data?.phoneNumber === 'string' ? data.phoneNumber : cleanedPhone,
+          recoveryToken: typeof data?.recoveryToken === 'string' ? data.recoveryToken : undefined,
         };
       }
       

@@ -15,12 +15,12 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAppFonts } from "@/constants/fonts";
 import { AuthProvider } from "@/lib/auth-context";
 import AccountRecoveryNotice from "@/components/AccountRecoveryNotice";
+import RecoveryMergeSuggestionNotice from "@/components/RecoveryMergeSuggestionNotice";
 import InAppToasts from "@/components/InAppToasts";
 import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
 import { SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
 import { initPushNotificationUX } from "@/lib/notifications/push";
 import {
-  hasFreshPendingAuthFlow,
   isTrustedAuthCallbackUrl,
   LAST_DEEP_LINK_URL_KEY,
   urlHasAuthPayload,
@@ -62,29 +62,42 @@ function RootLayout() {
   const footerScale = useRef(new Animated.Value(0.94)).current;
   const underlineScale = useRef(new Animated.Value(0.08)).current;
   const orbDrift = useRef(new Animated.Value(0)).current;
+  const authCallbackRouteInFlightRef = useRef(false);
 
   // Handle deep links
   useEffect(() => {
     // Be defensive: any uncaught exception during startup can crash a release build (TestFlight)
     // before we can render a fallback UI.
     try {
-      const maybeStoreAuthCallbackUrl = async (url: string) => {
+      const maybeStoreAuthCallbackUrl = async (url: string, source: "initial" | "listener") => {
         if (!urlHasAuthPayload(url) || !isTrustedAuthCallbackUrl(url)) {
           return;
         }
 
-        const hasPendingFlow = await hasFreshPendingAuthFlow();
-        if (!hasPendingFlow) {
-          return;
+        await AsyncStorage.setItem(LAST_DEEP_LINK_URL_KEY, url);
+
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[root] trusted auth callback captured", { source, url });
         }
 
-        await AsyncStorage.setItem(LAST_DEEP_LINK_URL_KEY, url);
+        if (!authCallbackRouteInFlightRef.current) {
+          authCallbackRouteInFlightRef.current = true;
+          requestAnimationFrame(() => {
+            try {
+              router.replace("/(auth)/callback");
+            } finally {
+              setTimeout(() => {
+                authCallbackRouteInFlightRef.current = false;
+              }, 1200);
+            }
+          });
+        }
       };
 
       Linking.getInitialURL()
         .then((url) => {
           if (url) {
-            void maybeStoreAuthCallbackUrl(url).catch(() => {});
+            void maybeStoreAuthCallbackUrl(url, "initial").catch(() => {});
           }
         })
         .catch((e) => captureException(e, { where: "Linking.getInitialURL" }));
@@ -92,7 +105,7 @@ function RootLayout() {
       const subscription = Linking.addEventListener("url", ({ url }) => {
         try {
           if (url) {
-            void maybeStoreAuthCallbackUrl(url).catch(() => {});
+            void maybeStoreAuthCallbackUrl(url, "listener").catch(() => {});
           }
         } catch (e) {
           captureException(e, { where: "Linking.urlListener" });
@@ -110,7 +123,7 @@ function RootLayout() {
       captureException(e, { where: "Linking.useEffect" });
       return;
     }
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     try {
@@ -132,7 +145,11 @@ function RootLayout() {
 
           // Category actions: treat OPEN_* the same as a normal tap.
           const isDefaultTap = action === Notifications.DEFAULT_ACTION_IDENTIFIER;
-          const isOpenAction = action === "OPEN_CHAT" || action === "OPEN_PROFILE";
+          const isOpenAction =
+            action === "OPEN_CHAT" ||
+            action === "OPEN_PROFILE" ||
+            action === "OPEN_MOMENTS" ||
+            action === "OPEN_COMPASS";
           if (!isDefaultTap && !isOpenAction) {
             // Unknown action; ignore safely.
             return;
@@ -153,21 +170,93 @@ function RootLayout() {
             }
           }
 
-          if (pushType === "moment_reaction" || pushType === "moment_comment") {
-            const startUserId = data?.start_user_id || data?.moment_owner_user_id || data?.user_id;
+          if (pushType === "match") {
+            const chatId = data?.profile_id || data?.user_id;
+            if (chatId) {
+              router.push({
+                pathname: "/chat/[id]",
+                params: {
+                  id: String(chatId),
+                  userName: data?.name ? String(data.name) : "",
+                  userAvatar: data?.avatar_url ? String(data.avatar_url) : "",
+                },
+              });
+              return;
+            }
+          }
+
+          if (pushType === "system_message" && data?.event_type === "request_accepted") {
+            const chatId = data?.profile_id || data?.user_id;
+            if (chatId) {
+              router.push({
+                pathname: "/chat/[id]",
+                params: {
+                  id: String(chatId),
+                  userName: data?.name ? String(data.name) : "",
+                  userAvatar: data?.avatar_url ? String(data.avatar_url) : "",
+                },
+              });
+              return;
+            }
+          }
+
+          if (
+            pushType === "system_message" &&
+            (
+              data?.event_type === "date_plan_accepted" ||
+              data?.event_type === "date_plan_declined" ||
+              data?.event_type === "date_plan_cancelled" ||
+              data?.event_type === "date_plan_concierge_requested"
+            )
+          ) {
+            const chatId = data?.profile_id || data?.user_id;
+            if (chatId) {
+              router.push({
+                pathname: "/chat/[id]",
+                params: {
+                  id: String(chatId),
+                  userName: data?.name ? String(data.name) : "",
+                  userAvatar: data?.avatar_url ? String(data.avatar_url) : "",
+                  datePlanId: data?.date_plan_id ? String(data.date_plan_id) : "",
+                },
+              });
+              return;
+            }
+          }
+
+          if (pushType === "system_message" && data?.event_type === "request_expired") {
+            router.push({
+              pathname: "/(tabs)/intent",
+              params: {
+                requestId: data?.intent_request_id ? String(data.intent_request_id) : "",
+              },
+            });
+            return;
+          }
+
+          if (pushType === "moment_post" || pushType === "moment_reaction" || pushType === "moment_comment") {
+            const startUserId =
+              data?.start_user_id ||
+              data?.poster_user_id ||
+              data?.moment_owner_user_id ||
+              data?.user_id;
             const momentId = data?.moment_id || data?.momentId;
             router.push({
               pathname: "/moments",
               params: {
                 startUserId: startUserId ? String(startUserId) : "",
                 startMomentId: momentId ? String(momentId) : "",
+                openComments: pushType === "moment_comment" ? "1" : "",
+                entrySource: pushType === "moment_comment" ? "comment" : pushType === "moment_reaction" ? "reaction" : "",
+                commentId: pushType === "moment_comment" && data?.comment_id ? String(data.comment_id) : "",
+                reactionEmoji: pushType === "moment_reaction" && data?.emoji ? String(data.emoji) : pushType === "moment_reaction" && data?.reaction_emoji ? String(data.reaction_emoji) : "",
               },
             });
             return;
           }
 
           // Intent reminders: route to the Intent inbox (actionable view) so users can accept/pass quickly.
-          if (pushType === "intent_expiring_soon" || pushType === "intent_last_chance") {
+          if (pushType === "intent_request" || pushType === "intent_expiring_soon" || pushType === "intent_last_chance") {
             const requestId = data?.request_id || data?.requestId;
             const requestType = data?.request_type || data?.requestType;
             router.push({
@@ -178,6 +267,21 @@ function RootLayout() {
                 type: requestType ? String(requestType) : "",
               },
             });
+            return;
+          }
+
+          if (pushType === "verification_outcome") {
+            router.push({
+              pathname: "/(tabs)/profile",
+              params: {
+                openVerification: "true",
+              },
+            });
+            return;
+          }
+
+          if (pushType === "relationship_compass_ready") {
+            router.push("/relationship-compass");
             return;
           }
 
@@ -449,6 +553,7 @@ function RootLayout() {
           <Slot />
           <InAppToasts />
           <AccountRecoveryNotice />
+          <RecoveryMergeSuggestionNotice />
 
           {!SUPABASE_IS_CONFIGURED && (
             <View style={styles.envBanner} pointerEvents="none">

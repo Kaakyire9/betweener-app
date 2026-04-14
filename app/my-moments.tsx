@@ -185,6 +185,7 @@ export default function MyMomentsScreen() {
     return [
       {
         userId: user.id,
+        profileId: profile?.id ?? null,
         name: profile?.full_name || 'You',
         avatarUrl: profile?.avatar_url || null,
         moments: viewerMoments,
@@ -192,7 +193,7 @@ export default function MyMomentsScreen() {
         isOwn: true,
       },
     ];
-  }, [profile?.avatar_url, profile?.full_name, user?.id, viewerMoments]);
+  }, [profile?.avatar_url, profile?.full_name, profile?.id, user?.id, viewerMoments]);
 
   const openViewer = (momentId?: string) => {
     if (!user?.id || moments.length === 0) return;

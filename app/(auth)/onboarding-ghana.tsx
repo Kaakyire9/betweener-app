@@ -52,7 +52,7 @@ const REGIONS = [
   "Western",
   "Western North",
 ];
-const TRIBES = [
+const ROOTS_OPTIONS = [
   "Asante",
   "Fante",
   "Akuapem",
@@ -65,8 +65,15 @@ const TRIBES = [
   "Ga",
   "Ewe",
   "Mole-Dagbon",
+  "Mixed",
+  "Other",
 ];
 const RELIGIONS = ["Christian", "Muslim", "Traditionalist", "Other"];
+const ROOTS_VISIBILITY_OPTIONS = [
+  { value: "VISIBLE", label: "Visible on profile" },
+  { value: "MATCHES_ONLY", label: "Matches only" },
+  { value: "HIDDEN", label: "Hidden for now" },
+];
 const INTERESTS = [
   "Afrobeats",
   "Football",
@@ -125,7 +132,9 @@ export default function Onboarding() {
     bio: "",
     occupation: "",
     region: "",
-    tribe: "",
+    roots: [] as string[],
+    rootsNote: "",
+    rootsVisibility: "VISIBLE",
     religion: "",
     interests: [] as string[],
     minAgeInterest: "18",
@@ -155,6 +164,21 @@ export default function Onboarding() {
     opacity: new Animated.Value(0),
     scale: new Animated.Value(0.6),
   }))).current;
+
+  const normalizeRoots = (values: string[]) =>
+    Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+
+  const handleRootToggle = (value: string) => {
+    setForm((prev) => {
+      const current = normalizeRoots(prev.roots);
+      const next = current.includes(value)
+        ? current.filter((root) => root !== value)
+        : [...current, value];
+
+      return { ...prev, roots: next };
+    });
+    setErrors((prev) => ({ ...prev, roots: "" }));
+  };
 
   const pickImage = async () => {
     try {
@@ -197,7 +221,7 @@ export default function Onboarding() {
         break;
       case 3: // Location
         if (!form.region) newErrors.region = "Region is required.";
-        if (!form.tribe) newErrors.tribe = "Tribe is required.";
+        if (normalizeRoots(form.roots).length === 0) newErrors.roots = "Pick at least one root.";
         if (!form.religion) newErrors.religion = "Religion is required.";
         break;
       case 4: // Preferences
@@ -392,6 +416,8 @@ export default function Onboarding() {
         return;
       }
       
+      const normalizedRoots = normalizeRoots(form.roots);
+      const rootsNote = form.rootsNote.trim();
       const profileData = {
         full_name: form.fullName,
         age: Number(form.age),
@@ -402,7 +428,10 @@ export default function Onboarding() {
             ? customOccupation.trim()
             : form.occupation,
         region: form.region,
-        tribe: form.tribe,
+        tribe: normalizedRoots[0] ?? null,
+        roots: normalizedRoots.length > 0 ? normalizedRoots : null,
+        roots_note: rootsNote || null,
+        roots_visibility: String(form.rootsVisibility || "VISIBLE").toUpperCase(),
         religion: form.religion.toUpperCase() as any,
         avatar_url: imageUrl,
         phone_number: phoneNumber,
@@ -415,6 +444,9 @@ export default function Onboarding() {
         current_country_code: "GH",
         years_in_diaspora: 0,
         profile_completed: true,
+        identity_status: "active",
+        onboarding_completed_at: new Date().toISOString(),
+        identity_finalized_at: new Date().toISOString(),
       };
 
       const { error: updateError } = await withTimeout("profile_upsert", updateProfile(profileData), 20_000);
@@ -1037,33 +1069,89 @@ export default function Onboarding() {
 
         <View style={styles.inputContainer}>
           <View style={styles.labelRow}>
-            <Text style={styles.labelInline}>Tribe</Text>
+            <Text style={styles.labelInline}>Roots</Text>
             <View style={styles.requiredBadge}>
               <Text style={styles.requiredBadgeText}>Required</Text>
             </View>
           </View>
+          <Text style={styles.inputHint}>
+            Pick one or more roots that matter to you culturally.
+          </Text>
           <View style={styles.optionsGrid}>
-            {TRIBES.map((tribe) => (
-              <TouchableOpacity
-                key={tribe}
-                style={[
-                  styles.gridOption,
-                  form.tribe === tribe && styles.gridOptionSelected,
-                ]}
-                onPress={() => setForm((prev) => ({ ...prev, tribe }))}
-              >
-                <Text
+            {ROOTS_OPTIONS.map((root) => {
+              const selected = form.roots.includes(root);
+              return (
+                <TouchableOpacity
+                  key={root}
                   style={[
-                    styles.gridOptionText,
-                    form.tribe === tribe && styles.gridOptionTextSelected,
+                    styles.gridOption,
+                    selected && styles.gridOptionSelected,
                   ]}
+                  onPress={() => handleRootToggle(root)}
                 >
-                  {tribe}
-                </Text>
-              </TouchableOpacity>
-            ))}
+                  <Text
+                    style={[
+                      styles.gridOptionText,
+                      selected && styles.gridOptionTextSelected,
+                    ]}
+                  >
+                    {root}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
-          {errors.tribe && <Text style={styles.errorText}>{errors.tribe}</Text>}
+          {errors.roots && <Text style={styles.errorText}>{errors.roots}</Text>}
+        </View>
+
+        <View style={styles.inputContainer}>
+          <View style={styles.labelRow}>
+            <Text style={styles.labelInline}>How you identify</Text>
+          </View>
+          <TextInput
+            style={[
+              styles.textArea,
+              focusedField === "rootsNote" && styles.textAreaFocused,
+            ]}
+            value={form.rootsNote}
+            onChangeText={(text) => setForm((prev) => ({ ...prev, rootsNote: text }))}
+            placeholder="Optional: Half Ewe, half Ashanti"
+            placeholderTextColor="#9ca3af"
+            onFocus={() => setFocusedField("rootsNote")}
+            onBlur={() => setFocusedField(null)}
+            multiline
+            numberOfLines={3}
+          />
+        </View>
+
+        <View style={styles.inputContainer}>
+          <View style={styles.labelRow}>
+            <Text style={styles.labelInline}>Roots visibility</Text>
+          </View>
+          <View style={styles.optionsGrid}>
+            {ROOTS_VISIBILITY_OPTIONS.map((option) => {
+              const selected = form.rootsVisibility === option.value;
+              return (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[
+                    styles.gridOption,
+                    selected && styles.gridOptionSelected,
+                  ]}
+                  onPress={() => setForm((prev) => ({ ...prev, rootsVisibility: option.value }))}
+                >
+                  <Text
+                    style={[
+                      styles.gridOptionText,
+                      selected && styles.gridOptionTextSelected,
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </View>
 
         <View style={styles.inputContainer}>

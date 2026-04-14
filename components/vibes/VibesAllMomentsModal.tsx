@@ -1,6 +1,7 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { MomentUser } from '@/hooks/useMoments';
+import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -130,10 +131,11 @@ export default function VibesAllMomentsModal({
   const renderItem = useCallback(
     ({ item }: { item: MomentUser }) => {
       const lastAt = item.latestMoment?.created_at;
+      const safeAvatarUrl = getSafeRemoteImageUri(item.avatarUrl);
       return (
         <TouchableOpacity style={styles.row} onPress={() => onPressUser(item.userId)} activeOpacity={0.85}>
-          {item.avatarUrl ? (
-            <Image source={{ uri: item.avatarUrl }} style={styles.avatar} />
+          {safeAvatarUrl ? (
+            <Image source={{ uri: safeAvatarUrl }} style={styles.avatar} />
           ) : (
             <View style={styles.avatarFallback}>
               <Text style={styles.avatarFallbackText}>{item.name.slice(0, 1).toUpperCase()}</Text>

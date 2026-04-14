@@ -183,7 +183,7 @@ export default function VerifyPhoneScreen() {
     );
   };
 
-  const handleRecoveryRequired = async ({ phoneNumber }: { phoneNumber: string }) => {
+  const handleRecoveryRequired = async ({ phoneNumber, recoveryToken }: { phoneNumber: string; recoveryToken?: string }) => {
     const metadata = await consumeSignupMetadata();
     const metadataMethod =
       metadata.auth_method === "oauth"
@@ -197,6 +197,7 @@ export default function VerifyPhoneScreen() {
       pathname: "/(auth)/account-recovery",
       params: {
         phoneNumber,
+        ...(recoveryToken ? { recoveryToken } : {}),
         currentMethod,
         next: nextRoute ?? "",
         reason: reason ?? "",

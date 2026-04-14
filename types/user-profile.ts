@@ -40,6 +40,9 @@ export type UserProfile = {
   distanceKm?: number;
   isActiveNow: boolean;
   tribe?: string;
+  roots?: string[];
+  rootsNote?: string;
+  rootsVisibility?: 'VISIBLE' | 'HIDDEN' | 'MATCHES_ONLY' | string;
   religion?: string;
   personalityType?: string;
   height?: string;

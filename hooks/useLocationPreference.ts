@@ -1,6 +1,8 @@
 import { supabase } from '@/lib/supabase';
 
-type Result = { ok: true } | { ok: false; error: string };
+type Result =
+  | { ok: true }
+  | { ok: false; error: string; permissionDenied?: boolean };
 
 /**
  * Request foreground location permission, fetch current coords, and persist
@@ -18,7 +20,7 @@ export async function requestAndSavePreciseLocation(profileId: string): Promise<
   try {
     const { status } = await Location.requestForegroundPermissionsAsync();
     if (status !== 'granted') {
-      return { ok: false, error: 'Location permission was denied.' };
+      return { ok: false, error: 'Location permission was denied.', permissionDenied: true };
     }
 
     const { coords } = await Location.getCurrentPositionAsync({
@@ -37,6 +39,11 @@ export async function requestAndSavePreciseLocation(profileId: string): Promise<
       .update({
         latitude,
         longitude,
+        city: null,
+        region: null,
+        location: null,
+        current_country: null,
+        current_country_code: null,
         location_precision: 'EXACT',
         location_updated_at: new Date().toISOString(),
       })

@@ -16,6 +16,7 @@ module.exports = ({ config }) => {
     process.env.EXPO_PUBLIC_ENVIRONMENT === 'development' ? 'development' : 'production';
   return {
     ...config,
+    newArchEnabled: false,
     plugins: [
       // Keep this plugin first so the NSE target is present before other iOS plugins run.
       [
@@ -38,7 +39,12 @@ module.exports = ({ config }) => {
           },
         },
       ],
-      'react-native-vision-camera',
+      [
+        'react-native-vision-camera',
+        {
+          enableFrameProcessors: true,
+        },
+      ],
       ...(config.plugins ?? []),
       'expo-secure-store',
       'expo-audio',

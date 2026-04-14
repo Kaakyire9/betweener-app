@@ -6,6 +6,9 @@ import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
 import { computeFirstReplyHours, computeInterestOverlapRatio } from '@/lib/match/match-score';
 import { Motion } from '@/lib/motion';
+import { fetchPeerVisibilityPrefs } from '@/lib/peer-visibility';
+import { getSafeRemoteImageUri, getUserFacingDisplayName, hasLeftBetweener } from '@/lib/profile/display-name';
+import { getProfileInitials, getProfilePlaceholderPalette } from '@/lib/profile-placeholders';
 import { readCache, writeCache } from '@/lib/persisted-cache';
 import { supabase } from '@/lib/supabase';
 import { getViewedProfileTrustChips } from '@/lib/viewed-profile-premium';
@@ -18,7 +21,7 @@ import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, Image, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, Image, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Animated, {
   FadeIn,
   FadeInDown,
@@ -35,13 +38,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import IntentRequestSheet from '@/components/IntentRequestSheet';
 
 type Direction = 'incoming' | 'sent';
-type Filter = 'action' | 'all' | 'accepted' | 'passed';
+type Filter = 'action' | 'all' | 'accepted' | 'passed' | 'archived';
 type TypeFilter = 'all' | IntentRequestType;
 
 type ProfileSnippet = {
   id: string;
   user_id?: string | null;
   full_name?: string | null;
+  account_state?: string | null;
+  deleted_at?: string | null;
   avatar_url?: string | null;
   photos?: string[] | null;
   age?: number | null;
@@ -683,6 +688,8 @@ export default function IntentScreen() {
   const [deepLinkRequestId, setDeepLinkRequestId] = useState<string | null>(null);
   const deepLinkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [profiles, setProfiles] = useState<Record<string, ProfileSnippet>>({});
+  const [hiddenPeerUserIds, setHiddenPeerUserIds] = useState<Record<string, true>>({});
+  const [archivedPeerUserIds, setArchivedPeerUserIds] = useState<Record<string, true>>({});
   const [myInterests, setMyInterests] = useState<string[]>([]);
   const [interestsByProfile, setInterestsByProfile] = useState<Record<string, string[]>>({});
   const [myProfile, setMyProfile] = useState<ProfileSnippet | null>(null);
@@ -796,7 +803,7 @@ export default function IntentScreen() {
       }
       const { data } = await supabase
         .from('profiles')
-        .select('id,user_id,full_name,avatar_url,photos,age,location,city,region,looking_for,love_language,personality_type,religion,wants_children,smoking,verification_level')
+        .select('id,user_id,full_name,account_state,deleted_at,avatar_url,photos,age,location,city,region,looking_for,love_language,personality_type,religion,wants_children,smoking,verification_level')
         .in('id', relevantIds);
       if (cancelled) return;
       const map: Record<string, ProfileSnippet> = {};
@@ -811,6 +818,40 @@ export default function IntentScreen() {
       cancelled = true;
     };
   }, [relevantIds]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const peerUserIds = Array.from(
+      new Set(
+        Object.values(profiles)
+          .map((entry) => (typeof entry?.user_id === 'string' ? entry.user_id : null))
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+
+    const loadPeerVisibility = async () => {
+      if (!user?.id || peerUserIds.length === 0) {
+        setHiddenPeerUserIds({});
+        setArchivedPeerUserIds({});
+        return;
+      }
+      const prefs = await fetchPeerVisibilityPrefs(user.id, peerUserIds);
+      if (cancelled) return;
+      const nextHidden: Record<string, true> = {};
+      const nextArchived: Record<string, true> = {};
+      Object.entries(prefs).forEach(([peerUserId, pref]) => {
+        if (pref.hidden) nextHidden[peerUserId] = true;
+        if (pref.archived && !pref.hidden) nextArchived[peerUserId] = true;
+      });
+      setHiddenPeerUserIds(nextHidden);
+      setArchivedPeerUserIds(nextArchived);
+    };
+
+    void loadPeerVisibility();
+    return () => {
+      cancelled = true;
+    };
+  }, [profiles, user?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -925,7 +966,13 @@ export default function IntentScreen() {
     const list = direction === 'incoming' ? incoming : sent;
     if (direction === 'sent' && filter === 'action') return [];
     return list.filter((item) => {
+      const peerProfileId = direction === 'incoming' ? item.actor_id : item.recipient_id;
+      const peerUserId = peerProfileId ? profiles[peerProfileId]?.user_id : null;
+      if (peerUserId && hiddenPeerUserIds[peerUserId]) return false;
       if (typeFilter !== 'all' && item.type !== typeFilter) return false;
+      const isArchivedPeer = Boolean(peerUserId && archivedPeerUserIds[peerUserId]);
+      if (filter === 'archived') return isArchivedPeer;
+      if (isArchivedPeer) return false;
       if (filter === 'action') {
         return item.status === 'pending' && !isExpired(item);
       }
@@ -933,7 +980,7 @@ export default function IntentScreen() {
       if (filter === 'passed') return item.status === 'passed' || item.status === 'matched';
       return true;
     });
-  }, [direction, filter, incoming, sent, typeFilter]);
+  }, [archivedPeerUserIds, direction, filter, hiddenPeerUserIds, incoming, profiles, sent, typeFilter]);
 
   const sortedFiltered = useMemo(() => {
     const list = [...filtered];
@@ -1083,7 +1130,7 @@ export default function IntentScreen() {
 
       return {
         id: item.actor_id,
-        name: actor?.full_name || 'Someone',
+        name: getUserFacingDisplayName(actor, 'Someone'),
         age: actor?.age ?? 0,
         avatar_url: actor?.avatar_url || undefined,
         location: actor?.city || actor?.region || actor?.location || undefined,
@@ -1162,6 +1209,111 @@ export default function IntentScreen() {
     await refresh();
   }, [refresh]);
 
+  const savePeerVisibilityPref = useCallback(
+    async (peerUserId: string, next: { archived: boolean; hidden: boolean }) => {
+      if (!user?.id) return false;
+      const { error } = await supabase
+        .from('peer_visibility_prefs')
+        .upsert(
+          {
+            user_id: user.id,
+            peer_user_id: peerUserId,
+            archived: next.archived,
+            hidden: next.hidden,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'user_id,peer_user_id' },
+        );
+
+      if (error) {
+        console.log('[intent] peer visibility save error', error);
+        return false;
+      }
+
+      setHiddenPeerUserIds((prev) => {
+        const updated = { ...prev };
+        if (next.hidden) updated[peerUserId] = true;
+        else delete updated[peerUserId];
+        return updated;
+      });
+      setArchivedPeerUserIds((prev) => {
+        const updated = { ...prev };
+        if (next.archived && !next.hidden) updated[peerUserId] = true;
+        else delete updated[peerUserId];
+        return updated;
+      });
+      return true;
+    },
+    [user?.id],
+  );
+
+  const openIntentVisibilityMenu = useCallback(
+    ({
+      peerUserId,
+      peerName,
+      peerHasLeft,
+      isArchived,
+    }: {
+      peerUserId: string | null | undefined;
+      peerName: string;
+      peerHasLeft: boolean;
+      isArchived: boolean;
+    }) => {
+      if (!peerUserId) return;
+
+      if (peerHasLeft) {
+        Alert.alert(
+          'Remove from Intent',
+          `${peerName} will disappear from your Intent surfaces on this device.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Remove',
+              style: 'destructive',
+              onPress: () => {
+                void (async () => {
+                  const ok = await savePeerVisibilityPref(peerUserId, { archived: false, hidden: true });
+                  if (!ok) Alert.alert('Remove', 'Unable to remove this request right now.');
+                })();
+              },
+            },
+          ],
+        );
+        return;
+      }
+
+      if (isArchived) {
+        Alert.alert('Unarchive request', 'Bring this request back into your main Intent list?', [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Unarchive',
+            onPress: () => {
+              void (async () => {
+                const ok = await savePeerVisibilityPref(peerUserId, { archived: false, hidden: false });
+                if (!ok) Alert.alert('Unarchive', 'Unable to update this request right now.');
+              })();
+            },
+          },
+        ]);
+        return;
+      }
+
+      Alert.alert('Archive request', 'Move this request out of your main Intent list. You can still find it in Archived.', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Archive',
+          onPress: () => {
+            void (async () => {
+              const ok = await savePeerVisibilityPref(peerUserId, { archived: true, hidden: false });
+              if (!ok) Alert.alert('Archive', 'Unable to archive this request right now.');
+            })();
+          },
+        },
+      ]);
+    },
+    [savePeerVisibilityPref],
+  );
+
   const resendIntent = useCallback(
     (peerId: string, peerName: string | null, intentType: IntentRequestType, prefill: string | null) => {
       setIntentTarget({ id: peerId, name: peerName });
@@ -1177,15 +1329,18 @@ export default function IntentScreen() {
       const isIncoming = direction === 'incoming';
       const peerId = isIncoming ? item.actor_id : item.recipient_id;
       const peer = profiles[peerId];
-      const name = peer?.full_name || 'Someone';
+      const peerUserId = peer?.user_id;
+      const peerHasLeft = hasLeftBetweener(peer);
+      const isArchivedPeer = Boolean(peerUserId && archivedPeerUserIds[peerUserId]);
+      const name = getUserFacingDisplayName(peer, 'Someone');
       const location = peer?.city || peer?.region || peer?.location || '';
+      const metaLine = peerHasLeft ? 'No longer on Betweener' : location || 'Location hidden';
       const peerInterests = Array.isArray(interestsByProfile[peerId]) ? interestsByProfile[peerId] : [];
       const sharedInterests = myInterests.length
         ? peerInterests.filter((i) => myInterests.includes(i)).slice(0, 3)
         : [];
       const isVerified = (profile?.verification_level ?? 0) >= 1 && (peer?.verification_level ?? 0) >= 1;
       const interestOverlapRatio = computeInterestOverlapRatio(myInterests, peerInterests) ?? undefined;
-      const peerUserId = peer?.user_id;
       const matchKey = peerUserId && user?.id ? matchKeyFor(user.id, peerUserId) : null;
       const matchMetricsEntry = matchKey ? matchMetrics[matchKey] : undefined;
       const meta = (item.metadata || {}) as any;
@@ -1193,8 +1348,8 @@ export default function IntentScreen() {
       const guessPromptCorrect = String(meta?.guess_outcome || '').toLowerCase() === 'correct';
       const isGuessPromptIntent = item.type === 'connect' && guessPromptSource && guessPromptCorrect;
       const photos = Array.isArray(peer?.photos) ? peer?.photos.filter(Boolean) : [];
-      const previewPhotos = photos.slice(0, 3);
-      const avatarUri = peer?.avatar_url ?? previewPhotos[0] ?? null;
+      const previewPhotos = photos.map((photo) => getSafeRemoteImageUri(photo)).filter(Boolean) as string[];
+      const avatarUri = getSafeRemoteImageUri(peer?.avatar_url) ?? previewPhotos[0] ?? null;
       const primaryPhoto = previewPhotos[0] ?? null;
       const secondaryPhotos = previewPhotos.slice(1, 3);
       const singlePhotoDuplicatesAvatar = Boolean(primaryPhoto) && Boolean(avatarUri) && secondaryPhotos.length === 0 && primaryPhoto === avatarUri;
@@ -1351,8 +1506,10 @@ export default function IntentScreen() {
             style={[
               styles.card,
               isClosedCard && styles.cardClosed,
+              isArchivedPeer && styles.cardArchived,
               highlightIncoming && styles.cardIncoming,
               highlightIncoming && urgent && styles.cardIncomingUrgent,
+              peerHasLeft && styles.cardLeftBetweener,
               deepLinkRequestId && item.id === deepLinkRequestId && styles.cardDeepLinked,
             ]}
             entering={
@@ -1372,39 +1529,73 @@ export default function IntentScreen() {
               {avatarUri ? (
                 <Image source={{ uri: avatarUri }} style={styles.requestAvatarImage} />
               ) : (
-                <View style={styles.requestAvatarFallback}>
-                  <MaterialCommunityIcons name="account-circle" size={42} color={theme.textMuted} />
-                </View>
+                <LinearGradient
+                  colors={
+                    peerHasLeft
+                      ? [isDark ? '#6E5B4B' : '#A18873', isDark ? '#8B7662' : '#C7B8A5']
+                      : [
+                          getProfilePlaceholderPalette(peerId || name).start,
+                          getProfilePlaceholderPalette(peerId || name).end,
+                        ]
+                  }
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={[styles.requestAvatarFallback, peerHasLeft && styles.requestAvatarFallbackLeft]}
+                >
+                  <Text style={styles.requestAvatarFallbackText}>{getProfileInitials(name)}</Text>
+                </LinearGradient>
               )}
             </View>
             <View style={styles.requestContent}>
               <View style={styles.requestHeaderRow}>
                 <View style={styles.requestTitleWrap}>
                   <Text style={styles.requestName}>{name}</Text>
-                  <Text style={styles.requestMeta}>{location || 'Location hidden'}</Text>
+                  <Text style={[styles.requestMeta, peerHasLeft && styles.requestMetaLeft]}>{metaLine}</Text>
                 </View>
-                <View style={styles.pillWrap}>
-                  <PillPulse active={highlightIncoming} reduceMotion={reduceMotion} color={theme.tint} />
-                  <View
-                    style={[
-                      styles.statusPill,
-                      statusTone === 'good' && styles.statusPillGood,
-                      statusTone === 'info' && styles.statusPillInfo,
-                      statusTone === 'warn' && styles.statusPillWarn,
-                      statusTone === 'muted' && styles.statusPillMuted,
-                    ]}
-                  >
-                    <Text
+                <View style={styles.requestHeaderActions}>
+                  <View style={styles.pillWrap}>
+                    <PillPulse active={highlightIncoming} reduceMotion={reduceMotion} color={theme.tint} />
+                    <View
                       style={[
-                        styles.statusText,
-                        statusTone === 'good' && styles.statusTextGood,
-                        statusTone === 'info' && styles.statusTextInfo,
-                        statusTone === 'warn' && styles.statusTextWarn,
+                        styles.statusPill,
+                        statusTone === 'good' && styles.statusPillGood,
+                        statusTone === 'info' && styles.statusPillInfo,
+                        statusTone === 'warn' && styles.statusPillWarn,
+                        statusTone === 'muted' && styles.statusPillMuted,
                       ]}
                     >
-                      {statusLabel}
-                    </Text>
+                      <Text
+                        style={[
+                          styles.statusText,
+                          statusTone === 'good' && styles.statusTextGood,
+                          statusTone === 'info' && styles.statusTextInfo,
+                          statusTone === 'warn' && styles.statusTextWarn,
+                        ]}
+                      >
+                        {statusLabel}
+                      </Text>
+                    </View>
                   </View>
+                  {peerUserId ? (
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() =>
+                        openIntentVisibilityMenu({
+                          peerUserId,
+                          peerName: name,
+                          peerHasLeft,
+                          isArchived: isArchivedPeer,
+                        })
+                      }
+                      style={[styles.requestOverflowButton, peerHasLeft && styles.requestOverflowButtonLeft]}
+                    >
+                      <MaterialCommunityIcons
+                        name="dots-horizontal"
+                        size={18}
+                        color={peerHasLeft ? (isDark ? '#D6C0AA' : '#8E735A') : theme.textMuted}
+                      />
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
               </View>
               <View style={styles.badgeRow}>
@@ -1593,14 +1784,16 @@ export default function IntentScreen() {
                 >
                   <Text style={styles.ghostText}>Quick reply</Text>
                 </AnimatedPressable>
-                <AnimatedPressable
-                  reduceMotion={reduceMotion}
-                  onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-                  onPress={() => router.push({ pathname: '/profile-view', params: { profileId: String(peerId) } })}
-                  style={[styles.profileButton, styles.actionWide]}
-                >
-                  <Text style={styles.profileText}>View Profile</Text>
-                </AnimatedPressable>
+                {!peerHasLeft ? (
+                  <AnimatedPressable
+                    reduceMotion={reduceMotion}
+                    onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                    onPress={() => router.push({ pathname: '/profile-view', params: { profileId: String(peerId) } })}
+                    style={[styles.profileButton, styles.actionWide]}
+                  >
+                    <Text style={styles.profileText}>View Profile</Text>
+                  </AnimatedPressable>
+                ) : null}
               </>
             ) : null}
 
@@ -1614,14 +1807,16 @@ export default function IntentScreen() {
                 >
                   <Text style={styles.secondaryText}>Cancel</Text>
                 </AnimatedPressable>
-                <AnimatedPressable
-                  reduceMotion={reduceMotion}
-                  onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-                  onPress={() => router.push({ pathname: '/profile-view', params: { profileId: String(peerId) } })}
-                  style={[styles.profileButton, styles.actionWide]}
-                >
-                  <Text style={styles.profileText}>Preview profile</Text>
-                </AnimatedPressable>
+                {!peerHasLeft ? (
+                  <AnimatedPressable
+                    reduceMotion={reduceMotion}
+                    onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                    onPress={() => router.push({ pathname: '/profile-view', params: { profileId: String(peerId) } })}
+                    style={[styles.profileButton, styles.actionWide]}
+                  >
+                    <Text style={styles.profileText}>Preview profile</Text>
+                  </AnimatedPressable>
+                ) : null}
               </>
             ) : null}
 
@@ -1646,14 +1841,16 @@ export default function IntentScreen() {
                     <Text style={styles.ghostText}>See similar people</Text>
                   </AnimatedPressable>
                 )}
-                <AnimatedPressable
-                  reduceMotion={reduceMotion}
-                  onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-                  onPress={() => router.push({ pathname: '/profile-view', params: { profileId: String(peerId) } })}
-                  style={[styles.profileButton, styles.actionWide]}
-                >
-                  <Text style={styles.profileText}>View profile</Text>
-                </AnimatedPressable>
+                {!peerHasLeft ? (
+                  <AnimatedPressable
+                    reduceMotion={reduceMotion}
+                    onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                    onPress={() => router.push({ pathname: '/profile-view', params: { profileId: String(peerId) } })}
+                    style={[styles.profileButton, styles.actionWide]}
+                  >
+                    <Text style={styles.profileText}>View profile</Text>
+                  </AnimatedPressable>
+                ) : null}
               </>
             ) : null}
 
@@ -1665,16 +1862,20 @@ export default function IntentScreen() {
                   onPress={() => openChat(peerId, name, peer?.avatar_url, autoClosedByMatch ? quickReply : null)}
                   style={[styles.primaryButton, styles.actionWide]}
                 >
-                  <Text style={styles.primaryText}>{canMessage ? 'Message' : 'Open chat'}</Text>
+                  <Text style={styles.primaryText}>
+                    {peerHasLeft ? 'Open history' : canMessage ? 'Message' : 'Open chat'}
+                  </Text>
                 </AnimatedPressable>
-                <AnimatedPressable
-                  reduceMotion={reduceMotion}
-                  onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-                  onPress={() => router.push({ pathname: '/profile-view', params: { profileId: String(peerId) } })}
-                  style={[styles.profileButton, styles.actionWide]}
-                >
-                  <Text style={styles.profileText}>Preview profile</Text>
-                </AnimatedPressable>
+                {!peerHasLeft ? (
+                  <AnimatedPressable
+                    reduceMotion={reduceMotion}
+                    onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                    onPress={() => router.push({ pathname: '/profile-view', params: { profileId: String(peerId) } })}
+                    style={[styles.profileButton, styles.actionWide]}
+                  >
+                    <Text style={styles.profileText}>Preview profile</Text>
+                  </AnimatedPressable>
+                ) : null}
               </>
             ) : null}
 
@@ -1688,14 +1889,16 @@ export default function IntentScreen() {
                 >
                   <Text style={styles.primaryText}>Send again</Text>
                 </AnimatedPressable>
-                <AnimatedPressable
-                  reduceMotion={reduceMotion}
-                  onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-                  onPress={() => router.push({ pathname: '/profile-view', params: { profileId: String(peerId) } })}
-                  style={[styles.profileButton, styles.actionWide]}
-                >
-                  <Text style={styles.profileText}>Preview profile</Text>
-                </AnimatedPressable>
+                {!peerHasLeft ? (
+                  <AnimatedPressable
+                    reduceMotion={reduceMotion}
+                    onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                    onPress={() => router.push({ pathname: '/profile-view', params: { profileId: String(peerId) } })}
+                    style={[styles.profileButton, styles.actionWide]}
+                  >
+                    <Text style={styles.profileText}>Preview profile</Text>
+                  </AnimatedPressable>
+                ) : null}
               </>
             ) : null}
           </View>
@@ -1720,6 +1923,8 @@ export default function IntentScreen() {
       reduceMotion,
       styles,
       theme.textMuted,
+      archivedPeerUserIds,
+      openIntentVisibilityMenu,
       user?.id,
     ],
   );
@@ -1729,6 +1934,7 @@ export default function IntentScreen() {
     { key: 'all', label: 'All' },
     { key: 'accepted', label: 'Accepted' },
     { key: 'passed', label: 'Passed' },
+    { key: 'archived', label: 'Archived' },
   ];
 
   const emptyCopy = useMemo(() => {
@@ -1736,8 +1942,10 @@ export default function IntentScreen() {
       if (filter === 'all') return 'No sent intents yet.';
       if (filter === 'accepted') return 'No accepted intents yet.';
       if (filter === 'passed') return 'No passed intents yet.';
+      if (filter === 'archived') return 'Nothing archived right now.';
       return 'Nothing to take action on yet.';
     }
+    if (filter === 'archived') return 'Nothing archived right now.';
     if (filter === 'action') return 'No requests right now.';
     if (filter === 'all') return 'Your requests feed is quiet.';
     return 'Nothing here yet.';
@@ -2832,6 +3040,16 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       shadowOpacity: isDark ? 0.14 : 0.04,
       elevation: 1,
     },
+    cardArchived: {
+      borderColor: isDark ? 'rgba(183, 193, 190, 0.12)' : 'rgba(31,42,42,0.06)',
+      backgroundColor: isDark ? 'rgba(245,248,247,0.024)' : 'rgba(248, 249, 247, 0.92)',
+      shadowOpacity: isDark ? 0.09 : 0.03,
+    },
+    cardLeftBetweener: {
+      borderColor: isDark ? 'rgba(196, 171, 145, 0.18)' : 'rgba(188, 164, 140, 0.18)',
+      backgroundColor: isDark ? 'rgba(232, 219, 203, 0.04)' : 'rgba(247, 240, 232, 0.92)',
+      shadowOpacity: isDark ? 0.12 : 0.035,
+    },
     cardIncoming: {
       borderColor: isDark ? 'rgba(0,160,160,0.35)' : 'rgba(0,160,160,0.22)',
       backgroundColor: isDark ? 'rgba(0,160,160,0.06)' : theme.backgroundSubtle,
@@ -2876,9 +3094,17 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderRadius: 27,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: theme.backgroundSubtle,
       borderWidth: 1,
-      borderColor: theme.outline,
+      borderColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(31,42,42,0.12)',
+    },
+    requestAvatarFallbackLeft: {
+      borderColor: isDark ? 'rgba(248, 236, 221, 0.16)' : 'rgba(143, 112, 84, 0.18)',
+    },
+    requestAvatarFallbackText: {
+      color: Colors.light.background,
+      fontSize: 18,
+      fontWeight: '800',
+      letterSpacing: 0.4,
     },
     requestContent: {
       flex: 1,
@@ -2895,6 +3121,11 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flex: 1,
       gap: 3,
     },
+    requestHeaderActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
     requestName: {
       fontSize: 16,
       fontWeight: '700',
@@ -2903,6 +3134,24 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     requestMeta: {
       fontSize: 12,
       color: theme.textMuted,
+    },
+    requestMetaLeft: {
+      color: isDark ? '#D6C0AA' : '#8E735A',
+      fontWeight: '600',
+    },
+    requestOverflowButton: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(31,42,42,0.08)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(255,255,255,0.62)',
+    },
+    requestOverflowButtonLeft: {
+      borderColor: isDark ? 'rgba(214, 192, 170, 0.14)' : 'rgba(143, 112, 84, 0.14)',
+      backgroundColor: isDark ? 'rgba(214, 192, 170, 0.04)' : 'rgba(248, 242, 235, 0.82)',
     },
     requestMessage: {
       marginTop: 2,

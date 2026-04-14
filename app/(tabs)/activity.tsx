@@ -4,6 +4,8 @@ import MatchModal from "@/components/MatchModal";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useInbox, type InboxItem } from "@/hooks/useInbox";
 import { useAuth } from "@/lib/auth-context";
+import { fetchPeerVisibilityPrefs } from "@/lib/peer-visibility";
+import { getUserFacingDisplayName } from "@/lib/profile/display-name";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -40,10 +42,13 @@ type InboxFilter = "all" | "needs_action" | "likes" | "messages" | "moments" | "
 
 type ActorProfile = {
   id: string;
+  user_id?: string | null;
   full_name?: string | null;
   avatar_url?: string | null;
   age?: number | null;
   bio?: string | null;
+  account_state?: string | null;
+  deleted_at?: string | null;
 };
 
 export default function ActivityScreen() {
@@ -57,6 +62,7 @@ export default function ActivityScreen() {
   const { items, loading, markRead, markAllRead, resolveItem } = useInbox(user?.id ?? null);
   const [filter, setFilter] = useState<InboxFilter>("needs_action");
   const [actorMap, setActorMap] = useState<Record<string, ActorProfile>>({});
+  const [hiddenPeerUserIds, setHiddenPeerUserIds] = useState<Record<string, true>>({});
   const [matchModalVisible, setMatchModalVisible] = useState(false);
   const [matchCandidate, setMatchCandidate] = useState<Match | null>(null);
 
@@ -80,10 +86,10 @@ export default function ActivityScreen() {
 
     let cancelled = false;
 
-    const fetchActors = async () => {
+      const fetchActors = async () => {
       const { data } = await supabase
         .from("profiles")
-        .select("id,full_name,avatar_url,age,bio")
+        .select("id,user_id,full_name,avatar_url,age,bio,account_state,deleted_at")
         .in("id", actorIds);
 
       if (cancelled) return;
@@ -104,9 +110,45 @@ export default function ActivityScreen() {
     };
   }, [actorIds]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const peerUserIds = Array.from(
+      new Set(
+        Object.values(actorMap)
+          .map((entry) => (typeof entry?.user_id === "string" ? entry.user_id : null))
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+
+    const loadHiddenPeers = async () => {
+      if (!user?.id || peerUserIds.length === 0) {
+        setHiddenPeerUserIds({});
+        return;
+      }
+      const prefs = await fetchPeerVisibilityPrefs(user.id, peerUserIds);
+      if (cancelled) return;
+      const next: Record<string, true> = {};
+      Object.entries(prefs).forEach(([peerUserId, pref]) => {
+        if (pref.hidden) next[peerUserId] = true;
+      });
+      setHiddenPeerUserIds(next);
+    };
+
+    void loadHiddenPeers();
+    return () => {
+      cancelled = true;
+    };
+  }, [actorMap, user?.id]);
+
   const filteredItems = useMemo(() => {
-    if (filter === "all") return items;
-    return items.filter((item) => {
+    const base = items.filter((item) => {
+      const actorId = typeof item.actor_id === "string" ? item.actor_id : null;
+      const actor = actorId ? actorMap[actorId] : undefined;
+      const actorUserId = actor?.user_id ?? null;
+      return !(actorUserId && hiddenPeerUserIds[actorUserId]);
+    });
+    if (filter === "all") return base;
+    return base.filter((item) => {
       switch (filter) {
         case "needs_action":
           return item.action_required;
@@ -122,7 +164,7 @@ export default function ActivityScreen() {
           return true;
       }
     });
-  }, [filter, items]);
+  }, [actorMap, filter, hiddenPeerUserIds, items]);
 
   const openProfile = useCallback((profileId?: string | null) => {
     if (!profileId) return;
@@ -220,10 +262,10 @@ export default function ActivityScreen() {
   const renderItem = useCallback(
     ({ item }: { item: InboxItem }) => {
       const actorId = typeof item.actor_id === "string" ? item.actor_id : null;
-      const actor = actorId ? actorMap[actorId] : undefined;
-      const actorName =
-        (actor?.full_name || (item.metadata as any)?.name || "").trim() ||
-        (item.type === "SYSTEM" ? "Betweener" : "Someone");
+        const actor = actorId ? actorMap[actorId] : undefined;
+        const actorName =
+          getUserFacingDisplayName(actor, String((item.metadata as any)?.name || "").trim()) ||
+          (item.type === "SYSTEM" ? "Betweener" : "Someone");
       const actorAvatar = actor?.avatar_url ?? (item.metadata as any)?.avatar_url ?? null;
       const initials = getInitials(actorName);
       const isUnread = !item.read_at;
@@ -547,7 +589,7 @@ export default function ActivityScreen() {
 
 const makeMatchFromProfile = (id: string, actor?: ActorProfile | null): Match => ({
   id,
-  name: (actor?.full_name || "New match").trim() || "New match",
+  name: getUserFacingDisplayName(actor, "New match"),
   age: Number(actor?.age) || 0,
   tagline: actor?.bio || "",
   interests: [],

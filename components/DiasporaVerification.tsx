@@ -573,9 +573,21 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const activeMethod = verificationMethods.find((method) => method.id === selectedMethod) ?? featuredMethod;
   const activeMethodSatisfiesFreshReview = freshReviewRequired && activeMethod.level >= freshReviewTargetLevel;
   const activeMethodCanUpgrade = activeMethod.level > currentVerificationLevel || activeMethodSatisfiesFreshReview;
-  const activeMethodCovered = verificationStatus.canResubmit && !activeMethodCanUpgrade;
+  const activeMethodState = verificationStatus.methodStates[activeMethod.id];
+  const hasHighestTrustWithoutRefresh = currentVerificationLevel >= 2 && !activeMethodSatisfiesFreshReview;
+  const activeMethodCovered =
+    hasHighestTrustWithoutRefresh
+      ? true
+      : activeMethod.id === 'social'
+      ? Boolean(activeMethodState?.hasApproved) && !activeMethodSatisfiesFreshReview
+      : verificationStatus.canResubmit && !activeMethodCanUpgrade;
   const activeMethodBlockedByPending = !verificationStatus.canResubmit;
-  const canSubmitActiveMethod = verificationStatus.canResubmit && activeMethodCanUpgrade;
+  const canSubmitActiveMethod =
+    hasHighestTrustWithoutRefresh
+      ? false
+      : activeMethod.id === 'social'
+      ? verificationStatus.canResubmit && (!activeMethodCovered || activeMethodSatisfiesFreshReview)
+      : verificationStatus.canResubmit && activeMethodCanUpgrade;
   const fastMethods = verificationMethods.filter(
     (method) => method.category === 'fast' && method.id !== featuredMethod.id,
   );
@@ -1153,11 +1165,28 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
         }
 
       const methodSatisfiesFreshReview = freshReviewRequired && method.level >= freshReviewTargetLevel;
-      if (currentVerificationLevel >= method.level && !methodSatisfiesFreshReview) {
+      const methodState = verificationStatus.methodStates[method.id];
+      const methodAlreadyApproved =
+        (currentVerificationLevel >= 2 && !methodSatisfiesFreshReview)
+          ? true
+          : method.id === 'social'
+          ? Boolean(methodState?.hasApproved)
+          : currentVerificationLevel >= method.level;
+      if (methodAlreadyApproved && !methodSatisfiesFreshReview) {
         setFlowMessage({
           tone: 'info',
-          title: 'This trust layer is already complete',
-          body: 'Your current Betweener verification already covers this method. No extra proof is needed right now.',
+          title:
+            currentVerificationLevel >= 2
+              ? 'Your highest Betweener trust level is already active'
+              : method.id === 'social'
+                ? 'This social proof is already on your profile'
+                : 'This trust layer is already complete',
+          body:
+            currentVerificationLevel >= 2
+              ? 'Your profile already carries Betweener’s highest trust level. No extra self-submitted verification is needed right now.'
+              : method.id === 'social'
+              ? 'Your social proof is already approved on Betweener. No extra social submission is needed right now.'
+              : 'Your current Betweener verification already covers this method. No extra proof is needed right now.',
         });
         return;
       }
@@ -1879,7 +1908,9 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                       : `Use ${activeMethod.title} to strengthen your profile`
                     : activeMethodBlockedByPending
                       ? 'Face check in review'
-                      : 'This trust layer is already complete'}
+                      : currentVerificationLevel >= 2
+                        ? 'Your highest Betweener trust level is already active'
+                        : 'This trust layer is already complete'}
                 </Text>
                 <Text style={[styles.submitHelper, { color: bodyColor }]}>
                   {canSubmitActiveMethod
@@ -1888,7 +1919,9 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                       : activeMethod.helperLabel
                     : activeMethodBlockedByPending
                       ? 'Betweener is already reviewing your latest submission. Your place in the trust queue is secure.'
-                      : 'Your profile already carries this level of Betweener trust. You do not need to send another proof for this method.'}
+                      : currentVerificationLevel >= 2
+                        ? 'Your profile already carries Betweener’s highest trust level. No extra self-submitted verification is needed right now.'
+                        : 'Your profile already carries this level of Betweener trust. You do not need to send another proof for this method.'}
                 </Text>
                 <View style={styles.submitMetaRow}>
                   <View style={[styles.submitMetaPill, { backgroundColor: softAccentSurface, borderColor: `${theme.accent}22` }]}>
@@ -2080,7 +2113,11 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                       </Text>
                       <Text style={[styles.reviewStatusBody, { color: bodyColor }]}>
                         {activeMethodCovered
-                          ? 'No extra submission is needed. Keep this proof private unless Betweener asks for a fresh review later.'
+                          ? currentVerificationLevel >= 2
+                            ? 'Your profile already carries Betweener’s highest trust level. No extra self-submitted verification is needed right now.'
+                            : activeMethod.id === 'social'
+                            ? 'Your social proof is already approved on your profile. Keep it private unless Betweener asks for a fresh review later.'
+                            : 'No extra submission is needed. Keep this proof private unless Betweener asks for a fresh review later.'
                           : 'No action is needed from you right now. We will update your profile as soon as the check clears.'}
                       </Text>
                     </View>

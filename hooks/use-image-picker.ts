@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { showOpenSettingsPrompt } from '@/lib/permission-prompts';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { useState } from 'react';
@@ -12,9 +13,9 @@ export function useImagePicker() {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert(
-          'Permission Required',
-          'Sorry, we need camera roll permissions to upload photos.'
+        showOpenSettingsPrompt(
+          'Photos access',
+          'Turn on photo access in Settings so Betweener can upload your photo.',
         );
         return;
       }

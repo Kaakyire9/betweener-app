@@ -15,6 +15,7 @@ export default function AuthLayout() {
           <Stack.Screen name="welcome" />
           <Stack.Screen name="verify-phone" />
           <Stack.Screen name="account-recovery" />
+          <Stack.Screen name="retired-duplicate-account" />
           <Stack.Screen name="signup-options" />
           <Stack.Screen name="login" />
           <Stack.Screen name="password-login" />
