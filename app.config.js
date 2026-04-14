@@ -16,7 +16,7 @@ module.exports = ({ config }) => {
     process.env.EXPO_PUBLIC_ENVIRONMENT === 'development' ? 'development' : 'production';
   return {
     ...config,
-    newArchEnabled: false,
+    newArchEnabled: true,
     plugins: [
       // Keep this plugin first so the NSE target is present before other iOS plugins run.
       [
