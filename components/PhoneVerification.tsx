@@ -28,7 +28,7 @@ interface PhoneVerificationProps {
   userId?: string | null;
   allowAnonymous?: boolean;
   onPhoneVerified?: (phoneNumber: string) => void;
-  onRecoveryRequired?: (details: { phoneNumber: string; code?: string; error?: string }) => void | Promise<void>;
+  onRecoveryRequired?: (details: { phoneNumber: string; code?: string; error?: string; recoveryToken?: string }) => void | Promise<void>;
   signupSessionId?: string | null;
   countryLabel?: string;
   dialCode?: string;
@@ -60,6 +60,7 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
     phoneNumber: string | null;
     error?: string;
     code?: string;
+    recoveryToken?: string;
   }>({
     visible: false,
     phoneNumber: null,
@@ -322,7 +323,7 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
         }
         onVerificationComplete(true, result.confidenceScore || 0);
       } else if (result.code === 'phone_belongs_to_existing_account') {
-        promptExistingAccountRecovery(fullNumber, result.error, result.code);
+        promptExistingAccountRecovery(fullNumber, result.error, result.code, result.recoveryToken);
       } else {
         Alert.alert('Error', result.error || 'Invalid verification code');
         setVerificationCode('');
@@ -357,16 +358,18 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
         phoneNumber: fullNumber,
         code: recoveryPrompt.code,
         error: recoveryPrompt.error,
+        recoveryToken: recoveryPrompt.recoveryToken,
       })
     );
   };
 
-  const promptExistingAccountRecovery = (fullNumber: string, error?: string, code?: string) => {
+  const promptExistingAccountRecovery = (fullNumber: string, error?: string, code?: string, recoveryToken?: string) => {
     setRecoveryPrompt({
       visible: true,
       phoneNumber: fullNumber,
       error,
       code,
+      recoveryToken,
     });
   };
 
@@ -598,10 +601,10 @@ export const PhoneVerification: React.FC<PhoneVerificationProps> = ({
                     <Ionicons name="shield-checkmark-outline" size={22} color="#A8F1EE" />
                   </LinearGradient>
                 </View>
-                <Text style={styles.recoveryEyebrow}>ACCOUNT FOUND</Text>
-                <Text style={styles.recoveryTitle}>This number is already in Betweener</Text>
+                <Text style={styles.recoveryEyebrow}>OLDER ACCOUNT DETECTED</Text>
+                <Text style={styles.recoveryTitle}>This number already protects an older Betweener account</Text>
                 <Text style={styles.recoveryBody}>
-                  It looks like this number is already protecting an older Betweener account. Recover that account or use a different number to create a new one.
+                  If this is your number, recover that account to continue. If you want a different Betweener account, use another number.
                 </Text>
 
                 <TouchableOpacity style={styles.recoveryPrimaryWrap} onPress={handleRecoverAccount} activeOpacity={0.92}>

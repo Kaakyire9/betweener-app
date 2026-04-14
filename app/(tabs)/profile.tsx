@@ -10,6 +10,7 @@ import { useColorScheme, useColorSchemePreference } from "@/hooks/use-color-sche
 import { useVerificationStatus } from "@/hooks/use-verification-status";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessAdminTools } from "@/lib/internal-tools";
+import { pickPreferredLocationLabel } from "@/lib/location/location-display";
 import { readCache, writeCache } from "@/lib/persisted-cache";
 import { getProfileInitials, getProfilePlaceholderPalette, hasProfileImage } from "@/lib/profile-placeholders";
 import {
@@ -80,6 +81,16 @@ const mergeAuthParamsFromUrl = (target: AuthCallbackParams, url: string) => {
   }
 };
 
+const toFlagEmoji = (code?: string | null) => {
+  if (!code) return '';
+  const normalized = String(code).trim().toUpperCase();
+  if (normalized.length !== 2) return '';
+  const first = normalized.charCodeAt(0);
+  const second = normalized.charCodeAt(1);
+  if (first < 65 || first > 90 || second < 65 || second > 90) return '';
+  return String.fromCodePoint(0x1f1e6 + (first - 65), 0x1f1e6 + (second - 65));
+};
+
 const HeroVideo = ({ uri }: { uri: string }) => {
   const player = useVideoPlayer(uri, (p) => {
     p.loop = true;
@@ -144,6 +155,20 @@ const ACCOUNT_RECOVERY_METHOD_OPTIONS = [
   { value: 'magic_link', label: 'Magic link' },
   { value: 'other', label: 'Other' },
 ] as const;
+
+const RECOVERY_PROVIDER_LABELS: Record<string, string> = {
+  email: 'Email',
+  google: 'Google',
+  apple: 'Apple',
+  password_backup: 'Password backup',
+};
+
+const RECOVERY_PROVIDER_ICONS: Record<string, keyof typeof MaterialCommunityIcons.glyphMap> = {
+  email: 'email-outline',
+  google: 'google',
+  apple: 'apple',
+  password_backup: 'form-textbox-password',
+};
 
 const ACCOUNT_DELETION_REASON_OPTIONS = [
   {
@@ -451,7 +476,9 @@ const computeProfileCompletion = (
   const hasGender = !!(profile.gender || '').toString().trim();
   const hasBio = (profile.bio || '').trim().length >= BIO_MIN_PUBLIC_CHARS;
   const hasRegion = !!(profile.region || '').trim();
-  const hasTribe = !!(profile.tribe || '').trim();
+  const hasRoots =
+    (Array.isArray((profile as any).roots) && (profile as any).roots.filter(Boolean).length > 0)
+    || !!(profile.tribe || '').trim();
   const hasOccupation = !!(profile.occupation || '').trim();
   const hasEducation = !!(profile.education || '').trim();
   const hasIntent = (profile.looking_for || '').trim().length >= LOOKING_FOR_MIN_CHARS;
@@ -479,7 +506,7 @@ const computeProfileCompletion = (
     { label: 'Add your gender', ok: hasGender },
     { label: 'Share a little about you', ok: hasBio },
     { label: 'Add your region', ok: hasRegion },
-    { label: 'Add your tribe or ethnicity', ok: hasTribe },
+    { label: 'Add your roots or ethnicity', ok: hasRoots },
     { label: 'Add your occupation', ok: hasOccupation },
     { label: 'Add your education', ok: hasEducation },
     { label: "Express what you're here for", ok: hasIntent },
@@ -567,6 +594,12 @@ export default function ProfileScreen() {
   const [emailSaving, setEmailSaving] = useState(false);
   const [emailMessage, setEmailMessage] = useState('');
   const [emailError, setEmailError] = useState('');
+  const [passwordBackupInput, setPasswordBackupInput] = useState('');
+  const [passwordBackupConfirm, setPasswordBackupConfirm] = useState('');
+  const [passwordBackupSaving, setPasswordBackupSaving] = useState(false);
+  const [passwordBackupMessage, setPasswordBackupMessage] = useState('');
+  const [passwordBackupError, setPasswordBackupError] = useState('');
+  const [hasPasswordBackup, setHasPasswordBackup] = useState(false);
   const [linkedProviders, setLinkedProviders] = useState<string[]>([]);
   const [identitiesLoading, setIdentitiesLoading] = useState(false);
   const [linkingProvider, setLinkingProvider] = useState<string | null>(null);
@@ -638,6 +671,14 @@ export default function ProfileScreen() {
     photos: false,
   });
   const [isVerificationModalVisible, setIsVerificationModalVisible] = useState(false);
+
+  useEffect(() => {
+    const metadata =
+      user?.user_metadata && typeof user.user_metadata === 'object'
+        ? (user.user_metadata as Record<string, unknown>)
+        : null;
+    setHasPasswordBackup(Boolean(metadata?.has_password_backup));
+  }, [user?.id, user?.user_metadata]);
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [notificationPrefs, setNotificationPrefs] = useState<NotificationPrefs>({
     push_enabled: true,
@@ -1192,10 +1233,51 @@ export default function ProfileScreen() {
   }, [showEditModal, loadDistanceUnit]);
 
   const handleSignOut = async () => {
-    if (linkedProviders.length < 2) {
+    if (isHighRiskOAuthOnlyAccount) {
+      Alert.alert(
+        'This account still has one fragile way back in',
+        `Right now you rely only on ${highRiskProviderLabel}. If ${highRiskProviderLabel} opens the wrong Betweener account later, recovery becomes slower and more manual. Add a password backup or another provider before you sign out.`,
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel',
+          },
+          {
+            text: 'Secure now',
+            onPress: openEmailAccountModal,
+          },
+          {
+            text: 'I understand',
+            style: 'destructive',
+            onPress: () => {
+              Alert.alert(
+                'Sign out anyway?',
+                `You can still sign out, but this account will keep depending on ${highRiskProviderLabel} alone until you add a backup route.`,
+                [
+                  {
+                    text: 'Cancel',
+                    style: 'cancel',
+                  },
+                  {
+                    text: 'Sign out anyway',
+                    style: 'destructive',
+                    onPress: () => {
+                      void signOut();
+                    },
+                  },
+                ],
+              );
+            },
+          },
+        ],
+      );
+      return;
+    }
+
+    if (!hasRecoveryBackup) {
       Alert.alert(
         'Before you sign out',
-        'Link Google or Apple so you always come back to the same Betweener account.',
+        'Add a backup sign-in method or password backup first so this account is easy to restore if the wrong identity opens later.',
         [
           {
             text: 'Cancel',
@@ -1407,6 +1489,9 @@ export default function ProfileScreen() {
           education: (profile as any).education,
           bio: profile.bio,
           tribe: (profile as any).tribe,
+          roots: (profile as any).roots,
+          roots_note: (profile as any).roots_note,
+          roots_visibility: (profile as any).roots_visibility,
           religion: (profile as any).religion,
           distance: '',
           interests: (profile as any).interests,
@@ -1471,6 +1556,10 @@ export default function ProfileScreen() {
     setEmailError('');
     setIdentityMessage('');
     setIdentityError('');
+    setPasswordBackupInput('');
+    setPasswordBackupConfirm('');
+    setPasswordBackupMessage('');
+    setPasswordBackupError('');
     setEmailInput(user?.email ?? '');
     setShowEmailModal(true);
   }, [user?.email]);
@@ -1523,6 +1612,59 @@ export default function ProfileScreen() {
       setEmailError(error?.message ?? 'Unable to update email.');
     } finally {
       setEmailSaving(false);
+    }
+  };
+
+  const handlePasswordBackupSave = async () => {
+    setPasswordBackupError('');
+    setPasswordBackupMessage('');
+    setIdentityError('');
+
+    if (!user?.email) {
+      setPasswordBackupError('Add an email address first so this account has a stable recovery destination.');
+      return;
+    }
+
+    if (passwordBackupInput.length < 8) {
+      setPasswordBackupError('Use at least 8 characters for the backup password.');
+      return;
+    }
+
+    if (passwordBackupInput !== passwordBackupConfirm) {
+      setPasswordBackupError('The password confirmation does not match.');
+      return;
+    }
+
+    try {
+      setPasswordBackupSaving(true);
+      const metadata =
+        user?.user_metadata && typeof user.user_metadata === 'object'
+          ? (user.user_metadata as Record<string, unknown>)
+          : {};
+      const { data, error } = await supabase.auth.updateUser({
+        password: passwordBackupInput,
+        data: {
+          ...metadata,
+          has_password_backup: true,
+          recovery_backup_updated_at: new Date().toISOString(),
+        },
+      });
+      if (error) {
+        setPasswordBackupError(error.message);
+        return;
+      }
+
+      setHasPasswordBackup(
+        Boolean((data.user?.user_metadata as Record<string, unknown> | undefined)?.has_password_backup ?? true),
+      );
+      setPasswordBackupInput('');
+      setPasswordBackupConfirm('');
+      setPasswordBackupMessage('Password backup is ready. This account can now be restored with email + password too.');
+      setIdentityMessage('Password backup added to this Betweener account.');
+    } catch (error: any) {
+      setPasswordBackupError(error?.message ?? 'Unable to save the password backup right now.');
+    } finally {
+      setPasswordBackupSaving(false);
     }
   };
 
@@ -1617,11 +1759,67 @@ export default function ProfileScreen() {
     }
   }, [user?.id]);
 
+  const normalizedLinkedRecoveryMethods = useMemo(() => {
+    const methods = new Set<string>();
+    linkedProviders.forEach((provider) => {
+      const normalized = String(provider || '').trim().toLowerCase();
+      if (normalized === 'email' || normalized === 'google' || normalized === 'apple') {
+        methods.add(normalized);
+      }
+    });
+    return Array.from(methods);
+  }, [linkedProviders]);
+
+  const recoveryMethodPills = useMemo(() => {
+    const methods = [...normalizedLinkedRecoveryMethods];
+    if (hasPasswordBackup) methods.push('password_backup');
+    return methods;
+  }, [hasPasswordBackup, normalizedLinkedRecoveryMethods]);
+
+  const isHighRiskOAuthOnlyAccount = useMemo(
+    () =>
+      !hasPasswordBackup &&
+      normalizedLinkedRecoveryMethods.length === 1 &&
+      (normalizedLinkedRecoveryMethods[0] === 'google' || normalizedLinkedRecoveryMethods[0] === 'apple'),
+    [hasPasswordBackup, normalizedLinkedRecoveryMethods],
+  );
+
+  const highRiskProviderLabel = useMemo(() => {
+    if (!isHighRiskOAuthOnlyAccount) return 'this sign-in method';
+    return RECOVERY_PROVIDER_LABELS[normalizedLinkedRecoveryMethods[0]] ?? 'this sign-in method';
+  }, [isHighRiskOAuthOnlyAccount, normalizedLinkedRecoveryMethods]);
+
+  const hasRecoveryBackup =
+    normalizedLinkedRecoveryMethods.length >= 2 ||
+    hasPasswordBackup;
+
+  const recoveryStrength = useMemo(() => {
+    if (normalizedLinkedRecoveryMethods.length >= 2 && hasPasswordBackup) {
+      return {
+        label: 'Strong',
+        tone: '#0f766e',
+        body: 'This account has more than one trusted way back in if the wrong identity opens first.',
+      };
+    }
+    if (hasRecoveryBackup) {
+      return {
+        label: 'Protected',
+        tone: '#0f766e',
+        body: 'You have a backup recovery route. One more method would make restoration even safer.',
+      };
+    }
+    return {
+      label: 'Vulnerable',
+      tone: '#b45309',
+      body: 'Right now one broken sign-in route could strand this account. Add a provider or a password backup.',
+    };
+  }, [hasPasswordBackup, hasRecoveryBackup, normalizedLinkedRecoveryMethods.length]);
+
   const shouldShowLinkedMethodsBanner =
     !isPreviewMode &&
     !linkedMethodsBannerDismissed &&
     !identitiesLoading &&
-    linkedProviders.length < 2;
+    !hasRecoveryBackup;
 
   const finishIdentityCallback = useCallback(async (url: string) => {
     if (!isTrustedAuthCallbackUrl(url)) {
@@ -2014,33 +2212,10 @@ export default function ProfileScreen() {
   const useDefaultBio = !rawBio || isPlaceholderBio;
   const displayBio = useDefaultBio ? defaultHookLines[hookIndex] : rawBio;
 
-  const locationSegments = [
-    (profile as any)?.city,
-    profile?.location,
-    profile?.region,
-    (profile as any)?.current_country,
-  ]
-    .flatMap((part: string | undefined) =>
-      String(part || '')
-        .split(',')
-        .map((segment) => segment.trim())
-        .filter(Boolean),
-    )
-    .filter((part, index, arr) => {
-      const key = part.toLowerCase();
-      return arr.findIndex((p) => p.toLowerCase() === key) === index;
-    });
-  const locationCity =
-    String((profile as any)?.city || '').trim() ||
-    locationSegments.find((segment) => segment.toLowerCase() !== String((profile as any)?.current_country || '').trim().toLowerCase()) ||
-    '';
   const locationCountry = String((profile as any)?.current_country || '').trim();
-  const locationDisplay = [locationCity, locationCountry]
-    .filter((part, index, arr) => {
-      if (!part) return false;
-      return arr.findIndex((candidate) => candidate.toLowerCase() === part.toLowerCase()) === index;
-    })
-    .join(', ') || (locationSegments.length ? locationSegments.join(', ') : 'Location not set');
+  const locationPrimary = pickPreferredLocationLabel(profile as Record<string, any>);
+  const locationFlag = toFlagEmoji((profile as any)?.current_country_code);
+  const locationDisplay = [locationPrimary || locationCountry, locationFlag].filter(Boolean).join(' ') || 'Location not set';
   const verificationLevel =
     (profile as any)?.verification_level
     ?? (profile as any)?.verificationLevel
@@ -2461,17 +2636,21 @@ export default function ProfileScreen() {
             <TouchableOpacity onPress={() => void dismissLinkedMethodsBanner()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
             </TouchableOpacity>
-          </View>
-          <Text style={[styles.linkedMethodsBannerTitle, { color: theme.text }]}>Add another sign-in method</Text>
+            </View>
+          <Text style={[styles.linkedMethodsBannerTitle, { color: theme.text }]}>
+            {isHighRiskOAuthOnlyAccount ? 'Do not leave this OAuth-only' : 'Secure this account'}
+          </Text>
           <Text style={[styles.linkedMethodsBannerBody, { color: theme.textMuted }]}>
-            Link Google or Apple so you always come back to the same Betweener account.
+            {isHighRiskOAuthOnlyAccount
+              ? `Right now ${highRiskProviderLabel} is the only trusted way back in. Add a password backup or another provider before you sign out.`
+              : 'Add a second recovery route before you sign out. Google, Apple, or a password backup can stop a duplicate-account dead end later.'}
           </Text>
           <View style={styles.linkedMethodsBannerActions}>
             <TouchableOpacity
               onPress={openEmailAccountModal}
               style={[styles.linkedMethodsBannerPrimary, { backgroundColor: theme.tint }]}
             >
-              <Text style={styles.linkedMethodsBannerPrimaryText}>Link now</Text>
+              <Text style={styles.linkedMethodsBannerPrimaryText}>Secure now</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => void dismissLinkedMethodsBanner()}
@@ -2937,8 +3116,54 @@ export default function ProfileScreen() {
             <View style={styles.identitySection}>
               <Text style={[styles.identitySectionTitle, { color: theme.text }]}>Linked sign-in methods</Text>
               <Text style={[styles.identitySectionBody, { color: theme.textMuted }]}>
-                Add another sign-in method so Google and Apple always open the same Betweener account.
+                Keep one primary sign-in route and at least one backup route so Betweener can always restore the right account.
               </Text>
+
+              <View
+                style={[
+                  styles.recoveryStrengthCard,
+                  { backgroundColor: theme.background, borderColor: theme.outline },
+                ]}
+              >
+                <View style={styles.recoveryStrengthHeader}>
+                  <View style={styles.recoveryStrengthCopy}>
+                    <Text style={[styles.recoveryStrengthTitle, { color: theme.text }]}>Recovery strength</Text>
+                    <Text style={[styles.recoveryStrengthBody, { color: theme.textMuted }]}>
+                      {recoveryStrength.body}
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.recoveryStrengthPill,
+                      { backgroundColor: `${recoveryStrength.tone}14`, borderColor: `${recoveryStrength.tone}33` },
+                    ]}
+                  >
+                    <Text style={[styles.recoveryStrengthPillText, { color: recoveryStrength.tone }]}>
+                      {recoveryStrength.label}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.recoveryStrengthMethods}>
+                  {recoveryMethodPills.map((method) => (
+                    <View
+                      key={method}
+                      style={[
+                        styles.recoveryStrengthMethodPill,
+                        { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name={RECOVERY_PROVIDER_ICONS[method] ?? 'shield-check-outline'}
+                        size={13}
+                        color={theme.tint}
+                      />
+                      <Text style={[styles.recoveryStrengthMethodText, { color: theme.text }]}>
+                        {RECOVERY_PROVIDER_LABELS[method] ?? method}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
 
               <View
                 style={[
@@ -3044,6 +3269,75 @@ export default function ProfileScreen() {
                 </View>
               ) : null}
 
+              <View
+                style={[
+                  styles.passwordBackupCard,
+                  { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+                ]}
+              >
+                <View style={styles.recoveryCardCopy}>
+                  <View style={styles.passwordBackupTitleRow}>
+                    <Text style={[styles.recoveryCardTitle, { color: theme.text }]}>Password backup</Text>
+                    {hasPasswordBackup ? (
+                      <View style={[styles.identityStatusPill, { backgroundColor: theme.tint + '18', borderColor: theme.tint }]}>
+                        <Text style={[styles.identityStatusText, { color: theme.tint }]}>Ready</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={[styles.recoveryCardBody, { color: theme.textMuted }]}>
+                    {hasPasswordBackup
+                      ? 'A password-based recovery route is already attached to this account. Refresh it any time you want a stronger fallback.'
+                      : 'Set a private backup password so email can restore this account even if Apple or Google opens the wrong profile first.'}
+                  </Text>
+                </View>
+                <TextInput
+                  value={passwordBackupInput}
+                  onChangeText={setPasswordBackupInput}
+                  placeholder="Create backup password"
+                  placeholderTextColor={theme.textMuted}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  style={[
+                    styles.emailInput,
+                    { color: theme.text, borderColor: theme.outline, backgroundColor: theme.background },
+                  ]}
+                />
+                <TextInput
+                  value={passwordBackupConfirm}
+                  onChangeText={setPasswordBackupConfirm}
+                  placeholder="Confirm backup password"
+                  placeholderTextColor={theme.textMuted}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  style={[
+                    styles.emailInput,
+                    { color: theme.text, borderColor: theme.outline, backgroundColor: theme.background },
+                  ]}
+                />
+                {passwordBackupError ? (
+                  <Text style={[styles.identityError, { color: '#ef4444' }]}>{passwordBackupError}</Text>
+                ) : null}
+                {passwordBackupMessage ? (
+                  <Text style={[styles.identityMessage, { color: theme.tint }]}>{passwordBackupMessage}</Text>
+                ) : null}
+                <TouchableOpacity
+                  onPress={handlePasswordBackupSave}
+                  disabled={passwordBackupSaving || !user?.email}
+                  style={[
+                    styles.passwordBackupButton,
+                    { backgroundColor: theme.tint, opacity: passwordBackupSaving || !user?.email ? 0.65 : 1 },
+                  ]}
+                >
+                  <Text style={styles.identityLinkButtonText}>
+                    {passwordBackupSaving
+                      ? 'Saving...'
+                      : hasPasswordBackup
+                        ? 'Refresh password backup'
+                        : 'Add password backup'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
               {identityError ? (
                 <Text style={[styles.identityError, { color: '#ef4444' }]}>{identityError}</Text>
               ) : null}
@@ -3058,7 +3352,7 @@ export default function ProfileScreen() {
                 <View style={styles.recoveryCardCopy}>
                   <Text style={[styles.recoveryCardTitle, { color: theme.text }]}>Having trouble with another sign-in method?</Text>
                   <Text style={[styles.recoveryCardBody, { color: theme.textMuted }]}>
-                    If Apple, Google, or email opened the wrong Betweener account, send a recovery request for support review.
+                    If Apple, Google, or email still opens the wrong Betweener account, the automatic recovery flow will try first. This support request stays here as the final safety net.
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -6640,6 +6934,60 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     fontFamily: 'Manrope_400Regular',
   },
+  recoveryStrengthCard: {
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    gap: 10,
+  },
+  recoveryStrengthHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  recoveryStrengthCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  recoveryStrengthTitle: {
+    fontSize: 13.5,
+    fontFamily: 'Archivo_600SemiBold',
+  },
+  recoveryStrengthBody: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: 'Manrope_400Regular',
+  },
+  recoveryStrengthPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  recoveryStrengthPillText: {
+    fontSize: 11.5,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
+  recoveryStrengthMethods: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  recoveryStrengthMethodPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  recoveryStrengthMethodText: {
+    fontSize: 11.5,
+    fontFamily: 'Manrope_600SemiBold',
+  },
   identityMethodCard: {
     borderWidth: 1,
     borderRadius: 14,
@@ -6721,6 +7069,24 @@ const styles = StyleSheet.create({
   },
   recoveryCardCopy: {
     gap: 4,
+  },
+  passwordBackupCard: {
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 12,
+    gap: 10,
+  },
+  passwordBackupTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  passwordBackupButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
   },
   recoveryCardTitle: {
     fontSize: 13.5,

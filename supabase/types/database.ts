@@ -2031,14 +2031,22 @@ export type Database = {
           exercise_frequency: string | null
           full_name: string | null
           future_ghana_plans: string | null
+          created_via_provider: string | null
+          duplicate_of_user_id: string | null
           gender: Database["public"]["Enums"]["gender"] | null
           has_children: string | null
           height: string | null
           id: string
+          identity_disabled_at: string | null
+          identity_finalized_at: string | null
+          identity_resolution_reason: string | null
+          identity_status: string
+          identity_status_updated_at: string
           is_active: boolean
           languages_spoken: string[] | null
           last_active: string | null
           last_ghana_visit: string | null
+          last_successful_auth_provider: string | null
           latitude: number | null
           living_situation: string | null
           location: string | null
@@ -2052,6 +2060,7 @@ export type Database = {
           min_age_interest: number | null
           occupation: string | null
           onboarding_step: number
+          onboarding_completed_at: string | null
           online: boolean
           pause_reason: string | null
           paused_at: string | null
@@ -2059,14 +2068,19 @@ export type Database = {
           pets: string | null
           phone_number: string | null
           phone_verification_score: number | null
+          phone_verified_at: string | null
           phone_verified: boolean | null
           photos: string[] | null
           profile_completed: boolean
           profile_video: string | null
           public_key: string | null
+          recovered_to_user_id: string | null
           region: string | null
           relationship_compass: Json
           religion: Database["public"]["Enums"]["religion"] | null
+          roots: string[] | null
+          roots_note: string | null
+          roots_visibility: string
           search_name: string | null
           smoking: string | null
           superlikes_left: number
@@ -2105,14 +2119,22 @@ export type Database = {
           exercise_frequency?: string | null
           full_name?: string | null
           future_ghana_plans?: string | null
+          created_via_provider?: string | null
+          duplicate_of_user_id?: string | null
           gender?: Database["public"]["Enums"]["gender"] | null
           has_children?: string | null
           height?: string | null
           id?: string
+          identity_disabled_at?: string | null
+          identity_finalized_at?: string | null
+          identity_resolution_reason?: string | null
+          identity_status?: string
+          identity_status_updated_at?: string
           is_active?: boolean
           languages_spoken?: string[] | null
           last_active?: string | null
           last_ghana_visit?: string | null
+          last_successful_auth_provider?: string | null
           latitude?: number | null
           living_situation?: string | null
           location?: string | null
@@ -2126,6 +2148,7 @@ export type Database = {
           min_age_interest?: number | null
           occupation?: string | null
           onboarding_step?: number
+          onboarding_completed_at?: string | null
           online?: boolean
           pause_reason?: string | null
           paused_at?: string | null
@@ -2133,14 +2156,19 @@ export type Database = {
           pets?: string | null
           phone_number?: string | null
           phone_verification_score?: number | null
+          phone_verified_at?: string | null
           phone_verified?: boolean | null
           photos?: string[] | null
           profile_completed?: boolean
           profile_video?: string | null
           public_key?: string | null
+          recovered_to_user_id?: string | null
           region?: string | null
           relationship_compass?: Json
           religion?: Database["public"]["Enums"]["religion"] | null
+          roots?: string[] | null
+          roots_note?: string | null
+          roots_visibility?: string
           search_name?: string | null
           smoking?: string | null
           superlikes_left?: number
@@ -2179,14 +2207,22 @@ export type Database = {
           exercise_frequency?: string | null
           full_name?: string | null
           future_ghana_plans?: string | null
+          created_via_provider?: string | null
+          duplicate_of_user_id?: string | null
           gender?: Database["public"]["Enums"]["gender"] | null
           has_children?: string | null
           height?: string | null
           id?: string
+          identity_disabled_at?: string | null
+          identity_finalized_at?: string | null
+          identity_resolution_reason?: string | null
+          identity_status?: string
+          identity_status_updated_at?: string
           is_active?: boolean
           languages_spoken?: string[] | null
           last_active?: string | null
           last_ghana_visit?: string | null
+          last_successful_auth_provider?: string | null
           latitude?: number | null
           living_situation?: string | null
           location?: string | null
@@ -2200,6 +2236,7 @@ export type Database = {
           min_age_interest?: number | null
           occupation?: string | null
           onboarding_step?: number
+          onboarding_completed_at?: string | null
           online?: boolean
           pause_reason?: string | null
           paused_at?: string | null
@@ -2207,14 +2244,19 @@ export type Database = {
           pets?: string | null
           phone_number?: string | null
           phone_verification_score?: number | null
+          phone_verified_at?: string | null
           phone_verified?: boolean | null
           photos?: string[] | null
           profile_completed?: boolean
           profile_video?: string | null
           public_key?: string | null
+          recovered_to_user_id?: string | null
           region?: string | null
           relationship_compass?: Json
           religion?: Database["public"]["Enums"]["religion"] | null
+          roots?: string[] | null
+          roots_note?: string | null
+          roots_visibility?: string
           search_name?: string | null
           smoking?: string | null
           superlikes_left?: number

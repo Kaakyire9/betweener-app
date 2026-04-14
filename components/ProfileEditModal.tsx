@@ -2,6 +2,7 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useVerificationStatus } from '@/hooks/use-verification-status';
 import { useAuth } from '@/lib/auth-context';
+import { showOpenSettingsPrompt } from '@/lib/permission-prompts';
 import { getProfileInitials, hasProfileImage } from '@/lib/profile-placeholders';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -167,6 +168,12 @@ const GLOBAL_TRIBES_OPTIONS = [
   "Other",
 ];
 
+const ROOTS_VISIBILITY_OPTIONS = [
+  { value: 'VISIBLE', label: 'Visible on profile', subtitle: 'Show your roots in full profile view.' },
+  { value: 'MATCHES_ONLY', label: 'Matches only', subtitle: 'Reveal your roots only after a mutual match.' },
+  { value: 'HIDDEN', label: 'Hidden', subtitle: 'Keep your roots private.' },
+];
+
 // HIGH PRIORITY: Ghana-focused languages
 const GHANA_LANGUAGES_OPTIONS = [
   "English",
@@ -220,6 +227,15 @@ const withAlpha = (hex: string | undefined | null, alpha: number) => {
 };
 
 const normalizeLanguages = (items?: string[]) =>
+  Array.from(
+    new Set(
+      (items ?? [])
+        .map((item) => (typeof item === 'string' ? item.trim() : ''))
+        .filter(Boolean)
+    )
+  );
+
+const normalizeRoots = (items?: string[]) =>
   Array.from(
     new Set(
       (items ?? [])
@@ -288,7 +304,6 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const [showEducationPicker, setShowEducationPicker] = useState(false);
   const [showLookingForPicker, setShowLookingForPicker] = useState(false);
   const [showRegionPicker, setShowRegionPicker] = useState(false);
-  const [showTribePicker, setShowTribePicker] = useState(false);
   
   // HIGH PRIORITY picker visibility states
   const [showExercisePicker, setShowExercisePicker] = useState(false);
@@ -308,7 +323,6 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const [customEducation, setCustomEducation] = useState('');
   const [customLookingFor, setCustomLookingFor] = useState('');
   const [customRegion, setCustomRegion] = useState('');
-  const [customTribe, setCustomTribe] = useState('');
   
   // HIGH PRIORITY custom input states
   const [customExercise, setCustomExercise] = useState('');
@@ -340,6 +354,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       age: '',
       region: '',
       tribe: '',
+      roots: [] as string[],
+      roots_note: '',
+      roots_visibility: 'VISIBLE',
     occupation: '',
     education: '',
     height: '',
@@ -457,6 +474,13 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       const normalizedLanguages = normalizeLanguages(
         (profile as any).languages_spoken || []
       );
+      const normalizedRoots = normalizeRoots(
+        Array.isArray((profile as any).roots) && (profile as any).roots.length > 0
+          ? (profile as any).roots
+          : (profile as any).tribe
+            ? [(profile as any).tribe]
+            : []
+      );
       const filteredLanguages = normalizedLanguages.filter(
         (lang) => languagesOptions.includes(lang) || lang === 'Other'
       );
@@ -467,6 +491,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         age: profile.age?.toString() || '',
         region: profile.region || '',
         tribe: (profile as any).tribe || '',
+        roots: normalizedRoots,
+        roots_note: (profile as any).roots_note || '',
+        roots_visibility: String((profile as any).roots_visibility || 'VISIBLE').toUpperCase(),
         occupation: (profile as any).occupation || '',
         education: (profile as any).education || '',
         height: (profile as any).height || '',
@@ -552,6 +579,20 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       ...prev,
       [field]: value
     }));
+  };
+
+  const handleRootToggle = (value: string) => {
+    setFormData((prev) => {
+      const current = normalizeRoots(prev.roots);
+      const next = current.includes(value)
+        ? current.filter((item) => item !== value)
+        : [...current, value];
+      return {
+        ...prev,
+        roots: next,
+        tribe: next[0] || '',
+      };
+    });
   };
 
   const resolveProfileId = async (): Promise<string | null> => {
@@ -801,7 +842,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       // Request permissions
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Please grant camera roll permissions to upload photos.');
+        showOpenSettingsPrompt(
+          'Photos access',
+          'Turn on photo access in Settings so Betweener can upload your profile photos.',
+        );
         return;
       }
 
@@ -825,7 +869,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Please grant camera permissions to take photos.');
+        showOpenSettingsPrompt(
+          'Camera access',
+          'Turn on camera access in Settings so Betweener can take your profile photos.',
+        );
         return;
       }
 
@@ -926,7 +973,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const openVideoLibrary = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Please grant camera roll permissions to upload videos.');
+      showOpenSettingsPrompt(
+        'Videos access',
+        'Turn on photo library access in Settings so Betweener can upload your profile videos.',
+      );
       return;
     }
 
@@ -948,7 +998,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const openVideoCamera = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Please grant camera permissions to record a video.');
+      showOpenSettingsPrompt(
+        'Camera access',
+        'Turn on camera access in Settings so Betweener can record your profile video.',
+      );
       return;
     }
 
@@ -1267,6 +1320,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       }
 
       // Prepare update data (preserve required fields to avoid NOT NULL constraint violations)
+      const normalizedRoots = normalizeRoots(formData.roots);
+      const rootsNote = formData.roots_note ? formData.roots_note.trim() : '';
       const updateData: any = {
         full_name: formData.full_name.trim(),
         bio: formData.bio.trim(),
@@ -1277,7 +1332,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         gender: String(formData.gender || profile?.gender || 'OTHER').trim().toUpperCase(),
         age: profile?.age || 18,
         region: profile?.region || '',
-        tribe: profile?.tribe || '',
+        tribe: normalizedRoots[0] ?? null,
+        roots: normalizedRoots.length > 0 ? normalizedRoots : null,
+        roots_note: rootsNote || null,
+        roots_visibility: String(formData.roots_visibility || 'VISIBLE').toUpperCase(),
         religion: profile?.religion || 'OTHER',
         min_age_interest: profile?.min_age_interest || 18,
         max_age_interest: profile?.max_age_interest || 35,
@@ -1299,9 +1357,6 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           updateData.longitude = null;
           updateData.location_updated_at = new Date().toISOString();
         }
-      }
-      if (formData.tribe && formData.tribe.trim()) {
-        updateData.tribe = formData.tribe.trim();
       }
       if (formData.occupation && formData.occupation.trim()) {
         updateData.occupation = formData.occupation.trim();
@@ -1695,82 +1750,59 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             </View>
 
             <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>
-                {isGhanaProfile ? 'Tribe' : 'Tribe / Ethnicity'}
+              <Text style={styles.inputLabel}>Roots</Text>
+              <Text style={styles.toggleHelper}>
+                {isGhanaProfile
+                  ? 'Pick one or more roots that matter to you culturally.'
+                  : 'Pick one or more roots or identities that matter to you culturally.'}
               </Text>
-              {isGhanaProfile ? (
-                <>
-                  <TouchableOpacity
-                    style={styles.selectButton}
-                    onPress={() => setShowTribePicker(true)}
-                  >
-                    <Text
-                      style={[
-                        formData.tribe
-                          ? styles.selectButtonText
-                          : styles.selectButtonPlaceholder,
-                      ]}
+              <View style={[styles.optionChipRow, { marginTop: 10 }]}>
+                {(isGhanaProfile ? GHANA_TRIBES_OPTIONS : GLOBAL_TRIBES_OPTIONS).map((option) => {
+                  const selected = formData.roots.includes(option);
+                  return (
+                    <TouchableOpacity
+                      key={option}
+                      style={[styles.optionChip, selected && styles.optionChipSelected]}
+                      onPress={() => handleRootToggle(option)}
+                      activeOpacity={0.85}
                     >
-                      {formData.tribe || 'Select tribe'}
-                    </Text>
-                    <MaterialCommunityIcons
-                      name="chevron-down"
-                      size={20}
-                      color={theme.textMuted}
-                    />
-                  </TouchableOpacity>
-                  {formData.tribe === 'Other' && (
-                    <TextInput
-                      style={[styles.textInput, { marginTop: 8 }]}
-                      value={customTribe}
-                      onChangeText={setCustomTribe}
-                      placeholder="Enter your tribe"
-                      maxLength={100}
-                      onBlur={() => {
-                        if (customTribe.trim()) {
-                          handleInputChange('tribe', customTribe.trim());
-                        }
-                      }}
-                    />
-                  )}
-                </>
-              ) : (
-                <>
-                  <TouchableOpacity
-                    style={styles.selectButton}
-                    onPress={() => setShowTribePicker(true)}
-                  >
-                    <Text
-                      style={[
-                        formData.tribe
-                          ? styles.selectButtonText
-                          : styles.selectButtonPlaceholder,
-                      ]}
+                      <Text style={[styles.optionChipText, selected && styles.optionChipTextSelected]}>
+                        {option}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <TextInput
+                style={[styles.textInput, { marginTop: 12 }]}
+                value={formData.roots_note}
+                onChangeText={(text) => handleInputChange('roots_note', text)}
+                placeholder={isGhanaProfile ? 'Optional: Half Ewe, half Ashanti' : 'Optional: describe how you identify'}
+                maxLength={120}
+              />
+              <View style={{ marginTop: 12, gap: 10 }}>
+                {ROOTS_VISIBILITY_OPTIONS.map((option) => {
+                  const active = formData.roots_visibility === option.value;
+                  return (
+                    <TouchableOpacity
+                      key={option.value}
+                      style={styles.toggleRow}
+                      onPress={() => handleInputChange('roots_visibility', option.value)}
+                      activeOpacity={0.85}
                     >
-                      {formData.tribe || 'Select ethnicity'}
-                    </Text>
-                    <MaterialCommunityIcons
-                      name="chevron-down"
-                      size={20}
-                      color={theme.textMuted}
-                    />
-                  </TouchableOpacity>
-                  {formData.tribe === 'Other' && (
-                    <TextInput
-                      style={[styles.textInput, { marginTop: 8 }]}
-                      value={customTribe}
-                      onChangeText={setCustomTribe}
-                      placeholder="Enter your ethnicity"
-                      maxLength={100}
-                      onBlur={() => {
-                        if (customTribe.trim()) {
-                          handleInputChange('tribe', customTribe.trim());
-                        }
-                      }}
-                    />
-                  )}
-                </>
-              )}
+                      <View style={styles.toggleTextCol}>
+                        <Text style={styles.toggleLabel}>{option.label}</Text>
+                        <Text style={styles.toggleSub}>{option.subtitle}</Text>
+                      </View>
+                      <View style={[styles.togglePill, active && styles.togglePillActive]}>
+                        <Text style={[styles.toggleText, active && styles.toggleTextActive]}>
+                          {active ? 'On' : 'Off'}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
           </View>
 
@@ -2626,21 +2658,6 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           currentValue={formData.region}
         />
       )}
-
-      {/* Tribe / Ethnicity Picker */}
-      <FieldPicker
-        title={isGhanaProfile ? 'Select Tribe' : 'Select Ethnicity'}
-        options={isGhanaProfile ? GHANA_TRIBES_OPTIONS : GLOBAL_TRIBES_OPTIONS}
-        visible={showTribePicker}
-        onClose={() => setShowTribePicker(false)}
-        onSelect={(value) => {
-          if (value === 'Other') {
-            setCustomTribe('');
-          }
-          handleInputChange('tribe', value);
-        }}
-        currentValue={formData.tribe}
-      />
 
       {/* Occupation Picker */}
       <FieldPicker

@@ -91,7 +91,7 @@ serve(async (req) => {
 
     const { data: profileRow, error: profileFetchError } = await supabase
       .from('profiles')
-      .select('verification_level')
+      .select('verification_level,identity_status,profile_completed')
       .eq('user_id', user.id)
       .limit(1)
       .maybeSingle()
@@ -100,7 +100,22 @@ serve(async (req) => {
       console.log('Profile fetch error', profileFetchError)
     }
 
+    if (
+      profileRow?.identity_status === 'recovered_into_existing_account' ||
+      profileRow?.identity_status === 'discarded_duplicate'
+    ) {
+      return new Response(JSON.stringify({ error: 'This account shell was already retired after recovery' }), {
+        status: 409,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     const nextLevel = Math.max(profileRow?.verification_level ?? 0, 1)
+    const inferredProvider =
+      user.app_metadata?.provider === 'google' ||
+      user.app_metadata?.provider === 'apple'
+        ? user.app_metadata.provider
+        : 'email'
 
     // Upsert verification flags (belt + suspenders).
     const { error: profileError } = await supabase
@@ -110,8 +125,11 @@ serve(async (req) => {
           user_id: user.id,
           phone_number: verifiedPhone,
           phone_verified: true,
+          phone_verified_at: nowIso,
           phone_verification_score: normalizedScore,
           verification_level: nextLevel,
+          identity_status: profileRow?.profile_completed ? 'active' : 'pending_onboarding',
+          last_successful_auth_provider: inferredProvider,
         },
         { onConflict: 'user_id' }
       )

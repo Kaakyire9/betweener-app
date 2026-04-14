@@ -21,6 +21,19 @@ export default function AuthGateScreen() {
   const lastUserIdRef = useRef<string | null>(null);
   const [statusText, setStatusText] = useState("Checking your account...");
 
+  const getRetiredDuplicateRoute = (
+    identityStatus: string | null,
+    provider?: string | null,
+    email?: string | null,
+  ) => ({
+    pathname: "/(auth)/retired-duplicate-account" as const,
+    params: {
+      ...(identityStatus ? { status: identityStatus } : {}),
+      ...(provider ? { method: provider } : {}),
+      ...(email ? { email: email.trim() } : {}),
+    },
+  });
+
   useEffect(() => {
     if (routedRef.current) return;
     if (isLoading) {
@@ -106,10 +119,26 @@ export default function AuthGateScreen() {
           return;
         }
 
+        const identityStatus = profile?.identity_status ?? null;
         const bestVerified = phoneVerified || profile?.phone_verified === true;
         const bestCompleted = profile?.profile_completed === true;
 
         routedRef.current = true;
+
+        if (identityStatus === "recovered_into_existing_account" || identityStatus === "discarded_duplicate") {
+          const retiredRoute = getRetiredDuplicateRoute(
+            identityStatus,
+            profile?.last_successful_auth_provider ?? user?.app_metadata?.provider ?? null,
+            user?.email ?? null,
+          );
+          try {
+            await supabase.auth.signOut();
+          } catch {
+            // best effort only
+          }
+          router.replace(retiredRoute);
+          return;
+        }
 
         if (!bestVerified) {
           if (typeof __DEV__ !== "undefined" && __DEV__) {
@@ -297,6 +326,7 @@ export default function AuthGateScreen() {
         }
 
         void refreshProfile();
+        const identityStatus = authContext.profile?.identity_status ?? profile?.identity_status ?? null;
         const verified = await refreshPhoneState();
         const profileCompleted = authContext.profile?.profile_completed === true;
 
@@ -306,6 +336,24 @@ export default function AuthGateScreen() {
             verified,
             profileCompleted,
           });
+        }
+
+        if (identityStatus === "recovered_into_existing_account" || identityStatus === "discarded_duplicate") {
+          const retiredRoute = getRetiredDuplicateRoute(
+            identityStatus,
+            authContext.profile?.last_successful_auth_provider ??
+              profile?.last_successful_auth_provider ??
+              userToUse.app_metadata?.provider ??
+              null,
+            userToUse.email ?? null,
+          );
+          try {
+            await supabase.auth.signOut();
+          } catch {
+            // best effort only
+          }
+          guardRoute(retiredRoute);
+          return;
         }
 
         if (!verified) {

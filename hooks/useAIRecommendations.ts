@@ -50,6 +50,8 @@ const mergePreservingLocationMetadata = (prev: Match[], next: Match[]): Match[] 
   return next.map((item) => {
     const prior = prevById.get(String(item.id));
     if (!prior) return item;
+    const incomingPrecision = String((item as any).location_precision || '').toUpperCase();
+    const shouldTrustIncomingExactLocation = incomingPrecision === 'EXACT';
     const mergedCity = pickBetterLocationValue((item as any).city, (prior as any).city, {
       preferShorter: true,
       avoidAdministrative: true,
@@ -66,11 +68,15 @@ const mergePreservingLocationMetadata = (prev: Match[], next: Match[]): Match[] 
     return {
       ...prior,
       ...item,
-      city: mergedCity || undefined,
-      location: mergedLocation || undefined,
-      region: mergedRegion || undefined,
-      current_country: (item as any).current_country ?? (prior as any).current_country,
-      current_country_code: (item as any).current_country_code ?? (prior as any).current_country_code,
+      city: shouldTrustIncomingExactLocation ? ((item as any).city || undefined) : mergedCity || undefined,
+      location: shouldTrustIncomingExactLocation ? ((item as any).location || undefined) : mergedLocation || undefined,
+      region: shouldTrustIncomingExactLocation ? ((item as any).region || undefined) : mergedRegion || undefined,
+      current_country: shouldTrustIncomingExactLocation
+        ? ((item as any).current_country ?? undefined)
+        : (item as any).current_country ?? (prior as any).current_country,
+      current_country_code: shouldTrustIncomingExactLocation
+        ? ((item as any).current_country_code ?? undefined)
+        : (item as any).current_country_code ?? (prior as any).current_country_code,
       location_precision: (item as any).location_precision ?? (prior as any).location_precision,
       distanceKm: typeof (item as any).distanceKm === 'number' ? (item as any).distanceKm : (prior as any).distanceKm,
       distance: (item as any).distance || (prior as any).distance,
@@ -187,7 +193,7 @@ export default function useAIRecommendations(
   const cacheKey = useMemo(() => {
     if (!userId) return null;
     const win = mode === 'active' ? String(activeWindowMinutes) : '-';
-    return `cache:ai_recs:v1:${userId}:${mode}:${win}`;
+    return `cache:ai_recs:v2:${userId}:${mode}:${win}`;
   }, [activeWindowMinutes, mode, userId]);
   const cacheLoadedKeyRef = useRef<string | null>(null);
   const cacheWriteInFlightRef = useRef(false);
@@ -1388,19 +1394,25 @@ export default function useAIRecommendations(
             preferShorter: true,
             avoidAdministrative: true,
           });
+          const incomingPrecision = String(profileData?.location_precision || (m as any).location_precision || '').toUpperCase();
+          const shouldTrustIncomingExactLocation = incomingPrecision === 'EXACT';
             merged = {
               ...m,
               profileVideo: signedProfileVideo || (m as any).profileVideo,
               personalityTags: personality,
               interests: interestsFinal,
               commonInterests,
-              city: mergedCity || undefined,
-              location: mergedLocation || undefined,
+              city: shouldTrustIncomingExactLocation ? (profileData?.city || undefined) : mergedCity || undefined,
+              location: shouldTrustIncomingExactLocation ? (profileData?.location || undefined) : mergedLocation || undefined,
               tribe: profileData?.tribe ?? (m as any).tribe,
               religion: profileData?.religion ?? (m as any).religion,
-              region: mergedRegion || undefined,
-            current_country: profileData?.current_country ?? (m as any).current_country,
-            current_country_code: profileData?.current_country_code ?? (m as any).current_country_code,
+              region: shouldTrustIncomingExactLocation ? (profileData?.region || undefined) : mergedRegion || undefined,
+            current_country: shouldTrustIncomingExactLocation
+              ? (profileData?.current_country || undefined)
+              : profileData?.current_country ?? (m as any).current_country,
+            current_country_code: shouldTrustIncomingExactLocation
+              ? (profileData?.current_country_code || undefined)
+              : profileData?.current_country_code ?? (m as any).current_country_code,
             location_precision: profileData?.location_precision ?? (m as any).location_precision,
           } as Match;
           return merged;

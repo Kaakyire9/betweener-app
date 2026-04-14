@@ -275,6 +275,53 @@ serve(async (req) => {
       throw new Error(`Unable to hide moments during deletion: ${momentsUpdateError.message}`);
     }
 
+    if (profileRow?.id) {
+      const { error: deleteSwipesError } = await service
+        .from("swipes")
+        .delete()
+        .or(`swiper_id.eq.${profileRow.id},target_id.eq.${profileRow.id}`);
+
+      if (deleteSwipesError) {
+        throw new Error(`Unable to remove swipes during deletion: ${deleteSwipesError.message}`);
+      }
+
+      const { error: deleteMatchesError } = await service
+        .from("matches")
+        .delete()
+        .or(`user1_id.eq.${profileRow.id},user2_id.eq.${profileRow.id}`);
+
+      if (deleteMatchesError) {
+        throw new Error(`Unable to remove matches during deletion: ${deleteMatchesError.message}`);
+      }
+
+      const { error: deleteIntentRequestsError } = await service
+        .from("intent_requests")
+        .delete()
+        .or(`actor_id.eq.${profileRow.id},recipient_id.eq.${profileRow.id}`);
+
+      if (deleteIntentRequestsError) {
+        throw new Error(`Unable to remove intent requests during deletion: ${deleteIntentRequestsError.message}`);
+      }
+
+      const { error: deleteOwnedCirclesError } = await service
+        .from("circles")
+        .delete()
+        .eq("created_by_profile_id", profileRow.id);
+
+      if (deleteOwnedCirclesError) {
+        throw new Error(`Unable to remove owned circles during deletion: ${deleteOwnedCirclesError.message}`);
+      }
+
+      const { error: deleteCircleMembershipsError } = await service
+        .from("circle_members")
+        .delete()
+        .eq("profile_id", profileRow.id);
+
+      if (deleteCircleMembershipsError) {
+        throw new Error(`Unable to remove circle memberships during deletion: ${deleteCircleMembershipsError.message}`);
+      }
+    }
+
     const { error: deleteUserError } = await service.auth.admin.deleteUser(user.id, true);
     if (deleteUserError) {
       throw new Error(`Unable to delete auth account: ${deleteUserError.message}`);

@@ -397,7 +397,7 @@ export default function DashboardScreen() {
 
         const { data: profilesData, error: profilesError } = await supabase
           .from('profiles')
-          .select('id,full_name,avatar_url')
+          .select('id,full_name,avatar_url,account_state,deleted_at')
           .in('id', otherProfileIds);
 
         if (cancelled) return;
@@ -414,14 +414,17 @@ export default function DashboardScreen() {
         const list: DashboardPerson[] = otherProfileIds
           .map((pid) => {
             const p = profileById.get(pid);
+            const hasLeft = Boolean(p?.deleted_at) || String(p?.account_state || '').toLowerCase() === 'deleted';
+            if (hasLeft) return null as DashboardPerson | null;
               return {
                 userId: pid,
                 name: (p?.full_name || '').trim() || 'Match',
                 avatarUrl: getSafeRemoteImageUri(p?.avatar_url),
                 unread: 0,
                 lastMessage: '',
-              };
+              } as DashboardPerson;
           })
+          .filter((item): item is DashboardPerson => Boolean(item))
           .slice(0, 10);
 
         setMatchesTodayPeople(list);
@@ -1744,4 +1747,3 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       height: 20,
     },
   });
-

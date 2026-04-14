@@ -25,6 +25,13 @@ export default function MagicLinkScreen() {
   const params = useLocalSearchParams();
   const mode = params.mode === "signup" ? "signup" : "signin";
   const isSignup = mode === "signup";
+  const routeEmail = typeof params.email === "string" ? params.email.trim() : "";
+
+  useEffect(() => {
+    if (routeEmail) {
+      setEmail(routeEmail);
+    }
+  }, [routeEmail]);
 
   // Countdown timer for resend cooldown
   useEffect(() => {

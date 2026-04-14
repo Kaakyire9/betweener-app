@@ -15,6 +15,7 @@ import useVibesFeed, { applyVibesFilters, type VibesFilters } from "@/hooks/useV
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
 import { canAccessInternalTools } from "@/lib/internal-tools";
+import { showOpenSettingsPrompt } from "@/lib/permission-prompts";
 import { recordProfileSignal } from '@/lib/profile-signals';
 import { applyDefaults as applyCompassDefaults, mapToDiscoveryFilters } from "@/lib/relationship-compass";
 import { supabase } from "@/lib/supabase";
@@ -46,6 +47,7 @@ const KM_PER_MILE = 1.60934;
 const VIBES_FILTERS_KEY = 'vibes_filters_v2';
 const VIBES_INTRO_SEEN_KEY = 'vibes_intro_seen_v1';
 const VIBES_MOMENTS_COLLAPSED_KEY = 'vibes:momentsCollapsed';
+const VIBES_LOCATION_PROMPT_DISMISSED_KEY = 'vibes:locationPromptDismissed:v1';
 
 const clearPremiumVibesFilters = (filters: VibesFilters): VibesFilters => ({
   ...filters,
@@ -306,6 +308,7 @@ export default function ExploreScreen() {
   const [momentStartUserId, setMomentStartUserId] = useState<string | null>(null);
   const [allMomentsVisible, setAllMomentsVisible] = useState(false);
   const [momentsCollapsed, setMomentsCollapsed] = useState(true);
+  const [locationPromptDismissed, setLocationPromptDismissed] = useState(false);
   const [momentPriorityProfileIds, setMomentPriorityProfileIds] = useState<Set<string>>(new Set());
   const [momentRelationshipContextByProfileId, setMomentRelationshipContextByProfileId] = useState<Record<string, MomentRelationshipContext>>({});
   const [intentSheetVisible, setIntentSheetVisible] = useState(false);
@@ -980,6 +983,9 @@ export default function ExploreScreen() {
   const hasPreciseCoords = profile?.latitude != null && profile?.longitude != null;
   const hasCityOnly = !!profile?.location && profile?.location_precision === 'CITY';
   const needsLocationPrompt = !hasPreciseCoords && !hasCityOnly;
+  const shouldShowLocationPrompt =
+    needsLocationPrompt && (activeTab === 'nearby' || !locationPromptDismissed);
+  const showCompactLocationPrompt = shouldShowLocationPrompt && activeTab !== 'nearby';
 
   useEffect(() => {
     if (typeof profile?.superlikes_left === 'number') {
@@ -994,6 +1000,25 @@ export default function ExploreScreen() {
     setManualCountryCode(profileCountryCode || "");
   }, [profileCountryCode]);
 
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(VIBES_LOCATION_PROMPT_DISMISSED_KEY)
+      .then((value) => {
+        if (!cancelled) setLocationPromptDismissed(value === '1');
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!needsLocationPrompt) {
+      setLocationPromptDismissed(false);
+      AsyncStorage.removeItem(VIBES_LOCATION_PROMPT_DISMISSED_KEY).catch(() => undefined);
+    }
+  }, [needsLocationPrompt]);
+
   // auto-show prompt once when location is missing
   useEffect(() => {
     if (needsLocationPrompt) {
@@ -1005,10 +1030,18 @@ export default function ExploreScreen() {
     if (!profile?.id) return;
     setIsSavingLocation(true);
     setLocationError(null);
-    const res = await requestAndSavePreciseLocation(profile.id);
+  const res = await requestAndSavePreciseLocation(profile.id);
     if (!res.ok) {
+      if ('permissionDenied' in res && res.permissionDenied) {
+        showOpenSettingsPrompt(
+          'Location access',
+          'Turn on location access in Settings so Betweener can personalize nearby profiles accurately.',
+        );
+      }
       setLocationError('error' in res ? res.error : 'Unable to save location');
     } else {
+      setLocationPromptDismissed(false);
+      AsyncStorage.removeItem(VIBES_LOCATION_PROMPT_DISMISSED_KEY).catch(() => undefined);
       await refreshProfile();
       await refreshMatches();
       await new Promise((resolve) => setTimeout(resolve, 1200));
@@ -1020,6 +1053,11 @@ export default function ExploreScreen() {
 
   const closeManualLocationModal = useCallback(() => {
     setManualLocationModalVisible(false);
+  }, []);
+
+  const dismissLocationPrompt = useCallback(() => {
+    setLocationPromptDismissed(true);
+    AsyncStorage.setItem(VIBES_LOCATION_PROMPT_DISMISSED_KEY, '1').catch(() => undefined);
   }, []);
 
   const openManualLocationModal = useCallback(() => {
@@ -1049,6 +1087,8 @@ export default function ExploreScreen() {
     if (!res.ok) {
       setLocationError('error' in res ? res.error : 'Unable to save location');
     } else {
+      setLocationPromptDismissed(false);
+      AsyncStorage.removeItem(VIBES_LOCATION_PROMPT_DISMISSED_KEY).catch(() => undefined);
       if (filtersVisible) {
         setFiltersPanel('main');
       } else {
@@ -1726,14 +1766,26 @@ export default function ExploreScreen() {
             { paddingBottom: Math.max(insets.bottom + 180, 180) },
           ]}
         >
-          {needsLocationPrompt ? (
-            <View style={styles.locationBanner}>
-              <Text style={styles.locationTitle}>Set your location</Text>
-              <Text style={styles.locationSubtitle}>
-                Enable location to see nearby matches and more accurate distance. You can also set
-                your city anytime from Filters.
-              </Text>
-              <View style={styles.locationActions}>
+          {shouldShowLocationPrompt ? (
+            <View style={[styles.locationBanner, showCompactLocationPrompt ? styles.locationBannerCompact : null]}>
+              <View style={styles.locationBannerHeader}>
+                <View style={styles.locationBannerCopy}>
+                  <Text style={styles.locationTitle}>
+                    {activeTab === 'nearby' ? 'Add your location to unlock Nearby' : 'Add your city to improve nearby matches'}
+                  </Text>
+                  <Text style={[styles.locationSubtitle, showCompactLocationPrompt ? styles.locationSubtitleCompact : null]}>
+                    {activeTab === 'nearby'
+                      ? 'Use your location or set a city so nearby discovery can work properly.'
+                      : 'For You still works without it. Nearby becomes more useful once you add a location.'}
+                  </Text>
+                </View>
+                {showCompactLocationPrompt ? (
+                  <TouchableOpacity style={styles.locationDismissButton} onPress={dismissLocationPrompt} activeOpacity={0.8}>
+                    <MaterialCommunityIcons name="close" size={16} color={theme.textMuted} />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+              <View style={[styles.locationActions, showCompactLocationPrompt ? styles.locationActionsCompact : null]}>
                 <TouchableOpacity
                   style={[styles.locationButton, styles.locationPrimary]}
                   onPress={handleUseMyLocation}
@@ -1752,6 +1804,15 @@ export default function ExploreScreen() {
                     {hasCityOnly ? 'Edit city' : 'Enter city'}
                   </Text>
                 </TouchableOpacity>
+                {showCompactLocationPrompt ? (
+                  <TouchableOpacity
+                    style={[styles.locationButton, styles.locationGhost, styles.locationNotNowButton]}
+                    onPress={dismissLocationPrompt}
+                    disabled={isSavingLocation}
+                  >
+                    <Text style={styles.locationGhostText}>Not now</Text>
+                  </TouchableOpacity>
+                ) : null}
               </View>
               {locationError ? (
                 <Text style={[styles.locationError, { marginTop: 8 }]}>{locationError}</Text>
@@ -3362,23 +3423,57 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     ghostButton: { borderWidth: 1, borderColor: outline, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12, backgroundColor: ghostBg },
     ghostButtonText: { color: theme.text, fontWeight: '600' },
     locationBanner: {
-      backgroundColor: isDark ? 'rgba(255,107,107,0.08)' : '#eef2ff',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.045)' : '#f8fafc',
       paddingHorizontal: 16,
       paddingVertical: 14,
       marginHorizontal: 16,
       marginBottom: 12,
-      borderRadius: 14,
+      borderRadius: 18,
       borderWidth: 1,
-      borderColor: isDark ? 'rgba(255,107,107,0.2)' : '#e0e7ff',
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : '#e2e8f0',
+    },
+    locationBannerCompact: {
+      paddingVertical: 12,
+      marginBottom: 10,
+    },
+    locationBannerHeader: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    locationBannerCopy: {
+      flex: 1,
     },
     locationTitle: { fontSize: 16, fontWeight: '700', color: theme.text, marginBottom: 4 },
     locationSubtitle: { fontSize: 13, color: theme.textMuted, marginBottom: 10 },
+    locationSubtitleCompact: {
+      marginBottom: 8,
+    },
     locationActions: { flexDirection: 'row', alignItems: 'center' },
+    locationActionsCompact: {
+      flexWrap: 'wrap',
+      gap: 8,
+    },
     locationButton: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 12 },
     locationPrimary: { backgroundColor: theme.tint, marginRight: 8 },
     locationPrimaryText: { color: '#fff', fontWeight: '700', fontSize: 13.5, lineHeight: 16, textAlign: 'center' },
     locationGhost: { borderWidth: 1, borderColor: outline, backgroundColor: ghostBg },
     locationGhostText: { color: theme.text, fontWeight: '600' },
+    locationDismissButton: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.04)',
+      borderWidth: 1,
+      borderColor: outline,
+    },
+    locationNotNowButton: {
+      marginLeft: 0,
+      marginRight: 0,
+    },
     locationError: { color: '#b91c1c', marginTop: 6, fontSize: 12 },
     modalBackdrop: {
       flex: 1,

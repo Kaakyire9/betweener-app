@@ -27,12 +27,6 @@ const normalizePlace = (value?: string | null) =>
     .toLowerCase()
     .replace(/\s+/g, ' ')
 
-const getFirstLocationPart = (value?: string | null) =>
-  String(value || '').split(',')[0]?.trim() || ''
-
-const looksAdministrative = (value?: string | null) =>
-  /\b(region|district|province|state|county|municipality|metropolitan)\b/i.test(getFirstLocationPart(value))
-
 const stripAdministrativeSuffix = (value?: string | null) => {
   const raw = String(value || '').trim()
   if (!raw) return ''
@@ -68,13 +62,13 @@ const resolveLocality = (address: Record<string, unknown>) => {
     address.city,
     address.town,
     address.village,
-    address.municipality,
-    address.county,
-    address.state_district,
-    address.city_district,
     address.suburb,
     address.neighbourhood,
     address.hamlet,
+    address.city_district,
+    address.state_district,
+    address.municipality,
+    address.county,
   ]
 
   for (const candidate of candidates) {
@@ -179,23 +173,11 @@ serve(async (req) => {
     }
 
     const safeRegion = region || currentProfile?.region || country || 'Unknown'
-    const previousLocationCity = getFirstLocationPart(currentProfile?.location)
-    const previousCity = String(currentProfile?.city || '').trim()
-    const safePreviousCity = previousCity && !looksAdministrative(previousCity)
-      ? previousCity
-      : previousLocationCity && !looksAdministrative(previousLocationCity)
-        ? previousLocationCity
-        : null
-    const safeCity = city || safePreviousCity || null
+    const safeCity = city || null
     const safeCountry = country || currentProfile?.current_country || null
     const safeCountryCode = countryCode || currentProfile?.current_country_code || null
     const fallbackLocation = buildLocationLabel(safeCity || undefined, safeRegion || undefined, safeCountry || undefined)
-    const safeCurrentLocation = currentProfile?.location && !looksAdministrative(currentProfile.location)
-      ? currentProfile.location
-      : null
-    const safeLocation = location && !(looksAdministrative(location) && safeCurrentLocation)
-      ? location
-      : safeCurrentLocation || fallbackLocation || null
+    const safeLocation = location || fallbackLocation || null
 
     const { error: updateError } = await supabase
       .from('profiles')

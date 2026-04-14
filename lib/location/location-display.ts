@@ -51,12 +51,17 @@ export const pickPreferredLocationLabel = (source: Record<string, any>) => {
   const city = getFirstLocationPart(source?.city);
   const location = getFirstLocationPart(source?.location);
   const region = getFirstLocationPart(source?.region);
-  const nonAdministrativeCity = city && !isAdministrativeLocationLabel(city) ? city : '';
-  const nonAdministrativeLocation = location && !isAdministrativeLocationLabel(location) ? location : '';
+  const currentCountry = normalizeLocationValue(
+    source?.current_country || source?.currentCountry || source?.current_country_name || source?.currentCountryName,
+  );
+  const nonAdministrativeCity =
+    city && !isAdministrativeLocationLabel(city) && !isBroadRegionLabel(city) ? city : '';
+  const nonAdministrativeLocation =
+    location && !isAdministrativeLocationLabel(location) && !isBroadRegionLabel(location) ? location : '';
   if (nonAdministrativeCity) return nonAdministrativeCity;
   if (nonAdministrativeLocation) return nonAdministrativeLocation;
-  if (city) return city;
-  if (location) return location;
+  if (city && !isBroadRegionLabel(city)) return city;
+  if (location && !isBroadRegionLabel(location)) return location;
   if (region && !isBroadRegionLabel(region)) return region;
-  return normalizeLocationValue(source?.current_country);
+  return currentCountry;
 };

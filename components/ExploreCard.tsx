@@ -1,4 +1,5 @@
 // components/ExploreCard.tsx
+import AmbientCardGlow from "@/components/AmbientCardGlow";
 import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
 import { VerificationBadge } from "@/components/VerificationBadge";
@@ -9,7 +10,7 @@ import { getProfileInitials, getProfilePlaceholderPalette, hasProfileImage } fro
 import type { Match } from "@/types/match";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AccessibilityInfo, Animated, Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { AccessibilityInfo, Animated, Image, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const isDistanceLabel = (label?: string) => {
@@ -26,6 +27,9 @@ const getCityOnly = (label?: string) => {
 
 const looksAdministrative = (label?: string) =>
   /\b(region|district|province|state|county|municipality|metropolitan)\b/i.test(String(label || '')) ||
+  /^(africa|north america|south america|europe|asia|oceania|middle east)$/i.test(String(label || '').trim());
+
+const isBroadLocationLabel = (label?: string) =>
   /^(africa|north america|south america|europe|asia|oceania|middle east)$/i.test(String(label || '').trim());
 
 const pickBetterCityLabel = (incoming?: string, previous?: string) => {
@@ -134,10 +138,11 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
   const locationLabel = stableLocationLabel || immediateLocationLabel;
   const distanceLabel = match.distance || '';
   const showDistance = isDistanceLabel(distanceLabel);
+  const countryLabel = String((match as any).current_country || (match as any).current_country_name || '').trim();
   const locationDisplayBase =
-    showDistance && locationLabel && getCityOnly(distanceLabel) !== locationLabel
+    showDistance && locationLabel && !isBroadLocationLabel(locationLabel) && getCityOnly(distanceLabel) !== locationLabel
       ? `${distanceLabel} \u00b7 ${locationLabel}`
-      : locationLabel || distanceLabel;
+      : (!isBroadLocationLabel(locationLabel) ? locationLabel : '') || countryLabel || distanceLabel;
   const resolvedCountryCode = inferCountryCode(
     (match as any).current_country_code,
     (match as any).current_country,
@@ -183,6 +188,8 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
   const badgeVariant = verificationLevel >= 2 ? 'id' : verificationLevel >= 1 ? 'phone' : null;
   const hasAvatarImage = hasProfileImage(match.avatar_url);
   const profileInitials = getProfileInitials(match.name);
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const compactMode = windowHeight <= 760 || windowWidth <= 360;
 
   const isOnlineNow = !!(match as any).online;
   const lastActiveValue = match.lastActive || (match as any).last_active;
@@ -224,6 +231,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
 
   // Reduced-motion preference + small, native Animated transitions (no Reanimated hooks).
   const [reduceMotion, setReduceMotion] = useState(false);
+  const [pressed, setPressed] = useState(false);
   useEffect(() => {
     let mounted = true;
     try {
@@ -248,7 +256,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
   const pillAnim = useRef(new Animated.Value(0)).current;
   const pillTranslate = useRef(new Animated.Value(6)).current;
   const introPulse = useRef(new Animated.Value(0)).current;
-  const previewGlowAnim = useRef(new Animated.Value(0)).current;
+  const hasIntroVideo = Boolean((match as any).profileVideo);
 
   useEffect(() => {
     if (badgeVariant) {
@@ -279,7 +287,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
   }, [badgeVariant, isOnlineNow, isActiveNow, recentlyActive, lastActiveValue]);
 
   useEffect(() => {
-    if (!(match as any).profileVideo) return;
+    if (!hasIntroVideo) return;
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(introPulse, { toValue: 1, duration: 900, useNativeDriver: true }),
@@ -291,7 +299,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
       loop.stop();
       introPulse.setValue(0);
     };
-  }, [introPulse, (match as any).profileVideo]);
+  }, [hasIntroVideo, introPulse]);
 
   const introPulseStyle = {
     transform: [
@@ -351,38 +359,23 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     return chips.slice(0, 3);
   }, [blockedLabels, match.interests, (match as any).commonInterests, (match as any).looking_for, (match as any).lookingFor, (match as any).love_language, (match as any).loveLanguage]);
 
-  const previewGlowStyle = {
-    transform: [
-      {
-        scale: previewGlowAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] }),
-      },
-    ],
-    opacity: previewGlowAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.82] }),
-  };
-
-  useEffect(() => {
-    if (!isPreviewing || reduceMotion) {
-      previewGlowAnim.stopAnimation();
-      previewGlowAnim.setValue(0);
-      return;
-    }
-
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(previewGlowAnim, { toValue: 1, duration: 900, useNativeDriver: true }),
-        Animated.timing(previewGlowAnim, { toValue: 0, duration: 900, useNativeDriver: true }),
-      ])
-    );
-    loop.start();
-    return () => {
-      loop.stop();
-      previewGlowAnim.setValue(0);
-    };
-  }, [isPreviewing, reduceMotion, previewGlowAnim]);
-
   return (
-    <View style={styles.card}>
-      <TouchableOpacity style={styles.cardContent} activeOpacity={0.95} onPress={() => onPress?.(match.id)}>
+    <View style={styles.cardShell}>
+      <AmbientCardGlow
+        theme={theme}
+        hasIntroVideo={hasIntroVideo}
+        isActiveNow={isOnlineNow || isActiveNow}
+        isPressed={pressed || Boolean(isPreviewing)}
+        compactMode={compactMode}
+        disabled={reduceMotion}
+      />
+      <TouchableOpacity
+        style={styles.card}
+        activeOpacity={0.95}
+        onPress={() => onPress?.(match.id)}
+        onPressIn={() => setPressed(true)}
+        onPressOut={() => setPressed(false)}
+      >
         {hasAvatarImage ? (
           <Image source={{ uri: match.avatar_url }} style={styles.image} />
         ) : (
@@ -400,30 +393,6 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
             </View>
           </LinearGradientSafe>
         )}
-
-        {/* subtle full-card glow while previewing (modal playing) */}
-        {isPreviewing ? (
-          !reduceMotion ? (
-            <Animated.View style={[styles.previewGlow, previewGlowStyle]} pointerEvents="none" />
-          ) : (
-            <View pointerEvents="none" style={styles.previewGlow} />
-          )
-        ) : null}
-
-        {/* Video indicator (bottom-right of avatar) */}
-        {((match as any).profileVideo) ? (
-          <TouchableOpacity
-            accessibilityLabel={"Play profile video"}
-            accessibilityRole="button"
-            onPress={() => onPlayPress ? onPlayPress(match.id) : onPress?.(match.id)}
-            style={styles.videoBadgeHit}
-            activeOpacity={0.9}
-          >
-            <Animated.View style={[styles.videoBadge, introPulseStyle]} pointerEvents="none">
-              <MaterialCommunityIcons name="play" size={14} color="#fff" />
-            </Animated.View>
-          </TouchableOpacity>
-        ) : null}
 
         {/* Top-row: left = Verified, center = AI pill, right = Active */}
         <View style={styles.topRow} pointerEvents="box-none">
@@ -489,8 +458,20 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
         <BlurViewSafe intensity={60} tint="dark" style={styles.info}>
           <View style={styles.nameRow}>
             <Text style={styles.name}>{match.name}, {match.age}</Text>
-            {/* keep inline small active badge for backward compatibility (hidden when top-right exists) */}
-            {!match.isActiveNow && !recentlyActive ? null : null}
+            {hasIntroVideo ? (
+              <TouchableOpacity
+                accessibilityLabel={"Play profile video"}
+                accessibilityRole="button"
+                onPress={() => onPlayPress ? onPlayPress(match.id) : onPress?.(match.id)}
+                style={styles.inlineIntroHit}
+                activeOpacity={0.9}
+              >
+                <Animated.View style={[styles.inlineIntroPill, introPulseStyle, compactMode ? styles.inlineIntroPillCompact : null]}>
+                  <MaterialCommunityIcons name="play-circle-outline" size={compactMode ? 12 : 13} color="#F2FBFB" />
+                  <Text style={styles.inlineIntroText}>Intro</Text>
+                </Animated.View>
+              </TouchableOpacity>
+            ) : null}
           </View>
 
           {null}
@@ -536,13 +517,18 @@ const createStyles = (
   placeholderPalette: ReturnType<typeof getProfilePlaceholderPalette>,
 ) => {
   const surface = theme.background;
-  const previewGlowBg = withAlpha(theme.tint, 0.1);
   const activeNowBgColor = withAlpha(theme.secondary, isDark ? 0.9 : 0.95);
   const recentlyActiveBgColor = withAlpha(theme.accent, isDark ? 0.85 : 0.9);
   const infoBg = isDark ? 'rgba(5,10,18,0.16)' : 'rgba(17,24,39,0.12)';
   return StyleSheet.create({
-    card: {
+    cardShell: {
       position: "absolute",
+      width: "100%",
+      height: "100%",
+      borderRadius: 28,
+      overflow: "visible",
+    },
+    card: {
       width: "100%",
       height: "100%",
       borderRadius: 28,
@@ -556,7 +542,6 @@ const createStyles = (
       shadowOffset: { width: 0, height: 10 },
       elevation: 12,
     },
-    cardContent: { flex: 1 },
     image: { width: "100%", height: "100%", resizeMode: "cover" },
     placeholderSurface: { width: "100%", height: "100%", justifyContent: "center", alignItems: "center" },
     placeholderOrb: {
@@ -606,8 +591,8 @@ const createStyles = (
       borderTopWidth: 1,
       borderTopColor: 'rgba(255,255,255,0.14)',
     },
-    nameRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
-    name: { color: "#fff", fontSize: 30, flex: 1, fontFamily: 'PlayfairDisplay_700Bold' },
+    nameRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10 },
+    name: { color: "#fff", fontSize: 30, flex: 1, fontFamily: 'PlayfairDisplay_700Bold', minWidth: 0 },
     activeBadge: { flexDirection: "row", alignItems: "center", backgroundColor: activeNowBgColor, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
     activeDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#fff", marginRight: 6 },
     activeText: { color: "#fff", fontSize: 11 },
@@ -717,42 +702,40 @@ const createStyles = (
       borderColor: 'rgba(255,255,255,0.18)',
     },
     aiPillText: { color: '#fff', fontSize: 9, fontWeight: '800', textAlign: 'center' },
-    // video badge
-    videoBadgeHit: {
-      position: 'absolute',
-      right: 12,
-      bottom: 20,
-      width: 36,
-      height: 36,
-      borderRadius: 18,
+    inlineIntroHit: {
       alignItems: 'center',
       justifyContent: 'center',
-      zIndex: 50,
+      flexShrink: 0,
     },
-    videoBadge: {
-      width: 28,
-      height: 28,
-      borderRadius: 14,
-      backgroundColor: withAlpha(theme.secondary, 0.95),
-      alignItems: 'center',
+    inlineIntroPill: {
+      minHeight: 26,
+      borderRadius: 13,
+      backgroundColor: isDark ? 'rgba(18, 38, 40, 0.74)' : 'rgba(23, 58, 63, 0.62)',
       justifyContent: 'center',
-      borderWidth: 2,
-      borderColor: withAlpha('#ffffff', 0.9),
-      shadowColor: withAlpha(theme.secondary, 0.8),
-      shadowOpacity: 0.95,
-      shadowRadius: 14,
-      shadowOffset: { width: 0, height: 0 },
-      elevation: 10,
+      borderWidth: 1,
+      borderColor: withAlpha('#E9FEFF', 0.28),
+      shadowColor: withAlpha(theme.tint, 0.35),
+      shadowOpacity: isDark ? 0.22 : 0.16,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 2 },
+      elevation: 4,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 9,
+      paddingVertical: 5,
     },
-    previewGlow: {
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      top: 0,
-      bottom: 0,
-      backgroundColor: previewGlowBg,
-      borderRadius: 24,
-      zIndex: 40,
+    inlineIntroPillCompact: {
+      minHeight: 24,
+      paddingHorizontal: 8,
+      borderRadius: 12,
+      gap: 4,
+    },
+    inlineIntroText: {
+      color: '#F5FFFF',
+      fontSize: 9,
+      fontWeight: '700',
+      letterSpacing: 0.2,
     },
   });
 };

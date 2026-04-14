@@ -15,12 +15,12 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAppFonts } from "@/constants/fonts";
 import { AuthProvider } from "@/lib/auth-context";
 import AccountRecoveryNotice from "@/components/AccountRecoveryNotice";
+import RecoveryMergeSuggestionNotice from "@/components/RecoveryMergeSuggestionNotice";
 import InAppToasts from "@/components/InAppToasts";
 import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
 import { SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
 import { initPushNotificationUX } from "@/lib/notifications/push";
 import {
-  hasFreshPendingAuthFlow,
   isTrustedAuthCallbackUrl,
   LAST_DEEP_LINK_URL_KEY,
   urlHasAuthPayload,
@@ -62,29 +62,42 @@ function RootLayout() {
   const footerScale = useRef(new Animated.Value(0.94)).current;
   const underlineScale = useRef(new Animated.Value(0.08)).current;
   const orbDrift = useRef(new Animated.Value(0)).current;
+  const authCallbackRouteInFlightRef = useRef(false);
 
   // Handle deep links
   useEffect(() => {
     // Be defensive: any uncaught exception during startup can crash a release build (TestFlight)
     // before we can render a fallback UI.
     try {
-      const maybeStoreAuthCallbackUrl = async (url: string) => {
+      const maybeStoreAuthCallbackUrl = async (url: string, source: "initial" | "listener") => {
         if (!urlHasAuthPayload(url) || !isTrustedAuthCallbackUrl(url)) {
           return;
         }
 
-        const hasPendingFlow = await hasFreshPendingAuthFlow();
-        if (!hasPendingFlow) {
-          return;
+        await AsyncStorage.setItem(LAST_DEEP_LINK_URL_KEY, url);
+
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[root] trusted auth callback captured", { source, url });
         }
 
-        await AsyncStorage.setItem(LAST_DEEP_LINK_URL_KEY, url);
+        if (!authCallbackRouteInFlightRef.current) {
+          authCallbackRouteInFlightRef.current = true;
+          requestAnimationFrame(() => {
+            try {
+              router.replace("/(auth)/callback");
+            } finally {
+              setTimeout(() => {
+                authCallbackRouteInFlightRef.current = false;
+              }, 1200);
+            }
+          });
+        }
       };
 
       Linking.getInitialURL()
         .then((url) => {
           if (url) {
-            void maybeStoreAuthCallbackUrl(url).catch(() => {});
+            void maybeStoreAuthCallbackUrl(url, "initial").catch(() => {});
           }
         })
         .catch((e) => captureException(e, { where: "Linking.getInitialURL" }));
@@ -92,7 +105,7 @@ function RootLayout() {
       const subscription = Linking.addEventListener("url", ({ url }) => {
         try {
           if (url) {
-            void maybeStoreAuthCallbackUrl(url).catch(() => {});
+            void maybeStoreAuthCallbackUrl(url, "listener").catch(() => {});
           }
         } catch (e) {
           captureException(e, { where: "Linking.urlListener" });
@@ -110,7 +123,7 @@ function RootLayout() {
       captureException(e, { where: "Linking.useEffect" });
       return;
     }
-  }, []);
+  }, [router]);
 
   useEffect(() => {
     try {
@@ -540,6 +553,7 @@ function RootLayout() {
           <Slot />
           <InAppToasts />
           <AccountRecoveryNotice />
+          <RecoveryMergeSuggestionNotice />
 
           {!SUPABASE_IS_CONFIGURED && (
             <View style={styles.envBanner} pointerEvents="none">

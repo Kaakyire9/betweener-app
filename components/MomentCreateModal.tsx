@@ -1,5 +1,6 @@
 import { Colors } from '@/constants/theme';
 import { useAuth } from '@/lib/auth-context';
+import { showOpenSettingsPrompt } from '@/lib/permission-prompts';
 import { createMomentFromMedia, createTextMoment } from '@/lib/moments';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -49,6 +50,10 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
     setError(null);
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
+      showOpenSettingsPrompt(
+        'Photos access',
+        'Turn on photo access in Settings so Betweener can upload a Moment from your library.',
+      );
       setError('Permission needed to access photos.');
       return;
     }
@@ -74,6 +79,10 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
     setError(null);
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) {
+      showOpenSettingsPrompt(
+        'Camera access',
+        'Turn on camera access in Settings so Betweener can record a Moment.',
+      );
       setError('Camera permission is required to record a Moment.');
       return;
     }
@@ -102,6 +111,10 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
     setError(null);
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) {
+      showOpenSettingsPrompt(
+        'Videos access',
+        'Turn on photo library access in Settings so Betweener can upload a video Moment.',
+      );
       setError('Permission needed to access videos.');
       return;
     }

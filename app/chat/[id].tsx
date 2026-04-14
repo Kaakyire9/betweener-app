@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth-context";
 import { decryptMediaBytes, encryptMediaBytes, getOrCreateDeviceKeypair } from "@/lib/e2ee";
 import { computeConversationSignalLabel, computeFirstReplyHours, computeInterestOverlapRatio } from "@/lib/match/match-score";
 import { Motion } from "@/lib/motion";
+import { showOpenSettingsPrompt } from "@/lib/permission-prompts";
 import { getSafeRemoteImageUri, getUserFacingDisplayName, hasLeftBetweener } from "@/lib/profile/display-name";
 import { supabase } from "@/lib/supabase";
 import type { Database } from "@/supabase/types/database";
@@ -5350,6 +5351,10 @@ export default function ConversationScreen() {
         setLocationStatus(permission.status);
         if (permission.status !== 'granted') {
           setLocationError('Enable location to show nearby places.');
+          showOpenSettingsPrompt(
+            'Location access',
+            'Turn on location access in Settings so Betweener can show nearby places and share your location.',
+          );
           return;
         }
         const position = await Location.getCurrentPositionAsync({
@@ -6333,16 +6338,36 @@ export default function ConversationScreen() {
   }, [closeLocationModal, selectedPlace, sendLocationMessage]);
 
   const handleSendLiveLocation = useCallback(async () => {
-    if (!selectedPlace) {
-      setLocationError('Choose a place to share.');
+    let coords = currentCoords;
+    if (!coords) {
+      if (locationStatus !== 'granted') {
+        setLocationError('Enable location to share live movement.');
+        return;
+      }
+      try {
+        const position = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        coords = { lat: position.coords.latitude, lng: position.coords.longitude };
+        setCurrentCoords(coords);
+      } catch (error) {
+        console.log('[chat] live location start error', error);
+        setLocationError('Unable to fetch your current location for live sharing.');
+        return;
+      }
+    }
+
+    if (!coords) {
+      setLocationError('Unable to fetch your current location for live sharing.');
       return;
     }
+
     const expiresAt = new Date(Date.now() + liveDurationMinutes * 60000);
     const payload = {
-      lat: selectedPlace.lat,
-      lng: selectedPlace.lng,
-      label: selectedPlace.name,
-      address: selectedPlace.address,
+      lat: coords.lat,
+      lng: coords.lng,
+      label: 'Live location',
+      address: null,
       live: true,
       expiresAt,
     };
@@ -6352,11 +6377,11 @@ export default function ConversationScreen() {
       void startLiveLocationUpdates({
         messageId,
         expiresAt,
-        label: selectedPlace.name,
-        address: selectedPlace.address,
+        label: 'Live location',
+        address: null,
       });
     }
-  }, [closeLocationModal, liveDurationMinutes, selectedPlace, sendLocationMessage, startLiveLocationUpdates]);
+  }, [closeLocationModal, currentCoords, liveDurationMinutes, locationStatus, sendLocationMessage, startLiveLocationUpdates]);
 
   const handleInputFocus = useCallback(() => {
     setIsInputFocused(true);
@@ -7705,7 +7730,10 @@ export default function ConversationScreen() {
     try {
       const permission = await requestRecordingPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Microphone access', 'Enable microphone access to record voice messages.');
+        showOpenSettingsPrompt(
+          'Microphone access',
+          'Turn on microphone access in Settings so Betweener can record voice messages.',
+        );
         return;
       }
       await setAudioModeAsync({
@@ -7981,7 +8009,10 @@ export default function ConversationScreen() {
     }
     const cameraStatus = await ImagePicker.requestCameraPermissionsAsync();
     if (!cameraStatus.granted) {
-      Alert.alert('Camera access', 'Enable camera access to take photos or videos.');
+      showOpenSettingsPrompt(
+        'Camera access',
+        'Turn on camera access in Settings so Betweener can take photos or videos.',
+      );
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
@@ -8070,7 +8101,10 @@ export default function ConversationScreen() {
     }
     const libraryStatus = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!libraryStatus.granted) {
-      Alert.alert('Photos access', 'Enable photo access to share media.');
+      showOpenSettingsPrompt(
+        'Photos access',
+        'Turn on photo access in Settings so Betweener can share media from your library.',
+      );
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({

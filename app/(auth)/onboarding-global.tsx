@@ -474,6 +474,9 @@ export default function Onboarding() {
         current_country_code: COUNTRY_NAME_TO_CODE[String(form.currentCountry || '').trim().toLowerCase()] || null,
         years_in_diaspora: 0,
         profile_completed: true,
+        identity_status: "active",
+        onboarding_completed_at: new Date().toISOString(),
+        identity_finalized_at: new Date().toISOString(),
       };
 
       const { error: updateError } = await withTimeout("profile_upsert", updateProfile(profileData), 20_000);

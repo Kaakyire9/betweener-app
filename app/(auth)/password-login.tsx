@@ -1,8 +1,8 @@
 import { useAuth } from "@/lib/auth-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { useState } from "react";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -14,6 +14,7 @@ import {
 } from "react-native";
 
 export default function PasswordLoginScreen() {
+  const params = useLocalSearchParams<{ email?: string }>();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -22,6 +23,13 @@ export default function PasswordLoginScreen() {
   const [success, setSuccess] = useState("");
   const router = useRouter();
   const { signIn, isAuthenticating } = useAuth();
+
+  useEffect(() => {
+    const routeEmail = typeof params.email === "string" ? params.email.trim() : "";
+    if (routeEmail) {
+      setEmail(routeEmail);
+    }
+  }, [params.email]);
 
   const validate = () => {
     if (!email.match(/^[^@\s]+@[^@\s]+\.[^@\s]+$/)) {

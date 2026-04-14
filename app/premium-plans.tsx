@@ -14,7 +14,7 @@ import {
   purchasePlanPackage,
   restoreRevenueCatPurchases,
 } from "@/lib/subscriptions";
-import { openExternalUrl, openSupportEmail } from "@/lib/trust-links";
+import { openExternalUrl, openSupportEmail, TRUST_LINKS } from "@/lib/trust-links";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
@@ -535,6 +535,20 @@ export default function PremiumPlansScreen() {
                 <Text style={styles.secondaryButtonText}>Refresh plans</Text>
               </Pressable>
             </View>
+            <View style={styles.legalFooter}>
+              <Text style={styles.legalCopy}>
+                Payment will be charged to your Apple ID account at confirmation of purchase. Subscriptions renew automatically unless cancelled at least 24 hours before the end of the current period. You can manage and cancel your subscriptions in App Store account settings.
+              </Text>
+              <View style={styles.legalLinksRow}>
+                <Pressable onPress={() => void openExternalUrl(TRUST_LINKS.terms)}>
+                  <Text style={styles.legalLink}>Terms of Use</Text>
+                </Pressable>
+                <Text style={styles.legalDivider}>|</Text>
+                <Pressable onPress={() => void openExternalUrl(TRUST_LINKS.privacy)}>
+                  <Text style={styles.legalLink}>Privacy Policy</Text>
+                </Pressable>
+              </View>
+            </View>
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -934,6 +948,34 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     footerTitle: { color: theme.text, fontSize: 16, fontFamily: "Archivo_700Bold" },
     footerBody: { color: theme.textMuted, fontSize: 12, lineHeight: 18, fontFamily: "Manrope_500Medium" },
     footerActions: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+    legalFooter: {
+      gap: 8,
+      paddingTop: 4,
+      borderTopWidth: 1,
+      borderTopColor: withAlpha(theme.text, isDark ? 0.12 : 0.06),
+    },
+    legalCopy: {
+      color: theme.textMuted,
+      fontSize: 10.5,
+      lineHeight: 16,
+      fontFamily: "Manrope_500Medium",
+    },
+    legalLinksRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+    },
+    legalLink: {
+      color: theme.tint,
+      fontSize: 11,
+      fontWeight: "700",
+    },
+    legalDivider: {
+      color: theme.textMuted,
+      fontSize: 11,
+      fontWeight: "700",
+    },
     secondaryButton: {
       paddingHorizontal: 14,
       paddingVertical: 10,

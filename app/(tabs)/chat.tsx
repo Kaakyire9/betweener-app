@@ -415,7 +415,7 @@ export default function ChatScreen() {
 
         const { data: peerProfiles, error: peerProfilesError } = await supabase
           .from('profiles')
-          .select('id,user_id,full_name,avatar_url,age,location,city,region')
+          .select('id,user_id,full_name,avatar_url,age,location,city,region,account_state,deleted_at')
           .in('id', otherProfileIds.slice(0, 24));
 
         if (peerProfilesError || !peerProfiles) {
@@ -428,6 +428,8 @@ export default function ChatScreen() {
 
         (peerProfiles as any[]).forEach((p) => {
           if (!p?.id || !p?.user_id) return;
+          const hasLeft = Boolean(p?.deleted_at) || String(p?.account_state || '').toLowerCase() === 'deleted';
+          if (hasLeft) return;
           const peerUserId = String(p.user_id);
           if (messaged.has(peerUserId)) return;
 

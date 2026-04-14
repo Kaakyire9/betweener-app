@@ -1,6 +1,7 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
+import { showOpenSettingsPrompt } from '@/lib/permission-prompts';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/telemetry/logger';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -328,9 +329,12 @@ export default function CircleDetailScreen() {
 
   const handlePickImage = useCallback(async () => {
     if (!circleId || !currentProfileId) return;
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Please grant photo permissions to upload a circle image.');
+  const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  if (status !== 'granted') {
+      showOpenSettingsPrompt(
+        'Photos access',
+        'Turn on photo access in Settings so Betweener can upload a circle image.',
+      );
       return;
     }
     const result = await ImagePicker.launchImageLibraryAsync({

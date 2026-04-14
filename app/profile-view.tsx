@@ -6,6 +6,7 @@ import { usePremiumState } from '@/hooks/use-premium-state';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
 import { hasFeatureAccess } from '@/lib/premium-access';
+import { pickPreferredLocationLabel } from '@/lib/location/location-display';
 import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
@@ -99,6 +100,15 @@ const ACTIVE_VISIBLE_PERCENT_THRESHOLD = 70;
 const RIGHT_SCROLL_HOLD_MS = 600;
 const ACTIVE_TAG_MIN_INTERVAL_MS = 120;
 const ACTIVE_NOW_MS = 3 * 60 * 1000;
+const PROFILE_REPORT_REASONS = [
+  { id: 'spam', label: 'Spam' },
+  { id: 'harassment', label: 'Harassment' },
+  { id: 'inappropriate', label: 'Inappropriate content' },
+  { id: 'scam', label: 'Scam or fraud' },
+  { id: 'other', label: 'Other' },
+] as const;
+const BLOCKED_BY_ME = 'blocked_by_me';
+const BLOCKED_BY_THEM = 'blocked_me';
 
 function buildGuessResultMessage(name: string, tone: 'correct' | 'wrong') {
   if (tone === 'correct') return `Correct. Nice one. Want to know more about ${name}?`;
@@ -145,11 +155,7 @@ function buildLocationLine(profile: UserProfile) {
   const distanceLabel = profile.distance?.trim() || '';
   const distanceFromKm = formatDistanceKm(profile.distanceKm);
   const distance = distanceFromKm || (isDistanceLabel(distanceLabel) ? distanceLabel : '');
-  const city = String(profile.city || profile.location || profile.region || '')
-    .split(',')
-    .map((part) => part.trim())
-    .find(Boolean) || '';
-  const base = city;
+  const base = pickPreferredLocationLabel(profile as Record<string, any>);
   const combined = distance
     ? base && distance !== base
       ? `${distance} - ${base}`
@@ -818,6 +824,11 @@ export default function ProfileViewPremiumV2Screen() {
   const [videoModalVisible, setVideoModalVisible] = useState(false);
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [blockStatus, setBlockStatus] = useState<typeof BLOCKED_BY_ME | typeof BLOCKED_BY_THEM | null>(null);
+  const [safetySheet, setSafetySheet] = useState<'menu' | 'blockConfirm' | 'report' | null>(null);
+  const [blockSubmitting, setBlockSubmitting] = useState(false);
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [selectedReportReason, setSelectedReportReason] = useState<string | null>(null);
   const isOwnProfile = useMemo(
     // Profiles are keyed by profiles.id (not auth.uid()), so compare against the viewer's profile id.
     () => Boolean(currentProfile?.id && profileId && currentProfile.id === profileId),
@@ -969,6 +980,42 @@ export default function ProfileViewPremiumV2Screen() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadBlockStatus() {
+      if (!currentUserId || !resolvedProfile.userId || isOwnProfile) {
+        if (!cancelled) setBlockStatus(null);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('blocks')
+        .select('blocker_id,blocked_id')
+        .or(
+          `and(blocker_id.eq.${currentUserId},blocked_id.eq.${resolvedProfile.userId}),and(blocker_id.eq.${resolvedProfile.userId},blocked_id.eq.${currentUserId})`,
+        );
+
+      if (cancelled) return;
+      if (error || !data?.length) {
+        setBlockStatus(null);
+        return;
+      }
+
+      const nextStatus = data.some((row) => row.blocker_id === currentUserId)
+        ? BLOCKED_BY_ME
+        : data.some((row) => row.blocked_id === currentUserId)
+          ? BLOCKED_BY_THEM
+          : null;
+      setBlockStatus(nextStatus);
+    }
+
+    void loadBlockStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserId, isOwnProfile, resolvedProfile.userId]);
 
   const loadImageReactions = useCallback(async () => {
     if (!resolvedProfile.id) return;
@@ -1159,6 +1206,100 @@ export default function ProfileViewPremiumV2Screen() {
   const handleClose = useCallback(() => {
     router.back();
   }, [router]);
+  const closeSafetySheet = useCallback(() => {
+    setSafetySheet(null);
+    setSelectedReportReason(null);
+    setBlockSubmitting(false);
+    setReportSubmitting(false);
+  }, []);
+  const openSafetySheet = useCallback(() => {
+    if (isOwnProfile || !resolvedProfile.userId) return;
+    Haptics.selectionAsync().catch(() => undefined);
+    setSafetySheet('menu');
+  }, [isOwnProfile, resolvedProfile.userId]);
+
+  const performBlockToggle = useCallback(async () => {
+    if (!currentUserId || !resolvedProfile.userId || blockSubmitting) return;
+    setBlockSubmitting(true);
+
+    if (blockStatus === BLOCKED_BY_ME) {
+      const { error } = await supabase
+        .from('blocks')
+        .delete()
+        .eq('blocker_id', currentUserId)
+        .eq('blocked_id', resolvedProfile.userId);
+
+      if (error) {
+        console.log('[profile] unblock user error', error);
+        Alert.alert('Unblock user', 'Unable to unblock this member right now.');
+        setBlockSubmitting(false);
+        return;
+      }
+
+      setBlockStatus(null);
+      closeSafetySheet();
+      Alert.alert('Unblocked', 'This member can interact with you again.');
+      return;
+    }
+
+    const { error } = await supabase
+      .from('blocks')
+      .insert({ blocker_id: currentUserId, blocked_id: resolvedProfile.userId });
+
+    if (error) {
+      if (error.code === '23505') {
+        setBlockStatus(BLOCKED_BY_ME);
+        closeSafetySheet();
+        Alert.alert('Blocked', 'This member is already blocked.');
+        return;
+      }
+      console.log('[profile] block user error', error);
+      Alert.alert('Block user', 'Unable to block this member right now.');
+      setBlockSubmitting(false);
+      return;
+    }
+
+    setBlockStatus(BLOCKED_BY_ME);
+    closeSafetySheet();
+    Alert.alert('Blocked', 'This member has been blocked. They will not be notified.');
+  }, [blockStatus, blockSubmitting, closeSafetySheet, currentUserId, resolvedProfile.userId]);
+
+  const submitProfileReport = useCallback(async () => {
+    if (!resolvedProfile.userId || !selectedReportReason || reportSubmitting) return;
+    setReportSubmitting(true);
+
+    const reasonLabel =
+      PROFILE_REPORT_REASONS.find((reason) => reason.id === selectedReportReason)?.label ?? selectedReportReason;
+
+    const { error } = await supabase.rpc('rpc_submit_report', {
+      p_reported_id: resolvedProfile.userId,
+      p_reason: reasonLabel,
+      p_evidence_message_id: null,
+      p_client_evidence: {
+        entry_point: 'profile_view',
+        profile_id: resolvedProfile.id,
+      },
+    });
+
+    if (error) {
+      console.log('[profile] report user error', error);
+      Alert.alert('Report user', 'Unable to send this report right now.');
+      setReportSubmitting(false);
+      return;
+    }
+
+    closeSafetySheet();
+    Alert.alert('Report sent', 'We will review this privately. They will not be notified.');
+  }, [closeSafetySheet, reportSubmitting, resolvedProfile.id, resolvedProfile.userId, selectedReportReason]);
+
+  const safetyPrimaryActionLabel =
+    blockStatus === BLOCKED_BY_ME ? `Unblock ${resolvedProfile.name}` : `Block ${resolvedProfile.name}`;
+  const safetyConfirmTitle =
+    blockStatus === BLOCKED_BY_ME ? `Unblock ${resolvedProfile.name}?` : `Block ${resolvedProfile.name}?`;
+  const safetyConfirmBody =
+    blockStatus === BLOCKED_BY_ME
+      ? 'They will be able to view and contact you again.'
+      : 'They will no longer be able to view or contact you on Betweener.';
 
   const setActiveTagSafely = useCallback(
     (nextTag: ProfileImageTag) => {
@@ -1476,6 +1617,8 @@ export default function ProfileViewPremiumV2Screen() {
         isDark={isDark}
         onBack={handleBack}
         onClose={handleClose}
+        onOpenSafetyMenu={openSafetySheet}
+        showSafetyMenu={!isOwnProfile && Boolean(resolvedProfile.userId)}
       />
 
         <View style={[stylesStatic.gateCard, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
@@ -1509,6 +1652,8 @@ export default function ProfileViewPremiumV2Screen() {
         onHeroDoubleTap={handleHeroDoubleTap}
         onBack={handleBack}
         onClose={handleClose}
+        onOpenSafetyMenu={openSafetySheet}
+        showSafetyMenu={!isOwnProfile && Boolean(resolvedProfile.userId)}
       />
 
       <PhotoLightboxModal
@@ -2165,6 +2310,162 @@ export default function ProfileViewPremiumV2Screen() {
         </Modal>
       ) : null}
 
+      <Modal
+        transparent
+        visible={Boolean(safetySheet)}
+        animationType="fade"
+        onRequestClose={closeSafetySheet}
+      >
+        <Pressable style={stylesStatic.safetySheetBackdrop} onPress={closeSafetySheet} />
+        <View style={stylesStatic.safetySheetWrap} pointerEvents="box-none">
+          <View
+            style={[
+              stylesStatic.safetySheetCard,
+              {
+                backgroundColor: theme.background,
+                borderColor: theme.outline,
+                paddingBottom: Math.max(16, insets.bottom + 6),
+              },
+            ]}
+          >
+            <View style={[stylesStatic.safetySheetHandle, { backgroundColor: theme.outline }]} />
+
+            {safetySheet === 'menu' ? (
+              <>
+                <Text style={[stylesStatic.safetySheetTitle, { color: theme.text }]}>Safety</Text>
+                <Text style={[stylesStatic.safetySheetSubtitle, { color: theme.textMuted }]}>
+                  Private controls for this profile.
+                </Text>
+                <Pressable
+                  onPress={() => setSafetySheet('report')}
+                  style={[stylesStatic.safetySheetAction, { borderColor: theme.outline }]}
+                >
+                  <View style={[stylesStatic.safetySheetIconWrap, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
+                    <MaterialCommunityIcons name="alert-octagon-outline" size={18} color={theme.textMuted} />
+                  </View>
+                  <Text style={[stylesStatic.safetySheetActionText, { color: theme.text }]}>
+                    {`Report ${resolvedProfile.name}`}
+                  </Text>
+                </Pressable>
+                {blockStatus !== BLOCKED_BY_THEM ? (
+                  <Pressable
+                    onPress={() => setSafetySheet('blockConfirm')}
+                    style={[stylesStatic.safetySheetAction, { borderColor: theme.outline }]}
+                  >
+                    <View style={[stylesStatic.safetySheetIconWrap, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
+                      <MaterialCommunityIcons
+                        name={blockStatus === BLOCKED_BY_ME ? 'shield-check-outline' : 'block-helper'}
+                        size={18}
+                        color={theme.textMuted}
+                      />
+                    </View>
+                    <Text style={[stylesStatic.safetySheetActionText, { color: theme.text }]}>
+                      {safetyPrimaryActionLabel}
+                    </Text>
+                  </Pressable>
+                ) : (
+                  <View style={[stylesStatic.safetySheetInfoRow, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle }]}>
+                    <MaterialCommunityIcons name="shield-lock-outline" size={17} color={theme.textMuted} />
+                    <Text style={[stylesStatic.safetySheetInfoText, { color: theme.textMuted }]}>
+                      This member already has you blocked.
+                    </Text>
+                  </View>
+                )}
+                <Pressable onPress={closeSafetySheet} style={stylesStatic.safetySheetCancel}>
+                  <Text style={[stylesStatic.safetySheetCancelText, { color: theme.textMuted }]}>Cancel</Text>
+                </Pressable>
+              </>
+            ) : null}
+
+            {safetySheet === 'blockConfirm' ? (
+              <>
+                <Text style={[stylesStatic.safetySheetTitle, { color: theme.text }]}>{safetyConfirmTitle}</Text>
+                <Text style={[stylesStatic.safetySheetSubtitle, { color: theme.textMuted }]}>
+                  {safetyConfirmBody}
+                </Text>
+                <Pressable
+                  onPress={() => void performBlockToggle()}
+                  disabled={blockSubmitting}
+                  style={[
+                    stylesStatic.safetySheetAction,
+                    stylesStatic.safetySheetActionDestructive,
+                    { borderColor: '#F0A3A8', backgroundColor: '#FFF4F5', opacity: blockSubmitting ? 0.7 : 1 },
+                  ]}
+                >
+                  <View style={[stylesStatic.safetySheetIconWrap, stylesStatic.safetySheetIconWrapDestructive]}>
+                    <MaterialCommunityIcons
+                      name={blockStatus === BLOCKED_BY_ME ? 'shield-check-outline' : 'block-helper'}
+                      size={18}
+                      color="#C03543"
+                    />
+                  </View>
+                  <Text style={stylesStatic.safetySheetActionTextDestructive}>
+                    {blockSubmitting ? 'Working...' : safetyPrimaryActionLabel}
+                  </Text>
+                </Pressable>
+                <Pressable onPress={() => setSafetySheet('menu')} style={stylesStatic.safetySheetCancel}>
+                  <Text style={[stylesStatic.safetySheetCancelText, { color: theme.textMuted }]}>Back</Text>
+                </Pressable>
+              </>
+            ) : null}
+
+            {safetySheet === 'report' ? (
+              <>
+                <Text style={[stylesStatic.safetySheetTitle, { color: theme.text }]}>{`Report ${resolvedProfile.name}`}</Text>
+                <Text style={[stylesStatic.safetySheetSubtitle, { color: theme.textMuted }]}>
+                  Choose the reason that fits best. We review reports privately.
+                </Text>
+                <View style={stylesStatic.reportReasonList}>
+                  {PROFILE_REPORT_REASONS.map((reason) => {
+                    const selected = selectedReportReason === reason.id;
+                    return (
+                      <Pressable
+                        key={reason.id}
+                        onPress={() => setSelectedReportReason(reason.id)}
+                        style={[
+                          stylesStatic.reportReasonPill,
+                          {
+                            backgroundColor: selected ? theme.tint : theme.backgroundSubtle,
+                            borderColor: selected ? theme.tint : theme.outline,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            stylesStatic.reportReasonPillText,
+                            { color: selected ? Colors.light.background : theme.text },
+                          ]}
+                        >
+                          {reason.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <Pressable
+                  onPress={() => void submitProfileReport()}
+                  disabled={!selectedReportReason || reportSubmitting}
+                  style={[
+                    stylesStatic.safetySheetAction,
+                    { borderColor: theme.outline, opacity: !selectedReportReason || reportSubmitting ? 0.6 : 1 },
+                  ]}
+                >
+                  <View style={[stylesStatic.safetySheetIconWrap, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
+                    <MaterialCommunityIcons name="send-outline" size={18} color={theme.textMuted} />
+                  </View>
+                  <Text style={[stylesStatic.safetySheetActionText, { color: theme.text }]}>
+                    {reportSubmitting ? 'Sending report...' : 'Send report'}
+                  </Text>
+                </Pressable>
+                <Pressable onPress={() => setSafetySheet('menu')} style={stylesStatic.safetySheetCancel}>
+                  <Text style={[stylesStatic.safetySheetCancelText, { color: theme.textMuted }]}>Back</Text>
+                </Pressable>
+              </>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
+
       <FloatingActions
         theme={theme}
         profileId={profileId}
@@ -2191,6 +2492,8 @@ const Header = memo(function Header({
   onHeroDoubleTap,
   onBack: _onBack,
   onClose,
+  onOpenSafetyMenu,
+  showSafetyMenu,
 }: {
   theme: typeof Colors.light;
   profile: UserProfile;
@@ -2205,6 +2508,8 @@ const Header = memo(function Header({
   onHeroDoubleTap?: () => void;
   onBack: () => void;
   onClose: () => void;
+  onOpenSafetyMenu?: () => void;
+  showSafetyMenu?: boolean;
 }) {
   const heroUri =
     (heroOverrideType === 'image' && heroOverrideUri) ||
@@ -2363,6 +2668,26 @@ const Header = memo(function Header({
               name={heroMuted ? 'volume-off' : 'volume-high'}
               size={18}
               color="#fff"
+            />
+          </Pressable>
+        ) : null}
+
+        {showSafetyMenu ? (
+          <Pressable
+            onPress={onOpenSafetyMenu}
+            hitSlop={10}
+            style={[
+              stylesStatic.heroMenuButton,
+              {
+                backgroundColor: isDark ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.78)',
+                borderColor: theme.outline,
+              },
+            ]}
+          >
+            <MaterialCommunityIcons
+              name="dots-horizontal"
+              size={18}
+              color={isDark ? Colors.light.background : Colors.dark.background}
             />
           </Pressable>
         ) : null}
@@ -3803,6 +4128,17 @@ const stylesStatic = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
   },
+  heroMenuButton: {
+    position: 'absolute',
+    top: 10,
+    right: 46,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
 
   activeBadgeHero: {
     flexDirection: 'row',
@@ -3962,6 +4298,121 @@ const stylesStatic = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
+  },
+  safetySheetBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(5, 10, 17, 0.34)',
+  },
+  safetySheetWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 10,
+  },
+  safetySheetCard: {
+    borderWidth: 1,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+  },
+  safetySheetHandle: {
+    alignSelf: 'center',
+    width: 42,
+    height: 5,
+    borderRadius: 999,
+    marginBottom: 14,
+    opacity: 0.9,
+  },
+  safetySheetTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  safetySheetSubtitle: {
+    marginTop: 4,
+    fontSize: 13.5,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  safetySheetAction: {
+    minHeight: 54,
+    borderRadius: 18,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 14,
+  },
+  safetySheetActionDestructive: {
+    marginTop: 16,
+  },
+  safetySheetIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  safetySheetIconWrapDestructive: {
+    backgroundColor: 'rgba(192,53,67,0.10)',
+    borderColor: 'rgba(192,53,67,0.18)',
+  },
+  safetySheetActionText: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  safetySheetActionTextDestructive: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '800',
+    color: '#C03543',
+  },
+  safetySheetInfoRow: {
+    minHeight: 52,
+    borderRadius: 18,
+    borderWidth: 1,
+    marginTop: 14,
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  safetySheetInfoText: {
+    flex: 1,
+    fontSize: 13.5,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  safetySheetCancel: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+    marginTop: 12,
+  },
+  safetySheetCancelText: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  reportReasonList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 14,
+  },
+  reportReasonPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  reportReasonPillText: {
+    fontSize: 13,
+    fontWeight: '700',
   },
   heroRequestText: {
     color: Colors.light.background,

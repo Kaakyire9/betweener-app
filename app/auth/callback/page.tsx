@@ -82,6 +82,14 @@ export default function AuthCallbackPage() {
 
     window.location.replace(deepLinkUrl);
 
+    const retryTimer = setTimeout(() => {
+      try {
+        window.location.href = deepLinkUrl;
+      } catch {
+        // best effort only
+      }
+    }, 900);
+
     fallbackTimerRef.current = setTimeout(() => {
       setPhase('ready');
       setTitle('Almost there');
@@ -97,6 +105,7 @@ export default function AuthCallbackPage() {
     }, 2200);
 
     return () => {
+      clearTimeout(retryTimer);
       if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
     };
   }, [isAndroid, isIos, isMobile]);

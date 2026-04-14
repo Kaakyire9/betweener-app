@@ -155,7 +155,7 @@ export default function VibesMomentsStrip({
   const collapsedCountLabel = momentCount > 9 ? '9+' : String(animatedCount);
   const previousCountLabel =
     previousAnimatedCount == null ? null : momentCount > 9 ? '9+' : String(previousAnimatedCount);
-  const countCurrentAnimatedStyle =
+  const countCurrentAnimatedStyle: any =
     previousAnimatedCount == null
       ? null
       : {
@@ -175,7 +175,7 @@ export default function VibesMomentsStrip({
             },
           ],
         };
-  const countPreviousAnimatedStyle =
+  const countPreviousAnimatedStyle: any =
     previousAnimatedCount == null
       ? null
       : {

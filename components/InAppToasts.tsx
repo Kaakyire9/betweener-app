@@ -264,6 +264,89 @@ export default function InAppToasts() {
     [isQuietHours, prefs],
   );
 
+  function intentRequestPreview(requestType?: string | null) {
+    switch (requestType) {
+      case 'connect':
+        return 'Opened the door to a thoughtful conversation.';
+      case 'date_request':
+        return 'Would like to take this beyond the app.';
+      case 'circle_intro':
+        return 'Opened a warmer introduction to connect.';
+      case 'like_with_note':
+        return 'Left a note worth your attention.';
+      default:
+        return 'Opened a meaningful way to connect.';
+    }
+  }
+
+  function intentReminderPreview(isLastChance: boolean, requestType?: string | null) {
+    if (isLastChance) {
+      return 'This opening is about to close. If you are curious, answer now.';
+    }
+    switch (requestType) {
+      case 'date_request':
+        return 'Would still like to take this beyond the app.';
+      case 'like_with_note':
+        return 'Left you a note worth answering.';
+      case 'circle_intro':
+        return 'Opened a more personal way to connect.';
+      case 'connect':
+      default:
+        return 'Left the door open for a thoughtful reply.';
+    }
+  }
+
+  function swipePreview(action?: string | null) {
+    return action === 'SUPERLIKE'
+      ? 'Made a stronger move toward you.'
+      : 'Noticed you and wanted you to know.';
+  }
+
+  function systemMessagePreview(row: any, peerName: string) {
+    if (row?.event_type === 'request_accepted') {
+      return {
+        title: peerName,
+        body: 'Reopened the door. Start with something warm and specific.',
+      };
+    }
+    if (row?.event_type === 'date_plan_accepted') {
+      return {
+        title: peerName,
+        body: 'Said yes to the date plan. Keep the energy warm and specific.',
+      };
+    }
+    if (row?.event_type === 'date_plan_declined') {
+      return {
+        title: peerName,
+        body: 'Passed on the date plan for now.',
+      };
+    }
+    if (row?.event_type === 'date_plan_cancelled') {
+      return {
+        title: peerName,
+        body: 'Closed the date plan for now.',
+      };
+    }
+    if (row?.event_type === 'date_plan_concierge_requested') {
+      return {
+        title: peerName,
+        body: 'Asked Betweener to help shape the details.',
+      };
+    }
+    if (row?.event_type === 'request_expired') {
+      return {
+        title: 'A window closed',
+        body:
+          row?.text ||
+          `That opening to ${peerName || 'them'} closed. If it still feels right, come back warmer and more specific.`,
+      };
+    }
+    return {
+      title: 'Betweener',
+      body: row?.text ?? 'There is something worth checking.',
+    };
+  }
+
   useEffect(() => {
     if (!user?.id) return;
 
@@ -330,7 +413,7 @@ export default function InAppToasts() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [canInAppNotify, getProfileLite, pushToast, systemMessagePreview, user?.id]);
+  }, [canInAppNotify, getProfileLite, pushToast, user?.id]);
 
   useEffect(() => {
     if (!profile?.id) return;
@@ -379,7 +462,7 @@ export default function InAppToasts() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [canInAppNotify, intentRequestPreview, profile?.id, pushToast]);
+  }, [canInAppNotify, profile?.id, pushToast]);
 
   const messagePreview = useCallback((row: any, previewsAllowed: boolean) => {
     if (!previewsAllowed) return 'Sent you a message';
@@ -492,44 +575,6 @@ export default function InAppToasts() {
     }
   }, []);
 
-  const intentRequestPreview = useCallback((requestType?: string | null) => {
-    switch (requestType) {
-      case 'connect':
-        return 'Opened the door to a thoughtful conversation.';
-      case 'date_request':
-        return 'Would like to take this beyond the app.';
-      case 'circle_intro':
-        return 'Opened a warmer introduction to connect.';
-      case 'like_with_note':
-        return 'Left a note worth your attention.';
-      default:
-        return 'Opened a meaningful way to connect.';
-    }
-  }, []);
-
-  const intentReminderPreview = useCallback((requestType?: string | null, isLastChance: boolean) => {
-    if (isLastChance) {
-      return 'This opening is about to close. If you are curious, answer now.';
-    }
-    switch (requestType) {
-      case 'date_request':
-        return 'Would still like to take this beyond the app.';
-      case 'like_with_note':
-        return 'Left you a note worth answering.';
-      case 'circle_intro':
-        return 'Opened a more personal way to connect.';
-      case 'connect':
-      default:
-        return 'Left the door open for a thoughtful reply.';
-    }
-  }, []);
-
-  const swipePreview = useCallback((action?: string | null) => {
-    return action === 'SUPERLIKE'
-      ? 'Made a stronger move toward you.'
-      : 'Noticed you and wanted you to know.';
-  }, []);
-
   const matchPreview = useCallback((otherName: string) => {
     return `You and ${otherName || 'them'} saw something in each other. Start with something real.`;
   }, []);
@@ -570,54 +615,6 @@ export default function InAppToasts() {
       return 'One proof needs a cleaner pass. Pick it up privately when you are ready.';
     },
     [verificationMethodLabel],
-  );
-
-  const systemMessagePreview = useCallback(
-    (row: any, peerName: string) => {
-      if (row?.event_type === 'request_accepted') {
-        return {
-          title: peerName,
-          body: 'Reopened the door. Start with something warm and specific.',
-        };
-      }
-      if (row?.event_type === 'date_plan_accepted') {
-        return {
-          title: peerName,
-          body: 'Said yes to the date plan. Keep the energy warm and specific.',
-        };
-      }
-      if (row?.event_type === 'date_plan_declined') {
-        return {
-          title: peerName,
-          body: 'Passed on the date plan for now.',
-        };
-      }
-      if (row?.event_type === 'date_plan_cancelled') {
-        return {
-          title: peerName,
-          body: 'Closed the date plan for now.',
-        };
-      }
-      if (row?.event_type === 'date_plan_concierge_requested') {
-        return {
-          title: peerName,
-          body: 'Asked Betweener to help shape the details.',
-        };
-      }
-      if (row?.event_type === 'request_expired') {
-        return {
-          title: 'A window closed',
-          body:
-            row?.text ||
-            `That opening to ${peerName || 'them'} closed. If it still feels right, come back warmer and more specific.`,
-        };
-      }
-      return {
-        title: 'Betweener',
-        body: row?.text ?? 'There is something worth checking.',
-      };
-    },
-    [],
   );
 
   const getMomentRelationshipCueForPoster = useCallback(
@@ -1072,7 +1069,7 @@ export default function InAppToasts() {
             notification.request.content.body ||
             (pushType === 'intent_request'
               ? intentRequestPreview(data?.request_type ? String(data.request_type) : '')
-              : intentReminderPreview(data?.request_type ? String(data.request_type) : '', pushType === 'intent_last_chance')),
+              : intentReminderPreview(pushType === 'intent_last_chance', data?.request_type ? String(data.request_type) : '')),
           avatarUrl: typeof data?.avatar_url === 'string' ? data.avatar_url : null,
           profileId: data?.profile_id ? String(data.profile_id) : null,
           route: '/(tabs)/intent',
