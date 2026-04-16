@@ -10,10 +10,13 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   clearPendingAuthFlow,
+  clearPendingAuthProvider,
+  markPendingAuthProvider,
   isTrustedAuthCallbackUrl,
   LAST_DEEP_LINK_URL_KEY,
   markPendingAuthFlow,
 } from "@/lib/auth-callback";
+import { setSignupIdentityHints } from "@/lib/signup-tracking";
 
 const isAppleAuthCancelled = (error: unknown) => {
   if (!error || typeof error !== "object") return false;
@@ -24,6 +27,17 @@ const isAppleAuthCancelled = (error: unknown) => {
     (typeof anyErr.message === "string" &&
       anyErr.message.toLowerCase().includes("canceled"))
   );
+};
+
+const formatAppleFullName = (
+  fullName?: AppleAuthentication.AppleAuthenticationFullName | null,
+) => {
+  const parts = [
+    String(fullName?.givenName ?? "").trim(),
+    String(fullName?.middleName ?? "").trim(),
+    String(fullName?.familyName ?? "").trim(),
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" ") : null;
 };
 
 export default function LoginScreen() {
@@ -54,6 +68,7 @@ export default function LoginScreen() {
   const handleGoogle = async () => {
     setLoadingProvider("google");
     try {
+      await markPendingAuthProvider("google");
       await markPendingAuthFlow("oauth");
       const redirectTo = getRedirectUrl();
       const { data, error } = await supabase.auth.signInWithOAuth({
@@ -71,6 +86,7 @@ export default function LoginScreen() {
         await clearPendingAuthFlow();
       }
     } catch (error) {
+      await clearPendingAuthProvider();
       await clearPendingAuthFlow();
       console.error("[auth] google sign-in error", error);
     } finally {
@@ -82,11 +98,16 @@ export default function LoginScreen() {
     if (Platform.OS !== "ios") return;
     setLoadingProvider("apple");
     try {
+      await markPendingAuthProvider("apple");
       const credential = await AppleAuthentication.signInAsync({
         requestedScopes: [
           AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
           AppleAuthentication.AppleAuthenticationScope.EMAIL,
         ],
+      });
+      await setSignupIdentityHints({
+        name: formatAppleFullName(credential.fullName),
+        email: credential.email ?? null,
       });
       if (!credential.identityToken) {
         throw new Error("Apple sign-in failed to return a token.");
@@ -104,6 +125,7 @@ export default function LoginScreen() {
       if (!isAppleAuthCancelled(error)) {
         console.error("[auth] apple sign-in error", error);
       }
+      await clearPendingAuthProvider();
     } finally {
       setLoadingProvider(null);
     }
@@ -150,24 +172,26 @@ export default function LoginScreen() {
         </Pressable>
 
         {Platform.OS === "ios" && (
-          <Pressable
-            onPress={handleApple}
-            disabled={loadingProvider !== null}
+          <View
             style={[
-              styles.providerButton,
-              styles.appleButton,
+              styles.appleButtonWrap,
               loadingProvider && loadingProvider !== "apple" && styles.buttonDisabled,
             ]}
+            pointerEvents={loadingProvider !== null ? "none" : "auto"}
           >
+            <AppleAuthentication.AppleAuthenticationButton
+              buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+              buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+              cornerRadius={16}
+              style={styles.appleButton}
+              onPress={handleApple}
+            />
             {loadingProvider === "apple" ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <>
-                <MaterialCommunityIcons name="apple" size={20} color="#fff" />
-                <Text style={styles.providerText}>Continue with Apple</Text>
-              </>
-            )}
-          </Pressable>
+              <View pointerEvents="none" style={styles.appleLoadingOverlay}>
+                <ActivityIndicator color="#fff" />
+              </View>
+            ) : null}
+          </View>
         )}
 
         <Pressable
@@ -273,8 +297,14 @@ const styles = StyleSheet.create({
   googleButton: {
     backgroundColor: "#111827",
   },
+  appleButtonWrap: {
+    position: "relative",
+    height: 52,
+    marginBottom: 12,
+  },
   appleButton: {
-    backgroundColor: "#000",
+    width: "100%",
+    height: 52,
   },
   emailButton: {
     backgroundColor: "#0FBAB5",
@@ -288,6 +318,13 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.6,
+  },
+  appleLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 16,
+    backgroundColor: "rgba(0, 0, 0, 0.22)",
   },
   loginLink: {
     alignItems: "center",

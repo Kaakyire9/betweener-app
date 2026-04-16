@@ -1,5 +1,6 @@
 import { useAuth, useAuthGuard } from '@/lib/auth-context';
-import { Redirect, useSegments } from 'expo-router';
+import { Redirect, usePathname, useRouter, useSegments } from 'expo-router';
+import { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
 type AuthGuardProps = {
@@ -73,10 +74,29 @@ export function withAuthGuard<P extends object>(
 // Guest-only guard (for auth screens)
 export function GuestGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isEmailVerified, hasProfile, phoneVerified, isLoading } = useAuth();
+  const pathname = usePathname();
+  const router = useRouter();
   const segments = useSegments();
   const currentScreen = segments.length > 0 ? segments[segments.length - 1] : null;
   const allowDuringAuthenticatedRecovery =
-    currentScreen === 'callback' || currentScreen === 'reset-password';
+    currentScreen === 'callback' ||
+    currentScreen === 'reset-password' ||
+    currentScreen === 'gate' ||
+    currentScreen === 'disconnected-provider' ||
+    currentScreen === 'retired-duplicate-account' ||
+    currentScreen === 'merged-account';
+  const shouldRedirectAuthenticatedUser =
+    isAuthenticated &&
+    isEmailVerified &&
+    phoneVerified &&
+    hasProfile &&
+    !allowDuringAuthenticatedRecovery;
+
+  useEffect(() => {
+    if (!shouldRedirectAuthenticatedUser) return;
+    if (pathname === '/gate') return;
+    router.replace('/gate');
+  }, [pathname, router, shouldRedirectAuthenticatedUser]);
 
   if (isLoading) {
     return (
@@ -86,15 +106,12 @@ export function GuestGuard({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // If fully authenticated, redirect to main app
-  if (
-    isAuthenticated &&
-    isEmailVerified &&
-    phoneVerified &&
-    hasProfile &&
-    !allowDuringAuthenticatedRecovery
-  ) {
-    return <Redirect href="/(tabs)/vibes" />;
+  if (shouldRedirectAuthenticatedUser) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color="#FF6B6B" />
+      </View>
+    );
   }
 
   return <>{children}</>;

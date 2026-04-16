@@ -236,6 +236,12 @@ const ACCOUNT_DELETION_REASON_OPTIONS = [
 type DeleteReasonOption = (typeof ACCOUNT_DELETION_REASON_OPTIONS)[number];
 type DeleteReasonKey = DeleteReasonOption['value'];
 type DeleteAlternativeAction = 'take_break' | 'quiet_notifications' | 'hide_profile';
+type LinkedIdentity = {
+  id: string;
+  user_id: string;
+  identity_id: string;
+  provider: string;
+};
 
 const DELETE_SOFT_OFFRAMP_OPTIONS: {
   id: DeleteAlternativeAction;
@@ -600,9 +606,13 @@ export default function ProfileScreen() {
   const [passwordBackupMessage, setPasswordBackupMessage] = useState('');
   const [passwordBackupError, setPasswordBackupError] = useState('');
   const [hasPasswordBackup, setHasPasswordBackup] = useState(false);
+  const [showPasswordBackupEditor, setShowPasswordBackupEditor] = useState(false);
+  const [linkedIdentities, setLinkedIdentities] = useState<LinkedIdentity[]>([]);
   const [linkedProviders, setLinkedProviders] = useState<string[]>([]);
+  const [disconnectedProviders, setDisconnectedProviders] = useState<string[]>([]);
   const [identitiesLoading, setIdentitiesLoading] = useState(false);
   const [linkingProvider, setLinkingProvider] = useState<string | null>(null);
+  const [unlinkingProvider, setUnlinkingProvider] = useState<string | null>(null);
   const [identityMessage, setIdentityMessage] = useState('');
   const [identityError, setIdentityError] = useState('');
   const [showRecoveryRequestModal, setShowRecoveryRequestModal] = useState(false);
@@ -1659,6 +1669,7 @@ export default function ProfileScreen() {
       );
       setPasswordBackupInput('');
       setPasswordBackupConfirm('');
+      setShowPasswordBackupEditor(false);
       setPasswordBackupMessage('Password backup is ready. This account can now be restored with email + password too.');
       setIdentityMessage('Password backup added to this Betweener account.');
     } catch (error: any) {
@@ -1687,46 +1698,83 @@ export default function ProfileScreen() {
     return false;
   }, []);
 
+  const getUserIdentitySnapshot = useCallback(async () => {
+    const { data, error } = await supabase.auth.getUserIdentities();
+    if (error) {
+      throw error;
+    }
+
+    const identities = (data?.identities ?? [])
+      .map((identity) => ({
+        id: String(identity.id || '').trim(),
+        user_id: String(identity.user_id || '').trim(),
+        identity_id: String(identity.identity_id || '').trim(),
+        provider: String(identity.provider || '').trim().toLowerCase(),
+      }))
+      .filter((identity) => identity.id && identity.user_id && identity.identity_id && identity.provider);
+
+    const providers = Array.from(new Set(identities.map((identity) => identity.provider).filter(Boolean)));
+    return { identities, providers };
+  }, []);
+
+  const loadDisconnectedProviders = useCallback(async () => {
+    if (!user?.id) {
+      setDisconnectedProviders([]);
+      return [];
+    }
+
+    try {
+      const { data, error } = await supabase.rpc('rpc_get_disconnected_signin_providers' as any);
+      if (error) {
+        throw error;
+      }
+      const providers = Array.isArray(data)
+        ? data
+            .map((value) => String(value || '').trim().toLowerCase())
+            .filter((value) => value === 'google' || value === 'apple')
+        : [];
+      setDisconnectedProviders(providers);
+      return providers;
+    } catch (error: any) {
+      setIdentityError(error?.message ?? 'Unable to load sign-in methods.');
+      return [];
+    }
+  }, [user?.id]);
+
   const loadLinkedIdentities = useCallback(async () => {
     if (!user?.id) {
+      setLinkedIdentities([]);
       setLinkedProviders([]);
       return;
     }
     setIdentitiesLoading(true);
     try {
-      const { data, error } = await supabase.auth.getUserIdentities();
-      if (error) {
-        setIdentityError(error.message);
-        return;
-      }
-      const providers = Array.from(
-        new Set(
-          (data?.identities ?? [])
-            .map((identity) => String(identity.provider || '').toLowerCase())
-            .filter(Boolean),
-        ),
-      );
+      const { identities, providers } = await getUserIdentitySnapshot();
+      setLinkedIdentities(identities);
       setLinkedProviders(providers);
     } catch (error: any) {
       setIdentityError(error?.message ?? 'Unable to load sign-in methods.');
     } finally {
       setIdentitiesLoading(false);
     }
-  }, [user?.id]);
+  }, [getUserIdentitySnapshot, user?.id]);
 
   useEffect(() => {
     if (!showEmailModal || !user?.id) return;
     void loadLinkedIdentities();
-  }, [loadLinkedIdentities, showEmailModal, user?.id]);
+    void loadDisconnectedProviders();
+  }, [loadDisconnectedProviders, loadLinkedIdentities, showEmailModal, user?.id]);
 
   useEffect(() => {
     if (!user?.id) {
       setLinkedProviders([]);
+      setDisconnectedProviders([]);
       setLinkedMethodsBannerDismissed(false);
       return;
     }
     void loadLinkedIdentities();
-  }, [loadLinkedIdentities, user?.id]);
+    void loadDisconnectedProviders();
+  }, [loadDisconnectedProviders, loadLinkedIdentities, user?.id]);
 
   useEffect(() => {
     if (!user?.id) {
@@ -1759,16 +1807,21 @@ export default function ProfileScreen() {
     }
   }, [user?.id]);
 
+  const effectiveLinkedProviders = useMemo(
+    () => linkedProviders.filter((provider) => !disconnectedProviders.includes(provider)),
+    [disconnectedProviders, linkedProviders],
+  );
+
   const normalizedLinkedRecoveryMethods = useMemo(() => {
     const methods = new Set<string>();
-    linkedProviders.forEach((provider) => {
+    effectiveLinkedProviders.forEach((provider) => {
       const normalized = String(provider || '').trim().toLowerCase();
       if (normalized === 'email' || normalized === 'google' || normalized === 'apple') {
         methods.add(normalized);
       }
     });
     return Array.from(methods);
-  }, [linkedProviders]);
+  }, [effectiveLinkedProviders]);
 
   const recoveryMethodPills = useMemo(() => {
     const methods = [...normalizedLinkedRecoveryMethods];
@@ -1792,6 +1845,24 @@ export default function ProfileScreen() {
   const hasRecoveryBackup =
     normalizedLinkedRecoveryMethods.length >= 2 ||
     hasPasswordBackup;
+
+  const findLinkedIdentity = useCallback(
+    (provider: string) =>
+      linkedIdentities.find(
+        (identity) => String(identity.provider || '').trim().toLowerCase() === String(provider || '').trim().toLowerCase(),
+      ) ?? null,
+    [linkedIdentities],
+  );
+
+  const canSafelyUnlinkProvider = useCallback(
+    (provider: string) => {
+      const normalized = String(provider || '').trim().toLowerCase();
+      if (normalized !== 'google' && normalized !== 'apple') return false;
+      const remainingLinkedMethods = normalizedLinkedRecoveryMethods.filter((method) => method !== normalized);
+      return remainingLinkedMethods.length > 0 || hasPasswordBackup;
+    },
+    [hasPasswordBackup, normalizedLinkedRecoveryMethods],
+  );
 
   const recoveryStrength = useMemo(() => {
     if (normalizedLinkedRecoveryMethods.length >= 2 && hasPasswordBackup) {
@@ -1876,7 +1947,9 @@ export default function ProfileScreen() {
       if (result.type === 'success' && result.url && isTrustedAuthCallbackUrl(result.url)) {
         await finishIdentityCallback(result.url);
         await waitForSession(4000);
+        await supabase.rpc('rpc_clear_signin_provider_disconnected' as any, { p_provider: 'google' });
         await loadLinkedIdentities();
+        await loadDisconnectedProviders();
         setIdentityMessage('Google is now linked to this Betweener account.');
       }
     } catch (error: any) {
@@ -1884,7 +1957,7 @@ export default function ProfileScreen() {
     } finally {
       setLinkingProvider(null);
     }
-  }, [finishIdentityCallback, formatIdentityLinkError, getOAuthRedirectUrl, loadLinkedIdentities, waitForSession]);
+  }, [finishIdentityCallback, formatIdentityLinkError, getOAuthRedirectUrl, loadDisconnectedProviders, loadLinkedIdentities, waitForSession]);
 
   const handleLinkApple = useCallback(async () => {
     if (Platform.OS !== 'ios') return;
@@ -1907,7 +1980,9 @@ export default function ProfileScreen() {
       });
       if (error) throw error;
       await waitForSession(4000);
+      await supabase.rpc('rpc_clear_signin_provider_disconnected' as any, { p_provider: 'apple' });
       await loadLinkedIdentities();
+      await loadDisconnectedProviders();
       setIdentityMessage('Apple is now linked to this Betweener account.');
     } catch (error: any) {
       const message = String(error?.message || '');
@@ -1919,7 +1994,131 @@ export default function ProfileScreen() {
     } finally {
       setLinkingProvider(null);
     }
-  }, [formatIdentityLinkError, loadLinkedIdentities, waitForSession]);
+  }, [formatIdentityLinkError, loadDisconnectedProviders, loadLinkedIdentities, waitForSession]);
+
+  const handleUnlinkProvider = useCallback(
+    (provider: 'google' | 'apple') => {
+      const providerLabel = RECOVERY_PROVIDER_LABELS[provider] ?? provider;
+      const linkedIdentity = findLinkedIdentity(provider);
+      const currentProvider = String(
+        user?.app_metadata?.provider ?? profile?.last_successful_auth_provider ?? '',
+      )
+        .trim()
+        .toLowerCase();
+
+      if (!linkedIdentity) {
+        setIdentityError(`${providerLabel} is not currently linked to this account.`);
+        return;
+      }
+
+      if (!canSafelyUnlinkProvider(provider)) {
+        Alert.alert(
+          `Keep ${providerLabel} linked for now`,
+          'Add another sign-in method or a password backup before disconnecting this provider so this account stays recoverable.',
+        );
+        return;
+      }
+
+      Alert.alert(
+        `Disconnect ${providerLabel}?`,
+        currentProvider === provider
+          ? `${providerLabel} is the sign-in method currently in use. Disconnecting it will sign you out right away. Your other recovery methods will stay available.`
+          : `${providerLabel} will stop being a sign-in option for this Betweener account. Your other recovery methods will stay available.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: currentProvider === provider ? 'Disconnect and sign out' : 'Disconnect',
+            style: 'destructive',
+            onPress: () => {
+              void (async () => {
+                setIdentityError('');
+                setIdentityMessage('');
+                setUnlinkingProvider(provider);
+                try {
+                  const { error: registryError } = await supabase.rpc('rpc_mark_signin_provider_disconnected' as any, {
+                    p_provider: provider,
+                  });
+                  if (registryError) throw registryError;
+
+                  const { error } = await supabase.auth.unlinkIdentity(linkedIdentity);
+                  if (error) {
+                    // Keep the Betweener-side disconnect registry even if the underlying
+                    // provider unlink is a no-op or immediately relinks later.
+                    console.log('[profile] unlinkIdentity warning', error);
+                  }
+
+                  await waitForSession(4000);
+                  await loadLinkedIdentities();
+                  await loadDisconnectedProviders();
+                  if (currentProvider === provider) {
+                    Alert.alert(
+                      `${providerLabel} disconnected`,
+                      `You just disconnected the sign-in method currently in use. Sign in again with another method to continue with this account.`,
+                    );
+                    setShowEmailModal(false);
+                    await signOut();
+                    router.replace({
+                      pathname: '/(auth)/disconnected-provider',
+                      params: {
+                        method: provider,
+                        ...(user?.email ? { email: user.email } : {}),
+                      },
+                    });
+                    return;
+                  }
+
+                  setIdentityMessage(
+                    `${providerLabel} has been disconnected for Betweener. Future ${providerLabel} sign-ins will be refused until you reconnect it here.`,
+                  );
+                } catch (error: any) {
+                  setIdentityError(error?.message ?? `Unable to disconnect ${providerLabel} right now.`);
+                } finally {
+                  setUnlinkingProvider(null);
+                }
+              })();
+            },
+          },
+        ],
+      );
+    },
+    [canSafelyUnlinkProvider, findLinkedIdentity, loadDisconnectedProviders, loadLinkedIdentities, profile?.last_successful_auth_provider, signOut, user?.app_metadata?.provider, user?.email, waitForSession],
+  );
+
+  const handleReconnectProvider = useCallback(
+    async (provider: 'google' | 'apple') => {
+      const providerLabel = RECOVERY_PROVIDER_LABELS[provider] ?? provider;
+      setIdentityError('');
+      setIdentityMessage('');
+
+      const isStillLinkedUnderneath = linkedProviders.includes(provider);
+      if (isStillLinkedUnderneath) {
+        setLinkingProvider(provider);
+        try {
+          const { error } = await supabase.rpc('rpc_clear_signin_provider_disconnected' as any, {
+            p_provider: provider,
+          });
+          if (error) throw error;
+          await loadDisconnectedProviders();
+          setIdentityMessage(`${providerLabel} can be used to sign in to this Betweener account again.`);
+        } catch (error: any) {
+          setIdentityError(error?.message ?? `Unable to reconnect ${providerLabel} right now.`);
+        } finally {
+          setLinkingProvider(null);
+        }
+        return;
+      }
+
+      if (provider === 'google') {
+        await handleLinkGoogle();
+        return;
+      }
+
+      if (provider === 'apple') {
+        await handleLinkApple();
+      }
+    },
+    [handleLinkApple, handleLinkGoogle, linkedProviders, loadDisconnectedProviders],
+  );
 
   const handleSubmitRecoveryRequest = useCallback(async () => {
     setRecoveryError('');
@@ -3200,23 +3399,65 @@ export default function ProfileScreen() {
                   <View style={styles.identityMethodTextWrap}>
                     <Text style={[styles.identityMethodTitle, { color: theme.text }]}>Google</Text>
                     <Text style={[styles.identityMethodSubtitle, { color: theme.textMuted }]}>
-                      {linkedProviders.includes('google') ? 'Linked to this account' : 'Not linked yet'}
+                      {disconnectedProviders.includes('google')
+                        ? 'Disconnected for Betweener'
+                        : linkedProviders.includes('google')
+                          ? 'Linked to this account'
+                          : 'Not linked yet'}
                     </Text>
                   </View>
                 </View>
-                {linkedProviders.includes('google') ? (
-                  <View style={[styles.identityStatusPill, { backgroundColor: theme.tint + '18', borderColor: theme.tint }]}>
-                    <Text style={[styles.identityStatusText, { color: theme.tint }]}>Linked</Text>
+                {disconnectedProviders.includes('google') ? (
+                  <View style={styles.identityActions}>
+                    <View style={[styles.identityStatusPill, { backgroundColor: '#ef444418', borderColor: '#ef4444' }]}>
+                      <Text style={[styles.identityStatusText, { color: '#ef4444' }]}>Disconnected</Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => void handleReconnectProvider('google')}
+                      disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null}
+                      style={[
+                        styles.identityLinkButton,
+                        {
+                          backgroundColor: theme.tint,
+                          opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null ? 0.65 : 1,
+                        },
+                      ]}
+                    >
+                      <Text style={styles.identityLinkButtonText}>
+                        {linkingProvider === 'google' ? 'Reconnecting...' : 'Reconnect'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : linkedProviders.includes('google') ? (
+                  <View style={styles.identityActions}>
+                    <View style={[styles.identityStatusPill, { backgroundColor: theme.tint + '18', borderColor: theme.tint }]}>
+                      <Text style={[styles.identityStatusText, { color: theme.tint }]}>Linked</Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => handleUnlinkProvider('google')}
+                      disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null}
+                      style={[
+                        styles.identityUnlinkButton,
+                        {
+                          borderColor: '#ef4444',
+                          opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null ? 0.6 : 1,
+                        },
+                      ]}
+                    >
+                      <Text style={styles.identityUnlinkButtonText}>
+                        {unlinkingProvider === 'google' ? 'Disconnecting...' : 'Disconnect'}
+                      </Text>
+                    </TouchableOpacity>
                   </View>
                 ) : (
                   <TouchableOpacity
                     onPress={handleLinkGoogle}
-                    disabled={identitiesLoading || linkingProvider !== null}
+                    disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null}
                     style={[
                       styles.identityLinkButton,
                       {
                         backgroundColor: theme.tint,
-                        opacity: identitiesLoading || linkingProvider !== null ? 0.65 : 1,
+                        opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null ? 0.65 : 1,
                       },
                     ]}
                   >
@@ -3241,23 +3482,65 @@ export default function ProfileScreen() {
                     <View style={styles.identityMethodTextWrap}>
                       <Text style={[styles.identityMethodTitle, { color: theme.text }]}>Apple</Text>
                       <Text style={[styles.identityMethodSubtitle, { color: theme.textMuted }]}>
-                        {linkedProviders.includes('apple') ? 'Linked to this account' : 'Not linked yet'}
+                        {disconnectedProviders.includes('apple')
+                          ? 'Disconnected for Betweener'
+                          : linkedProviders.includes('apple')
+                            ? 'Linked to this account'
+                            : 'Not linked yet'}
                       </Text>
                     </View>
                   </View>
-                  {linkedProviders.includes('apple') ? (
-                    <View style={[styles.identityStatusPill, { backgroundColor: theme.tint + '18', borderColor: theme.tint }]}>
-                      <Text style={[styles.identityStatusText, { color: theme.tint }]}>Linked</Text>
+                  {disconnectedProviders.includes('apple') ? (
+                    <View style={styles.identityActions}>
+                      <View style={[styles.identityStatusPill, { backgroundColor: '#ef444418', borderColor: '#ef4444' }]}>
+                        <Text style={[styles.identityStatusText, { color: '#ef4444' }]}>Disconnected</Text>
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => void handleReconnectProvider('apple')}
+                        disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null}
+                        style={[
+                          styles.identityLinkButton,
+                          {
+                            backgroundColor: theme.tint,
+                            opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null ? 0.65 : 1,
+                          },
+                        ]}
+                      >
+                        <Text style={styles.identityLinkButtonText}>
+                          {linkingProvider === 'apple' ? 'Reconnecting...' : 'Reconnect'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : linkedProviders.includes('apple') ? (
+                    <View style={styles.identityActions}>
+                      <View style={[styles.identityStatusPill, { backgroundColor: theme.tint + '18', borderColor: theme.tint }]}>
+                        <Text style={[styles.identityStatusText, { color: theme.tint }]}>Linked</Text>
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => handleUnlinkProvider('apple')}
+                        disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null}
+                        style={[
+                          styles.identityUnlinkButton,
+                          {
+                            borderColor: '#ef4444',
+                            opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null ? 0.6 : 1,
+                          },
+                        ]}
+                      >
+                        <Text style={styles.identityUnlinkButtonText}>
+                          {unlinkingProvider === 'apple' ? 'Disconnecting...' : 'Disconnect'}
+                        </Text>
+                      </TouchableOpacity>
                     </View>
                   ) : (
                     <TouchableOpacity
                       onPress={handleLinkApple}
-                      disabled={identitiesLoading || linkingProvider !== null}
+                      disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null}
                       style={[
                         styles.identityLinkButton,
                         {
                           backgroundColor: theme.tint,
-                          opacity: identitiesLoading || linkingProvider !== null ? 0.65 : 1,
+                          opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null ? 0.65 : 1,
                         },
                       ]}
                     >
@@ -3268,6 +3551,10 @@ export default function ProfileScreen() {
                   )}
                 </View>
               ) : null}
+
+              <Text style={[styles.identitySupportText, { color: theme.textMuted }]}>
+                Disconnect Google or Apple here any time, as long as another sign-in method or password backup remains on the account.
+              </Text>
 
               <View
                 style={[
@@ -3290,52 +3577,71 @@ export default function ProfileScreen() {
                       : 'Set a private backup password so email can restore this account even if Apple or Google opens the wrong profile first.'}
                   </Text>
                 </View>
-                <TextInput
-                  value={passwordBackupInput}
-                  onChangeText={setPasswordBackupInput}
-                  placeholder="Create backup password"
-                  placeholderTextColor={theme.textMuted}
-                  secureTextEntry
-                  autoCapitalize="none"
-                  style={[
-                    styles.emailInput,
-                    { color: theme.text, borderColor: theme.outline, backgroundColor: theme.background },
-                  ]}
-                />
-                <TextInput
-                  value={passwordBackupConfirm}
-                  onChangeText={setPasswordBackupConfirm}
-                  placeholder="Confirm backup password"
-                  placeholderTextColor={theme.textMuted}
-                  secureTextEntry
-                  autoCapitalize="none"
-                  style={[
-                    styles.emailInput,
-                    { color: theme.text, borderColor: theme.outline, backgroundColor: theme.background },
-                  ]}
-                />
-                {passwordBackupError ? (
-                  <Text style={[styles.identityError, { color: '#ef4444' }]}>{passwordBackupError}</Text>
-                ) : null}
-                {passwordBackupMessage ? (
+                <View style={styles.passwordBackupActions}>
+                  <TouchableOpacity
+                    onPress={() => setShowPasswordBackupEditor((current) => !current)}
+                    style={[
+                      styles.passwordBackupSecondaryButton,
+                      { borderColor: theme.outline, backgroundColor: theme.background },
+                    ]}
+                  >
+                    <Text style={[styles.passwordBackupSecondaryText, { color: theme.text }]}>
+                      {showPasswordBackupEditor
+                        ? 'Hide password setup'
+                        : hasPasswordBackup
+                          ? 'Refresh password backup'
+                          : 'Set up password backup'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                {showPasswordBackupEditor ? (
+                  <View style={styles.passwordBackupEditor}>
+                    <TextInput
+                      value={passwordBackupInput}
+                      onChangeText={setPasswordBackupInput}
+                      placeholder="Create backup password"
+                      placeholderTextColor={theme.textMuted}
+                      secureTextEntry
+                      autoCapitalize="none"
+                      style={[
+                        styles.emailInput,
+                        { color: theme.text, borderColor: theme.outline, backgroundColor: theme.background },
+                      ]}
+                    />
+                    <TextInput
+                      value={passwordBackupConfirm}
+                      onChangeText={setPasswordBackupConfirm}
+                      placeholder="Confirm backup password"
+                      placeholderTextColor={theme.textMuted}
+                      secureTextEntry
+                      autoCapitalize="none"
+                      style={[
+                        styles.emailInput,
+                        { color: theme.text, borderColor: theme.outline, backgroundColor: theme.background },
+                      ]}
+                    />
+                    {passwordBackupError ? (
+                      <Text style={[styles.identityError, { color: '#ef4444' }]}>{passwordBackupError}</Text>
+                    ) : null}
+                    {passwordBackupMessage ? (
+                      <Text style={[styles.identityMessage, { color: theme.tint }]}>{passwordBackupMessage}</Text>
+                    ) : null}
+                    <TouchableOpacity
+                      onPress={handlePasswordBackupSave}
+                      disabled={passwordBackupSaving || !user?.email}
+                      style={[
+                        styles.passwordBackupButton,
+                        { backgroundColor: theme.tint, opacity: passwordBackupSaving || !user?.email ? 0.65 : 1 },
+                      ]}
+                    >
+                      <Text style={styles.identityLinkButtonText}>
+                        {passwordBackupSaving ? 'Saving...' : 'Save password backup'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : passwordBackupMessage ? (
                   <Text style={[styles.identityMessage, { color: theme.tint }]}>{passwordBackupMessage}</Text>
                 ) : null}
-                <TouchableOpacity
-                  onPress={handlePasswordBackupSave}
-                  disabled={passwordBackupSaving || !user?.email}
-                  style={[
-                    styles.passwordBackupButton,
-                    { backgroundColor: theme.tint, opacity: passwordBackupSaving || !user?.email ? 0.65 : 1 },
-                  ]}
-                >
-                  <Text style={styles.identityLinkButtonText}>
-                    {passwordBackupSaving
-                      ? 'Saving...'
-                      : hasPasswordBackup
-                        ? 'Refresh password backup'
-                        : 'Add password backup'}
-                  </Text>
-                </TouchableOpacity>
               </View>
 
               {identityError ? (
@@ -7040,11 +7346,32 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
+  identityActions: {
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  identityUnlinkButton: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  identityUnlinkButtonText: {
+    color: '#ef4444',
+    fontSize: 12,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 0.2,
+  },
   identityLinkButtonText: {
     color: '#fff',
     fontSize: 12,
     fontFamily: 'Manrope_700Bold',
     letterSpacing: 0.2,
+  },
+  identitySupportText: {
+    fontSize: 11.5,
+    lineHeight: 17,
+    fontFamily: 'Manrope_400Regular',
   },
   identityError: {
     fontSize: 12,
@@ -7076,11 +7403,31 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 10,
   },
+  passwordBackupActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
   passwordBackupTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 8,
+  },
+  passwordBackupSecondaryButton: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  passwordBackupSecondaryText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_600SemiBold',
+    letterSpacing: 0.2,
+  },
+  passwordBackupEditor: {
+    gap: 10,
   },
   passwordBackupButton: {
     alignSelf: 'flex-start',

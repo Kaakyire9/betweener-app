@@ -115,6 +115,36 @@ function buildGuessResultMessage(name: string, tone: 'correct' | 'wrong') {
   return 'Close. Try again, or skip the game and send a message.';
 }
 
+function buildRootsSection(profile: UserProfile, isOwnProfile: boolean): PremiumSection | null {
+  const roots = Array.isArray(profile.roots)
+    ? profile.roots.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  const rootsVisibility = String(profile.rootsVisibility || 'VISIBLE').trim().toUpperCase();
+  const rootsNote = String(profile.rootsNote || '').trim();
+
+  if (roots.length === 0) return null;
+  if (rootsVisibility === 'HIDDEN' && !isOwnProfile) return null;
+
+  if (rootsVisibility === 'MATCHES_ONLY' && !isOwnProfile) {
+    return {
+      id: 'sec-roots',
+      tag: 'values',
+      title: 'Roots & Heritage',
+      body: 'Shared after a mutual match.',
+    };
+  }
+
+  return {
+    id: 'sec-roots',
+    tag: 'values',
+    title: 'Roots & Heritage',
+    body:
+      rootsNote ||
+      (roots.length === 1 ? `${roots[0]} heritage.` : 'Cultural roots shared with intention.'),
+    chips: roots,
+  };
+}
+
 // Content heuristics for empty-state branching.
 // Goal: "images-only" should trigger unless the profile has real narrative/intent content.
 const BIO_MEANINGFUL_MIN_CHARS = 40;
@@ -297,7 +327,7 @@ function pickTaggedImages(profile: UserProfile): PremiumImage[] {
   }));
 }
 
-function buildSections(profile: UserProfile): PremiumSection[] {
+function buildSections(profile: UserProfile, isOwnProfile: boolean): PremiumSection[] {
   const chipsFromInterests = (profile.interests || []).slice(0, 6).map((i) => i.name);
   const allPrompts = profile.promptAnswers || [];
   const topPrompt = allPrompts[0];
@@ -356,6 +386,11 @@ function buildSections(profile: UserProfile): PremiumSection[] {
       })(),
     },
   ];
+
+  const rootsSection = buildRootsSection(profile, isOwnProfile);
+  if (rootsSection) {
+    sections.splice(1, 0, rootsSection);
+  }
 
   if (remainingPrompts.length) {
     sections.splice(2, 0, {
@@ -429,7 +464,7 @@ function buildAutoSectionsIfNeeded(profile: UserProfile, existing: PremiumSectio
   return generated;
 }
 
-function adaptToPremiumProfile(profile: UserProfile): PremiumProfile {
+function adaptToPremiumProfile(profile: UserProfile, isOwnProfile: boolean): PremiumProfile {
   return {
     id: profile.id,
     name: profile.name,
@@ -438,7 +473,7 @@ function adaptToPremiumProfile(profile: UserProfile): PremiumProfile {
     verified: profile.verified,
     distanceKm: profile.distanceKm,
     images: pickTaggedImages(profile),
-    sections: buildSections(profile),
+    sections: buildSections(profile, isOwnProfile),
   };
 }
 
@@ -658,12 +693,16 @@ export default function ProfileViewPremiumV2Screen() {
   );
   const meaningfulText = useMemo(() => hasMeaningfulText(resolvedProfile), [resolvedProfile]);
   const gated = useMemo(() => shouldGateProfile(resolvedProfile), [resolvedProfile]);
+  const isOwnProfile = useMemo(
+    () => Boolean(currentProfile?.id && profileId && currentProfile.id === profileId),
+    [currentProfile?.id, profileId],
+  );
 
   const profile: PremiumProfile = useMemo(() => {
-    const adapted = adaptToPremiumProfile(resolvedProfile);
+    const adapted = adaptToPremiumProfile(resolvedProfile, isOwnProfile);
     const sections = buildAutoSectionsIfNeeded(resolvedProfile, adapted.sections);
     return { ...adapted, sections };
-  }, [resolvedProfile]);
+  }, [isOwnProfile, resolvedProfile]);
   const viewerPrompts = useMemo(
     () => (resolvedProfile.promptAnswers || []).filter((item) => item?.promptTitle?.trim() || item?.answer?.trim()),
     [resolvedProfile.promptAnswers],
@@ -829,11 +868,6 @@ export default function ProfileViewPremiumV2Screen() {
   const [blockSubmitting, setBlockSubmitting] = useState(false);
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [selectedReportReason, setSelectedReportReason] = useState<string | null>(null);
-  const isOwnProfile = useMemo(
-    // Profiles are keyed by profiles.id (not auth.uid()), so compare against the viewer's profile id.
-    () => Boolean(currentProfile?.id && profileId && currentProfile.id === profileId),
-    [currentProfile?.id, profileId],
-  );
   const shouldFloatGuessPrompt = Boolean(
     featuredPrompt &&
       isGuessPrompt(featuredPrompt.promptType) &&

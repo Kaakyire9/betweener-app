@@ -3,7 +3,7 @@ import Notice from "@/components/ui/Notice";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
 import { isLikelyNetworkError } from "@/lib/network";
-import { captureSignupContext, clearSignupSession, finalizeSignupPhoneVerification, getSignupPhoneState } from "@/lib/signup-tracking";
+import { captureSignupContext, clearSignupSession, consumeSignupMetadata, finalizeSignupPhoneVerification, getSignupPhoneState } from "@/lib/signup-tracking";
 import { supabase } from "@/lib/supabase";
 import { logger } from "@/lib/telemetry/logger";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -140,7 +140,7 @@ const ONBOARDING_STEPS = [
 
 export default function Onboarding() {
   const router = useRouter();
-  const { updateProfile, user, signOut, refreshProfile, phoneVerified } = useAuth();
+  const { updateProfile, user, profile, signOut, refreshProfile, phoneVerified } = useAuth();
   const fontsLoaded = useAppFonts();
   
   const [currentStep, setCurrentStep] = useState(0);
@@ -169,6 +169,41 @@ export default function Onboarding() {
   const [saveNetworkError, setSaveNetworkError] = useState<string | null>(null);
   const [submitDebugId, setSubmitDebugId] = useState<string | null>(null);
   const submitAttemptRef = useRef(0);
+
+  useEffect(() => {
+    let active = true;
+
+    const deriveNameFromMetadata = () => {
+      const metadata = (user?.user_metadata ?? {}) as Record<string, unknown>;
+      const fullName = String(metadata.full_name ?? metadata.name ?? "").trim();
+      if (fullName) return fullName;
+
+      const givenName = String(metadata.given_name ?? "").trim();
+      const familyName = String(metadata.family_name ?? "").trim();
+      const combinedName = [givenName, familyName].filter(Boolean).join(" ").trim();
+      if (combinedName) return combinedName;
+
+      return "";
+    };
+
+    void (async () => {
+      if (form.fullName.trim()) return;
+      const signupMetadata = await consumeSignupMetadata();
+      if (!active) return;
+
+      const nextFullName =
+        String(profile?.full_name ?? "").trim() ||
+        String(signupMetadata.auth_name ?? "").trim() ||
+        deriveNameFromMetadata();
+
+      if (!nextFullName) return;
+      setForm((prev) => (prev.fullName.trim() ? prev : { ...prev, fullName: nextFullName }));
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [form.fullName, profile?.full_name, user?.app_metadata?.provider, user?.email, user?.user_metadata]);
 
   useEffect(() => {
     let active = true;

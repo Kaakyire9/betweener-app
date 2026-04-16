@@ -10,6 +10,8 @@ const SIGNUP_PHONE_KEY = "signup_phone_number_v1";
 const SIGNUP_PHONE_VERIFIED_KEY = "signup_phone_verified_v1";
 const SIGNUP_AUTH_METHOD_KEY = "signup_auth_method_v1";
 const SIGNUP_OAUTH_PROVIDER_KEY = "signup_oauth_provider_v1";
+const SIGNUP_AUTH_NAME_KEY = "signup_auth_name_v1";
+const SIGNUP_AUTH_EMAIL_KEY = "signup_auth_email_v1";
 
 type SignupEventPayload = {
   signup_session_id: string;
@@ -130,6 +132,8 @@ export const clearSignupSession = async () => {
     SIGNUP_PHONE_VERIFIED_KEY,
     SIGNUP_AUTH_METHOD_KEY,
     SIGNUP_OAUTH_PROVIDER_KEY,
+    SIGNUP_AUTH_NAME_KEY,
+    SIGNUP_AUTH_EMAIL_KEY,
   ]);
 };
 
@@ -185,6 +189,21 @@ export const setPendingAuthMethod = async (authMethod: string, oauthProvider?: s
   ]);
 };
 
+export const setSignupIdentityHints = async ({
+  name,
+  email,
+}: {
+  name?: string | null;
+  email?: string | null;
+}) => {
+  const normalizedName = String(name ?? "").trim();
+  const normalizedEmail = String(email ?? "").trim().toLowerCase();
+  await AsyncStorage.multiSet([
+    [SIGNUP_AUTH_NAME_KEY, normalizedName],
+    [SIGNUP_AUTH_EMAIL_KEY, normalizedEmail],
+  ]);
+};
+
 export const finalizeSignupPhoneVerification = async (): Promise<boolean> => {
   const signupSessionId = await getSignupSessionId();
   if (!signupSessionId) return false;
@@ -202,11 +221,13 @@ export const finalizeSignupPhoneVerification = async (): Promise<boolean> => {
 };
 
 export const consumeSignupMetadata = async () => {
-  const [phoneNumber, verified, authMethod, oauthProvider] = await Promise.all([
+  const [phoneNumber, verified, authMethod, oauthProvider, authName, authEmail] = await Promise.all([
     AsyncStorage.getItem(SIGNUP_PHONE_KEY),
     AsyncStorage.getItem(SIGNUP_PHONE_VERIFIED_KEY),
     AsyncStorage.getItem(SIGNUP_AUTH_METHOD_KEY),
     AsyncStorage.getItem(SIGNUP_OAUTH_PROVIDER_KEY),
+    AsyncStorage.getItem(SIGNUP_AUTH_NAME_KEY),
+    AsyncStorage.getItem(SIGNUP_AUTH_EMAIL_KEY),
   ]);
 
   return {
@@ -214,5 +235,7 @@ export const consumeSignupMetadata = async () => {
     phone_verified: verified === "true",
     auth_method: authMethod || null,
     oauth_provider: oauthProvider || null,
+    auth_name: authName || null,
+    auth_email: authEmail || null,
   };
 };

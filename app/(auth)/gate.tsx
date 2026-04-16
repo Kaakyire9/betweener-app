@@ -6,9 +6,11 @@ import { useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { supabase } from "@/lib/supabase";
+import { clearPendingAuthProvider, getFreshPendingAuthProvider } from "@/lib/auth-callback";
 
 const AUTH_PENDING_TOKENS_KEY = "auth_pending_tokens_v1";
 const RETIRED_DUPLICATE_REDIRECT_KEY = "retired_duplicate_redirect_v1";
+const DISCONNECTED_PROVIDER_REDIRECT_KEY = "disconnected_provider_redirect_v1";
 // Disable auth-bootstrap while stabilizing core auth/phone verification routing.
 // It can be re-enabled once the function is proven reliable in production.
 const ENABLE_AUTH_BOOTSTRAP = false;
@@ -55,6 +57,35 @@ export default function AuthGateScreen() {
     }
   };
 
+  const getDisconnectedProviderRoute = (
+    provider?: string | null,
+    email?: string | null,
+  ) => ({
+    pathname: "/(auth)/disconnected-provider" as const,
+    params: {
+      ...(provider ? { method: provider } : {}),
+      ...(email ? { email: email.trim() } : {}),
+    },
+  });
+
+  const persistDisconnectedProviderRedirect = async (
+    provider?: string | null,
+    email?: string | null,
+  ) => {
+    try {
+      await AsyncStorage.setItem(
+        DISCONNECTED_PROVIDER_REDIRECT_KEY,
+        JSON.stringify({
+          method: provider ?? null,
+          email: email?.trim() || null,
+          createdAt: Date.now(),
+        }),
+      );
+    } catch {
+      // best effort only
+    }
+  };
+
   const consumeRetiredDuplicateRoute = async () => {
     try {
       const raw = await AsyncStorage.getItem(RETIRED_DUPLICATE_REDIRECT_KEY);
@@ -70,6 +101,25 @@ export default function AuthGateScreen() {
         return null;
       }
       return getRetiredDuplicateRoute(parsed?.status ?? null, parsed?.method ?? null, parsed?.email ?? null);
+    } catch {
+      return null;
+    }
+  };
+
+  const consumeDisconnectedProviderRoute = async () => {
+    try {
+      const raw = await AsyncStorage.getItem(DISCONNECTED_PROVIDER_REDIRECT_KEY);
+      if (!raw) return null;
+      await AsyncStorage.removeItem(DISCONNECTED_PROVIDER_REDIRECT_KEY);
+      const parsed = JSON.parse(raw) as {
+        method?: string | null;
+        email?: string | null;
+        createdAt?: number;
+      };
+      if (typeof parsed?.createdAt === "number" && Date.now() - parsed.createdAt > 10 * 60 * 1000) {
+        return null;
+      }
+      return getDisconnectedProviderRoute(parsed?.method ?? null, parsed?.email ?? null);
     } catch {
       return null;
     }
@@ -139,12 +189,20 @@ export default function AuthGateScreen() {
         // If no session, go welcome
         if (!session?.user || !user?.id) {
           const retiredRoute = await consumeRetiredDuplicateRoute();
+          const disconnectedProviderRoute = await consumeDisconnectedProviderRoute();
           routedRef.current = true;
           if (retiredRoute) {
             if (typeof __DEV__ !== "undefined" && __DEV__) {
               console.log("[auth-gate] hard fallback route", retiredRoute);
             }
             router.replace(retiredRoute);
+            return;
+          }
+          if (disconnectedProviderRoute) {
+            if (typeof __DEV__ !== "undefined" && __DEV__) {
+              console.log("[auth-gate] hard fallback route", disconnectedProviderRoute);
+            }
+            router.replace(disconnectedProviderRoute);
             return;
           }
           if (typeof __DEV__ !== "undefined" && __DEV__) {
@@ -308,7 +366,8 @@ export default function AuthGateScreen() {
             console.log("[auth-gate] no session/user");
           }
           const retiredRoute = await consumeRetiredDuplicateRoute();
-          guardRoute(retiredRoute ?? "/(auth)/welcome");
+          const disconnectedProviderRoute = await consumeDisconnectedProviderRoute();
+          guardRoute(retiredRoute ?? disconnectedProviderRoute ?? "/(auth)/welcome");
           return;
         }
 
@@ -419,7 +478,62 @@ export default function AuthGateScreen() {
           return;
         }
 
+        const pendingAuthProvider = await getFreshPendingAuthProvider();
+        const currentProvider =
+          String(
+            pendingAuthProvider?.provider ??
+              userToUse.app_metadata?.provider ??
+              authContext.profile?.last_successful_auth_provider ??
+              profile?.last_successful_auth_provider ??
+              "",
+          )
+            .trim()
+            .toLowerCase() || null;
+
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth-gate] provider enforcement context", {
+            pendingProvider: pendingAuthProvider?.provider ?? null,
+            appMetadataProvider: userToUse.app_metadata?.provider ?? null,
+            profileProvider:
+              authContext.profile?.last_successful_auth_provider ??
+              profile?.last_successful_auth_provider ??
+              null,
+            currentProvider,
+            userId: userToUse.id,
+            email: userToUse.email ?? null,
+          });
+        }
+
+        if (currentProvider === "google" || currentProvider === "apple") {
+          const { data: disconnectedProvider, error: disconnectedProviderError } = await supabase.rpc(
+            "rpc_is_signin_provider_disconnected" as any,
+            { p_provider: currentProvider },
+          );
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[auth-gate] disconnected provider check", {
+              currentProvider,
+              disconnectedProvider: disconnectedProvider ?? null,
+              disconnectedProviderError: disconnectedProviderError?.message ?? null,
+            });
+          }
+          if (!disconnectedProviderError && disconnectedProvider === true) {
+            const providerRoute = getDisconnectedProviderRoute(currentProvider, userToUse.email ?? null);
+            await persistDisconnectedProviderRedirect(currentProvider, userToUse.email ?? null);
+            try {
+              await supabase.auth.signOut();
+            } catch {
+              // best effort only
+            }
+            if (typeof __DEV__ !== "undefined" && __DEV__) {
+              console.log("[auth-gate] disconnected provider route", providerRoute);
+            }
+            guardRoute(providerRoute);
+            return;
+          }
+        }
+
         if (!verified) {
+          await clearPendingAuthProvider();
           guardRoute({
             pathname: "/(auth)/verify-phone",
             params: {
@@ -431,10 +545,12 @@ export default function AuthGateScreen() {
         }
 
         if (!profileCompleted) {
+          await clearPendingAuthProvider();
           guardRoute("/(auth)/onboarding", true);
           return;
         }
 
+        await clearPendingAuthProvider();
         guardRoute("/(tabs)/vibes", true);
       } catch (_error) {
         if (active && !routedRef.current) {

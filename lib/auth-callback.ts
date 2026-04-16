@@ -3,11 +3,17 @@ import * as Linking from "expo-linking";
 
 export const LAST_DEEP_LINK_URL_KEY = "last_deep_link_url";
 export const AUTH_PENDING_TOKENS_KEY = "auth_pending_tokens_v1";
+export const AUTH_PENDING_PROVIDER_KEY = "auth_pending_provider_v1";
 
 const AUTH_PENDING_FLOW_KEY = "auth_pending_flow_v1";
 type PendingAuthFlow = {
   createdAt: number;
   purpose: "oauth" | "email_link" | "email_signup" | "password_reset";
+};
+
+type PendingAuthProvider = {
+  createdAt: number;
+  provider: "google" | "apple";
 };
 
 const DEV_CALLBACK_HOSTS = new Set(["localhost", "127.0.0.1"]);
@@ -16,6 +22,31 @@ const AUTH_PENDING_FLOW_TTLS: Record<PendingAuthFlow["purpose"], number> = {
   email_link: 4 * 60 * 60 * 1000,
   email_signup: 24 * 60 * 60 * 1000,
   password_reset: 2 * 60 * 60 * 1000,
+};
+const AUTH_PENDING_PROVIDER_TTL_MS = 15 * 60 * 1000;
+
+const parseFreshPendingAuthProvider = async (): Promise<PendingAuthProvider | null> => {
+  try {
+    const raw = await AsyncStorage.getItem(AUTH_PENDING_PROVIDER_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as Partial<PendingAuthProvider>;
+    const createdAt = typeof parsed.createdAt === "number" ? parsed.createdAt : 0;
+    const provider =
+      parsed.provider === "google" || parsed.provider === "apple"
+        ? parsed.provider
+        : null;
+
+    const isFresh = createdAt > 0 && provider && Date.now() - createdAt <= AUTH_PENDING_PROVIDER_TTL_MS;
+    if (!isFresh || !provider) {
+      await AsyncStorage.removeItem(AUTH_PENDING_PROVIDER_KEY);
+      return null;
+    }
+
+    return { createdAt, provider };
+  } catch {
+    return null;
+  }
 };
 
 const parseFreshPendingAuthFlow = async (): Promise<PendingAuthFlow | null> => {
@@ -108,4 +139,21 @@ export const getFreshPendingAuthFlow = async () => {
 
 export const clearPendingAuthFlow = async () => {
   await AsyncStorage.removeItem(AUTH_PENDING_FLOW_KEY);
+};
+
+export const markPendingAuthProvider = async (
+  provider: PendingAuthProvider["provider"]
+) => {
+  await AsyncStorage.setItem(
+    AUTH_PENDING_PROVIDER_KEY,
+    JSON.stringify({ createdAt: Date.now(), provider } satisfies PendingAuthProvider)
+  );
+};
+
+export const getFreshPendingAuthProvider = async () => {
+  return await parseFreshPendingAuthProvider();
+};
+
+export const clearPendingAuthProvider = async () => {
+  await AsyncStorage.removeItem(AUTH_PENDING_PROVIDER_KEY);
 };
