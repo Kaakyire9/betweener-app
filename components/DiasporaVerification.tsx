@@ -8,6 +8,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import RNSvg, { Circle, Path } from 'react-native-svg';
 import Animated, {
@@ -127,6 +128,14 @@ type VerificationMethod = {
 
 type SocialPlatform = 'instagram' | 'tiktok' | 'facebook' | 'linkedin' | 'other';
 
+type LivePreviewAsset = {
+  uri: string;
+  mimeType: string;
+  fileName: string;
+  width?: number;
+  height?: number;
+};
+
 const SOCIAL_PROOF_PLATFORMS: { id: SocialPlatform; label: string; icon: string }[] = [
   { id: 'instagram', label: 'Instagram', icon: 'logo-instagram' },
   { id: 'tiktok', label: 'TikTok', icon: 'musical-notes-outline' },
@@ -137,26 +146,26 @@ const SOCIAL_PROOF_PLATFORMS: { id: SocialPlatform; label: string; icon: string 
 
 const LIVENESS_GUIDE_STEPS = [
   {
-    title: 'Center your face',
+    title: 'Keep your face in frame',
     body: 'Hold the phone at eye level and keep your face inside the frame.',
     icon: 'scan-outline',
     progress: 0.25,
   },
   {
     title: 'Turn slightly left',
-    body: 'Rotate your head a little to the left, like you are moving around a clock face.',
+    body: 'Turn your head gently so the reviewer can see this is a live recording.',
     icon: 'refresh-circle-outline',
     progress: 0.55,
   },
   {
     title: 'Blink once',
-    body: 'Blink naturally while staying in frame so the review team can verify the challenge.',
+    body: 'Blink naturally while staying in frame.',
     icon: 'eye-outline',
     progress: 0.82,
   },
   {
-    title: 'Ready to record',
-    body: 'Record one short clip and complete the movement smoothly from start to finish.',
+    title: 'Hold steady',
+    body: 'Keep the phone still for the last moment while Betweener secures the clip.',
     icon: 'videocam-outline',
     progress: 1,
   },
@@ -167,13 +176,13 @@ const LIVE_GUIDE_HEIGHT = 304;
 const LIVE_GUIDE_STROKE = 10;
 const LIVENESS_GUIDE_TIMINGS = {
   faceSeen: 350,
-  centered: 800,
-  turn: 1350,
-  blink: 1900,
-  ready: 2200,
-  recordingTurn: 850,
-  recordingBlink: 1500,
-  recordingStop: 2300,
+  centered: 650,
+  turn: 1700,
+  blink: 3200,
+  ready: 4600,
+  recordingTurn: 1600,
+  recordingBlink: 3200,
+  recordingStop: 5200,
 } as const;
 
 const cubicPoint = (p0: number, p1: number, p2: number, p3: number, t: number) => {
@@ -251,20 +260,20 @@ const buildFaceGuide = (width: number, height: number) => {
 };
 
 type LiveChecklistPillProps = {
-  completed: boolean;
+  active: boolean;
   icon: string;
   label: string;
   tint: string;
 };
 
 const LiveChecklistPill: React.FC<LiveChecklistPillProps> = ({
-  completed,
+  active,
   icon,
   label,
   tint,
 }) => {
   const scale = useSharedValue(1);
-  const glow = useSharedValue(completed ? 0.5 : 0);
+  const glow = useSharedValue(active ? 0.5 : 0);
   const mountedRef = useRef(false);
 
   useEffect(() => {
@@ -273,7 +282,7 @@ const LiveChecklistPill: React.FC<LiveChecklistPillProps> = ({
       return;
     }
 
-    if (completed) {
+    if (active) {
       scale.value = withSequence(
         withTiming(1.08, { duration: 170, easing: Easing.out(Easing.cubic) }),
         withSpring(1, { damping: 11, stiffness: 220 }),
@@ -286,7 +295,7 @@ const LiveChecklistPill: React.FC<LiveChecklistPillProps> = ({
       scale.value = withTiming(1, { duration: 150 });
       glow.value = withTiming(0, { duration: 150 });
     }
-  }, [completed, glow, scale]);
+  }, [active, glow, scale]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
@@ -299,19 +308,29 @@ const LiveChecklistPill: React.FC<LiveChecklistPillProps> = ({
     <Animated.View
       style={[
         styles.liveChecklistPill,
-        completed && styles.liveChecklistPillCompleted,
-        completed && { shadowColor: tint },
+        active && styles.liveChecklistPillCompleted,
+        active && { shadowColor: tint },
         animatedStyle,
       ]}
     >
       <Ionicons
-        name={(completed ? 'checkmark-circle' : icon) as any}
+        name={icon as any}
         size={16}
         color="#fff"
       />
       <Text style={styles.liveChecklistText}>{label}</Text>
     </Animated.View>
   );
+};
+
+const LivenessPreviewVideo = ({ uri }: { uri: string }) => {
+  const player = useVideoPlayer(uri, (instance) => {
+    instance.loop = true;
+    instance.muted = true;
+    instance.play();
+  });
+
+  return <VideoView player={player} style={styles.livePreviewVideo} contentFit="cover" nativeControls />;
 };
 
 export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
@@ -340,6 +359,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const [liveTurnComplete, setLiveTurnComplete] = useState(false);
   const [liveBlinkComplete, setLiveBlinkComplete] = useState(false);
   const [liveChallengeReady, setLiveChallengeReady] = useState(false);
+  const [livePreviewAsset, setLivePreviewAsset] = useState<LivePreviewAsset | null>(null);
   const [, setLiveGuideLayout] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const { status: verificationStatus, refreshStatus } = useVerificationStatus(profile?.user_id);
   const insets = useSafeAreaInsets();
@@ -542,7 +562,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     {
       id: 'selfie_liveness',
       title: 'Selfie Liveness',
-      description: 'Record a short face-check video from the camera to confirm it is really you',
+      description: 'Record a short guided selfie video so Betweener can confirm it is really you',
       level: 2,
       icon: 'scan-circle-outline',
       color: '#7C4DFF',
@@ -553,7 +573,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
       helperLabel: 'Fastest way to prove it is really you with a short guided video',
       reviewLabel: 'Fast review',
       isRecommended: true,
-      challengeType: 'turn_left_blink',
+      challengeType: 'guided_selfie_video',
     },
   ];
   const featuredMethod = verificationMethods.find((method) => method.id === 'selfie_liveness') ?? verificationMethods[0];
@@ -598,6 +618,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     setLiveTurnComplete(false);
     setLiveBlinkComplete(false);
     setLiveChallengeReady(false);
+    setLivePreviewAsset(null);
     setLiveGuideLayout(null);
     stopRecordingTriggeredRef.current = false;
     recordingStartedAtRef.current = null;
@@ -665,7 +686,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
           p_profile_id: profile.id,
           p_document_path: data.path,
           p_capture_mode: method.mediaType,
-          p_challenge_type: method.challengeType ?? 'turn_left_blink',
+          p_challenge_type: method.challengeType ?? 'guided_selfie_video',
           p_reference_asset_path: null,
         },
       );
@@ -890,42 +911,15 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   }, [windowSize.width]);
 
   useEffect(() => {
-    if (!showLiveLivenessCamera || !liveCameraReady || liveRecording) return;
+    if (!showLiveLivenessCamera || !liveCameraReady || liveRecording || livePreviewAsset) return;
 
     setLiveHasFace(false);
     setLiveFaceCentered(false);
     setLiveTurnComplete(false);
     setLiveBlinkComplete(false);
-    setLiveChallengeReady(false);
-    setLiveRecordingProgress(0.08);
-
-    const timers = [
-      setTimeout(() => {
-        setLiveHasFace(true);
-        setLiveRecordingProgress(0.24);
-      }, LIVENESS_GUIDE_TIMINGS.faceSeen),
-      setTimeout(() => {
-        setLiveFaceCentered(true);
-        setLiveRecordingProgress(0.48);
-      }, LIVENESS_GUIDE_TIMINGS.centered),
-      setTimeout(() => {
-        setLiveTurnComplete(true);
-        setLiveRecordingProgress(0.72);
-      }, LIVENESS_GUIDE_TIMINGS.turn),
-      setTimeout(() => {
-        setLiveBlinkComplete(true);
-        setLiveRecordingProgress(0.92);
-      }, LIVENESS_GUIDE_TIMINGS.blink),
-      setTimeout(() => {
-        setLiveChallengeReady(true);
-        setLiveRecordingProgress(1);
-      }, LIVENESS_GUIDE_TIMINGS.ready),
-    ];
-
-    return () => {
-      timers.forEach(clearTimeout);
-    };
-  }, [liveCameraReady, liveRecording, showLiveLivenessCamera]);
+    setLiveChallengeReady(true);
+    setLiveRecordingProgress(1);
+  }, [liveCameraReady, livePreviewAsset, liveRecording, showLiveLivenessCamera]);
 
   const beginLiveLivenessRecording = async () => {
     if (liveRecording) return;
@@ -937,33 +931,35 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
       setLiveCameraIssue('The camera is still starting.');
       return;
     }
-    if (!liveChallengeReady) {
-      setLiveCameraIssue('Follow the short practice guide before recording.');
-      return;
-    }
-
     try {
       setLiveRecording(true);
       setLiveCameraIssue(null);
+      setLiveHasFace(true);
+      setLiveFaceCentered(true);
       setLiveTurnComplete(false);
       setLiveBlinkComplete(false);
       setLiveChallengeReady(false);
-      setLiveRecordingProgress(0.28);
+      setLiveRecordingProgress(0.12);
       recordingStartedAtRef.current = Date.now();
       stopRecordingTriggeredRef.current = false;
 
       setTimeout(() => {
         if (!recordingStartedAtRef.current || stopRecordingTriggeredRef.current) return;
         setLiveTurnComplete(true);
-        setLiveRecordingProgress(0.64);
+        setLiveRecordingProgress(0.55);
       }, LIVENESS_GUIDE_TIMINGS.recordingTurn);
 
       setTimeout(() => {
         if (!recordingStartedAtRef.current || stopRecordingTriggeredRef.current) return;
         setLiveBlinkComplete(true);
+        setLiveRecordingProgress(0.82);
+      }, LIVENESS_GUIDE_TIMINGS.recordingBlink);
+
+      setTimeout(() => {
+        if (!recordingStartedAtRef.current || stopRecordingTriggeredRef.current) return;
         setLiveChallengeReady(true);
         setLiveRecordingProgress(1);
-      }, LIVENESS_GUIDE_TIMINGS.recordingBlink);
+      }, LIVENESS_GUIDE_TIMINGS.ready);
 
       recordingTimeoutRef.current = setTimeout(() => {
         if (!stopRecordingTriggeredRef.current) {
@@ -981,22 +977,15 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
           }
           setLiveRecording(false);
           recordingStartedAtRef.current = null;
-          setLoading(true);
-          try {
-            const success = await submitVerificationAsset(featuredMethod, {
-              uri: video.path.startsWith('file://') ? video.path : `file://${video.path}`,
-              mimeType: 'video/mp4',
-              fileName: `selfie_liveness_${Date.now()}.mp4`,
-              width: video.width,
-              height: video.height,
-            });
-
-            if (success) {
-              resetLivenessGuide();
-            }
-          } finally {
-            setLoading(false);
-          }
+          setLiveChallengeReady(true);
+          setLiveRecordingProgress(1);
+          setLivePreviewAsset({
+            uri: video.path.startsWith('file://') ? video.path : `file://${video.path}`,
+            mimeType: 'video/mp4',
+            fileName: `selfie_liveness_${Date.now()}.mp4`,
+            width: video.width,
+            height: video.height,
+          });
         },
         onRecordingError: (error) => {
           if (recordingTimeoutRef.current) {
@@ -1017,22 +1006,37 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     }
   };
 
-  useEffect(() => {
-    if (!liveRecording || !liveChallengeReady || stopRecordingTriggeredRef.current) return;
+  const retakeLiveLivenessVideo = () => {
+    setLivePreviewAsset(null);
+    setLiveCameraIssue(null);
+    setLiveRecording(false);
+    setLiveHasFace(false);
+    setLiveFaceCentered(false);
+    setLiveTurnComplete(false);
+    setLiveBlinkComplete(false);
+    setLiveChallengeReady(true);
+    setLiveRecordingProgress(1);
+    recordingStartedAtRef.current = null;
+    stopRecordingTriggeredRef.current = false;
+    if (recordingTimeoutRef.current) {
+      clearTimeout(recordingTimeoutRef.current);
+      recordingTimeoutRef.current = null;
+    }
+  };
 
-    const elapsed = recordingStartedAtRef.current ? Date.now() - recordingStartedAtRef.current : 0;
-    const finishDelay = Math.max(450, 1400 - elapsed);
-    const timeout = setTimeout(() => {
-      if (!stopRecordingTriggeredRef.current) {
-        stopRecordingTriggeredRef.current = true;
-        void cameraRef.current?.stopRecording();
+  const submitLiveLivenessPreview = async () => {
+    if (!livePreviewAsset || loading) return;
+
+    try {
+      setLoading(true);
+      const success = await submitVerificationAsset(featuredMethod, livePreviewAsset);
+      if (success) {
+        resetLivenessGuide();
       }
-    }, finishDelay);
-
-    return () => {
-      clearTimeout(timeout);
-    };
-  }, [liveChallengeReady, liveRecording]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     return () => {
@@ -1134,38 +1138,34 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const liveRingProgress = liveRecordingProgress > 0 ? liveRecordingProgress : 0.08;
   const liveGuide = useMemo(() => buildFaceGuide(liveGuideWidth, liveGuideHeight), [liveGuideHeight, liveGuideWidth]);
   const liveChallengeComplete = liveChallengeReady || (liveHasFace && liveFaceCentered && liveTurnComplete && liveBlinkComplete);
-  const livePrompt = !liveHasFace
-    ? 'Center your face before you begin'
-    : !liveFaceCentered
-      ? 'Move into the guide ring'
-      : !liveTurnComplete
-        ? 'Turn your head gently toward 12:00'
-        : !liveBlinkComplete
-          ? 'Blink once to complete the challenge'
-          : liveRecording
-            ? 'Hold steady and finish strong'
-            : 'Challenge complete. Record your clip';
+  const livePrompt = liveRecording
+    ? !liveTurnComplete
+      ? 'Turn slightly left'
+      : !liveBlinkComplete
+        ? 'Blink naturally'
+        : 'Hold steady'
+    : !liveCameraReady
+      ? 'Starting camera'
+      : liveCameraIssue
+        ? 'Camera needs attention'
+        : 'Ready for your face check';
   const livePromptBody = liveRecording
-    ? liveChallengeComplete
-      ? 'Captured. Hold steady for one more moment while we secure the clip.'
-      : !liveTurnComplete
-        ? 'Now turn slightly left while the recording is running.'
-        : !liveBlinkComplete
-          ? 'Good. Blink once while staying inside the guide ring.'
+    ? !liveTurnComplete
+      ? 'Move slowly and keep your face inside the guide ring.'
+      : !liveBlinkComplete
+        ? 'Good. Blink once while staying relaxed and in frame.'
+        : liveChallengeComplete
+          ? 'Captured. Hold steady for one more moment while we secure the clip.'
           : 'Hold steady while Betweener secures the clip.'
-    : liveChallengeComplete
-      ? 'Your face check is ready. Record one short clip and complete the movement in a single take.'
-      : !liveHasFace
-        ? 'Position yourself inside the guide ring so we can start reading your challenge.'
-        : !liveFaceCentered
-          ? 'Move your face into the guide ring until the camera locks on.'
-          : !liveTurnComplete
-            ? 'Turn a little left until the progress ring moves close to 12:00.'
-            : 'Blink once while staying in frame to finish the challenge.';
+    : !liveCameraReady
+      ? 'We are preparing the front camera. This should only take a moment.'
+      : liveCameraIssue
+        ? liveCameraIssue
+        : 'Tap record when you are ready. Betweener will capture one short guided clip for manual review.';
   const liveChecklist = [
-    { key: 'center', icon: 'scan-outline', label: 'Face centered', completed: liveChallengeComplete || (liveHasFace && liveFaceCentered) },
-    { key: 'turn', icon: 'refresh-circle-outline', label: liveRecording ? 'Turn recorded' : 'Turn left', completed: liveChallengeComplete || liveTurnComplete },
-    { key: 'blink', icon: 'eye-outline', label: liveRecording ? 'Blink recorded' : 'Blink', completed: liveChallengeComplete || liveBlinkComplete },
+    { key: 'center', icon: 'scan-outline', label: 'Keep face visible', active: !liveRecording || (!liveTurnComplete && !liveBlinkComplete) },
+    { key: 'turn', icon: 'refresh-circle-outline', label: 'Turn slightly', active: liveRecording && liveTurnComplete && !liveBlinkComplete },
+    { key: 'blink', icon: 'eye-outline', label: 'Blink once', active: liveRecording && liveBlinkComplete },
   ] as const;
   const [liveDisplayedProgress, setLiveDisplayedProgress] = useState(Math.round(liveRingProgress * 100));
   const liveAnimatedProgress = useSharedValue(liveRingProgress);
@@ -1213,9 +1213,8 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
 
   useEffect(() => {
     const recoverableIssue =
-      liveCameraIssue === 'Bring your face back into the guide ring before recording.' ||
-      liveCameraIssue === 'Complete the practice turn and blink before recording.' ||
-      liveCameraIssue === 'Follow the short practice guide before recording.';
+      liveCameraIssue === 'The camera is still starting.' ||
+      liveCameraIssue === 'Recording failed. Please try the face check again.';
 
     if (recoverableIssue && (liveChallengeComplete || (liveHasFace && liveFaceCentered))) {
       setLiveCameraIssue(null);
@@ -1258,6 +1257,72 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   }));
 
   if (showLiveLivenessCamera) {
+    if (livePreviewAsset) {
+      return (
+        <Modal
+          visible={visible}
+          animationType="slide"
+          presentationStyle="fullScreen"
+          onRequestClose={resetLivenessGuide}
+        >
+          <View style={styles.livePreviewScreen}>
+            <LivenessPreviewVideo uri={livePreviewAsset.uri} />
+            <LinearGradient
+              colors={['rgba(8,12,18,0.36)', 'rgba(8,12,18,0.08)', 'rgba(8,12,18,0.86)']}
+              start={{ x: 0.5, y: 0 }}
+              end={{ x: 0.5, y: 1 }}
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            />
+
+            <View style={styles.liveCameraTopBar}>
+              <TouchableOpacity onPress={resetLivenessGuide} style={styles.liveCameraClose}>
+                <Ionicons name="close" size={22} color="#fff" />
+              </TouchableOpacity>
+              <View style={styles.liveCameraBadge}>
+                <Text style={styles.liveCameraBadgeText}>Review clip</Text>
+              </View>
+              <View style={styles.liveCameraStatusWrap}>
+                <Text style={styles.liveCameraStatusText}>Preview</Text>
+              </View>
+            </View>
+
+            <View style={styles.livePreviewBottom}>
+              <View style={styles.livePreviewCard}>
+                <View style={styles.livePreviewIconWrap}>
+                  <Ionicons name="play-circle-outline" size={26} color="#fff" />
+                </View>
+                <Text style={styles.livePreviewTitle}>Preview your face check</Text>
+                <Text style={styles.livePreviewBody}>
+                  Make sure your face is visible and the clip shows your small turn and blink. Submit only if it feels clear.
+                </Text>
+                <View style={styles.livePreviewActions}>
+                  <TouchableOpacity
+                    style={[styles.livePreviewButton, styles.livePreviewSecondaryButton]}
+                    onPress={retakeLiveLivenessVideo}
+                    disabled={loading}
+                  >
+                    <Ionicons name="refresh-outline" size={18} color="#fff" />
+                    <Text style={styles.livePreviewSecondaryText}>Retake</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.livePreviewButton, styles.livePreviewPrimaryButton, loading && styles.submitButtonDisabled]}
+                    onPress={submitLiveLivenessPreview}
+                    disabled={loading}
+                  >
+                    <Ionicons name="shield-checkmark-outline" size={18} color="#fff" />
+                    <Text style={styles.livePreviewPrimaryText}>
+                      {loading ? 'Submitting...' : 'Submit for review'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      );
+    }
+
     return (
       <Modal
         visible={visible}
@@ -1368,7 +1433,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                 </RNSvg>
                 <View style={styles.liveRingCenter}>
                   <Text style={styles.liveRingPercent}>{liveDisplayedProgress}%</Text>
-                  <Text style={styles.liveRingHint}>toward 12:00</Text>
+                  <Text style={styles.liveRingHint}>guided clip</Text>
                 </View>
               </Animated.View>
               <Animated.View style={[styles.livePromptWrap, livePromptAnimatedStyle]}>
@@ -1383,7 +1448,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                   {liveChecklist.map((item) => (
                     <LiveChecklistPill
                       key={item.key}
-                      completed={item.completed}
+                      active={item.active}
                       icon={item.icon}
                       label={item.label}
                       tint={theme.accent}
@@ -1394,10 +1459,10 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                 <TouchableOpacity
                   style={[
                     styles.liveRecordButton,
-                    (!device || liveRecording || loading) && styles.liveRecordButtonDisabled,
+                    (!device || !liveCameraReady || liveRecording || loading) && styles.liveRecordButtonDisabled,
                   ]}
                   onPress={beginLiveLivenessRecording}
-                  disabled={!device || liveRecording || loading}
+                  disabled={!device || !liveCameraReady || liveRecording || loading}
                 >
                   <View style={[styles.liveRecordButtonInner, liveRecording && styles.liveRecordButtonInnerActive]} />
                 </TouchableOpacity>
@@ -1408,9 +1473,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                       ? liveCameraIssue
                     : !liveCameraReady
                       ? 'Camera starting...'
-                      : liveChallengeComplete
-                        ? 'Tap to record'
-                        : 'Complete the challenge first'}
+                      : 'Tap to record'}
                 </Text>
               </View>
             </View>
@@ -1451,7 +1514,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
             <Text style={[styles.livenessEyebrow, { color: theme.accent }]}>Before you record</Text>
             <Text style={[styles.livenessTitle, { color: titleColor }]}>Get ready for a quick face check</Text>
             <Text style={[styles.livenessSubtitle, { color: bodyColor }]}>
-              Use the front camera, keep your face in frame, then rehearse the turn and blink once. When you tap record, Betweener will capture that same movement in the final clip.
+              Use the front camera, keep your face in frame, then record one short guided clip. Betweener will review it manually before updating your badge.
             </Text>
 
             <View style={styles.livenessRingWrap}>
@@ -1480,7 +1543,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
               <View style={styles.livenessRingCenter}>
                 <Ionicons name="videocam-outline" size={30} color={theme.tint} />
                 <Text style={[styles.livenessRingPercent, { color: titleColor }]}>3 steps</Text>
-                <Text style={[styles.livenessRingCaption, { color: theme.accent }]}>before recording</Text>
+                <Text style={[styles.livenessRingCaption, { color: theme.accent }]}>guided clip</Text>
               </View>
             </View>
 
@@ -1489,7 +1552,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                 <Text style={[styles.livenessStepTitle, { color: titleColor }]}>What you will do on camera</Text>
               </View>
               <Text style={[styles.livenessStepBody, { color: bodyColor }]}>
-                The live camera unlocks recording after a short practice pass, then asks you to repeat the turn and blink while the clip is being captured.
+                The camera records a short clip while you keep your face in frame, turn slightly, blink once, and hold steady. No fragile real-time face detection is required.
               </Text>
             </View>
 
@@ -1715,7 +1778,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                     <View style={[styles.howItWorksBadge, { backgroundColor: softAccentSurface }]}>
                       <Text style={[styles.howItWorksBadgeText, { color: theme.accent }]}>2</Text>
                     </View>
-                    <Text style={[styles.howItWorksStepText, { color: bodyColor }]}>Turn slightly left and blink during the clip</Text>
+                    <Text style={[styles.howItWorksStepText, { color: bodyColor }]}>Keep your face in frame, turn slightly, and blink once</Text>
                   </View>
                   <View style={[styles.howItWorksDivider, { backgroundColor: `${theme.accent}35` }]} />
                   <View style={styles.howItWorksStep}>
@@ -2466,6 +2529,84 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#fff',
     letterSpacing: 0.2,
+  },
+  livePreviewScreen: {
+    flex: 1,
+    backgroundColor: '#05070d',
+  },
+  livePreviewVideo: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  livePreviewBottom: {
+    position: 'absolute',
+    left: 18,
+    right: 18,
+    bottom: 28,
+  },
+  livePreviewCard: {
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
+    backgroundColor: 'rgba(8,14,18,0.72)',
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    shadowColor: '#000',
+    shadowOpacity: 0.26,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+  },
+  livePreviewIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    marginBottom: 12,
+  },
+  livePreviewTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#fff',
+    marginBottom: 6,
+  },
+  livePreviewBody: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: 'rgba(255,255,255,0.76)',
+  },
+  livePreviewActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 18,
+  },
+  livePreviewButton: {
+    minHeight: 50,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 7,
+  },
+  livePreviewSecondaryButton: {
+    flex: 0.82,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(255,255,255,0.10)',
+  },
+  livePreviewPrimaryButton: {
+    flex: 1.18,
+    backgroundColor: '#0f9f9a',
+  },
+  livePreviewSecondaryText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  livePreviewPrimaryText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#fff',
   },
   header: {
     flexDirection: 'row',

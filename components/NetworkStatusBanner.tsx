@@ -8,9 +8,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { getNetworkQualitySnapshot, subscribeToNetworkQuality } from '@/lib/network-quality-monitor';
 
 type NetworkBannerState = {
-  tone: 'offline' | 'weak';
+  tone: 'offline' | 'weak' | 'slow';
   title: string;
   body: string;
 };
@@ -42,22 +43,56 @@ export default function NetworkStatusBanner() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const insets = useSafeAreaInsets();
-  const [banner, setBanner] = useState<NetworkBannerState | null>(null);
+  const [netInfoBanner, setNetInfoBanner] = useState<NetworkBannerState | null>(null);
+  const [networkQuality, setNetworkQuality] = useState(getNetworkQualitySnapshot);
+  const [qualityClock, setQualityClock] = useState(0);
   const [visibleBanner, setVisibleBanner] = useState<NetworkBannerState | null>(null);
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(-12)).current;
 
   useEffect(() => {
     const unsubscribe = addEventListener((state) => {
-      setBanner(getBannerState(state));
+      setNetInfoBanner(getBannerState(state));
     });
 
     fetchNetInfo()
-      .then((state) => setBanner(getBannerState(state)))
+      .then((state) => setNetInfoBanner(getBannerState(state)))
       .catch(() => undefined);
 
     return unsubscribe;
   }, []);
+
+  useEffect(() => subscribeToNetworkQuality(setNetworkQuality), []);
+
+  useEffect(() => {
+    if (networkQuality.activeSlowRequests > 0) return;
+
+    const delay = networkQuality.slowUntil - Date.now();
+    if (delay <= 0) return;
+
+    const timer = setTimeout(() => {
+      setQualityClock((value) => value + 1);
+    }, delay + 80);
+
+    return () => clearTimeout(timer);
+  }, [networkQuality.activeSlowRequests, networkQuality.slowUntil]);
+
+  const banner = useMemo<NetworkBannerState | null>(() => {
+    if (netInfoBanner?.tone === 'offline' || netInfoBanner?.tone === 'weak') {
+      return netInfoBanner;
+    }
+
+    const slowRequestActive = networkQuality.activeSlowRequests > 0 || networkQuality.slowUntil > Date.now();
+    if (slowRequestActive) {
+      return {
+        tone: 'slow',
+        title: 'Slow connection',
+        body: 'Betweener is still trying. Some actions may take a little longer.',
+      };
+    }
+
+    return netInfoBanner;
+  }, [netInfoBanner, networkQuality.activeSlowRequests, networkQuality.slowUntil, qualityClock]);
 
   useEffect(() => {
     if (banner) {
@@ -110,8 +145,8 @@ export default function NetworkStatusBanner() {
 
   if (!visibleBanner) return null;
 
-  const railColor = visibleBanner.tone === 'offline' ? '#F59E0B' : theme.tint;
-  const iconName = visibleBanner.tone === 'offline' ? 'wifi-off' : 'signal-cellular-2';
+  const railColor = visibleBanner.tone === 'offline' ? '#F59E0B' : visibleBanner.tone === 'slow' ? '#E7C78D' : theme.tint;
+  const iconName = visibleBanner.tone === 'offline' ? 'wifi-off' : visibleBanner.tone === 'slow' ? 'timer-sand' : 'signal-cellular-2';
 
   return (
     <Animated.View pointerEvents="none" style={containerStyle}>
