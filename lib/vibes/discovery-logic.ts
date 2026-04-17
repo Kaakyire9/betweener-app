@@ -1,5 +1,5 @@
-import type { Match } from '@/types/match';
-import { getRelationshipCompassMatchScore, type RelationshipCompass } from '@/lib/relationship-compass';
+import type { Match } from '../../types/match.ts';
+import { getRelationshipCompassMatchScore, type RelationshipCompass } from '../relationship-compass.ts';
 
 export type VibesSegment = 'forYou' | 'nearby' | 'activeNow';
 

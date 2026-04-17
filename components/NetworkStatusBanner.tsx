@@ -1,4 +1,5 @@
-import NetInfo, { NetInfoState } from '@react-native-community/netinfo';
+import { addEventListener, fetch as fetchNetInfo } from '@react-native-community/netinfo';
+import type { NetInfoState } from '@react-native-community/netinfo';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -47,11 +48,11 @@ export default function NetworkStatusBanner() {
   const translateY = useRef(new Animated.Value(-12)).current;
 
   useEffect(() => {
-    const unsubscribe = NetInfo.addEventListener((state) => {
+    const unsubscribe = addEventListener((state) => {
       setBanner(getBannerState(state));
     });
 
-    NetInfo.fetch()
+    fetchNetInfo()
       .then((state) => setBanner(getBannerState(state)))
       .catch(() => undefined);
 
