@@ -17,10 +17,12 @@ import { AuthProvider } from "@/lib/auth-context";
 import AccountRecoveryNotice from "@/components/AccountRecoveryNotice";
 import RecoveryMergeSuggestionNotice from "@/components/RecoveryMergeSuggestionNotice";
 import InAppToasts from "@/components/InAppToasts";
+import NetworkStatusBanner from "@/components/NetworkStatusBanner";
 import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
 import { SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
 import { initPushNotificationUX } from "@/lib/notifications/push";
 import {
+  getFreshPendingIdentityLink,
   isTrustedAuthCallbackUrl,
   LAST_DEEP_LINK_URL_KEY,
   urlHasAuthPayload,
@@ -71,6 +73,17 @@ function RootLayout() {
     try {
       const maybeStoreAuthCallbackUrl = async (url: string, source: "initial" | "listener") => {
         if (!urlHasAuthPayload(url) || !isTrustedAuthCallbackUrl(url)) {
+          return;
+        }
+
+        const pendingIdentityLink = await getFreshPendingIdentityLink();
+        if (pendingIdentityLink) {
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[root] identity link callback ignored by global auth route", {
+              provider: pendingIdentityLink.provider,
+              source,
+            });
+          }
           return;
         }
 
@@ -552,6 +565,7 @@ function RootLayout() {
         <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
           <Slot />
           <InAppToasts />
+          <NetworkStatusBanner />
           <AccountRecoveryNotice />
           <RecoveryMergeSuggestionNotice />
 

@@ -4,6 +4,7 @@ import * as Linking from "expo-linking";
 export const LAST_DEEP_LINK_URL_KEY = "last_deep_link_url";
 export const AUTH_PENDING_TOKENS_KEY = "auth_pending_tokens_v1";
 export const AUTH_PENDING_PROVIDER_KEY = "auth_pending_provider_v1";
+export const AUTH_PENDING_IDENTITY_LINK_KEY = "auth_pending_identity_link_v1";
 
 const AUTH_PENDING_FLOW_KEY = "auth_pending_flow_v1";
 type PendingAuthFlow = {
@@ -16,6 +17,11 @@ type PendingAuthProvider = {
   provider: "google" | "apple";
 };
 
+type PendingIdentityLink = {
+  createdAt: number;
+  provider: "google" | "apple";
+};
+
 const DEV_CALLBACK_HOSTS = new Set(["localhost", "127.0.0.1"]);
 const AUTH_PENDING_FLOW_TTLS: Record<PendingAuthFlow["purpose"], number> = {
   oauth: 15 * 60 * 1000,
@@ -24,6 +30,7 @@ const AUTH_PENDING_FLOW_TTLS: Record<PendingAuthFlow["purpose"], number> = {
   password_reset: 2 * 60 * 60 * 1000,
 };
 const AUTH_PENDING_PROVIDER_TTL_MS = 15 * 60 * 1000;
+const AUTH_PENDING_IDENTITY_LINK_TTL_MS = 5 * 60 * 1000;
 
 const parseFreshPendingAuthProvider = async (): Promise<PendingAuthProvider | null> => {
   try {
@@ -40,6 +47,33 @@ const parseFreshPendingAuthProvider = async (): Promise<PendingAuthProvider | nu
     const isFresh = createdAt > 0 && provider && Date.now() - createdAt <= AUTH_PENDING_PROVIDER_TTL_MS;
     if (!isFresh || !provider) {
       await AsyncStorage.removeItem(AUTH_PENDING_PROVIDER_KEY);
+      return null;
+    }
+
+    return { createdAt, provider };
+  } catch {
+    return null;
+  }
+};
+
+const parseFreshPendingIdentityLink = async (): Promise<PendingIdentityLink | null> => {
+  try {
+    const raw = await AsyncStorage.getItem(AUTH_PENDING_IDENTITY_LINK_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as Partial<PendingIdentityLink>;
+    const createdAt = typeof parsed.createdAt === "number" ? parsed.createdAt : 0;
+    const provider =
+      parsed.provider === "google" || parsed.provider === "apple"
+        ? parsed.provider
+        : null;
+
+    const isFresh =
+      createdAt > 0 &&
+      provider &&
+      Date.now() - createdAt <= AUTH_PENDING_IDENTITY_LINK_TTL_MS;
+    if (!isFresh || !provider) {
+      await AsyncStorage.removeItem(AUTH_PENDING_IDENTITY_LINK_KEY);
       return null;
     }
 
@@ -156,4 +190,21 @@ export const getFreshPendingAuthProvider = async () => {
 
 export const clearPendingAuthProvider = async () => {
   await AsyncStorage.removeItem(AUTH_PENDING_PROVIDER_KEY);
+};
+
+export const markPendingIdentityLink = async (
+  provider: PendingIdentityLink["provider"]
+) => {
+  await AsyncStorage.setItem(
+    AUTH_PENDING_IDENTITY_LINK_KEY,
+    JSON.stringify({ createdAt: Date.now(), provider } satisfies PendingIdentityLink)
+  );
+};
+
+export const getFreshPendingIdentityLink = async () => {
+  return await parseFreshPendingIdentityLink();
+};
+
+export const clearPendingIdentityLink = async () => {
+  await AsyncStorage.removeItem(AUTH_PENDING_IDENTITY_LINK_KEY);
 };

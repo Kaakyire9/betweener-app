@@ -22,7 +22,11 @@ import {
   shuffleOptions,
 } from "@/lib/prompts/guess-prompts";
 import { supabase } from "@/lib/supabase";
-import { isTrustedAuthCallbackUrl } from "@/lib/auth-callback";
+import {
+  clearPendingIdentityLink,
+  isTrustedAuthCallbackUrl,
+  markPendingIdentityLink,
+} from "@/lib/auth-callback";
 import type { GuessMode, ProfilePromptAnswer, PromptType } from "@/types/user-profile";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -549,7 +553,7 @@ export default function ProfileScreen() {
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = colorScheme === 'dark';
   const params = useLocalSearchParams();
-  const { refreshStatus } = useVerificationStatus(profile?.user_id);
+  const { status: verificationStatus, refreshStatus } = useVerificationStatus(profile?.user_id);
   const { preference: themePreference, setPreference: setThemePreference } = useColorSchemePreference();
   
   const [selectedPrompts, setSelectedPrompts] = useState<Record<string, number>>({
@@ -615,6 +619,11 @@ export default function ProfileScreen() {
   const [unlinkingProvider, setUnlinkingProvider] = useState<string | null>(null);
   const [identityMessage, setIdentityMessage] = useState('');
   const [identityError, setIdentityError] = useState('');
+  const [identitySuccessSheet, setIdentitySuccessSheet] = useState<{
+    provider: 'google' | 'apple';
+    title: string;
+    body: string;
+  } | null>(null);
   const [showRecoveryRequestModal, setShowRecoveryRequestModal] = useState(false);
   const [recoveryCurrentMethod, setRecoveryCurrentMethod] = useState<string>('email');
   const [recoveryPreviousMethod, setRecoveryPreviousMethod] = useState<string>('google');
@@ -1717,6 +1726,23 @@ export default function ProfileScreen() {
     return { identities, providers };
   }, []);
 
+  const waitForProviderIdentity = useCallback(
+    async (provider: 'google' | 'apple', timeoutMs = 5000) => {
+      const startedAt = Date.now();
+      let latestProviders: string[] = [];
+      while (Date.now() - startedAt < timeoutMs) {
+        const { providers } = await getUserIdentitySnapshot();
+        latestProviders = providers;
+        if (providers.includes(provider)) {
+          return providers;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+      return latestProviders;
+    },
+    [getUserIdentitySnapshot],
+  );
+
   const loadDisconnectedProviders = useCallback(async () => {
     if (!user?.id) {
       setDisconnectedProviders([]);
@@ -1854,6 +1880,21 @@ export default function ProfileScreen() {
     [linkedIdentities],
   );
 
+  const showProviderSuccess = useCallback(
+    (provider: 'google' | 'apple', action: 'linked' | 'reconnected') => {
+      const providerLabel = RECOVERY_PROVIDER_LABELS[provider] ?? provider;
+      setIdentitySuccessSheet({
+        provider,
+        title: `${providerLabel} ${action}`,
+        body:
+          action === 'linked'
+            ? `${providerLabel} is now a trusted sign-in route for this Betweener account.`
+            : `${providerLabel} can now be used as a trusted sign-in route for this Betweener account again.`,
+      });
+    },
+    [],
+  );
+
   const canSafelyUnlinkProvider = useCallback(
     (provider: string) => {
       const normalized = String(provider || '').trim().toLowerCase();
@@ -1903,6 +1944,15 @@ export default function ProfileScreen() {
     const code = merged.code;
     const accessToken = merged.access_token;
     const refreshToken = merged.refresh_token;
+    const callbackError = merged.error;
+    const callbackErrorDescription = merged.error_description;
+
+    if (callbackError || callbackErrorDescription) {
+      throw new Error(
+        decodeURIComponent(callbackErrorDescription || callbackError || "Provider linking was cancelled.")
+          .replace(/\+/g, " "),
+      );
+    }
 
     if (code) {
       const { error } = await supabase.auth.exchangeCodeForSession(code);
@@ -1921,6 +1971,10 @@ export default function ProfileScreen() {
 
   const formatIdentityLinkError = useCallback((error: any, providerLabel: string) => {
     const code = String(error?.code || '').toLowerCase();
+    const message = String(error?.message || '').toLowerCase();
+    if (message.includes('manual linking') && message.includes('disabled')) {
+      return `${providerLabel} linking is not enabled on Betweener auth yet. Enable Manual Linking in Supabase Authentication settings, then try again.`;
+    }
     if (code === 'identity_already_exists') {
       return `This ${providerLabel} account is already linked to another Betweener account.`;
     }
@@ -1943,21 +1997,28 @@ export default function ProfileScreen() {
       if (error || !data?.url) {
         throw error ?? new Error('Unable to start Google linking.');
       }
+      await markPendingIdentityLink('google');
       const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
       if (result.type === 'success' && result.url && isTrustedAuthCallbackUrl(result.url)) {
         await finishIdentityCallback(result.url);
-        await waitForSession(4000);
+      }
+
+      await waitForSession(4000);
+      const providers = await waitForProviderIdentity('google');
+      if (providers.includes('google')) {
         await supabase.rpc('rpc_clear_signin_provider_disconnected' as any, { p_provider: 'google' });
-        await loadLinkedIdentities();
+        setLinkedProviders(providers);
         await loadDisconnectedProviders();
         setIdentityMessage('Google is now linked to this Betweener account.');
+        showProviderSuccess('google', 'linked');
       }
     } catch (error: any) {
       setIdentityError(formatIdentityLinkError(error, 'Google'));
     } finally {
+      await clearPendingIdentityLink().catch(() => {});
       setLinkingProvider(null);
     }
-  }, [finishIdentityCallback, formatIdentityLinkError, getOAuthRedirectUrl, loadDisconnectedProviders, loadLinkedIdentities, waitForSession]);
+  }, [finishIdentityCallback, formatIdentityLinkError, getOAuthRedirectUrl, loadDisconnectedProviders, showProviderSuccess, waitForSession, waitForProviderIdentity]);
 
   const handleLinkApple = useCallback(async () => {
     if (Platform.OS !== 'ios') return;
@@ -1984,6 +2045,7 @@ export default function ProfileScreen() {
       await loadLinkedIdentities();
       await loadDisconnectedProviders();
       setIdentityMessage('Apple is now linked to this Betweener account.');
+      showProviderSuccess('apple', 'linked');
     } catch (error: any) {
       const message = String(error?.message || '');
       if (message.toLowerCase().includes('canceled') || message.toLowerCase().includes('cancelled')) {
@@ -1994,17 +2056,12 @@ export default function ProfileScreen() {
     } finally {
       setLinkingProvider(null);
     }
-  }, [formatIdentityLinkError, loadDisconnectedProviders, loadLinkedIdentities, waitForSession]);
+  }, [formatIdentityLinkError, loadDisconnectedProviders, loadLinkedIdentities, showProviderSuccess, waitForSession]);
 
   const handleUnlinkProvider = useCallback(
     (provider: 'google' | 'apple') => {
       const providerLabel = RECOVERY_PROVIDER_LABELS[provider] ?? provider;
       const linkedIdentity = findLinkedIdentity(provider);
-      const currentProvider = String(
-        user?.app_metadata?.provider ?? profile?.last_successful_auth_provider ?? '',
-      )
-        .trim()
-        .toLowerCase();
 
       if (!linkedIdentity) {
         setIdentityError(`${providerLabel} is not currently linked to this account.`);
@@ -2021,13 +2078,11 @@ export default function ProfileScreen() {
 
       Alert.alert(
         `Disconnect ${providerLabel}?`,
-        currentProvider === provider
-          ? `${providerLabel} is the sign-in method currently in use. Disconnecting it will sign you out right away. Your other recovery methods will stay available.`
-          : `${providerLabel} will stop being a sign-in option for this Betweener account. Your other recovery methods will stay available.`,
+        `${providerLabel} will stop being an active Betweener sign-in option. Your other recovery methods will stay available.`,
         [
           { text: 'Cancel', style: 'cancel' },
           {
-            text: currentProvider === provider ? 'Disconnect and sign out' : 'Disconnect',
+            text: 'Disconnect',
             style: 'destructive',
             onPress: () => {
               void (async () => {
@@ -2050,22 +2105,6 @@ export default function ProfileScreen() {
                   await waitForSession(4000);
                   await loadLinkedIdentities();
                   await loadDisconnectedProviders();
-                  if (currentProvider === provider) {
-                    Alert.alert(
-                      `${providerLabel} disconnected`,
-                      `You just disconnected the sign-in method currently in use. Sign in again with another method to continue with this account.`,
-                    );
-                    setShowEmailModal(false);
-                    await signOut();
-                    router.replace({
-                      pathname: '/(auth)/disconnected-provider',
-                      params: {
-                        method: provider,
-                        ...(user?.email ? { email: user.email } : {}),
-                      },
-                    });
-                    return;
-                  }
 
                   setIdentityMessage(
                     `${providerLabel} has been disconnected for Betweener. Future ${providerLabel} sign-ins will be refused until you reconnect it here.`,
@@ -2081,7 +2120,7 @@ export default function ProfileScreen() {
         ],
       );
     },
-    [canSafelyUnlinkProvider, findLinkedIdentity, loadDisconnectedProviders, loadLinkedIdentities, profile?.last_successful_auth_provider, signOut, user?.app_metadata?.provider, user?.email, waitForSession],
+    [canSafelyUnlinkProvider, findLinkedIdentity, loadDisconnectedProviders, loadLinkedIdentities, waitForSession],
   );
 
   const handleReconnectProvider = useCallback(
@@ -2100,6 +2139,7 @@ export default function ProfileScreen() {
           if (error) throw error;
           await loadDisconnectedProviders();
           setIdentityMessage(`${providerLabel} can be used to sign in to this Betweener account again.`);
+          showProviderSuccess(provider, 'reconnected');
         } catch (error: any) {
           setIdentityError(error?.message ?? `Unable to reconnect ${providerLabel} right now.`);
         } finally {
@@ -2117,7 +2157,7 @@ export default function ProfileScreen() {
         await handleLinkApple();
       }
     },
-    [handleLinkApple, handleLinkGoogle, linkedProviders, loadDisconnectedProviders],
+    [handleLinkApple, handleLinkGoogle, linkedProviders, loadDisconnectedProviders, showProviderSuccess],
   );
 
   const handleSubmitRecoveryRequest = useCallback(async () => {
@@ -2419,10 +2459,20 @@ export default function ProfileScreen() {
     (profile as any)?.verification_level
     ?? (profile as any)?.verificationLevel
     ?? ((profile as any)?.verified ? 1 : 0);
+  const hasPendingVerificationRequest =
+    verificationStatus.hasPendingRequest || Boolean(verificationStatus.pendingRequest);
+  const showPendingVerificationNudge =
+    !isPreviewMode && !verificationStatus.loading && hasPendingVerificationRequest;
+  const showInviteVerificationNudge =
+    !isPreviewMode
+    && !verificationStatus.loading
+    && !hasPendingVerificationRequest
+    && verificationLevel === 1
+    && !verificationNudgeDismissed;
   useEffect(() => {
     let active = true;
 
-    if (!verificationNudgeDismissedKey || verificationLevel !== 1) {
+    if (!verificationNudgeDismissedKey || verificationLevel !== 1 || hasPendingVerificationRequest) {
       setVerificationNudgeDismissed(false);
       return () => {
         active = false;
@@ -2444,7 +2494,7 @@ export default function ProfileScreen() {
     return () => {
       active = false;
     };
-  }, [verificationLevel, verificationNudgeDismissedKey]);
+  }, [hasPendingVerificationRequest, verificationLevel, verificationNudgeDismissedKey]);
 
   const dismissVerificationNudge = useCallback(async () => {
     setVerificationNudgeDismissed(true);
@@ -3312,6 +3362,46 @@ export default function ProfileScreen() {
               <Text style={styles.emailSaveText}>{emailSaving ? 'Sending...' : 'Send confirmation'}</Text>
             </TouchableOpacity>
             <View style={[styles.emailAccountDivider, { backgroundColor: theme.outline }]} />
+            {identitySuccessSheet ? (
+              <View style={[styles.identitySuccessInlineCard, { backgroundColor: theme.background, borderColor: `${theme.tint}33` }]}>
+                <LinearGradient
+                  colors={[`${theme.tint}20`, `${theme.accent}14`, 'transparent']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.identitySuccessInlineGlow}
+                  pointerEvents="none"
+                />
+                <View style={styles.identitySuccessInlineHeader}>
+                  <View style={[styles.identitySuccessInlineIconHalo, { backgroundColor: `${theme.tint}18`, borderColor: `${theme.tint}40` }]}>
+                    <LinearGradient
+                      colors={[theme.tint, theme.accent]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={styles.identitySuccessInlineIconCore}
+                    >
+                      <MaterialCommunityIcons
+                        name={identitySuccessSheet.provider === 'google' ? 'google' : 'apple'}
+                        size={20}
+                        color="#FFFFFF"
+                      />
+                    </LinearGradient>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => setIdentitySuccessSheet(null)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
+                  </TouchableOpacity>
+                </View>
+                <Text style={[styles.identitySuccessInlineEyebrow, { color: theme.tint }]}>SIGN-IN METHOD SECURED</Text>
+                <Text style={[styles.identitySuccessInlineTitle, { color: theme.text }]}>
+                  {identitySuccessSheet.title}
+                </Text>
+                <Text style={[styles.identitySuccessInlineBody, { color: theme.textMuted }]}>
+                  {identitySuccessSheet.body}
+                </Text>
+              </View>
+            ) : null}
             <View style={styles.identitySection}>
               <Text style={[styles.identitySectionTitle, { color: theme.text }]}>Linked sign-in methods</Text>
               <Text style={[styles.identitySectionBody, { color: theme.textMuted }]}>
@@ -4287,7 +4377,14 @@ export default function ProfileScreen() {
               {displayBio}
             </Text>
           </View>
-          {!isPreviewMode && verificationLevel === 1 && !verificationNudgeDismissed ? (
+          {showPendingVerificationNudge ? (
+            <VerificationNudgeCard
+              theme={theme}
+              mode="pending"
+              onPress={() => setIsVerificationModalVisible(true)}
+            />
+          ) : null}
+          {showInviteVerificationNudge ? (
             <VerificationNudgeCard
               theme={theme}
               onPress={() => setIsVerificationModalVisible(true)}
@@ -7381,6 +7478,59 @@ const styles = StyleSheet.create({
   identityMessage: {
     fontSize: 12,
     lineHeight: 17,
+    fontFamily: 'Manrope_500Medium',
+  },
+  identitySuccessInlineCard: {
+    position: 'relative',
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderRadius: 22,
+    padding: 16,
+    marginBottom: 14,
+    gap: 7,
+  },
+  identitySuccessInlineGlow: {
+    position: 'absolute',
+    top: -28,
+    left: -24,
+    right: -24,
+    height: 116,
+  },
+  identitySuccessInlineHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  identitySuccessInlineIconHalo: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  identitySuccessInlineIconCore: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  identitySuccessInlineEyebrow: {
+    fontSize: 10.5,
+    lineHeight: 14,
+    fontFamily: 'Archivo_700Bold',
+    letterSpacing: 1.4,
+    marginTop: 4,
+  },
+  identitySuccessInlineTitle: {
+    fontSize: 23,
+    lineHeight: 28,
+    fontFamily: 'PlayfairDisplay_700Bold',
+  },
+  identitySuccessInlineBody: {
+    fontSize: 13,
+    lineHeight: 19,
     fontFamily: 'Manrope_500Medium',
   },
   identityLoading: {

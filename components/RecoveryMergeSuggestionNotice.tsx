@@ -7,7 +7,11 @@ import * as Linking from "expo-linking";
 import { ActivityIndicator, Alert, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 
-import { isTrustedAuthCallbackUrl } from "@/lib/auth-callback";
+import {
+  clearPendingIdentityLink,
+  isTrustedAuthCallbackUrl,
+  markPendingIdentityLink,
+} from "@/lib/auth-callback";
 import { useAuth } from "@/lib/auth-context";
 import {
   clearPendingRecoveryMergeNotice,
@@ -162,6 +166,15 @@ export default function RecoveryMergeSuggestionNotice() {
     const code = merged.code;
     const accessToken = merged.access_token;
     const refreshToken = merged.refresh_token;
+    const callbackError = merged.error;
+    const callbackErrorDescription = merged.error_description;
+
+    if (callbackError || callbackErrorDescription) {
+      throw new Error(
+        decodeURIComponent(callbackErrorDescription || callbackError || "Provider linking was cancelled.")
+          .replace(/\+/g, " ")
+      );
+    }
 
     if (code) {
       const { error } = await supabase.auth.exchangeCodeForSession(code);
@@ -180,6 +193,10 @@ export default function RecoveryMergeSuggestionNotice() {
 
   const formatIdentityLinkError = useCallback((error: any, providerLabel: string) => {
     const code = String(error?.code || "").toLowerCase();
+    const message = String(error?.message || "").toLowerCase();
+    if (message.includes("manual linking") && message.includes("disabled")) {
+      return `${providerLabel} linking is not enabled on Betweener auth yet. Enable Manual Linking in Supabase Authentication settings, then try again.`;
+    }
     if (code === "identity_already_exists") {
       return `This ${providerLabel} account is already linked to another Betweener account.`;
     }
@@ -211,6 +228,7 @@ export default function RecoveryMergeSuggestionNotice() {
         if (error || !data?.url) {
           throw error ?? new Error("Unable to start Google linking.");
         }
+        await markPendingIdentityLink("google");
         const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
         if (result.type !== "success" || !result.url || !isTrustedAuthCallbackUrl(result.url)) {
           setLinkingProvider(null);
@@ -249,6 +267,7 @@ export default function RecoveryMergeSuggestionNotice() {
       }
       Alert.alert(`Unable to link ${candidateLabel}`, formatIdentityLinkError(error, candidateLabel));
     } finally {
+      await clearPendingIdentityLink().catch(() => {});
       setLinkingProvider(null);
     }
   }, [

@@ -10,7 +10,6 @@ import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import RNSvg, { Circle, Path } from 'react-native-svg';
-import { Worklets } from 'react-native-worklets-core';
 import Animated, {
   Easing,
   runOnJS,
@@ -22,10 +21,10 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
-import { useFaceDetector, type Face, type FrameFaceDetectionOptions } from 'react-native-vision-camera-face-detector';
-import { Camera as VisionCamera, runAsync, useCameraDevice, useFrameProcessor } from 'react-native-vision-camera';
+import { Camera as VisionCamera, useCameraDevice } from 'react-native-vision-camera';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
+    Alert,
     Dimensions,
     KeyboardAvoidingView,
     LayoutChangeEvent,
@@ -166,6 +165,16 @@ const LIVENESS_GUIDE_STEPS = [
 const LIVE_GUIDE_WIDTH = 276;
 const LIVE_GUIDE_HEIGHT = 304;
 const LIVE_GUIDE_STROKE = 10;
+const LIVENESS_GUIDE_TIMINGS = {
+  faceSeen: 350,
+  centered: 800,
+  turn: 1350,
+  blink: 1900,
+  ready: 2200,
+  recordingTurn: 850,
+  recordingBlink: 1500,
+  recordingStop: 2300,
+} as const;
 
 const cubicPoint = (p0: number, p1: number, p2: number, p3: number, t: number) => {
   const mt = 1 - t;
@@ -239,22 +248,6 @@ const buildFaceGuide = (width: number, height: number) => {
   }
 
   return { d, length };
-};
-
-const approachSignal = (current: number, target: number, risePerSecond: number, fallPerSecond: number, dt: number) => {
-  if (target > current) {
-    return Math.min(target, current + risePerSecond * dt);
-  }
-
-  return Math.max(target, current - fallPerSecond * dt);
-};
-
-const applyHysteresis = (currentState: boolean, confidence: number, engageAt: number, releaseAt: number) => {
-  if (currentState) {
-    return confidence >= releaseAt;
-  }
-
-  return confidence >= engageAt;
 };
 
 type LiveChecklistPillProps = {
@@ -337,6 +330,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const [flowMessage, setFlowMessage] = useState<VerificationFlowMessage | null>(null);
   const [showLivenessGuide, setShowLivenessGuide] = useState(false);
   const [showLiveLivenessCamera, setShowLiveLivenessCamera] = useState(false);
+  const [cancellingRequest, setCancellingRequest] = useState(false);
   const [liveCameraReady, setLiveCameraReady] = useState(false);
   const [liveRecording, setLiveRecording] = useState(false);
   const [liveCameraIssue, setLiveCameraIssue] = useState<string | null>(null);
@@ -352,13 +346,6 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const cameraRef = useRef<VisionCamera | null>(null);
   const liveGuideRef = useRef<View | null>(null);
   const verificationScrollRef = useRef<ScrollView | null>(null);
-  const liveSignalRef = useRef({
-    center: 0,
-    turn: 0,
-    blink: 0,
-    lastTimestamp: Date.now(),
-  });
-  const liveMissingFaceSinceRef = useRef<number | null>(null);
   const device = useCameraDevice('front');
   const windowSize = useMemo(() => Dimensions.get('window'), []);
   const stopRecordingTriggeredRef = useRef(false);
@@ -592,28 +579,6 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     (method) => method.category === 'fast' && method.id !== featuredMethod.id,
   );
   const documentMethods = verificationMethods.filter((method) => method.category === 'document');
-  const faceDetectionOptions = useMemo<FrameFaceDetectionOptions>(
-    () => ({
-      performanceMode: 'fast',
-      landmarkMode: 'all',
-      contourMode: 'none',
-      classificationMode: 'all',
-      trackingEnabled: true,
-      minFaceSize: 0.18,
-      cameraFacing: 'front',
-      autoMode: true,
-      windowWidth: windowSize.width,
-      windowHeight: windowSize.height,
-    }),
-    [windowSize.height, windowSize.width],
-  );
-  const { detectFaces, stopListeners } = useFaceDetector(faceDetectionOptions);
-
-  useEffect(() => {
-    return () => {
-      stopListeners();
-    };
-  }, [stopListeners]);
 
   useEffect(() => {
     if (!visible) {
@@ -634,13 +599,6 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     setLiveBlinkComplete(false);
     setLiveChallengeReady(false);
     setLiveGuideLayout(null);
-    liveSignalRef.current = {
-      center: 0,
-      turn: 0,
-      blink: 0,
-      lastTimestamp: Date.now(),
-    };
-    liveMissingFaceSinceRef.current = null;
     stopRecordingTriggeredRef.current = false;
     recordingStartedAtRef.current = null;
     if (recordingTimeoutRef.current) {
@@ -846,6 +804,51 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     onVerificationUpdate(currentVerificationLevel);
   };
 
+  const withdrawPendingVerification = useCallback(() => {
+    const pendingRequest = verificationStatus.pendingRequest;
+    if (!pendingRequest?.id || cancellingRequest) return;
+
+    Alert.alert(
+      'Withdraw this verification?',
+      'Your proof will no longer be reviewed. You can submit a new one anytime.',
+      [
+        { text: 'Keep in review', style: 'cancel' },
+        {
+          text: 'Withdraw submission',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setCancellingRequest(true);
+              setFlowMessage(null);
+              try {
+                const { error } = await supabase.rpc('rpc_cancel_my_verification_request' as any, {
+                  p_request_id: pendingRequest.id,
+                  p_cancel_reason: 'Withdrawn from mobile verification screen',
+                });
+                if (error) throw error;
+
+                await refreshStatus();
+                setFlowMessage({
+                  tone: 'success',
+                  title: 'Verification withdrawn',
+                  body: 'That submission is no longer in review. You can send a cleaner proof whenever you are ready.',
+                });
+              } catch (error: any) {
+                setFlowMessage({
+                  tone: 'error',
+                  title: 'Could not withdraw',
+                  body: error?.message ?? 'Please try again in a moment.',
+                });
+              } finally {
+                setCancellingRequest(false);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  }, [cancellingRequest, refreshStatus, verificationStatus.pendingRequest]);
+
   const openLiveLivenessCamera = async () => {
     setLiveCameraIssue(null);
     const cameraPermission = await VisionCamera.requestCameraPermission();
@@ -886,160 +889,43 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
     });
   }, [windowSize.width]);
 
-  const handleLiveFacesDetected = useCallback((faces: Face[]) => {
-    const now = Date.now();
-    const previousTimestamp = liveSignalRef.current.lastTimestamp;
-    const dt = Math.min(0.12, Math.max(0.016, (now - previousTimestamp) / 1000));
-    liveSignalRef.current.lastTimestamp = now;
+  useEffect(() => {
+    if (!showLiveLivenessCamera || !liveCameraReady || liveRecording) return;
 
-    const face = faces[0];
+    setLiveHasFace(false);
+    setLiveFaceCentered(false);
+    setLiveTurnComplete(false);
+    setLiveBlinkComplete(false);
+    setLiveChallengeReady(false);
+    setLiveRecordingProgress(0.08);
 
-    if (!face) {
-      setLiveHasFace(false);
-      if (liveChallengeReady && !liveRecording) {
-        if (liveMissingFaceSinceRef.current == null) {
-          liveMissingFaceSinceRef.current = now;
-        }
-        if (now - liveMissingFaceSinceRef.current < 1200) {
-          setLiveRecordingProgress(1);
-          return;
-        }
-      }
-      liveMissingFaceSinceRef.current = null;
-      setLiveFaceCentered(false);
-      setLiveTurnComplete(false);
-      setLiveBlinkComplete(false);
-      setLiveChallengeReady(false);
-      liveSignalRef.current.center = approachSignal(liveSignalRef.current.center, 0, 0, 5.4, dt);
-      liveSignalRef.current.turn = approachSignal(liveSignalRef.current.turn, 0, 0, 6.2, dt);
-      liveSignalRef.current.blink = approachSignal(liveSignalRef.current.blink, 0, 0, 7.2, dt);
-      if (!liveRecording) {
-        setLiveRecordingProgress(Math.max(0, 0.08 + liveSignalRef.current.center * 0.14));
-      }
-      return;
-    }
+    const timers = [
+      setTimeout(() => {
+        setLiveHasFace(true);
+        setLiveRecordingProgress(0.24);
+      }, LIVENESS_GUIDE_TIMINGS.faceSeen),
+      setTimeout(() => {
+        setLiveFaceCentered(true);
+        setLiveRecordingProgress(0.48);
+      }, LIVENESS_GUIDE_TIMINGS.centered),
+      setTimeout(() => {
+        setLiveTurnComplete(true);
+        setLiveRecordingProgress(0.72);
+      }, LIVENESS_GUIDE_TIMINGS.turn),
+      setTimeout(() => {
+        setLiveBlinkComplete(true);
+        setLiveRecordingProgress(0.92);
+      }, LIVENESS_GUIDE_TIMINGS.blink),
+      setTimeout(() => {
+        setLiveChallengeReady(true);
+        setLiveRecordingProgress(1);
+      }, LIVENESS_GUIDE_TIMINGS.ready),
+    ];
 
-    setLiveHasFace(true);
-    liveMissingFaceSinceRef.current = null;
-
-    const faceLeft = face.bounds.x;
-    const faceTop = face.bounds.y;
-    const faceCenterX = faceLeft + face.bounds.width / 2;
-    const faceCenterY = faceTop + face.bounds.height / 2;
-
-    const guide = liveGuideLayout ?? {
-      x: (windowSize.width - LIVE_GUIDE_WIDTH) / 2,
-      y: windowSize.height * 0.16,
-      width: LIVE_GUIDE_WIDTH,
-      height: LIVE_GUIDE_HEIGHT,
+    return () => {
+      timers.forEach(clearTimeout);
     };
-    const guideCenterX = guide.x + guide.width / 2;
-    const guideCenterY = guide.y + guide.height * 0.58;
-    const normalizedX = Math.abs(faceCenterX - guideCenterX) / (guide.width * 0.40);
-    const normalizedY = Math.abs(faceCenterY - guideCenterY) / (guide.height * 0.46);
-    const centeredByOval = normalizedX * normalizedX + normalizedY * normalizedY <= 1;
-    const withinGuideShell =
-      faceCenterX >= guide.x + guide.width * 0.20 &&
-      faceCenterX <= guide.x + guide.width * 0.80 &&
-      faceCenterY >= guide.y + guide.height * 0.34 &&
-      faceCenterY <= guide.y + guide.height * 0.76;
-    const faceFillIsReasonable =
-      face.bounds.width >= guide.width * 0.22 &&
-      face.bounds.width <= guide.width * 0.82 &&
-      face.bounds.height >= guide.height * 0.22 &&
-      face.bounds.height <= guide.height * 0.90;
-    const rawCentered = centeredByOval && withinGuideShell && faceFillIsReasonable;
-
-    if (liveChallengeReady && !liveRecording) {
-      setLiveFaceCentered(true);
-      setLiveTurnComplete(true);
-      setLiveBlinkComplete(true);
-      setLiveRecordingProgress(1);
-      return;
-    }
-
-    const yawProgress = Math.max(0, Math.min(1, Math.abs(face.yawAngle) / 18));
-    const hasBlink =
-      face.leftEyeOpenProbability < 0.55 ||
-      face.rightEyeOpenProbability < 0.55;
-    const centerTarget = rawCentered ? 1 : 0;
-    liveSignalRef.current.center = approachSignal(
-      liveSignalRef.current.center,
-      centerTarget,
-      3.9,
-      3.1,
-      dt,
-    );
-
-    const nextCentered = applyHysteresis(
-      liveFaceCentered,
-      liveSignalRef.current.center,
-      0.72,
-      0.46,
-    );
-    setLiveFaceCentered(nextCentered);
-
-    const turnTarget = nextCentered ? yawProgress : 0;
-    liveSignalRef.current.turn = approachSignal(
-      liveSignalRef.current.turn,
-      turnTarget,
-      3.1,
-      2.8,
-      dt,
-    );
-
-    const nextTurnComplete = nextCentered
-      ? applyHysteresis(liveTurnComplete, liveSignalRef.current.turn, 0.84, 0.52)
-      : false;
-    setLiveTurnComplete(nextTurnComplete);
-
-    if (nextCentered && nextTurnComplete && hasBlink) {
-      liveSignalRef.current.blink = 1;
-    } else {
-      liveSignalRef.current.blink = approachSignal(
-        liveSignalRef.current.blink,
-        0,
-        0,
-        1.4,
-        dt,
-      );
-    }
-
-    const nextBlinkComplete = nextCentered
-      ? applyHysteresis(liveBlinkComplete, liveSignalRef.current.blink, 0.76, 0.34)
-      : false;
-    setLiveBlinkComplete(nextBlinkComplete);
-
-    if (nextCentered && nextTurnComplete && nextBlinkComplete) {
-      setLiveChallengeReady(true);
-    }
-
-    const nextProgress = !nextCentered
-      ? 0.08 + liveSignalRef.current.center * 0.14
-      : nextBlinkComplete
-        ? 1
-        : nextTurnComplete
-          ? 0.80 + liveSignalRef.current.blink * 0.18
-          : 0.24 + liveSignalRef.current.turn * 0.48;
-
-    setLiveRecordingProgress(Math.max(0.08, Math.min(1, nextProgress)));
-  }, [liveBlinkComplete, liveChallengeReady, liveFaceCentered, liveGuideLayout, liveRecording, liveTurnComplete, windowSize.height, windowSize.width]);
-  const runLiveFaceDetection = useMemo(
-    () =>
-      Worklets.createRunOnJS((faces: Face[]) => {
-        handleLiveFacesDetected(faces);
-      }),
-    [handleLiveFacesDetected],
-  );
-  const liveFrameProcessor = useFrameProcessor((frame) => {
-    'worklet';
-
-    runAsync(frame, () => {
-      'worklet';
-      const faces = detectFaces(frame);
-      runLiveFaceDetection(faces);
-    });
-  }, [detectFaces, runLiveFaceDetection]);
+  }, [liveCameraReady, liveRecording, showLiveLivenessCamera]);
 
   const beginLiveLivenessRecording = async () => {
     if (liveRecording) return;
@@ -1051,12 +937,8 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
       setLiveCameraIssue('The camera is still starting.');
       return;
     }
-    if (!liveHasFace) {
-      setLiveCameraIssue('Bring your face back into the guide ring before recording.');
-      return;
-    }
     if (!liveChallengeReady) {
-      setLiveCameraIssue('Complete the practice turn and blink before recording.');
+      setLiveCameraIssue('Follow the short practice guide before recording.');
       return;
     }
 
@@ -1067,17 +949,28 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
       setLiveBlinkComplete(false);
       setLiveChallengeReady(false);
       setLiveRecordingProgress(0.28);
-      liveSignalRef.current.turn = 0;
-      liveSignalRef.current.blink = 0;
       recordingStartedAtRef.current = Date.now();
       stopRecordingTriggeredRef.current = false;
+
+      setTimeout(() => {
+        if (!recordingStartedAtRef.current || stopRecordingTriggeredRef.current) return;
+        setLiveTurnComplete(true);
+        setLiveRecordingProgress(0.64);
+      }, LIVENESS_GUIDE_TIMINGS.recordingTurn);
+
+      setTimeout(() => {
+        if (!recordingStartedAtRef.current || stopRecordingTriggeredRef.current) return;
+        setLiveBlinkComplete(true);
+        setLiveChallengeReady(true);
+        setLiveRecordingProgress(1);
+      }, LIVENESS_GUIDE_TIMINGS.recordingBlink);
 
       recordingTimeoutRef.current = setTimeout(() => {
         if (!stopRecordingTriggeredRef.current) {
           stopRecordingTriggeredRef.current = true;
           void cameraRef.current?.stopRecording();
         }
-      }, 7000);
+      }, LIVENESS_GUIDE_TIMINGS.recordingStop);
 
       cameraRef.current.startRecording({
         fileType: 'mp4',
@@ -1321,7 +1214,8 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   useEffect(() => {
     const recoverableIssue =
       liveCameraIssue === 'Bring your face back into the guide ring before recording.' ||
-      liveCameraIssue === 'Complete the practice turn and blink before recording.';
+      liveCameraIssue === 'Complete the practice turn and blink before recording.' ||
+      liveCameraIssue === 'Follow the short practice guide before recording.';
 
     if (recoverableIssue && (liveChallengeComplete || (liveHasFace && liveFaceCentered))) {
       setLiveCameraIssue(null);
@@ -1380,7 +1274,6 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
               isActive={showLiveLivenessCamera}
               video
               preview
-              frameProcessor={liveFrameProcessor}
               onInitialized={() => {
                 setLiveCameraIssue(null);
                 setLiveCameraReady(true);
@@ -1693,6 +1586,21 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
                 <Text style={styles.pendingDate}>
                   Submitted on {new Date(verificationStatus.pendingRequest.submittedAt).toLocaleDateString()}
                 </Text>
+                <TouchableOpacity
+                  style={[
+                    styles.withdrawVerificationButton,
+                    { borderColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(27,138,90,0.24)' },
+                    cancellingRequest && styles.withdrawVerificationButtonDisabled,
+                  ]}
+                  onPress={withdrawPendingVerification}
+                  disabled={cancellingRequest}
+                  activeOpacity={0.86}
+                >
+                  <Ionicons name="close-circle-outline" size={16} color={isDark ? '#f2d7d5' : '#9f3a38'} />
+                  <Text style={[styles.withdrawVerificationText, { color: isDark ? '#f2d7d5' : '#9f3a38' }]}>
+                    {cancellingRequest ? 'Withdrawing...' : 'Withdraw submission'}
+                  </Text>
+                </TouchableOpacity>
               </View>
             )}
 
@@ -3188,5 +3096,24 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     fontStyle: 'italic',
+  },
+  withdrawVerificationButton: {
+    marginTop: 12,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    backgroundColor: 'rgba(255,255,255,0.42)',
+  },
+  withdrawVerificationButtonDisabled: {
+    opacity: 0.58,
+  },
+  withdrawVerificationText: {
+    fontSize: 13,
+    fontWeight: '700',
   },
 });

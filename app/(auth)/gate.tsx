@@ -11,6 +11,8 @@ import { clearPendingAuthProvider, getFreshPendingAuthProvider } from "@/lib/aut
 const AUTH_PENDING_TOKENS_KEY = "auth_pending_tokens_v1";
 const RETIRED_DUPLICATE_REDIRECT_KEY = "retired_duplicate_redirect_v1";
 const DISCONNECTED_PROVIDER_REDIRECT_KEY = "disconnected_provider_redirect_v1";
+const SESSION_CHECK_TIMEOUT_MS = 4_000;
+const GATE_RETRY_DELAY_MS = 2_500;
 // Disable auth-bootstrap while stabilizing core auth/phone verification routing.
 // It can be re-enabled once the function is proven reliable in production.
 const ENABLE_AUTH_BOOTSTRAP = false;
@@ -23,6 +25,37 @@ export default function AuthGateScreen() {
   const runInFlightRef = useRef(false);
   const lastUserIdRef = useRef<string | null>(null);
   const [statusText, setStatusText] = useState("Checking your account...");
+  const [gateRetryTick, setGateRetryTick] = useState(0);
+  const activeRef = useRef(true);
+
+  const waitForStoredSession = async (timeoutMs = SESSION_CHECK_TIMEOUT_MS) => {
+    try {
+      const { data, timedOut } = await Promise.race([
+        supabase.auth.getSession().then((result) => ({
+          data: result.data,
+          timedOut: false,
+        })),
+        new Promise<{ data: { session: null }; timedOut: true }>((resolve) =>
+          setTimeout(() => resolve({ data: { session: null }, timedOut: true }), timeoutMs),
+        ),
+      ]);
+      return { session: data?.session ?? null, timedOut };
+    } catch {
+      return { session: null, timedOut: true };
+    }
+  };
+
+  const holdForConnectionRetry = (message = "Connection is unstable. Keeping you signed in while we retry...") => {
+    if (!activeRef.current || routedRef.current) return;
+    setStatusText(message);
+    runInFlightRef.current = false;
+    setTimeout(() => {
+      if (!activeRef.current || routedRef.current) return;
+      lastUserIdRef.current = null;
+      setStatusText("Checking your account...");
+      setGateRetryTick((value) => value + 1);
+    }, GATE_RETRY_DELAY_MS);
+  };
 
   const getRetiredDuplicateRoute = (
     identityStatus: string | null,
@@ -126,6 +159,7 @@ export default function AuthGateScreen() {
   };
 
   useEffect(() => {
+    activeRef.current = true;
     if (routedRef.current) return;
     if (isLoading) {
       runInFlightRef.current = false;
@@ -188,6 +222,15 @@ export default function AuthGateScreen() {
 
         // If no session, go welcome
         if (!session?.user || !user?.id) {
+          const stored = await waitForStoredSession();
+          if (stored.timedOut) {
+            holdForConnectionRetry();
+            return;
+          }
+          if (stored.session?.user) {
+            holdForConnectionRetry("Restoring your session. Please stay on this screen...");
+            return;
+          }
           const retiredRoute = await consumeRetiredDuplicateRoute();
           const disconnectedProviderRoute = await consumeDisconnectedProviderRoute();
           routedRef.current = true;
@@ -362,6 +405,18 @@ export default function AuthGateScreen() {
         }
 
         if (!sessionToUse || !userToUse) {
+          const stored = await waitForStoredSession();
+          if (stored.timedOut) {
+            holdForConnectionRetry();
+            return;
+          }
+          if (stored.session?.user) {
+            sessionToUse = stored.session;
+            userToUse = stored.session.user;
+          }
+        }
+
+        if (!sessionToUse || !userToUse) {
           if (typeof __DEV__ !== "undefined" && __DEV__) {
             console.log("[auth-gate] no session/user");
           }
@@ -442,7 +497,8 @@ export default function AuthGateScreen() {
         void refreshProfile();
         const identityStatus = authContext.profile?.identity_status ?? profile?.identity_status ?? null;
         const verified = await refreshPhoneState();
-        const profileCompleted = authContext.profile?.profile_completed === true;
+        const profileSnapshot = authContext.profile ?? profile ?? null;
+        const profileCompleted = profileSnapshot?.profile_completed === true;
 
         if (typeof __DEV__ !== "undefined" && __DEV__) {
           console.log("[auth-gate] refreshPhoneState done");
@@ -544,6 +600,11 @@ export default function AuthGateScreen() {
           return;
         }
 
+        if (!profileSnapshot) {
+          holdForConnectionRetry("Connection is weak. We are keeping your session open while profile details load...");
+          return;
+        }
+
         if (!profileCompleted) {
           await clearPendingAuthProvider();
           guardRoute("/(auth)/onboarding", true);
@@ -554,8 +615,7 @@ export default function AuthGateScreen() {
         guardRoute("/(tabs)/vibes", true);
       } catch (_error) {
         if (active && !routedRef.current) {
-          routedRef.current = true;
-          router.replace("/(auth)/welcome");
+          holdForConnectionRetry();
         }
       } finally {
         runInFlightRef.current = false;
@@ -565,9 +625,10 @@ export default function AuthGateScreen() {
     void run();
     return () => {
       active = false;
+      activeRef.current = false;
       clearTimeout(hardFallbackTimer);
     };
-  }, [isLoading, user?.id, profile?.profile_completed, router]);
+  }, [gateRetryTick, isLoading, user?.id, profile?.profile_completed, router]);
 
   return (
     <View

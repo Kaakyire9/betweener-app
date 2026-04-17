@@ -29,7 +29,7 @@ export function AuthGuard({ children, fallback }: AuthGuardProps) {
 
   // Redirect based on auth state
   if (needsAuth) {
-    return <Redirect href="/(auth)/welcome" />;
+    return <Redirect href="/(auth)/gate" />;
   }
 
   if (needsEmailVerification) {
