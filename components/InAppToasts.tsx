@@ -303,6 +303,12 @@ export default function InAppToasts() {
   }
 
   function systemMessagePreview(row: any, peerName: string) {
+    if (row?.event_type === 'admin_queue_item') {
+      return {
+        title: 'Admin queue',
+        body: row?.text ?? 'A new admin item needs review.',
+      };
+    }
     if (row?.event_type === 'admin_report_reviewed') {
       return {
         title: 'Safety update',
@@ -376,6 +382,7 @@ export default function InAppToasts() {
   function isOfficialSystemMessage(row: any) {
     const eventType = String(row?.event_type || '');
     return (
+      eventType === 'admin_queue_item' ||
       eventType === 'admin_report_reviewed' ||
       eventType === 'date_plan_concierge_claimed' ||
       eventType === 'date_plan_concierge_completed' ||
@@ -399,7 +406,9 @@ export default function InAppToasts() {
           if (!row) return;
           const officialSystemMessage = isOfficialSystemMessage(row);
           const notificationKind =
-            row?.event_type === 'admin_report_reviewed' || String(row?.event_type || '').startsWith('account_recovery_')
+            row?.event_type === 'admin_queue_item' ||
+            row?.event_type === 'admin_report_reviewed' ||
+            String(row?.event_type || '').startsWith('account_recovery_')
               ? 'verification'
               : 'messages';
           if (!canInAppNotify(notificationKind)) return;
@@ -444,7 +453,12 @@ export default function InAppToasts() {
                       row.event_type === 'date_plan_concierge_requested'
                     ? peer?.id ?? null
                     : null,
-              route: row.event_type === 'request_expired' ? '/(tabs)/intent' : null,
+              route:
+                row.event_type === 'admin_queue_item'
+                  ? '/admin'
+                  : row.event_type === 'request_expired'
+                    ? '/(tabs)/intent'
+                    : null,
               routeParams:
                 row.event_type === 'request_expired'
                   ? {

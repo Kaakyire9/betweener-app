@@ -247,6 +247,11 @@ function RootLayout() {
             return;
           }
 
+          if (pushType === "system_message" && data?.event_type === "admin_queue_item") {
+            router.push("/admin");
+            return;
+          }
+
           if (pushType === "moment_post" || pushType === "moment_reaction" || pushType === "moment_comment") {
             const startUserId =
               data?.start_user_id ||
