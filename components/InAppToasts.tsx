@@ -303,6 +303,32 @@ export default function InAppToasts() {
   }
 
   function systemMessagePreview(row: any, peerName: string) {
+    if (row?.event_type === 'admin_report_reviewed') {
+      return {
+        title: 'Safety update',
+        body: row?.text ?? 'Your report has been reviewed.',
+      };
+    }
+    if (
+      row?.event_type === 'date_plan_concierge_claimed' ||
+      row?.event_type === 'date_plan_concierge_completed' ||
+      row?.event_type === 'date_plan_concierge_cancelled'
+    ) {
+      return {
+        title: 'Date concierge',
+        body: row?.text ?? 'Your concierge request has been updated.',
+      };
+    }
+    if (
+      row?.event_type === 'account_recovery_reviewing' ||
+      row?.event_type === 'account_recovery_resolved' ||
+      row?.event_type === 'account_recovery_closed'
+    ) {
+      return {
+        title: 'Account support',
+        body: row?.text ?? 'Your account recovery request has been updated.',
+      };
+    }
     if (row?.event_type === 'request_accepted') {
       return {
         title: peerName,
@@ -347,6 +373,19 @@ export default function InAppToasts() {
     };
   }
 
+  function isOfficialSystemMessage(row: any) {
+    const eventType = String(row?.event_type || '');
+    return (
+      eventType === 'admin_report_reviewed' ||
+      eventType === 'date_plan_concierge_claimed' ||
+      eventType === 'date_plan_concierge_completed' ||
+      eventType === 'date_plan_concierge_cancelled' ||
+      eventType === 'account_recovery_reviewing' ||
+      eventType === 'account_recovery_resolved' ||
+      eventType === 'account_recovery_closed'
+    );
+  }
+
   useEffect(() => {
     if (!user?.id) return;
 
@@ -358,7 +397,12 @@ export default function InAppToasts() {
         (payload) => {
           const row = payload.new as any;
           if (!row) return;
-          if (!canInAppNotify('messages')) return;
+          const officialSystemMessage = isOfficialSystemMessage(row);
+          const notificationKind =
+            row?.event_type === 'admin_report_reviewed' || String(row?.event_type || '').startsWith('account_recovery_')
+              ? 'verification'
+              : 'messages';
+          if (!canInAppNotify(notificationKind)) return;
           // Mirror server behavior: only push to the requester; accepter gets in-app only.
           if (String(row?.metadata?.role || '') === 'accepter') return;
           if (
@@ -375,7 +419,8 @@ export default function InAppToasts() {
             return;
           }
           void (async () => {
-            const peerUserId = typeof row.peer_user_id === 'string' ? row.peer_user_id : null;
+            const peerUserId =
+              !officialSystemMessage && typeof row.peer_user_id === 'string' ? row.peer_user_id : null;
             const peer = peerUserId ? await getProfileLite(peerUserId, { preferUserId: true }) : null;
             const peerName = getUserFacingDisplayName(peer, 'They');
             const preview = systemMessagePreview(row, peerName);
@@ -386,16 +431,19 @@ export default function InAppToasts() {
               id: `system-${row.id}`,
               title: preview.title,
               body: preview.body,
-              avatarUrl: peer?.avatar_url ?? null,
-              profileId: peer?.id ?? null,
+              emoji: officialSystemMessage ? 'B' : null,
+              avatarUrl: officialSystemMessage ? null : peer?.avatar_url ?? null,
+              profileId: officialSystemMessage ? null : peer?.id ?? null,
               chatId:
-                row.event_type === 'request_accepted' ||
-                row.event_type === 'date_plan_accepted' ||
-                row.event_type === 'date_plan_declined' ||
-                row.event_type === 'date_plan_cancelled' ||
-                row.event_type === 'date_plan_concierge_requested'
-                  ? peer?.id ?? null
-                  : null,
+                officialSystemMessage
+                  ? null
+                  : row.event_type === 'request_accepted' ||
+                      row.event_type === 'date_plan_accepted' ||
+                      row.event_type === 'date_plan_declined' ||
+                      row.event_type === 'date_plan_cancelled' ||
+                      row.event_type === 'date_plan_concierge_requested'
+                    ? peer?.id ?? null
+                    : null,
               route: row.event_type === 'request_expired' ? '/(tabs)/intent' : null,
               routeParams:
                 row.event_type === 'request_expired'
