@@ -44,6 +44,18 @@
         "EXPO_USE_POD_REPO_UPDATE": "1"
       }
     },
+    "playVerification": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_ENVIRONMENT": "production",
+        "EXPO_PUBLIC_ENABLE_INTERNAL_TOOLS": "false",
+        "GOOGLE_PLAY_PACKAGE_VERIFICATION_TOKEN": "CSMCKSCOJWUC2AAAAAAAAAAAAA",
+        "EXPO_USE_POD_REPO_UPDATE": "1"
+      }
+    },
     "production": {
       "autoIncrement": true,
       "android": {
