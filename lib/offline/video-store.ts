@@ -1,0 +1,112 @@
+import * as Crypto from 'expo-crypto';
+import * as FileSystem from 'expo-file-system/legacy';
+
+import { readOfflineData, writeOfflineEnvelope } from '@/lib/offline/core';
+
+const VIDEO_CACHE_KEY = 'offline:video-store:v1';
+const VIDEO_CACHE_DIR = `${FileSystem.documentDirectory ?? FileSystem.cacheDirectory ?? ''}offline-videos/`;
+
+type VideoCacheEntry = {
+  localUri: string;
+  sourceKey: string;
+  remoteUri?: string | null;
+  extension?: string;
+  savedAt?: number;
+};
+
+type VideoCacheMap = Record<string, VideoCacheEntry>;
+
+const normalizeVideoCacheMap = (raw: unknown): VideoCacheMap => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const next: VideoCacheMap = {};
+  Object.entries(raw as Record<string, unknown>).forEach(([key, value]) => {
+    if (typeof value === 'string') {
+      next[key] = {
+        localUri: value,
+        sourceKey: key,
+      };
+      return;
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    const record = value as Partial<VideoCacheEntry>;
+    if (typeof record.localUri !== 'string' || !record.localUri.trim()) return;
+    next[key] = {
+      localUri: record.localUri,
+      sourceKey: typeof record.sourceKey === 'string' && record.sourceKey.trim() ? record.sourceKey : key,
+      remoteUri: typeof record.remoteUri === 'string' ? record.remoteUri : undefined,
+      extension: typeof record.extension === 'string' ? record.extension : undefined,
+      savedAt: typeof record.savedAt === 'number' ? record.savedAt : undefined,
+    };
+  });
+  return next;
+};
+
+const readVideoCacheMap = async (): Promise<VideoCacheMap> => {
+  const raw = await readOfflineData<unknown>(VIDEO_CACHE_KEY);
+  return normalizeVideoCacheMap(raw);
+};
+
+const writeVideoCacheMap = async (next: VideoCacheMap) => {
+  await writeOfflineEnvelope(VIDEO_CACHE_KEY, next, { kind: 'video-manifest' });
+};
+
+const ensureVideoCacheDir = async () => {
+  const info = await FileSystem.getInfoAsync(VIDEO_CACHE_DIR);
+  if (!info.exists) {
+    await FileSystem.makeDirectoryAsync(VIDEO_CACHE_DIR, { intermediates: true });
+  }
+};
+
+const guessVideoExtension = (value?: string | null) => {
+  if (!value) return 'mp4';
+  const clean = String(value).split('?')[0].split('#')[0];
+  const ext = clean.split('.').pop()?.toLowerCase() || 'mp4';
+  if (ext.length < 2 || ext.length > 5) return 'mp4';
+  return ext;
+};
+
+const buildCachePath = async (sourceKey: string, extension: string) => {
+  const hash = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, sourceKey);
+  return `${VIDEO_CACHE_DIR}${hash}.${extension}`;
+};
+
+export const getOfflineVideoUri = async (sourceKey?: string | null): Promise<string | null> => {
+  if (!sourceKey) return null;
+  const map = await readVideoCacheMap();
+  const cached = map[sourceKey];
+  if (!cached?.localUri) return null;
+  try {
+    const info = await FileSystem.getInfoAsync(cached.localUri);
+    if (info.exists) return cached.localUri;
+  } catch {}
+  const next = { ...map };
+  delete next[sourceKey];
+  await writeVideoCacheMap(next);
+  return null;
+};
+
+export const cacheOfflineVideo = async (sourceKey: string, remoteUri?: string | null): Promise<string | null> => {
+  if (!sourceKey || !remoteUri) return null;
+  if (!remoteUri.startsWith('http')) return remoteUri;
+  try {
+    await ensureVideoCacheDir();
+    const extension = guessVideoExtension(remoteUri) || guessVideoExtension(sourceKey);
+    const targetUri = await buildCachePath(sourceKey, extension);
+    const existing = await FileSystem.getInfoAsync(targetUri);
+    if (!existing.exists) {
+      await FileSystem.downloadAsync(remoteUri, targetUri);
+    }
+    const next = await readVideoCacheMap();
+    next[sourceKey] = {
+      localUri: targetUri,
+      sourceKey,
+      remoteUri,
+      extension,
+      savedAt: Date.now(),
+    };
+    await writeVideoCacheMap(next);
+    return targetUri;
+  } catch {
+    return null;
+  }
+};

@@ -141,7 +141,14 @@
         {
           "url": "https://sentry.io/",
           "project": "betweener",
-          "organization": "nyansapa-ltd"
+          "organization": "nyansapa-ltd",
+          "experimental_android": {
+            "enableAndroidGradlePlugin": true,
+            "includeProguardMapping": true,
+            "autoUploadProguardMapping": true,
+            "uploadNativeSymbols": true,
+            "autoUploadNativeSymbols": true
+          }
         }
       ]
     ],

@@ -18,24 +18,32 @@ type ConfigureArgs = {
 
 const IOS_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY || "";
 const ANDROID_API_KEY = process.env.EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY || "";
+
+const getPlatformEnv = (sharedName: string, androidName?: string) => {
+  if (Platform.OS === "android" && androidName) {
+    return process.env[androidName] || process.env[sharedName] || "";
+  }
+  return process.env[sharedName] || "";
+};
+
 const SILVER_ENTITLEMENT = (process.env.EXPO_PUBLIC_REVENUECAT_SILVER_ENTITLEMENT || "silver").toLowerCase();
 const GOLD_ENTITLEMENT = (process.env.EXPO_PUBLIC_REVENUECAT_GOLD_ENTITLEMENT || "gold").toLowerCase();
 const SILVER_PACKAGE_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_SILVER_PACKAGE || "silver").toLowerCase();
 const GOLD_PACKAGE_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_GOLD_PACKAGE || "gold").toLowerCase();
-const SILVER_PRODUCT_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_SILVER_PRODUCT || "silver").toLowerCase();
-const GOLD_PRODUCT_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_GOLD_PRODUCT || "gold").toLowerCase();
+const SILVER_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_SILVER_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_SILVER_PRODUCT") || "silver").toLowerCase();
+const GOLD_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_GOLD_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_GOLD_PRODUCT") || "gold").toLowerCase();
 const SILVER_MONTHLY_PACKAGE_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_SILVER_MONTHLY_PACKAGE || "silver_monthly").toLowerCase();
 const SILVER_QUARTERLY_PACKAGE_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_SILVER_QUARTERLY_PACKAGE || "silver_quarterly").toLowerCase();
 const SILVER_ANNUAL_PACKAGE_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_SILVER_ANNUAL_PACKAGE || "silver_annual").toLowerCase();
 const GOLD_MONTHLY_PACKAGE_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_GOLD_MONTHLY_PACKAGE || "gold_monthly").toLowerCase();
 const GOLD_QUARTERLY_PACKAGE_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_GOLD_QUARTERLY_PACKAGE || "gold_quarterly").toLowerCase();
 const GOLD_ANNUAL_PACKAGE_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_GOLD_ANNUAL_PACKAGE || "gold_annual").toLowerCase();
-const SILVER_MONTHLY_PRODUCT_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_SILVER_MONTHLY_PRODUCT || "silver.monthly").toLowerCase();
-const SILVER_QUARTERLY_PRODUCT_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_SILVER_QUARTERLY_PRODUCT || "silver.quarterly").toLowerCase();
-const SILVER_ANNUAL_PRODUCT_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_SILVER_ANNUAL_PRODUCT || "silver.annual").toLowerCase();
-const GOLD_MONTHLY_PRODUCT_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_GOLD_MONTHLY_PRODUCT || "gold.monthly").toLowerCase();
-const GOLD_QUARTERLY_PRODUCT_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_GOLD_QUARTERLY_PRODUCT || "gold.quarterly").toLowerCase();
-const GOLD_ANNUAL_PRODUCT_HINT = (process.env.EXPO_PUBLIC_REVENUECAT_GOLD_ANNUAL_PRODUCT || "gold.annual").toLowerCase();
+const SILVER_MONTHLY_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_SILVER_MONTHLY_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_SILVER_MONTHLY_PRODUCT") || "silver.monthly").toLowerCase();
+const SILVER_QUARTERLY_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_SILVER_QUARTERLY_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_SILVER_QUARTERLY_PRODUCT") || "silver.quarterly").toLowerCase();
+const SILVER_ANNUAL_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_SILVER_ANNUAL_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_SILVER_ANNUAL_PRODUCT") || "silver.annual").toLowerCase();
+const GOLD_MONTHLY_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_GOLD_MONTHLY_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_GOLD_MONTHLY_PRODUCT") || "gold.monthly").toLowerCase();
+const GOLD_QUARTERLY_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_GOLD_QUARTERLY_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_GOLD_QUARTERLY_PRODUCT") || "gold.quarterly").toLowerCase();
+const GOLD_ANNUAL_PRODUCT_HINT = (getPlatformEnv("EXPO_PUBLIC_REVENUECAT_GOLD_ANNUAL_PRODUCT", "EXPO_PUBLIC_REVENUECAT_ANDROID_GOLD_ANNUAL_PRODUCT") || "gold.annual").toLowerCase();
 
 const INTERVAL_ORDER: Record<PremiumPlanInterval, number> = {
   monthly: 0,

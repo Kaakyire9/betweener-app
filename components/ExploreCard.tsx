@@ -1,5 +1,6 @@
 // components/ExploreCard.tsx
 import AmbientCardGlow from "@/components/AmbientCardGlow";
+import OfflineImage from "@/components/media/OfflineImage";
 import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
 import { VerificationBadge } from "@/components/VerificationBadge";
@@ -211,24 +212,6 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     }
   })();
 
-  // Dev-only debug: print key match fields to help diagnose rendering
-  try {
-    if (typeof __DEV__ !== 'undefined' && __DEV__) {
-      // avoid heavy serialization in prod; stringify small arrays for clarity
-      const interestsSample = Array.isArray((match as any).interests) ? (match as any).interests : (match as any).interests;
-      const personalitySample = Array.isArray((match as any).personalityTags) ? (match as any).personalityTags : (match as any).personalityTags;
-       
-      console.log('[ExploreCard] debug', {
-        id: match.id,
-        name: match.name,
-        interests: interestsSample,
-        personalityTags: personalitySample,
-        distance: (match as any).distance,
-        profileVideo: (match as any).profileVideo,
-      });
-    }
-  } catch (_e) {}
-
   // Reduced-motion preference + small, native Animated transitions (no Reanimated hooks).
   const [reduceMotion, setReduceMotion] = useState(false);
   const [pressed, setPressed] = useState(false);
@@ -377,7 +360,25 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
         onPressOut={() => setPressed(false)}
       >
         {hasAvatarImage ? (
-          <Image source={{ uri: match.avatar_url }} style={styles.image} />
+          <OfflineImage
+            uri={match.avatar_url}
+            style={styles.image}
+            fallback={
+              <LinearGradientSafe
+                colors={[placeholderPalette.start, placeholderPalette.end]}
+                start={[0, 0]}
+                end={[1, 1]}
+                style={styles.placeholderSurface}
+              >
+                <View style={styles.placeholderOrb} />
+                <View style={styles.placeholderContent}>
+                  <Text style={styles.placeholderInitials}>{profileInitials}</Text>
+                  <Text style={styles.placeholderTitle}>Profile loading in style</Text>
+                  <Text style={styles.placeholderSubtitle}>Photos can wait. Presence still matters.</Text>
+                </View>
+              </LinearGradientSafe>
+            }
+          />
         ) : (
           <LinearGradientSafe
             colors={[placeholderPalette.start, placeholderPalette.end]}

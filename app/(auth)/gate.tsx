@@ -7,6 +7,9 @@ import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { supabase } from "@/lib/supabase";
 import { clearPendingAuthProvider, getFreshPendingAuthProvider } from "@/lib/auth-callback";
+import {
+  peekPendingNotificationRoute,
+} from "@/lib/notifications/notification-routing";
 
 const AUTH_PENDING_TOKENS_KEY = "auth_pending_tokens_v1";
 const RETIRED_DUPLICATE_REDIRECT_KEY = "retired_duplicate_redirect_v1";
@@ -20,7 +23,16 @@ const ENABLE_AUTH_BOOTSTRAP = false;
 export default function AuthGateScreen() {
   const router = useRouter();
   const authContext = useAuth();
-  const { isLoading, session, user, profile, refreshPhoneState, refreshProfile, phoneVerified } = authContext;
+  const {
+    isLoading,
+    session,
+    user,
+    profile,
+    refreshPhoneState,
+    refreshProfile,
+    phoneVerified,
+    hadStableAppAccess,
+  } = authContext;
   const routedRef = useRef(false);
   const runInFlightRef = useRef(false);
   const lastUserIdRef = useRef<string | null>(null);
@@ -272,6 +284,7 @@ export default function AuthGateScreen() {
         const identityStatus = profile?.identity_status ?? null;
         const bestVerified = phoneVerified || profile?.phone_verified === true;
         const bestCompleted = profile?.profile_completed === true;
+        const canResumeKnownGoodAppSurface = hadStableAppAccess && bestVerified;
 
         routedRef.current = true;
 
@@ -295,7 +308,7 @@ export default function AuthGateScreen() {
           return;
         }
 
-        if (!bestVerified) {
+        if (!bestVerified && !canResumeKnownGoodAppSurface) {
           if (typeof __DEV__ !== "undefined" && __DEV__) {
             console.log("[auth-gate] hard fallback route", "/(auth)/verify-phone");
           }
@@ -312,10 +325,20 @@ export default function AuthGateScreen() {
         if (typeof __DEV__ !== "undefined" && __DEV__) {
           console.log(
             "[auth-gate] hard fallback route",
-            bestCompleted ? "/(tabs)/vibes" : "/(auth)/onboarding"
+            bestCompleted || canResumeKnownGoodAppSurface ? "/(tabs)/vibes" : "/(auth)/onboarding"
           );
         }
-        router.replace(bestCompleted ? "/(tabs)/vibes" : "/(auth)/onboarding");
+        if (bestCompleted || canResumeKnownGoodAppSurface) {
+          const pendingNotificationRoute = await peekPendingNotificationRoute();
+          if (pendingNotificationRoute) {
+            if (typeof __DEV__ !== "undefined" && __DEV__) {
+              console.log("[auth-gate] hard fallback route", pendingNotificationRoute);
+            }
+            router.replace(pendingNotificationRoute);
+            return;
+          }
+        }
+        router.replace(bestCompleted || canResumeKnownGoodAppSurface ? "/(tabs)/vibes" : "/(auth)/onboarding");
       })();
     }, 10000);
 
@@ -588,7 +611,7 @@ export default function AuthGateScreen() {
           }
         }
 
-        if (!verified) {
+        if (!verified && !hadStableAppAccess) {
           await clearPendingAuthProvider();
           guardRoute({
             pathname: "/(auth)/verify-phone",
@@ -600,18 +623,36 @@ export default function AuthGateScreen() {
           return;
         }
 
+        if (!profileSnapshot && hadStableAppAccess) {
+          const pendingNotificationRoute = await peekPendingNotificationRoute();
+          if (pendingNotificationRoute) {
+            guardRoute(pendingNotificationRoute, true);
+            return;
+          }
+          guardRoute("/(tabs)/vibes", true);
+          return;
+        }
+
         if (!profileSnapshot) {
           holdForConnectionRetry("Connection is weak. We are keeping your session open while profile details load...");
           return;
         }
 
-        if (!profileCompleted) {
+        if (!profileCompleted && !hadStableAppAccess) {
           await clearPendingAuthProvider();
           guardRoute("/(auth)/onboarding", true);
           return;
         }
 
         await clearPendingAuthProvider();
+        const pendingNotificationRoute = await peekPendingNotificationRoute();
+        if (pendingNotificationRoute) {
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[auth-gate] pending notification route", pendingNotificationRoute);
+          }
+          guardRoute(pendingNotificationRoute, true);
+          return;
+        }
         guardRoute("/(tabs)/vibes", true);
       } catch (_error) {
         if (active && !routedRef.current) {

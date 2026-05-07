@@ -1,4 +1,5 @@
 import ProfileVideoModal from '@/components/ProfileVideoModal';
+import OfflineImage from '@/components/media/OfflineImage';
 import PremiumUpsellModal from '@/components/premium/PremiumUpsellModal';
 import { VerificationBadge } from '@/components/VerificationBadge';
 import { Colors } from '@/constants/theme';
@@ -7,10 +8,24 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
 import { hasFeatureAccess } from '@/lib/premium-access';
 import { pickPreferredLocationLabel } from '@/lib/location/location-display';
+import { isLikelyNetworkError } from '@/lib/network';
+import {
+  enqueueProfileNoteCreateMutation,
+  enqueueProfileImageReactionSyncMutation,
+  enqueueSwipeSyncMutation,
+  getPendingProfileImageReactionMap,
+  hasPendingSwipeSyncMutation,
+} from '@/lib/offline/mutation-queue';
 import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
+import { cacheOfflineVideo, getOfflineVideoUri } from '@/lib/offline/video-store';
 import { getProfileInitials, getProfilePlaceholderPalette } from '@/lib/profile-placeholders';
+import {
+  mergeViewedProfileSnapshots,
+  readViewedProfileSnapshot,
+  writeViewedProfileSnapshot,
+} from '@/lib/offline/profile-store';
 import { recordProfileSignal } from '@/lib/profile-signals';
 import { isGuessPrompt, isMultipleChoiceGuess } from '@/lib/prompts/guess-prompts';
 import { supabase } from '@/lib/supabase';
@@ -28,7 +43,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
-import { Alert, Dimensions, FlatList, Image, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View, type ImageStyle, type ViewStyle } from 'react-native';
+import { Alert, Dimensions, FlatList, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View, type ImageStyle, type ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Easing,
@@ -56,6 +71,7 @@ type PremiumImage = {
   uri: string;
   tag: ProfileImageTag;
   isVideo?: boolean;
+  reactionUri?: string;
 };
 
 type PremiumSection = {
@@ -318,7 +334,13 @@ function parseFallbackProfile(rawParam?: string | string[]): UserProfile | null 
 function pickTaggedImages(profile: UserProfile): PremiumImage[] {
   const tags: ProfileImageTag[] = ['intro', 'lifestyle', 'prompts', 'values'];
   const uris = Array.isArray(profile.photos) ? profile.photos.filter(Boolean) : [];
-  const safeUris = uris.length ? uris : profile.profilePicture ? [profile.profilePicture] : [];
+  const orderedUris = [
+    profile.profilePicture,
+    ...uris,
+  ]
+    .filter((uri): uri is string => typeof uri === 'string' && uri.trim().length > 0)
+    .filter((uri, index, arr) => arr.findIndex((item) => item === uri) === index);
+  const safeUris = orderedUris;
 
   return safeUris.map((uri, index) => ({
     id: `img-${index}`,
@@ -489,6 +511,7 @@ export default function ProfileViewPremiumV2Screen() {
   const isPreviewReplica = String((params as any)?.isPreview ?? '').toLowerCase() === 'true';
 
   const fallbackProfile = useMemo(() => parseFallbackProfile((params as any)?.fallbackProfile), [params]);
+  const [cachedProfile, setCachedProfile] = useState<UserProfile | null>(null);
   const [fetchedProfile, setFetchedProfile] = useState<UserProfile | null>(null);
   const [presenceState, setPresenceState] = useState<{
     online: boolean;
@@ -503,6 +526,41 @@ export default function ProfileViewPremiumV2Screen() {
   const signalOpenedRef = useRef<string | null>(null);
   const signalIntroRef = useRef<string | null>(null);
   const dwellTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!profileId || profileId === 'preview') {
+      setCachedProfile(null);
+      return;
+    }
+    let mounted = true;
+    void (async () => {
+      const snapshot = await readViewedProfileSnapshot(profileId);
+      if (mounted && snapshot) {
+        setCachedProfile(snapshot);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [profileId]);
+
+  useEffect(() => {
+    if (!fallbackProfile || !profileId || profileId === 'preview') return;
+    void (async () => {
+      try {
+        const existing = await readViewedProfileSnapshot(profileId);
+        const merged = mergeViewedProfileSnapshots(existing, {
+          ...fallbackProfile,
+          id: profileId,
+        });
+        if (merged) {
+          await writeViewedProfileSnapshot(merged, { merge: false });
+        }
+      } catch {
+        // best effort only
+      }
+    })();
+  }, [fallbackProfile, profileId]);
 
   // Fetch using the same logic extracted from app/profile-view.tsx.
   React.useEffect(() => {
@@ -528,12 +586,15 @@ export default function ProfileViewPremiumV2Screen() {
           fallbackDistanceLabel: fallbackProfile?.distance,
           fallbackDistanceKm: fallbackProfile?.distanceKm,
         });
+        const merged = mergeViewedProfileSnapshots(cachedProfile, fallbackProfile, mapped) ?? mapped;
         if (mounted) {
-          setFetchedProfile(mapped);
+          setFetchedProfile(merged);
+          setCachedProfile(merged);
+          void writeViewedProfileSnapshot(merged, { merge: false });
           setFetchWatchdogError(null);
         }
       } catch {
-        if (mounted) setFetchedProfile(null);
+        if (mounted && !cachedProfile) setFetchedProfile(null);
       } finally {
         clearTimeout(watchdog);
         if (mounted) setFetching(false);
@@ -543,11 +604,11 @@ export default function ProfileViewPremiumV2Screen() {
     return () => {
       mounted = false;
     };
-  }, [currentProfile?.id, profileId, fallbackProfile?.distance, fallbackProfile?.distanceKm, fetchRetryNonce]);
+  }, [cachedProfile, currentProfile?.id, profileId, fallbackProfile?.distance, fallbackProfile?.distanceKm, fetchRetryNonce]);
 
   const resolvedProfile: UserProfile = useMemo(() => {
-    if (fetchedProfile) return fetchedProfile;
-    if (fallbackProfile) return fallbackProfile;
+    const merged = mergeViewedProfileSnapshots(fallbackProfile, cachedProfile, fetchedProfile);
+    if (merged) return merged;
     return {
       id: profileId,
       name: 'Profile',
@@ -565,7 +626,7 @@ export default function ProfileViewPremiumV2Screen() {
       interests: [],
       compatibility: 0,
     };
-  }, [fallbackProfile, fetchedProfile, profileId]);
+  }, [cachedProfile, fallbackProfile, fetchedProfile, profileId]);
 
   useEffect(() => {
     if (!currentProfile?.id || !resolvedProfile?.id || resolvedProfile.id === 'preview') return;
@@ -589,8 +650,16 @@ export default function ProfileViewPremiumV2Screen() {
         if (mounted) setHeroVideoUrl(null);
         return;
       }
+      const cachedUri = await getOfflineVideoUri(source);
+      if (cachedUri) {
+        if (mounted) setHeroVideoUrl(cachedUri);
+        return;
+      }
       if (source.startsWith('http')) {
         if (mounted) setHeroVideoUrl(source);
+        void cacheOfflineVideo(source, source).then((localUri) => {
+          if (mounted && localUri) setHeroVideoUrl(localUri);
+        });
         return;
       }
       const { data, error } = await supabase.storage
@@ -602,6 +671,9 @@ export default function ProfileViewPremiumV2Screen() {
         return;
       }
       setHeroVideoUrl(data.signedUrl);
+      void cacheOfflineVideo(source, data.signedUrl).then((localUri) => {
+        if (mounted && localUri) setHeroVideoUrl(localUri);
+      });
     };
     void resolveHeroVideo();
     return () => {
@@ -719,7 +791,7 @@ export default function ProfileViewPremiumV2Screen() {
   const heroHeight = Math.max(260, Math.min(390, Math.round(screenHeight * 0.36)));
   const guessFabTop = 10 + 44 + 10 + heroHeight - 54;
 
-  const isLoading = fetching && !fetchedProfile && !fallbackProfile && !fetchWatchdogError;
+  const isLoading = fetching && !fetchedProfile && !cachedProfile && !fallbackProfile && !fetchWatchdogError;
   const locationLine = useMemo(() => buildLocationLine(resolvedProfile), [resolvedProfile]);
   const sharedInterestNames = useMemo(() => {
     const mine = new Set(myInterests.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean));
@@ -775,8 +847,11 @@ export default function ProfileViewPremiumV2Screen() {
       fallbackDistanceLabel: fallbackProfile?.distance,
       fallbackDistanceKm: fallbackProfile?.distanceKm,
     });
-    setFetchedProfile(mapped);
-  }, [currentProfile?.id, fallbackProfile?.distance, fallbackProfile?.distanceKm, profileId]);
+    const merged = mergeViewedProfileSnapshots(cachedProfile, fallbackProfile, mapped) ?? mapped;
+    setFetchedProfile(merged);
+    setCachedProfile(merged);
+    void writeViewedProfileSnapshot(merged, { merge: false });
+  }, [cachedProfile, currentProfile?.id, fallbackProfile, profileId]);
 
   const submitFeaturedGuess = useCallback(async () => {
     if (!featuredPrompt?.id || !currentProfile?.id || !isGuessPrompt(featuredPrompt.promptType)) return;
@@ -1053,12 +1128,21 @@ export default function ProfileViewPremiumV2Screen() {
 
   const loadImageReactions = useCallback(async () => {
     if (!resolvedProfile.id) return;
+    const pendingMine = await getPendingProfileImageReactionMap(resolvedProfile.id, currentUserId);
     const { data, error } = await supabase
       .from('profile_image_reactions')
       .select('image_url,emoji,reactor_user_id')
       .eq('profile_id', resolvedProfile.id);
     if (error) {
       console.log('[profile] reactions fetch error', error);
+      setImageReactions((prev) => {
+        const next = { ...prev };
+        Object.entries(pendingMine).forEach(([imageUrl, emoji]) => {
+          if (emoji) next[imageUrl] = emoji;
+          else delete next[imageUrl];
+        });
+        return next;
+      });
       return;
     }
     const counts: Record<string, { count: number; topEmoji: string | null }> = {};
@@ -1075,6 +1159,10 @@ export default function ProfileViewPremiumV2Screen() {
       if (currentUserId && reactorId === currentUserId) {
         mine[imageUrl] = emoji;
       }
+    });
+    Object.entries(pendingMine).forEach(([imageUrl, emoji]) => {
+      if (emoji) mine[imageUrl] = emoji;
+      else delete mine[imageUrl];
     });
     setReactionCounts(counts);
     setImageReactions(mine);
@@ -1133,12 +1221,13 @@ export default function ProfileViewPremiumV2Screen() {
     const photos = Array.isArray(resolvedProfile.photos) ? resolvedProfile.photos : [];
     return photos.find(Boolean) || resolvedProfile.profilePicture || '';
   }, [heroOverrideType, heroOverrideUri, resolvedProfile.photos, resolvedProfile.profilePicture]);
+  const hasHeroVideo = Boolean(resolvedProfile.profileVideoPath || resolvedProfile.profileVideo || heroVideoUrl);
   const showHeroVideo =
     heroOverrideType === 'video'
       ? true
       : heroOverrideType === 'image'
         ? false
-        : !!heroVideoUrl;
+        : hasHeroVideo;
   useEffect(() => {
     if (!currentProfile?.id || !resolvedProfile?.id) return;
     if (!showHeroVideo || !heroVideoUrl) return;
@@ -1156,12 +1245,25 @@ export default function ProfileViewPremiumV2Screen() {
     const photos = Array.isArray(resolvedProfile.photos) ? resolvedProfile.photos : [];
     return photos.find(Boolean) || '';
   }, [resolvedProfile.photos, resolvedProfile.profilePicture]);
+  const introReactionUri = useMemo(() => {
+    const source = resolvedProfile.profileVideoPath || resolvedProfile.profileVideo;
+    return source ? `video:${source}` : '';
+  }, [resolvedProfile.profileVideo, resolvedProfile.profileVideoPath]);
   const leftRailItems = useMemo<PremiumImage[]>(() => {
-    if (!heroVideoUrl) return profile.images;
+    if (!hasHeroVideo) return profile.images;
     const thumb = videoThumbUri || profile.images[0]?.uri || '';
-    const videoItem: PremiumImage = { id: 'vid-0', uri: thumb, tag: 'intro', isVideo: true };
-    return [videoItem, ...profile.images];
-  }, [heroVideoUrl, profile.images, videoThumbUri]);
+    const dedupedImages = thumb
+      ? profile.images.filter((img) => img.uri !== thumb)
+      : profile.images;
+    const videoItem: PremiumImage = {
+      id: 'vid-0',
+      uri: thumb,
+      tag: 'intro',
+      isVideo: true,
+      reactionUri: introReactionUri || thumb,
+    };
+    return [videoItem, ...dedupedImages];
+  }, [hasHeroVideo, introReactionUri, profile.images, videoThumbUri]);
 
   const openLightboxAtIndex = useCallback(
     (nextIndex: number) => {
@@ -1184,10 +1286,19 @@ export default function ProfileViewPremiumV2Screen() {
   const openIntroVideo = useCallback(async () => {
     const source = resolvedProfile.profileVideoPath || resolvedProfile.profileVideo;
     if (!source) return;
+    const cachedUri = await getOfflineVideoUri(source);
+    if (cachedUri) {
+      setVideoModalUrl(cachedUri);
+      setVideoModalVisible(true);
+      return;
+    }
 
     if (source.startsWith('http')) {
       setVideoModalUrl(source);
       setVideoModalVisible(true);
+      void cacheOfflineVideo(source, source).then((localUri) => {
+        if (localUri) setVideoModalUrl(localUri);
+      });
       return;
     }
 
@@ -1195,6 +1306,9 @@ export default function ProfileViewPremiumV2Screen() {
     if (error || !data?.signedUrl) return;
     setVideoModalUrl(data.signedUrl);
     setVideoModalVisible(true);
+    void cacheOfflineVideo(source, data.signedUrl).then((localUri) => {
+      if (localUri) setVideoModalUrl(localUri);
+    });
   }, [resolvedProfile.profileVideo, resolvedProfile.profileVideoPath]);
 
   const openIntentSheet = useCallback(() => {
@@ -1214,7 +1328,7 @@ export default function ProfileViewPremiumV2Screen() {
     [heroImageUri, heroVideoUrl, openIntroVideo, openLightboxForUri, showHeroVideo],
   );
   const handleHeroDoubleTap = useCallback(() => {
-    if (heroVideoUrl) {
+    if (hasHeroVideo) {
       if (showHeroVideo) {
         if (!heroImageUri) return;
         setHeroOverrideType('image');
@@ -1233,7 +1347,7 @@ export default function ProfileViewPremiumV2Screen() {
       return next;
     });
     Haptics.selectionAsync().catch(() => undefined);
-  }, [heroImageUri, heroVideoUrl, showHeroVideo]);
+  }, [hasHeroVideo, heroImageUri, showHeroVideo]);
   const handleBack = useCallback(() => {
     router.back();
   }, [router]);
@@ -1564,15 +1678,16 @@ export default function ProfileViewPremiumV2Screen() {
 
   const handleSelectReaction = useCallback(async (item: PremiumImage, icon: string) => {
     if (!currentUserId || !resolvedProfile.id) return;
-    const existing = imageReactions[item.uri];
+    const reactionKey = item.reactionUri || item.uri;
+    const existing = imageReactions[reactionKey];
     setActiveReactionImageId(null);
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setImageReactions((prev) => {
       const next = { ...prev };
       if (existing === icon) {
-        delete next[item.uri];
+        delete next[reactionKey];
       } else {
-        next[item.uri] = icon;
+        next[reactionKey] = icon;
       }
       return next;
     });
@@ -1580,9 +1695,9 @@ export default function ProfileViewPremiumV2Screen() {
       setImageReactions((prev) => {
         const next = { ...prev };
         if (existing) {
-          next[item.uri] = existing;
+          next[reactionKey] = existing;
         } else {
-          delete next[item.uri];
+          delete next[reactionKey];
         }
         return next;
       });
@@ -1595,13 +1710,31 @@ export default function ProfileViewPremiumV2Screen() {
           .from('profile_image_reactions')
           .delete()
           .eq('profile_id', resolvedProfile.id)
-          .eq('image_url', item.uri)
+          .eq('image_url', reactionKey)
           .eq('reactor_user_id', currentUserId);
         if (error) {
+          if (isLikelyNetworkError(error)) {
+            await enqueueProfileImageReactionSyncMutation({
+              profileId: resolvedProfile.id,
+              imageUrl: reactionKey,
+              reactorUserId: currentUserId,
+              emoji: null,
+            });
+            return;
+          }
           console.log('[profile] reaction delete error', error);
           rollback();
         }
       } catch (error) {
+        if (isLikelyNetworkError(error)) {
+          await enqueueProfileImageReactionSyncMutation({
+            profileId: resolvedProfile.id,
+            imageUrl: reactionKey,
+            reactorUserId: currentUserId,
+            emoji: null,
+          });
+          return;
+        }
         console.log('[profile] reaction delete error', error);
         rollback();
       }
@@ -1613,21 +1746,49 @@ export default function ProfileViewPremiumV2Screen() {
         .upsert(
           {
             profile_id: resolvedProfile.id,
-            image_url: item.uri,
+            image_url: reactionKey,
             reactor_user_id: currentUserId,
             emoji: icon,
           },
           { onConflict: 'profile_id,image_url,reactor_user_id' },
         );
       if (error) {
+        if (isLikelyNetworkError(error)) {
+          await enqueueProfileImageReactionSyncMutation({
+            profileId: resolvedProfile.id,
+            imageUrl: reactionKey,
+            reactorUserId: currentUserId,
+            emoji: icon,
+          });
+          return;
+        }
         console.log('[profile] reaction upsert error', error);
         rollback();
       }
     } catch (error) {
+      if (isLikelyNetworkError(error)) {
+        await enqueueProfileImageReactionSyncMutation({
+          profileId: resolvedProfile.id,
+          imageUrl: reactionKey,
+          reactorUserId: currentUserId,
+          emoji: icon,
+        });
+        return;
+      }
       console.log('[profile] reaction upsert error', error);
       rollback();
     }
   }, [currentUserId, imageReactions, resolvedProfile.id]);
+  const introReactionItem = useMemo<PremiumImage | null>(() => {
+    if (!introReactionUri && !videoThumbUri) return null;
+    return {
+      id: 'vid-0',
+      uri: videoThumbUri || introReactionUri,
+      reactionUri: introReactionUri || videoThumbUri,
+      tag: 'intro',
+      isVideo: true,
+    };
+  }, [introReactionUri, videoThumbUri]);
 
   const onRightScroll = useCallback(
     (event: any) => {
@@ -1646,7 +1807,9 @@ export default function ProfileViewPremiumV2Screen() {
           locationLine={''}
         heroOverrideUri={null}
         heroOverrideType={null}
+        heroHasVideo={Boolean(resolvedProfile.profileVideoPath || resolvedProfile.profileVideo)}
         heroVideoUrl={null}
+        pauseHeroVideo={false}
         heroScrollY={heroScrollY}
         isDark={isDark}
         onBack={handleBack}
@@ -1679,7 +1842,9 @@ export default function ProfileViewPremiumV2Screen() {
         locationLine={locationLine}
         heroOverrideUri={heroOverrideUri}
         heroOverrideType={heroOverrideType}
+        heroHasVideo={Boolean(resolvedProfile.profileVideoPath || resolvedProfile.profileVideo)}
         heroVideoUrl={heroVideoUrl}
+        pauseHeroVideo={videoModalVisible}
         heroScrollY={heroScrollY}
         isDark={isDark}
         onHeroPress={handleHeroPress}
@@ -1703,6 +1868,13 @@ export default function ProfileViewPremiumV2Screen() {
       <ProfileVideoModal
         visible={videoModalVisible}
         videoUrl={videoModalUrl || undefined}
+        title={`${resolvedProfile.name}, ${resolvedProfile.age}`}
+        subtitle="Intro video"
+        reactionIcon={introReactionItem ? imageReactions[introReactionItem.reactionUri || introReactionItem.uri] ?? reactionCounts[introReactionItem.reactionUri || introReactionItem.uri]?.topEmoji ?? null : null}
+        reactionCount={introReactionItem ? reactionCounts[introReactionItem.reactionUri || introReactionItem.uri]?.count ?? 0 : 0}
+        reactionsOpen={activeReactionImageId === 'vid-0'}
+        onToggleReactions={introReactionItem ? () => toggleImageReactions(introReactionItem) : undefined}
+        onSelectReaction={introReactionItem ? (icon: string) => handleSelectReaction(introReactionItem, icon) : undefined}
         onClose={() => {
           setVideoModalVisible(false);
           setVideoModalUrl(null);
@@ -2066,14 +2238,12 @@ export default function ProfileViewPremiumV2Screen() {
                   onTap={onImageTap}
                   isVideo={item.isVideo}
                   reactionIcon={
-                    item.isVideo
-                      ? null
-                      : imageReactions[item.uri] ?? reactionCounts[item.uri]?.topEmoji ?? null
+                    imageReactions[item.reactionUri || item.uri] ?? reactionCounts[item.reactionUri || item.uri]?.topEmoji ?? null
                   }
-                  reactionCount={item.isVideo ? 0 : reactionCounts[item.uri]?.count ?? 0}
-                  reactionsOpen={!item.isVideo && activeReactionImageId === item.id}
-                  onToggleReactions={item.isVideo ? undefined : toggleImageReactions}
-                  onSelectReaction={item.isVideo ? undefined : handleSelectReaction}
+                  reactionCount={reactionCounts[item.reactionUri || item.uri]?.count ?? 0}
+                  reactionsOpen={activeReactionImageId === item.id}
+                  onToggleReactions={toggleImageReactions}
+                  onSelectReaction={handleSelectReaction}
                 />
               )}
               ItemSeparatorComponent={() => <View style={{ height: IMAGE_ITEM_GAP }} />}
@@ -2519,7 +2689,9 @@ const Header = memo(function Header({
   locationLine: _locationLine,
   heroOverrideUri,
   heroOverrideType,
+  heroHasVideo,
   heroVideoUrl,
+  pauseHeroVideo,
   heroScrollY,
   isDark,
   onHeroPress,
@@ -2535,7 +2707,9 @@ const Header = memo(function Header({
   locationLine: string;
   heroOverrideUri: string | null;
   heroOverrideType?: 'image' | 'video' | null;
+  heroHasVideo?: boolean;
   heroVideoUrl?: string | null;
+  pauseHeroVideo?: boolean;
   heroScrollY: SharedValue<number>;
   isDark: boolean;
   onHeroPress?: (heroUri: string) => void;
@@ -2557,46 +2731,11 @@ const Header = memo(function Header({
       ? true
       : heroOverrideType === 'image'
         ? false
-        : !!heroVideoUrl;
+        : !!heroHasVideo;
   const [heroMuted, setHeroMuted] = useState(true);
   const lastHeroTapRef = useRef<number | null>(null);
   const heroTapTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const heroHeight = Math.max(260, Math.min(390, Math.round(screenHeight * 0.36)));
-  const HeroVideo = ({ uri, muted }: { uri: string; muted: boolean }) => {
-    const player = useVideoPlayer(uri, (p) => {
-      p.loop = true;
-      p.muted = muted;
-      try {
-        p.play();
-      } catch {}
-    });
-
-    useEffect(() => {
-      try {
-        player.muted = muted;
-      } catch {}
-    }, [player, muted]);
-
-    useEffect(() => {
-      try {
-        player.play();
-      } catch {}
-      return () => {
-        try {
-          player.pause();
-        } catch {}
-      };
-    }, [player]);
-
-    return (
-      <VideoView
-        style={StyleSheet.absoluteFillObject}
-        player={player}
-        contentFit="cover"
-        nativeControls={false}
-      />
-    );
-  };
   useEffect(() => {
     return () => {
       if (heroTapTimeoutRef.current) clearTimeout(heroTapTimeoutRef.current);
@@ -2623,7 +2762,7 @@ const Header = memo(function Header({
       onHeroPress?.(heroUri);
     }, 260);
   };
-  const heroImageStyle = useAnimatedStyle<ImageStyle>(() => {
+  const heroImageStyle = useAnimatedStyle<ViewStyle>(() => {
     const translateY = interpolate(
       heroScrollY.value,
       [0, heroHeight],
@@ -2656,14 +2795,45 @@ const Header = memo(function Header({
       >
         {showHeroVideo ? (
           <View style={StyleSheet.absoluteFillObject}>
-            <HeroVideo uri={heroVideoUrl!} muted={heroMuted} />
+            {heroVideoUrl ? (
+              <HeroVideoSurface uri={heroVideoUrl} muted={heroMuted} shouldPlay={!pauseHeroVideo} />
+            ) : (
+              <LinearGradient
+                colors={['rgba(10,16,18,0.98)', 'rgba(17,27,29,0.94)']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={stylesStatic.heroImage}
+              >
+                <View style={stylesStatic.heroVideoPendingContent}>
+                  <View style={[stylesStatic.heroVideoPendingDot, { backgroundColor: theme.tint }]} />
+                  <Text style={stylesStatic.heroVideoPendingEyebrow}>Intro video</Text>
+                  <Text style={stylesStatic.heroVideoPendingText}>Preparing the live intro...</Text>
+                </View>
+              </LinearGradient>
+            )}
           </View>
         ) : heroUri ? (
-          <Animated.Image
-            source={{ uri: heroUri }}
-            style={[stylesStatic.heroImage, heroImageStyle]}
-            resizeMode="cover"
-          />
+          <Animated.View style={[StyleSheet.absoluteFillObject, heroImageStyle]}>
+            <OfflineImage
+              uri={heroUri}
+              style={stylesStatic.heroImage}
+              contentFit="cover"
+              fallback={
+                <LinearGradient
+                  colors={[placeholderPalette.start, placeholderPalette.end]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={stylesStatic.heroImage}
+                >
+                  <View style={stylesStatic.heroPlaceholderContent}>
+                    <Text style={stylesStatic.heroPlaceholderEyebrow}>Intentional presence</Text>
+                    <Text style={stylesStatic.heroPlaceholderInitials}>{profileInitials}</Text>
+                    <Text style={stylesStatic.heroPlaceholderText}>This profile is still unfolding.</Text>
+                  </View>
+                </LinearGradient>
+              }
+            />
+          </Animated.View>
         ) : (
           <LinearGradient
             colors={[placeholderPalette.start, placeholderPalette.end]}
@@ -2990,7 +3160,16 @@ function PhotoLightboxModal({
                     const chips = Array.isArray(item.chips) ? item.chips.filter(Boolean).slice(0, 6) : [];
                     return (
                       <View style={{ width: screenWidth, height: viewportHeight, justifyContent: 'center' }}>
-                        <Image source={{ uri: item.uri }} resizeMode="contain" style={stylesStatic.lightboxImage} />
+                        <OfflineImage
+                          uri={item.uri}
+                          style={stylesStatic.lightboxImage}
+                          contentFit="contain"
+                          fallback={
+                            <View style={[stylesStatic.lightboxImageFallback, { backgroundColor: Colors.dark.backgroundSubtle }]}>
+                              <MaterialCommunityIcons name="image-outline" size={42} color={Colors.dark.textMuted} />
+                            </View>
+                          }
+                        />
 
                         {showText ? (
                           <Animated.View style={[stylesStatic.lightboxCaptionWrap, captionStyle]} pointerEvents="none">
@@ -3142,14 +3321,21 @@ const ImageCard = memo(function ImageCard({
         cardStyle,
       ]}
     >
-      <Image source={{ uri: item.uri }} resizeMode="cover" style={StyleSheet.absoluteFillObject} />
+      <OfflineImage
+        uri={item.uri}
+        style={StyleSheet.absoluteFillObject}
+        fallback={
+          <View style={[StyleSheet.absoluteFillObject, stylesStatic.imageCardFallback, { backgroundColor: theme.backgroundSubtle }]}>
+            <MaterialCommunityIcons name={isVideo ? "play-circle-outline" : "image-outline"} size={34} color={theme.textMuted} />
+          </View>
+        }
+      />
       <Animated.View
         pointerEvents="none"
         style={[StyleSheet.absoluteFillObject, { backgroundColor: '#000' }, overlayStyle]}
       />
 
-        {!isVideo ? (
-          <View style={stylesStatic.reactionPillWrap} pointerEvents="box-none">
+        <View style={stylesStatic.reactionPillWrap} pointerEvents="box-none">
           <Pressable
             onPress={() => onToggleReactions?.(item)}
             style={[stylesStatic.reactionPill, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle }]}
@@ -3176,18 +3362,6 @@ const ImageCard = memo(function ImageCard({
             </View>
           ) : null}
         </View>
-        ) : (
-          <View
-            style={[
-              stylesStatic.videoPill,
-              { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
-            ]}
-            pointerEvents="none"
-          >
-            <MaterialCommunityIcons name="play" size={18} color={theme.textMuted} />
-            <Text style={[stylesStatic.reactionCount, { color: theme.textMuted }]}>Intro</Text>
-          </View>
-        )}
 
         {isVideo ? (
           <View style={[stylesStatic.videoBadge, { borderColor: theme.outline }]}>
@@ -3251,7 +3425,22 @@ const StoryHeader = memo(function StoryHeader({
         ]}
       >
         {avatarUri ? (
-          <Image source={{ uri: avatarUri }} style={stylesStatic.storyAvatar} />
+          <OfflineImage
+            uri={avatarUri}
+            style={stylesStatic.storyAvatar}
+            fallback={
+              <LinearGradient
+                colors={[placeholderPalette.start, placeholderPalette.end]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={stylesStatic.storyAvatar}
+              >
+                <View style={stylesStatic.storyAvatarPlaceholder}>
+                  <Text style={stylesStatic.storyAvatarInitials}>{profileInitials}</Text>
+                </View>
+              </LinearGradient>
+            }
+          />
         ) : (
           <LinearGradient
             colors={[placeholderPalette.start, placeholderPalette.end]}
@@ -3318,6 +3507,61 @@ const StoryHeader = memo(function StoryHeader({
         </View>
       </View>
     </View>
+  );
+});
+
+const HeroVideoSurface = memo(function HeroVideoSurface({
+  uri,
+  muted,
+  shouldPlay,
+}: {
+  uri: string;
+  muted: boolean;
+  shouldPlay: boolean;
+}) {
+  const player = useVideoPlayer(uri, (p) => {
+    p.loop = true;
+    p.muted = muted;
+    if (shouldPlay) {
+      try {
+        p.play();
+      } catch {}
+    }
+  });
+
+  useEffect(() => {
+    try {
+      player.muted = muted;
+    } catch {}
+  }, [player, muted]);
+
+  useEffect(() => {
+    if (shouldPlay) {
+      try {
+        player.play();
+      } catch {}
+    } else {
+      try {
+        player.pause();
+      } catch {}
+    }
+  }, [player, shouldPlay]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        player.pause();
+      } catch {}
+    };
+  }, [player]);
+
+  return (
+    <VideoView
+      style={StyleSheet.absoluteFillObject}
+      player={player}
+      contentFit="cover"
+      nativeControls={false}
+    />
   );
 });
 
@@ -3548,12 +3792,25 @@ function FloatingActions({
       sender_id: currentUserId,
       note,
     });
-    setNoteSending(false);
     if (error) {
+      setNoteSending(false);
+      if (isLikelyNetworkError(error)) {
+        await enqueueProfileNoteCreateMutation({
+          profileId,
+          senderId: currentUserId,
+          note,
+        });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+        setNoteText('');
+        setNoteOpen(false);
+        Alert.alert('Note saved', 'We will send it when the network returns.');
+        return;
+      }
       logger.error('[profile-view] send_note_failed', error);
       Alert.alert('Unable to send note', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
       return;
     }
+    setNoteSending(false);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
     setNoteText('');
     setNoteOpen(false);
@@ -3599,7 +3856,8 @@ function FloatingActions({
         setLiked(false);
         return;
       }
-      const { data } = await supabase
+      const hasPendingLike = await hasPendingSwipeSyncMutation(viewerProfileId, profileId, ['LIKE', 'SUPERLIKE']);
+      const { data, error } = await supabase
         .from('swipes')
         .select('action')
         .eq('swiper_id', viewerProfileId)
@@ -3607,7 +3865,11 @@ function FloatingActions({
         .in('action', ['LIKE', 'SUPERLIKE'])
         .limit(1);
       if (cancelled) return;
-      setLiked(!!(data && data.length > 0));
+      if (error && !isLikelyNetworkError(error)) {
+        setLiked(hasPendingLike);
+        return;
+      }
+      setLiked(!!(data && data.length > 0) || hasPendingLike);
     };
     void loadLikeState();
     return () => {
@@ -3631,12 +3893,25 @@ function FloatingActions({
         ],
         { onConflict: 'swiper_id,target_id' },
       );
-    setLikeSending(false);
     if (error) {
+      setLikeSending(false);
+      if (isLikelyNetworkError(error)) {
+        await enqueueSwipeSyncMutation({
+          userId: viewerProfileId,
+          targetId: profileId,
+          action: 'LIKE',
+          mirrorIntent: true,
+          message: null,
+        });
+        setLiked(true);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+        return;
+      }
       logger.error('[profile-view] send_like_failed', error);
       Alert.alert('Unable to like', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
       return;
     }
+    setLikeSending(false);
 
     // Mirror likes into Intent requests so they show up in the Intent -> Likes feed.
     try {
@@ -3647,6 +3922,15 @@ function FloatingActions({
         p_metadata: { source: 'profile_view', swipe_action: 'like' },
       });
       if (intentErr) {
+        if (isLikelyNetworkError(intentErr)) {
+          await enqueueSwipeSyncMutation({
+            userId: viewerProfileId,
+            targetId: profileId,
+            action: 'LIKE',
+            mirrorIntent: true,
+            message: null,
+          });
+        }
         logger.warn('[profile-view] create_like_intent_failed', {
           message: intentErr.message,
           code: (intentErr as any).code ?? null,
@@ -4001,6 +4285,32 @@ const stylesStatic = StyleSheet.create({
     color: 'rgba(255,255,255,0.82)',
     textAlign: 'center',
   },
+  heroVideoPendingContent: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  heroVideoPendingDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 999,
+    marginBottom: 10,
+  },
+  heroVideoPendingEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    color: 'rgba(255,255,255,0.76)',
+    marginBottom: 8,
+  },
+  heroVideoPendingText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.88)',
+    textAlign: 'center',
+  },
   heroTopGradient: {
     position: 'absolute',
     left: 0,
@@ -4047,6 +4357,12 @@ const stylesStatic = StyleSheet.create({
   lightboxImage: {
     width: '100%',
     height: '100%',
+  },
+  lightboxImageFallback: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   lightboxCaptionWrap: {
     position: 'absolute',
@@ -4811,6 +5127,10 @@ const stylesStatic = StyleSheet.create({
     bottom: 10,
     alignItems: 'flex-end',
     gap: 8,
+  },
+  imageCardFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   videoPill: {
     position: 'absolute',

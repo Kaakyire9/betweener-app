@@ -1,4 +1,5 @@
 import type { Match } from "@/types/match";
+import type { VibesLayoutMetrics } from "@/components/vibes/VibesResponsiveLayout";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { forwardRef, useEffect, useImperativeHandle } from "react";
@@ -15,9 +16,7 @@ import Animated, {
 } from "react-native-reanimated";
 import ExploreCard from "./ExploreCard";
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
-const IS_COMPACT_SCREEN = SCREEN_HEIGHT <= 760 || SCREEN_WIDTH <= 360;
-const CARD_HEIGHT = IS_COMPACT_SCREEN ? SCREEN_HEIGHT * 0.49 : SCREEN_HEIGHT * 0.52;
+const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
 export type ExploreStackHandle = {
   performSwipe: (dir: "left" | "right" | "superlike") => void;
@@ -32,14 +31,19 @@ type Props = {
   onProfileTap: (id: string) => void;
   onPlayPress?: (id: string) => void;
   previewingId?: string;
+  layoutMetrics: VibesLayoutMetrics;
 };
 
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.28;
 const EXIT_DISTANCE = SCREEN_WIDTH * 1.2;
 
 const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
-  ({ matches, currentIndex, setCurrentIndex, recordSwipe, onProfileTap, onPlayPress, previewingId }, ref) => {
+  ({ matches, currentIndex, setCurrentIndex, recordSwipe, onProfileTap, onPlayPress, previewingId, layoutMetrics }, ref) => {
     const list = matches && matches.length > 0 ? matches : [];
+    const cardFrameStyle = {
+      height: layoutMetrics.cardHeight,
+      borderRadius: layoutMetrics.cardBorderRadius,
+    };
 
     // Shared values
     const translateX = useSharedValue(0);
@@ -245,11 +249,17 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
     // ActiveCard child stabilizes hooks ordering when list changes
     function ActiveCard({ m, zIndex }: { m: Match; zIndex: number }) {
       return (
-        <View style={[styles.cardContainer, { zIndex }]}> 
+        <View style={[styles.cardContainer, cardFrameStyle, { zIndex }]}> 
           <GestureDetector gesture={pan}>
             <Animated.View style={{ flex: 1 }} pointerEvents="box-none">
-              <Animated.View style={[styles.card, activeStyle]}>
-                <ExploreCard match={m} onPress={() => onProfileTap(m.id)} onPlayPress={() => onPlayPress?.(m.id)} isPreviewing={previewingId === m.id} />
+              <Animated.View style={[styles.card, cardFrameStyle, activeStyle]}>
+                <ExploreCard
+                  match={m}
+                  onPress={() => onProfileTap(m.id)}
+                  onPlayPress={() => onPlayPress?.(m.id)}
+                  isPreviewing={previewingId === m.id}
+                  layoutMetrics={layoutMetrics}
+                />
               </Animated.View>
 
               <Animated.View pointerEvents="none" style={[styles.feedbackContainer, overlayContainerStyle]}>
@@ -287,8 +297,14 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
       }, [currentIndex, index]);
 
       return (
-        <Animated.View key={m.id} style={[styles.card, st, { zIndex }]}>
-          <ExploreCard match={m} onPress={() => onProfileTap(m.id)} onPlayPress={() => onPlayPress?.(m.id)} isPreviewing={previewingId === m.id} />
+        <Animated.View key={m.id} style={[styles.card, cardFrameStyle, st, { zIndex }]}>
+          <ExploreCard
+            match={m}
+            onPress={() => onProfileTap(m.id)}
+            onPlayPress={() => onPlayPress?.(m.id)}
+            isPreviewing={previewingId === m.id}
+            layoutMetrics={layoutMetrics}
+          />
         </Animated.View>
       );
     }
@@ -320,14 +336,12 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     top: 0,
-    height: CARD_HEIGHT,
   },
   card: {
     position: "absolute",
     left: 0,
     right: 0,
     top: 0,
-    height: CARD_HEIGHT,
     borderRadius: 28,
     overflow: "visible",
     backgroundColor: "transparent",

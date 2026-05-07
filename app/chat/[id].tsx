@@ -7,6 +7,15 @@ import { useAuth } from "@/lib/auth-context";
 import { decryptMediaBytes, encryptMediaBytes, getOrCreateDeviceKeypair } from "@/lib/e2ee";
 import { computeConversationSignalLabel, computeFirstReplyHours, computeInterestOverlapRatio } from "@/lib/match/match-score";
 import { Motion } from "@/lib/motion";
+import { isLikelyNetworkError } from "@/lib/network";
+import {
+  buildChatPeerStoreKey,
+  buildChatThreadStoreKey,
+  migrateLegacyChatThreadSnapshot,
+  readOfflineSnapshot,
+  writeOfflineSnapshot,
+} from "@/lib/offline/chat-store";
+import { enqueueChatTextSendMutation } from "@/lib/offline/mutation-queue";
 import { showOpenSettingsPrompt } from "@/lib/permission-prompts";
 import { getSafeRemoteImageUri, getUserFacingDisplayName, hasLeftBetweener } from "@/lib/profile/display-name";
 import { supabase } from "@/lib/supabase";
@@ -27,6 +36,7 @@ import type { AudioRecorder } from "expo-audio";
 import { BlurView } from "expo-blur";
 import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
+import { Image as ExpoImage } from "expo-image";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Haptics from 'expo-haptics';
 import * as ImageManipulator from "expo-image-manipulator";
@@ -289,6 +299,22 @@ type MessageType = {
   replyTo?: MessageType;
 };
 
+type CachedMessageType = Omit<
+  MessageType,
+  "timestamp" | "readAt" | "deletedAt" | "editedAt" | "replyTo" | "location" | "dateInvite"
+> & {
+  timestamp: string;
+  readAt?: string;
+  deletedAt?: string | null;
+  editedAt?: string | null;
+  location?: Omit<NonNullable<MessageType["location"]>, "expiresAt"> & {
+    expiresAt?: string | null;
+  };
+  dateInvite?: Omit<NonNullable<MessageType["dateInvite"]>, "scheduledFor"> & {
+    scheduledFor: string;
+  };
+};
+
 type ReceiptIconState = {
   name: ComponentProps<typeof MaterialCommunityIcons>['name'];
   color: string;
@@ -322,6 +348,59 @@ type MessageRow = {
   encrypted_media_alg?: string | null;
   encrypted_media_mime?: string | null;
   encrypted_media_size?: number | null;
+};
+
+const serializeCachedMessages = (messages: MessageType[]): CachedMessageType[] =>
+  (messages || []).map((message) => ({
+    ...message,
+    timestamp: message.timestamp instanceof Date ? message.timestamp.toISOString() : new Date().toISOString(),
+    readAt: message.readAt instanceof Date ? message.readAt.toISOString() : undefined,
+    deletedAt: message.deletedAt instanceof Date ? message.deletedAt.toISOString() : (message.deletedAt ?? null),
+    editedAt: message.editedAt instanceof Date ? message.editedAt.toISOString() : (message.editedAt ?? null),
+    location: message.location
+      ? {
+          ...message.location,
+          expiresAt: message.location.expiresAt instanceof Date
+            ? message.location.expiresAt.toISOString()
+            : (message.location.expiresAt ?? null),
+        }
+      : undefined,
+    dateInvite: message.dateInvite
+      ? {
+          ...message.dateInvite,
+          scheduledFor:
+            message.dateInvite.scheduledFor instanceof Date
+              ? message.dateInvite.scheduledFor.toISOString()
+              : new Date().toISOString(),
+        }
+      : undefined,
+    replyTo: undefined,
+  }));
+
+const deserializeCachedMessages = (raw: unknown): MessageType[] => {
+  if (!Array.isArray(raw)) return [];
+  return (raw as CachedMessageType[]).map((message) => ({
+    ...message,
+    timestamp: message.timestamp ? new Date(message.timestamp) : new Date(),
+    readAt: message.readAt ? new Date(message.readAt) : undefined,
+    deletedAt: message.deletedAt ? new Date(message.deletedAt) : null,
+    editedAt: message.editedAt ? new Date(message.editedAt) : null,
+    location: message.location
+      ? {
+          ...message.location,
+          expiresAt: message.location.expiresAt ? new Date(message.location.expiresAt) : null,
+        }
+      : undefined,
+    dateInvite: message.dateInvite
+      ? {
+          ...message.dateInvite,
+          scheduledFor: message.dateInvite.scheduledFor
+            ? new Date(message.dateInvite.scheduledFor)
+            : new Date(),
+        }
+      : undefined,
+    replyTo: undefined,
+  }));
 };
 
 type MediaUploadStatus = {
@@ -1872,10 +1951,20 @@ const MessageRowItem = memo(
           ]}
         >
           {showAvatar ? (
-            <Image
-              source={userAvatar ? { uri: userAvatar } : BLOCKED_AVATAR_SOURCE}
-              style={styles.messageAvatar}
-            />
+            userAvatar ? (
+              <ExpoImage
+                source={{ uri: userAvatar }}
+                style={styles.messageAvatar}
+                cachePolicy="disk"
+                contentFit="cover"
+                transition={0}
+              />
+            ) : (
+              <Image
+                source={BLOCKED_AVATAR_SOURCE}
+                style={styles.messageAvatar}
+              />
+            )
             ) : showAvatarSpacer ? (
             <View style={styles.messageAvatarSpacer} />
           ) : null}
@@ -2230,7 +2319,13 @@ const MessageRowItem = memo(
                             },
                           ]}
                         >
-                           <Image source={{ uri: userAvatar }} style={styles.datePlanPersonAvatar} />
+                           <ExpoImage
+                             source={{ uri: userAvatar }}
+                             style={styles.datePlanPersonAvatar}
+                             cachePolicy="disk"
+                             contentFit="cover"
+                             transition={0}
+                           />
                           <Text
                             style={[
                               styles.datePlanPersonText,
@@ -3226,6 +3321,7 @@ export default function ConversationScreen() {
     user_id: string;
     verification_level?: number | null;
     full_name?: string | null;
+    avatar_url?: string | null;
     city?: string | null;
     region?: string | null;
     location?: string | null;
@@ -3278,6 +3374,15 @@ export default function ConversationScreen() {
     () => (user?.id ? `${CHAT_SAFETY_SEEN_KEY}:${user.id}` : null),
     [user?.id],
   );
+  const chatThreadCacheKey = useMemo(
+    () => (user?.id && conversationId ? buildChatThreadStoreKey(user.id, conversationId) : null),
+    [conversationId, user?.id],
+  );
+  const chatPeerStoreKey = useMemo(
+    () => (user?.id && conversationId ? buildChatPeerStoreKey(user.id, conversationId) : null),
+    [conversationId, user?.id],
+  );
+  const chatThreadCacheLoadedKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     // When switching threads, allow the safety prompt to re-evaluate (but it will still be deduped via AsyncStorage).
@@ -3377,6 +3482,19 @@ export default function ConversationScreen() {
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
   useEffect(() => {
+    if (!chatPeerStoreKey) return;
+    let cancelled = false;
+    (async () => {
+      const cachedPeer = await readOfflineSnapshot<typeof peerProfile>(chatPeerStoreKey);
+      if (cancelled || !cachedPeer) return;
+      setPeerProfile((prev) => prev ?? cachedPeer);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [chatPeerStoreKey]);
+
+  useEffect(() => {
     let cancelled = false;
     const fetchPeerProfile = async () => {
       if (!conversationId) {
@@ -3385,19 +3503,29 @@ export default function ConversationScreen() {
       }
       const { data, error } = await supabase
         .from('profiles')
-        .select('id,user_id,verification_level,full_name,city,region,location,account_state,deleted_at')
+        .select('id,user_id,verification_level,full_name,avatar_url,city,region,location,account_state,deleted_at')
         .eq('user_id', conversationId)
         .maybeSingle();
       if (error) {
         console.log('[chat] fetch peer profile error', error);
+        if (isLikelyNetworkError(error)) {
+          return;
+        }
       }
-      if (!cancelled) setPeerProfile(data ?? null);
+      if (!cancelled && data) {
+        setPeerProfile(data);
+        if (chatPeerStoreKey) {
+          void writeOfflineSnapshot(chatPeerStoreKey, data);
+        }
+      } else if (!cancelled && !error) {
+        setPeerProfile(null);
+      }
     };
     void fetchPeerProfile();
     return () => {
       cancelled = true;
     };
-  }, [conversationId]);
+  }, [chatPeerStoreKey, conversationId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4685,6 +4813,41 @@ export default function ConversationScreen() {
     });
   }, []);
 
+  useEffect(() => {
+    if (!chatThreadCacheKey) return;
+    if (chatThreadCacheLoadedKeyRef.current === chatThreadCacheKey) return;
+    chatThreadCacheLoadedKeyRef.current = chatThreadCacheKey;
+
+    let cancelled = false;
+    (async () => {
+      const cached =
+        (await readOfflineSnapshot<CachedMessageType[]>(chatThreadCacheKey)) ??
+        (user?.id && conversationId
+          ? await migrateLegacyChatThreadSnapshot<CachedMessageType[]>(user.id, conversationId)
+          : null);
+      if (cancelled || !cached) return;
+      const hydrated = reconcileDeliveredFallback(linkReplies(deserializeCachedMessages(cached)));
+      if (hydrated.length === 0) {
+        setMessagesLoaded(true);
+        return;
+      }
+      setMessages((prev) => (prev.length === 0 ? hydrated : prev));
+      setMessagesLoaded(true);
+      setHasMore(hydrated.length >= PAGE_SIZE);
+      setOldestTimestamp(hydrated[0]?.timestamp ?? null);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [chatThreadCacheKey, conversationId, linkReplies, reconcileDeliveredFallback, user?.id]);
+
+  useEffect(() => {
+    if (!chatThreadCacheKey) return;
+    if (!messagesLoaded) return;
+    void writeOfflineSnapshot(chatThreadCacheKey, serializeCachedMessages(messages));
+  }, [chatThreadCacheKey, messages, messagesLoaded]);
+
   const replaceMessageById = useCallback((
     items: MessageType[],
     messageId: string,
@@ -5689,6 +5852,15 @@ export default function ConversationScreen() {
       .single();
 
     if (error || !data) {
+      if (isLikelyNetworkError(error)) {
+        await enqueueChatTextSendMutation({
+          senderId: user.id,
+          receiverId: conversationId,
+          text,
+          replyToMessageId: replyingTo?.id ?? null,
+        });
+        return;
+      }
       console.log('[chat] send attachment text error', error);
       setMessages((prev) =>
         prev.map((msg) =>
@@ -6423,6 +6595,23 @@ export default function ConversationScreen() {
 
     if (error) {
       console.log('[chat] fetch messages error', error);
+      if (isLikelyNetworkError(error)) {
+        if (messagesRef.current.length === 0 && chatThreadCacheKey) {
+          const cached =
+            (await readOfflineSnapshot<CachedMessageType[]>(chatThreadCacheKey)) ??
+            (user?.id && conversationId
+              ? await migrateLegacyChatThreadSnapshot<CachedMessageType[]>(user.id, conversationId)
+              : null);
+          if (cached) {
+            const hydrated = reconcileDeliveredFallback(linkReplies(deserializeCachedMessages(cached)));
+            setMessages(hydrated);
+            setHasMore(hydrated.length >= PAGE_SIZE);
+            setOldestTimestamp(hydrated[0]?.timestamp ?? null);
+          }
+        }
+        setMessagesLoaded(true);
+        return;
+      }
       setMessages([]);
       setMessagesLoaded(true);
       return;
@@ -6439,6 +6628,9 @@ export default function ConversationScreen() {
     const linked = reconcileDeliveredFallback(linkReplies(combined));
     setMessages(linked);
     setMessagesLoaded(true);
+    if (chatThreadCacheKey) {
+      void writeOfflineSnapshot(chatThreadCacheKey, serializeCachedMessages(linked));
+    }
     void syncMessageReactions(linked.map((msg) => msg.id).filter((id) => !id.startsWith('system:')));
     const viewOnceIds = linked.filter((msg) => msg.isViewOnce).map((msg) => msg.id);
     void syncViewOnceStatus(viewOnceIds);
@@ -6451,7 +6643,7 @@ export default function ConversationScreen() {
       .eq('receiver_id', user.id)
       .eq('sender_id', conversationId)
       .is('delivered_at', null);
-  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, reconcileDeliveredFallback, syncMessageReactions, syncViewOnceStatus, user?.id]);
+  }, [chatThreadCacheKey, conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, reconcileDeliveredFallback, syncMessageReactions, syncViewOnceStatus, user?.id]);
 
   const clearPendingReadTimer = useCallback((messageId: string) => {
     const timer = pendingReadTimersRef.current[messageId];
@@ -7501,6 +7693,18 @@ export default function ConversationScreen() {
       .single();
 
     if (error || !data) {
+      if (isLikelyNetworkError(error)) {
+        await enqueueChatTextSendMutation({
+          senderId: user.id,
+          receiverId: conversationId,
+          text: trimmed,
+          replyToMessageId: replyingTo?.id ?? null,
+        });
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 100);
+        return;
+      }
       console.log('[chat] send message error', error);
       setMessages((prev) =>
         prev.map((msg) =>
@@ -8415,10 +8619,17 @@ export default function ConversationScreen() {
 
     return (
         <View style={styles.typingContainer}>
-          <Image
-            source={userAvatar ? { uri: userAvatar } : BLOCKED_AVATAR_SOURCE}
-            style={styles.typingAvatar}
-          />
+          {userAvatar ? (
+            <ExpoImage
+              source={{ uri: userAvatar }}
+              style={styles.typingAvatar}
+              cachePolicy="disk"
+              contentFit="cover"
+              transition={0}
+            />
+          ) : (
+            <Image source={BLOCKED_AVATAR_SOURCE} style={styles.typingAvatar} />
+          )}
         <View style={styles.typingBubble}>
           <Text style={styles.typingLabel}>{userName || 'Your match'} is typing</Text>
           <Animated.View style={styles.typingDots}>
@@ -9820,19 +10031,33 @@ export default function ConversationScreen() {
                 style={[styles.avatarRing, styles.avatarRingActive]}
               >
                 <View style={styles.avatarInner}>
-                    <Image
-                      source={isChatBlocked || !userAvatar ? BLOCKED_AVATAR_SOURCE : { uri: userAvatar }}
-                      style={styles.headerAvatar}
-                    />
+                    {isChatBlocked || !userAvatar ? (
+                      <Image source={BLOCKED_AVATAR_SOURCE} style={styles.headerAvatar} />
+                    ) : (
+                      <ExpoImage
+                        source={{ uri: userAvatar }}
+                        style={styles.headerAvatar}
+                        cachePolicy="disk"
+                        contentFit="cover"
+                        transition={0}
+                      />
+                    )}
                 </View>
               </LinearGradient>
             ) : (
               <View style={styles.avatarRing}>
                 <View style={styles.avatarInner}>
-                    <Image
-                      source={isChatBlocked || !userAvatar ? BLOCKED_AVATAR_SOURCE : { uri: userAvatar }}
-                      style={styles.headerAvatar}
-                    />
+                    {isChatBlocked || !userAvatar ? (
+                      <Image source={BLOCKED_AVATAR_SOURCE} style={styles.headerAvatar} />
+                    ) : (
+                      <ExpoImage
+                        source={{ uri: userAvatar }}
+                        style={styles.headerAvatar}
+                        cachePolicy="disk"
+                        contentFit="cover"
+                        transition={0}
+                      />
+                    )}
                 </View>
               </View>
             )}
@@ -10023,7 +10248,13 @@ export default function ConversationScreen() {
                   <Text style={styles.datePlannerSubtitle}>{datePlannerSubtitle}</Text>
                   {userAvatar ? (
                       <View style={styles.datePlannerPersonChip}>
-                        <Image source={{ uri: userAvatar }} style={styles.datePlannerPersonAvatar} />
+                        <ExpoImage
+                          source={{ uri: userAvatar }}
+                          style={styles.datePlannerPersonAvatar}
+                          cachePolicy="disk"
+                          contentFit="cover"
+                          transition={0}
+                        />
                       <View style={styles.datePlannerPersonText}>
                         <Text style={styles.datePlannerPersonLabel}>Planning for</Text>
                         <Text style={styles.datePlannerPersonName} numberOfLines={1}>

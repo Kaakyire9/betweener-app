@@ -20,7 +20,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import Animated, { FadeInDown } from "react-native-reanimated";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { PurchasesOfferings, PurchasesPackage } from "react-native-purchases";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -161,6 +161,9 @@ export default function PremiumPlansScreen() {
   const [selectedIntervals, setSelectedIntervals] = useState<Record<PaidPlan, PremiumPlanInterval>>(PLAN_DEFAULT_INTERVAL);
   const showDeveloperBillingNotice = __DEV__ && !billingReady && !loading && isRevenueCatConfiguredForPlatform() === false;
   const formattedCurrentPlanEndsAt = formatMembershipDate(currentPlanEndsAt);
+  const accountLabel = Platform.OS === "android" ? "Google Play account" : "Apple ID account";
+  const manageLocationLabel = Platform.OS === "android" ? "Google Play subscription settings" : "App Store account settings";
+  const restoreLabel = Platform.OS === "android" ? "Google Play account" : "Apple ID";
 
   const packageCatalog = useMemo(
     () => ({
@@ -521,7 +524,7 @@ export default function PremiumPlansScreen() {
           <View style={styles.footerCard}>
             <Text style={styles.footerTitle}>Restore purchases</Text>
             <Text style={styles.footerBody}>
-              Already subscribed on this Apple ID? Restore your purchases to refresh your membership on this device.
+              {`Already subscribed on this ${restoreLabel}? Restore your purchases to refresh your membership on this device.`}
             </Text>
             <View style={styles.footerActions}>
               <Pressable
@@ -537,7 +540,7 @@ export default function PremiumPlansScreen() {
             </View>
             <View style={styles.legalFooter}>
               <Text style={styles.legalCopy}>
-                Payment will be charged to your Apple ID account at confirmation of purchase. Subscriptions renew automatically unless cancelled at least 24 hours before the end of the current period. You can manage and cancel your subscriptions in App Store account settings.
+                {`Payment will be charged to your ${accountLabel} at confirmation of purchase. Subscriptions renew automatically unless cancelled at least 24 hours before the end of the current period. You can manage and cancel your subscriptions in ${manageLocationLabel}.`}
               </Text>
               <View style={styles.legalLinksRow}>
                 <Pressable onPress={() => void openExternalUrl(TRUST_LINKS.terms)}>

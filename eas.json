@@ -35,8 +35,11 @@
     "playInternal": {
       "distribution": "store",
       "autoIncrement": true,
+      "buildArtifactPaths": [
+        "android/app/build/outputs/mapping/release/mapping.txt"
+      ],
       "android": {
-        "buildType": "app-bundle"
+        "gradleCommand": ":app:bundleRelease -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true"
       },
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "preview",
@@ -58,8 +61,11 @@
     },
     "production": {
       "autoIncrement": true,
+      "buildArtifactPaths": [
+        "android/app/build/outputs/mapping/release/mapping.txt"
+      ],
       "android": {
-        "buildType": "app-bundle"
+        "gradleCommand": ":app:bundleRelease -Pandroid.enableMinifyInReleaseBuilds=true -Pandroid.enableShrinkResourcesInReleaseBuilds=true"
       },
       "env": {
         "EXPO_PUBLIC_ENVIRONMENT": "production",

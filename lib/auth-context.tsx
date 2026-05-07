@@ -2,6 +2,7 @@ import { getOrCreateDeviceKeypair } from '@/lib/e2ee';
 import { registerPushToken } from '@/lib/notifications/push';
 import { clearSignupSession, consumeSignupMetadata, finalizeSignupPhoneVerification, getSignupPhoneState, updateSignupEventForUser } from '@/lib/signup-tracking';
 import { ensureFreshSession, initSupabaseAuthLifecycle, supabase } from '@/lib/supabase';
+import { isLikelyNetworkError } from '@/lib/network';
 import { Session, User } from '@supabase/supabase-js';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
@@ -11,6 +12,12 @@ import { setSentryUser } from '@/lib/telemetry/sentry';
 
 type Profile = Database['public']['Tables']['profiles']['Row'];
 type FetchProfileOptions = { force?: boolean };
+type PersistedAuthSnapshot = {
+  session: Session;
+  profile: Profile | null;
+  phoneVerified: boolean;
+  cachedAt: number;
+};
 
 // Only allow writing actual DB columns (compile-time enforced). Also prevent callers
 // from setting identity/system columns; those are controlled in auth-context.
@@ -34,6 +41,8 @@ type AuthContextType = {
   hasProfile: boolean;
   isEmailVerified: boolean;
   phoneVerified: boolean;
+  authRecoveryPending: boolean;
+  hadStableAppAccess: boolean;
   
   // Auth Actions
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
@@ -48,14 +57,56 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const PHONE_VERIFIED_CACHE_KEY_PREFIX = "phone_verified_cache_v1:";
+const AUTH_SNAPSHOT_KEY = "auth_snapshot_v1";
 const PHONE_VERIFIED_CACHE_TTL_MS = 60_000;
 const PROFILE_DIAG_TIMEOUT_MS = 8000;
 const PROFILE_CACHE_TTL_MS = 60_000;
 const RESUME_REFRESH_THROTTLE_MS = 10_000;
 const RESUME_REFRESH_TIMEOUT_MS = 6_000;
+const AUTH_SNAPSHOT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const getPhoneVerifiedCacheKey = (userId: string) =>
   `${PHONE_VERIFIED_CACHE_KEY_PREFIX}${userId}`;
+
+const readPersistedAuthSnapshot = async (): Promise<PersistedAuthSnapshot | null> => {
+  try {
+    const raw = await AsyncStorage.getItem(AUTH_SNAPSHOT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PersistedAuthSnapshot> | null;
+    if (!parsed?.session?.user?.id) return null;
+    if (
+      typeof parsed.cachedAt === "number" &&
+      Date.now() - parsed.cachedAt > AUTH_SNAPSHOT_TTL_MS
+    ) {
+      await AsyncStorage.removeItem(AUTH_SNAPSHOT_KEY);
+      return null;
+    }
+    return {
+      session: parsed.session as Session,
+      profile: (parsed.profile as Profile | null) ?? null,
+      phoneVerified: parsed.phoneVerified === true || parsed.profile?.phone_verified === true,
+      cachedAt: typeof parsed.cachedAt === "number" ? parsed.cachedAt : Date.now(),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const writePersistedAuthSnapshot = async (snapshot: PersistedAuthSnapshot) => {
+  try {
+    await AsyncStorage.setItem(AUTH_SNAPSHOT_KEY, JSON.stringify(snapshot));
+  } catch {
+    // best effort only
+  }
+};
+
+const clearPersistedAuthSnapshot = async () => {
+  try {
+    await AsyncStorage.removeItem(AUTH_SNAPSHOT_KEY);
+  } catch {
+    // best effort only
+  }
+};
 
 const diagnoseProfileFetch = async (userId: string) => {
   if (typeof __DEV__ === "undefined" || !__DEV__) return;
@@ -237,17 +288,94 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [phoneVerified, setPhoneVerified] = useState(false);
+  const [authRecoveryPending, setAuthRecoveryPending] = useState(false);
+  const [hadStableAppAccess, setHadStableAppAccess] = useState(false);
   const presenceUpdateAtRef = useRef(0);
   const resumeRefreshAtRef = useRef(0);
   const phoneRefreshInFlightRef = useRef(false);
   const phoneRefreshPromiseRef = useRef<Promise<boolean> | null>(null);
+  const profileFetchPromiseRef = useRef<{
+    userId: string;
+    promise: Promise<Profile | null>;
+  } | null>(null);
   const profileCacheRef = useRef<{ userId: string; profile: Profile | null; fetchedAt: number } | null>(null);
   const accessTokenRef = useRef<string | null>(null);
+  const signOutRequestedRef = useRef(false);
+  const currentSessionUserIdRef = useRef<string | null>(null);
 
   // Computed states
   const isAuthenticated = !!session && !!user;
   const hasProfile = !!profile && profile.profile_completed === true;
   const isEmailVerified = !!user?.email_confirmed_at;
+
+  const applySignedOutState = () => {
+    accessTokenRef.current = null;
+    profileCacheRef.current = null;
+    profileFetchPromiseRef.current = null;
+    currentSessionUserIdRef.current = null;
+    setAuthRecoveryPending(false);
+    setHadStableAppAccess(false);
+    setSession(null);
+    setUser(null);
+    setProfile(null);
+    setPhoneVerified(false);
+  };
+
+  const persistAuthSnapshot = async (
+    nextSession: Session,
+    nextProfile: Profile | null,
+    nextPhoneVerified: boolean
+  ) => {
+    const existing = await readPersistedAuthSnapshot();
+    await writePersistedAuthSnapshot({
+      session: nextSession,
+      profile: nextProfile ?? existing?.profile ?? null,
+      phoneVerified:
+        nextPhoneVerified ||
+        nextProfile?.phone_verified === true ||
+        existing?.phoneVerified === true,
+      cachedAt: Date.now(),
+    });
+  };
+
+  const restoreAuthSnapshot = async (reason: string) => {
+    const snapshot = await readPersistedAuthSnapshot();
+    if (!snapshot) return null;
+
+    accessTokenRef.current = snapshot.session.access_token ?? null;
+    currentSessionUserIdRef.current = snapshot.session.user?.id ?? null;
+    const restoredStableAccess =
+      !!snapshot.session &&
+      !!snapshot.session.user &&
+      !!snapshot.session.user.email_confirmed_at &&
+      (snapshot.phoneVerified === true || snapshot.profile?.phone_verified === true) &&
+      snapshot.profile?.profile_completed === true;
+    setAuthRecoveryPending(false);
+    setHadStableAppAccess(restoredStableAccess);
+    setSession(snapshot.session);
+    setUser(snapshot.session.user ?? null);
+    setProfile(snapshot.profile ?? null);
+    setPhoneVerified(snapshot.phoneVerified === true || snapshot.profile?.phone_verified === true);
+
+    if (snapshot.session.user?.id) {
+      profileCacheRef.current = {
+        userId: snapshot.session.user.id,
+        profile: snapshot.profile ?? null,
+        fetchedAt: Date.now(),
+      };
+    }
+
+    if (typeof __DEV__ !== "undefined" && __DEV__) {
+      console.log("[auth] restored persisted auth snapshot", {
+        reason,
+        userId: snapshot.session.user?.id ?? null,
+        hasProfile: !!snapshot.profile,
+        phoneVerified: snapshot.phoneVerified,
+      });
+    }
+
+    return snapshot;
+  };
 
   // Ensure Supabase token refresh is correctly managed across iOS background/foreground.
   useEffect(() => {
@@ -328,6 +456,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         const initialSession = data?.session ?? null;
         accessTokenRef.current = initialSession?.access_token ?? null;
+        currentSessionUserIdRef.current = initialSession?.user?.id ?? null;
+        setAuthRecoveryPending(false);
         setSession(initialSession);
         setUser(initialSession?.user ?? null);
 
@@ -345,20 +475,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (!cancelled && initialProfile?.phone_verified === true) {
             setPhoneVerified(true);
           }
+          if (
+            initialSession.user.email_confirmed_at &&
+            initialProfile?.phone_verified === true &&
+            initialProfile?.profile_completed === true
+          ) {
+            setHadStableAppAccess(true);
+          }
+          await persistAuthSnapshot(
+            initialSession,
+            initialProfile ?? null,
+            initialProfile?.phone_verified === true
+          );
         } else {
-          setProfile(null);
-          setPhoneVerified(false);
+          const restored = await restoreAuthSnapshot(
+            error?.message === "initial_session_timeout" ? "initial_session_timeout" : "initial_session_empty"
+          );
+          if (!restored) {
+            setProfile(null);
+            setPhoneVerified(false);
+          }
         }
       } catch (error) {
         if (typeof __DEV__ !== "undefined" && __DEV__) {
           console.log("[auth] initial auth bootstrap error", error);
         }
         if (cancelled) return;
-        accessTokenRef.current = null;
-        setSession(null);
-        setUser(null);
-        setProfile(null);
-        setPhoneVerified(false);
+        const restored = await restoreAuthSnapshot("initial_auth_exception");
+        if (!restored) {
+          applySignedOutState();
+        }
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -377,10 +523,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           });
         }
         accessTokenRef.current = session?.access_token ?? null;
-        setSession(session);
-        setUser(session?.user ?? null);
         
         if (session?.user) {
+          signOutRequestedRef.current = false;
+          setAuthRecoveryPending(false);
+          const nextUserId = session.user.id;
+          const isRedundantInitialSession =
+            _event === "INITIAL_SESSION" &&
+            currentSessionUserIdRef.current === nextUserId &&
+            profileCacheRef.current?.userId === nextUserId;
+
+          currentSessionUserIdRef.current = nextUserId;
+          setSession(session);
+          setUser(session.user);
+
+          if (isRedundantInitialSession) {
+            return;
+          }
+
           // Don't block auth state changes on a network write; profile fetching already
           // has its own "ensure then retry" logic.
           void ensureProfileExists(session.user.id);
@@ -400,13 +560,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
 
           // refresh profile one more time if first fetch failed
-          if (!profileData) {
-            await fetchProfile(session.user.id);
+          let finalProfile = profileData;
+          if (!finalProfile) {
+            finalProfile = await fetchProfile(session.user.id);
           }
+          if (
+            session.user.email_confirmed_at &&
+            (finalProfile?.phone_verified === true || phoneVerified) &&
+            finalProfile?.profile_completed === true
+          ) {
+            setHadStableAppAccess(true);
+          }
+          await persistAuthSnapshot(
+            session,
+            finalProfile ?? null,
+            (finalProfile?.phone_verified === true) || phoneVerified
+          );
         } else {
-          accessTokenRef.current = null;
-          setProfile(null);
-          setPhoneVerified(false);
+          if (_event === "SIGNED_OUT" || signOutRequestedRef.current) {
+            signOutRequestedRef.current = false;
+            applySignedOutState();
+            await clearPersistedAuthSnapshot();
+            return;
+          }
+
+          setAuthRecoveryPending(true);
+          const restored = await restoreAuthSnapshot(`auth_event:${_event}`);
+          if (!restored) {
+            applySignedOutState();
+          } else {
+            setAuthRecoveryPending(false);
+          }
         }
       }
     );
@@ -419,7 +603,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Fetch user profile
   const fetchProfile = async (userId: string, options?: FetchProfileOptions) => {
-    try {
+    const inFlight = profileFetchPromiseRef.current;
+    if (inFlight && inFlight.userId === userId) {
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[auth] fetchProfile: awaiting in-flight");
+      }
+      return await inFlight.promise;
+    }
+
+    const fetchPromise = (async () => {
+      try {
       if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.log("[auth] fetchProfile: start", { userId });
       }
@@ -458,11 +651,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.log("[auth] fetchProfile: rest ok");
       }
       return restProfile;
-    } catch (error) {
+      } catch (error) {
       if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.log("[auth] fetchProfile: error", error);
       }
       return null;
+      }
+    })();
+
+    profileFetchPromiseRef.current = {
+      userId,
+      promise: fetchPromise,
+    };
+
+    try {
+      return await fetchPromise;
+    } finally {
+      if (profileFetchPromiseRef.current?.promise === fetchPromise) {
+        profileFetchPromiseRef.current = null;
+      }
     }
   };
 
@@ -629,12 +836,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         })
         .eq('user_id', user.id);
       if (error) {
-        console.error('[presence] update error', error);
+        if (isLikelyNetworkError(error)) {
+          if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            console.warn('[presence] update warning', error);
+          }
+        } else {
+          console.error('[presence] update error', error);
+        }
       } else if (typeof __DEV__ !== 'undefined' && __DEV__) {
         console.log('[presence] set', { online: nextOnline });
       }
     } catch (error) {
-      console.error('[presence] update error', error);
+      if (isLikelyNetworkError(error)) {
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.warn('[presence] update warning', error);
+        }
+      } else {
+        console.error('[presence] update error', error);
+      }
     }
   };
 
@@ -702,6 +921,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user?.id]);
 
   useEffect(() => {
+    if (!user?.id) return;
     void refreshPhoneState();
   }, [user?.id, profile?.phone_verified]);
 
@@ -740,6 +960,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [user?.id]);
 
+  useEffect(() => {
+    if (!session?.user) return;
+    void persistAuthSnapshot(session, profile ?? null, phoneVerified);
+  }, [
+    session,
+    profile,
+    phoneVerified,
+  ]);
+
+  useEffect(() => {
+    const hasStableAccessNow =
+      !!session &&
+      !!user &&
+      !!user.email_confirmed_at &&
+      phoneVerified &&
+      !!profile &&
+      profile.profile_completed === true;
+
+    if (hasStableAccessNow) {
+      if (!hadStableAppAccess) {
+        setHadStableAppAccess(true);
+      }
+      if (authRecoveryPending) {
+        setAuthRecoveryPending(false);
+      }
+    }
+  }, [authRecoveryPending, hadStableAppAccess, phoneVerified, profile, session, user]);
+
   const signIn = async (email: string, password: string) => {
     setIsAuthenticating(true);
     try {
@@ -772,12 +1020,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signOut = async () => {
+    signOutRequestedRef.current = true;
+    await clearPersistedAuthSnapshot();
     if (user?.id) {
       await updatePresence(false);
     }
     const { error } = await supabase.auth.signOut();
     if (error) {
       console.error('Error signing out:', error);
+      signOutRequestedRef.current = false;
     }
   };
 
@@ -820,6 +1071,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     hasProfile,
     isEmailVerified,
     phoneVerified,
+    authRecoveryPending,
+    hadStableAppAccess,
     
     // Actions
     signIn,
@@ -847,14 +1100,26 @@ export function useAuth() {
 
 // Auth guard hook for protected routes
 export function useAuthGuard() {
-  const { isAuthenticated, isLoading, isEmailVerified, hasProfile, phoneVerified } = useAuth();
+  const {
+    isAuthenticated,
+    isLoading,
+    isEmailVerified,
+    hasProfile,
+    phoneVerified,
+    authRecoveryPending,
+    hadStableAppAccess,
+  } = useAuth();
+
+  const stableAccess = isAuthenticated && isEmailVerified && phoneVerified && hasProfile;
+  const canPreserveAccessDuringRecovery =
+    hadStableAppAccess || (authRecoveryPending && hasProfile && phoneVerified);
   
   return {
     isLoading,
-    needsAuth: !isAuthenticated,
-    needsEmailVerification: isAuthenticated && !isEmailVerified,
-    needsPhoneVerification: isAuthenticated && isEmailVerified && !phoneVerified,
-    needsProfileSetup: isAuthenticated && isEmailVerified && phoneVerified && !hasProfile,
-    canAccessApp: isAuthenticated && isEmailVerified && phoneVerified && hasProfile,
+    needsAuth: !isAuthenticated && !canPreserveAccessDuringRecovery,
+    needsEmailVerification: isAuthenticated && !isEmailVerified && !canPreserveAccessDuringRecovery,
+    needsPhoneVerification: isAuthenticated && isEmailVerified && !phoneVerified && !canPreserveAccessDuringRecovery,
+    needsProfileSetup: isAuthenticated && isEmailVerified && phoneVerified && !hasProfile && !canPreserveAccessDuringRecovery,
+    canAccessApp: stableAccess || canPreserveAccessDuringRecovery,
   };
 }

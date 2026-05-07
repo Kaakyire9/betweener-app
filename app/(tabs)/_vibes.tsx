@@ -15,6 +15,7 @@ import useVibesFeed, { applyVibesFilters, type VibesFilters } from "@/hooks/useV
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
 import { canAccessInternalTools } from "@/lib/internal-tools";
+import { cacheOfflineVideo, getOfflineVideoUri } from "@/lib/offline/video-store";
 import { showOpenSettingsPrompt } from "@/lib/permission-prompts";
 import { recordProfileSignal } from '@/lib/profile-signals';
 import { applyDefaults as applyCompassDefaults, mapToDiscoveryFilters } from "@/lib/relationship-compass";
@@ -331,13 +332,22 @@ export default function ExploreScreen() {
     // of swiping when data is already present.
     if (matchList.length === 0) {
       const now = Date.now();
+      const networkLikeError = isLikelyNetworkError(matchesError);
       if (now - lastFeedErrorAtRef.current > 60_000) {
         lastFeedErrorAtRef.current = now;
-        logger.error("[vibes] feed_error", matchesError, {
+        const ctx = {
           segment: vibesSegment,
-          isLikelyNetwork: isLikelyNetworkError(matchesError),
+          isLikelyNetwork: networkLikeError,
           hasUserId: !!profile?.id,
-        });
+        };
+        if (networkLikeError) {
+          logger.warn("[vibes] feed_warning", {
+            ...ctx,
+            error: String((matchesError as any)?.message || matchesError || "unknown"),
+          });
+        } else {
+          logger.error("[vibes] feed_error", matchesError, ctx);
+        }
       }
 
       // Keep tester UX generic; detailed error goes to Sentry.
@@ -355,6 +365,8 @@ export default function ExploreScreen() {
 
   const [videoModalUrl, setVideoModalUrl] = useState<string | null>(null);
   const [videoModalVisible, setVideoModalVisible] = useState(false);
+  const [videoModalTitle, setVideoModalTitle] = useState<string | null>(null);
+  const [videoModalSubtitle, setVideoModalSubtitle] = useState<string | null>(null);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [manualLocationModalVisible, setManualLocationModalVisible] = useState(false);
   const [manualLocation, setManualLocation] = useState(profile?.location || "");
@@ -1624,30 +1636,39 @@ export default function ExploreScreen() {
       }
       // fetch optional fields on demand and merge into matches
       const updated = await fetchProfileDetails?.(id);
-      const videoUrl = (updated && (updated as any).profileVideo) ? String((updated as any).profileVideo) : undefined;
+      const m = matchList.find((x) => String(x.id) === String(id));
+      const sourceProfile = (updated as any) ?? m;
+      const videoUrl = (sourceProfile && (sourceProfile as any).profileVideo) ? String((sourceProfile as any).profileVideo) : undefined;
       // navigate to the full profile preview screen; include videoUrl param if we have it so ProfileView can auto-play
       const params: any = { profileId: String(id) };
-      const m = matchList.find((x) => String(x.id) === String(id));
       if (m) {
         try {
-          const compatPct = typeof (m as any).compatibility === 'number' ? (m as any).compatibility : 0;
+          const fallbackSource = sourceProfile ?? m;
+          const compatPct = typeof (fallbackSource as any).compatibility === 'number' ? (fallbackSource as any).compatibility : 0;
           params.fallbackProfile = encodeURIComponent(JSON.stringify({
-            id: m.id,
-            name: (m as any).name,
-            age: (m as any).age,
-            location: (m as any).city || (m as any).location || (m as any).region || '',
-            avatar_url: (m as any).avatar_url,
-            photos: (m as any).photos,
-            occupation: (m as any).occupation,
-            education: (m as any).education,
-            bio: (m as any).tagline || (m as any).bio,
-            tribe: (m as any).tribe,
-            religion: (m as any).religion,
-            distance: (m as any).distance,
-            interests: (m as any).interests,
-            is_active: (m as any).isActiveNow,
+            id: fallbackSource.id,
+            name: (fallbackSource as any).name,
+            age: (fallbackSource as any).age,
+            location: (fallbackSource as any).city || (fallbackSource as any).location || (fallbackSource as any).region || '',
+            city: (fallbackSource as any).city,
+            region: (fallbackSource as any).region,
+            avatar_url: (fallbackSource as any).avatar_url,
+            photos: Array.isArray((fallbackSource as any).photos) ? (fallbackSource as any).photos : undefined,
+            occupation: (fallbackSource as any).occupation,
+            education: (fallbackSource as any).education,
+            bio: (fallbackSource as any).tagline || (fallbackSource as any).bio,
+            tribe: (fallbackSource as any).tribe,
+            religion: (fallbackSource as any).religion,
+            distance: (fallbackSource as any).distance,
+            interests: (fallbackSource as any).interests,
+            is_active: (fallbackSource as any).isActiveNow,
             compatibility: compatPct,
-            verified: (m as any).verified,
+            verified: (fallbackSource as any).verified,
+            verification_level: (fallbackSource as any).verification_level,
+            current_country: (fallbackSource as any).current_country,
+            current_country_code: (fallbackSource as any).current_country_code,
+            profileVideo: (fallbackSource as any).profileVideo,
+            profile_video: (fallbackSource as any).profileVideoPath,
           }));
         } catch {}
       }
@@ -1899,12 +1920,25 @@ export default function ExploreScreen() {
                         introVideoStarted: true,
                       });
                     }
-                    const updated = await fetchProfileDetails?.(id);
-                    const videoUrl = (updated && (updated as any).profileVideo) ? String((updated as any).profileVideo) : undefined;
-                    if (videoUrl) {
-                      setVideoModalUrl(videoUrl);
-                      setVideoModalVisible(true);
-                    }
+                      const updated = await fetchProfileDetails?.(id);
+                      const videoSource = (updated && ((updated as any).profileVideoPath || (updated as any).profileVideo))
+                        ? String((updated as any).profileVideoPath || (updated as any).profileVideo)
+                        : undefined;
+                      const cachedVideoUrl = videoSource ? await getOfflineVideoUri(videoSource) : null;
+                      const videoUrl = cachedVideoUrl || ((updated && (updated as any).profileVideo) ? String((updated as any).profileVideo) : undefined);
+                      if (videoUrl) {
+                        const display = updated || matchList.find((entry) => String(entry.id) === String(id));
+                        const age = typeof (display as any)?.age === 'number' ? (display as any).age : null;
+                        setVideoModalTitle(display?.name ? `${display.name}${age ? `, ${age}` : ''}` : null);
+                        setVideoModalSubtitle('Intro video');
+                        setVideoModalUrl(videoUrl);
+                        setVideoModalVisible(true);
+                        if (!cachedVideoUrl && videoSource && String(videoUrl).startsWith('http')) {
+                          void cacheOfflineVideo(videoSource, videoUrl).then((localUri) => {
+                            if (localUri) setVideoModalUrl(localUri);
+                          });
+                        }
+                      }
                   } catch (e) {
                     console.log('video preview failed', e);
                   }
@@ -2787,9 +2821,13 @@ export default function ExploreScreen() {
         <ProfileVideoModal
           visible={videoModalVisible}
           videoUrl={videoModalUrl ?? undefined}
+          title={videoModalTitle ?? undefined}
+          subtitle={videoModalSubtitle ?? undefined}
           onClose={() => {
             setVideoModalVisible(false);
             setVideoModalUrl(null);
+            setVideoModalTitle(null);
+            setVideoModalSubtitle(null);
             setPreviewingId(null);
           }}
         />

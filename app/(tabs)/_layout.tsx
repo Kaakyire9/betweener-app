@@ -6,7 +6,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useIntentRequests } from '@/hooks/useIntentRequests';
 import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
-import { Tabs } from 'expo-router';
+import { clearPendingNotificationRoute, peekPendingNotificationRoute } from '@/lib/notifications/notification-routing';
+import { Tabs, usePathname, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MessageCircle, Sparkles, Target, User, Users } from 'lucide-react-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -16,6 +17,8 @@ import { supabase } from '@/lib/supabase';
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
+  const pathname = usePathname();
+  const router = useRouter();
   const { user, profile } = useAuth();
   const { profileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
   const { badgeCount } = useIntentRequests(profileId);
@@ -138,6 +141,40 @@ export default function TabLayout() {
       supabase.removeChannel(channel);
     };
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+
+    void (async () => {
+      const target = await peekPendingNotificationRoute();
+      if (!target || cancelled) return;
+
+      const currentPath = typeof pathname === 'string' ? pathname : '';
+      const targetId = target.params?.id ? String(target.params.id) : '';
+      const alreadyAtTarget =
+        currentPath === target.pathname ||
+        (targetId.length > 0 && currentPath.endsWith(`/${targetId}`));
+
+      if (alreadyAtTarget) {
+        await clearPendingNotificationRoute();
+        return;
+      }
+
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log('[tabs] hydrating pending notification route', {
+          currentPath,
+          target,
+        });
+      }
+
+      router.replace(target as any);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname, router, user?.id]);
   
   // Badge component for tab notifications
   const TabBadge = ({ count }: { count: number }) => {

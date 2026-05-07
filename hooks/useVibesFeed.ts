@@ -3,7 +3,9 @@ import type { Match } from '@/types/match';
 import { getSupabaseNetEvents, supabase } from '@/lib/supabase';
 import { captureMessage } from '@/lib/telemetry/sentry';
 import { buildLocationSearchText, isRecentlyActive, parseDistanceKm, rerankVibesSegment, type VibesSegment } from '@/lib/vibes/discovery-logic';
+import { readVibesSnapshot, writeVibesSnapshot } from '@/lib/offline/vibes-store';
 import type { RelationshipCompass } from '@/lib/relationship-compass';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export type VibesFilters = {
@@ -67,6 +69,22 @@ const computeSharedInterests = (viewerInterests: string[] | undefined, matchInte
   });
   return shared;
 };
+
+const VIBES_EXCLUSIONS_CACHE_KEY_PREFIX = 'vibes_exclusions_v1:';
+
+type PersistedVibesExclusions = {
+  dayKey: string;
+  blockedIds: string[];
+  swipedTodayIds: string[];
+  pendingIntentPeerIds: string[];
+  acceptedMatchPeerIds: string[];
+  cachedAt: number;
+};
+
+const getVibesExclusionsCacheKey = (profileId: string) =>
+  `${VIBES_EXCLUSIONS_CACHE_KEY_PREFIX}${profileId}`;
+
+const getTodayDayKey = () => new Date().toISOString().slice(0, 10);
 
 // Shared filter logic so the UI can show an accurate "preview count" while users tweak draft filters.
 export function applyVibesFilters(
@@ -168,6 +186,9 @@ export default function useVibesFeed({
   const [swipedTodayIds, setSwipedTodayIds] = useState<Set<string>>(new Set());
   const [pendingIntentPeerIds, setPendingIntentPeerIds] = useState<Set<string>>(new Set());
   const [acceptedMatchPeerIds, setAcceptedMatchPeerIds] = useState<Set<string>>(new Set());
+  const [exclusionsHydrated, setExclusionsHydrated] = useState(false);
+  const [cachedMatches, setCachedMatches] = useState<Match[]>([]);
+  const [snapshotHydrated, setSnapshotHydrated] = useState(false);
   const [watchdogError, setWatchdogError] = useState<Error | null>(null);
   const lastWatchdogLogAtRef = useRef(0);
 
@@ -188,6 +209,119 @@ export default function useVibesFeed({
     activeWindowMinutes,
     distanceUnit,
   });
+
+  useEffect(() => {
+    if (!userId) {
+      setCachedMatches([]);
+      setSnapshotHydrated(true);
+      return;
+    }
+
+    let cancelled = false;
+    setSnapshotHydrated(false);
+
+    void (async () => {
+      try {
+        const snapshot = await readVibesSnapshot(userId, segment);
+        if (!cancelled) {
+          setCachedMatches(Array.isArray(snapshot) ? snapshot : []);
+        }
+      } finally {
+        if (!cancelled) {
+          setSnapshotHydrated(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [segment, userId]);
+
+  useEffect(() => {
+    if (!userId || lastFetchedAt == null || lastError) return;
+    void writeVibesSnapshot(userId, segment, matches).catch(() => {
+      // best effort only
+    });
+    setCachedMatches(matches);
+  }, [lastError, lastFetchedAt, matches, segment, userId]);
+
+  useEffect(() => {
+    if (!userId) {
+      setBlockedIds(new Set());
+      setSwipedTodayIds(new Set());
+      setPendingIntentPeerIds(new Set());
+      setAcceptedMatchPeerIds(new Set());
+      setExclusionsHydrated(true);
+      return;
+    }
+
+    let cancelled = false;
+    setExclusionsHydrated(false);
+
+    void (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(getVibesExclusionsCacheKey(userId));
+        if (!raw || cancelled) {
+          setExclusionsHydrated(true);
+          return;
+        }
+
+        const parsed = JSON.parse(raw) as Partial<PersistedVibesExclusions> | null;
+        if (cancelled || !parsed) {
+          setExclusionsHydrated(true);
+          return;
+        }
+
+        const todayKey = getTodayDayKey();
+        setBlockedIds(new Set((parsed.blockedIds ?? []).map(String)));
+        setPendingIntentPeerIds(new Set((parsed.pendingIntentPeerIds ?? []).map(String)));
+        setAcceptedMatchPeerIds(new Set((parsed.acceptedMatchPeerIds ?? []).map(String)));
+        setSwipedTodayIds(
+          new Set(
+            parsed.dayKey === todayKey
+              ? (parsed.swipedTodayIds ?? []).map(String)
+              : []
+          )
+        );
+      } catch {
+        // ignore cache errors
+      } finally {
+        if (!cancelled) {
+          setExclusionsHydrated(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId || !exclusionsHydrated) return;
+    const payload: PersistedVibesExclusions = {
+      dayKey: getTodayDayKey(),
+      blockedIds: Array.from(blockedIds),
+      swipedTodayIds: Array.from(swipedTodayIds),
+      pendingIntentPeerIds: Array.from(pendingIntentPeerIds),
+      acceptedMatchPeerIds: Array.from(acceptedMatchPeerIds),
+      cachedAt: Date.now(),
+    };
+    void AsyncStorage.setItem(
+      getVibesExclusionsCacheKey(userId),
+      JSON.stringify(payload)
+    ).catch(() => {
+      // best effort only
+    });
+  }, [
+    acceptedMatchPeerIds,
+    blockedIds,
+    exclusionsHydrated,
+    pendingIntentPeerIds,
+    swipedTodayIds,
+    userId,
+  ]);
 
   useEffect(() => {
     if (!userId) return;
@@ -369,8 +503,14 @@ export default function useVibesFeed({
     }
   }, [matches, refreshing]);
 
+  const sourceMatches = useMemo(() => {
+    if (matches.length > 0) return matches;
+    if (!hasFetchedOnce || lastError || watchdogError) return cachedMatches;
+    return matches;
+  }, [cachedMatches, hasFetchedOnce, lastError, matches, watchdogError]);
+
   const poolProfiles = useMemo(() => {
-    let list = matches.slice().map((match) => ({
+    let list = sourceMatches.slice().map((match) => ({
       ...match,
       commonInterests: computeSharedInterests(viewerInterests, (match as any).interests),
     }));
@@ -401,7 +541,7 @@ export default function useVibesFeed({
     }
 
     return list;
-  }, [matches, blockedIds, swipedTodayIds, pendingIntentPeerIds, acceptedMatchPeerIds, viewerInterests, viewerGender]);
+  }, [sourceMatches, blockedIds, swipedTodayIds, pendingIntentPeerIds, acceptedMatchPeerIds, viewerInterests, viewerGender]);
 
   const filteredProfiles = useMemo(() => {
     return applyVibesFilters(poolProfiles, filters, {
@@ -413,22 +553,54 @@ export default function useVibesFeed({
     });
   }, [filters, momentUserIds, poolProfiles, relationshipCompass, segment, viewerInterests, viewerProfile]);
 
+  const recordFeedSwipe = useCallback(
+    (id: string, action: 'like' | 'dislike' | 'superlike', index = 0) => {
+      setSwipedTodayIds((prev) => {
+        const next = new Set(prev);
+        next.add(String(id));
+        return next;
+      });
+      recordSwipe(id, action, index);
+    },
+    [recordSwipe],
+  );
+
+  const undoFeedSwipe = useCallback(() => {
+    const undone = undoLastSwipe();
+    if (!undone?.match?.id) return undone;
+
+    setSwipedTodayIds((prev) => {
+      if (!prev.has(String(undone.match.id))) return prev;
+      const next = new Set(prev);
+      next.delete(String(undone.match.id));
+      return next;
+    });
+
+    return undone;
+  }, [undoLastSwipe]);
+
+  const snapshotsReady = exclusionsHydrated && snapshotHydrated;
+  const visiblePoolProfiles = snapshotsReady ? poolProfiles : [];
+  const visibleProfiles = snapshotsReady ? filteredProfiles : [];
+
   return {
     segment,
-    profiles: filteredProfiles,
-    poolProfiles,
+    profiles: visibleProfiles,
+    poolProfiles: visiblePoolProfiles,
     filters,
     applyFilters,
     refresh,
     refreshing,
     refreshRemaining: Math.max(0, 3 - refreshCount),
     // Avoid "skeleton forever": "loaded" can mean "loaded 0 items".
-    loading: !!userId && !hasFetchedOnce && filteredProfiles.length === 0 && !lastError && !watchdogError,
+    loading:
+      !snapshotsReady ||
+      (!!userId && !hasFetchedOnce && visibleProfiles.length === 0 && !lastError && !watchdogError),
     error: lastError ?? watchdogError,
     lastFetchedAt,
     fetchNextBatch: refresh,
-    recordSwipe,
-    undoLastSwipe,
+    recordSwipe: recordFeedSwipe,
+    undoLastSwipe: undoFeedSwipe,
     smartCount,
     lastMutualMatch,
     fetchProfileDetails,

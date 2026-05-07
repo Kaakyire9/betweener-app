@@ -180,6 +180,7 @@ const safeStorageKey = (key: string) => {
 // Supabase auth reads from storage on many code paths; if storage hangs,
 // supabase-js calls can hang *without ever reaching fetch()*.
 const AUTH_STORAGE_TIMEOUT_MS = IS_DEV ? 2500 : 1800;
+const authStorageCache = new Map<string, string | null>();
 
 const storageWithTimeout = {
   async getItem(key: string) {
@@ -195,15 +196,23 @@ const storageWithTimeout = {
         ),
       ]);
       if (didTimeout) {
+        const cachedValue = authStorageCache.has(key) ? authStorageCache.get(key) ?? null : null;
         logFetchIssueThrottled(
           'storage_timeout',
-          { op: 'getItem', key: safeStorageKey(key), timeoutMs: AUTH_STORAGE_TIMEOUT_MS },
+          {
+            op: 'getItem',
+            key: safeStorageKey(key),
+            timeoutMs: AUTH_STORAGE_TIMEOUT_MS,
+            usedCachedValue: cachedValue !== null,
+          },
           `storage_timeout|getItem|${safeStorageKey(key)}`,
         );
+        return cachedValue as any;
       }
+      authStorageCache.set(key, (value as string | null) ?? null);
       return value as any;
     } catch {
-      return null;
+      return authStorageCache.has(key) ? (authStorageCache.get(key) ?? null) : null;
     }
   },
 
@@ -226,6 +235,7 @@ const storageWithTimeout = {
           `storage_timeout|setItem|${safeStorageKey(key)}`,
         );
       }
+      authStorageCache.set(key, value);
     } catch {
       // best-effort only
     }
@@ -250,6 +260,7 @@ const storageWithTimeout = {
           `storage_timeout|removeItem|${safeStorageKey(key)}`,
         );
       }
+      authStorageCache.delete(key);
     } catch {
       // best-effort only
     }

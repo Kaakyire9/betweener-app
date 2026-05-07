@@ -49,6 +49,11 @@ export default function NetworkStatusBanner() {
   const [visibleBanner, setVisibleBanner] = useState<NetworkBannerState | null>(null);
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(-12)).current;
+  const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const healthyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeSignalRef = useRef<string | null>(null);
+  const announcedSignalRef = useRef<string | null>(null);
 
   useEffect(() => {
     const unsubscribe = addEventListener((state) => {
@@ -95,8 +100,36 @@ export default function NetworkStatusBanner() {
   }, [netInfoBanner, networkQuality.activeSlowRequests, networkQuality.slowUntil, qualityClock]);
 
   useEffect(() => {
-    if (banner) {
-      const timer = setTimeout(() => {
+    if (showTimerRef.current) {
+      clearTimeout(showTimerRef.current);
+      showTimerRef.current = null;
+    }
+    if (hideTimerRef.current) {
+      clearTimeout(hideTimerRef.current);
+      hideTimerRef.current = null;
+    }
+    if (healthyResetTimerRef.current && banner) {
+      clearTimeout(healthyResetTimerRef.current);
+      healthyResetTimerRef.current = null;
+    }
+
+    const signalKey = banner ? banner.tone : null;
+    if (!signalKey) {
+      activeSignalRef.current = null;
+      if (!healthyResetTimerRef.current) {
+        healthyResetTimerRef.current = setTimeout(() => {
+          announcedSignalRef.current = null;
+          healthyResetTimerRef.current = null;
+        }, 8000);
+      }
+    }
+
+    if (banner && signalKey && announcedSignalRef.current !== signalKey) {
+      activeSignalRef.current = signalKey;
+      const showDelayMs = banner.tone === 'slow' ? 1600 : banner.tone === 'weak' ? 900 : 550;
+      const visibleDurationMs = banner.tone === 'offline' ? 2800 : banner.tone === 'weak' ? 2400 : 2200;
+
+      showTimerRef.current = setTimeout(() => {
         setVisibleBanner(banner);
         Animated.parallel([
           Animated.timing(opacity, {
@@ -110,26 +143,64 @@ export default function NetworkStatusBanner() {
             bounciness: 6,
             useNativeDriver: true,
           }),
-        ]).start();
-      }, 900);
-      return () => clearTimeout(timer);
+        ]).start(() => {
+          announcedSignalRef.current = signalKey;
+          hideTimerRef.current = setTimeout(() => {
+            Animated.parallel([
+              Animated.timing(opacity, {
+                toValue: 0,
+                duration: 180,
+                useNativeDriver: true,
+              }),
+              Animated.timing(translateY, {
+                toValue: -12,
+                duration: 180,
+                useNativeDriver: true,
+              }),
+            ]).start(({ finished }) => {
+              if (finished) setVisibleBanner(null);
+            });
+          }, visibleDurationMs);
+        });
+      }, showDelayMs);
+
+      return () => {
+        if (showTimerRef.current) {
+          clearTimeout(showTimerRef.current);
+          showTimerRef.current = null;
+        }
+        if (hideTimerRef.current) {
+          clearTimeout(hideTimerRef.current);
+          hideTimerRef.current = null;
+        }
+      };
     }
 
-    Animated.parallel([
-      Animated.timing(opacity, {
-        toValue: 0,
-        duration: 180,
-        useNativeDriver: true,
-      }),
-      Animated.timing(translateY, {
-        toValue: -12,
-        duration: 180,
-        useNativeDriver: true,
-      }),
-    ]).start(({ finished }) => {
-      if (finished) setVisibleBanner(null);
-    });
+    if (!banner && visibleBanner) {
+      Animated.parallel([
+        Animated.timing(opacity, {
+          toValue: 0,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+        Animated.timing(translateY, {
+          toValue: -12,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+      ]).start(({ finished }) => {
+        if (finished) setVisibleBanner(null);
+      });
+    }
   }, [banner, opacity, translateY]);
+
+  useEffect(() => {
+    return () => {
+      if (showTimerRef.current) clearTimeout(showTimerRef.current);
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+      if (healthyResetTimerRef.current) clearTimeout(healthyResetTimerRef.current);
+    };
+  }, []);
 
   const containerStyle = useMemo(
     () => [
@@ -150,18 +221,34 @@ export default function NetworkStatusBanner() {
 
   return (
     <Animated.View pointerEvents="none" style={containerStyle}>
-      <View style={[styles.card, { backgroundColor: theme.background, borderColor: theme.outline, shadowColor: theme.text }]}>
+      <View
+        style={[
+          styles.card,
+          {
+            backgroundColor: theme.background,
+            borderColor: theme.outline,
+            shadowColor: theme.text,
+          },
+        ]}
+      >
         <LinearGradient
           colors={[railColor, theme.accent]}
           start={{ x: 0, y: 0 }}
           end={{ x: 0, y: 1 }}
           style={styles.rail}
         />
-        <View style={[styles.iconWrap, { backgroundColor: `${railColor}18`, borderColor: `${railColor}30` }]}>
+        <View
+          style={[
+            styles.iconWrap,
+            { backgroundColor: `${railColor}18`, borderColor: `${railColor}30` },
+          ]}
+        >
           <MaterialCommunityIcons name={iconName} size={18} color={railColor} />
         </View>
         <View style={styles.copy}>
-          <Text style={[styles.title, { color: theme.text }]}>{visibleBanner.title}</Text>
+          <Text style={[styles.title, { color: theme.text }]}>
+            {visibleBanner.title}
+          </Text>
           <Text style={[styles.body, { color: theme.textMuted }]}>{visibleBanner.body}</Text>
         </View>
       </View>

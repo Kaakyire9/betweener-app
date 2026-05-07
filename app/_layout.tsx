@@ -1,9 +1,10 @@
 import { LinearGradient } from "expo-linear-gradient";
 import * as Linking from "expo-linking";
-import { Slot, useRouter } from "expo-router";
+import { Slot, usePathname, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect, useRef, useState } from "react";
-import { Animated, Easing, StyleSheet, Text, View } from "react-native";
+import { Animated, AppState, Easing, StyleSheet, Text, View } from "react-native";
+import { InteractionManager } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Notifications from "expo-notifications";
@@ -13,14 +14,23 @@ import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 
 import { useAppFonts } from "@/constants/fonts";
-import { AuthProvider } from "@/lib/auth-context";
+import { AuthProvider, useAuthGuard } from "@/lib/auth-context";
 import AccountRecoveryNotice from "@/components/AccountRecoveryNotice";
 import RecoveryMergeSuggestionNotice from "@/components/RecoveryMergeSuggestionNotice";
 import InAppToasts from "@/components/InAppToasts";
 import NetworkStatusBanner from "@/components/NetworkStatusBanner";
+import { drainOfflineMutationQueue, startOfflineMutationQueueAutoDrain } from "@/lib/offline/mutation-queue";
 import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
 import { SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
 import { initPushNotificationUX } from "@/lib/notifications/push";
+import {
+  buildNotificationRoute,
+  clearPendingNotificationRoute,
+  getNotificationResponseKey,
+  peekPendingNotificationRoute,
+  persistPendingNotificationRoute,
+  shouldDeferNotificationNavigation,
+} from "@/lib/notifications/notification-routing";
 import {
   getFreshPendingIdentityLink,
   isTrustedAuthCallbackUrl,
@@ -33,6 +43,82 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 
 // Initialize telemetry as early as possible (safe no-op if DSN isn't set).
 initSentry();
+
+function PendingNotificationRouteHydrator() {
+  const { isLoading, canAccessApp } = useAuthGuard();
+  const pathname = usePathname();
+  const segments = useSegments();
+  const router = useRouter();
+  const inFlightRef = useRef(false);
+
+  useEffect(() => {
+    if (isLoading || !canAccessApp || inFlightRef.current) return;
+
+    const currentScreen = segments.length > 0 ? segments[segments.length - 1] : null;
+    const isAuthRecoveryScreen =
+      currentScreen === "gate" ||
+      currentScreen === "callback" ||
+      currentScreen === "verify-phone" ||
+      currentScreen === "verify-email" ||
+      currentScreen === "welcome";
+
+    if (isAuthRecoveryScreen) return;
+
+    let cancelled = false;
+    inFlightRef.current = true;
+
+    void (async () => {
+      try {
+        const target = await peekPendingNotificationRoute();
+        if (!target || cancelled) return;
+
+        const currentPath = typeof pathname === "string" ? pathname : "";
+        const samePath = currentPath === target.pathname;
+        const sameId =
+          target.params?.id &&
+          typeof currentPath === "string" &&
+          currentPath.endsWith(`/${target.params.id}`);
+
+        if (samePath || sameId) {
+          await clearPendingNotificationRoute();
+          return;
+        }
+
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[root] hydrating pending notification route", target);
+        }
+        router.replace(target as any);
+      } finally {
+        inFlightRef.current = false;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      inFlightRef.current = false;
+    };
+  }, [canAccessApp, isLoading, pathname, router, segments]);
+
+  return null;
+}
+
+function OfflineMutationQueueHydrator() {
+  useEffect(() => {
+    const stopAutoDrain = startOfflineMutationQueueAutoDrain();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        void drainOfflineMutationQueue();
+      }
+    });
+
+    return () => {
+      stopAutoDrain();
+      subscription.remove();
+    };
+  }, []);
+
+  return null;
+}
 
 function RootLayout() {
   const fontsLoaded = useAppFonts();
@@ -65,6 +151,7 @@ function RootLayout() {
   const underlineScale = useRef(new Animated.Value(0.08)).current;
   const orbDrift = useRef(new Animated.Value(0)).current;
   const authCallbackRouteInFlightRef = useRef(false);
+  const lastHandledNotificationKeyRef = useRef<string | null>(null);
 
   // Handle deep links
   useEffect(() => {
@@ -150,184 +237,72 @@ function RootLayout() {
   useEffect(() => {
     // Same reasoning as deep links: don't let a notification handler crash a release build.
     try {
-      const handleResponse = (response: Notifications.NotificationResponse) => {
+      const handleResponse = async (
+        response: Notifications.NotificationResponse,
+        options?: { deferNavigation?: boolean }
+      ) => {
         try {
-          const action = response.actionIdentifier;
-          const data = response.notification.request.content.data as Record<string, any> | undefined;
-          const pushType = data?.type;
-
-          // Category actions: treat OPEN_* the same as a normal tap.
-          const isDefaultTap = action === Notifications.DEFAULT_ACTION_IDENTIFIER;
-          const isOpenAction =
-            action === "OPEN_CHAT" ||
-            action === "OPEN_PROFILE" ||
-            action === "OPEN_MOMENTS" ||
-            action === "OPEN_COMPASS";
-          if (!isDefaultTap && !isOpenAction) {
-            // Unknown action; ignore safely.
+          const responseKey = getNotificationResponseKey({
+            requestIdentifier: response.notification.request.identifier,
+            actionIdentifier: response.actionIdentifier,
+          });
+          if (lastHandledNotificationKeyRef.current === responseKey) {
             return;
           }
 
-          if (pushType === "message" || pushType === "message_reaction") {
-            const chatId = data?.profile_id || data?.reactor_id || data?.user_id;
-            if (chatId) {
-              router.push({
-                pathname: "/chat/[id]",
-                params: {
-                  id: String(chatId),
-                  userName: data?.name ? String(data.name) : "",
-                  userAvatar: data?.avatar_url ? String(data.avatar_url) : "",
-                },
-              });
-              return;
-            }
-          }
-
-          if (pushType === "match") {
-            const chatId = data?.profile_id || data?.user_id;
-            if (chatId) {
-              router.push({
-                pathname: "/chat/[id]",
-                params: {
-                  id: String(chatId),
-                  userName: data?.name ? String(data.name) : "",
-                  userAvatar: data?.avatar_url ? String(data.avatar_url) : "",
-                },
-              });
-              return;
-            }
-          }
-
-          if (pushType === "system_message" && data?.event_type === "request_accepted") {
-            const chatId = data?.profile_id || data?.user_id;
-            if (chatId) {
-              router.push({
-                pathname: "/chat/[id]",
-                params: {
-                  id: String(chatId),
-                  userName: data?.name ? String(data.name) : "",
-                  userAvatar: data?.avatar_url ? String(data.avatar_url) : "",
-                },
-              });
-              return;
-            }
-          }
-
-          if (
-            pushType === "system_message" &&
-            (
-              data?.event_type === "date_plan_accepted" ||
-              data?.event_type === "date_plan_declined" ||
-              data?.event_type === "date_plan_cancelled" ||
-              data?.event_type === "date_plan_concierge_requested"
-            )
-          ) {
-            const chatId = data?.profile_id || data?.user_id;
-            if (chatId) {
-              router.push({
-                pathname: "/chat/[id]",
-                params: {
-                  id: String(chatId),
-                  userName: data?.name ? String(data.name) : "",
-                  userAvatar: data?.avatar_url ? String(data.avatar_url) : "",
-                  datePlanId: data?.date_plan_id ? String(data.date_plan_id) : "",
-                },
-              });
-              return;
-            }
-          }
-
-          if (pushType === "system_message" && data?.event_type === "request_expired") {
-            router.push({
-              pathname: "/(tabs)/intent",
-              params: {
-                requestId: data?.intent_request_id ? String(data.intent_request_id) : "",
-              },
-            });
+          const target = buildNotificationRoute({
+            requestIdentifier: response.notification.request.identifier,
+            actionIdentifier: response.actionIdentifier,
+            date: response.notification.date,
+            data: response.notification.request.content.data as Record<string, unknown> | undefined,
+          });
+          if (!target) {
             return;
           }
 
-          if (pushType === "system_message" && data?.event_type === "admin_queue_item") {
-            router.push("/admin");
+          lastHandledNotificationKeyRef.current = responseKey;
+
+          if (options?.deferNavigation) {
+            await persistPendingNotificationRoute(target);
             return;
           }
 
-          if (pushType === "moment_post" || pushType === "moment_reaction" || pushType === "moment_comment") {
-            const startUserId =
-              data?.start_user_id ||
-              data?.poster_user_id ||
-              data?.moment_owner_user_id ||
-              data?.user_id;
-            const momentId = data?.moment_id || data?.momentId;
-            router.push({
-              pathname: "/moments",
-              params: {
-                startUserId: startUserId ? String(startUserId) : "",
-                startMomentId: momentId ? String(momentId) : "",
-                openComments: pushType === "moment_comment" ? "1" : "",
-                entrySource: pushType === "moment_comment" ? "comment" : pushType === "moment_reaction" ? "reaction" : "",
-                commentId: pushType === "moment_comment" && data?.comment_id ? String(data.comment_id) : "",
-                reactionEmoji: pushType === "moment_reaction" && data?.emoji ? String(data.emoji) : pushType === "moment_reaction" && data?.reaction_emoji ? String(data.reaction_emoji) : "",
-              },
-            });
-            return;
-          }
-
-          // Intent reminders: route to the Intent inbox (actionable view) so users can accept/pass quickly.
-          if (pushType === "intent_request" || pushType === "intent_expiring_soon" || pushType === "intent_last_chance") {
-            const requestId = data?.request_id || data?.requestId;
-            const requestType = data?.request_type || data?.requestType;
-            router.push({
-              pathname: "/(tabs)/intent",
-              params: {
-                requestId: requestId ? String(requestId) : "",
-                // Reuse the existing `?type=` deep-link behavior in IntentScreen.
-                type: requestType ? String(requestType) : "",
-              },
-            });
-            return;
-          }
-
-          if (pushType === "verification_outcome") {
-            router.push({
-              pathname: "/(tabs)/profile",
-              params: {
-                openVerification: "true",
-              },
-            });
-            return;
-          }
-
-          if (pushType === "relationship_compass_ready") {
-            router.push("/relationship-compass");
-            return;
-          }
-
-          const route = typeof data?.route === "string" ? String(data.route) : "";
-          if (route && route.startsWith("/")) {
-            router.push(route);
-            return;
-          }
-
-          const profileId = data?.profile_id || data?.profileId;
-          if (profileId) {
-            router.push({ pathname: "/profile-view", params: { profileId: String(profileId) } });
-          }
+          router.push(target as any);
         } catch (e) {
           captureException(e, { where: "Notifications.responseListener" });
         }
       };
 
-      // Handle taps that launched the app from a terminated state.
-      Notifications.getLastNotificationResponseAsync()
-        .then((initial) => {
-          if (initial) handleResponse(initial);
-        })
-        .catch((e) => captureException(e, { where: "Notifications.getLastNotificationResponseAsync" }));
+      let interactionHandle: { cancel?: () => void } | null = null;
+      let bootstrapTimer: ReturnType<typeof setTimeout> | null = null;
+
+      // Handle taps that launched the app from a terminated state,
+      // but only after the initial render/interaction cycle settles.
+      if (allowRender) {
+        interactionHandle = InteractionManager.runAfterInteractions(() => {
+          bootstrapTimer = setTimeout(() => {
+            Notifications.getLastNotificationResponseAsync()
+              .then((initial) => {
+                if (!initial) return;
+                void handleResponse(initial, {
+                  deferNavigation: shouldDeferNotificationNavigation({
+                    requestIdentifier: initial.notification.request.identifier,
+                    actionIdentifier: initial.actionIdentifier,
+                    date: initial.notification.date,
+                    data: initial.notification.request.content.data as Record<string, unknown> | undefined,
+                  }),
+                });
+              })
+              .catch((e) => captureException(e, { where: "Notifications.getLastNotificationResponseAsync" }));
+          }, 350);
+        });
+      }
 
       const subscription = Notifications.addNotificationResponseReceivedListener(handleResponse);
 
       return () => {
+        if (bootstrapTimer) clearTimeout(bootstrapTimer);
+        interactionHandle?.cancel?.();
         try {
           subscription.remove();
         } catch (e) {
@@ -338,7 +313,7 @@ function RootLayout() {
       captureException(e, { where: "Notifications.useEffect" });
       return;
     }
-  }, [router]);
+  }, [allowRender, router]);
 
   // Always release native splash even if fonts hang.
   useEffect(() => {
@@ -568,6 +543,8 @@ function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AuthProvider>
         <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
+          <OfflineMutationQueueHydrator />
+          <PendingNotificationRouteHydrator />
           <Slot />
           <InAppToasts />
           <NetworkStatusBanner />

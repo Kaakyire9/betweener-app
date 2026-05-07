@@ -5,6 +5,8 @@ import {
   pickBetterLocationValue,
   pickPreferredLocationLabel,
 } from '@/lib/location/location-display';
+import { isLikelyNetworkError } from '@/lib/network';
+import { enqueueSwipeSyncMutation } from '@/lib/offline/mutation-queue';
 import { readCache, writeCache } from '@/lib/persisted-cache';
 import { addBreadcrumb } from '@/lib/telemetry/sentry';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -372,15 +374,30 @@ export default function useAIRecommendations(
     (async () => {
       try {
         if (!userId) return;
+        const swipeAction = action === 'superlike' ? 'SUPERLIKE' : action === 'like' ? 'LIKE' : 'PASS';
+        const shouldMirrorIntent = action === 'like' || action === 'superlike';
+        const queueSwipeSync = async () => {
+          await enqueueSwipeSyncMutation({
+            userId,
+            targetId: id,
+            action: swipeAction,
+            mirrorIntent: shouldMirrorIntent,
+            message: action === 'superlike' ? 'Superliked you.' : null,
+          });
+        };
         // insert swipe record
         const { error: insertErr } = await supabase
           .from('swipes')
           .upsert([{
             swiper_id: userId,
             target_id: id,
-            action: action === 'superlike' ? 'SUPERLIKE' : action === 'like' ? 'LIKE' : 'PASS',
+            action: swipeAction,
           }], { onConflict: 'swiper_id,target_id' });
         if (insertErr) {
+          if (isLikelyNetworkError(insertErr)) {
+            await queueSwipeSync();
+            return;
+          }
           console.log('[recordSwipe] failed to upsert swipe', insertErr);
         }
 
@@ -398,6 +415,10 @@ export default function useAIRecommendations(
             },
           });
           if (intentErr) {
+            if (isLikelyNetworkError(intentErr)) {
+              await queueSwipeSync();
+              return;
+            }
             // Best-effort: swipes should still function even if the Intent mirror fails.
             console.log('[recordSwipe] failed to create like intent', intentErr);
           }
@@ -425,7 +446,15 @@ export default function useAIRecommendations(
           }
         }
       } catch (_e) {
-        // ignore and keep local mock behavior
+        if (isLikelyNetworkError(_e) && userId) {
+          await enqueueSwipeSyncMutation({
+            userId,
+            targetId: id,
+            action: action === 'superlike' ? 'SUPERLIKE' : action === 'like' ? 'LIKE' : 'PASS',
+            mirrorIntent: action === 'like' || action === 'superlike',
+            message: action === 'superlike' ? 'Superliked you.' : null,
+          });
+        }
       }
     })();
   }, [matches, persistMatchesCache, userId]);
@@ -1342,7 +1371,7 @@ export default function useAIRecommendations(
       // fetch optional profile fields
       const { data: profileData } = await supabase
         .from('profiles')
-              .select('id, city, location, profile_video, latitude, longitude, region, tribe, religion, current_country, current_country_code, location_precision, personality_type, online, is_active, last_active, verification_level')
+              .select('id, city, location, avatar_url, photos, profile_video, latitude, longitude, region, tribe, religion, current_country, current_country_code, location_precision, personality_type, online, is_active, last_active, verification_level')
         .eq('id', profileId)
         .limit(1)
         .single();
@@ -1398,7 +1427,15 @@ export default function useAIRecommendations(
           const shouldTrustIncomingExactLocation = incomingPrecision === 'EXACT';
             merged = {
               ...m,
+              avatar_url: profileData?.avatar_url ?? (m as any).avatar_url,
+              photos:
+                Array.isArray(profileData?.photos) && profileData.photos.length > 0
+                  ? profileData.photos
+                  : Array.isArray((m as any).photos)
+                    ? (m as any).photos
+                    : ((profileData?.avatar_url || (m as any).avatar_url) ? [profileData?.avatar_url ?? (m as any).avatar_url] : []),
               profileVideo: signedProfileVideo || (m as any).profileVideo,
+              profileVideoPath: profileData?.profile_video || (m as any).profileVideoPath,
               personalityTags: personality,
               interests: interestsFinal,
               commonInterests,
