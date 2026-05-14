@@ -1,11 +1,14 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
+import { createIntentRequestOfflineSafe } from '@/lib/intents/offline-actions';
+import { isLikelyNetworkError } from '@/lib/network';
+import { useResponsiveMetrics, type ResponsiveMetrics } from '@/lib/responsive';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Dimensions, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
+import { Alert, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 
 type IntentRequestType = 'connect' | 'date_request' | 'like_with_note' | 'circle_intro';
 
@@ -26,8 +29,6 @@ const optionLabels: { type: IntentRequestType; label: string; subtitle: string; 
   { type: 'circle_intro', label: 'Circle intro', subtitle: 'Contextual connect', icon: 'account-group-outline' },
 ];
 
-const { height: screenHeight } = Dimensions.get('window');
-
 export default function IntentRequestSheet({
   visible,
   onClose,
@@ -41,7 +42,8 @@ export default function IntentRequestSheet({
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
-  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const responsive = useResponsiveMetrics();
+  const styles = useMemo(() => createStyles(theme, isDark, responsive), [theme, isDark, responsive]);
   const { profile } = useAuth();
   const myProfileId = profile?.id ? String(profile.id) : null;
   const [selectedType, setSelectedType] = useState<IntentRequestType>('connect');
@@ -82,6 +84,14 @@ export default function IntentRequestSheet({
       return;
     }
     setSubmitting(true);
+    const requestPayload = {
+      recipientId,
+      type: selectedType,
+      message: message.trim() ? message.trim() : null,
+      suggestedTime: null,
+      suggestedPlace: selectedType === 'date_request' && suggestedPlace.trim() ? suggestedPlace.trim() : null,
+      metadata: metadata ?? {},
+    };
     try {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
@@ -107,22 +117,30 @@ export default function IntentRequestSheet({
         return;
       }
 
-      const { data, error } = await supabase.rpc('rpc_create_intent_request', {
-        p_recipient_id: recipientId,
-        p_type: selectedType,
-        p_message: message.trim() ? message.trim() : null,
-        p_suggested_time: null,
-        p_suggested_place: selectedType === 'date_request' && suggestedPlace.trim() ? suggestedPlace.trim() : null,
-        p_metadata: metadata ?? {},
-      });
-      if (error) throw error;
-      if (data) {
+      const result = await createIntentRequestOfflineSafe(requestPayload);
+      if (result.status === 'queued') {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Alert.alert('Request queued', `Your request to ${recipientName || 'connect'} will send when you're back online.`);
+        onSent?.(null);
+        onClose();
+        return;
+      }
+      if (result.requestId) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         Alert.alert('Request sent', `Your request to ${recipientName || 'connect'} is on the way.`);
-        onSent?.(data as string);
+        onSent?.(result.requestId);
         onClose();
       }
     } catch (err) {
+      if (isLikelyNetworkError(err)) {
+        await createIntentRequestOfflineSafe(requestPayload);
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Alert.alert('Request queued', `Your request to ${recipientName || 'connect'} will send when you're back online.`);
+        onSent?.(null);
+        onClose();
+        return;
+      }
+
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       // Supabase errors are often plain objects (not Error instances).
       const supaMessage =
@@ -296,7 +314,7 @@ export default function IntentRequestSheet({
   );
 }
 
-const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
+const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: ResponsiveMetrics) =>
   StyleSheet.create({
     backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
     backdropPress: { flex: 1 },
@@ -304,10 +322,10 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: theme.background,
       borderTopLeftRadius: 20,
       borderTopRightRadius: 20,
-      maxHeight: Math.round(screenHeight * 0.74),
-      paddingHorizontal: 16,
-      paddingTop: 12,
-      paddingBottom: Platform.OS === 'android' ? 10 : 16,
+      maxHeight: Math.round(responsive.usableHeight * (responsive.compactHeight ? 0.82 : 0.74)),
+      paddingHorizontal: responsive.compactWidth ? 14 : 16,
+      paddingTop: responsive.compactHeight ? 10 : 12,
+      paddingBottom: Math.max(responsive.insets.bottom + 8, Platform.OS === 'android' ? 10 : 16),
       borderWidth: 1,
       borderColor: theme.outline,
     },

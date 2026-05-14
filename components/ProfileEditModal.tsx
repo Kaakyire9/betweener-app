@@ -2,10 +2,21 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useVerificationStatus } from '@/hooks/use-verification-status';
 import { useAuth } from '@/lib/auth-context';
+import { isKnownGhanaRegionLabel, normalizeLocationValue } from '@/lib/location/location-display';
+import { isLikelyNetworkError } from '@/lib/network';
+import {
+  enqueueProfileInterestsUpdateMutation,
+  enqueueProfileMediaSyncMutation,
+} from '@/lib/offline/mutation-queue';
+import { readMeProfileSnapshot, writeMeProfileSnapshot } from '@/lib/offline/me-store';
 import { showOpenSettingsPrompt } from '@/lib/permission-prompts';
+import { isLocalMediaUri, normalizeProfilePhotoList, normalizeProfilePhotoUri } from '@/lib/profile/media';
+import { RELIGION_LABELS, formatReligionLabel, isReligionEnumError, normalizeReligionForProfile } from '@/lib/profile/religion';
 import { getProfileInitials, hasProfileImage } from '@/lib/profile-placeholders';
+import { type ResponsiveMetrics, useResponsiveMetrics } from '@/lib/responsive';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { fetch as fetchNetInfo } from '@react-native-community/netinfo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -167,12 +178,20 @@ const GLOBAL_TRIBES_OPTIONS = [
   "Mixed",
   "Other",
 ];
+const RELIGION_OPTIONS = RELIGION_LABELS;
 
 const ROOTS_VISIBILITY_OPTIONS = [
   { value: 'VISIBLE', label: 'Visible on profile', subtitle: 'Show your roots in full profile view.' },
   { value: 'MATCHES_ONLY', label: 'Matches only', subtitle: 'Reveal your roots only after a mutual match.' },
   { value: 'HIDDEN', label: 'Hidden', subtitle: 'Keep your roots private.' },
 ];
+const LEGACY_ROOTS_VISIBILITY_FALLBACK = 'HIDDEN';
+
+const isRootsVisibilityConstraintError = (error: unknown) => {
+  const code = String((error as any)?.code || '');
+  const message = String((error as any)?.message || '').toLowerCase();
+  return code === '23514' && message.includes('profiles_roots_visibility_check');
+};
 
 // HIGH PRIORITY: Ghana-focused languages
 const GHANA_LANGUAGES_OPTIONS = [
@@ -244,6 +263,62 @@ const normalizeRoots = (items?: string[]) =>
     )
   );
 
+const PROFILE_MEDIA_STAGING_FOLDER = 'betweener-profile-media';
+
+const inferMediaUploadMeta = (
+  uri: string,
+  fallbackPrefix: string,
+  fallbackContentType: string,
+) => {
+  const cleanUri = uri.split('?')[0] || uri;
+  const rawName = cleanUri.split('/').pop() || `${fallbackPrefix}-${Date.now()}`;
+  const safeName = rawName.replace(/[^a-zA-Z0-9._-]/g, '-');
+  const ext = (safeName.match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
+  const contentType =
+    ext === 'png'
+      ? 'image/png'
+      : ext === 'webp'
+        ? 'image/webp'
+        : ext === 'heic' || ext === 'heif'
+          ? 'image/heic'
+          : ext === 'mov'
+            ? 'video/quicktime'
+            : ext === 'mp4' || ext === 'm4v'
+              ? 'video/mp4'
+              : fallbackContentType;
+  const fileName = safeName.includes('.')
+    ? safeName
+    : `${safeName}.${contentType.includes('video') ? 'mp4' : 'jpg'}`;
+  return { localUri: uri, fileName, contentType };
+};
+
+const getProfileMediaStagingDirectory = () => {
+  const root = FileSystem.documentDirectory || FileSystem.cacheDirectory || '';
+  return root ? `${root}${PROFILE_MEDIA_STAGING_FOLDER}/` : '';
+};
+
+const persistProfileMediaUri = async (
+  uri: string,
+  fallbackPrefix: string,
+  fallbackContentType: string,
+) => {
+  if (!isLocalMediaUri(uri)) return uri;
+  if (uri.includes(`/${PROFILE_MEDIA_STAGING_FOLDER}/`)) return uri;
+
+  const directory = getProfileMediaStagingDirectory();
+  if (!directory) return uri;
+
+  try {
+    await FileSystem.makeDirectoryAsync(directory, { intermediates: true });
+    const meta = inferMediaUploadMeta(uri, fallbackPrefix, fallbackContentType);
+    const targetUri = `${directory}${Date.now()}-${meta.fileName}`;
+    await FileSystem.copyAsync({ from: uri, to: targetUri });
+    return targetUri;
+  } catch {
+    return uri;
+  }
+};
+
 interface ProfileEditModalProps {
   visible: boolean;
   onClose: () => void;
@@ -276,7 +351,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
-  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const responsive = useResponsiveMetrics();
+  const styles = useMemo(() => createStyles(theme, isDark, responsive), [theme, isDark, responsive]);
   const { status: verificationStatus } = useVerificationStatus(profile?.user_id);
   const isGhanaProfile = useMemo(() => {
     const currentCountry = (profile as any)?.current_country;
@@ -304,6 +380,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const [showEducationPicker, setShowEducationPicker] = useState(false);
   const [showLookingForPicker, setShowLookingForPicker] = useState(false);
   const [showRegionPicker, setShowRegionPicker] = useState(false);
+  const [showReligionPicker, setShowReligionPicker] = useState(false);
   
   // HIGH PRIORITY picker visibility states
   const [showExercisePicker, setShowExercisePicker] = useState(false);
@@ -357,6 +434,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       roots: [] as string[],
       roots_note: '',
       roots_visibility: 'VISIBLE',
+      religion: '',
     occupation: '',
     education: '',
     height: '',
@@ -494,12 +572,13 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         roots: normalizedRoots,
         roots_note: (profile as any).roots_note || '',
         roots_visibility: String((profile as any).roots_visibility || 'VISIBLE').toUpperCase(),
+        religion: formatReligionLabel((profile as any).religion || ''),
         occupation: (profile as any).occupation || '',
         education: (profile as any).education || '',
         height: (profile as any).height || '',
           looking_for: (profile as any).looking_for || '',
-          avatar_url: profile.avatar_url || '',
-          photos: (profile as any).photos || [],
+          avatar_url: normalizeProfilePhotoUri(profile.avatar_url),
+          photos: normalizeProfilePhotoList((profile as any).photos),
           profile_video: (profile as any).profile_video || '',
           matchmaking_mode: Boolean((profile as any).matchmaking_mode),
           discoverable_in_vibes: (profile as any).discoverable_in_vibes ?? true,
@@ -523,6 +602,27 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       setSelectedLanguages(filteredLanguages);
     }
   }, [visible, profile]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const profileId = (profile as any)?.id || user?.id;
+    if (!profileId) return;
+    let cancelled = false;
+    void (async () => {
+      const snapshot = await readMeProfileSnapshot(profileId);
+      if (cancelled || !snapshot) return;
+      const cachedPhotos = normalizeProfilePhotoList(snapshot.photos);
+      setFormData((prev) => ({
+        ...prev,
+        photos: prev.photos.length > 0 ? prev.photos : cachedPhotos,
+        avatar_url: prev.avatar_url || normalizeProfilePhotoUri(snapshot.avatarUrl) || cachedPhotos[0] || '',
+        profile_video: prev.profile_video || snapshot.profileVideo || '',
+      }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [profile, user?.id, visible]);
 
   // One-time side loads per open (avoid clobbering edits if profile refreshes while modal is open).
   useEffect(() => {
@@ -554,6 +654,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       const path = formData.profile_video;
       if (!path) {
         if (mounted) setVideoPreviewUrl(null);
+        return;
+      }
+      if (isLocalMediaUri(path)) {
+        if (mounted) setVideoPreviewUrl(path);
         return;
       }
       if (path.startsWith('http')) {
@@ -593,6 +697,42 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         tribe: next[0] || '',
       };
     });
+  };
+
+  const isOfflineNow = async () => {
+    try {
+      const state = await fetchNetInfo();
+      return state.isConnected === false || state.isInternetReachable === false;
+    } catch {
+      return false;
+    }
+  };
+
+  const getSnapshotProfileId = () => (profile as any)?.id || user?.id || null;
+
+  const stageImageOffline = async (uri: string, isAvatar: boolean) => {
+    const stableUri = await persistProfileMediaUri(uri, isAvatar ? 'profile-avatar' : 'profile-photo', 'image/jpeg');
+    if (isAvatar) {
+      setFormData(prev => ({
+        ...prev,
+        avatar_url: stableUri,
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        photos: [...prev.photos, stableUri],
+      }));
+    }
+    Alert.alert('Saved offline', 'Photo added here. Tap Save and Betweener will upload it when your connection returns.');
+  };
+
+  const stageVideoOffline = async (uri: string) => {
+    const stableUri = await persistProfileMediaUri(uri, 'profile-video', 'video/mp4');
+    setFormData(prev => ({
+      ...prev,
+      profile_video: stableUri,
+    }));
+    Alert.alert('Saved offline', 'Video added here. Tap Save and Betweener will upload it when your connection returns.');
   };
 
   const resolveProfileId = async (): Promise<string | null> => {
@@ -715,7 +855,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   // Save user interests to profile_interests table
   const saveUserInterests = async (interests: string[]) => {
     const pid = await resolveProfileId();
-    if (!pid) return;
+    if (!pid) return { queued: false };
     
     try {
       // First, delete existing interests for this user
@@ -748,8 +888,16 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           if (insertError) throw insertError;
         }
       }
+      return { queued: false };
     } catch (error) {
       console.error('Error saving user interests:', error);
+      if (isLikelyNetworkError(error)) {
+        await enqueueProfileInterestsUpdateMutation({
+          profileId: pid,
+          interests,
+        });
+        return { queued: true };
+      }
       throw error;
     }
   };
@@ -919,6 +1067,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         return;
       }
 
+      if (await isOfflineNow()) {
+        await stageImageOffline(uri, isAvatar);
+        return;
+      }
+
       // Get file extension and create file name
       const fileExtension = uri.split('.').pop()?.toLowerCase() || 'jpg';
       const timestamp = Date.now();
@@ -963,6 +1116,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       Alert.alert('Success', 'Photo uploaded successfully!');
     } catch (error) {
       console.error('Error uploading image:', error);
+      if (isLikelyNetworkError(error)) {
+        await stageImageOffline(uri, isAvatar);
+        return;
+      }
       const errorMessage = error instanceof Error ? error.message : 'Failed to upload image';
       Alert.alert('Error', `Upload failed: ${errorMessage}`);
     } finally {
@@ -1113,6 +1270,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         return;
       }
 
+      if (await isOfflineNow()) {
+        await stageVideoOffline(asset.uri);
+        return;
+      }
+
       let uri = asset.uri;
 
       // Enforce 30s max (library pickers may ignore `videoMaxDuration`).
@@ -1255,6 +1417,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       Alert.alert('Success', 'Profile video uploaded. Tap Save to apply.');
     } catch (error) {
       console.error('Error uploading video:', error);
+      if (isLikelyNetworkError(error)) {
+        await stageVideoOffline(asset.uri);
+        return;
+      }
       const errorMessage = error instanceof Error ? error.message : 'Failed to upload video';
       Alert.alert('Error', `Upload failed: ${errorMessage}`);
     } finally {
@@ -1322,21 +1488,50 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       // Prepare update data (preserve required fields to avoid NOT NULL constraint violations)
       const normalizedRoots = normalizeRoots(formData.roots);
       const rootsNote = formData.roots_note ? formData.roots_note.trim() : '';
+      const hasLocalAvatar = isLocalMediaUri(formData.avatar_url);
+      const localPhotos = formData.photos.filter((photo) => isLocalMediaUri(photo));
+      const hasLocalVideo = isLocalMediaUri(formData.profile_video);
+      const remotePhotos = formData.photos.filter((photo) => !isLocalMediaUri(photo));
+      const mediaSyncPayload =
+        user?.id && (hasLocalAvatar || localPhotos.length > 0 || hasLocalVideo)
+          ? {
+              userId: user.id,
+              avatar: hasLocalAvatar
+                ? inferMediaUploadMeta(formData.avatar_url, 'profile-avatar', 'image/jpeg')
+                : null,
+              photos: localPhotos.length > 0 ? formData.photos : null,
+              photoItems: localPhotos.map((photo, index) =>
+                inferMediaUploadMeta(photo, `profile-photo-${index + 1}`, 'image/jpeg'),
+              ),
+              video: hasLocalVideo
+                ? {
+                    ...inferMediaUploadMeta(formData.profile_video, 'profile-video', 'video/mp4'),
+                    previousPath: (profile as any)?.profile_video ?? null,
+                  }
+                : null,
+              updatedAt: new Date().toISOString(),
+            }
+          : null;
+
       const updateData: any = {
         full_name: formData.full_name.trim(),
         bio: formData.bio.trim(),
-        avatar_url: formData.avatar_url,
-        photos: formData.photos,
-        profile_video: formData.profile_video && formData.profile_video.trim() ? formData.profile_video.trim() : null,
+        avatar_url: hasLocalAvatar ? ((profile as any)?.avatar_url ?? null) : formData.avatar_url,
+        photos: remotePhotos,
+        profile_video: hasLocalVideo
+          ? ((profile as any)?.profile_video ?? null)
+          : formData.profile_video && formData.profile_video.trim()
+            ? formData.profile_video.trim()
+            : null,
         // Preserve existing required fields to avoid null constraint violations
         gender: String(formData.gender || profile?.gender || 'OTHER').trim().toUpperCase(),
         age: profile?.age || 18,
         region: profile?.region || '',
-        tribe: normalizedRoots[0] ?? null,
-        roots: normalizedRoots.length > 0 ? normalizedRoots : null,
+        tribe: normalizedRoots[0] ?? (profile as any)?.tribe ?? null,
+        roots: normalizedRoots.length > 0 ? normalizedRoots : ((profile as any)?.tribe ? [(profile as any).tribe] : null),
         roots_note: rootsNote || null,
         roots_visibility: String(formData.roots_visibility || 'VISIBLE').toUpperCase(),
-        religion: profile?.religion || 'OTHER',
+        religion: normalizeReligionForProfile(formData.religion || (profile as any)?.religion || 'OTHER'),
         min_age_interest: profile?.min_age_interest || 18,
         max_age_interest: profile?.max_age_interest || 35,
       };
@@ -1347,9 +1542,20 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       }
       const regionValue = formData.region ? formData.region.trim() : '';
       if (regionValue) {
+        const existingCountry = normalizeLocationValue((profile as any)?.current_country);
+        const existingCountryCode = normalizeLocationValue((profile as any)?.current_country_code).toUpperCase();
+        const inferredCountry = existingCountry || (isGhanaProfile || isKnownGhanaRegionLabel(regionValue) ? 'Ghana' : '');
+        const inferredCountryCode = existingCountryCode || (inferredCountry.toLowerCase() === 'ghana' ? 'GH' : '');
+        const regionOnlyLocation = isKnownGhanaRegionLabel(regionValue);
         updateData.region = regionValue;
-        updateData.city = regionValue;
-        updateData.location = regionValue;
+        updateData.city = regionOnlyLocation ? null : regionValue;
+        updateData.location = regionOnlyLocation ? inferredCountry : regionValue;
+        if (inferredCountry) {
+          updateData.current_country = inferredCountry;
+        }
+        if (inferredCountryCode) {
+          updateData.current_country_code = inferredCountryCode;
+        }
         const previousRegion = profile?.region ? profile.region.trim() : '';
         if (regionValue !== previousRegion) {
           updateData.location_precision = 'CITY';
@@ -1416,7 +1622,28 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
 
       // Update profile using auth context (this will refresh the UI automatically)
       console.log('Profile update data:', updateData);
-      const { error } = await updateProfile(updateData);
+      let saveResult = await updateProfile(updateData);
+      let { error } = saveResult;
+
+      if (
+        error &&
+        updateData.roots_visibility === 'MATCHES_ONLY' &&
+        isRootsVisibilityConstraintError(error)
+      ) {
+        console.warn('[profile-edit] roots_visibility_matches_only_not_supported');
+        const fallbackUpdateData = {
+          ...updateData,
+          roots_visibility: LEGACY_ROOTS_VISIBILITY_FALLBACK,
+        };
+        saveResult = await updateProfile(fallbackUpdateData);
+        ({ error } = saveResult);
+      }
+
+      if (error && updateData.religion !== 'OTHER' && isReligionEnumError(error)) {
+        console.warn('[profile-edit] religion_enum_value_not_supported');
+        saveResult = await updateProfile({ ...updateData, religion: 'OTHER' });
+        ({ error } = saveResult);
+      }
 
       if (error) {
         if ((error as any).code === '23505') {
@@ -1443,10 +1670,34 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       }
 
       // Save interests separately through profile_interests table
-      await saveUserInterests(selectedInterests);
+      const interestsResult = await saveUserInterests(selectedInterests);
+      if (mediaSyncPayload) {
+        await enqueueProfileMediaSyncMutation(mediaSyncPayload);
+      }
 
-      Alert.alert('Success', 'Profile updated successfully!');
-      onSave(updateData);
+      const queued = saveResult.queued === true || interestsResult.queued === true || Boolean(mediaSyncPayload);
+      const snapshotProfileId = getSnapshotProfileId();
+      if (snapshotProfileId) {
+        void writeMeProfileSnapshot(snapshotProfileId, {
+          avatarUrl: formData.avatar_url || null,
+          photos: formData.photos,
+          profileVideo: formData.profile_video || null,
+        });
+      }
+      Alert.alert(
+        queued ? 'Saved offline' : 'Success',
+        queued
+          ? 'Your profile is updated here and will sync automatically when your connection returns.'
+          : 'Profile updated successfully!',
+      );
+      onSave({
+        ...updateData,
+        __displayAvatarUrl: formData.avatar_url || null,
+        __displayPhotos: formData.photos,
+        __displayProfileVideo: formData.profile_video || null,
+        __interests: selectedInterests,
+        __offlineQueued: queued,
+      });
       onClose();
     } catch (error) {
       console.error('Error updating profile:', error);
@@ -1520,9 +1771,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
               {hasAvatarImage ? (
                 <Image
                   source={{
-                    uri: formData.avatar_url,
+                    uri: normalizeProfilePhotoUri(formData.avatar_url),
                   }}
                   style={styles.avatar}
+                  resizeMode="cover"
                 />
               ) : (
                 <View style={styles.avatarPlaceholder}>
@@ -1747,6 +1999,29 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                   maxLength={100}
                 />
               )}
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Religion</Text>
+              <TouchableOpacity
+                style={styles.selectButton}
+                onPress={() => setShowReligionPicker(true)}
+              >
+                <Text
+                  style={[
+                    formData.religion
+                      ? styles.selectButtonText
+                      : styles.selectButtonPlaceholder,
+                  ]}
+                >
+                  {formatReligionLabel(formData.religion) || 'Select religion'}
+                </Text>
+                <MaterialCommunityIcons
+                  name="chevron-down"
+                  size={20}
+                  color={theme.textMuted}
+                />
+              </TouchableOpacity>
             </View>
 
             <View style={styles.inputContainer}>
@@ -2579,17 +2854,20 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             </Text>
 
             <View style={styles.photosGrid}>
-              {formData.photos.map((photo, index) => (
-                <View key={index} style={styles.photoContainer}>
-                  <Image source={{ uri: photo }} style={styles.photo} />
-                  <TouchableOpacity
-                    style={styles.removePhotoButton}
-                    onPress={() => removePhoto(index)}
-                  >
-                    <MaterialCommunityIcons name="close" size={14} color={theme.text} />
-                  </TouchableOpacity>
-                </View>
-              ))}
+              {formData.photos.map((photo, index) => {
+                const photoUri = normalizeProfilePhotoUri(photo);
+                return (
+                  <View key={`${photoUri}-${index}`} style={styles.photoContainer}>
+                    <Image source={{ uri: photoUri }} style={styles.photo} resizeMode="cover" />
+                    <TouchableOpacity
+                      style={styles.removePhotoButton}
+                      onPress={() => removePhoto(index)}
+                    >
+                      <MaterialCommunityIcons name="close" size={14} color={theme.text} />
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
               
               {/* Empty slots */}
               {Array.from({ length: 6 - formData.photos.length }).map((_, index) => (
@@ -2658,6 +2936,16 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           currentValue={formData.region}
         />
       )}
+
+      {/* Religion Picker */}
+      <FieldPicker
+        title="Select Religion"
+        options={RELIGION_OPTIONS}
+        visible={showReligionPicker}
+        onClose={() => setShowReligionPicker(false)}
+        onSelect={(value) => handleInputChange('religion', value)}
+        currentValue={formatReligionLabel(formData.religion)}
+      />
 
       {/* Occupation Picker */}
       <FieldPicker
@@ -2957,8 +3245,17 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   );
 }
 
-const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
-  StyleSheet.create({
+const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: ResponsiveMetrics) => {
+  const pageGutter = responsive.horizontalGutter;
+  const sectionPadding = responsive.space(18, { min: 15, max: 20 });
+  const sectionMargin = responsive.compactWidth ? 12 : 16;
+  const controlPaddingX = responsive.space(16, { min: 14, max: 18 });
+  const controlPaddingY = responsive.space(12, { min: 10, max: 14 });
+  const headerPaddingY = responsive.compactHeight ? 12 : 16;
+  const avatarSize = responsive.compactHeight ? 92 : 100;
+  const avatarPlaceholderSize = responsive.compactHeight ? 102 : 112;
+
+  return StyleSheet.create({
     container: {
       flex: 1,
       backgroundColor: theme.background,
@@ -2967,24 +3264,24 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 20,
-      paddingVertical: 16,
+      paddingHorizontal: pageGutter,
+      paddingVertical: headerPaddingY,
       backgroundColor: theme.background,
       borderBottomWidth: 1,
       borderBottomColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
     },
     title: {
-      fontSize: 18,
+      fontSize: responsive.font(18, { min: 17, max: 20 }),
       fontWeight: '700',
       letterSpacing: 0.2,
       color: theme.text,
     },
     cancelButton: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       color: theme.textMuted,
     },
     saveButton: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       fontWeight: '600',
       color: theme.tint,
     },
@@ -2994,10 +3291,10 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     section: {
       backgroundColor: theme.backgroundSubtle,
-      paddingHorizontal: 18,
-      paddingVertical: 18,
-      marginBottom: 12,
-      marginHorizontal: 16,
+      paddingHorizontal: sectionPadding,
+      paddingVertical: sectionPadding,
+      marginBottom: responsive.space(12, { min: 10, max: 14 }),
+      marginHorizontal: sectionMargin,
       borderWidth: 1,
       borderRadius: 18,
       borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.05),
@@ -3009,10 +3306,10 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     verificationCard: {
       backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.92 : 0.98),
-      paddingHorizontal: 18,
-      paddingVertical: 18,
-      marginBottom: 12,
-      marginHorizontal: 16,
+      paddingHorizontal: sectionPadding,
+      paddingVertical: sectionPadding,
+      marginBottom: responsive.space(12, { min: 10, max: 14 }),
+      marginHorizontal: sectionMargin,
       borderWidth: 1,
       borderRadius: 18,
       borderColor: withAlpha(theme.tint, isDark ? 0.22 : 0.16),
@@ -3031,9 +3328,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     sectionTitleRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
+      gap: responsive.space(8, { min: 6, max: 10 }),
       flexShrink: 1,
-      marginBottom: 12,
+      marginBottom: responsive.space(12, { min: 10, max: 14 }),
     },
     sectionIcon: {
       marginTop: 1,
@@ -3059,7 +3356,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       shadowColor: theme.tint,
     },
     sectionTitle: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 18 }),
       fontWeight: '700',
       letterSpacing: 0.2,
       color: theme.text,
@@ -3068,7 +3365,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     verificationCardRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 12,
+      gap: responsive.space(12, { min: 10, max: 14 }),
     },
     verificationBadgeWrap: {
       width: 42,
@@ -3090,13 +3387,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       gap: 4,
     },
     verificationCardTitle: {
-      fontSize: 15,
+      fontSize: responsive.font(15, { min: 14, max: 16 }),
       fontWeight: '700',
       color: theme.text,
       letterSpacing: 0.2,
     },
     verificationCardSubtitle: {
-      fontSize: 12,
+      fontSize: responsive.font(12, { min: 12, max: 13 }),
       lineHeight: 17,
       color: theme.textMuted,
     },
@@ -3104,15 +3401,15 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'center',
       gap: 4,
-      paddingHorizontal: 10,
-      paddingVertical: 8,
+      paddingHorizontal: responsive.space(10, { min: 9, max: 12 }),
+      paddingVertical: responsive.space(8, { min: 7, max: 9 }),
       borderRadius: 999,
       backgroundColor: withAlpha(theme.background, isDark ? 0.82 : 0.95),
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
     },
     verificationCardActionText: {
-      fontSize: 12,
+      fontSize: responsive.font(12, { min: 12, max: 13 }),
       fontWeight: '700',
       color: theme.tint,
       letterSpacing: 0.2,
@@ -3122,16 +3419,16 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       position: 'relative',
     },
     avatar: {
-      width: 100,
-      height: 100,
-      borderRadius: 50,
+      width: avatarSize,
+      height: avatarSize,
+      borderRadius: avatarSize / 2,
       borderWidth: 3,
       borderColor: withAlpha(theme.text, isDark ? 0.25 : 0.12),
     },
     avatarPlaceholder: {
-      width: 112,
-      height: 112,
-      borderRadius: 56,
+      width: avatarPlaceholderSize,
+      height: avatarPlaceholderSize,
+      borderRadius: avatarPlaceholderSize / 2,
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
       backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
@@ -3145,7 +3442,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       elevation: 8,
     },
     avatarPlaceholderInitials: {
-      fontSize: 30,
+      fontSize: responsive.font(30, { min: 27, max: 32 }),
       fontFamily: 'PlayfairDisplay_700Bold',
       color: theme.text,
       letterSpacing: 1.2,
@@ -3172,10 +3469,10 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderColor: theme.background,
     },
     inputContainer: {
-      marginBottom: 16,
+      marginBottom: responsive.space(16, { min: 13, max: 18 }),
     },
     inputLabel: {
-      fontSize: 13,
+      fontSize: responsive.font(13, { min: 12, max: 14 }),
       fontWeight: '600',
       color: withAlpha(theme.text, isDark ? 0.72 : 0.58),
       marginBottom: 8,
@@ -3184,14 +3481,14 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      gap: 12,
-      paddingVertical: 10,
+      gap: responsive.space(12, { min: 10, max: 14 }),
+      paddingVertical: responsive.space(10, { min: 8, max: 12 }),
     },
     toggleTextCol: {
       flex: 1,
     },
     toggleLabel: {
-      fontSize: 14,
+      fontSize: responsive.font(14, { min: 13, max: 15 }),
       fontWeight: '600',
       color: theme.text,
     },
@@ -3429,15 +3726,15 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     uploadingContainer: {
       backgroundColor: theme.background,
-      paddingHorizontal: 24,
-      paddingVertical: 20,
+      paddingHorizontal: responsive.space(24, { min: 20, max: 28 }),
+      paddingVertical: responsive.space(20, { min: 16, max: 22 }),
       borderRadius: 16,
       alignItems: 'center',
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.08),
     },
     uploadingText: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       color: theme.text,
       marginTop: 12,
     },
@@ -3451,18 +3748,18 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 20,
-      paddingVertical: 16,
+      paddingHorizontal: pageGutter,
+      paddingVertical: headerPaddingY,
       backgroundColor: theme.background,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
     },
     pickerCancel: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       color: theme.textMuted,
     },
     pickerTitle: {
-      fontSize: 18,
+      fontSize: responsive.font(18, { min: 17, max: 20 }),
       fontWeight: '600',
       color: theme.text,
     },
@@ -3473,8 +3770,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 20,
-      paddingVertical: 16,
+      paddingHorizontal: pageGutter,
+      paddingVertical: responsive.space(16, { min: 14, max: 18 }),
       backgroundColor: theme.background,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: withAlpha(theme.text, isDark ? 0.12 : 0.1),
@@ -3483,7 +3780,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.12),
     },
     pickerItemText: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       color: theme.text,
     },
     pickerItemTextSelected: {
@@ -3497,17 +3794,17 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
       borderRadius: 16,
-      paddingHorizontal: 16,
-      paddingVertical: 12,
-      minHeight: 52,
+      paddingHorizontal: controlPaddingX,
+      paddingVertical: controlPaddingY,
+      minHeight: responsive.minTapTarget + 8,
       backgroundColor: withAlpha(theme.background, isDark ? 0.7 : 0.95),
     },
     selectButtonText: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       color: theme.text,
     },
     selectButtonPlaceholder: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       color: theme.textMuted,
     },
     
@@ -3515,8 +3812,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     interestsPreview: {
       flexDirection: 'row',
       flexWrap: 'wrap',
-      gap: 8,
-      marginTop: 12,
+      gap: responsive.space(8, { min: 6, max: 10 }),
+      marginTop: responsive.space(12, { min: 10, max: 14 }),
     },
     interestTag: {
       flexDirection: 'row',
@@ -3525,11 +3822,11 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderColor: withAlpha(theme.accent, isDark ? 0.4 : 0.3),
       borderWidth: 1,
       borderRadius: 20,
-      paddingHorizontal: 12,
-      paddingVertical: 6,
+      paddingHorizontal: responsive.space(12, { min: 10, max: 14 }),
+      paddingVertical: responsive.space(6, { min: 5, max: 8 }),
     },
     interestText: {
-      fontSize: 14,
+      fontSize: responsive.font(14, { min: 13, max: 15 }),
       color: theme.text,
       fontWeight: '500',
     },
@@ -3538,13 +3835,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       padding: 2,
     },
     distanceUnitGroup: {
-      gap: 12,
+      gap: responsive.space(12, { min: 10, max: 14 }),
     },
     distanceUnitRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingVertical: 12,
-      paddingHorizontal: 12,
+      paddingVertical: controlPaddingY,
+      paddingHorizontal: responsive.space(12, { min: 10, max: 14 }),
       borderRadius: 16,
       backgroundColor: theme.background,
       borderWidth: StyleSheet.hairlineWidth,
@@ -3573,12 +3870,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       marginLeft: 12,
     },
     distanceUnitLabel: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       fontFamily: 'Manrope_600SemiBold',
       color: theme.text,
     },
     distanceUnitSubtitle: {
-      fontSize: 12,
+      fontSize: responsive.font(12, { min: 12, max: 13 }),
       fontFamily: 'Manrope_400Regular',
       color: theme.textMuted,
       marginTop: 2,
@@ -3586,9 +3883,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     statusBanner: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
-      paddingHorizontal: 14,
-      paddingVertical: 10,
+      gap: responsive.space(8, { min: 6, max: 10 }),
+      paddingHorizontal: responsive.space(14, { min: 12, max: 16 }),
+      paddingVertical: responsive.space(10, { min: 8, max: 12 }),
       borderRadius: 12,
       borderWidth: 1,
       marginTop: 12,
@@ -3603,7 +3900,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     statusBannerText: {
       flex: 1,
-      fontSize: 13,
+      fontSize: responsive.font(13, { min: 12, max: 14 }),
       fontFamily: 'Manrope_500Medium',
       color: theme.text,
     },
@@ -3614,7 +3911,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: theme.tint,
     },
     statusDisplay: {
-      padding: 16,
+      padding: responsive.space(16, { min: 14, max: 18 }),
       backgroundColor: theme.backgroundSubtle,
       borderRadius: 12,
       borderWidth: 1,
@@ -3626,14 +3923,15 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       justifyContent: 'space-between',
     },
     statusText: {
-      fontSize: 16,
+      fontSize: responsive.font(16, { min: 15, max: 17 }),
       fontFamily: 'Archivo_600SemiBold',
       color: theme.text,
       marginBottom: 4,
     },
     statusSubtext: {
-      fontSize: 14,
+      fontSize: responsive.font(14, { min: 13, max: 15 }),
       fontFamily: 'Manrope_400Regular',
       color: theme.textMuted,
     },
   });
+};

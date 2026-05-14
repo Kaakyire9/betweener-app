@@ -1,62 +1,25 @@
 // components/ExploreCard.tsx
 import AmbientCardGlow from "@/components/AmbientCardGlow";
 import OfflineImage from "@/components/media/OfflineImage";
-import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
 import { VerificationBadge } from "@/components/VerificationBadge";
+import { getMomentAtmosphere } from "@/components/vibes/momentAtmosphere";
+import { formatDisplayNameForCard } from "@/components/vibes/nameFormatting";
+import { getInterestIconName } from "@/components/vibes/interestIcons";
+import { getVibesLayoutMetrics, type VibesLayoutMetrics } from "@/components/vibes/VibesResponsiveLayout";
+import GlassSurface from "@/components/vibes/depth/GlassSurface";
+import VibesCardFrame from "@/components/vibes/depth/VibesCardFrame";
+import { VIBES_DEPTH_COLORS } from "@/components/vibes/depth/platformGlass";
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
-import { pickPreferredLocationLabel } from "@/lib/location/location-display";
+import { buildLocationDisplay, getFirstLocationPart } from "@/lib/location/location-display";
+import { getPresenceDisplay } from "@/lib/presence";
 import { getProfileInitials, getProfilePlaceholderPalette, hasProfileImage } from "@/lib/profile-placeholders";
 import type { Match } from "@/types/match";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AccessibilityInfo, Animated, Image, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
+import { AccessibilityInfo, Animated, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-
-const isDistanceLabel = (label?: string) => {
-  if (!label) return false;
-  const lower = label.toLowerCase();
-  return lower.includes('away') || /\b(km|mi|mile|miles)\b/.test(lower) || /<\s*1/.test(lower);
-};
-
-const getCityOnly = (label?: string) => {
-  if (!label) return '';
-  const parts = String(label).split(',');
-  return parts[0]?.trim() || '';
-};
-
-const looksAdministrative = (label?: string) =>
-  /\b(region|district|province|state|county|municipality|metropolitan)\b/i.test(String(label || '')) ||
-  /^(africa|north america|south america|europe|asia|oceania|middle east)$/i.test(String(label || '').trim());
-
-const isBroadLocationLabel = (label?: string) =>
-  /^(africa|north america|south america|europe|asia|oceania|middle east)$/i.test(String(label || '').trim());
-
-const pickBetterCityLabel = (incoming?: string, previous?: string) => {
-  const next = getCityOnly(incoming);
-  const prev = getCityOnly(previous);
-  if (!next) return prev;
-  if (!prev) return next;
-  const nextLower = next.toLowerCase();
-  const prevLower = prev.toLowerCase();
-  if (nextLower === prevLower) return next;
-  if (looksAdministrative(next) && !looksAdministrative(prev)) return prev;
-  if (looksAdministrative(prev) && !looksAdministrative(next)) return next;
-  if (nextLower.includes(prevLower) && prev.length <= next.length) return prev;
-  if (prevLower.includes(nextLower) && next.length <= prev.length) return next;
-  return next;
-};
-
-const toFlagEmoji = (code?: string) => {
-  if (!code) return '';
-  const normalized = String(code).trim().toUpperCase();
-  if (normalized.length !== 2) return '';
-  const first = normalized.charCodeAt(0);
-  const second = normalized.charCodeAt(1);
-  if (first < 65 || first > 90 || second < 65 || second > 90) return '';
-  return String.fromCodePoint(0x1f1e6 + (first - 65), 0x1f1e6 + (second - 65));
-};
 
 const withAlpha = (hex: string, alpha: number) => {
   const normalized = hex.replace('#', '');
@@ -74,95 +37,69 @@ const normalizeLabel = (value?: string | null) =>
     .replace(/\s+/g, ' ')
     .trim();
 
-const COUNTRY_NAME_TO_CODE: Record<string, string> = {
-  england: 'GB',
-  scotland: 'GB',
-  wales: 'GB',
-  'united kingdom': 'GB',
-  uk: 'GB',
-  britain: 'GB',
-  'great britain': 'GB',
-  ghana: 'GH',
-  nigeria: 'NG',
-  'united states': 'US',
-  usa: 'US',
-  america: 'US',
-  canada: 'CA',
-  germany: 'DE',
-  france: 'FR',
-  italy: 'IT',
-  spain: 'ES',
-  netherlands: 'NL',
-  belgium: 'BE',
-  sweden: 'SE',
-  norway: 'NO',
-  ireland: 'IE',
-  australia: 'AU',
-  'south africa': 'ZA',
-  uae: 'AE',
-  'united arab emirates': 'AE',
-};
+const toTitleLabel = (value: string) =>
+  String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/\b\p{L}/gu, (letter) => letter.toUpperCase());
 
-const inferCountryCode = (...values: (string | null | undefined)[]) => {
-  for (const value of values) {
-    const normalized = normalizeLabel(value);
-    if (!normalized) continue;
-    if (normalized.length === 2 && /^[a-z]+$/i.test(normalized)) {
-      return normalized.toUpperCase();
-    }
-    if (COUNTRY_NAME_TO_CODE[normalized]) {
-      return COUNTRY_NAME_TO_CODE[normalized];
-    }
-  }
-  return '';
-};
-
-export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress }: { match: Match; onPress?: (id: string) => void; isPreviewing?: boolean; onPlayPress?: (id: string) => void; }) {
+export default function ExploreCard({
+  match,
+  onPress,
+  isPreviewing,
+  onPlayPress,
+  layoutMetrics,
+}: {
+  match: Match;
+  onPress?: (id: string) => void;
+  isPreviewing?: boolean;
+  onPlayPress?: (id: string) => void;
+  layoutMetrics?: VibesLayoutMetrics;
+}) {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const resolvedLayoutMetrics = useMemo(
+    () => layoutMetrics ?? getVibesLayoutMetrics({
+      screenWidth: windowWidth,
+      screenHeight: windowHeight,
+      insets,
+    }),
+    [insets, layoutMetrics, windowHeight, windowWidth],
+  );
   const placeholderPalette = getProfilePlaceholderPalette(match.id || match.name);
-  const styles = useMemo(() => createStyles(theme, isDark, placeholderPalette), [placeholderPalette, theme, isDark]);
+  const hasIntroVideo = Boolean((match as any).profileVideo);
+  const styles = useMemo(
+    () => createStyles(theme, isDark, placeholderPalette, resolvedLayoutMetrics, hasIntroVideo),
+    [placeholderPalette, theme, isDark, resolvedLayoutMetrics, hasIntroVideo],
+  );
   const gradientColors = useMemo(
-    () => (isDark ? ["rgba(0,0,0,0)", "rgba(0,0,0,0.7)"] : ["rgba(0,0,0,0)", "rgba(0,0,0,0.55)"] ),
+    () => (isDark
+      ? ["rgba(0,0,0,0)", "rgba(3,14,18,0.28)", "rgba(2,8,10,0.82)"]
+      : ["rgba(0,0,0,0)", "rgba(4,19,22,0.32)", "rgba(2,8,10,0.74)"] ),
     [isDark]
   );
-  const immediateLocationLabel = getCityOnly(pickPreferredLocationLabel(match as any));
-  const [stableLocationLabel, setStableLocationLabel] = useState(immediateLocationLabel);
-  useEffect(() => {
-    setStableLocationLabel(immediateLocationLabel);
-  }, [match.id]);
-  useEffect(() => {
-    if (!immediateLocationLabel) return;
-    setStableLocationLabel((prev) => pickBetterCityLabel(immediateLocationLabel, prev));
-  }, [immediateLocationLabel]);
-  const locationLabel = stableLocationLabel || immediateLocationLabel;
-  const distanceLabel = match.distance || '';
-  const showDistance = isDistanceLabel(distanceLabel);
-  const countryLabel = String((match as any).current_country || (match as any).current_country_name || '').trim();
-  const locationDisplayBase =
-    showDistance && locationLabel && !isBroadLocationLabel(locationLabel) && getCityOnly(distanceLabel) !== locationLabel
-      ? `${distanceLabel} \u00b7 ${locationLabel}`
-      : (!isBroadLocationLabel(locationLabel) ? locationLabel : '') || countryLabel || distanceLabel;
-  const resolvedCountryCode = inferCountryCode(
-    (match as any).current_country_code,
-    (match as any).current_country,
-    (match as any).current_country_name,
-    (match as any).city,
-    match.region,
-    match.location,
+  const bottomGradientColors = useMemo(
+    () => (isDark
+      ? ["rgba(0,0,0,0)", "rgba(2,8,10,0.44)", "rgba(2,8,10,0.84)"]
+      : ["rgba(0,0,0,0)", "rgba(5,22,24,0.34)", "rgba(4,14,16,0.72)"]),
+    [isDark],
   );
-  const [stableCountryCode, setStableCountryCode] = useState(resolvedCountryCode);
-  useEffect(() => {
-    setStableCountryCode(resolvedCountryCode);
-  }, [match.id]);
-  useEffect(() => {
-    if (resolvedCountryCode) {
-      setStableCountryCode((prev) => (prev === resolvedCountryCode ? prev : resolvedCountryCode));
-    }
-  }, [resolvedCountryCode]);
-  const countryFlag = toFlagEmoji(stableCountryCode || resolvedCountryCode);
-  const locationDisplay = locationDisplayBase || '';
+  const sideVignetteColors = useMemo(
+    () => (isDark
+      ? ["rgba(0,0,0,0.20)", "rgba(0,0,0,0)", "rgba(0,0,0,0.16)"]
+      : ["rgba(0,0,0,0.13)", "rgba(0,0,0,0)", "rgba(0,0,0,0.10)"]),
+    [isDark],
+  );
+  const distanceLabel = match.distance || '';
+  const locationPresentation = useMemo(
+    () => buildLocationDisplay(match as any, { surface: 'vibes', distanceLabel }),
+    [distanceLabel, match],
+  );
+  const countryFlag = locationPresentation.flag;
+  const locationDisplay = locationPresentation.withFlag.replace(countryFlag, '').trim();
   const blockedLabels = useMemo(() => {
     const values = new Set<string>();
     const addValue = (value?: string | null) => {
@@ -170,16 +107,17 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
       if (normalized) values.add(normalized);
     };
 
-    addValue(locationLabel);
+    addValue(locationPresentation.primary);
+    addValue(locationPresentation.secondary);
     addValue((match as any).city);
-    addValue(getCityOnly(match.location || ''));
+    addValue(getFirstLocationPart(match.location || ''));
     addValue(match.location);
     addValue(match.region);
     addValue((match as any).current_country);
     addValue((match as any).current_country_name);
 
     return values;
-  }, [locationLabel, (match as any).city, match.location, match.region, (match as any).current_country, (match as any).current_country_name]);
+  }, [locationPresentation.primary, locationPresentation.secondary, (match as any).city, match.location, match.region, (match as any).current_country, (match as any).current_country_name]);
   const verificationLevel =
     typeof (match as any).verification_level === 'number'
       ? (match as any).verification_level
@@ -189,28 +127,23 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
   const badgeVariant = verificationLevel >= 2 ? 'id' : verificationLevel >= 1 ? 'phone' : null;
   const hasAvatarImage = hasProfileImage(match.avatar_url);
   const profileInitials = getProfileInitials(match.name);
-  const { height: windowHeight, width: windowWidth } = useWindowDimensions();
   const compactMode = windowHeight <= 760 || windowWidth <= 360;
+  const displayName = useMemo(
+    () => formatDisplayNameForCard(match.name, (match as any).age, resolvedLayoutMetrics.device.compactWidth ? 18 : 24),
+    [resolvedLayoutMetrics.device.compactWidth, match.name, (match as any).age],
+  );
 
-  const isOnlineNow = !!(match as any).online;
+  const [presenceNow, setPresenceNow] = useState(() => Date.now());
   const lastActiveValue = match.lastActive || (match as any).last_active;
-  const ACTIVE_NOW_MS = 3 * 60 * 1000;
-  const RECENTLY_ACTIVE_MS = 45 * 60 * 1000;
-  const { isActiveNow, recentlyActive } = (() => {
-    if (!lastActiveValue) return { isActiveNow: false, recentlyActive: false };
-    try {
-      const then = new Date(lastActiveValue).getTime();
-      if (isNaN(then)) return { isActiveNow: false, recentlyActive: false };
-      const diffMs = Date.now() - then;
-      if (diffMs <= 0) return { isActiveNow: false, recentlyActive: false };
-      return {
-        isActiveNow: diffMs <= ACTIVE_NOW_MS,
-        recentlyActive: diffMs > ACTIVE_NOW_MS && diffMs <= RECENTLY_ACTIVE_MS,
-      };
-    } catch (_e) {
-      return { isActiveNow: false, recentlyActive: false };
-    }
-  })();
+  const presence = getPresenceDisplay(lastActiveValue, presenceNow);
+  const isOnlineNow = presence.online;
+  const isActiveNow = presence.activeNow;
+  const recentlyActive = presence.recentlyActive;
+
+  useEffect(() => {
+    const interval = setInterval(() => setPresenceNow(Date.now()), 30_000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Reduced-motion preference + small, native Animated transitions (no Reanimated hooks).
   const [reduceMotion, setReduceMotion] = useState(false);
@@ -228,7 +161,6 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
   const [rightBadgeWidth, setRightBadgeWidth] = useState(0);
   const MIN_SLOT = 44;
 
-  const insets = useSafeAreaInsets();
   const slotWidth = Math.max(leftBadgeWidth + insets.left, rightBadgeWidth + insets.right, MIN_SLOT);
 
   // fallback Animated values
@@ -239,7 +171,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
   const pillAnim = useRef(new Animated.Value(0)).current;
   const pillTranslate = useRef(new Animated.Value(6)).current;
   const introPulse = useRef(new Animated.Value(0)).current;
-  const hasIntroVideo = Boolean((match as any).profileVideo);
+  const atmospherePulse = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (badgeVariant) {
@@ -284,6 +216,37 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
     };
   }, [hasIntroVideo, introPulse]);
 
+  const momentTypeHint = useMemo(() => {
+    const shared = Array.isArray((match as any).commonInterests) ? (match as any).commonInterests[0] : null;
+    const interest = Array.isArray(match.interests) ? match.interests[0] : null;
+    const lookingFor = (match as any).looking_for || (match as any).lookingFor;
+    if (shared) return String(shared);
+    if (interest) return String(interest);
+    if (hasIntroVideo) return "video";
+    if (badgeVariant) return "verified";
+    return lookingFor ? String(lookingFor) : null;
+  }, [(match as any).commonInterests, (match as any).looking_for, (match as any).lookingFor, badgeVariant, hasIntroVideo, match.interests]);
+
+  const atmosphere = useMemo(() => getMomentAtmosphere(momentTypeHint), [momentTypeHint]);
+
+  useEffect(() => {
+    if (reduceMotion) {
+      atmospherePulse.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(atmospherePulse, { toValue: 1, duration: 2600, useNativeDriver: true }),
+        Animated.timing(atmospherePulse, { toValue: 0, duration: 2600, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => {
+      loop.stop();
+      atmospherePulse.setValue(0);
+    };
+  }, [atmospherePulse, reduceMotion, atmosphere.microAnimationType]);
+
   const introPulseStyle = {
     transform: [
       {
@@ -318,29 +281,58 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
   }, [(match as any).compatibility, theme.accent, theme.secondary, theme.tint]);
 
   const alignmentChips = useMemo(() => {
-    const chips: { label: string; tone: 'tint' | 'secondary' | 'accent' }[] = [];
+    const chips: { label: string; tone: 'tint' | 'secondary' | 'accent'; icon: string }[] = [];
     const commonInterests = (Array.isArray((match as any).commonInterests) ? (match as any).commonInterests : []).filter(
-      (interest) => !blockedLabels.has(normalizeLabel(String(interest || '')))
-    );
-    const interests = (Array.isArray(match.interests) ? match.interests : []).filter(
       (interest) => !blockedLabels.has(normalizeLabel(String(interest || '')))
     );
     const lookingFor = (match as any).looking_for || (match as any).lookingFor;
     const loveLanguage = (match as any).love_language || (match as any).loveLanguage;
 
     if (commonInterests[0]) {
+      const cleanShared = commonInterests.map((interest) => toTitleLabel(String(interest || ''))).filter(Boolean);
+      const sharedLabel =
+        cleanShared.length >= 3
+          ? `${cleanShared.length} shared interests`
+          : `Shared: ${cleanShared.slice(0, 2).join(', ')}`;
       chips.push({
-        label: commonInterests.length > 1 ? `${commonInterests.length} shared interests` : `Shared: ${commonInterests[0]}`,
+        label: sharedLabel,
         tone: 'secondary',
+        icon: getInterestIconName(cleanShared[0] || sharedLabel),
       });
-    } else if (interests[0]) {
-      chips.push({ label: interests[0], tone: 'secondary' });
     }
-    if (lookingFor) chips.push({ label: `Intent: ${lookingFor}`, tone: 'tint' });
-    if (loveLanguage && chips.length < 3) chips.push({ label: `Love language: ${loveLanguage}`, tone: 'tint' });
+    if (lookingFor) chips.push({ label: `Intent: ${toTitleLabel(String(lookingFor))}`, tone: 'tint', icon: 'target' });
+    if (loveLanguage && chips.length < 3) chips.push({ label: `Love language: ${toTitleLabel(String(loveLanguage))}`, tone: 'tint', icon: 'hand-heart-outline' });
 
     return chips.slice(0, 3);
-  }, [blockedLabels, match.interests, (match as any).commonInterests, (match as any).looking_for, (match as any).lookingFor, (match as any).love_language, (match as any).loveLanguage]);
+  }, [
+    blockedLabels,
+    (match as any).commonInterests,
+    (match as any).looking_for,
+    (match as any).lookingFor,
+    (match as any).love_language,
+    (match as any).loveLanguage,
+  ]);
+
+  const atmosphereStyle: any = {
+    opacity: atmospherePulse.interpolate({
+      inputRange: [0, 1],
+      outputRange: [atmosphere.glowOpacity * 0.54, atmosphere.glowOpacity],
+    }),
+    transform: [
+      {
+        translateY: atmospherePulse.interpolate({
+          inputRange: [0, 1],
+          outputRange: atmosphere.microAnimationType === "pulse" ? [0, -6] : [0, -12],
+        }),
+      },
+      {
+        scale: atmospherePulse.interpolate({
+          inputRange: [0, 1],
+          outputRange: [1, atmosphere.microAnimationType === "pulse" ? 1.08 : 1.04],
+        }),
+      },
+    ],
+  };
 
   return (
     <View style={styles.cardShell}>
@@ -352,6 +344,7 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
         compactMode={compactMode}
         disabled={reduceMotion}
       />
+      <VibesCardFrame metrics={resolvedLayoutMetrics} active={!isPreviewing}>
       <TouchableOpacity
         style={styles.card}
         activeOpacity={0.95}
@@ -363,6 +356,8 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
           <OfflineImage
             uri={match.avatar_url}
             style={styles.image}
+            contentFit="cover"
+            contentPosition={{ top: "42%", left: "50%" }}
             fallback={
               <LinearGradientSafe
                 colors={[placeholderPalette.start, placeholderPalette.end]}
@@ -454,24 +449,47 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
           </View>
         </View>
 
-        <LinearGradientSafe colors={gradientColors} style={styles.gradient} />
+        <Animated.View pointerEvents="none" style={[styles.atmosphere, atmosphereStyle]}>
+          <LinearGradientSafe
+            colors={atmosphere.backgroundOverlay}
+            start={[0.2, 0]}
+            end={[0.8, 1]}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
 
-        <BlurViewSafe intensity={60} tint="dark" style={styles.info}>
+        <LinearGradientSafe colors={gradientColors} style={styles.gradient} />
+        <LinearGradientSafe
+          pointerEvents="none"
+          colors={bottomGradientColors}
+          start={[0.5, 0]}
+          end={[0.5, 1]}
+          style={styles.bottomReadabilityGradient}
+        />
+        <LinearGradientSafe
+          pointerEvents="none"
+          colors={sideVignetteColors}
+          start={[0, 0.45]}
+          end={[1, 0.45]}
+          style={StyleSheet.absoluteFill}
+        />
+
+        <View style={styles.info}>
           <View style={styles.nameRow}>
-            <Text style={styles.name}>{match.name}, {match.age}</Text>
-            {hasIntroVideo ? (
-              <TouchableOpacity
-                accessibilityLabel={"Play profile video"}
-                accessibilityRole="button"
-                onPress={() => onPlayPress ? onPlayPress(match.id) : onPress?.(match.id)}
-                style={styles.inlineIntroHit}
-                activeOpacity={0.9}
-              >
-                <Animated.View style={[styles.inlineIntroPill, introPulseStyle, compactMode ? styles.inlineIntroPillCompact : null]}>
-                  <MaterialCommunityIcons name="play-circle-outline" size={compactMode ? 12 : 13} color="#F2FBFB" />
-                  <Text style={styles.inlineIntroText}>Intro</Text>
-                </Animated.View>
-              </TouchableOpacity>
+            <Text
+              style={styles.name}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+              allowFontScaling={false}
+              accessibilityLabel={displayName.accessibilityLabel}
+            >
+              {displayName.name}
+            </Text>
+            {displayName.ageLabel ? (
+              <View style={styles.ageCluster} pointerEvents="none">
+                <Text style={styles.ageDot} allowFontScaling={false}>·</Text>
+                <Text style={styles.ageText} allowFontScaling={false}>{displayName.ageLabel}</Text>
+              </View>
             ) : null}
           </View>
 
@@ -480,34 +498,68 @@ export default function ExploreCard({ match, onPress, isPreviewing, onPlayPress 
           {locationDisplay || countryFlag ? (
             <View style={styles.locationRow}>
               <MaterialCommunityIcons name="map-marker" size={14} color="#fff" />
-              {locationDisplay ? <Text style={styles.location}>{locationDisplay}</Text> : null}
+              {locationDisplay ? (
+                <Text style={styles.location} numberOfLines={1} ellipsizeMode="tail" maxFontSizeMultiplier={1.12}>
+                  {locationDisplay}
+                </Text>
+              ) : null}
               {countryFlag ? <Text style={styles.locationFlag}>{countryFlag}</Text> : null}
             </View>
           ) : null}
 
-          {alignmentChips.length >= 2 || /shared/i.test(String(alignmentChips[0]?.label || '')) ? (
-            <View style={styles.alignmentRow}>
-              <View style={styles.alignmentChips}>
-                {alignmentChips.map((chip, idx) => (
-                  <View
-                    key={`${chip.label}-${idx}`}
-                    style={[
-                      styles.alignmentChip,
-                      chip.tone === 'tint'
-                        ? styles.alignmentChipTint
-                        : chip.tone === 'secondary'
-                          ? styles.alignmentChipSecondary
-                          : styles.alignmentChipAccent,
-                    ]}
-                  >
-                    <Text style={styles.alignmentChipText}>{chip.label}</Text>
-                  </View>
-                ))}
-              </View>
+          {alignmentChips.length > 0 || hasIntroVideo ? (
+            <View style={styles.contextRow}>
+              {alignmentChips.length > 0 ? (
+                <View style={styles.alignmentChips}>
+                  {alignmentChips.map((chip, idx) => (
+                    <GlassSurface
+                      key={`${chip.label}-${idx}`}
+                      radius={999}
+                      intensity={16}
+                      borderOpacity={0.14}
+                      fallbackColor={isDark ? "rgba(8,34,38,0.74)" : "rgba(7,30,34,0.62)"}
+                      contentStyle={styles.alignmentChipSurface}
+                      style={[
+                        styles.alignmentChipFrame,
+                        chip.tone === 'tint'
+                          ? styles.alignmentChipTint
+                          : chip.tone === 'secondary'
+                            ? styles.alignmentChipSecondary
+                            : styles.alignmentChipAccent,
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name={chip.icon as any}
+                        size={resolvedLayoutMetrics.device.compactHeight ? 11 : 12}
+                        color={isDark ? '#D9FFFF' : '#F4FFFF'}
+                        style={styles.alignmentChipIcon}
+                      />
+                      <Text style={styles.alignmentChipText} numberOfLines={1} ellipsizeMode="tail" allowFontScaling={false}>
+                        {chip.label}
+                      </Text>
+                    </GlassSurface>
+                  ))}
+                </View>
+              ) : <View style={styles.alignmentChipsEmpty} />}
+              {hasIntroVideo ? (
+                <TouchableOpacity
+                  accessibilityLabel={"Play profile video"}
+                  accessibilityRole="button"
+                  onPress={() => onPlayPress ? onPlayPress(match.id) : onPress?.(match.id)}
+                  style={styles.inlineIntroHit}
+                  activeOpacity={0.9}
+                >
+                  <Animated.View style={[styles.inlineIntroPill, introPulseStyle, compactMode ? styles.inlineIntroPillCompact : null]}>
+                    <MaterialCommunityIcons name="play-circle-outline" size={compactMode ? 12 : 13} color="#F2FBFB" />
+                    <Text style={styles.inlineIntroText}>Intro</Text>
+                  </Animated.View>
+                </TouchableOpacity>
+              ) : null}
             </View>
           ) : null}
-        </BlurViewSafe>
+        </View>
       </TouchableOpacity>
+      </VibesCardFrame>
     </View>
   );
 }
@@ -516,32 +568,26 @@ const createStyles = (
   theme: typeof Colors.light,
   isDark: boolean,
   placeholderPalette: ReturnType<typeof getProfilePlaceholderPalette>,
+  metrics: VibesLayoutMetrics,
+  hasIntroVideo: boolean,
 ) => {
-  const surface = theme.background;
   const activeNowBgColor = withAlpha(theme.secondary, isDark ? 0.9 : 0.95);
   const recentlyActiveBgColor = withAlpha(theme.accent, isDark ? 0.85 : 0.9);
-  const infoBg = isDark ? 'rgba(5,10,18,0.16)' : 'rgba(17,24,39,0.12)';
+  const infoBg = isDark ? 'rgba(3,14,18,0.10)' : 'rgba(4,19,22,0.08)';
   return StyleSheet.create({
     cardShell: {
       position: "absolute",
       width: "100%",
       height: "100%",
-      borderRadius: 28,
+      borderRadius: metrics.cardBorderRadius,
       overflow: "visible",
     },
     card: {
       width: "100%",
       height: "100%",
-      borderRadius: 28,
+      borderRadius: metrics.cardBorderRadius,
       overflow: "hidden",
-      backgroundColor: surface,
-      borderWidth: 1,
-      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.05)',
-      shadowColor: '#000',
-      shadowOpacity: isDark ? 0.22 : 0.08,
-      shadowRadius: 18,
-      shadowOffset: { width: 0, height: 10 },
-      elevation: 12,
+      backgroundColor: VIBES_DEPTH_COLORS.background,
     },
     image: { width: "100%", height: "100%", resizeMode: "cover" },
     placeholderSurface: { width: "100%", height: "100%", justifyContent: "center", alignItems: "center" },
@@ -579,42 +625,105 @@ const createStyles = (
       textAlign: 'center',
       lineHeight: 19,
     },
-    gradient: { position: "absolute", left: 0, right: 0, bottom: 0, height: "56%" },
+    atmosphere: {
+      position: "absolute",
+      left: -20,
+      right: -20,
+      bottom: metrics.cardHeight * 0.16,
+      height: metrics.cardHeight * 0.42,
+      borderRadius: metrics.cardBorderRadius * 1.5,
+      overflow: "hidden",
+    },
+    gradient: { position: "absolute", left: 0, right: 0, bottom: 0, height: "68%" },
+    bottomReadabilityGradient: {
+      position: "absolute",
+      left: 0,
+      right: 0,
+      bottom: 0,
+      height: "54%",
+    },
     info: {
       position: "absolute",
       left: 0,
       right: 0,
       bottom: 0,
-      padding: 18,
-      paddingTop: 22,
-      paddingBottom: 34,
+      maxHeight: Math.max(190, metrics.cardHeight * 0.58),
+      paddingHorizontal: metrics.overlayPadding.horizontal,
+      paddingTop: metrics.device.compactHeight ? 14 : metrics.overlayPadding.top,
+      paddingBottom: metrics.overlayPadding.bottom,
       backgroundColor: infoBg,
-      borderTopWidth: 1,
-      borderTopColor: 'rgba(255,255,255,0.14)',
+      borderTopWidth: 0,
+      borderTopColor: 'transparent',
     },
-    nameRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10 },
-    name: { color: "#fff", fontSize: 30, flex: 1, fontFamily: 'PlayfairDisplay_700Bold', minWidth: 0 },
+    nameRow: { flexDirection: "row", alignItems: "baseline", gap: 6, marginBottom: metrics.device.compactHeight ? 6 : 8 },
+    name: {
+      color: VIBES_DEPTH_COLORS.cream,
+      fontSize: metrics.device.compactHeight ? Math.max(24, metrics.nameFontSize - 1) : metrics.nameFontSize,
+      flexShrink: 1,
+      flexGrow: 0,
+      maxWidth: Math.max(168, metrics.cardWidth - (metrics.overlayPadding.horizontal * 2) - 88),
+      fontFamily: 'PlayfairDisplay_700Bold',
+      minWidth: 0,
+      lineHeight: (metrics.device.compactHeight ? Math.max(24, metrics.nameFontSize - 1) : metrics.nameFontSize) + 6,
+      textShadowColor: isDark ? 'rgba(0,0,0,0.58)' : 'rgba(0,0,0,0.5)',
+      textShadowOffset: { width: 0, height: 4 },
+      textShadowRadius: 13,
+    },
+    ageCluster: {
+      flexDirection: "row",
+      alignItems: "baseline",
+      flexShrink: 0,
+    },
+    ageDot: {
+      color: "rgba(255,255,255,0.78)",
+      fontSize: Math.max(18, metrics.nameFontSize - 8),
+      fontFamily: 'Manrope_700Bold',
+      marginRight: 5,
+    },
+    ageText: {
+      color: "rgba(244,232,208,0.94)",
+      fontSize: Math.max(18, metrics.nameFontSize - 6),
+      fontFamily: 'Manrope_700Bold',
+    },
     activeBadge: { flexDirection: "row", alignItems: "center", backgroundColor: activeNowBgColor, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12 },
     activeDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#fff", marginRight: 6 },
     activeText: { color: "#fff", fontSize: 11 },
     tagline: { color: "#fff", marginBottom: 12, fontSize: 15, fontFamily: 'Manrope_500Medium' },
-    locationRow: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
-    location: { color: "#fff", marginLeft: 6, fontFamily: 'Manrope_600SemiBold' },
-    locationFlag: { marginLeft: 6, fontSize: 15 },
-    alignmentRow: { marginBottom: 2 },
-    alignmentChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-    alignmentChip: {
-      paddingHorizontal: 11,
-      paddingVertical: 7,
-      borderRadius: 999,
-      backgroundColor: withAlpha(theme.text, 0.16),
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: 'rgba(255,255,255,0.18)',
+    locationRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginBottom: hasIntroVideo ? (metrics.device.compactHeight ? 6 : 7) : (metrics.device.compactHeight ? 7 : 10),
     },
-    alignmentChipTint: { backgroundColor: withAlpha(theme.tint, 0.35) },
-    alignmentChipSecondary: { backgroundColor: withAlpha(theme.secondary, 0.32) },
-    alignmentChipAccent: { backgroundColor: withAlpha(theme.accent, 0.32) },
-    alignmentChipText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+    location: { color: "rgba(255,255,255,0.9)", marginLeft: 6, fontFamily: 'Manrope_600SemiBold', flexShrink: 1, fontSize: metrics.device.compactHeight ? 13 : 14 },
+    locationFlag: { marginLeft: 6, fontSize: 15 },
+    contextRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 8,
+      marginBottom: 2,
+    },
+    alignmentChips: { flex: 1, minWidth: 0, flexDirection: 'row', flexWrap: 'wrap', gap: 6, overflow: 'hidden' },
+    alignmentChipsEmpty: { flex: 1 },
+    alignmentChipFrame: {
+      maxWidth: metrics.device.compactWidth ? 150 : 192,
+      borderRadius: 999,
+    },
+    alignmentChipSurface: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: metrics.device.compactHeight ? 9 : 11,
+      paddingVertical: metrics.device.compactHeight ? 6 : 7,
+      borderRadius: 999,
+    },
+    alignmentChipIcon: {
+      marginTop: 1,
+    },
+    alignmentChipTint: { backgroundColor: withAlpha(theme.tint, 0.18) },
+    alignmentChipSecondary: { backgroundColor: withAlpha(theme.secondary, 0.16) },
+    alignmentChipAccent: { backgroundColor: withAlpha(theme.accent, 0.16) },
+    alignmentChipText: { color: '#F8FFFF', fontSize: metrics.device.compactHeight ? 11 : 12, fontWeight: '800' },
     verifiedBadge: {
       position: 'absolute',
       top: 12,
@@ -655,7 +764,16 @@ const createStyles = (
       minWidth: 100,
       maxWidth: '70%',
     },
-    topRow: { position: 'absolute', top: 22, left: 22, right: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', zIndex: 40 },
+    topRow: {
+      position: 'absolute',
+      top: metrics.topRowInset,
+      left: metrics.topRowInset,
+      right: metrics.topRowInset,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      zIndex: 40,
+    },
     leftSlot: { alignItems: 'flex-start' },
     centerSlot: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     rightSlot: { alignItems: 'flex-end' },
@@ -707,23 +825,25 @@ const createStyles = (
       alignItems: 'center',
       justifyContent: 'center',
       flexShrink: 0,
+      alignSelf: 'flex-start',
+      marginBottom: 0,
     },
     inlineIntroPill: {
-      minHeight: 26,
+      minHeight: 25,
       borderRadius: 13,
-      backgroundColor: isDark ? 'rgba(18, 38, 40, 0.74)' : 'rgba(23, 58, 63, 0.62)',
+      backgroundColor: isDark ? 'rgba(18, 38, 40, 0.70)' : 'rgba(15, 61, 62, 0.60)',
       justifyContent: 'center',
       borderWidth: 1,
-      borderColor: withAlpha('#E9FEFF', 0.28),
+      borderColor: withAlpha('#E9FEFF', isDark ? 0.28 : 0.22),
       shadowColor: withAlpha(theme.tint, 0.35),
-      shadowOpacity: isDark ? 0.22 : 0.16,
+      shadowOpacity: isDark ? 0.18 : 0.1,
       shadowRadius: 8,
       shadowOffset: { width: 0, height: 2 },
       elevation: 4,
       flexDirection: 'row',
       alignItems: 'center',
       gap: 5,
-      paddingHorizontal: 9,
+      paddingHorizontal: 10,
       paddingVertical: 5,
     },
     inlineIntroPillCompact: {

@@ -1,9 +1,8 @@
-import { Colors } from "@/constants/theme";
+import BetweenerLoader from "@/components/ui/BetweenerLoader";
 import { useAuth } from "@/lib/auth-context";
 import { getSignupPhoneState } from "@/lib/signup-tracking";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect } from "react";
-import { ActivityIndicator, Text, View } from "react-native";
 
 export default function OnboardingRouter() {
   const router = useRouter();
@@ -46,18 +45,9 @@ export default function OnboardingRouter() {
   }, [router, variantParam, phoneVerified, profile?.phone_number, refreshPhoneState]);
 
   return (
-    <View
-      style={{
-        flex: 1,
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: Colors.light.background,
-      }}
-    >
-      <ActivityIndicator size="large" color={Colors.light.tint} />
-      <Text style={{ marginTop: 12, color: Colors.light.textMuted }}>
-        Preparing onboarding...
-      </Text>
-    </View>
+    <BetweenerLoader
+      label="Preparing your profile"
+      sublabel="Setting up the right onboarding path."
+    />
   );
 }

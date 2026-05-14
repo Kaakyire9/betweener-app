@@ -1,4 +1,5 @@
 import { isDistanceLabel, parseDistanceKmFromLabel } from '@/lib/profile/distance';
+import { getPresenceDisplay } from '@/lib/presence';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
 import { supabase } from '@/lib/supabase';
 import type { Interest, ProfilePromptAnswer, UserProfile } from '@/types/user-profile';
@@ -18,9 +19,9 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
   const { viewedProfileId, viewerProfileId, fallbackDistanceLabel, fallbackDistanceKm } = options;
 
   const selectFull =
-    'id, user_id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, height, looking_for, love_language, languages_spoken, current_country, current_country_code, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, verification_level';
+    'id, user_id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, height, looking_for, love_language, languages_spoken, current_country, current_country_code, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, last_active, verification_level';
   const selectMinimal =
-    'id, user_id, full_name, age, region, city, location, avatar_url, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, love_language, is_active, online, verification_level, current_country_code';
+    'id, user_id, full_name, age, region, city, location, avatar_url, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, love_language, is_active, online, last_active, verification_level, current_country_code';
 
   let data: any = null;
   let error: any = null;
@@ -107,6 +108,8 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
         ? parseDistanceKmFromLabel(fallbackDistanceLabel)
         : undefined;
 
+  const presence = getPresenceDisplay(data.last_active ?? null);
+
   const mapped: UserProfile = {
     id: data.id,
     userId: data.user_id || undefined,
@@ -127,7 +130,10 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
     bio: data.bio || '',
     distance: isDistanceLabel(fallbackDistanceLabel) ? fallbackDistanceLabel || '' : data.region || data.location || '',
     distanceKm: computedFallbackKm,
-    isActiveNow: !!data.is_active || !!(data as any).online,
+    isActiveNow: presence.online || presence.activeNow,
+    online: presence.online,
+    lastActive: data.last_active ?? null,
+    last_active: data.last_active ?? null,
     personalityType: data.personality_type || undefined,
     height: data.height || undefined,
     lookingFor: data.looking_for || undefined,

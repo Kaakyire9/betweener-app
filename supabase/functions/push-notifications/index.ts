@@ -28,6 +28,50 @@ const getRichImageUrl = (data?: Record<string, unknown>): string | null => {
   return null
 }
 
+const getMessageIdForDeliveryAck = (data?: Record<string, unknown>): string | null => {
+  if (!data) return null
+  const type = asString((data as any).type)
+  const messageId = asString((data as any).message_id)
+  if (type !== 'message' || !messageId) return null
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(messageId)
+    ? messageId
+    : null
+}
+
+const countAcceptedExpoTickets = (result: unknown): number => {
+  const data = (result as any)?.data
+  if (Array.isArray(data)) {
+    return data.filter((ticket) => ticket?.status === 'ok').length
+  }
+  if (data && typeof data === 'object') {
+    return data.status === 'ok' ? 1 : 0
+  }
+  return 0
+}
+
+const acknowledgePushDelivered = async (
+  service: ReturnType<typeof createClient>,
+  messageId: string | null,
+  receiverId: string,
+) => {
+  if (!messageId || !receiverId) return { acked: false, error: null }
+  const { error } = await service
+    .from('messages')
+    .update({ delivered_at: new Date().toISOString() })
+    .eq('id', messageId)
+    .eq('receiver_id', receiverId)
+    .is('delivered_at', null)
+  if (error) {
+    console.log('push-notifications delivery ack error', {
+      message_id: messageId,
+      receiver_id: receiverId,
+      error,
+    })
+    return { acked: false, error: error.message || 'delivery_ack_failed' }
+  }
+  return { acked: true, error: null }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -150,6 +194,8 @@ serve(async (req) => {
 
     const data = { ...(payload.data || {}) }
     const type = asString((data as any).type) || 'generic'
+    const messageIdForDeliveryAck = getMessageIdForDeliveryAck(data)
+    const deliveryAckOnly = Boolean((data as any).delivery_ack_only)
     const richImageUrl = getRichImageUrl(data)
     if (richImageUrl && !(data as any).image) {
       // Make the URL available to the iOS Notification Service Extension.
@@ -181,6 +227,14 @@ serve(async (req) => {
       return msg
     })
 
+    if (deliveryAckOnly && messageIdForDeliveryAck) {
+      const deliveryAck = await acknowledgePushDelivered(service, messageIdForDeliveryAck, effectiveUserId)
+      return new Response(JSON.stringify({ ok: true, sent: 0, deliveryAck, debug: 'delivery_ack_only' }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     if (!expoMessages.length) {
       return new Response(JSON.stringify({ ok: true, sent: 0 }), {
         status: 200,
@@ -197,8 +251,13 @@ serve(async (req) => {
     })
     const result = await expoResponse.json()
     console.log('push-notifications expo result', result)
+    const acceptedTickets = countAcceptedExpoTickets(result)
+    const deliveryAck =
+      messageIdForDeliveryAck && acceptedTickets > 0
+        ? await acknowledgePushDelivered(service, messageIdForDeliveryAck, effectiveUserId)
+        : { acked: false, error: null }
 
-    return new Response(JSON.stringify({ ok: true, result }), {
+    return new Response(JSON.stringify({ ok: true, result, acceptedTickets, deliveryAck }), {
       status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })

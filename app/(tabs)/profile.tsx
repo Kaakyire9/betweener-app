@@ -10,8 +10,20 @@ import { useColorScheme, useColorSchemePreference } from "@/hooks/use-color-sche
 import { useVerificationStatus } from "@/hooks/use-verification-status";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessAdminTools } from "@/lib/internal-tools";
-import { pickPreferredLocationLabel } from "@/lib/location/location-display";
-import { readCache, writeCache } from "@/lib/persisted-cache";
+import { buildLocationDisplay } from "@/lib/location/location-display";
+import {
+  migrateLegacyMeProfileSnapshot,
+  readMeProfileSnapshot,
+  writeMeProfileSnapshot,
+  type MeProfileStatsSnapshot,
+} from "@/lib/offline/me-store";
+import {
+  getOfflineMutationQueueSnapshot,
+  subscribeToOfflineMutationEvents,
+} from "@/lib/offline/mutation-queue";
+import { isLocalMediaUri, normalizeProfilePhotoList, normalizeProfilePhotoUri } from "@/lib/profile/media";
+import { getPresenceDisplay } from "@/lib/presence";
+import { formatReligionLabel } from "@/lib/profile/religion";
 import { getProfileInitials, getProfilePlaceholderPalette, hasProfileImage } from "@/lib/profile-placeholders";
 import {
   DEFAULT_GUESS_REVEAL_POLICY,
@@ -85,14 +97,14 @@ const mergeAuthParamsFromUrl = (target: AuthCallbackParams, url: string) => {
   }
 };
 
-const toFlagEmoji = (code?: string | null) => {
-  if (!code) return '';
-  const normalized = String(code).trim().toUpperCase();
-  if (normalized.length !== 2) return '';
-  const first = normalized.charCodeAt(0);
-  const second = normalized.charCodeAt(1);
-  if (first < 65 || first > 90 || second < 65 || second > 90) return '';
-  return String.fromCodePoint(0x1f1e6 + (first - 65), 0x1f1e6 + (second - 65));
+const formatProfileDetailValue = (value?: string | null) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 };
 
 const HeroVideo = ({ uri }: { uri: string }) => {
@@ -145,6 +157,17 @@ type NotificationPrefs = {
   quiet_hours_end: string;
   quiet_hours_tz: string;
 };
+
+const normalizeMeProfileStatsSnapshot = (
+  stats: Partial<MeProfileStatsSnapshot>,
+): MeProfileStatsSnapshot => ({
+  likesCount: Math.max(0, Number(stats.likesCount) || 0),
+  matchesCount: Math.max(0, Number(stats.matchesCount) || 0),
+  chatsCount: Math.max(0, Number(stats.chatsCount) || 0),
+  matchQuality: typeof stats.matchQuality === 'number' && Number.isFinite(stats.matchQuality)
+    ? Math.max(0, Math.min(100, Math.round(stats.matchQuality)))
+    : null,
+});
 
 const DISTANCE_UNIT_OPTIONS: { value: DistanceUnit; label: string; subtitle?: string }[] = [
   { value: 'auto', label: 'Auto', subtitle: 'Recommended' },
@@ -366,7 +389,7 @@ const NOTIFICATION_CORE_OPTIONS = [
   { key: 'message_reactions', label: 'Message reactions', body: 'See the small signals inside chat.', icon: 'sticker-emoji' },
   { key: 'reactions', label: 'Reactions', body: 'Catch quick responses across the app.', icon: 'heart-outline' },
   { key: 'likes', label: 'Likes', body: 'Know when interest lands on your profile.', icon: 'cards-heart-outline' },
-  { key: 'superlikes', label: 'Superlikes', body: 'Separate stronger signals from casual ones.', icon: 'star-four-points-outline' },
+  { key: 'superlikes', label: 'Signals', body: 'Know when someone noticed something specific.', icon: 'broadcast' },
   { key: 'matches', label: 'Matches', body: 'Do not miss a fresh mutual opening.', icon: 'account-heart-outline' },
 ] as const;
 
@@ -646,6 +669,8 @@ export default function ProfileScreen() {
   const [userInterests, setUserInterests] = useState<string[]>([]);
   const [loadingInterests, setLoadingInterests] = useState(false);
   const [userPhotos, setUserPhotos] = useState<string[]>([]);
+  const [displayAvatarUrl, setDisplayAvatarUrl] = useState<string | null>(null);
+  const [displayProfileVideo, setDisplayProfileVideo] = useState<string | null>(null);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const promptEditorYRef = useRef(0);
   const deleteReasonSections = useMemo(() => {
@@ -668,27 +693,11 @@ export default function ProfileScreen() {
   );
 
   const cacheProfileId = profile?.id ?? user?.id ?? null;
-  const promptsCacheKey = useMemo(
-    () => (cacheProfileId ? `cache:profile_prompts:v2:${cacheProfileId}` : null),
-    [cacheProfileId],
-  );
-  const interestsCacheKey = useMemo(
-    () => (cacheProfileId ? `cache:profile_interests:v1:${cacheProfileId}` : null),
-    [cacheProfileId],
-  );
-  const photosCacheKey = useMemo(
-    () => (cacheProfileId ? `cache:profile_photos:v1:${cacheProfileId}` : null),
-    [cacheProfileId],
-  );
   const verificationNudgeDismissedKey = useMemo(
     () => (cacheProfileId ? `${VERIFICATION_NUDGE_DISMISSED_KEY_PREFIX}:${cacheProfileId}` : null),
     [cacheProfileId],
   );
-  const cacheLoadedRef = useRef<{ prompts: boolean; interests: boolean; photos: boolean }>({
-    prompts: false,
-    interests: false,
-    photos: false,
-  });
+  const cacheLoadedRef = useRef<Record<string, true>>({});
   const [isVerificationModalVisible, setIsVerificationModalVisible] = useState(false);
 
   useEffect(() => {
@@ -722,6 +731,14 @@ export default function ProfileScreen() {
   const [matchesCount, setMatchesCount] = useState(0);
   const [chatsCount, setChatsCount] = useState(0);
   const [matchQuality, setMatchQuality] = useState<number | null>(null);
+  const [profileSyncPending, setProfileSyncPending] = useState(false);
+  const [profileSyncFailed, setProfileSyncFailed] = useState(false);
+  const profileStatsRef = useRef<MeProfileStatsSnapshot>({
+    likesCount: 0,
+    matchesCount: 0,
+    chatsCount: 0,
+    matchQuality: null,
+  });
   const profileCompletion = useMemo(
     () => computeProfileCompletion(profile, userInterests, promptAnswers.length, userPhotos.length),
     [profile, promptAnswers.length, userInterests, userPhotos.length],
@@ -841,6 +858,32 @@ export default function ProfileScreen() {
     }
   };
 
+  const refreshProfileSyncState = useCallback(async () => {
+    const snapshot = await getOfflineMutationQueueSnapshot();
+    const isProfileMutation = (item: { kind: string }) =>
+      item.kind === 'profile_update' ||
+      item.kind === 'profile_interests_update' ||
+      item.kind === 'profile_media_sync';
+    setProfileSyncPending(snapshot.pending.some(isProfileMutation));
+    setProfileSyncFailed(snapshot.failed.some(isProfileMutation));
+  }, []);
+
+  useEffect(() => {
+    void refreshProfileSyncState();
+    return subscribeToOfflineMutationEvents((event) => {
+      if (
+        event.mutation.kind === 'profile_update' ||
+        event.mutation.kind === 'profile_interests_update' ||
+        event.mutation.kind === 'profile_media_sync'
+      ) {
+        void refreshProfileSyncState();
+        if (event.type === 'completed') {
+          void refreshProfile();
+        }
+      }
+    });
+  }, [refreshProfile, refreshProfileSyncState]);
+
   const applyPromptAnswers = useCallback(
     (rows: ProfilePromptAnswer[]) => {
       setPromptAnswers(rows);
@@ -858,36 +901,69 @@ export default function ProfileScreen() {
     [],
   );
 
-  // Cached-first hydration for profile sub-data (prompts/interests/photos).
+  const applyProfileStatsSnapshot = useCallback((stats: Partial<MeProfileStatsSnapshot>) => {
+    const next = normalizeMeProfileStatsSnapshot(stats);
+    profileStatsRef.current = next;
+    setLikesCount(next.likesCount);
+    setMatchesCount(next.matchesCount);
+    setChatsCount(next.chatsCount);
+    setMatchQuality(next.matchQuality);
+  }, []);
+
+  const writeMeSnapshot = useCallback(
+    (patch: Parameters<typeof writeMeProfileSnapshot>[1]) => {
+      if (!cacheProfileId) return;
+      void writeMeProfileSnapshot(cacheProfileId, patch);
+    },
+    [cacheProfileId],
+  );
+
+  const commitProfileStatsSnapshot = useCallback(
+    (stats: Partial<MeProfileStatsSnapshot>) => {
+      const next = normalizeMeProfileStatsSnapshot(stats);
+      applyProfileStatsSnapshot(next);
+      writeMeSnapshot({ stats: next });
+    },
+    [applyProfileStatsSnapshot, writeMeSnapshot],
+  );
+
+  // Durable cached-first hydration for Me tab sub-data.
   useEffect(() => {
-    if (promptsCacheKey && !cacheLoadedRef.current.prompts) {
-      cacheLoadedRef.current.prompts = true;
-      void (async () => {
-        const cached = await readCache<typeof promptAnswers>(promptsCacheKey, 30 * 60_000);
-        if (cached && Array.isArray(cached) && cached.length > 0 && promptAnswers.length === 0) {
-          applyPromptAnswers(cached as any);
-        }
-      })();
-    }
-    if (interestsCacheKey && !cacheLoadedRef.current.interests) {
-      cacheLoadedRef.current.interests = true;
-      void (async () => {
-        const cached = await readCache<string[]>(interestsCacheKey, 30 * 60_000);
-        if (cached && Array.isArray(cached) && cached.length > 0) {
-          setUserInterests((prev) => (prev.length === 0 ? cached : prev));
-        }
-      })();
-    }
-    if (photosCacheKey && !cacheLoadedRef.current.photos) {
-      cacheLoadedRef.current.photos = true;
-      void (async () => {
-        const cached = await readCache<string[]>(photosCacheKey, 30 * 60_000);
-        if (cached && Array.isArray(cached) && cached.length > 0) {
-          setUserPhotos((prev) => (prev.length === 0 ? cached : prev));
-        }
-      })();
-    }
-  }, [applyPromptAnswers, interestsCacheKey, photosCacheKey, promptsCacheKey, promptAnswers.length]);
+    if (!cacheProfileId || cacheLoadedRef.current[cacheProfileId]) return;
+    cacheLoadedRef.current[cacheProfileId] = true;
+    let cancelled = false;
+    void (async () => {
+      const cached =
+        (await readMeProfileSnapshot(cacheProfileId)) ??
+        (await migrateLegacyMeProfileSnapshot(cacheProfileId));
+      if (cancelled || !cached) return;
+      if (Array.isArray(cached.promptAnswers) && cached.promptAnswers.length > 0 && promptAnswers.length === 0) {
+        applyPromptAnswers(cached.promptAnswers as any);
+      }
+      if (Array.isArray(cached.interests) && cached.interests.length > 0) {
+        setUserInterests((prev) => (prev.length === 0 ? (cached.interests as string[]) : prev));
+      }
+      if (Array.isArray(cached.photos) && cached.photos.length > 0) {
+        setUserPhotos((prev) => (prev.length === 0 ? normalizeProfilePhotoList(cached.photos) : prev));
+      }
+      if (cached.avatarUrl) {
+        setDisplayAvatarUrl(normalizeProfilePhotoUri(cached.avatarUrl));
+      }
+      if (cached.profileVideo) {
+        setDisplayProfileVideo(String(cached.profileVideo));
+      }
+      if (cached.stats) {
+        applyProfileStatsSnapshot(cached.stats);
+      }
+      if (cached.notificationPrefs) {
+        setNotificationPrefs((prev) => ({ ...prev, ...(cached.notificationPrefs as Partial<NotificationPrefs>) }));
+        setNotificationPrefsLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyProfileStatsSnapshot, applyPromptAnswers, cacheProfileId, promptAnswers.length]);
 
   const loadPromptAnswers = useCallback(async () => {
     if (!profile?.id) {
@@ -923,11 +999,11 @@ export default function ProfileScreen() {
         createdAt: row.created_at || undefined,
       })) as ProfilePromptAnswer[];
       applyPromptAnswers(rows);
-      if (promptsCacheKey) void writeCache(promptsCacheKey, rows);
+      writeMeSnapshot({ promptAnswers: rows });
     } finally {
       setPromptsLoading(false);
     }
-  }, [applyPromptAnswers, profile?.id, promptsCacheKey]);
+  }, [applyPromptAnswers, profile?.id, writeMeSnapshot]);
 
   // Fetch user interests from profile_interests table
   const fetchUserInterests = async () => {
@@ -949,7 +1025,7 @@ export default function ProfileScreen() {
       
       const interests = data?.map(item => (item as any).interests.name) || [];
       setUserInterests(interests);
-      if (interestsCacheKey) void writeCache(interestsCacheKey, interests);
+      writeMeSnapshot({ interests });
     } catch (error) {
       console.error('Error fetching user interests:', error);
     } finally {
@@ -963,10 +1039,10 @@ export default function ProfileScreen() {
     
     try {
       // First check if photos exist in profile.photos field
-      const profilePhotos = (profile as any)?.photos || [];
+      const profilePhotos = normalizeProfilePhotoList((profile as any)?.photos || []);
       if (profilePhotos.length > 0) {
         setUserPhotos(profilePhotos);
-        if (photosCacheKey) void writeCache(photosCacheKey, profilePhotos);
+        writeMeSnapshot({ photos: profilePhotos });
         return;
       }
 
@@ -995,7 +1071,7 @@ export default function ProfileScreen() {
           });
         
         setUserPhotos(photoUrls);
-        if (photosCacheKey) void writeCache(photosCacheKey, photoUrls);
+        writeMeSnapshot({ photos: photoUrls });
       }
     } catch (error) {
       console.error('Error loading photos:', error);
@@ -1004,12 +1080,16 @@ export default function ProfileScreen() {
 
   const fetchProfileStats = useCallback(async () => {
     if (!profile?.id || !user?.id) {
-      setLikesCount(0);
-      setMatchesCount(0);
-      setChatsCount(0);
-      setMatchQuality(null);
+      commitProfileStatsSnapshot({
+        likesCount: 0,
+        matchesCount: 0,
+        chatsCount: 0,
+        matchQuality: null,
+      });
       return;
     }
+
+    const nextStats: MeProfileStatsSnapshot = { ...profileStatsRef.current };
 
     try {
       // Likes are stored as incoming intent requests (keyed by profiles.id).
@@ -1021,18 +1101,16 @@ export default function ProfileScreen() {
         .order('created_at', { ascending: false })
         .limit(300);
 
-      if (intentsError || !intents) {
-        setLikesCount(0);
-      } else {
+      if (!intentsError && intents) {
         const now = Date.now();
         const actionable = (intents as any[]).filter((row) => {
           const ts = typeof row?.expires_at === 'string' ? Date.parse(row.expires_at) : NaN;
           return Number.isNaN(ts) ? true : ts >= now;
         });
-        setLikesCount(actionable.filter((row) => row?.type === 'like_with_note').length);
+        nextStats.likesCount = actionable.filter((row) => row?.type === 'like_with_note').length;
       }
     } catch {
-      setLikesCount(0);
+      // Keep the last durable count while offline.
     }
 
     try {
@@ -1043,10 +1121,7 @@ export default function ProfileScreen() {
         .or(`user1_id.eq.${profile.id},user2_id.eq.${profile.id}`)
         .limit(500);
 
-      if (matchesError || !matches) {
-        setMatchesCount(0);
-        setMatchQuality(null);
-      } else {
+      if (!matchesError && matches) {
         const rows = matches as any[];
         const otherIds = Array.from(
           new Set(
@@ -1055,7 +1130,8 @@ export default function ProfileScreen() {
               .filter((v): v is string => typeof v === 'string' && v.length > 0),
           ),
         );
-        setMatchesCount(otherIds.length);
+        nextStats.matchesCount = otherIds.length;
+        nextStats.matchQuality = null;
 
         if (otherIds.length > 0) {
           const { data: profilesData, error: profilesError } = await supabase
@@ -1064,25 +1140,20 @@ export default function ProfileScreen() {
             .select('id,ai_score')
             .in('id', otherIds);
           if (profilesError || !profilesData) {
-            setMatchQuality(null);
+            nextStats.matchQuality = profileStatsRef.current.matchQuality;
           } else {
             const scores = (profilesData as any[])
               .map((p) => (typeof p?.ai_score === 'number' ? p.ai_score : null))
               .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
             if (scores.length > 0) {
               const avg = scores.reduce((sum, v) => sum + v, 0) / scores.length;
-              setMatchQuality(Math.max(0, Math.min(100, Math.round(avg))));
-            } else {
-              setMatchQuality(null);
+              nextStats.matchQuality = Math.max(0, Math.min(100, Math.round(avg)));
             }
           }
-        } else {
-          setMatchQuality(null);
         }
       }
     } catch {
-      setMatchesCount(0);
-      setMatchQuality(null);
+      // Keep the last durable match summary while offline.
     }
 
     try {
@@ -1093,20 +1164,20 @@ export default function ProfileScreen() {
         .order('created_at', { ascending: false })
         .limit(500);
 
-      if (messagesError || !messages) {
-        setChatsCount(0);
-      } else {
+      if (!messagesError && messages) {
         const convoIds = new Set<string>();
         (messages as any[]).forEach((m) => {
           const otherId = m.sender_id === user.id ? m.receiver_id : m.sender_id;
           if (typeof otherId === 'string' && otherId.length > 0) convoIds.add(otherId);
         });
-        setChatsCount(convoIds.size);
+        nextStats.chatsCount = convoIds.size;
       }
     } catch {
-      setChatsCount(0);
+      // Keep the last durable chat count while offline.
     }
-  }, [profile?.id, user?.id]);
+
+    commitProfileStatsSnapshot(nextStats);
+  }, [commitProfileStatsSnapshot, profile?.id, user?.id]);
 
   // Remove photo function
   const removePhoto = async (index: number) => {
@@ -1188,7 +1259,7 @@ export default function ProfileScreen() {
     }
     if (data) {
       const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-      setNotificationPrefs({
+      const nextPrefs = {
         push_enabled: Boolean(data.push_enabled),
         inapp_enabled: Boolean(data.inapp_enabled),
         messages: Boolean(data.messages),
@@ -1205,10 +1276,12 @@ export default function ProfileScreen() {
         quiet_hours_start: data.quiet_hours_start ?? '22:00:00',
         quiet_hours_end: data.quiet_hours_end ?? '08:00:00',
         quiet_hours_tz: data.quiet_hours_tz ?? localTz,
-      });
+      };
+      setNotificationPrefs(nextPrefs);
+      writeMeSnapshot({ notificationPrefs: nextPrefs as unknown as Record<string, unknown> });
     }
     setNotificationPrefsLoaded(true);
-  }, [user?.id]);
+  }, [user?.id, writeMeSnapshot]);
 
   useEffect(() => {
     void loadNotificationPrefs();
@@ -1514,7 +1587,8 @@ export default function ProfileScreen() {
           religion: (profile as any).religion,
           distance: '',
           interests: (profile as any).interests,
-          is_active: true,
+          last_active: (profile as any).last_active ?? (profile as any).lastActive ?? null,
+          is_active: getPresenceDisplay((profile as any).last_active ?? (profile as any).lastActive).showPresence,
           compatibility: compatPct,
           verified: !!(profile as any).verification_level,
           current_country: (profile as any).current_country,
@@ -2238,10 +2312,14 @@ export default function ProfileScreen() {
 
         const returnedPrefs = (data as any)?.notificationPrefs;
         if (returnedPrefs && typeof returnedPrefs === 'object') {
-          setNotificationPrefs((current) => ({
-            ...current,
-            ...returnedPrefs,
-          }));
+          setNotificationPrefs((current) => {
+            const next = {
+              ...current,
+              ...returnedPrefs,
+            };
+            writeMeSnapshot({ notificationPrefs: next as unknown as Record<string, unknown> });
+            return next;
+          });
         }
 
         if ((data as any)?.profileState) {
@@ -2262,7 +2340,7 @@ export default function ProfileScreen() {
         setDeleteAlternativeAction(null);
       }
     },
-    [primaryDeleteReason, refreshProfile],
+    [primaryDeleteReason, refreshProfile, writeMeSnapshot],
   );
 
   const readFunctionErrorMessage = useCallback(async (error: any, fallback: string) => {
@@ -2352,6 +2430,7 @@ export default function ProfileScreen() {
   const persistNotificationPrefs = useCallback(
     async (next: NotificationPrefs) => {
       setNotificationPrefs(next);
+      writeMeSnapshot({ notificationPrefs: next as unknown as Record<string, unknown> });
       if (!user?.id) return;
       const { error } = await supabase
         .from('notification_prefs')
@@ -2367,7 +2446,7 @@ export default function ProfileScreen() {
         console.log('[profile] notification prefs update error', error);
       }
     },
-    [user?.id],
+    [user?.id, writeMeSnapshot],
   );
 
   const updateNotificationPref = useCallback(
@@ -2409,16 +2488,21 @@ export default function ProfileScreen() {
     return `Quiet hours use ${tzLabel} time`;
   }, [notificationPrefs.quiet_hours_enabled, notificationPrefs.quiet_hours_tz]);
 
+  const normalizedProfileAvatar = normalizeProfilePhotoUri(profile?.avatar_url);
+  const normalizedDisplayAvatar = normalizeProfilePhotoUri(displayAvatarUrl);
   const heroImageUri =
     userPhotos[0]
-    || profile?.avatar_url
+    || normalizedDisplayAvatar
+    || normalizedProfileAvatar
     || '';
   const avatarImageUri =
-    profile?.avatar_url
+    normalizedDisplayAvatar
+    || normalizedProfileAvatar
     || userPhotos[0]
     || '';
   const heroVideoSource =
-    (profile as any)?.profile_video
+    displayProfileVideo
+    || (profile as any)?.profile_video
     || (profile as any)?.profileVideo
     || '';
   const heroVideoThumbnail =
@@ -2451,10 +2535,8 @@ export default function ProfileScreen() {
   const useDefaultBio = !rawBio || isPlaceholderBio;
   const displayBio = useDefaultBio ? defaultHookLines[hookIndex] : rawBio;
 
-  const locationCountry = String((profile as any)?.current_country || '').trim();
-  const locationPrimary = pickPreferredLocationLabel(profile as Record<string, any>);
-  const locationFlag = toFlagEmoji((profile as any)?.current_country_code);
-  const locationDisplay = [locationPrimary || locationCountry, locationFlag].filter(Boolean).join(' ') || 'Location not set';
+  const locationPresentation = buildLocationDisplay(profile as Record<string, any>, { surface: 'profile' });
+  const locationDisplay = locationPresentation.withFlag || 'Location not set';
   const verificationLevel =
     (profile as any)?.verification_level
     ?? (profile as any)?.verificationLevel
@@ -2505,10 +2587,11 @@ export default function ProfileScreen() {
       // Best-effort dismissal persistence only.
     }
   }, [verificationNudgeDismissedKey]);
-  const isOnlineNow = !!(profile as any)?.online;
-  const isActiveNow = !!(profile as any)?.is_active || !!(profile as any)?.isActiveNow;
-  const showPresence = isOnlineNow || isActiveNow;
-  const presenceLabel = isOnlineNow ? 'Online' : 'Active now';
+  const presence = getPresenceDisplay((profile as any)?.last_active ?? (profile as any)?.lastActive);
+  const isOnlineNow = presence.online;
+  const isActiveNow = presence.activeNow;
+  const showPresence = presence.showPresence;
+  const presenceLabel = presence.label;
   const aboutMeText = rawBio || 'Add a few lines about you.';
   const showAboutCard = !!rawBio && rawBio !== displayBio;
   const qualityLabel = useMemo(() => {
@@ -2649,6 +2732,10 @@ export default function ProfileScreen() {
       const source = heroVideoSource;
       if (!source) {
         if (mounted) setHeroVideoUrl(null);
+        return;
+      }
+      if (isLocalMediaUri(source)) {
+        if (mounted) setHeroVideoUrl(source);
         return;
       }
       if (source.startsWith('http')) {
@@ -4333,9 +4420,9 @@ export default function ProfileScreen() {
           </View>
 
           <View style={styles.heroNameRow}>
-            <Text style={[styles.profileName, { color: theme.text }]}>
+            <Text style={[styles.profileName, { color: theme.text }]} numberOfLines={2}>
               {displayName}
-              {displayAge ? `, ${displayAge}` : ""}
+              {displayAge ? ` · ${displayAge}` : ""}
             </Text>
             {verificationLevel > 0 ? (
               <VerificationBadge
@@ -4366,6 +4453,29 @@ export default function ProfileScreen() {
               {locationDisplay}
             </Text>
           </View>
+
+          {profileSyncPending || profileSyncFailed ? (
+            <View
+              style={[
+                styles.profileSyncBanner,
+                {
+                  backgroundColor: profileSyncFailed ? "rgba(239, 68, 68, 0.12)" : "rgba(20, 184, 166, 0.12)",
+                  borderColor: profileSyncFailed ? "rgba(239, 68, 68, 0.32)" : "rgba(20, 184, 166, 0.32)",
+                },
+              ]}
+            >
+              <MaterialCommunityIcons
+                name={profileSyncFailed ? "cloud-alert-outline" : "cloud-sync-outline"}
+                size={16}
+                color={profileSyncFailed ? "#F87171" : theme.tint}
+              />
+              <Text style={[styles.profileSyncText, { color: theme.textMuted }]}>
+                {profileSyncFailed
+                  ? "Some profile edits need your attention when you're back online."
+                  : "Profile edits saved here. Syncing when your connection returns."}
+              </Text>
+            </View>
+          ) : null}
 
           <View
             style={[
@@ -4683,6 +4793,27 @@ export default function ProfileScreen() {
               </View>
             )}
 
+            {(Boolean((profile as any)?.religion) || Boolean((profile as any)?.tribe)) && (
+              <View style={styles.detailRow}>
+                {Boolean((profile as any)?.religion) && (
+                  <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                    <MaterialCommunityIcons name="shield-check" size={16} color={theme.tint} />
+                    <Text style={[styles.detailText, { color: theme.text }]}>
+                      Faith: {formatReligionLabel((profile as any).religion)}
+                    </Text>
+                  </View>
+                )}
+                {Boolean((profile as any)?.tribe) && (
+                  <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
+                    <MaterialCommunityIcons name="star-four-points" size={16} color={theme.tint} />
+                    <Text style={[styles.detailText, { color: theme.text }]}>
+                      Heritage: {(profile as any).tribe}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            )}
+
             {/* Occupation */}
             {Boolean((profile as any)?.occupation) && (
               <View style={styles.detailRow}>
@@ -4708,18 +4839,20 @@ export default function ProfileScreen() {
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="heart-outline" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>Looking for {(profile as any).looking_for}</Text>
+                  <Text style={[styles.detailText, { color: theme.text }]}>
+                    Looking for {formatProfileDetailValue((profile as any).looking_for)}
+                  </Text>
                 </View>
               </View>
             )}
 
             {/* DIASPORA: Location Information */}
-            {Boolean((profile as any)?.current_country) && (
+            {Boolean(locationPresentation.withFlag) && (
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="map-marker" size={16} color={theme.tint} />
                   <Text style={[styles.detailText, { color: theme.text }]}>
-                    {`Currently in ${(profile as any).current_country || 'Unknown'}${(profile as any).current_country === 'Ghana' ? ' (GH)' : ''}`}
+                    {`Currently in ${locationPresentation.withFlag}`}
                   </Text>
                 </View>
               </View>
@@ -4750,7 +4883,9 @@ export default function ProfileScreen() {
               <View style={styles.detailRow}>
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="dumbbell" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>Exercises {(profile as any).exercise_frequency}</Text>
+                  <Text style={[styles.detailText, { color: theme.text }]}>
+                    Exercise: {formatProfileDetailValue((profile as any).exercise_frequency)}
+                  </Text>
                 </View>
               </View>
             )}
@@ -4760,13 +4895,13 @@ export default function ProfileScreen() {
               {Boolean((profile as any)?.smoking) && (
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="smoking-off" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>Smoking: {(profile as any).smoking}</Text>
+                  <Text style={[styles.detailText, { color: theme.text }]}>Smoking: {formatProfileDetailValue((profile as any).smoking)}</Text>
                 </View>
               )}
               {Boolean((profile as any)?.drinking) && (
                 <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
                   <MaterialCommunityIcons name="glass-cocktail" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>Drinking: {(profile as any).drinking}</Text>
+                  <Text style={[styles.detailText, { color: theme.text }]}>Drinking: {formatProfileDetailValue((profile as any).drinking)}</Text>
                 </View>
               )}
             </View>
@@ -5566,7 +5701,25 @@ export default function ProfileScreen() {
             setShowEditModal(false);
             setIsVerificationModalVisible(true);
           }}
-          onSave={async () => {
+          onSave={async (updatedProfile) => {
+            if (Array.isArray(updatedProfile?.__interests)) {
+              setUserInterests(updatedProfile.__interests);
+              writeMeSnapshot({ interests: updatedProfile.__interests });
+            }
+            if (Array.isArray(updatedProfile?.__displayPhotos)) {
+              setUserPhotos(updatedProfile.__displayPhotos);
+              writeMeSnapshot({
+                avatarUrl: updatedProfile.__displayAvatarUrl ?? null,
+                photos: updatedProfile.__displayPhotos,
+                profileVideo: updatedProfile.__displayProfileVideo ?? null,
+              });
+            }
+            if (updatedProfile?.__offlineQueued) {
+              setProfileSyncPending(true);
+              setProfileSyncFailed(false);
+              setShowEditModal(false);
+              return;
+            }
             // Force refresh the profile to ensure UI is updated
             setRefreshing(true);
             try {
@@ -5952,6 +6105,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    flexWrap: 'wrap',
     gap: 10,
     marginTop: 14,
   },
@@ -6023,7 +6177,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   profileName: {
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: '88%',
     fontSize: 29,
+    lineHeight: 35,
     fontFamily: 'PlayfairDisplay_700Bold',
     color: '#111827',
     textAlign: 'center',
@@ -6039,6 +6197,23 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Manrope_400Regular',
     color: '#6b7280',
+  },
+  profileSyncBanner: {
+    width: '100%',
+    marginTop: 12,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  profileSyncText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: 'Manrope_600SemiBold',
   },
   heroBioCard: {
     marginTop: 14,

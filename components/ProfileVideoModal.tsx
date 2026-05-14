@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Dimensions, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import LinearGradientSafe from '@/components/NativeWrappers/LinearGradientSafe';
+import { useResponsiveMetrics } from '@/lib/responsive';
 import Animated, {
   interpolate,
   runOnJS,
@@ -80,7 +81,8 @@ export default function ProfileVideoModal({
   onSelectReaction,
   onClose,
 }: Props) {
-  const screenH = Dimensions.get('window').height;
+  const responsive = useResponsiveMetrics();
+  const screenH = responsive.height;
   const [muted, setMuted] = useState(false);
   const insets = useSafeAreaInsets();
   const dragY = useSharedValue(0);

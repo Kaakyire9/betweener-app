@@ -78,6 +78,7 @@ type PersistedVibesExclusions = {
   swipedTodayIds: string[];
   pendingIntentPeerIds: string[];
   acceptedMatchPeerIds: string[];
+  chattedPeerIds: string[];
   cachedAt: number;
 };
 
@@ -186,6 +187,7 @@ export default function useVibesFeed({
   const [swipedTodayIds, setSwipedTodayIds] = useState<Set<string>>(new Set());
   const [pendingIntentPeerIds, setPendingIntentPeerIds] = useState<Set<string>>(new Set());
   const [acceptedMatchPeerIds, setAcceptedMatchPeerIds] = useState<Set<string>>(new Set());
+  const [chattedPeerIds, setChattedPeerIds] = useState<Set<string>>(new Set());
   const [exclusionsHydrated, setExclusionsHydrated] = useState(false);
   const [cachedMatches, setCachedMatches] = useState<Match[]>([]);
   const [snapshotHydrated, setSnapshotHydrated] = useState(false);
@@ -252,6 +254,7 @@ export default function useVibesFeed({
       setSwipedTodayIds(new Set());
       setPendingIntentPeerIds(new Set());
       setAcceptedMatchPeerIds(new Set());
+      setChattedPeerIds(new Set());
       setExclusionsHydrated(true);
       return;
     }
@@ -277,6 +280,7 @@ export default function useVibesFeed({
         setBlockedIds(new Set((parsed.blockedIds ?? []).map(String)));
         setPendingIntentPeerIds(new Set((parsed.pendingIntentPeerIds ?? []).map(String)));
         setAcceptedMatchPeerIds(new Set((parsed.acceptedMatchPeerIds ?? []).map(String)));
+        setChattedPeerIds(new Set((parsed.chattedPeerIds ?? []).map(String)));
         setSwipedTodayIds(
           new Set(
             parsed.dayKey === todayKey
@@ -306,6 +310,7 @@ export default function useVibesFeed({
       swipedTodayIds: Array.from(swipedTodayIds),
       pendingIntentPeerIds: Array.from(pendingIntentPeerIds),
       acceptedMatchPeerIds: Array.from(acceptedMatchPeerIds),
+      chattedPeerIds: Array.from(chattedPeerIds),
       cachedAt: Date.now(),
     };
     void AsyncStorage.setItem(
@@ -317,6 +322,7 @@ export default function useVibesFeed({
   }, [
     acceptedMatchPeerIds,
     blockedIds,
+    chattedPeerIds,
     exclusionsHydrated,
     pendingIntentPeerIds,
     swipedTodayIds,
@@ -387,13 +393,18 @@ export default function useVibesFeed({
         const { data, error } = await supabase
           .from('intent_requests')
           .select('actor_id,recipient_id,expires_at,status')
-          .eq('status', 'pending')
-          .gte('expires_at', nowIso)
+          .in('status', ['pending', 'accepted', 'matched'])
           .or(`actor_id.eq.${userId},recipient_id.eq.${userId}`);
         if (error || !data || cancelled) return;
 
         const next = new Set<string>();
         (data as any[]).forEach((row) => {
+          const status = String(row?.status || '').toLowerCase();
+          const expiresAt = row?.expires_at ? Date.parse(String(row.expires_at)) : null;
+          const isActivePending = status === 'pending' && expiresAt != null && !Number.isNaN(expiresAt) && expiresAt >= Date.now();
+          const isAcceptedConnection = status === 'accepted' || status === 'matched';
+          if (!isActivePending && !isAcceptedConnection) return;
+
           const actor = row?.actor_id ? String(row.actor_id) : null;
           const recipient = row?.recipient_id ? String(row.recipient_id) : null;
           if (!actor || !recipient) return;
@@ -429,13 +440,79 @@ export default function useVibesFeed({
       }
     };
 
+    const fetchChatPeers = async () => {
+      try {
+        let viewerAuthUserId =
+          typeof viewerProfile?.user_id === 'string'
+            ? viewerProfile.user_id
+            : typeof viewerProfile?.userId === 'string'
+              ? viewerProfile.userId
+              : null;
+
+        if (!viewerAuthUserId) {
+          const { data: profileRow } = await supabase
+            .from('profiles')
+            .select('user_id')
+            .eq('id', userId)
+            .maybeSingle();
+          viewerAuthUserId = typeof (profileRow as any)?.user_id === 'string' ? (profileRow as any).user_id : null;
+        }
+
+        if (!viewerAuthUserId || cancelled) return;
+
+        const { data, error } = await supabase
+          .from('messages')
+          .select('sender_id,receiver_id')
+          .or(`sender_id.eq.${viewerAuthUserId},receiver_id.eq.${viewerAuthUserId}`)
+          .order('created_at', { ascending: false })
+          .limit(500);
+        if (error || !Array.isArray(data) || cancelled) return;
+
+        const peerUserIds = Array.from(
+          new Set(
+            (data as any[])
+              .map((row) => {
+                const sender = row?.sender_id ? String(row.sender_id) : null;
+                const receiver = row?.receiver_id ? String(row.receiver_id) : null;
+                if (sender === viewerAuthUserId) return receiver;
+                if (receiver === viewerAuthUserId) return sender;
+                return null;
+              })
+              .filter((value): value is string => Boolean(value)),
+          ),
+        );
+
+        if (peerUserIds.length === 0) {
+          setChattedPeerIds(new Set());
+          return;
+        }
+
+        const { data: profiles, error: profilesError } = await supabase
+          .from('profiles')
+          .select('id,user_id')
+          .in('user_id', peerUserIds);
+        if (profilesError || !Array.isArray(profiles) || cancelled) return;
+
+        setChattedPeerIds(
+          new Set(
+            (profiles as any[])
+              .map((row) => (row?.id ? String(row.id) : null))
+              .filter((value): value is string => Boolean(value)),
+          ),
+        );
+      } catch {
+        // ignore
+      }
+    };
+
     void fetchIntentPeers();
     void fetchAcceptedMatchPeers();
+    void fetchChatPeers();
 
     return () => {
       cancelled = true;
     };
-  }, [userId, refreshCount]);
+  }, [refreshCount, userId, viewerProfile?.user_id, viewerProfile?.userId]);
 
   // If the server returns 0 rows (valid when there are no eligible profiles yet),
   // we still want to stop showing the skeleton.
@@ -539,9 +616,12 @@ export default function useVibesFeed({
     if (acceptedMatchPeerIds.size > 0) {
       list = list.filter((m) => !acceptedMatchPeerIds.has(String(m.id)));
     }
+    if (chattedPeerIds.size > 0) {
+      list = list.filter((m) => !chattedPeerIds.has(String(m.id)));
+    }
 
     return list;
-  }, [sourceMatches, blockedIds, swipedTodayIds, pendingIntentPeerIds, acceptedMatchPeerIds, viewerInterests, viewerGender]);
+  }, [sourceMatches, blockedIds, swipedTodayIds, pendingIntentPeerIds, acceptedMatchPeerIds, chattedPeerIds, viewerInterests, viewerGender]);
 
   const filteredProfiles = useMemo(() => {
     return applyVibesFilters(poolProfiles, filters, {

@@ -3,7 +3,7 @@ import type { VibesLayoutMetrics } from "@/components/vibes/VibesResponsiveLayou
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { forwardRef, useEffect, useImperativeHandle } from "react";
-import { Dimensions, StyleSheet, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
     Extrapolate,
@@ -15,8 +15,7 @@ import Animated, {
     withTiming,
 } from "react-native-reanimated";
 import ExploreCard from "./ExploreCard";
-
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
+import IntentMark from "./icons/IntentMark";
 
 export type ExploreStackHandle = {
   performSwipe: (dir: "left" | "right" | "superlike") => void;
@@ -32,14 +31,28 @@ type Props = {
   onPlayPress?: (id: string) => void;
   previewingId?: string;
   layoutMetrics: VibesLayoutMetrics;
+  onIntentSwipeUp?: () => void;
+  onGestureLockChange?: (locked: boolean) => void;
 };
 
-const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.28;
-const EXIT_DISTANCE = SCREEN_WIDTH * 1.2;
-
 const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
-  ({ matches, currentIndex, setCurrentIndex, recordSwipe, onProfileTap, onPlayPress, previewingId, layoutMetrics }, ref) => {
+  ({
+    matches,
+    currentIndex,
+    setCurrentIndex,
+    recordSwipe,
+    onProfileTap,
+    onPlayPress,
+    previewingId,
+    layoutMetrics,
+    onIntentSwipeUp,
+    onGestureLockChange,
+  }, ref) => {
     const list = matches && matches.length > 0 ? matches : [];
+    const screenWidth = layoutMetrics.cardWidth;
+    const swipeThreshold = screenWidth * 0.28;
+    const exitDistance = screenWidth * 1.2;
+    const intentSwipeThreshold = Math.min(layoutMetrics.cardHeight * 0.18, 124);
     const cardFrameStyle = {
       height: layoutMetrics.cardHeight,
       borderRadius: layoutMetrics.cardBorderRadius,
@@ -53,6 +66,18 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
     const cardOpacity = useSharedValue(1);
     const hasPassedThreshold = useSharedValue(false);
     const superlikePulse = useSharedValue(0);
+    const intentProgress = useSharedValue(0);
+
+    const setGestureLocked = (locked: boolean) => {
+      onGestureLockChange?.(locked);
+    };
+
+    const openIntentFromSwipe = () => {
+      try {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      } catch {}
+      onIntentSwipeUp?.();
+    };
 
     // Imperative API
     const completeSwipe = (dir: "left" | "right" | "superlike") => {
@@ -77,10 +102,10 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
             // special arc motion upwards
             cardOpacity.value = withTiming(0, { duration: 420 });
             // small curve: nudge left then return while moving up
-            translateX.value = withTiming(-SCREEN_WIDTH * 0.08, { duration: 220 }, () => {
+            translateX.value = withTiming(-screenWidth * 0.08, { duration: 220 }, () => {
               translateX.value = withTiming(0, { duration: 320 });
             });
-            translateY.value = withTiming(-EXIT_DISTANCE, { duration: 520 }, () => runOnJS(completeSwipe)(dir));
+            translateY.value = withTiming(-exitDistance, { duration: 520 }, () => runOnJS(completeSwipe)(dir));
             rotate.value = withTiming(-6, { duration: 420 });
             superlikePulse.value = withTiming(1, { duration: 160 }, () => {
               superlikePulse.value = withTiming(0, { duration: 300 });
@@ -88,7 +113,7 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
             return;
           }
 
-          const targetX = dir === "right" ? EXIT_DISTANCE : -EXIT_DISTANCE;
+          const targetX = dir === "right" ? exitDistance : -exitDistance;
           cardOpacity.value = withTiming(0, { duration: 240 });
           translateX.value = withTiming(targetX, { duration: 300 }, () => {
             runOnJS(completeSwipe)(dir);
@@ -118,19 +143,43 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
       scale.value = 1;
       cardOpacity.value = 1;
       hasPassedThreshold.value = false;
+      intentProgress.value = 0;
     }, [currentIndex]);
 
     // Gesture
     const pan = Gesture.Pan()
+      .onBegin(() => {
+        if (onGestureLockChange) runOnJS(setGestureLocked)(true);
+      })
       .onUpdate((e) => {
-        translateX.value = e.translationX;
-        translateY.value = e.translationY;
-        rotate.value = interpolate(translateX.value, [-SCREEN_WIDTH, 0, SCREEN_WIDTH], [-18, 0, 18], Extrapolate.CLAMP);
-        scale.value = 1 - Math.min(Math.abs(translateX.value) / (SCREEN_WIDTH * 8), 0.08);
-        cardOpacity.value = 1 - Math.min(Math.abs(translateX.value) / (SCREEN_WIDTH * 1.2), 0.6);
+        const verticalIntentDrag =
+          !!onIntentSwipeUp &&
+          e.translationY < -8 &&
+          Math.abs(e.translationY) > Math.abs(e.translationX) * 0.85;
+
+        if (verticalIntentDrag) {
+          translateX.value = e.translationX * 0.12;
+          translateY.value = Math.max(e.translationY * 0.82, -layoutMetrics.cardHeight * 0.32);
+          rotate.value = 0;
+          scale.value = 1 - Math.min(Math.abs(e.translationY) / (layoutMetrics.cardHeight * 12), 0.035);
+          cardOpacity.value = 1 - Math.min(Math.abs(e.translationY) / (layoutMetrics.cardHeight * 3.2), 0.18);
+          intentProgress.value = interpolate(
+            Math.abs(e.translationY),
+            [0, intentSwipeThreshold],
+            [0, 1],
+            Extrapolate.CLAMP,
+          );
+        } else {
+          translateX.value = e.translationX;
+          translateY.value = e.translationY;
+          rotate.value = interpolate(translateX.value, [-screenWidth, 0, screenWidth], [-18, 0, 18], Extrapolate.CLAMP);
+          scale.value = 1 - Math.min(Math.abs(translateX.value) / (screenWidth * 8), 0.08);
+          cardOpacity.value = 1 - Math.min(Math.abs(translateX.value) / (screenWidth * 1.2), 0.6);
+          intentProgress.value = 0;
+        }
 
         // threshold haptic gate
-        const passed = Math.abs(e.translationX) > SWIPE_THRESHOLD;
+        const passed = Math.abs(e.translationX) > swipeThreshold || intentProgress.value >= 1;
         if (passed && !hasPassedThreshold.value) {
           hasPassedThreshold.value = true;
           runOnJS(() => {
@@ -143,10 +192,32 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
         }
       })
       .onEnd((e) => {
-        const shouldExit = Math.abs(e.translationX) > SWIPE_THRESHOLD || Math.abs(e.velocityX) > 1000;
+        const shouldOpenIntent =
+          !!onIntentSwipeUp &&
+          e.translationY < -intentSwipeThreshold &&
+          Math.abs(e.translationY) > Math.abs(e.translationX) * 0.85;
+        const shouldOpenIntentByVelocity =
+          !!onIntentSwipeUp &&
+          e.velocityY < -950 &&
+          Math.abs(e.velocityY) > Math.abs(e.velocityX) * 0.7;
+
+        if (shouldOpenIntent || shouldOpenIntentByVelocity) {
+          translateX.value = withSpring(0, { damping: 14, stiffness: 150 });
+          translateY.value = withTiming(-Math.min(layoutMetrics.cardHeight * 0.12, 86), { duration: 130 }, () => {
+            translateY.value = withSpring(0, { damping: 14, stiffness: 150 });
+          });
+          rotate.value = withSpring(0);
+          scale.value = withSpring(1);
+          cardOpacity.value = withTiming(1, { duration: 160 });
+          intentProgress.value = withTiming(0, { duration: 180 });
+          runOnJS(openIntentFromSwipe)();
+          return;
+        }
+
+        const shouldExit = Math.abs(e.translationX) > swipeThreshold || Math.abs(e.velocityX) > 1000;
         if (shouldExit) {
           const dir: "left" | "right" = e.translationX > 0 ? "right" : "left";
-          const targetX = dir === "right" ? EXIT_DISTANCE : -EXIT_DISTANCE;
+          const targetX = dir === "right" ? exitDistance : -exitDistance;
           translateX.value = withTiming(targetX, { duration: 280 }, () => runOnJS(completeSwipe)(dir));
           rotate.value = withTiming(dir === "right" ? 18 : -18, { duration: 280 });
           cardOpacity.value = withTiming(0, { duration: 240 });
@@ -156,7 +227,11 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
           rotate.value = withSpring(0);
           scale.value = withSpring(1);
           cardOpacity.value = withTiming(1);
+          intentProgress.value = withTiming(0, { duration: 160 });
         }
+      })
+      .onFinalize(() => {
+        if (onGestureLockChange) runOnJS(setGestureLocked)(false);
       })
       .runOnJS(true);
 
@@ -174,62 +249,65 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
     }, []);
 
     const overlayContainerStyle = useAnimatedStyle(() => ({
-      opacity: interpolate(translateX.value, [-SWIPE_THRESHOLD, 0, SWIPE_THRESHOLD], [0.9, 0, 0.9], Extrapolate.CLAMP),
+      opacity: Math.max(
+        interpolate(translateX.value, [-swipeThreshold, 0, swipeThreshold], [0.9, 0, 0.9], Extrapolate.CLAMP),
+        intentProgress.value * 0.95,
+      ),
     })) as any;
 
     const rightGlowStyle = useAnimatedStyle(() => ({
       position: "absolute",
-      width: SCREEN_WIDTH * 0.6,
-      height: SCREEN_WIDTH * 0.6,
-      borderRadius: (SCREEN_WIDTH * 0.6) / 2,
+      width: screenWidth * 0.6,
+      height: screenWidth * 0.6,
+      borderRadius: (screenWidth * 0.6) / 2,
       backgroundColor: "rgba(16,185,129,0.12)",
-      transform: [{ scale: interpolate(translateX.value, [0, SWIPE_THRESHOLD], [0.6, 1.15], Extrapolate.CLAMP) }],
-      opacity: interpolate(translateX.value, [0, SWIPE_THRESHOLD * 0.5, SWIPE_THRESHOLD], [0, 0.65, 1], Extrapolate.CLAMP),
+      transform: [{ scale: interpolate(translateX.value, [0, swipeThreshold], [0.6, 1.15], Extrapolate.CLAMP) }],
+      opacity: interpolate(translateX.value, [0, swipeThreshold * 0.5, swipeThreshold], [0, 0.65, 1], Extrapolate.CLAMP),
     } as any));
 
     const rightIconStyle = useAnimatedStyle(() => {
-      const MAX_X = SCREEN_WIDTH * 0.22;
-      const followX = Math.abs(translateX.value) > 12 ? interpolate(translateX.value, [-SWIPE_THRESHOLD, 0, SWIPE_THRESHOLD], [-MAX_X, 0, MAX_X], Extrapolate.CLAMP) : 0;
+      const MAX_X = screenWidth * 0.22;
+      const followX = Math.abs(translateX.value) > 12 ? interpolate(translateX.value, [-swipeThreshold, 0, swipeThreshold], [-MAX_X, 0, MAX_X], Extrapolate.CLAMP) : 0;
       return {
         transform: [
           { translateX: followX },
-          { translateY: interpolate(translateX.value, [0, SWIPE_THRESHOLD], [12, -12], Extrapolate.CLAMP) },
-          { scale: interpolate(translateX.value, [0, SWIPE_THRESHOLD * 0.5, SWIPE_THRESHOLD], [0.7, 1, 1.2], Extrapolate.CLAMP) },
-          { rotate: `${interpolate(translateX.value, [0, SWIPE_THRESHOLD], [0, 12], Extrapolate.CLAMP)}deg` },
+          { translateY: interpolate(translateX.value, [0, swipeThreshold], [12, -12], Extrapolate.CLAMP) },
+          { scale: interpolate(translateX.value, [0, swipeThreshold * 0.5, swipeThreshold], [0.7, 1, 1.2], Extrapolate.CLAMP) },
+          { rotate: `${interpolate(translateX.value, [0, swipeThreshold], [0, 12], Extrapolate.CLAMP)}deg` },
         ],
-        opacity: interpolate(translateX.value, [0, SWIPE_THRESHOLD * 0.3, SWIPE_THRESHOLD], [0, 0.8, 1], Extrapolate.CLAMP),
+        opacity: interpolate(translateX.value, [0, swipeThreshold * 0.3, swipeThreshold], [0, 0.8, 1], Extrapolate.CLAMP),
       } as any;
     });
 
     const leftGlowStyle = useAnimatedStyle(() => ({
       position: "absolute",
-      width: SCREEN_WIDTH * 0.6,
-      height: SCREEN_WIDTH * 0.6,
-      borderRadius: (SCREEN_WIDTH * 0.6) / 2,
+      width: screenWidth * 0.6,
+      height: screenWidth * 0.6,
+      borderRadius: (screenWidth * 0.6) / 2,
       backgroundColor: "rgba(239,68,68,0.12)",
-      transform: [{ scale: interpolate(translateX.value, [-SWIPE_THRESHOLD, 0], [1.15, 0.6], Extrapolate.CLAMP) }],
-      opacity: interpolate(translateX.value, [-SWIPE_THRESHOLD, -SWIPE_THRESHOLD * 0.5, 0], [1, 0.65, 0], Extrapolate.CLAMP),
+      transform: [{ scale: interpolate(translateX.value, [-swipeThreshold, 0], [1.15, 0.6], Extrapolate.CLAMP) }],
+      opacity: interpolate(translateX.value, [-swipeThreshold, -swipeThreshold * 0.5, 0], [1, 0.65, 0], Extrapolate.CLAMP),
     } as any));
 
     const leftIconStyle = useAnimatedStyle(() => {
-      const MAX_X = SCREEN_WIDTH * 0.22;
-      const followX = Math.abs(translateX.value) > 12 ? interpolate(translateX.value, [-SWIPE_THRESHOLD, 0, SWIPE_THRESHOLD], [-MAX_X, 0, MAX_X], Extrapolate.CLAMP) : 0;
+      const MAX_X = screenWidth * 0.22;
+      const followX = Math.abs(translateX.value) > 12 ? interpolate(translateX.value, [-swipeThreshold, 0, swipeThreshold], [-MAX_X, 0, MAX_X], Extrapolate.CLAMP) : 0;
       return {
         transform: [
           { translateX: followX },
-          { translateY: interpolate(translateX.value, [-SWIPE_THRESHOLD, 0], [-12, 12], Extrapolate.CLAMP) },
-          { scale: interpolate(translateX.value, [-SWIPE_THRESHOLD, -SWIPE_THRESHOLD * 0.5, 0], [1.2, 1, 0.7], Extrapolate.CLAMP) },
-          { rotate: `${interpolate(translateX.value, [-SWIPE_THRESHOLD, 0], [-12, 0], Extrapolate.CLAMP)}deg` },
+          { translateY: interpolate(translateX.value, [-swipeThreshold, 0], [-12, 12], Extrapolate.CLAMP) },
+          { scale: interpolate(translateX.value, [-swipeThreshold, -swipeThreshold * 0.5, 0], [1.2, 1, 0.7], Extrapolate.CLAMP) },
+          { rotate: `${interpolate(translateX.value, [-swipeThreshold, 0], [-12, 0], Extrapolate.CLAMP)}deg` },
         ],
-        opacity: interpolate(translateX.value, [-SWIPE_THRESHOLD, -SWIPE_THRESHOLD * 0.3, 0], [1, 0.8, 0], Extrapolate.CLAMP),
+        opacity: interpolate(translateX.value, [-swipeThreshold, -swipeThreshold * 0.3, 0], [1, 0.8, 0], Extrapolate.CLAMP),
       } as any;
     });
 
     const superlikeGlowStyle = useAnimatedStyle(() => ({
       position: "absolute",
-      width: SCREEN_WIDTH * 0.84,
-      height: SCREEN_WIDTH * 0.84,
-      borderRadius: (SCREEN_WIDTH * 0.84) / 2,
+      width: screenWidth * 0.84,
+      height: screenWidth * 0.84,
+      borderRadius: (screenWidth * 0.84) / 2,
       backgroundColor: "rgba(59,130,246,0.2)",
       transform: [
         { scale: interpolate(superlikePulse.value, [0, 1], [0.5, 1.6], Extrapolate.CLAMP) },
@@ -245,6 +323,35 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
       ],
       opacity: superlikePulse.value,
     }) as any);
+
+    const intentGlowStyle = useAnimatedStyle(() => ({
+      position: "absolute",
+      width: screenWidth * 0.82,
+      height: screenWidth * 0.82,
+      borderRadius: (screenWidth * 0.82) / 2,
+      backgroundColor: "rgba(19,168,168,0.16)",
+      transform: [
+        { translateY: interpolate(intentProgress.value, [0, 1], [36, -24], Extrapolate.CLAMP) },
+        { scale: interpolate(intentProgress.value, [0, 1], [0.55, 1.18], Extrapolate.CLAMP) },
+      ],
+      opacity: interpolate(intentProgress.value, [0, 0.45, 1], [0, 0.55, 1], Extrapolate.CLAMP),
+    } as any));
+
+    const intentIconStyle = useAnimatedStyle(() => ({
+      alignItems: "center",
+      justifyContent: "center",
+      width: 104,
+      height: 104,
+      borderRadius: 52,
+      borderWidth: 1,
+      borderColor: "rgba(127,228,220,0.45)",
+      backgroundColor: "rgba(3,20,24,0.42)",
+      transform: [
+        { translateY: interpolate(intentProgress.value, [0, 1], [40, -28], Extrapolate.CLAMP) },
+        { scale: interpolate(intentProgress.value, [0, 0.55, 1], [0.72, 1, 1.1], Extrapolate.CLAMP) },
+      ],
+      opacity: interpolate(intentProgress.value, [0, 0.28, 1], [0, 0.85, 1], Extrapolate.CLAMP),
+    } as any));
 
     // ActiveCard child stabilizes hooks ordering when list changes
     function ActiveCard({ m, zIndex }: { m: Match; zIndex: number }) {
@@ -274,6 +381,10 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
                 <Animated.View style={leftGlowStyle} />
                 <Animated.View style={leftIconStyle}>
                   <MaterialCommunityIcons name="close" size={64} color="#EF4444" />
+                </Animated.View>
+                <Animated.View style={intentGlowStyle} />
+                <Animated.View style={intentIconStyle}>
+                  <IntentMark size={58} color="#A7FFF8" strokeWidth={2.15} />
                 </Animated.View>
               </Animated.View>
             </Animated.View>

@@ -4,24 +4,39 @@ import { useIntentRequests, type IntentRequest, type IntentRequestType } from '@
 import { useReduceMotion } from '@/hooks/useReduceMotion';
 import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
+import {
+  cancelIntentRequestOfflineSafe,
+  decideIntentRequestOfflineSafe,
+} from '@/lib/intents/offline-actions';
 import { computeFirstReplyHours, computeInterestOverlapRatio } from '@/lib/match/match-score';
 import { Motion } from '@/lib/motion';
+import {
+  migrateLegacySuggestedMovesSnapshot,
+  readIntentProfileContextSnapshot,
+  readIntentProfilesSnapshot,
+  readIntentSignalsSnapshot,
+  readIntentSuggestedMovesSnapshot,
+  writeIntentProfileContextSnapshot,
+  writeIntentProfilesSnapshot,
+  writeIntentSignalsSnapshot,
+  writeIntentSuggestedMovesSnapshot,
+} from '@/lib/offline/intent-store';
 import { fetchPeerVisibilityPrefs } from '@/lib/peer-visibility';
 import { getSafeRemoteImageUri, getUserFacingDisplayName, hasLeftBetweener } from '@/lib/profile/display-name';
 import { getProfileInitials, getProfilePlaceholderPalette } from '@/lib/profile-placeholders';
-import { readCache, writeCache } from '@/lib/persisted-cache';
 import { supabase } from '@/lib/supabase';
 import { getViewedProfileTrustChips } from '@/lib/viewed-profile-premium';
 import MatchModal from '@/components/MatchModal';
 import AnimatedPressable from '@/components/motion/AnimatedPressable';
+import SignalIcon from '@/components/icons/SignalIcon';
+import OfflineImage from '@/components/media/OfflineImage';
 import type { Match } from '@/types/match';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Image as ExpoImage } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, FlatList, Image, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Animated, {
   FadeIn,
   FadeInDown,
@@ -36,10 +51,14 @@ import Animated, {
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import IntentRequestSheet from '@/components/IntentRequestSheet';
+import SignalReceivedCard, { type ReceivedSignal } from '@/components/signal/SignalReceivedCard';
 
 type Direction = 'incoming' | 'sent';
 type Filter = 'action' | 'all' | 'accepted' | 'passed' | 'archived';
-type TypeFilter = 'all' | IntentRequestType;
+type TypeFilter = 'all' | IntentRequestType | 'signal';
+type DecisionQueueItem =
+  | { key: string; kind: 'signal'; signal: ReceivedSignal; expiresAt: string; createdAt: string; peerProfileId: string }
+  | { key: string; kind: 'request'; request: IntentRequest; expiresAt: string; createdAt: string; peerProfileId: string };
 
 type ProfileSnippet = {
   id: string;
@@ -82,6 +101,17 @@ type SuggestedMove = {
   candidate_tier?: number | null;
   quality_band?: number | null;
   shared_interest_count?: number | null;
+};
+
+type IntentSignalsSnapshot = {
+  received: ReceivedSignal[];
+  sent: ReceivedSignal[];
+};
+
+type IntentProfileContextSnapshot = {
+  myProfile: ProfileSnippet | null;
+  interestsByProfile: Record<string, string[]>;
+  myInterests: string[];
 };
 
 type SuggestedMoveEventType =
@@ -435,6 +465,12 @@ const hoursUntil = (iso?: string | null) => {
   return (ts - Date.now()) / 3600000;
 };
 
+const isSignalExpiredForSender = (signal: Pick<ReceivedSignal, 'status' | 'expires_at'>) => {
+  if (signal.status === 'expired') return true;
+  const ts = Date.parse(signal.expires_at);
+  return !Number.isNaN(ts) && ts <= Date.now();
+};
+
 const buildQuickReplyText = (opts: {
   name: string;
   itemType: IntentRequest['type'];
@@ -493,10 +529,10 @@ const typeLabel = (item: Pick<IntentRequest, 'type' | 'message' | 'metadata'>) =
         typeof item.message === 'string' &&
         item.message.trim().length > 0 &&
         !isSwipeLike &&
-        // our swipe mirror sometimes uses a canned message; don't treat that as a "note"
+        // our legacy swipe mirror sometimes uses a canned message; don't treat that as a "note"
         !/^superliked you\.?$/i.test(item.message.trim());
 
-      if (swipeAction === 'SUPERLIKE') return 'Superlike';
+      if (swipeAction === 'SUPERLIKE') return 'Signal';
       // "like_with_note" represents plain likes (from swipes) too.
       return hasUserNote ? 'Note' : 'Like';
     }
@@ -505,6 +541,15 @@ const typeLabel = (item: Pick<IntentRequest, 'type' | 'message' | 'metadata'>) =
     default:
       return 'Request';
   }
+};
+
+const getRequestPriorityRank = (item: Pick<IntentRequest, 'type' | 'message' | 'metadata'>) => {
+  if (item.type === 'connect' || item.type === 'date_request') return 1;
+  if (item.type === 'like_with_note') {
+    return typeLabel(item) === 'Note' ? 1 : 2;
+  }
+  if (item.type === 'circle_intro') return 3;
+  return 4;
 };
 
 const typeIcon = (item: Pick<IntentRequest, 'type' | 'message' | 'metadata'>) => {
@@ -680,7 +725,7 @@ export default function IntentScreen() {
   const reduceMotion = useReduceMotion();
 
   const currentProfileId = profileId;
-  const { incoming, sent, loading, refresh } = useIntentRequests(currentProfileId);
+  const { incoming, sent, loading, refresh, updateLocalIntent } = useIntentRequests(currentProfileId);
   const [direction, setDirection] = useState<Direction>('incoming');
   const [filter, setFilter] = useState<Filter>('action');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
@@ -688,6 +733,9 @@ export default function IntentScreen() {
   const [deepLinkRequestId, setDeepLinkRequestId] = useState<string | null>(null);
   const deepLinkTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [profiles, setProfiles] = useState<Record<string, ProfileSnippet>>({});
+  const [receivedSignals, setReceivedSignals] = useState<ReceivedSignal[]>([]);
+  const [sentSignals, setSentSignals] = useState<ReceivedSignal[]>([]);
+  const [signalsRefreshKey, setSignalsRefreshKey] = useState(0);
   const [hiddenPeerUserIds, setHiddenPeerUserIds] = useState<Record<string, true>>({});
   const [archivedPeerUserIds, setArchivedPeerUserIds] = useState<Record<string, true>>({});
   const [myInterests, setMyInterests] = useState<string[]>([]);
@@ -705,11 +753,10 @@ export default function IntentScreen() {
   const suggestedBatchKeyRef = useRef<string | null>(null);
   const suggestedBatchSignatureRef = useRef('');
   const loggedSuggestedImpressionsRef = useRef<Set<string>>(new Set());
-  const suggestedCacheKey = useMemo(
-    () => (currentProfileId ? `cache:suggested_moves:v2:${currentProfileId}` : null),
-    [currentProfileId],
-  );
   const suggestedCacheLoadedKeyRef = useRef<string | null>(null);
+  const suggestedMovesRef = useRef<SuggestedMove[]>([]);
+  const [decisionModeOpen, setDecisionModeOpen] = useState(false);
+  const [decisionModeIndex, setDecisionModeIndex] = useState(0);
   const [intentSheetOpen, setIntentSheetOpen] = useState(false);
   const [intentTarget, setIntentTarget] = useState<{ id: string; name?: string | null } | null>(null);
   const [intentPrefill, setIntentPrefill] = useState<string | null>(null);
@@ -721,6 +768,10 @@ export default function IntentScreen() {
   });
   const suggestedSendTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [typePickerOpen, setTypePickerOpen] = useState(false);
+
+  useEffect(() => {
+    suggestedMovesRef.current = suggestedMoves;
+  }, [suggestedMoves]);
 
   const upsertSignal = useCallback(
     async (targetId: string, opts?: { openedDelta?: number; liked?: boolean; dwellDelta?: number }) => {
@@ -742,8 +793,74 @@ export default function IntentScreen() {
   useFocusEffect(
     useCallback(() => {
       void refresh();
+      setSignalsRefreshKey((key) => key + 1);
     }, [refresh]),
   );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSignals = async () => {
+      if (!currentProfileId) {
+        setReceivedSignals([]);
+        setSentSignals([]);
+        return;
+      }
+
+      const cached = await readIntentSignalsSnapshot<IntentSignalsSnapshot>(currentProfileId);
+      if (!cancelled && cached) {
+        setReceivedSignals(Array.isArray(cached.received) ? cached.received : []);
+        setSentSignals(Array.isArray(cached.sent) ? cached.sent : []);
+      }
+
+      const signalSelect =
+        'id,sender_profile_id,receiver_profile_id,sender_user_id,receiver_user_id,reason_key,reason_label,note,source,status,expires_at,seen_at,created_at';
+      const now = new Date().toISOString();
+
+      const [receivedResult, sentResult] = await Promise.all([
+        (supabase as any)
+          .from('profile_signal_gestures')
+          .select(signalSelect)
+          .eq('receiver_profile_id', currentProfileId)
+          .in('status', ['sent', 'seen'])
+          .gt('expires_at', now)
+          .order('created_at', { ascending: false })
+          .limit(12),
+        (supabase as any)
+          .from('profile_signal_gestures')
+          .select(signalSelect)
+          .eq('sender_profile_id', currentProfileId)
+          .in('status', ['sent', 'seen', 'expired'])
+          .order('created_at', { ascending: false })
+          .limit(12),
+      ]);
+
+      if (cancelled) return;
+      if (receivedResult.error) {
+        console.log('[intent] received signals error', receivedResult.error);
+      } else {
+        setReceivedSignals(((receivedResult.data as ReceivedSignal[] | null) ?? []).filter(Boolean));
+      }
+
+      if (sentResult.error) {
+        console.log('[intent] sent signals error', sentResult.error);
+      } else {
+        setSentSignals(((sentResult.data as ReceivedSignal[] | null) ?? []).filter(Boolean));
+      }
+
+      if (!receivedResult.error && !sentResult.error) {
+        void writeIntentSignalsSnapshot<IntentSignalsSnapshot>(currentProfileId, {
+          received: ((receivedResult.data as ReceivedSignal[] | null) ?? []).filter(Boolean),
+          sent: ((sentResult.data as ReceivedSignal[] | null) ?? []).filter(Boolean),
+        });
+      }
+    };
+
+    void loadSignals();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentProfileId, signalsRefreshKey]);
 
   useEffect(() => {
     // Allow other screens to deep-link into a specific intent type.
@@ -751,7 +868,7 @@ export default function IntentScreen() {
     const raw = params?.type;
     if (typeof raw !== 'string' || raw.length === 0) return;
     const normalized = raw.trim();
-    const allowed: TypeFilter[] = ['all', 'connect', 'date_request', 'like_with_note', 'circle_intro'];
+    const allowed: TypeFilter[] = ['all', 'signal', 'connect', 'date_request', 'like_with_note', 'circle_intro'];
     if ((allowed as string[]).includes(normalized)) {
       setTypeFilter(normalized as TypeFilter);
       return;
@@ -785,21 +902,50 @@ export default function IntentScreen() {
   }, [params?.requestId, params?.request_id]);
 
   const relevantIds = useMemo(() => {
-    const list = direction === 'incoming' ? incoming : sent;
     const ids = new Set<string>();
-    list.forEach((item) => {
-      const id = direction === 'incoming' ? item.actor_id : item.recipient_id;
-      if (id) ids.add(String(id));
+    incoming.forEach((item) => {
+      if (item.actor_id) ids.add(String(item.actor_id));
+      if (item.recipient_id) ids.add(String(item.recipient_id));
     });
+    sent.forEach((item) => {
+      if (item.actor_id) ids.add(String(item.actor_id));
+      if (item.recipient_id) ids.add(String(item.recipient_id));
+    });
+    receivedSignals.forEach((signal) => {
+      if (signal.sender_profile_id) ids.add(String(signal.sender_profile_id));
+      if (signal.receiver_profile_id) ids.add(String(signal.receiver_profile_id));
+    });
+    sentSignals.forEach((signal) => {
+      if (signal.sender_profile_id) ids.add(String(signal.sender_profile_id));
+      if (signal.receiver_profile_id) ids.add(String(signal.receiver_profile_id));
+    });
+    if (currentProfileId) ids.delete(currentProfileId);
     return Array.from(ids);
-  }, [direction, incoming, sent]);
+  }, [currentProfileId, incoming, receivedSignals, sent, sentSignals]);
 
   useEffect(() => {
     let cancelled = false;
     const fetchProfiles = async () => {
       if (relevantIds.length === 0) {
-        setProfiles({});
+        if (currentProfileId) {
+          const cached = await readIntentProfilesSnapshot<Record<string, ProfileSnippet>>(currentProfileId);
+          if (!cancelled && cached) setProfiles(cached);
+          return;
+        }
+        if (!cancelled) setProfiles({});
         return;
+      }
+      const cached = currentProfileId
+        ? await readIntentProfilesSnapshot<Record<string, ProfileSnippet>>(currentProfileId)
+        : null;
+      if (!cancelled && cached) {
+        setProfiles((prev) => {
+          const next = { ...cached, ...prev };
+          return relevantIds.reduce<Record<string, ProfileSnippet>>((acc, id) => {
+            if (next[id]) acc[id] = next[id];
+            return acc;
+          }, {});
+        });
       }
       const { data } = await supabase
         .from('profiles')
@@ -811,13 +957,20 @@ export default function IntentScreen() {
         if (!row?.id) return;
         map[row.id] = row;
       });
-      setProfiles(map);
+      setProfiles((prev) => {
+        const next = { ...(cached ?? {}), ...prev, ...map };
+        if (currentProfileId) void writeIntentProfilesSnapshot(currentProfileId, next);
+        return relevantIds.reduce<Record<string, ProfileSnippet>>((acc, id) => {
+          if (next[id]) acc[id] = next[id];
+          return acc;
+        }, {});
+      });
     };
     void fetchProfiles();
     return () => {
       cancelled = true;
     };
-  }, [relevantIds]);
+  }, [currentProfileId, relevantIds]);
 
   useEffect(() => {
     let cancelled = false;
@@ -852,6 +1005,36 @@ export default function IntentScreen() {
       cancelled = true;
     };
   }, [profiles, user?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const hydrateProfileContext = async () => {
+      if (!currentProfileId) return;
+      const cached = await readIntentProfileContextSnapshot<IntentProfileContextSnapshot>(currentProfileId);
+      if (cancelled || !cached) return;
+      setMyProfile((prev) => prev ?? cached.myProfile ?? null);
+      setInterestsByProfile((prev) =>
+        Object.keys(prev).length === 0 && cached.interestsByProfile ? cached.interestsByProfile : prev,
+      );
+      setMyInterests((prev) =>
+        prev.length === 0 && Array.isArray(cached.myInterests) ? cached.myInterests : prev,
+      );
+    };
+    void hydrateProfileContext();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentProfileId]);
+
+  useEffect(() => {
+    if (!currentProfileId) return;
+    if (!myProfile && myInterests.length === 0 && Object.keys(interestsByProfile).length === 0) return;
+    void writeIntentProfileContextSnapshot<IntentProfileContextSnapshot>(currentProfileId, {
+      myProfile,
+      interestsByProfile,
+      myInterests,
+    });
+  }, [currentProfileId, interestsByProfile, myInterests, myProfile]);
 
   useEffect(() => {
     let cancelled = false;
@@ -965,6 +1148,7 @@ export default function IntentScreen() {
   const filtered = useMemo(() => {
     const list = direction === 'incoming' ? incoming : sent;
     if (direction === 'sent' && filter === 'action') return [];
+    if (typeFilter === 'signal') return [];
     return list.filter((item) => {
       const peerProfileId = direction === 'incoming' ? item.actor_id : item.recipient_id;
       const peerUserId = peerProfileId ? profiles[peerProfileId]?.user_id : null;
@@ -984,14 +1168,24 @@ export default function IntentScreen() {
 
   const sortedFiltered = useMemo(() => {
     const list = [...filtered];
-    // Premium feel: "actionable" inbox prioritizes what will expire soonest.
-    if (direction === 'incoming' && filter === 'action') {
+    // Premium feel: incoming queues prioritize time-limited decisions, then stronger intent types.
+    if (direction === 'incoming' && (filter === 'action' || filter === 'all')) {
       list.sort((a, b) => {
+        const aActionable = a.status === 'pending' && !isExpired(a);
+        const bActionable = b.status === 'pending' && !isExpired(b);
+        if (aActionable !== bActionable) return aActionable ? -1 : 1;
+
         const ha = hoursUntil(a.expires_at);
         const hb = hoursUntil(b.expires_at);
         const aKey = typeof ha === 'number' ? ha : Number.POSITIVE_INFINITY;
         const bKey = typeof hb === 'number' ? hb : Number.POSITIVE_INFINITY;
-        if (aKey !== bKey) return aKey - bKey;
+        const aSoon = aActionable && aKey <= 6;
+        const bSoon = bActionable && bKey <= 6;
+        if (aSoon !== bSoon) return aSoon ? -1 : 1;
+        if (aActionable && bActionable && aKey !== bKey) return aKey - bKey;
+
+        const rankDiff = getRequestPriorityRank(a) - getRequestPriorityRank(b);
+        if (rankDiff !== 0) return rankDiff;
         return Date.parse(b.created_at) - Date.parse(a.created_at);
       });
       return list;
@@ -1001,6 +1195,202 @@ export default function IntentScreen() {
     list.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
     return list;
   }, [direction, filter, filtered]);
+
+  const visibleReceivedSignals = useMemo(() => {
+    if (direction !== 'incoming') return [];
+    if (filter !== 'action' && filter !== 'all') return [];
+    if (typeFilter !== 'all' && typeFilter !== 'signal') return [];
+    const now = Date.now();
+    return receivedSignals.filter((signal) => {
+      if (!signal?.id || !signal.sender_profile_id) return false;
+      if (signal.status !== 'sent' && signal.status !== 'seen') return false;
+      const expiresAt = Date.parse(signal.expires_at);
+      if (!Number.isNaN(expiresAt) && expiresAt <= now) return false;
+      const peerUserId = profiles[signal.sender_profile_id]?.user_id;
+      if (peerUserId && hiddenPeerUserIds[peerUserId]) return false;
+      if (peerUserId && archivedPeerUserIds[peerUserId]) return false;
+      return true;
+    }).sort((a, b) => {
+      const ha = hoursUntil(a.expires_at);
+      const hb = hoursUntil(b.expires_at);
+      const aKey = typeof ha === 'number' ? ha : Number.POSITIVE_INFINITY;
+      const bKey = typeof hb === 'number' ? hb : Number.POSITIVE_INFINITY;
+      if (aKey !== bKey) return aKey - bKey;
+      return Date.parse(b.created_at) - Date.parse(a.created_at);
+    });
+  }, [archivedPeerUserIds, direction, filter, hiddenPeerUserIds, profiles, receivedSignals, typeFilter]);
+
+  const visibleSentSignals = useMemo(() => {
+    if (direction !== 'sent') return [];
+    if (filter !== 'action' && filter !== 'all') return [];
+    if (typeFilter !== 'all' && typeFilter !== 'signal') return [];
+    return sentSignals
+      .filter((signal) => {
+        if (!signal?.id || !signal.receiver_profile_id) return false;
+        if (signal.status !== 'sent' && signal.status !== 'seen' && signal.status !== 'expired') return false;
+        const peerUserId = profiles[signal.receiver_profile_id]?.user_id;
+        if (peerUserId && hiddenPeerUserIds[peerUserId]) return false;
+        if (peerUserId && archivedPeerUserIds[peerUserId]) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const aExpired = isSignalExpiredForSender(a);
+        const bExpired = isSignalExpiredForSender(b);
+        if (aExpired !== bExpired) return aExpired ? 1 : -1;
+
+        const ha = hoursUntil(a.expires_at);
+        const hb = hoursUntil(b.expires_at);
+        const aKey = typeof ha === 'number' ? ha : Number.POSITIVE_INFINITY;
+        const bKey = typeof hb === 'number' ? hb : Number.POSITIVE_INFINITY;
+        if (!aExpired && !bExpired && aKey !== bKey) return aKey - bKey;
+
+        return Date.parse(b.created_at) - Date.parse(a.created_at);
+      });
+  }, [archivedPeerUserIds, direction, filter, hiddenPeerUserIds, profiles, sentSignals, typeFilter]);
+
+  const activeReceivedSignalsForReminder = useMemo(() => {
+    const now = Date.now();
+    return receivedSignals.filter((signal) => {
+      if (!signal?.id || !signal.sender_profile_id) return false;
+      if (signal.status !== 'sent' && signal.status !== 'seen') return false;
+      const expiresAt = Date.parse(signal.expires_at);
+      if (!Number.isNaN(expiresAt) && expiresAt <= now) return false;
+      const peerUserId = profiles[signal.sender_profile_id]?.user_id;
+      if (peerUserId && hiddenPeerUserIds[peerUserId]) return false;
+      if (peerUserId && archivedPeerUserIds[peerUserId]) return false;
+      return true;
+    });
+  }, [archivedPeerUserIds, hiddenPeerUserIds, profiles, receivedSignals]);
+
+  const pendingIncomingForReminder = useMemo(
+    () =>
+      incoming.filter((item) => {
+        if (item.status !== 'pending' || isExpired(item)) return false;
+        const peerUserId = profiles[item.actor_id]?.user_id;
+        if (peerUserId && hiddenPeerUserIds[peerUserId]) return false;
+        if (peerUserId && archivedPeerUserIds[peerUserId]) return false;
+        return true;
+      }),
+    [archivedPeerUserIds, hiddenPeerUserIds, incoming, profiles],
+  );
+
+  const intentReminder = useMemo(() => {
+    const waitingCount = activeReceivedSignalsForReminder.length + pendingIncomingForReminder.length;
+    if (waitingCount <= 0) return null;
+    const signalEndingSoon = activeReceivedSignalsForReminder.filter((signal) => {
+      const hours = hoursUntil(signal.expires_at);
+      return typeof hours === 'number' && hours <= 6;
+    }).length;
+    const requestEndingSoon = pendingIncomingForReminder.filter((item) => {
+      const hours = hoursUntil(item.expires_at);
+      return typeof hours === 'number' && hours <= 6;
+    }).length;
+    const endingSoonCount = signalEndingSoon + requestEndingSoon;
+    const signalCount = activeReceivedSignalsForReminder.length;
+    const requestCount = pendingIncomingForReminder.length;
+
+    return {
+      waitingCount,
+      endingSoonCount,
+      title: endingSoonCount > 0 ? `${endingSoonCount} ending soon` : `${waitingCount} waiting`,
+      body:
+        signalCount > 0 && requestCount > 0
+          ? `${signalCount} Signal${signalCount === 1 ? '' : 's'} and ${requestCount} request${requestCount === 1 ? '' : 's'} need a decision.`
+          : signalCount > 0
+            ? `${signalCount} Signal${signalCount === 1 ? '' : 's'} waiting for your decision.`
+            : `${requestCount} request${requestCount === 1 ? '' : 's'} waiting for your response.`,
+    };
+  }, [activeReceivedSignalsForReminder, pendingIncomingForReminder]);
+
+  const decisionQueue = useMemo<DecisionQueueItem[]>(() => {
+    const signals: DecisionQueueItem[] = activeReceivedSignalsForReminder.map((signal) => ({
+      key: `signal:${signal.id}`,
+      kind: 'signal',
+      signal,
+      expiresAt: signal.expires_at,
+      createdAt: signal.created_at,
+      peerProfileId: signal.sender_profile_id,
+    }));
+    const requests: DecisionQueueItem[] = pendingIncomingForReminder.map((request) => ({
+      key: `request:${request.id}`,
+      kind: 'request',
+      request,
+      expiresAt: request.expires_at,
+      createdAt: request.created_at,
+      peerProfileId: request.actor_id,
+    }));
+    return [...signals, ...requests].sort((a, b) => {
+      const aHours = hoursUntil(a.expiresAt);
+      const bHours = hoursUntil(b.expiresAt);
+      const aKey = typeof aHours === 'number' ? aHours : Number.POSITIVE_INFINITY;
+      const bKey = typeof bHours === 'number' ? bHours : Number.POSITIVE_INFINITY;
+      if (aKey !== bKey) return aKey - bKey;
+      return Date.parse(b.createdAt) - Date.parse(a.createdAt);
+    });
+  }, [activeReceivedSignalsForReminder, pendingIncomingForReminder]);
+
+  useEffect(() => {
+    if (decisionModeIndex <= Math.max(decisionQueue.length - 1, 0)) return;
+    setDecisionModeIndex(Math.max(decisionQueue.length - 1, 0));
+  }, [decisionModeIndex, decisionQueue.length]);
+
+  const openDecisionMode = useCallback(() => {
+    if (decisionQueue.length === 0) return;
+    void Haptics.selectionAsync();
+    setDirection('incoming');
+    setFilter('action');
+    setTypeFilter('all');
+    setDecisionModeIndex(0);
+    setDecisionModeOpen(true);
+  }, [decisionQueue.length]);
+
+  const reviewWaitingItems = useCallback(() => {
+    if (decisionQueue.length > 0) {
+      openDecisionMode();
+      return;
+    }
+    void Haptics.selectionAsync();
+    setDirection('incoming');
+    setFilter('action');
+    setTypeFilter('all');
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToOffset({ offset: 0, animated: true });
+    });
+  }, [decisionQueue.length, openDecisionMode]);
+
+  const advanceDecisionMode = useCallback(() => {
+    setDecisionModeIndex((index) => {
+      const next = index + 1;
+      if (next >= decisionQueue.length) {
+        setDecisionModeOpen(false);
+        return 0;
+      }
+      return next;
+    });
+  }, [decisionQueue.length]);
+
+  useEffect(() => {
+    if (direction !== 'incoming' || visibleReceivedSignals.length === 0) return;
+    const unseenIds = visibleReceivedSignals
+      .filter((signal) => signal.status === 'sent' && !signal.seen_at)
+      .map((signal) => signal.id);
+    if (unseenIds.length === 0) return;
+
+    const seenAt = new Date().toISOString();
+    setReceivedSignals((prev) =>
+      prev.map((signal) =>
+        unseenIds.includes(signal.id) ? { ...signal, status: 'seen', seen_at: seenAt } : signal,
+      ),
+    );
+
+    void (supabase as any)
+      .from('profile_signal_gestures')
+      .update({ status: 'seen', seen_at: seenAt })
+      .in('id', unseenIds)
+      .then(({ error }: { error?: unknown }) => {
+        if (error) console.log('[intent] mark signal seen error', error);
+      });
+  }, [direction, visibleReceivedSignals]);
 
   const onScrollToIndexFailed = useCallback((info: { index: number; averageItemLength: number }) => {
     // Best-effort fallback: approximate offset and try again after layout settles.
@@ -1039,7 +1429,8 @@ export default function IntentScreen() {
     [incoming],
   );
 
-  const showEmpty = !loading && sortedFiltered.length === 0;
+  const visibleSignalsForDirection = direction === 'incoming' ? visibleReceivedSignals : visibleSentSignals;
+  const showEmpty = !loading && sortedFiltered.length === 0 && visibleSignalsForDirection.length === 0;
   const [loadingStuck, setLoadingStuck] = useState(false);
 
   useEffect(() => {
@@ -1078,11 +1469,16 @@ export default function IntentScreen() {
         if (cancelled) return;
         if (error) {
           console.log('[intent] suggested moves error', error);
-          setSuggestedError(error.message || 'Could not load suggestions.');
+          if (suggestedMovesRef.current.length === 0) {
+            setSuggestedError(error.message || 'Could not load suggestions.');
+          } else {
+            setSuggestedError(null);
+          }
         } else {
           const next = ((data as SuggestedMove[]) || []);
           setSuggestedMoves(next);
-          if (suggestedCacheKey) void writeCache(suggestedCacheKey, next);
+          setSuggestedError(null);
+          void writeIntentSuggestedMovesSnapshot(currentProfileId, next);
         }
         // Prevent retry loops; the UI provides an explicit retry/refresh action.
         suggestedLoadedRef.current = true;
@@ -1094,25 +1490,28 @@ export default function IntentScreen() {
     return () => {
       cancelled = true;
     };
-  }, [currentProfileId, loading, suggestedCacheKey, suggestedRetryKey]);
+  }, [currentProfileId, loading, suggestedRetryKey]);
 
   // Cached-first: show last suggested moves immediately, then refresh in background.
   useEffect(() => {
-    if (!suggestedCacheKey) return;
-    if (suggestedCacheLoadedKeyRef.current === suggestedCacheKey) return;
-    suggestedCacheLoadedKeyRef.current = suggestedCacheKey;
+    if (!currentProfileId) return;
+    if (suggestedCacheLoadedKeyRef.current === currentProfileId) return;
+    suggestedCacheLoadedKeyRef.current = currentProfileId;
 
     let cancelled = false;
     (async () => {
-      const cached = await readCache<SuggestedMove[]>(suggestedCacheKey, 10 * 60_000);
+      const cached =
+        (await readIntentSuggestedMovesSnapshot<SuggestedMove[]>(currentProfileId)) ??
+        (await migrateLegacySuggestedMovesSnapshot<SuggestedMove[]>(currentProfileId));
       if (cancelled || !cached || !Array.isArray(cached)) return;
       setSuggestedMoves((prev) => (prev.length === 0 ? cached : prev));
+      if (cached.length > 0) setSuggestedError(null);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [suggestedCacheKey]);
+  }, [currentProfileId]);
 
   const openChat = useCallback((peerId?: string | null, name?: string, avatar?: string | null, prefill?: string | null) => {
     if (!peerId) return;
@@ -1144,29 +1543,56 @@ export default function IntentScreen() {
     [interestsByProfile, myInterests, profiles],
   );
 
+  const buildSignalCelebrationMatch = useCallback(
+    (signal: ReceivedSignal): Match => {
+      const sender = profiles[signal.sender_profile_id];
+      const peerInterests = Array.isArray(interestsByProfile[signal.sender_profile_id])
+        ? interestsByProfile[signal.sender_profile_id]
+        : [];
+      const sharedInterests = myInterests.length ? peerInterests.filter((i) => myInterests.includes(i)).slice(0, 3) : [];
+
+      return {
+        id: signal.sender_profile_id,
+        name: getUserFacingDisplayName(sender, 'Someone'),
+        age: sender?.age ?? 0,
+        avatar_url: sender?.avatar_url || undefined,
+        location: sender?.city || sender?.region || sender?.location || undefined,
+        interests: peerInterests,
+        commonInterests: sharedInterests,
+        verified: (sender?.verification_level ?? 0) > 0,
+        verification_level: sender?.verification_level ?? undefined,
+        region: sender?.region ?? undefined,
+      };
+    },
+    [interestsByProfile, myInterests, profiles],
+  );
+
   const ensureMatch = useCallback(async (actorId: string, recipientId: string) => {
-    const { data } = await supabase
+    const { data, error: matchLookupError } = await supabase
       .from('matches')
       .select('id,status')
       .or(
         `and(user1_id.eq.${actorId},user2_id.eq.${recipientId}),and(user1_id.eq.${recipientId},user2_id.eq.${actorId})`,
       )
       .limit(1);
+    if (matchLookupError) throw matchLookupError;
 
     if (data && data.length > 0) {
       const match = data[0];
       if (match.status !== 'ACCEPTED') {
-        await supabase.from('matches').update({ status: 'ACCEPTED' }).eq('id', match.id);
+        const { error: matchUpdateError } = await supabase.from('matches').update({ status: 'ACCEPTED' }).eq('id', match.id);
+        if (matchUpdateError) throw matchUpdateError;
       }
       return match.id;
     }
 
     const [user1, user2] = [actorId, recipientId].sort();
-    const { data: inserted } = await supabase
+    const { data: inserted, error: matchInsertError } = await supabase
       .from('matches')
       .insert({ user1_id: user1, user2_id: user2, status: 'ACCEPTED' })
       .select('id')
       .single();
+    if (matchInsertError) throw matchInsertError;
     return inserted?.id;
   }, []);
 
@@ -1177,37 +1603,71 @@ export default function IntentScreen() {
       if (expired) {
         return;
       }
-      const { error: decideError } = await supabase.rpc('rpc_decide_intent_request', {
-        p_request_id: item.id,
-        p_decision: 'accept',
-      });
-      if (decideError) {
-        console.log('[intent] accept request error', decideError);
+      try {
+        const result = await decideIntentRequestOfflineSafe({
+          requestId: item.id,
+          decision: 'accept',
+          insertAcceptanceSystemMessages: true,
+        });
+        if (result.status === 'queued') {
+          updateLocalIntent(item.id, {
+            metadata: {
+              ...(item.metadata ?? {}),
+              offline_queue: { action: 'accept', state: 'queued', queued_at: new Date().toISOString() },
+            },
+          });
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          return;
+        }
+      } catch (error) {
+        console.log('[intent] accept request error', error);
         return;
       }
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      const { error: systemError } = await supabase.rpc('rpc_insert_request_acceptance_system_messages', {
-        p_request_id: item.id,
-      });
-      if (systemError) {
-        console.log('[intent] system message error', systemError);
-      }
       await ensureMatch(item.actor_id, item.recipient_id);
       setCelebrationMatch(buildIntentCelebrationMatch(item));
       await refresh();
     },
-    [buildIntentCelebrationMatch, ensureMatch, refresh, user],
+    [buildIntentCelebrationMatch, ensureMatch, refresh, updateLocalIntent, user],
   );
 
   const passRequest = useCallback(async (item: IntentRequest) => {
-    await supabase.rpc('rpc_decide_intent_request', { p_request_id: item.id, p_decision: 'pass' });
+    try {
+      const result = await decideIntentRequestOfflineSafe({ requestId: item.id, decision: 'pass' });
+      if (result.status === 'queued') {
+        updateLocalIntent(item.id, {
+          metadata: {
+            ...(item.metadata ?? {}),
+            offline_queue: { action: 'pass', state: 'queued', queued_at: new Date().toISOString() },
+          },
+        });
+        return;
+      }
+    } catch (error) {
+      console.log('[intent] pass request error', error);
+      return;
+    }
     await refresh();
-  }, [refresh]);
+  }, [refresh, updateLocalIntent]);
 
   const cancelRequest = useCallback(async (item: IntentRequest) => {
-    await supabase.rpc('rpc_cancel_intent_request', { p_request_id: item.id });
+    try {
+      const result = await cancelIntentRequestOfflineSafe(item.id);
+      if (result.status === 'queued') {
+        updateLocalIntent(item.id, {
+          metadata: {
+            ...(item.metadata ?? {}),
+            offline_queue: { action: 'cancel', state: 'queued', queued_at: new Date().toISOString() },
+          },
+        });
+        return;
+      }
+    } catch (error) {
+      console.log('[intent] cancel request error', error);
+      return;
+    }
     await refresh();
-  }, [refresh]);
+  }, [refresh, updateLocalIntent]);
 
   const savePeerVisibilityPref = useCallback(
     async (peerUserId: string, next: { archived: boolean; hidden: boolean }) => {
@@ -1324,6 +1784,149 @@ export default function IntentScreen() {
     [],
   );
 
+  const dismissSignal = useCallback(async (signalId: string) => {
+    const dismissedAt = new Date().toISOString();
+    setReceivedSignals((prev) => prev.filter((signal) => signal.id !== signalId));
+    const { error } = await (supabase as any)
+      .from('profile_signal_gestures')
+      .update({ status: 'dismissed', dismissed_at: dismissedAt })
+      .eq('id', signalId);
+    if (error) {
+      console.log('[intent] dismiss signal error', error);
+      setSignalsRefreshKey((key) => key + 1);
+    }
+  }, []);
+
+  const markSignalResponded = useCallback(async (signalId: string) => {
+    const respondedAt = new Date().toISOString();
+    setReceivedSignals((prev) => prev.filter((signal) => signal.id !== signalId));
+    const { error } = await (supabase as any)
+      .from('profile_signal_gestures')
+      .update({ status: 'responded', responded_at: respondedAt })
+      .eq('id', signalId);
+    if (error) {
+      console.log('[intent] respond signal error', error);
+      setSignalsRefreshKey((key) => key + 1);
+    }
+  }, []);
+
+  const acceptSignal = useCallback(
+    (signal: ReceivedSignal) => {
+      void (async () => {
+        const expiresAt = Date.parse(signal.expires_at);
+        if (!Number.isNaN(expiresAt) && expiresAt <= Date.now()) {
+          setSignalsRefreshKey((key) => key + 1);
+          return;
+        }
+        try {
+          await ensureMatch(signal.sender_profile_id, signal.receiver_profile_id);
+          await markSignalResponded(signal.id);
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          setCelebrationMatch(buildSignalCelebrationMatch(signal));
+          await refresh();
+        } catch (error) {
+          console.log('[intent] accept signal error', error);
+          setSignalsRefreshKey((key) => key + 1);
+        }
+      })();
+    },
+    [buildSignalCelebrationMatch, ensureMatch, markSignalResponded, refresh],
+  );
+
+  const cancelSentSignal = useCallback(async (signalId: string) => {
+    setSentSignals((prev) => prev.filter((signal) => signal.id !== signalId));
+    const { error } = await (supabase as any).rpc('rpc_cancel_signal', { p_signal_id: signalId });
+    if (error) {
+      console.log('[intent] cancel sent signal error', error);
+      setSignalsRefreshKey((key) => key + 1);
+    }
+  }, []);
+
+  const renderSignalCard = useCallback(
+    (signal: ReceivedSignal) => {
+      const sender = profiles[signal.sender_profile_id];
+      return (
+        <SignalReceivedCard
+          variant="received"
+          key={signal.id}
+          signal={signal}
+          sender={sender}
+          theme={theme}
+          isDark={isDark}
+          reduceMotion={reduceMotion}
+          onViewProfile={() => router.push({ pathname: '/profile-view', params: { profileId: String(signal.sender_profile_id) } })}
+          onAccept={() => acceptSignal(signal)}
+          onDismiss={() => void dismissSignal(signal.id)}
+        />
+      );
+    },
+    [acceptSignal, dismissSignal, isDark, profiles, reduceMotion, theme],
+  );
+
+  const renderSentSignalCard = useCallback(
+    (signal: ReceivedSignal) => {
+      const receiver = profiles[signal.receiver_profile_id];
+      const isExpiredSignal = isSignalExpiredForSender(signal);
+      return (
+        <SignalReceivedCard
+          variant="sent"
+          key={signal.id}
+          signal={signal}
+          sender={receiver}
+          theme={theme}
+          isDark={isDark}
+          reduceMotion={reduceMotion}
+          onViewProfile={() => router.push({ pathname: '/profile-view', params: { profileId: String(signal.receiver_profile_id) } })}
+          onDismiss={() => {
+            if (isExpiredSignal) {
+              setSentSignals((prev) => prev.filter((item) => item.id !== signal.id));
+              return;
+            }
+            void cancelSentSignal(signal.id);
+          }}
+        />
+      );
+    },
+    [cancelSentSignal, isDark, profiles, reduceMotion, theme],
+  );
+
+  const currentDecision = decisionQueue[decisionModeIndex] ?? null;
+
+  const openDecisionProfile = useCallback(
+    (item: DecisionQueueItem | null) => {
+      if (!item?.peerProfileId) return;
+      router.push({ pathname: '/profile-view', params: { profileId: String(item.peerProfileId) } });
+    },
+    [],
+  );
+
+  const acceptDecision = useCallback(
+    (item: DecisionQueueItem | null) => {
+      if (!item) return;
+      if (item.kind === 'signal') {
+        setDecisionModeOpen(false);
+        acceptSignal(item.signal);
+        return;
+      }
+      setDecisionModeOpen(false);
+      void acceptRequest(item.request);
+    },
+    [acceptRequest, acceptSignal],
+  );
+
+  const passDecision = useCallback(
+    (item: DecisionQueueItem | null) => {
+      if (!item) return;
+      if (item.kind === 'signal') {
+        void dismissSignal(item.signal.id);
+      } else {
+        void passRequest(item.request);
+      }
+      advanceDecisionMode();
+    },
+    [advanceDecisionMode, dismissSignal, passRequest],
+  );
+
   const renderItem = useCallback(
     ({ item, index }: { item: IntentRequest; index: number }) => {
       const isIncoming = direction === 'incoming';
@@ -1344,6 +1947,10 @@ export default function IntentScreen() {
       const matchKey = peerUserId && user?.id ? matchKeyFor(user.id, peerUserId) : null;
       const matchMetricsEntry = matchKey ? matchMetrics[matchKey] : undefined;
       const meta = (item.metadata || {}) as any;
+      const queuedAction = String(meta?.offline_queue?.action || '').toLowerCase();
+      const queuedState = String(meta?.offline_queue?.state || 'queued').toLowerCase();
+      const hasQueuedAction = ['create', 'accept', 'pass', 'cancel'].includes(queuedAction);
+      const queuedFailed = queuedState === 'failed';
       const guessPromptSource = String(meta?.source || '').toLowerCase() === 'guess_prompt';
       const guessPromptCorrect = String(meta?.guess_outcome || '').toLowerCase() === 'correct';
       const isGuessPromptIntent = item.type === 'connect' && guessPromptSource && guessPromptCorrect;
@@ -1371,19 +1978,35 @@ export default function IntentScreen() {
           });
 
       const pendingExpired = item.status === 'pending' && isExpired(item);
-      const actionable = item.status === 'pending' && !isExpired(item);
-      const canMessage = item.status === 'accepted';
+      const actionable = item.status === 'pending' && !isExpired(item) && !hasQueuedAction;
+      const canMessage = item.status === 'accepted' && !hasQueuedAction;
       const autoClosedByMatch =
         (item.status === 'matched' ||
           (item.status === 'passed' &&
             (String(((item.metadata || {}) as any)?.auto_closed_by || '').toLowerCase() === 'match' ||
               Boolean(((item.metadata || {}) as any)?.match_id)))) ||
         false;
-      const canResend = !isIncoming && item.status !== 'pending' && item.status !== 'accepted' && !autoClosedByMatch;
+      const canResend = !isIncoming && item.status !== 'pending' && item.status !== 'accepted' && !autoClosedByMatch && !hasQueuedAction;
       const canOpenChat = !actionable && (canMessage || autoClosedByMatch);
       const isClosedCard = !autoClosedByMatch && (pendingExpired || item.status === 'passed' || item.status === 'expired' || item.status === 'cancelled');
       const statusLabel =
-        pendingExpired
+        hasQueuedAction
+          ? queuedFailed
+            ? queuedAction === 'create'
+              ? 'Send failed'
+              : queuedAction === 'accept'
+                ? 'Accept failed'
+                : queuedAction === 'pass'
+                  ? 'Pass failed'
+                  : 'Cancel failed'
+            : queuedAction === 'create'
+              ? 'Queued'
+              : queuedAction === 'accept'
+                ? 'Accept queued'
+                : queuedAction === 'pass'
+                  ? 'Pass queued'
+                  : 'Cancel queued'
+          : pendingExpired
           ? 'Expired'
           : item.status === 'pending'
             ? (isIncoming ? 'New' : 'Sent')
@@ -1393,7 +2016,11 @@ export default function IntentScreen() {
                 ? 'Matched'
               : item.status;
       const statusTone =
-        item.status === 'accepted'
+        hasQueuedAction
+          ? queuedFailed
+            ? 'warn'
+            : 'info'
+          : item.status === 'accepted'
           ? 'good'
           : pendingExpired
             ? 'warn'
@@ -1526,25 +2153,27 @@ export default function IntentScreen() {
           >
           <View style={styles.requestHeroRow}>
             <View style={styles.requestAvatarWrap}>
-              {avatarUri ? (
-                <Image source={{ uri: avatarUri }} style={styles.requestAvatarImage} />
-              ) : (
-                <LinearGradient
-                  colors={
-                    peerHasLeft
-                      ? [isDark ? '#6E5B4B' : '#A18873', isDark ? '#8B7662' : '#C7B8A5']
-                      : [
-                          getProfilePlaceholderPalette(peerId || name).start,
-                          getProfilePlaceholderPalette(peerId || name).end,
-                        ]
-                  }
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={[styles.requestAvatarFallback, peerHasLeft && styles.requestAvatarFallbackLeft]}
-                >
-                  <Text style={styles.requestAvatarFallbackText}>{getProfileInitials(name)}</Text>
-                </LinearGradient>
-              )}
+              <OfflineImage
+                uri={avatarUri}
+                style={styles.requestAvatarImage}
+                fallback={
+                  <LinearGradient
+                    colors={
+                      peerHasLeft
+                        ? [isDark ? '#6E5B4B' : '#A18873', isDark ? '#8B7662' : '#C7B8A5']
+                        : [
+                            getProfilePlaceholderPalette(peerId || name).start,
+                            getProfilePlaceholderPalette(peerId || name).end,
+                          ]
+                    }
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={[styles.requestAvatarFallback, peerHasLeft && styles.requestAvatarFallbackLeft]}
+                  >
+                    <Text style={styles.requestAvatarFallbackText}>{getProfileInitials(name)}</Text>
+                  </LinearGradient>
+                }
+              />
             </View>
             <View style={styles.requestContent}>
               <View style={styles.requestHeaderRow}>
@@ -1665,6 +2294,21 @@ export default function IntentScreen() {
                   <Text style={styles.matchedHintText}>You matched, continue in chat.</Text>
                 </View>
               ) : null}
+
+              {hasQueuedAction ? (
+                <View style={styles.matchedHintRow}>
+                  <MaterialCommunityIcons
+                    name={queuedFailed ? 'cloud-alert-outline' : 'cloud-sync-outline'}
+                    size={14}
+                    color={queuedFailed ? theme.danger : theme.tint}
+                  />
+                  <Text style={styles.matchedHintText}>
+                    {queuedFailed
+                      ? 'This queued action could not sync. Retry from the offline sync badge when your connection is stable.'
+                      : 'Queued. Betweener will sync this when your connection returns.'}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           </View>
 
@@ -1682,7 +2326,7 @@ export default function IntentScreen() {
             <View style={styles.closedStatePanel}>
               {closedPreviewUri ? (
                 <View style={styles.closedStateMediaWrap}>
-                  <Image source={{ uri: closedPreviewUri }} style={styles.closedStateMedia} resizeMode="cover" />
+                  <OfflineImage uri={closedPreviewUri} style={styles.closedStateMedia} />
                 </View>
               ) : null}
               <View style={styles.closedStateBody}>
@@ -1696,7 +2340,7 @@ export default function IntentScreen() {
             <View style={styles.requestGalleryRow}>
               <View style={styles.requestGalleryPrimaryWrap}>
                 <View pointerEvents="none" style={styles.requestGalleryPlate} />
-                <Image source={{ uri: primaryPhoto! }} style={styles.requestGalleryPrimaryImage} resizeMode="cover" />
+                <OfflineImage uri={primaryPhoto} style={styles.requestGalleryPrimaryImage} />
               </View>
               <View style={styles.requestGallerySecondaryColumn}>
                 {secondaryPhotos.map((uri, idx) => (
@@ -1708,10 +2352,9 @@ export default function IntentScreen() {
                     ]}
                   >
                     <View pointerEvents="none" style={styles.requestGallerySecondaryPlate} />
-                    <ExpoImage
-                      source={{ uri }}
+                    <OfflineImage
+                      uri={uri}
                       style={styles.requestGallerySecondaryImage}
-                      contentFit="cover"
                       contentPosition="top center"
                     />
                   </View>
@@ -1724,7 +2367,7 @@ export default function IntentScreen() {
             <View style={styles.requestSingleFeatureRow}>
               <View style={styles.requestSingleMediaWrap}>
                 <View pointerEvents="none" style={styles.requestSingleMediaPlate} />
-                <Image source={{ uri: primaryPhoto! }} style={styles.requestSingleMediaImage} resizeMode="cover" />
+                <OfflineImage uri={primaryPhoto} style={styles.requestSingleMediaImage} />
               </View>
               <View style={styles.requestSingleDetailPanel}>
                 {singlePhotoPanelChip ? (
@@ -1938,6 +2581,7 @@ export default function IntentScreen() {
   ];
 
   const emptyCopy = useMemo(() => {
+    if (typeFilter === 'signal') return 'No active Signals right now.';
     if (direction === 'sent') {
       if (filter === 'all') return 'No sent intents yet.';
       if (filter === 'accepted') return 'No accepted intents yet.';
@@ -1949,7 +2593,7 @@ export default function IntentScreen() {
     if (filter === 'action') return 'No requests right now.';
     if (filter === 'all') return 'Your requests feed is quiet.';
     return 'Nothing here yet.';
-  }, [direction, filter]);
+  }, [direction, filter, typeFilter]);
 
   const handleSuggestedRequest = useCallback(
     (item: SuggestedMove) => {
@@ -2043,18 +2687,16 @@ export default function IntentScreen() {
             <View style={styles.suggestedMediaWrap}>
               <View pointerEvents="none" style={styles.suggestedMediaPlate} />
               <View style={styles.suggestedMediaFrame}>
-                {item.avatar_url ? (
-                  <ExpoImage
-                    source={{ uri: item.avatar_url }}
-                    style={styles.suggestedAvatar}
-                    contentFit="cover"
-                    contentPosition="top center"
-                  />
-                ) : (
-                  <View style={styles.suggestedAvatarFallback}>
-                    <MaterialCommunityIcons name="account-circle" size={42} color={theme.textMuted} />
-                  </View>
-                )}
+                <OfflineImage
+                  uri={item.avatar_url}
+                  style={styles.suggestedAvatar}
+                  contentPosition="top center"
+                  fallback={
+                    <View style={styles.suggestedAvatarFallback}>
+                      <MaterialCommunityIcons name="account-circle" size={42} color={theme.textMuted} />
+                    </View>
+                  }
+                />
               </View>
             </View>
             <View style={styles.suggestedInfo}>
@@ -2249,13 +2891,16 @@ export default function IntentScreen() {
                 <View style={styles.suggestedHeroMediaWrap}>
                   <View pointerEvents="none" style={styles.suggestedHeroMediaPlate} />
                   <View style={styles.suggestedHeroMediaFrame}>
-                    {item.avatar_url ? (
-                      <Image source={{ uri: item.avatar_url }} style={styles.suggestedHeroAvatar} />
-                    ) : (
-                      <View style={styles.suggestedHeroAvatarFallback}>
-                        <MaterialCommunityIcons name="account-circle" size={52} color={theme.textMuted} />
-                      </View>
-                    )}
+                    <OfflineImage
+                      uri={item.avatar_url}
+                      style={styles.suggestedHeroAvatar}
+                      contentPosition="top center"
+                      fallback={
+                        <View style={styles.suggestedHeroAvatarFallback}>
+                          <MaterialCommunityIcons name="account-circle" size={52} color={theme.textMuted} />
+                        </View>
+                      }
+                    />
                   </View>
                 </View>
                 <View style={styles.suggestedHeroInfo}>
@@ -2361,6 +3006,7 @@ export default function IntentScreen() {
     () =>
       [
         { key: 'all' as const, label: 'All', icon: 'layers-outline' },
+        { key: 'signal' as const, label: 'Signals', icon: 'broadcast' },
         { key: 'like_with_note' as const, label: 'Likes', icon: 'heart-outline' },
         { key: 'connect' as const, label: 'Connect', icon: 'message-plus-outline' },
         { key: 'date_request' as const, label: 'Dates', icon: 'calendar-heart' },
@@ -2465,6 +3111,37 @@ export default function IntentScreen() {
     [reduceMotion],
   );
 
+  const decisionPeer = currentDecision ? profiles[currentDecision.peerProfileId] : undefined;
+  const decisionName = getUserFacingDisplayName(decisionPeer, 'Someone');
+  const decisionLocation = decisionPeer?.city || decisionPeer?.region || decisionPeer?.location || 'Location hidden';
+  const decisionPhotos = Array.isArray(decisionPeer?.photos) ? decisionPeer.photos : [];
+  const decisionAvatar =
+    getSafeRemoteImageUri(decisionPeer?.avatar_url) ??
+    (decisionPhotos.map((photo) => getSafeRemoteImageUri(photo)).filter(Boolean)[0] as string | undefined) ??
+    null;
+  const decisionPalette = getProfilePlaceholderPalette(decisionPeer?.id || decisionName);
+  const decisionInitials = getProfileInitials(decisionName);
+  const decisionHours = currentDecision ? hoursUntil(currentDecision.expiresAt) : null;
+  const decisionTimeLabel =
+    typeof decisionHours === 'number'
+      ? decisionHours < 1
+        ? 'Ending soon'
+        : `${Math.ceil(decisionHours)}h left`
+      : '48h window';
+  const decisionKindLabel = currentDecision?.kind === 'signal' ? 'Signal' : 'Request';
+  const decisionReason =
+    currentDecision?.kind === 'signal'
+      ? currentDecision.signal.reason_label
+      : currentDecision?.kind === 'request'
+        ? typeLabel(currentDecision.request)
+        : 'Intent';
+  const decisionMessage =
+    currentDecision?.kind === 'signal'
+      ? currentDecision.signal.note
+      : currentDecision?.kind === 'request'
+        ? currentDecision.request.message
+        : null;
+
   return (
     <SafeAreaView style={styles.container}>
       <Animated.View entering={enterHeader} style={styles.header}>
@@ -2508,6 +3185,47 @@ export default function IntentScreen() {
         </AnimatedPressable>
       </Animated.View>
 
+      {intentReminder ? (
+        <Animated.View
+          entering={
+            reduceMotion
+              ? FadeIn.duration(Motion.duration.base)
+              : FadeInDown.duration(Motion.duration.base)
+                  .delay(80)
+                  .easing(Motion.easing.outCubic)
+                  .withInitialValues({ transform: [{ translateY: 6 }], opacity: 0 })
+          }
+          style={styles.intentReminderWrap}
+        >
+          <TouchableOpacity
+            activeOpacity={0.88}
+            onPress={reviewWaitingItems}
+            style={[styles.intentReminder, intentReminder.endingSoonCount > 0 && styles.intentReminderUrgent]}
+            accessibilityRole="button"
+            accessibilityLabel={`${intentReminder.title}. ${intentReminder.body}`}
+          >
+            <View style={styles.intentReminderIcon}>
+              <PillPulse active={intentReminder.endingSoonCount > 0} reduceMotion={reduceMotion} color={theme.accent} />
+              <MaterialCommunityIcons
+                name={intentReminder.endingSoonCount > 0 ? 'timer-alert-outline' : 'message-badge-outline'}
+                size={18}
+                color={intentReminder.endingSoonCount > 0 ? theme.accent : theme.tint}
+              />
+            </View>
+            <View style={styles.intentReminderCopy}>
+              <Text style={styles.intentReminderTitle}>{intentReminder.title}</Text>
+              <Text style={styles.intentReminderBody} numberOfLines={1}>
+                {intentReminder.body}
+              </Text>
+            </View>
+            <View style={styles.intentReminderCta}>
+              <Text style={styles.intentReminderCtaText}>Review</Text>
+              <MaterialCommunityIcons name="chevron-right" size={15} color={theme.tint} />
+            </View>
+          </TouchableOpacity>
+        </Animated.View>
+      ) : null}
+
         <Animated.View key={direction} style={{ flex: 1 }}>
           <Animated.View
             style={{ flex: 1 }}
@@ -2531,11 +3249,38 @@ export default function IntentScreen() {
             renderItem={renderItem}
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
-            extraData={sortedFiltered.length}
+            extraData={`${sortedFiltered.length}:${visibleReceivedSignals.length}:${visibleSentSignals.length}`}
             onScrollToIndexFailed={onScrollToIndexFailed as any}
             ListHeaderComponent={
               direction === 'incoming' ? (
-                sortedFiltered.length > 0 ? (
+                <>
+                  {visibleReceivedSignals.length > 0 ? (
+                    <Animated.View
+                      entering={
+                        reduceMotion
+                          ? FadeIn.duration(Motion.duration.base)
+                          : FadeInDown.duration(Motion.duration.base)
+                              .easing(Motion.easing.outCubic)
+                              .withInitialValues({ transform: [{ translateY: 6 }], opacity: 0 })
+                      }
+                      style={styles.receivedSignalSection}
+                    >
+                      <View style={styles.receivedSignalHeader}>
+                        <View style={styles.receivedSignalTitleRow}>
+                          <SignalIcon size={18} color={theme.tint} accentColor={theme.accent} active />
+                          <Text style={styles.receivedSignalTitle}>Signals waiting</Text>
+                          <View style={styles.inboxCountPill}>
+                            <Text style={styles.inboxCountText}>{visibleReceivedSignals.length}</Text>
+                          </View>
+                        </View>
+                        <Text style={styles.receivedSignalHint}>
+                          Limited 48-hour gestures from people who noticed something specific.
+                        </Text>
+                      </View>
+                      <View style={styles.receivedSignalStack}>{visibleReceivedSignals.map(renderSignalCard)}</View>
+                    </Animated.View>
+                  ) : null}
+                  {sortedFiltered.length > 0 ? (
                   <Animated.View
                     entering={
                       reduceMotion
@@ -2555,7 +3300,7 @@ export default function IntentScreen() {
                     </View>
                     <Text style={styles.inboxHeaderHint}>{incomingHeaderCopy.hint}</Text>
                   </Animated.View>
-                ) : (
+                ) : typeFilter !== 'signal' ? (
                   <View style={styles.suggestedSection}>
               <View style={styles.suggestedTitleRow}>
                 <View style={styles.suggestedTitleLine}>
@@ -2565,13 +3310,13 @@ export default function IntentScreen() {
                 <Text style={styles.suggestedSubtitle}>3 smart ways to turn curiosity into connection.</Text>
               </View>
 
-              {suggestedLoading ? (
+              {suggestedLoading && suggestedMoves.length === 0 ? (
                 <View style={styles.suggestedSkeletonWrap}>
                   <View style={styles.suggestedSkeletonHero} />
                   <View style={styles.suggestedSkeletonCard} />
                   <View style={styles.suggestedSkeletonCard} />
                 </View>
-              ) : suggestedError ? (
+              ) : suggestedError && suggestedMoves.length === 0 ? (
                 <View style={styles.suggestedMetaRow}>
                   <Text style={styles.emptyHint}>{suggestedError}</Text>
                   <TouchableOpacity style={styles.ghostButton} onPress={retrySuggested}>
@@ -2637,7 +3382,33 @@ export default function IntentScreen() {
                 </View>
               )}
               </View>
-                )
+                ) : null}
+                </>
+              ) : direction === 'sent' && visibleSentSignals.length > 0 ? (
+                <Animated.View
+                  entering={
+                    reduceMotion
+                      ? FadeIn.duration(Motion.duration.base)
+                      : FadeInDown.duration(Motion.duration.base)
+                          .easing(Motion.easing.outCubic)
+                          .withInitialValues({ transform: [{ translateY: 6 }], opacity: 0 })
+                  }
+                  style={styles.receivedSignalSection}
+                >
+                  <View style={styles.receivedSignalHeader}>
+                    <View style={styles.receivedSignalTitleRow}>
+                      <SignalIcon size={18} color={theme.tint} accentColor={theme.accent} active />
+                      <Text style={styles.receivedSignalTitle}>Signals sent</Text>
+                      <View style={styles.inboxCountPill}>
+                        <Text style={styles.inboxCountText}>{visibleSentSignals.length}</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.receivedSignalHint}>
+                      Active Signals you sent. They stay visible for 48 hours unless you cancel them.
+                    </Text>
+                  </View>
+                  <View style={styles.receivedSignalStack}>{visibleSentSignals.map(renderSentSignalCard)}</View>
+                </Animated.View>
               ) : null
           }
           ListFooterComponent={
@@ -2651,13 +3422,13 @@ export default function IntentScreen() {
                   <Text style={styles.suggestedSubtitle}>3 smart ways to turn curiosity into connection.</Text>
                 </View>
 
-                {suggestedLoading ? (
+                {suggestedLoading && suggestedMoves.length === 0 ? (
                   <View style={styles.suggestedSkeletonWrap}>
                     <View style={styles.suggestedSkeletonHero} />
                     <View style={styles.suggestedSkeletonCard} />
                     <View style={styles.suggestedSkeletonCard} />
                   </View>
-                ) : suggestedError ? (
+                ) : suggestedError && suggestedMoves.length === 0 ? (
                   <View style={styles.suggestedMetaRow}>
                     <Text style={styles.emptyHint}>{suggestedError}</Text>
                     <TouchableOpacity style={styles.ghostButton} onPress={retrySuggested}>
@@ -2744,6 +3515,8 @@ export default function IntentScreen() {
                   </AnimatedPressable>
                 ) : null}
               </View>
+            ) : visibleSignalsForDirection.length > 0 ? (
+              null
             ) : (
               <Animated.View
                 entering={
@@ -2819,6 +3592,177 @@ export default function IntentScreen() {
         onSent={handleIntentSent}
       />
 
+      <Modal
+        visible={decisionModeOpen && Boolean(currentDecision)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDecisionModeOpen(false)}
+      >
+        <View style={styles.decisionBackdrop}>
+          <Pressable style={styles.decisionBackdropPress} onPress={() => setDecisionModeOpen(false)} />
+          <Animated.View
+            entering={
+              reduceMotion
+                ? FadeIn.duration(Motion.duration.base)
+                : FadeInDown.duration(Motion.duration.base)
+                    .easing(Motion.easing.outCubic)
+                    .withInitialValues({ transform: [{ translateY: 12 }], opacity: 0 })
+            }
+            style={styles.decisionSheet}
+          >
+            <LinearGradient
+              pointerEvents="none"
+              colors={
+                isDark
+                  ? ['rgba(19,168,168,0.20)', 'rgba(124,92,255,0.10)', 'rgba(7,30,34,0.00)']
+                  : ['rgba(19,168,168,0.13)', 'rgba(139,92,255,0.08)', 'rgba(255,255,255,0.00)']
+              }
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={styles.decisionHeader}>
+              <View style={styles.decisionHeaderCopy}>
+                <Text style={styles.decisionEyebrow}>Decision mode</Text>
+                <Text style={styles.decisionTitle}>Review with intention</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.decisionClose}
+                onPress={() => setDecisionModeOpen(false)}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Close decision mode"
+              >
+                <MaterialCommunityIcons name="close" size={16} color={theme.text} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.decisionProgressRow}>
+              <Text style={styles.decisionProgressText}>
+                {Math.min(decisionModeIndex + 1, Math.max(decisionQueue.length, 1))} of {Math.max(decisionQueue.length, 1)}
+              </Text>
+              <View style={styles.decisionTimePill}>
+                <MaterialCommunityIcons name="timer-sand" size={13} color={theme.accent} />
+                <Text style={styles.decisionTimeText}>{decisionTimeLabel}</Text>
+              </View>
+            </View>
+
+            <View style={styles.decisionProfileCard}>
+              <TouchableOpacity
+                style={styles.decisionAvatarFrame}
+                activeOpacity={0.9}
+                onPress={() => openDecisionProfile(currentDecision)}
+                accessibilityRole="button"
+                accessibilityLabel={`View ${decisionName}'s profile`}
+              >
+                <OfflineImage
+                  uri={decisionAvatar}
+                  style={styles.decisionAvatarImage}
+                  fallback={
+                    <LinearGradient
+                      colors={[decisionPalette.start, decisionPalette.end]}
+                      style={styles.decisionAvatarFallback}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                    >
+                      <Text style={styles.decisionAvatarText}>{decisionInitials}</Text>
+                    </LinearGradient>
+                  }
+                />
+              </TouchableOpacity>
+              <View style={styles.decisionPeerCopy}>
+                <Text style={styles.decisionPeerName} numberOfLines={1}>
+                  {decisionName}
+                </Text>
+                <Text style={styles.decisionPeerMeta} numberOfLines={1}>
+                  {decisionLocation}
+                </Text>
+                <View style={styles.decisionKindPill}>
+                  {currentDecision?.kind === 'signal' ? (
+                    <SignalIcon size={15} color={theme.tint} accentColor={theme.accent} active />
+                  ) : (
+                    <MaterialCommunityIcons name="message-text-outline" size={14} color={theme.tint} />
+                  )}
+                  <Text style={styles.decisionKindText}>{decisionKindLabel}</Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.decisionReceipt}>
+              <Text style={styles.decisionReceiptLabel}>
+                {currentDecision?.kind === 'signal' ? 'Signal receipt' : 'Intent receipt'}
+              </Text>
+              <Text style={styles.decisionReceiptTitle}>{decisionReason}</Text>
+              {decisionMessage ? (
+                <Text style={styles.decisionReceiptNote} numberOfLines={3}>
+                  "{decisionMessage}"
+                </Text>
+              ) : (
+                <Text style={styles.decisionReceiptMuted}>A quick decision keeps the connection clear.</Text>
+              )}
+            </View>
+
+            <View style={styles.decisionActionRow}>
+              <TouchableOpacity
+                style={styles.decisionAcceptButton}
+                onPress={() => acceptDecision(currentDecision)}
+                activeOpacity={0.88}
+                accessibilityRole="button"
+                accessibilityLabel="Accept and unlock chemistry"
+              >
+                <LinearGradient
+                  colors={isDark ? ['#F4E8D0', '#13A8A8'] : ['#FFF6EC', '#13A8A8']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={StyleSheet.absoluteFill}
+                />
+                <MaterialCommunityIcons name="check-circle-outline" size={17} color="#061719" />
+                <Text style={styles.decisionAcceptText}>Accept</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.decisionSecondaryButton}
+                onPress={() => openDecisionProfile(currentDecision)}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.decisionSecondaryText}>Profile</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.decisionPassButton}
+                onPress={() => passDecision(currentDecision)}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Pass on this request"
+              >
+                <MaterialCommunityIcons name="close" size={17} color={theme.textMuted} />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={styles.decisionSkipButton}
+              onPress={() => {
+                if (decisionQueue.length > 1) {
+                  advanceDecisionMode();
+                  return;
+                }
+                setDecisionModeOpen(false);
+              }}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={decisionQueue.length > 1 ? 'Skip this decision for now' : 'Decide later'}
+            >
+              <Text style={styles.decisionSkipText}>
+                {decisionQueue.length > 1 ? 'Skip for now' : 'Decide later'}
+              </Text>
+              <MaterialCommunityIcons
+                name={decisionQueue.length > 1 ? 'chevron-right' : 'clock-outline'}
+                size={15}
+                color={theme.textMuted}
+              />
+            </TouchableOpacity>
+          </Animated.View>
+        </View>
+      </Modal>
+
       <MatchModal
         visible={!!celebrationMatch}
         match={celebrationMatch}
@@ -2854,59 +3798,66 @@ export default function IntentScreen() {
               </TouchableOpacity>
             </View>
 
-            <View style={styles.pickerSection}>
-              <Text style={styles.pickerSectionTitle}>Status</Text>
-              {filters.map((pill) => {
-                const active = pill.key === filter;
-                return (
-                  <TouchableOpacity
-                    key={pill.key}
-                    style={[styles.pickerRow, active && styles.pickerRowActive]}
-                    onPress={() => setFilter(pill.key)}
-                    activeOpacity={0.85}
-                  >
-                    <View style={[styles.pickerIcon, active && styles.pickerIconActive]}>
-                      <MaterialCommunityIcons
-                        name={
-                          pill.key === 'action'
-                            ? 'gesture-tap-button'
-                            : pill.key === 'accepted'
-                              ? 'check-circle-outline'
-                              : pill.key === 'passed'
-                                ? 'skip-next-circle-outline'
-                                : 'layers-outline'
-                        }
-                        size={18}
-                        color={active ? Colors.light.background : theme.tint}
-                      />
-                    </View>
-                    <Text style={[styles.pickerRowText, active && styles.pickerRowTextActive]}>{pill.label}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+            <ScrollView
+              style={styles.pickerScroll}
+              contentContainerStyle={styles.pickerScrollContent}
+              showsVerticalScrollIndicator={false}
+              bounces
+            >
+              <View style={styles.pickerSection}>
+                <Text style={styles.pickerSectionTitle}>Status</Text>
+                {filters.map((pill) => {
+                  const active = pill.key === filter;
+                  return (
+                    <TouchableOpacity
+                      key={pill.key}
+                      style={[styles.pickerRow, active && styles.pickerRowActive]}
+                      onPress={() => setFilter(pill.key)}
+                      activeOpacity={0.85}
+                    >
+                      <View style={[styles.pickerIcon, active && styles.pickerIconActive]}>
+                        <MaterialCommunityIcons
+                          name={
+                            pill.key === 'action'
+                              ? 'gesture-tap-button'
+                              : pill.key === 'accepted'
+                                ? 'check-circle-outline'
+                                : pill.key === 'passed'
+                                  ? 'skip-next-circle-outline'
+                                  : 'layers-outline'
+                          }
+                          size={18}
+                          color={active ? Colors.light.background : theme.tint}
+                        />
+                      </View>
+                      <Text style={[styles.pickerRowText, active && styles.pickerRowTextActive]}>{pill.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
 
-            <View style={styles.pickerSection}>
-              <Text style={styles.pickerSectionTitle}>Type</Text>
-            {typePills.map((pill) => {
-              const active = pill.key === typeFilter;
-              return (
-                <TouchableOpacity
-                  key={pill.key}
-                  style={[styles.pickerRow, active && styles.pickerRowActive]}
-                  onPress={() => {
-                    setTypeFilter(pill.key);
-                  }}
-                  activeOpacity={0.85}
-                >
-                  <View style={[styles.pickerIcon, active && styles.pickerIconActive]}>
-                    <MaterialCommunityIcons name={pill.icon as any} size={18} color={active ? Colors.light.background : theme.tint} />
-                  </View>
-                  <Text style={[styles.pickerRowText, active && styles.pickerRowTextActive]}>{pill.label}</Text>
-                </TouchableOpacity>
-              );
-            })}
-            </View>
+              <View style={styles.pickerSection}>
+                <Text style={styles.pickerSectionTitle}>Type</Text>
+                {typePills.map((pill) => {
+                  const active = pill.key === typeFilter;
+                  return (
+                    <TouchableOpacity
+                      key={pill.key}
+                      style={[styles.pickerRow, active && styles.pickerRowActive]}
+                      onPress={() => {
+                        setTypeFilter(pill.key);
+                      }}
+                      activeOpacity={0.85}
+                    >
+                      <View style={[styles.pickerIcon, active && styles.pickerIconActive]}>
+                        <MaterialCommunityIcons name={pill.icon as any} size={18} color={active ? Colors.light.background : theme.tint} />
+                      </View>
+                      <Text style={[styles.pickerRowText, active && styles.pickerRowTextActive]}>{pill.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </ScrollView>
 
             <View style={styles.pickerFooter}>
               <TouchableOpacity
@@ -3008,11 +3959,89 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: theme.tint,
     },
     filterTriggerCountText: { fontSize: 10, fontWeight: '800', color: Colors.light.background },
+    intentReminderWrap: {
+      paddingHorizontal: 18,
+      marginTop: 10,
+    },
+    intentReminder: {
+      minHeight: 62,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(19,168,168,0.20)' : 'rgba(15,61,62,0.10)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.035)' : 'rgba(255,255,255,0.68)',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 11,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      shadowColor: theme.tint,
+      shadowOpacity: isDark ? 0.10 : 0.06,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 9 },
+      elevation: 3,
+    },
+    intentReminderUrgent: {
+      borderColor: isDark ? 'rgba(244,232,208,0.18)' : 'rgba(139,92,255,0.16)',
+      backgroundColor: isDark ? 'rgba(244,232,208,0.045)' : 'rgba(255,250,245,0.82)',
+    },
+    intentReminderIcon: {
+      position: 'relative',
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,61,62,0.08)',
+      backgroundColor: isDark ? 'rgba(19,168,168,0.08)' : 'rgba(255,255,255,0.68)',
+    },
+    intentReminderCopy: { flex: 1, minWidth: 0 },
+    intentReminderTitle: {
+      fontSize: 13,
+      lineHeight: 17,
+      color: theme.text,
+      fontWeight: '900',
+    },
+    intentReminderBody: {
+      marginTop: 2,
+      fontSize: 11,
+      lineHeight: 15,
+      color: theme.textMuted,
+      fontWeight: '700',
+    },
+    intentReminderCta: {
+      minHeight: 34,
+      borderRadius: 999,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 2,
+      paddingLeft: 11,
+      paddingRight: 8,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(19,168,168,0.18)' : 'rgba(19,128,128,0.14)',
+      backgroundColor: isDark ? 'rgba(19,168,168,0.055)' : 'rgba(255,255,255,0.62)',
+    },
+    intentReminderCtaText: {
+      color: theme.tint,
+      fontSize: 11,
+      fontWeight: '900',
+    },
     listContent: { padding: 18, paddingBottom: 40, gap: 12 },
     inboxHeader: { marginTop: 6, gap: 4, paddingHorizontal: 2 },
     inboxHeaderLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     inboxHeaderTitle: { fontSize: 14, fontWeight: '800', color: theme.text },
     inboxHeaderHint: { fontSize: 11, color: theme.textMuted },
+    receivedSignalSection: { marginTop: 6, gap: 12 },
+    receivedSignalHeader: {
+      gap: 4,
+      paddingHorizontal: 2,
+      paddingBottom: 1,
+    },
+    receivedSignalTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    receivedSignalTitle: { fontSize: 14, fontWeight: '900', color: theme.text },
+    receivedSignalHint: { fontSize: 11, lineHeight: 16, color: theme.textMuted, fontWeight: '600' },
+    receivedSignalStack: { gap: 12 },
     inboxCountPill: {
       paddingHorizontal: 8,
       paddingVertical: 3,
@@ -3984,9 +5013,238 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontWeight: '800',
       fontSize: 12,
     },
+    decisionBackdrop: {
+      flex: 1,
+      justifyContent: 'flex-end',
+      backgroundColor: isDark ? 'rgba(0,0,0,0.58)' : 'rgba(6,23,25,0.34)',
+    },
+    decisionBackdropPress: { flex: 1 },
+    decisionSheet: {
+      marginHorizontal: 14,
+      marginBottom: 18,
+      borderRadius: 30,
+      padding: 16,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(244,232,208,0.13)' : 'rgba(15,61,62,0.10)',
+      backgroundColor: isDark ? 'rgba(7,30,34,0.96)' : 'rgba(255,250,245,0.96)',
+      shadowColor: theme.tint,
+      shadowOpacity: isDark ? 0.25 : 0.10,
+      shadowRadius: 28,
+      shadowOffset: { width: 0, height: 18 },
+      elevation: 12,
+      gap: 13,
+    },
+    decisionHeader: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    decisionHeaderCopy: { flex: 1, gap: 3 },
+    decisionEyebrow: {
+      fontSize: 10,
+      lineHeight: 13,
+      letterSpacing: 1.5,
+      textTransform: 'uppercase',
+      color: theme.tint,
+      fontWeight: '900',
+    },
+    decisionTitle: {
+      fontSize: 22,
+      lineHeight: 27,
+      color: theme.text,
+      fontFamily: 'PlayfairDisplay_700Bold',
+    },
+    decisionClose: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,61,62,0.08)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.045)' : 'rgba(255,255,255,0.58)',
+    },
+    decisionProgressRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    decisionProgressText: {
+      color: theme.textMuted,
+      fontSize: 11,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+      letterSpacing: 1,
+    },
+    decisionTimePill: {
+      minHeight: 30,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(244,232,208,0.12)' : 'rgba(15,61,62,0.08)',
+      backgroundColor: isDark ? 'rgba(244,232,208,0.05)' : 'rgba(255,255,255,0.58)',
+    },
+    decisionTimeText: { color: theme.text, fontSize: 11, fontWeight: '900' },
+    decisionProfileCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 13,
+      padding: 11,
+      borderRadius: 24,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(19,168,168,0.18)' : 'rgba(15,61,62,0.08)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.035)' : 'rgba(255,255,255,0.62)',
+    },
+    decisionAvatarFrame: {
+      width: 78,
+      height: 94,
+      borderRadius: 22,
+      padding: 3,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(244,232,208,0.18)' : 'rgba(15,61,62,0.10)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.72)',
+    },
+    decisionAvatarImage: {
+      width: '100%',
+      height: '100%',
+      borderRadius: 19,
+      backgroundColor: theme.backgroundSubtle,
+    },
+    decisionAvatarFallback: {
+      width: '100%',
+      height: '100%',
+      borderRadius: 19,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    decisionAvatarText: {
+      color: Colors.light.background,
+      fontSize: 22,
+      fontWeight: '900',
+      letterSpacing: 0.5,
+    },
+    decisionPeerCopy: { flex: 1, minWidth: 0, gap: 5 },
+    decisionPeerName: {
+      color: theme.text,
+      fontSize: 19,
+      lineHeight: 24,
+      fontWeight: '900',
+    },
+    decisionPeerMeta: {
+      color: theme.textMuted,
+      fontSize: 12,
+      lineHeight: 16,
+      fontWeight: '700',
+    },
+    decisionKindPill: {
+      alignSelf: 'flex-start',
+      marginTop: 4,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(19,168,168,0.20)' : 'rgba(19,128,128,0.14)',
+      backgroundColor: isDark ? 'rgba(19,168,168,0.08)' : 'rgba(255,255,255,0.64)',
+    },
+    decisionKindText: { color: theme.tint, fontSize: 11, fontWeight: '900' },
+    decisionReceipt: {
+      padding: 14,
+      borderRadius: 24,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(244,232,208,0.11)' : 'rgba(15,61,62,0.08)',
+      backgroundColor: isDark ? 'rgba(0,0,0,0.16)' : 'rgba(255,255,255,0.56)',
+      gap: 6,
+    },
+    decisionReceiptLabel: {
+      color: theme.tint,
+      fontSize: 10,
+      fontWeight: '900',
+      letterSpacing: 1.2,
+      textTransform: 'uppercase',
+    },
+    decisionReceiptTitle: {
+      color: theme.text,
+      fontSize: 15,
+      lineHeight: 20,
+      fontWeight: '900',
+    },
+    decisionReceiptNote: {
+      color: isDark ? '#F4E8D0' : theme.text,
+      fontSize: 13,
+      lineHeight: 19,
+      fontWeight: '700',
+    },
+    decisionReceiptMuted: {
+      color: theme.textMuted,
+      fontSize: 12,
+      lineHeight: 18,
+      fontWeight: '700',
+    },
+    decisionActionRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    decisionAcceptButton: {
+      flex: 1,
+      minHeight: 50,
+      borderRadius: 999,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      overflow: 'hidden',
+    },
+    decisionAcceptText: { color: '#061719', fontSize: 14, fontWeight: '900' },
+    decisionSecondaryButton: {
+      minHeight: 50,
+      paddingHorizontal: 17,
+      borderRadius: 999,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,61,62,0.08)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.045)' : 'rgba(255,255,255,0.60)',
+    },
+    decisionSecondaryText: { color: theme.text, fontSize: 13, fontWeight: '900' },
+    decisionPassButton: {
+      width: 50,
+      height: 50,
+      borderRadius: 25,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,61,62,0.08)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.035)' : 'rgba(255,255,255,0.54)',
+    },
+    decisionSkipButton: {
+      alignSelf: 'center',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      minHeight: 32,
+      paddingHorizontal: 13,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,61,62,0.07)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.025)' : 'rgba(255,255,255,0.42)',
+    },
+    decisionSkipText: { color: theme.textMuted, fontSize: 12, fontWeight: '800' },
     pickerBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' },
     pickerBackdropPress: { flex: 1 },
     pickerSheet: {
+      maxHeight: '84%',
       backgroundColor: theme.background,
       borderTopLeftRadius: 20,
       borderTopRightRadius: 20,
@@ -3998,6 +5256,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     pickerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
     pickerTitle: { fontSize: 16, fontWeight: '800', color: theme.text },
+    pickerScroll: { flexGrow: 0 },
+    pickerScrollContent: { paddingBottom: 4 },
     pickerSection: { gap: 10, marginBottom: 14 },
     pickerSectionTitle: {
       fontSize: 12,

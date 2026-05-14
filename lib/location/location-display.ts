@@ -8,6 +8,25 @@ export const BROAD_REGION_LABELS = new Set([
   'middle east',
 ]);
 
+export const GHANA_REGION_LABELS = new Set([
+  'ahafo',
+  'ashanti',
+  'bono',
+  'bono east',
+  'central',
+  'eastern',
+  'greater accra',
+  'north east',
+  'northern',
+  'oti',
+  'savannah',
+  'upper east',
+  'upper west',
+  'volta',
+  'western',
+  'western north',
+]);
+
 export const normalizeLocationValue = (value?: string | null) => String(value || '').trim();
 
 export const getFirstLocationPart = (value?: string | null) =>
@@ -21,6 +40,19 @@ export const ADMINISTRATIVE_LOCATION_PATTERN =
 
 export const isAdministrativeLocationLabel = (value?: string | null) =>
   ADMINISTRATIVE_LOCATION_PATTERN.test(getFirstLocationPart(value));
+
+export const isKnownGhanaRegionLabel = (value?: string | null) =>
+  GHANA_REGION_LABELS.has(getFirstLocationPart(value).toLowerCase());
+
+export const toFlagEmoji = (code?: string | null) => {
+  if (!code) return '';
+  const normalized = String(code).trim().toUpperCase();
+  if (normalized.length !== 2) return '';
+  const first = normalized.charCodeAt(0);
+  const second = normalized.charCodeAt(1);
+  if (first < 65 || first > 90 || second < 65 || second > 90) return '';
+  return String.fromCodePoint(0x1f1e6 + (first - 65), 0x1f1e6 + (second - 65));
+};
 
 export const pickBetterLocationValue = (
   incoming?: string | null,
@@ -47,21 +79,132 @@ export const pickBetterLocationValue = (
   return next;
 };
 
-export const pickPreferredLocationLabel = (source: Record<string, any>) => {
+const normalizeComparable = (value?: string | null) =>
+  getFirstLocationPart(value)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const sameLocationLabel = (a?: string | null, b?: string | null) => {
+  const left = normalizeComparable(a);
+  const right = normalizeComparable(b);
+  return !!left && !!right && left === right;
+};
+
+const isDistanceLabel = (label?: string | null) => {
+  const lower = String(label || '').toLowerCase();
+  return lower.includes('away') || /\b(km|mi|mile|miles)\b/.test(lower) || /<\s*1/.test(lower);
+};
+
+const getCountry = (source: Record<string, any>) =>
+  normalizeLocationValue(
+    source?.current_country || source?.currentCountry || source?.current_country_name || source?.currentCountryName,
+  );
+
+const getCountryCode = (source: Record<string, any>) =>
+  normalizeLocationValue(source?.current_country_code || source?.currentCountryCode);
+
+const isCountryOnlyValue = (value?: string | null, source?: Record<string, any>) => {
+  if (!source) return false;
+  const country = getCountry(source);
+  const code = getCountryCode(source);
+  return sameLocationLabel(value, country) || sameLocationLabel(value, code);
+};
+
+export type LocationDisplaySurface = 'default' | 'vibes' | 'profile';
+
+export type LocationDisplay = {
+  primary: string;
+  secondary: string;
+  country: string;
+  countryCode: string;
+  flag: string;
+  compact: string;
+  withFlag: string;
+};
+
+export const buildLocationDisplay = (
+  source: Record<string, any> | null | undefined,
+  opts?: {
+    surface?: LocationDisplaySurface;
+    distanceLabel?: string | null;
+    includeFlag?: boolean;
+  },
+): LocationDisplay => {
+  const data = source || {};
   const city = getFirstLocationPart(source?.city);
   const location = getFirstLocationPart(source?.location);
   const region = getFirstLocationPart(source?.region);
-  const currentCountry = normalizeLocationValue(
-    source?.current_country || source?.currentCountry || source?.current_country_name || source?.currentCountryName,
-  );
+  const currentCountry = getCountry(data);
+  const countryCode = getCountryCode(data);
+  const flag = opts?.includeFlag === false ? '' : toFlagEmoji(countryCode);
+  const precision = normalizeLocationValue(source?.location_precision || source?.locationPrecision).toUpperCase();
+  const surface = opts?.surface || 'default';
+  const distanceLabel = isDistanceLabel(opts?.distanceLabel) ? normalizeLocationValue(opts?.distanceLabel) : '';
+  const cityIsUsable =
+    !!city &&
+    !isBroadRegionLabel(city) &&
+    !isCountryOnlyValue(city, data) &&
+    !sameLocationLabel(city, region) &&
+    (!isKnownGhanaRegionLabel(city) || precision === 'EXACT');
+  const locationIsUsable =
+    !!location &&
+    !isBroadRegionLabel(location) &&
+    !isCountryOnlyValue(location, data) &&
+    !sameLocationLabel(location, city) &&
+    (!isKnownGhanaRegionLabel(location) || precision === 'EXACT');
+  const regionIsUsable =
+    !!region &&
+    !isBroadRegionLabel(region) &&
+    !isCountryOnlyValue(region, data);
   const nonAdministrativeCity =
-    city && !isAdministrativeLocationLabel(city) && !isBroadRegionLabel(city) ? city : '';
+    cityIsUsable && !isAdministrativeLocationLabel(city) ? city : '';
   const nonAdministrativeLocation =
-    location && !isAdministrativeLocationLabel(location) && !isBroadRegionLabel(location) ? location : '';
-  if (nonAdministrativeCity) return nonAdministrativeCity;
-  if (nonAdministrativeLocation) return nonAdministrativeLocation;
-  if (city && !isBroadRegionLabel(city)) return city;
-  if (location && !isBroadRegionLabel(location)) return location;
-  if (region && !isBroadRegionLabel(region)) return region;
-  return currentCountry;
+    locationIsUsable && !isAdministrativeLocationLabel(location) ? location : '';
+
+  const specific = nonAdministrativeCity || nonAdministrativeLocation || (cityIsUsable ? city : '') || (locationIsUsable ? location : '');
+  const regionLabel = regionIsUsable ? region : '';
+  const country = currentCountry || (countryCode === 'GH' ? 'Ghana' : '');
+  const profilePlace = [specific || regionLabel, country].filter((value, index, arr) => {
+    if (!value) return false;
+    return index === 0 || !sameLocationLabel(value, arr[0]);
+  }).join(', ');
+
+  const base =
+    surface === 'vibes'
+      ? country || specific || regionLabel
+      : surface === 'profile'
+        ? profilePlace || country || specific || regionLabel
+        : specific || location || city || regionLabel || country;
+  const secondary =
+    surface === 'vibes'
+      ? (specific && !sameLocationLabel(specific, base) ? specific : regionLabel && !sameLocationLabel(regionLabel, base) ? regionLabel : '')
+      : '';
+  const compactBase = distanceLabel && base && !sameLocationLabel(distanceLabel, base)
+    ? `${distanceLabel} \u00b7 ${base}`
+    : distanceLabel || base;
+  const withFlag = [compactBase, flag].filter(Boolean).join(' ');
+
+  return {
+    primary: base,
+    secondary,
+    country,
+    countryCode,
+    flag,
+    compact: withFlag,
+    withFlag,
+  };
+};
+
+export const pickPreferredLocationLabel = (source: Record<string, any>) => {
+  return buildLocationDisplay(source, { surface: 'default', includeFlag: false }).primary;
+};
+
+export const pickVibesLocationLabel = (source: Record<string, any>) => {
+  return buildLocationDisplay(source, { surface: 'vibes', includeFlag: false }).primary;
+};
+
+export const pickProfileLocationLabel = (source: Record<string, any>) => {
+  return buildLocationDisplay(source, { surface: 'profile', includeFlag: false }).primary;
 };

@@ -11,31 +11,40 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { requestAndSavePreciseLocation, saveManualCityLocation } from "@/hooks/useLocationPreference";
 import { useMoments, type MomentUser } from '@/hooks/useMoments';
 import { usePremiumState } from "@/hooks/use-premium-state";
+import useSignalAccess from "@/hooks/useSignalAccess";
 import useVibesFeed, { applyVibesFilters, type VibesFilters } from "@/hooks/useVibesFeed";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
+import { cancelIntentRequestOfflineSafe } from "@/lib/intents/offline-actions";
 import { canAccessInternalTools } from "@/lib/internal-tools";
 import { cacheOfflineVideo, getOfflineVideoUri } from "@/lib/offline/video-store";
 import { showOpenSettingsPrompt } from "@/lib/permission-prompts";
 import { recordProfileSignal } from '@/lib/profile-signals';
+import { RELIGION_OPTIONS, formatReligionLabel, normalizeReligionForProfile } from "@/lib/profile/religion";
 import { applyDefaults as applyCompassDefaults, mapToDiscoveryFilters } from "@/lib/relationship-compass";
 import { supabase } from "@/lib/supabase";
+import { logVibesEvent, type VibesEventType } from "@/lib/vibes/events";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 
-import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
-import LinearGradientSafe, { isLinearGradientAvailable } from "@/components/NativeWrappers/LinearGradientSafe";
+import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
 import IntentRequestSheet from "@/components/IntentRequestSheet";
+import SendSignalSheet from "@/components/signal/SendSignalSheet";
 import { router, useFocusEffect } from 'expo-router';
-import { CircleOff, Gem, Sparkles, Target } from "lucide-react-native";
+import { Gem } from "lucide-react-native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Animated, DeviceEventEmitter, Easing, KeyboardAvoidingView, Modal, PanResponder, Platform, RefreshControl, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import VibesAllMomentsModal from "@/components/vibes/VibesAllMomentsModal";
-import VibesMomentsStrip from "@/components/vibes/VibesMomentsStrip";
-import VibesIntroModal from "@/components/vibes/VibesIntroModal";
+import FloatingMomentsCapsule from "@/components/vibes/moments/FloatingMomentsCapsule";
+import MomentsHeaderRow from "@/components/vibes/moments/MomentsHeaderRow";
+import useMomentsCapsuleMetrics from "@/components/vibes/moments/useMomentsCapsuleMetrics";
+import VibesPracticeWalkthrough from "@/components/vibes/VibesPracticeWalkthrough";
+import DepthBackground from "@/components/vibes/depth/DepthBackground";
+import VibesActionDock from "@/components/vibes/depth/VibesActionDock";
+import useVibesResponsiveMetrics from "@/components/vibes/depth/useVibesResponsiveMetrics";
 import Notice from "@/components/ui/Notice";
 import { ExploreStackSkeleton } from "@/components/ui/Skeleton";
 import { isLikelyNetworkError } from "@/lib/network";
@@ -47,6 +56,7 @@ const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
 const KM_PER_MILE = 1.60934;
 const VIBES_FILTERS_KEY = 'vibes_filters_v2';
 const VIBES_INTRO_SEEN_KEY = 'vibes_intro_seen_v1';
+const VIBES_PRACTICE_COMPLETE_KEY = 'vibes_practice_complete_v1';
 const VIBES_MOMENTS_COLLAPSED_KEY = 'vibes:momentsCollapsed';
 const VIBES_LOCATION_PROMPT_DISMISSED_KEY = 'vibes:locationPromptDismissed:v1';
 
@@ -76,6 +86,18 @@ type PreviewTone = {
   body: string;
   cta: string;
 };
+type VibesIntentTarget = {
+  id: string;
+  name?: string | null;
+  deckIndex?: number;
+};
+type VibesSignalTarget = VibesIntentTarget & {
+  match?: any | null;
+};
+type VibesActionHistoryEntry =
+  | { kind: 'swipe'; id: string; action: 'like' | 'dislike' | 'superlike'; index: number }
+  | { kind: 'intent'; id: string; requestId: string | null; index: number }
+  | { kind: 'signal'; id: string; signalId: string; index: number };
 
 const COUNTRY_OPTIONS = [
   { label: 'Ghana', code: 'GH' },
@@ -246,8 +268,11 @@ export default function ExploreScreen() {
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const layoutMetrics = useVibesResponsiveMetrics();
+  const momentsCapsuleMetrics = useMomentsCapsuleMetrics();
   const { profile, user, refreshProfile } = useAuth();
   const { hasAccess } = usePremiumState();
+  const { access: signalAccess, refresh: refreshSignalAccess } = useSignalAccess(Boolean(profile?.id));
   const hasAdvancedFilters = hasAccess('SILVER');
   const profileCountryCode = (profile as any)?.current_country_code as string | undefined;
   const relationshipCompass = useMemo(() => {
@@ -313,7 +338,10 @@ export default function ExploreScreen() {
   const [momentPriorityProfileIds, setMomentPriorityProfileIds] = useState<Set<string>>(new Set());
   const [momentRelationshipContextByProfileId, setMomentRelationshipContextByProfileId] = useState<Record<string, MomentRelationshipContext>>({});
   const [intentSheetVisible, setIntentSheetVisible] = useState(false);
-  const [intentTarget, setIntentTarget] = useState<{ id: string; name?: string | null } | null>(null);
+  const [intentTarget, setIntentTarget] = useState<VibesIntentTarget | null>(null);
+  const [signalSheetVisible, setSignalSheetVisible] = useState(false);
+  const [signalTarget, setSignalTarget] = useState<VibesSignalTarget | null>(null);
+  const [intentQueueBadge, setIntentQueueBadge] = useState<{ waiting: number; endingSoon: number } | null>(null);
 
   // when the hook reports a mutual match, show the celebration modal
   useEffect(() => {
@@ -322,6 +350,50 @@ export default function ExploreScreen() {
       void haptics.success();
     }
   }, [lastMutualMatch]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      const loadIntentQueueBadge = async () => {
+        if (!profile?.id) {
+          setIntentQueueBadge(null);
+          return;
+        }
+        const nowIso = new Date().toISOString();
+        const [signalsResult, requestsResult] = await Promise.all([
+          (supabase as any)
+            .from('profile_signal_gestures')
+            .select('id,expires_at')
+            .eq('receiver_profile_id', profile.id)
+            .in('status', ['sent', 'seen'])
+            .gt('expires_at', nowIso)
+            .limit(20),
+          supabase
+            .from('intent_requests')
+            .select('id,expires_at')
+            .eq('recipient_id', profile.id)
+            .eq('status', 'pending')
+            .gt('expires_at', nowIso)
+            .limit(20),
+        ]);
+        if (cancelled || signalsResult.error || requestsResult.error) return;
+        const rows = [
+          ...(((signalsResult.data as Array<{ expires_at: string }> | null) ?? []).filter(Boolean)),
+          ...(((requestsResult.data as Array<{ expires_at: string }> | null) ?? []).filter(Boolean)),
+        ];
+        const endingSoon = rows.filter((item) => {
+          const ts = Date.parse(item.expires_at);
+          if (Number.isNaN(ts)) return false;
+          return (ts - Date.now()) / 3600000 <= 6;
+        }).length;
+        setIntentQueueBadge(rows.length > 0 ? { waiting: rows.length, endingSoon } : null);
+      };
+      void loadIntentQueueBadge();
+      return () => {
+        cancelled = true;
+      };
+    }, [profile?.id]),
+  );
 
   useEffect(() => {
     if (!matchesError) {
@@ -378,7 +450,12 @@ export default function ExploreScreen() {
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [filtersPanel, setFiltersPanel] = useState<'main' | 'location'>('main');
   const [advancedExpanded, setAdvancedExpanded] = useState(false);
-  const [introVisible, setIntroVisible] = useState(false);
+  const [practiceLoaded, setPracticeLoaded] = useState(false);
+  const [practiceComplete, setPracticeComplete] = useState(true);
+  const [practiceReplayVisible, setPracticeReplayVisible] = useState(false);
+  const [practiceGestureLocked, setPracticeGestureLocked] = useState(false);
+  const [deckGestureLocked, setDeckGestureLocked] = useState(false);
+  const showPracticeWalkthrough = practiceLoaded && (!practiceComplete || practiceReplayVisible);
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [hasVideoOnly, setHasVideoOnly] = useState(false);
   const [activeOnly, setActiveOnly] = useState(false);
@@ -389,6 +466,7 @@ export default function ExploreScreen() {
   const [minVibeScore, setMinVibeScore] = useState<number | null>(null);
   const [minSharedInterests, setMinSharedInterests] = useState<number>(0);
   const [locationQuery, setLocationQuery] = useState<string>('');
+  const scrollViewRef = useRef<any>(null);
   const prefetchedDetailsRef = useRef<Set<string>>(new Set());
   const prefetchInFlightRef = useRef<Set<string>>(new Set());
   const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -408,13 +486,65 @@ export default function ExploreScreen() {
     () => (profile?.id ? `${VIBES_INTRO_SEEN_KEY}:${profile.id}` : user?.id ? `${VIBES_INTRO_SEEN_KEY}:auth:${user.id}` : null),
     [profile?.id, user?.id],
   );
+  const practiceStorageKey = useMemo(
+    () => (profile?.id ? `${VIBES_PRACTICE_COMPLETE_KEY}:${profile.id}` : user?.id ? `${VIBES_PRACTICE_COMPLETE_KEY}:auth:${user.id}` : null),
+    [profile?.id, user?.id],
+  );
 
-  const closeIntro = useCallback(async () => {
+  const scrollVibesToTop = useCallback(() => {
+    requestAnimationFrame(() => {
+      try {
+        scrollViewRef.current?.scrollTo?.({ y: 0, animated: true });
+      } catch {}
+    });
+  }, []);
+
+  const completePractice = useCallback(async () => {
+    if (practiceReplayVisible) {
+      setPracticeReplayVisible(false);
+      setPracticeGestureLocked(false);
+      setDeckGestureLocked(false);
+      scrollVibesToTop();
+      return;
+    }
+    setPracticeComplete(true);
+    setPracticeGestureLocked(false);
+    setDeckGestureLocked(false);
+    scrollVibesToTop();
     try {
+      if (practiceStorageKey) await AsyncStorage.setItem(practiceStorageKey, '1');
       if (introStorageKey) await AsyncStorage.setItem(introStorageKey, '1');
     } catch {}
-    setIntroVisible(false);
-  }, [introStorageKey]);
+  }, [introStorageKey, practiceReplayVisible, practiceStorageKey, scrollVibesToTop]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPracticeLoaded(false);
+
+    if (!practiceStorageKey) {
+      setPracticeComplete(true);
+      setPracticeLoaded(true);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    (async () => {
+      try {
+        const completed = await AsyncStorage.getItem(practiceStorageKey);
+        if (cancelled) return;
+        setPracticeComplete(completed === '1');
+      } catch {
+        if (!cancelled) setPracticeComplete(false);
+      } finally {
+        if (!cancelled) setPracticeLoaded(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [practiceStorageKey]);
 
   useEffect(() => {
     if (!filtersStorageKey) return;
@@ -513,27 +643,6 @@ export default function ExploreScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (!introStorageKey) return;
-      let cancelled = false;
-      (async () => {
-        try {
-          const seen = await AsyncStorage.getItem(introStorageKey);
-          if (cancelled || seen) return;
-          // Avoid showing on a cold focus while other modals might still be presenting.
-          setTimeout(() => {
-            if (cancelled) return;
-            setIntroVisible(true);
-          }, 650);
-        } catch {}
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }, [introStorageKey]),
-  );
-
-  useFocusEffect(
-    useCallback(() => {
       let mounted = true;
       const loadDistanceUnit = async () => {
         try {
@@ -614,7 +723,10 @@ export default function ExploreScreen() {
   }, [profile?.id]);
 
   const stackRef = useRef<ExploreStackHandle | null>(null);
+  const vibesActionHistoryRef = useRef<VibesActionHistoryEntry[]>([]);
+  const seenVibesCardKeysRef = useRef<Set<string>>(new Set());
   const buttonScale = useRef(new Animated.Value(1)).current;
+  const intentBadgePulse = useRef(new Animated.Value(0)).current;
   const superlikePulse = useRef(new Animated.Value(0)).current;
   const floatingMomentsOpacity = useRef(new Animated.Value(0)).current;
   const floatingMomentsTranslateY = useRef(new Animated.Value(-10)).current;
@@ -646,6 +758,71 @@ export default function ExploreScreen() {
     ]).start();
   }, [fallbackEntranceOpacity, fallbackEntranceTranslate]);
 
+  const recordVibesEvent = useCallback(
+    (
+      targetProfileId: string | null | undefined,
+      eventType: VibesEventType,
+      opts?: { position?: number | null; dwellMs?: number | null; metadata?: Record<string, unknown> },
+    ) => {
+      if (!profile?.id || !targetProfileId) return;
+      void logVibesEvent({
+        viewerProfileId: profile.id,
+        targetProfileId: String(targetProfileId),
+        segment: vibesSegment,
+        eventType,
+        position: opts?.position ?? null,
+        dwellMs: opts?.dwellMs ?? null,
+        metadata: opts?.metadata ?? {},
+      });
+    },
+    [profile?.id, vibesSegment],
+  );
+
+  useEffect(() => {
+    const current = matchList[currentIndex];
+    if (!current?.id || !profile?.id || showPracticeWalkthrough) return;
+
+    const key = `${vibesSegment}:${String(current.id)}`;
+    if (seenVibesCardKeysRef.current.has(key)) return;
+    seenVibesCardKeysRef.current.add(key);
+
+    recordVibesEvent(String(current.id), 'card_seen', {
+      position: currentIndex,
+      metadata: {
+        deck_size: matchList.length,
+        compatibility: (current as any).compatibility ?? null,
+        distance_km: (current as any).distanceKm ?? null,
+      },
+    });
+  }, [currentIndex, matchList, profile?.id, recordVibesEvent, showPracticeWalkthrough, vibesSegment]);
+
+  useEffect(() => {
+    if (!intentQueueBadge) {
+      intentBadgePulse.stopAnimation();
+      intentBadgePulse.setValue(0);
+      return;
+    }
+
+    const animation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(intentBadgePulse, {
+          toValue: 1,
+          duration: intentQueueBadge.endingSoon > 0 ? 950 : 1400,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(intentBadgePulse, {
+          toValue: 0,
+          duration: intentQueueBadge.endingSoon > 0 ? 950 : 1400,
+          easing: Easing.inOut(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    animation.start();
+    return () => animation.stop();
+  }, [intentBadgePulse, intentQueueBadge]);
+
   const distanceChipOptions = useMemo(() => {
     const base = [5, 10, 25, 50, 100];
     if (resolvedDistanceUnit === 'mi') {
@@ -659,17 +836,18 @@ export default function ExploreScreen() {
 
   const distinctReligions = useMemo(() => {
     const source = poolProfiles.length > 0 ? poolProfiles : matchList;
-    const preferred = ['Christian', 'Muslim'];
+    const preferred = RELIGION_OPTIONS.map((option) => option.value);
     const normalizedSeen = new Set<string>();
     const collected: string[] = [];
 
     const pushReligion = (value: unknown) => {
       const trimmed = String(value || '').trim();
       if (!trimmed) return;
-      const normalized = trimmed.toLowerCase();
+      const normalizedValue = normalizeReligionForProfile(trimmed);
+      const normalized = normalizedValue.toLowerCase();
       if (normalizedSeen.has(normalized)) return;
       normalizedSeen.add(normalized);
-      collected.push(trimmed);
+      collected.push(normalizedValue);
     };
 
     preferred.forEach(pushReligion);
@@ -702,9 +880,11 @@ export default function ExploreScreen() {
   }, [myMomentUser, otherMomentUsers, prioritizedMomentUsers]);
   const hasMyActiveMoment = (myMomentUser?.moments?.length ?? 0) > 0;
   const hasOtherActiveMoments = prioritizedMomentUsers.length + otherMomentUsers.length > 0;
+  const hasOnlyMyActiveMoment = hasMyActiveMoment && !hasOtherActiveMoments;
   const showMomentsEmptyState = !hasOtherActiveMoments && !hasMyActiveMoment;
   const momentUsersWithContent = useMemo(() => momentUsers.filter((u) => u.moments.length > 0), [momentUsers]);
-  const shouldShowFloatingMoments = Boolean(user?.id && !showMomentsEmptyState && !momentsCollapsed);
+  const hasCompactMomentRail = momentUsersWithContent.length > 0 && momentUsersWithContent.length <= 3;
+  const shouldShowFloatingMoments = Boolean(user?.id && !showPracticeWalkthrough && momentUsersWithContent.length > 0);
 
   useEffect(() => {
     if (shouldShowFloatingMoments) {
@@ -961,9 +1141,120 @@ export default function ExploreScreen() {
   const openIntentSheet = useCallback(() => {
     const target = matchList[currentIndex];
     if (!target) return;
-    setIntentTarget({ id: String(target.id), name: (target as any).name || (target as any).full_name });
+    recordVibesEvent(String(target.id), 'intent_opened', { position: currentIndex });
+    setIntentTarget({
+      id: String(target.id),
+      name: (target as any).name || (target as any).full_name,
+      deckIndex: currentIndex,
+    });
     setIntentSheetVisible(true);
-  }, [currentIndex, matchList]);
+  }, [currentIndex, matchList, recordVibesEvent]);
+
+  const openSignalSheet = useCallback(() => {
+    const target = matchList[currentIndex];
+    if (!target) return;
+    recordVibesEvent(String(target.id), 'signal_opened', { position: currentIndex });
+    setSignalTarget({
+      id: String(target.id),
+      name: (target as any).name || (target as any).full_name,
+      deckIndex: currentIndex,
+      match: target,
+    });
+    setSignalSheetVisible(true);
+  }, [currentIndex, matchList, recordVibesEvent]);
+
+  const pushVibesAction = useCallback((entry: VibesActionHistoryEntry) => {
+    vibesActionHistoryRef.current = [...vibesActionHistoryRef.current, entry].slice(-24);
+  }, []);
+
+  const popVibesAction = useCallback(() => {
+    const last = vibesActionHistoryRef.current[vibesActionHistoryRef.current.length - 1] ?? null;
+    if (last) vibesActionHistoryRef.current = vibesActionHistoryRef.current.slice(0, -1);
+    return last;
+  }, []);
+
+  const recordVibesSwipe = useCallback(
+    (id: string, action: 'like' | 'dislike' | 'superlike', index = currentIndex) => {
+      pushVibesAction({ kind: 'swipe', id: String(id), action, index });
+      recordVibesEvent(String(id), action === 'dislike' ? 'pass' : action === 'superlike' ? 'signal_sent' : 'like', {
+        position: index,
+        metadata: { swipe_action: action },
+      });
+      recordSwipe(id, action, index);
+    },
+    [currentIndex, pushVibesAction, recordSwipe, recordVibesEvent],
+  );
+
+  const cancelDirectIntentRequest = useCallback(async (entry: Extract<VibesActionHistoryEntry, { kind: 'intent' }>) => {
+    try {
+      let requestId = entry.requestId;
+      if (!requestId && profile?.id) {
+        const { data } = await supabase
+          .from('intent_requests')
+          .select('id')
+          .eq('actor_id', profile.id)
+          .eq('recipient_id', entry.id)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: false })
+          .limit(1);
+        requestId = Array.isArray(data) ? data[0]?.id ?? null : null;
+      }
+      if (!requestId) return;
+      await cancelIntentRequestOfflineSafe(requestId);
+    } catch (error) {
+      logger.warn('[vibes] undo_intent_cancel_failed', { error: String((error as any)?.message || error) });
+    }
+  }, [profile?.id]);
+
+  const cancelSignal = useCallback(async (entry: Extract<VibesActionHistoryEntry, { kind: 'signal' }>) => {
+    try {
+      const { error } = await supabase.rpc('rpc_cancel_signal', { p_signal_id: entry.signalId });
+      if (error) logger.warn('[vibes] undo_signal_cancel_failed', { error: String(error.message || error) });
+      void refreshSignalAccess();
+    } catch (error) {
+      logger.warn('[vibes] undo_signal_cancel_failed', { error: String((error as any)?.message || error) });
+    }
+  }, [refreshSignalAccess]);
+
+  const undoLastVibesAction = useCallback(() => {
+    const last = popVibesAction();
+    if (last) {
+      recordVibesEvent(last.id, 'undo', {
+        position: last.index,
+        metadata: { action_kind: last.kind },
+      });
+    }
+
+    try {
+      stackRef.current?.rewind();
+    } catch {}
+
+    if (last?.kind === 'intent') {
+      void cancelDirectIntentRequest(last);
+      setCurrentIndex(Math.max(0, last.index));
+      try { Haptics.selectionAsync(); } catch {}
+      return;
+    }
+
+    if (last?.kind === 'signal') {
+      void cancelSignal(last);
+      setCurrentIndex(Math.max(0, last.index));
+      try { Haptics.selectionAsync(); } catch {}
+      return;
+    }
+
+    const prev = undoLastSwipe?.();
+    if (prev) {
+      setCurrentIndex(Math.max(0, prev.index));
+    } else if (last?.kind === 'swipe') {
+      setCurrentIndex(Math.max(0, last.index));
+    }
+    if (last?.kind === 'swipe' && last.action === 'superlike') {
+      setSuperlikesLeft((count) => count + 1);
+      void refreshProfile?.();
+    }
+    try { Haptics.selectionAsync(); } catch {}
+  }, [cancelDirectIntentRequest, cancelSignal, popVibesAction, recordVibesEvent, refreshProfile, undoLastSwipe]);
 
   const handlePressMyMoment = useCallback(() => {
     if (hasMyActiveMoment) {
@@ -1273,7 +1564,7 @@ export default function ExploreScreen() {
     if (minSharedInterests > 0) chips.push({ key: 'shared', label: `${minSharedInterests}+ shared`, onClear: () => setMinSharedInterests(0) });
     if (distanceFilterKm != null) chips.push({ key: 'distance', label: `<= ${formatDistanceLabel(distanceFilterKm)}`, onClear: () => setDistanceFilterKm(null) });
     if (minAge !== 18 || maxAge !== 60) chips.push({ key: 'age', label: `${minAge}-${maxAge}`, onClear: () => { setMinAge(18); setMaxAge(60); } });
-    if (religionFilter) chips.push({ key: 'religion', label: String(religionFilter), onClear: () => setReligionFilter(null) });
+    if (religionFilter) chips.push({ key: 'religion', label: formatReligionLabel(religionFilter), onClear: () => setReligionFilter(null) });
     if (locationQuery.trim()) chips.push({ key: 'loc', label: `City: ${locationQuery.trim()}`, onClear: () => setLocationQuery('') });
     return chips;
   }, [
@@ -1327,6 +1618,15 @@ export default function ExploreScreen() {
         message: 'Advanced Vibes filters are included with Silver and Gold. Upgrade to shape the room by trust, activity, chemistry, and distance.',
       });
     }, 120);
+  }, []);
+
+  const showSignalUpsell = useCallback(() => {
+    setSignalSheetVisible(false);
+    setPremiumUpsell({
+      requiredPlan: 'SILVER',
+      title: 'Send Signals that stand out',
+      message: 'Signals let you show what you noticed, with priority for 48 hours. Silver includes 3 Signals each week; Gold includes 7.',
+    });
   }, []);
 
   const showSharedInterestsHint = useCallback(() => {
@@ -1501,6 +1801,28 @@ export default function ExploreScreen() {
 
   const exhausted = currentIndex >= matchList.length;
 
+  useEffect(() => {
+    if (!showPracticeWalkthrough && practiceGestureLocked) {
+      setPracticeGestureLocked(false);
+    }
+  }, [practiceGestureLocked, showPracticeWalkthrough]);
+
+  const openPracticeReplay = useCallback(() => {
+    setPracticeReplayVisible(true);
+    setPracticeGestureLocked(false);
+    setDeckGestureLocked(false);
+    setRenderFloatingMoments(false);
+    floatingMomentsOpacity.setValue(0);
+    floatingMomentsTranslateY.setValue(-10);
+    floatingMomentsScale.setValue(0.985);
+    scrollVibesToTop();
+  }, [floatingMomentsOpacity, floatingMomentsScale, floatingMomentsTranslateY, scrollVibesToTop]);
+
+  useEffect(() => {
+    vibesActionHistoryRef.current = [];
+    setDeckGestureLocked(false);
+  }, [activeTab]);
+
   function NoMoreProfiles() {
     const noMoreTranslate = useRef(new Animated.Value(18)).current;
     const noMoreOpacity = useRef(new Animated.Value(0)).current;
@@ -1598,7 +1920,7 @@ export default function ExploreScreen() {
       stackRef.current?.performSwipe("right");
     } catch {
       const cm = matchList[currentIndex];
-      if (cm) recordSwipe(cm.id, "like", currentIndex);
+      if (cm) recordVibesSwipe(cm.id, "like", currentIndex);
       if (currentIndex < matchList.length - 1)
         setCurrentIndex(currentIndex + 1);
     }
@@ -1614,7 +1936,7 @@ export default function ExploreScreen() {
       stackRef.current?.performSwipe("left");
     } catch {
       const cm = matchList[currentIndex];
-      if (cm) recordSwipe(cm.id, "dislike", currentIndex);
+      if (cm) recordVibesSwipe(cm.id, "dislike", currentIndex);
       if (currentIndex < matchList.length - 1)
         setCurrentIndex(currentIndex + 1);
     }
@@ -1633,6 +1955,7 @@ export default function ExploreScreen() {
           targetProfileId: id,
           openedDelta: 1,
         });
+        recordVibesEvent(id, 'profile_opened', { position: currentIndex });
       }
       // fetch optional fields on demand and merge into matches
       const updated = await fetchProfileDetails?.(id);
@@ -1682,7 +2005,7 @@ export default function ExploreScreen() {
   const onSuperlike = () => {
     if (superlikesLeft <= 0) {
       try { Haptics.selectionAsync(); } catch {}
-      Alert.alert('Superlikes', 'You have no superlikes left. Upgrade to get more!');
+      Alert.alert('Signals', 'You have no Signals left. Upgrade to send more.');
       return;
     }
 
@@ -1695,7 +2018,7 @@ export default function ExploreScreen() {
             setSuperlikesLeft(Math.max(0, data));
           } else if (error && String(error.message || '').includes('NO_SUPERLIKES')) {
             setSuperlikesLeft(0);
-            Alert.alert('Superlikes', 'You have no superlikes left. Upgrade to get more!');
+            Alert.alert('Signals', 'You have no Signals left. Upgrade to send more.');
             return;
           } else {
             setSuperlikesLeft((s) => Math.max(0, s - 1));
@@ -1724,7 +2047,7 @@ export default function ExploreScreen() {
       stackRef.current?.performSwipe("superlike");
     } catch {
       const cm = matchList[currentIndex];
-      if (cm) recordSwipe(cm.id, "superlike", currentIndex);
+      if (cm) recordVibesSwipe(cm.id, "superlike", currentIndex);
       if (currentIndex < matchList.length - 1) setCurrentIndex(currentIndex + 1);
     }
 
@@ -1739,8 +2062,17 @@ export default function ExploreScreen() {
     </View>
   );
 
+  const renderSignalBadge = () => (
+    <View style={[styles.superlikeBadgeInline, signalAccess.remaining <= 0 && styles.superlikeBadgeInlineDisabled]}>
+      <Text style={styles.superlikeBadgeInlineText}>
+        {`${Math.max(signalAccess.remaining, 0)} left`}
+      </Text>
+    </View>
+  );
+
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
+      <DepthBackground>
       <SafeAreaView style={styles.container}>
         {/* TOP HEADER */}
         <ExploreHeader
@@ -1759,19 +2091,60 @@ export default function ExploreScreen() {
           onPressFilter={() => setFiltersVisible(true)}
           filterCount={appliedFilterCount}
           rightAccessory={(
-            <TouchableOpacity
-              style={styles.headerRefreshButton}
-              onPress={() => setIntroVisible(true)}
-              activeOpacity={0.85}
-            >
-              <MaterialCommunityIcons name="star-four-points" size={16} color={theme.tint} />
-            </TouchableOpacity>
+            <>
+              {intentQueueBadge ? (
+                <TouchableOpacity
+                  style={[styles.headerIntentBadge, intentQueueBadge.endingSoon > 0 && styles.headerIntentBadgeUrgent]}
+                  onPress={() => router.push({ pathname: '/(tabs)/intent', params: { filter: 'action' } } as never)}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${intentQueueBadge.waiting} waiting in Intent`}
+                >
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      styles.headerIntentBadgePulse,
+                      intentQueueBadge.endingSoon > 0 && styles.headerIntentBadgePulseUrgent,
+                      {
+                        opacity: intentBadgePulse.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0.22, intentQueueBadge.endingSoon > 0 ? 0.72 : 0.46],
+                        }),
+                        transform: [
+                          {
+                            scale: intentBadgePulse.interpolate({
+                              inputRange: [0, 1],
+                              outputRange: [0.92, 1.18],
+                            }),
+                          },
+                        ],
+                      },
+                    ]}
+                  />
+                  <MaterialCommunityIcons
+                    name={intentQueueBadge.endingSoon > 0 ? 'timer-sand' : 'message-badge-outline'}
+                    size={18}
+                    color={intentQueueBadge.endingSoon > 0 ? theme.accent : theme.tint}
+                  />
+                  <View style={[styles.headerIntentBadgeCount, intentQueueBadge.endingSoon > 0 && styles.headerIntentBadgeCountUrgent]}>
+                    <Text style={styles.headerIntentBadgeText}>{intentQueueBadge.waiting > 9 ? '9+' : intentQueueBadge.waiting}</Text>
+                  </View>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity
+                style={styles.headerRefreshButton}
+                onPress={openPracticeReplay}
+                activeOpacity={0.85}
+              >
+                <MaterialCommunityIcons name="star-four-points" size={16} color={theme.tint} />
+              </TouchableOpacity>
+            </>
           )}
         />
 
-        <VibesIntroModal visible={introVisible} onClose={closeIntro} />
-
         <Animated.ScrollView
+          ref={scrollViewRef}
+          scrollEnabled={!practiceGestureLocked && !deckGestureLocked}
           onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
           scrollEventThrottle={16}
           showsVerticalScrollIndicator={false}
@@ -1784,7 +2157,7 @@ export default function ExploreScreen() {
           )}
           contentContainerStyle={[
             styles.scrollContent,
-            { paddingBottom: Math.max(insets.bottom + 180, 180) },
+            { paddingBottom: Math.max(insets.bottom + layoutMetrics.stackBottomReserve + 92, 180) },
           ]}
         >
           {shouldShowLocationPrompt ? (
@@ -1840,37 +2213,49 @@ export default function ExploreScreen() {
               ) : null}
             </View>
           ) : null}
-          {user?.id && (showMomentsEmptyState || momentsCollapsed) ? (
-            <VibesMomentsStrip
-              users={momentStripUsers}
-              hasMyActiveMoment={hasMyActiveMoment}
-              showEmptyState={showMomentsEmptyState}
-              relationshipContextByProfileId={momentRelationshipContextByProfileId}
-              onPressMyMoment={handlePressMyMoment}
-              onPressUserMoment={handlePressUserMoment}
+          {user?.id && momentUsersWithContent.length === 0 ? (
+            <MomentsHeaderRow
+              momentCount={momentUsersWithContent.length}
+              isEmpty={showMomentsEmptyState}
+              expanded={!momentsCollapsed}
+              onToggle={() => setMomentsCollapsed((current) => !current)}
               onPressSeeAll={handleMomentsPress}
-              onPressPostMoment={handlePressMyMoment}
-              variant="inline"
-              collapsed={momentsCollapsed}
-              onCollapsedChange={setMomentsCollapsed}
-            />
-          ) : user?.id ? (
-            <VibesMomentsStrip
-              users={momentStripUsers}
-              hasMyActiveMoment={hasMyActiveMoment}
-              showEmptyState={showMomentsEmptyState}
-              relationshipContextByProfileId={momentRelationshipContextByProfileId}
-              onPressMyMoment={handlePressMyMoment}
-              onPressUserMoment={handlePressUserMoment}
-              onPressSeeAll={handleMomentsPress}
-              onPressPostMoment={handlePressMyMoment}
-              variant="inline"
-              collapsed={false}
-              onCollapsedChange={setMomentsCollapsed}
-              expandedAsHeaderOnly
+              onPressShare={handlePressMyMoment}
+              theme={theme}
+              isDark={isDark}
+              metrics={momentsCapsuleMetrics}
             />
           ) : null}
-          {offlineNotice ? (
+          {!showPracticeWalkthrough && renderFloatingMoments && user?.id ? (
+            <Animated.View
+              pointerEvents="box-none"
+              style={[
+                styles.momentsCapsuleFlow,
+                {
+                  marginTop: momentsCapsuleMetrics.capsuleMarginTop,
+                  marginBottom: hasCompactMomentRail ? 8 : momentsCapsuleMetrics.capsuleMarginBottom,
+                  opacity: floatingMomentsOpacity,
+                  transform: [
+                    { translateY: floatingMomentsTranslateY },
+                    { scale: floatingMomentsScale },
+                  ],
+                },
+              ]}
+            >
+              <FloatingMomentsCapsule
+                users={momentStripUsers}
+                relationshipContextByProfileId={momentRelationshipContextByProfileId}
+                onPressMyMoment={handlePressMyMoment}
+                onPressUserMoment={handlePressUserMoment}
+                onPressSeeAll={handleMomentsPress}
+                onPressPostMoment={handlePressMyMoment}
+                theme={theme}
+                isDark={isDark}
+                metrics={momentsCapsuleMetrics}
+              />
+            </Animated.View>
+          ) : null}
+          {!showPracticeWalkthrough && offlineNotice ? (
             <View>
               <Notice
                 title="Couldn't load profiles"
@@ -1894,8 +2279,36 @@ export default function ExploreScreen() {
           ) : null}
 
           {/* CARD STACK */}
-          <View style={styles.stackWrapper}>
-            {loadingMatches ? (
+          <View
+            style={[
+              styles.stackWrapper,
+              {
+                width: layoutMetrics.cardWidth,
+                height: layoutMetrics.cardHeight + layoutMetrics.stackBottomReserve,
+                paddingHorizontal: 0,
+                paddingBottom: layoutMetrics.stackBottomReserve,
+                marginTop:
+                  !showPracticeWalkthrough && renderFloatingMoments && user?.id
+                    ? hasCompactMomentRail
+                      ? 0
+                      : -momentsCapsuleMetrics.capsuleOverlapAmount
+                    : layoutMetrics.device.compactHeight
+                      ? -12
+                      : layoutMetrics.device.tallHeight
+                        ? 4
+                        : -6,
+              },
+            ]}
+          >
+            {!practiceLoaded ? (
+              <ExploreStackSkeleton />
+            ) : showPracticeWalkthrough ? (
+              <VibesPracticeWalkthrough
+                metrics={layoutMetrics}
+                onComplete={completePractice}
+                onGestureLockChange={setPracticeGestureLocked}
+              />
+            ) : loadingMatches ? (
               <ExploreStackSkeleton />
             ) : offlineNotice && matchList.length === 0 ? (
               // If we failed to load, don't show the "no more profiles" empty state.
@@ -1907,8 +2320,11 @@ export default function ExploreScreen() {
                 matches={matchList}
                 currentIndex={currentIndex}
                 setCurrentIndex={setCurrentIndex}
-                recordSwipe={recordSwipe}
+                recordSwipe={recordVibesSwipe}
                 onProfileTap={onProfileTap}
+                layoutMetrics={layoutMetrics}
+                onIntentSwipeUp={openIntentSheet}
+                onGestureLockChange={setDeckGestureLocked}
                 onPlayPress={async (id: string) => {
                   try {
                     if (previewingId) return;
@@ -1919,6 +2335,7 @@ export default function ExploreScreen() {
                         targetProfileId: id,
                         introVideoStarted: true,
                       });
+                      recordVibesEvent(id, 'intro_played', { position: currentIndex });
                     }
                       const updated = await fetchProfileDetails?.(id);
                       const videoSource = (updated && ((updated as any).profileVideoPath || (updated as any).profileVideo))
@@ -1948,132 +2365,37 @@ export default function ExploreScreen() {
             ) : (
               <NoMoreProfiles />
             )}
-            {shouldShowFloatingMoments || renderFloatingMoments ? (
-              <Animated.View
-                pointerEvents="box-none"
-                style={[
-                  styles.momentsFloatingOverlay,
-                  {
-                    opacity: floatingMomentsOpacity,
-                    transform: [
-                      { translateY: floatingMomentsTranslateY },
-                      { scale: floatingMomentsScale },
-                    ],
-                  },
-                ]}
-              >
-                <VibesMomentsStrip
-                  users={momentStripUsers}
-                  hasMyActiveMoment={hasMyActiveMoment}
-                  showEmptyState={showMomentsEmptyState}
-                  relationshipContextByProfileId={momentRelationshipContextByProfileId}
-                  onPressMyMoment={handlePressMyMoment}
-                  onPressUserMoment={handlePressUserMoment}
-                  onPressSeeAll={handleMomentsPress}
-                  onPressPostMoment={handlePressMyMoment}
-                  variant="floating"
-                  collapsed={false}
-                  onCollapsedChange={setMomentsCollapsed}
-                  bodyOnly
-                />
-              </Animated.View>
-            ) : null}
           </View>
         </Animated.ScrollView>
 
-        <View style={styles.actionButtons} pointerEvents="box-none">
-          <Animated.View
+        {!showPracticeWalkthrough && practiceLoaded ? (
+          <View
             style={[
+              styles.actionButtons,
               {
+                bottom: layoutMetrics.dockBottom,
+              },
+            ]}
+            pointerEvents="box-none"
+          >
+            <VibesActionDock
+              metrics={layoutMetrics}
+              onPass={() => animateButtonPress(onReject)}
+              onUndo={undoLastVibesAction}
+              onLike={() => animateButtonPress(onLike)}
+              onPremium={() => animateButtonPress(openSignalSheet)}
+              onIntent={openIntentSheet}
+              superlikeBadge={renderSignalBadge()}
+              entranceStyle={{
                 transform: [
                   { translateY: fallbackEntranceTranslate },
                   { scale: buttonScale },
                 ],
                 opacity: fallbackEntranceOpacity,
-              },
-            ]}
-          >
-            <BlurViewSafe
-              intensity={24}
-              tint={isDark ? 'dark' : 'light'}
-              style={styles.actionFloatingCard}
-            >
-              <View style={styles.actionSecondaryCluster}>
-                <LinearGradientSafe
-                  colors={[theme.backgroundSubtle, theme.background]}
-                  style={styles.rejectRing}
-                >
-                  <TouchableOpacity
-                    style={styles.rejectButton}
-                    onPress={() => animateButtonPress(onReject)}
-                    activeOpacity={0.85}
-                  >
-                    <CircleOff size={21} color={theme.textMuted} style={{ marginTop: 1 }} />
-                  </TouchableOpacity>
-                </LinearGradientSafe>
-
-                <TouchableOpacity
-                  style={styles.infoButton}
-                  onPress={() => {
-                    try {
-                      stackRef.current?.rewind();
-                    } catch {}
-                    const prev = undoLastSwipe?.();
-                    if (prev) setCurrentIndex(Math.max(0, prev.index));
-                    try { Haptics.selectionAsync(); } catch {}
-                  }}
-                  activeOpacity={0.85}
-                >
-                  <MaterialCommunityIcons name="undo-variant" size={18} color={theme.tint} />
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.actionPrimaryCluster}>
-                <LinearGradientSafe
-                  colors={[theme.tint, theme.accent]}
-                  style={styles.requestRing}
-                >
-                  <TouchableOpacity
-                    style={styles.requestButton}
-                    onPress={openIntentSheet}
-                    activeOpacity={0.85}
-                  >
-                    <Target size={24} color={theme.text} strokeWidth={2.6} />
-                  </TouchableOpacity>
-                </LinearGradientSafe>
-
-                <View style={styles.superlikeWrap}>
-                  {renderSuperlikeBadge()}
-                  <LinearGradientSafe
-                    colors={[theme.accent, theme.backgroundSubtle]}
-                    style={[styles.superlikeButton, !isLinearGradientAvailable() && styles.superlikeFallback]}
-                  >
-                    <TouchableOpacity
-                      style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}
-                      onPress={() => animateButtonPress(onSuperlike)}
-                      activeOpacity={0.85}
-                    >
-                      <Gem size={20} color="#fff" style={{ marginTop: 1 }} />
-                    </TouchableOpacity>
-                  </LinearGradientSafe>
-                </View>
-
-                <LinearGradientSafe
-                  colors={[theme.secondary, theme.tint]}
-                  style={styles.likeRing}
-                >
-                  <TouchableOpacity
-                    style={styles.likeButton}
-                    onPress={() => animateButtonPress(onLike)}
-                    activeOpacity={0.85}
-                  >
-                    <Sparkles size={23} color="#fff" style={{ marginTop: 1 }} />
-                  </TouchableOpacity>
-                </LinearGradientSafe>
-              </View>
-            </BlurViewSafe>
-          </Animated.View>
-        </View>
+              }}
+            />
+          </View>
+        ) : null}
 
         <Modal
           visible={filtersVisible}
@@ -2563,7 +2885,9 @@ export default function ExploreScreen() {
                           style={[styles.filterChip, religionFilter === r && styles.filterChipActive]}
                           onPress={() => setReligionFilter((curr) => (curr === r ? null : r))}
                         >
-                          <Text style={[styles.filterChipText, religionFilter === r && styles.filterChipTextActive]}>{r}</Text>
+                          <Text style={[styles.filterChipText, religionFilter === r && styles.filterChipTextActive]}>
+                            {formatReligionLabel(r)}
+                          </Text>
                         </TouchableOpacity>
                       ))}
                       {distinctReligions.length > 0 && (
@@ -2786,13 +3110,59 @@ export default function ExploreScreen() {
           />
           <IntentRequestSheet
             visible={intentSheetVisible}
-            onClose={() => setIntentSheetVisible(false)}
+            onClose={() => {
+              setIntentSheetVisible(false);
+              setIntentTarget(null);
+            }}
             recipientId={intentTarget?.id}
             recipientName={intentTarget?.name ?? null}
             metadata={{ source: 'vibes' }}
-            onSent={() => {
-              // Sending an intent should advance the deck just like a swipe.
-              setCurrentIndex((i) => i + 1);
+            onSent={(requestId) => {
+              if (intentTarget?.id) {
+                recordVibesEvent(intentTarget.id, 'intent_sent', {
+                  position: intentTarget.deckIndex ?? currentIndex,
+                  metadata: { request_id: requestId ?? null },
+                });
+              }
+              if (intentTarget?.deckIndex != null) {
+                pushVibesAction({
+                  kind: 'intent',
+                  id: intentTarget.id,
+                  requestId,
+                  index: intentTarget.deckIndex,
+                });
+                setCurrentIndex((i) => Math.max(i, intentTarget.deckIndex! + 1));
+              }
+            }}
+          />
+          <SendSignalSheet
+            visible={signalSheetVisible}
+            receiverProfileId={signalTarget?.id}
+            receiverName={signalTarget?.name ?? null}
+            match={signalTarget?.match ?? null}
+            source="vibes_card"
+            onClose={() => {
+              setSignalSheetVisible(false);
+              setSignalTarget(null);
+            }}
+            onPaywall={showSignalUpsell}
+            onSent={({ signalId }) => {
+              if (signalTarget?.id) {
+                recordVibesEvent(signalTarget.id, 'signal_sent', {
+                  position: signalTarget.deckIndex ?? currentIndex,
+                  metadata: { signal_id: signalId },
+                });
+              }
+              if (signalTarget?.deckIndex != null) {
+                pushVibesAction({
+                  kind: 'signal',
+                  id: signalTarget.id,
+                  signalId,
+                  index: signalTarget.deckIndex,
+                });
+                setCurrentIndex((i) => Math.max(i, signalTarget.deckIndex! + 1));
+              }
+              void refreshSignalAccess();
             }}
           />
           {/* Match celebration modal */}
@@ -2832,6 +3202,7 @@ export default function ExploreScreen() {
           }}
         />
       </SafeAreaView>
+      </DepthBackground>
     </GestureHandlerRootView>
   );
 }
@@ -3035,12 +3406,9 @@ function PremiumRangeSlider({
 
 function createStyles(theme: typeof Colors.light, isDark: boolean) {
   const surface = isDark ? '#111827' : '#fff';
-  const surfaceSubtle = isDark ? theme.backgroundSubtle : '#f8fafc';
   const cardBorder = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)';
   const outline = isDark ? 'rgba(255,255,255,0.12)' : '#e5e7eb';
   const shadowColor = isDark ? '#000' : '#0f172a';
-  const overlayCard = isDark ? 'rgba(15,23,42,0.72)' : 'rgba(255,255,255,0.62)';
-  const overlayBorder = isDark ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.75)';
   const infoButtonBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.95)';
   const infoButtonBorder = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(148,163,184,0.35)';
   const placeholderBg = isDark ? '#1f2937' : '#e2e8f0';
@@ -3054,25 +3422,19 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
   const ghostBg = isDark ? 'rgba(255,255,255,0.04)' : '#fff';
 
   return StyleSheet.create({
-    container: { flex: 1, backgroundColor: surfaceSubtle },
-    scrollContent: { flexGrow: 1, paddingTop: 8 },
+    container: { flex: 1, backgroundColor: 'transparent' },
+    scrollContent: { flexGrow: 1, paddingTop: 4 },
     stackWrapper: {
-      flex: 1,
       position: 'relative',
       alignItems: "center",
-      justifyContent: "center",
-      paddingHorizontal: 20,
+      justifyContent: "flex-start",
       marginTop: -2,
-      // leave room at the bottom for action buttons
-      paddingBottom: 154,
+      alignSelf: 'center',
     },
-    momentsFloatingOverlay: {
-      position: 'absolute',
-      top: -1,
-      left: 20,
-      right: 20,
-      zIndex: 60,
-      elevation: 24,
+    momentsCapsuleFlow: {
+      marginHorizontal: 20,
+      zIndex: 8,
+      elevation: 8,
     },
     momentsStripContainer: {
       overflow: 'hidden',
@@ -3155,7 +3517,6 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       bottom: 8, // keep the rail clear of the card copy while staying above the tab bar
       flexDirection: "row",
       justifyContent: "center",
-      paddingHorizontal: 36,
       paddingVertical: 8,
       backgroundColor: "transparent",
       // Ensure action buttons sit above the card stack
@@ -3170,14 +3531,15 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       paddingHorizontal: 12,
       paddingVertical: 8,
       borderRadius: 30,
-      backgroundColor: overlayCard,
+      backgroundColor: isDark ? 'rgba(9,18,22,0.58)' : 'rgba(255,255,255,0.58)',
       borderWidth: 1,
-      borderColor: overlayBorder,
+      borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.7)',
       shadowColor,
-      shadowOffset: { width: 0, height: 12 },
-      shadowOpacity: isDark ? 0.26 : 0.16,
-      shadowRadius: 28,
+      shadowOffset: { width: 0, height: 10 },
+      shadowOpacity: isDark ? 0.22 : 0.12,
+      shadowRadius: 24,
       elevation: 12,
+      overflow: 'hidden',
     },
     actionSecondaryCluster: {
       flexDirection: 'row',
@@ -3185,7 +3547,8 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       marginRight: 10,
       paddingRight: 10,
       borderRightWidth: 1,
-      borderRightColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)',
+      borderRightColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(15,23,42,0.06)',
+      opacity: 0.86,
     },
     actionPrimaryCluster: {
       flexDirection: 'row',
@@ -3207,9 +3570,9 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       borderColor: outline,
       shadowColor,
       shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: isDark ? 0.18 : 0.12,
-      shadowRadius: 12,
-      elevation: 8,
+      shadowOpacity: isDark ? 0.12 : 0.08,
+      shadowRadius: 10,
+      elevation: 5,
       justifyContent: "center",
       alignItems: "center",
     },
@@ -3224,9 +3587,9 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       borderColor: infoButtonBorder,
       shadowColor,
       shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: isDark ? 0.16 : 0.08,
-      shadowRadius: 10,
-      elevation: 4,
+      shadowOpacity: isDark ? 0.1 : 0.06,
+      shadowRadius: 8,
+      elevation: 3,
       marginHorizontal: 0,
     },
     requestRing: {
@@ -3237,7 +3600,7 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       marginHorizontal: 0,
       shadowColor: theme.tint,
       shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: isDark ? 0.25 : 0.2,
+      shadowOpacity: isDark ? 0.22 : 0.16,
       shadowRadius: 12,
       elevation: 6,
     },
@@ -3258,8 +3621,8 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       marginLeft: 2,
       shadowColor: theme.tint,
       shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: isDark ? 0.24 : 0.16,
-      shadowRadius: 14,
+      shadowOpacity: isDark ? 0.28 : 0.2,
+      shadowRadius: 18,
       elevation: 9,
     },
     likeButton: {
@@ -3345,6 +3708,57 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     },
     headerBadgeDisabled: { opacity: 0.7 },
     headerBadgeText: { color: theme.tint, fontSize: 12, fontWeight: '700' },
+    headerIntentBadge: {
+      position: 'relative',
+      width: 42,
+      height: 42,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(19,168,168,0.22)' : 'rgba(19,128,128,0.14)',
+      backgroundColor: isDark ? 'rgba(19,168,168,0.06)' : 'rgba(255,255,255,0.62)',
+      overflow: 'visible',
+    },
+    headerIntentBadgeUrgent: {
+      borderColor: isDark ? 'rgba(244,232,208,0.18)' : 'rgba(139,92,255,0.15)',
+      backgroundColor: isDark ? 'rgba(244,232,208,0.055)' : 'rgba(255,248,241,0.70)',
+      shadowColor: theme.accent,
+      shadowOpacity: isDark ? 0.14 : 0.10,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 5 },
+      elevation: 4,
+    },
+    headerIntentBadgePulse: {
+      position: 'absolute',
+      left: -3,
+      right: -3,
+      top: -3,
+      bottom: -3,
+      borderRadius: 19,
+      backgroundColor: isDark ? 'rgba(19,168,168,0.16)' : 'rgba(19,168,168,0.12)',
+    },
+    headerIntentBadgePulseUrgent: {
+      backgroundColor: isDark ? 'rgba(244,232,208,0.16)' : 'rgba(139,92,255,0.13)',
+    },
+    headerIntentBadgeCount: {
+      position: 'absolute',
+      top: -5,
+      right: -5,
+      minWidth: 18,
+      height: 18,
+      paddingHorizontal: 4,
+      borderRadius: 9,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: isDark ? '#071E22' : '#F7EFE3',
+      backgroundColor: theme.tint,
+    },
+    headerIntentBadgeCountUrgent: {
+      backgroundColor: theme.accent,
+    },
+    headerIntentBadgeText: { color: Colors.light.background, fontSize: 10, lineHeight: 12, fontWeight: '900' },
     emptyStateContainer: {
       flex: 1,
       alignItems: 'center',

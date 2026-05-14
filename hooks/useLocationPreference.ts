@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { isKnownGhanaRegionLabel } from '@/lib/location/location-display';
 
 type Result =
   | { ok: true }
@@ -81,9 +82,10 @@ export async function saveManualCityLocation(
 
     const city = label.split(',')[0]?.trim() || label;
     const normalizedCountryCode = countryCode ? countryCode.trim().toUpperCase() : '';
+    const isGhanaRegionOnly = normalizedCountryCode === 'GH' && isKnownGhanaRegionLabel(city);
     const updateData: Record<string, any> = {
-      location: city,
-      city,
+      location: isGhanaRegionOnly ? 'Ghana' : city,
+      city: isGhanaRegionOnly ? null : city,
       region: city,
       location_precision: 'CITY',
       latitude: null,
@@ -92,6 +94,9 @@ export async function saveManualCityLocation(
     };
     if (normalizedCountryCode) {
       updateData.current_country_code = normalizedCountryCode;
+      if (normalizedCountryCode === 'GH') {
+        updateData.current_country = 'Ghana';
+      }
     }
 
     const { error } = await supabase

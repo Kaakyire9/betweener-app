@@ -1,0 +1,286 @@
+import IntentMark from "@/components/icons/IntentMark";
+import SignalIcon from "@/components/icons/SignalIcon";
+import GlassSurface from "@/components/vibes/depth/GlassSurface";
+import GlowOrb from "@/components/vibes/depth/GlowOrb";
+import RimLight from "@/components/vibes/depth/RimLight";
+import { VIBES_DEPTH_COLORS } from "@/components/vibes/depth/platformGlass";
+import type { VibesDepthMetrics } from "@/components/vibes/depth/useVibesResponsiveMetrics";
+import { useColorScheme } from "@/hooks/use-color-scheme";
+import { CircleOff, RotateCcw } from "lucide-react-native";
+import * as Haptics from "expo-haptics";
+import React, { memo } from "react";
+import { Animated as RNAnimated, Platform, StyleSheet, TouchableOpacity, View } from "react-native";
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { vibesMotion } from "./motionPresets";
+import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
+
+type ActionKey = "pass" | "undo" | "intent" | "premium" | "like";
+
+type VibesActionDockProps = {
+  metrics: VibesDepthMetrics;
+  onPass: () => void;
+  onUndo: () => void;
+  onIntent: () => void;
+  onPremium: () => void;
+  onLike: () => void;
+  superlikeBadge?: React.ReactNode;
+  disabledPremium?: boolean;
+  entranceStyle?: any;
+};
+
+function DockButton({
+  actionKey,
+  size,
+  primary,
+  accent,
+  onPress,
+  children,
+  isDark,
+}: {
+  actionKey: ActionKey;
+  size: number;
+  primary?: boolean;
+  accent?: "purple" | "cream" | "teal";
+  onPress: () => void;
+  children: React.ReactNode;
+  isDark: boolean;
+}) {
+  const scale = useSharedValue(1);
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
+  const handlePress = () => {
+    scale.value = withTiming(0.94, vibesMotion.pressIn, () => {
+      scale.value = withTiming(1, vibesMotion.pressOut);
+    });
+    try {
+      Haptics.selectionAsync();
+    } catch {}
+    onPress();
+  };
+
+  return (
+    <Animated.View style={[animatedStyle, primary ? styles.primaryLift : null]}>
+      {primary ? <GlowOrb color="rgba(19,168,168,0.18)" size={size + 34} opacity={0.22} top={-17} left={-17} /> : null}
+      <TouchableOpacity
+        accessibilityRole="button"
+        accessibilityLabel={
+          actionKey === "pass"
+            ? "Pass profile"
+            : actionKey === "undo"
+              ? "Undo last action"
+            : actionKey === "intent"
+                ? "Open Intent request"
+                : actionKey === "premium"
+                  ? "Send Signal"
+                  : "Send Notice"
+        }
+        activeOpacity={0.88}
+        onPress={handlePress}
+        style={[
+          styles.actionButton,
+          {
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            backgroundColor: isDark ? "rgba(3,14,18,0.58)" : "rgba(255,250,244,0.64)",
+            borderColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(0,128,128,0.10)",
+          },
+          primary ? styles.primaryButton : null,
+          primary && !isDark ? styles.primaryButtonLight : null,
+          accent === "purple" ? styles.purpleButton : null,
+          accent === "purple" && !isDark ? styles.purpleButtonLight : null,
+          accent === "cream" ? styles.creamButton : null,
+          accent === "cream" && !isDark ? styles.creamButtonLight : null,
+          accent === "teal" ? styles.tealButton : null,
+        ]}
+      >
+        {children}
+        {primary ? (
+          <LinearGradientSafe
+            pointerEvents="none"
+            colors={["rgba(255,255,255,0.32)", "rgba(255,255,255,0.04)", "rgba(255,255,255,0)"]}
+            start={[0.2, 0]}
+            end={[0.8, 1]}
+            style={StyleSheet.absoluteFill}
+          />
+        ) : null}
+        <RimLight position="all" color={primary ? VIBES_DEPTH_COLORS.teal : "rgba(255,255,255,0.55)"} opacity={primary ? 0.34 : 0.14} radius={size / 2} thickness={1} />
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
+function VibesActionDock({
+  metrics,
+  onPass,
+  onUndo,
+  onIntent,
+  onPremium,
+  onLike,
+  superlikeBadge,
+  entranceStyle,
+}: VibesActionDockProps) {
+  const secondarySize = metrics.buttonSize;
+  const centerSize = metrics.centerButtonSize;
+  const colorScheme = useColorScheme();
+  const isDark = (colorScheme ?? "light") === "dark";
+
+  return (
+    <RNAnimated.View style={[styles.wrap, entranceStyle]}>
+      <GlowOrb color="rgba(19,168,168,0.13)" size={metrics.dockWidth * 0.86} opacity={0.18} bottom={-24} left={metrics.dockWidth * 0.07} />
+      <GlassSurface
+        radius={metrics.dockHeight / 2}
+        intensity={20}
+        glow={false}
+        glowColor={VIBES_DEPTH_COLORS.teal}
+        borderOpacity={0.07}
+        fallbackColor={isDark
+          ? Platform.OS === "android" ? "rgba(3,14,18,0.92)" : "rgba(7,30,34,0.46)"
+          : Platform.OS === "android" ? "rgba(255,250,244,0.88)" : "rgba(255,250,244,0.56)"}
+        style={[
+          styles.dock,
+          {
+            width: metrics.dockWidth,
+            minHeight: metrics.dockHeight,
+            borderRadius: metrics.dockHeight / 2,
+          },
+        ]}
+        contentStyle={[
+          styles.dockContent,
+          {
+            borderRadius: metrics.dockHeight / 2,
+            paddingHorizontal: metrics.isCompactWidth ? 7 : 10,
+            paddingVertical: metrics.isCompactHeight ? 3 : 4,
+          },
+        ]}
+      >
+        <LinearGradientSafe
+          pointerEvents="none"
+          colors={isDark
+            ? ["rgba(255,255,255,0.20)", "rgba(255,255,255,0.04)", "rgba(255,255,255,0)"]
+            : ["rgba(255,255,255,0.54)", "rgba(255,255,255,0.18)", "rgba(255,255,255,0)"]}
+          start={[0, 0]}
+          end={[1, 0]}
+          style={styles.dockReflection}
+        />
+        <LinearGradientSafe
+          pointerEvents="none"
+          colors={["rgba(19,168,168,0)", isDark ? "rgba(19,168,168,0.30)" : "rgba(0,128,128,0.22)", "rgba(19,168,168,0)"]}
+          start={[0, 0]}
+          end={[1, 0]}
+          style={styles.dockUnderscore}
+        />
+        <RimLight position="top" color="rgba(244,232,208,0.9)" opacity={0.12} radius={metrics.dockHeight / 2} thickness={1} />
+        <RimLight position="bottom" color={VIBES_DEPTH_COLORS.teal} opacity={0.1} radius={metrics.dockHeight / 2} thickness={1} />
+        <View style={styles.row}>
+          <DockButton actionKey="pass" size={secondarySize} onPress={onPass} isDark={isDark}>
+            <CircleOff size={Math.round(secondarySize * 0.43)} color={isDark ? "rgba(244,232,208,0.88)" : "#173C3B"} strokeWidth={2.2} />
+          </DockButton>
+          <DockButton actionKey="undo" size={Math.max(44, secondarySize - 4)} onPress={onUndo} isDark={isDark}>
+            <RotateCcw size={Math.round(secondarySize * 0.36)} color={VIBES_DEPTH_COLORS.teal} strokeWidth={2.25} />
+          </DockButton>
+          <DockButton actionKey="intent" size={centerSize} primary accent="teal" onPress={onIntent} isDark={isDark}>
+            <IntentMark size={Math.round(centerSize * 0.50)} color={isDark ? "#DDFBFA" : "#0F3D3E"} strokeWidth={2.2} />
+          </DockButton>
+          <View style={styles.superlikeWrap}>
+            {superlikeBadge}
+            <DockButton actionKey="premium" size={secondarySize} accent="purple" onPress={onPremium} isDark={isDark}>
+              <SignalIcon size={Math.round(secondarySize * 0.58)} color="#fff" accentColor="#F4E8D0" active strokeWidth={2.15} />
+            </DockButton>
+          </View>
+          <DockButton actionKey="like" size={secondarySize} accent="cream" onPress={onLike} isDark={isDark}>
+            <MaterialCommunityIcons name="heart-outline" size={Math.round(secondarySize * 0.43)} color={isDark ? VIBES_DEPTH_COLORS.cream : "#7A5B3A"} />
+          </DockButton>
+        </View>
+      </GlassSurface>
+    </RNAnimated.View>
+  );
+}
+
+export default memo(VibesActionDock);
+
+const styles = StyleSheet.create({
+  wrap: {
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "visible",
+  },
+  dock: {
+    overflow: "visible",
+  },
+  dockContent: {
+    justifyContent: "center",
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 6,
+  },
+  dockReflection: {
+    position: "absolute",
+    left: 18,
+    right: 18,
+    top: 5,
+    height: 12,
+    borderRadius: 999,
+    opacity: 0.55,
+  },
+  dockUnderscore: {
+    position: "absolute",
+    left: "38%",
+    right: "38%",
+    bottom: 3,
+    height: 2,
+    borderRadius: 999,
+    opacity: 0.72,
+  },
+  actionButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: "hidden",
+  },
+  primaryLift: {
+    marginHorizontal: -1,
+  },
+  primaryButton: {
+    backgroundColor: "rgba(5,36,40,0.72)",
+    borderColor: "rgba(19,168,168,0.24)",
+    shadowColor: VIBES_DEPTH_COLORS.teal,
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 9,
+  },
+  primaryButtonLight: {
+    backgroundColor: "rgba(232,249,246,0.74)",
+    borderColor: "rgba(19,168,168,0.24)",
+  },
+  purpleButton: {
+    backgroundColor: "rgba(75,43,164,0.82)",
+    borderColor: "rgba(139,92,255,0.34)",
+  },
+  purpleButtonLight: {
+    backgroundColor: "rgba(124,92,255,0.74)",
+  },
+  creamButton: {
+    backgroundColor: "rgba(34,28,22,0.7)",
+    borderColor: "rgba(244,232,208,0.18)",
+  },
+  creamButtonLight: {
+    backgroundColor: "rgba(255,248,237,0.78)",
+    borderColor: "rgba(122,91,58,0.14)",
+  },
+  tealButton: {
+    borderColor: "rgba(19,168,168,0.38)",
+  },
+  superlikeWrap: {
+    position: "relative",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+});

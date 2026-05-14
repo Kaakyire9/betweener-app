@@ -2,6 +2,7 @@ import { Colors } from "@/constants/theme";
 import { usePremiumState } from "@/hooks/use-premium-state";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/lib/auth-context";
+import { getPresenceDisplay } from "@/lib/presence";
 import { getSafeRemoteImageUri } from "@/lib/profile/display-name";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -209,7 +210,7 @@ export default function DashboardScreen() {
   const [profileViews, setProfileViews] = useState(0);
   const [likesReceived, setLikesReceived] = useState(0);
   const [conversationStreak, setConversationStreak] = useState(0);
-  const isOnline = !!liveProfile?.is_active;
+  const isOnline = getPresenceDisplay(liveProfile?.last_active ?? liveProfile?.lastActive).showPresence;
   const boostsUnlocked = hasAccess('SILVER');
   const boostStatusText = premiumLoading
     ? 'Checking premium access...'
@@ -852,7 +853,7 @@ export default function DashboardScreen() {
     <View style={styles.card}>
       <CardChrome />
       <View style={styles.cardHeader}>
-        <Text style={styles.cardTitle}>Likes / Superlikes</Text>
+        <Text style={styles.cardTitle}>Likes / Signals</Text>
         <View style={styles.badge}>
           <Text style={styles.badgeText}>{likesSuperlikesToday}</Text>
         </View>

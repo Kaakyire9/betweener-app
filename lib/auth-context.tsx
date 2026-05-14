@@ -3,6 +3,7 @@ import { registerPushToken } from '@/lib/notifications/push';
 import { clearSignupSession, consumeSignupMetadata, finalizeSignupPhoneVerification, getSignupPhoneState, updateSignupEventForUser } from '@/lib/signup-tracking';
 import { ensureFreshSession, initSupabaseAuthLifecycle, supabase } from '@/lib/supabase';
 import { isLikelyNetworkError } from '@/lib/network';
+import { enqueueProfileUpdateMutation } from '@/lib/offline/mutation-queue';
 import { Session, User } from '@supabase/supabase-js';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
@@ -52,12 +53,13 @@ type AuthContextType = {
   refreshPhoneState: () => Promise<boolean>;
   
   // Profile Actions
-  updateProfile: (updates: ProfileUpdateInput) => Promise<{ error: Error | null }>;
+  updateProfile: (updates: ProfileUpdateInput) => Promise<{ error: Error | null; queued?: boolean }>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const PHONE_VERIFIED_CACHE_KEY_PREFIX = "phone_verified_cache_v1:";
 const AUTH_SNAPSHOT_KEY = "auth_snapshot_v1";
+const EXPLICIT_SIGN_OUT_KEY = "auth_explicit_sign_out_v1";
 const PHONE_VERIFIED_CACHE_TTL_MS = 60_000;
 const PROFILE_DIAG_TIMEOUT_MS = 8000;
 const PROFILE_CACHE_TTL_MS = 60_000;
@@ -577,10 +579,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             (finalProfile?.phone_verified === true) || phoneVerified
           );
         } else {
-          if (_event === "SIGNED_OUT" || signOutRequestedRef.current) {
+          if (signOutRequestedRef.current) {
             signOutRequestedRef.current = false;
             applySignedOutState();
             await clearPersistedAuthSnapshot();
+            return;
+          }
+
+          if (_event === "SIGNED_OUT") {
+            setAuthRecoveryPending(true);
+            const restored = await restoreAuthSnapshot("auth_event:SIGNED_OUT_unrequested");
+            if (!restored) {
+              applySignedOutState();
+            } else {
+              setAuthRecoveryPending(false);
+            }
             return;
           }
 
@@ -1022,8 +1035,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = async () => {
     signOutRequestedRef.current = true;
     await clearPersistedAuthSnapshot();
+    try {
+      await AsyncStorage.setItem(EXPLICIT_SIGN_OUT_KEY, JSON.stringify({ at: Date.now() }));
+    } catch {
+      // best effort only
+    }
     if (user?.id) {
-      await updatePresence(false);
+      void updatePresence(false);
     }
     const { error } = await supabase.auth.signOut();
     if (error) {
@@ -1034,6 +1052,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const updateProfile = async (updates: ProfileUpdateInput) => {
     if (!user) return { error: new Error('No user found') };
+    const updatedAt = new Date().toISOString();
 
     try {
       // Use upsert for profile creation/updates to handle both scenarios
@@ -1042,10 +1061,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         .upsert({
           ...updates,
           user_id: user.id,
-          updated_at: new Date().toISOString(),
+          updated_at: updatedAt,
         }, {
           onConflict: 'user_id'
         });
+
+      if (error && isLikelyNetworkError(error)) {
+        throw error;
+      }
 
       if (!error) {
         await refreshProfile();
@@ -1054,6 +1077,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { error };
     } catch (error) {
       console.error('Profile update error:', error);
+      if (isLikelyNetworkError(error)) {
+        const optimisticProfile = profile
+          ? ({
+              ...profile,
+              ...updates,
+              user_id: user.id,
+              updated_at: updatedAt,
+            } as Profile)
+          : null;
+
+        if (optimisticProfile) {
+          profileCacheRef.current = { userId: user.id, profile: optimisticProfile, fetchedAt: Date.now() };
+          setProfile(optimisticProfile);
+          if (session) {
+            void writePersistedAuthSnapshot({
+              session,
+              profile: optimisticProfile,
+              phoneVerified: phoneVerified || optimisticProfile.phone_verified === true,
+              cachedAt: Date.now(),
+            });
+          }
+        }
+
+        await enqueueProfileUpdateMutation({
+          userId: user.id,
+          updates: updates as Record<string, unknown>,
+          updatedAt,
+        });
+
+        return { error: null, queued: true };
+      }
       return { error: error as Error };
     }
   };

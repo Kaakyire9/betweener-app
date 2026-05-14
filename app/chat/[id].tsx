@@ -5,6 +5,7 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useMoments } from "@/hooks/useMoments";
 import { useAuth } from "@/lib/auth-context";
 import { decryptMediaBytes, encryptMediaBytes, getOrCreateDeviceKeypair } from "@/lib/e2ee";
+import { decideIntentRequestOfflineSafe } from "@/lib/intents/offline-actions";
 import { computeConversationSignalLabel, computeFirstReplyHours, computeInterestOverlapRatio } from "@/lib/match/match-score";
 import { Motion } from "@/lib/motion";
 import { isLikelyNetworkError } from "@/lib/network";
@@ -13,11 +14,18 @@ import {
   buildChatThreadStoreKey,
   migrateLegacyChatThreadSnapshot,
   readOfflineSnapshot,
+  stageOfflineChatUpload,
   writeOfflineSnapshot,
 } from "@/lib/offline/chat-store";
-import { enqueueChatTextSendMutation } from "@/lib/offline/mutation-queue";
+import {
+  enqueueChatMediaSendMutation,
+  enqueueChatReactionSyncMutation,
+  enqueueChatTextSendMutation,
+  enqueueChatVoiceSendMutation,
+} from "@/lib/offline/mutation-queue";
 import { showOpenSettingsPrompt } from "@/lib/permission-prompts";
 import { getSafeRemoteImageUri, getUserFacingDisplayName, hasLeftBetweener } from "@/lib/profile/display-name";
+import { type ResponsiveMetrics, useResponsiveMetrics } from "@/lib/responsive";
 import { supabase } from "@/lib/supabase";
 import type { Database } from "@/supabase/types/database";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -51,7 +59,6 @@ import {
     ActivityIndicator,
     Alert,
     Animated,
-    Dimensions,
     Easing,
     FlatList,
     Image,
@@ -76,7 +83,6 @@ import RNSvg, { Path } from "react-native-svg";
 import { WebView } from "react-native-webview";
 import { encodeBase64 } from "tweetnacl-util";
 
-const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 const ATTACHMENT_SHEET_HEIGHT = 300;
 const CHAT_MEDIA_BUCKET = 'chat-media';
 const LOCATION_TEXT_PREFIX = '\u{1F4CD}';
@@ -87,7 +93,6 @@ const GOOGLE_MAPS_NATIVE_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 const GOOGLE_MAPS_WEB_API_KEY =
   process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY || GOOGLE_MAPS_NATIVE_API_KEY;
 const GOOGLE_MAPS_MAP_ID = process.env.EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID;
-const LOCATION_PREVIEW_WIDTH = Math.min(screenWidth * 0.68, 296);
 const LOCATION_PREVIEW_HEIGHT = 164;
 const LIVE_LOCATION_PRESETS = [15, 60, 480] as const;
 const FALLBACK_BETWEENER_DATE_PICKS = [
@@ -239,7 +244,7 @@ type MessageType = {
   encryptedMediaMime?: string | null;
   encryptedMediaSize?: number | null;
   reactions: { userId: string; emoji: string; }[];
-  status?: 'sending' | 'sent' | 'delivered' | 'read';
+  status?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read';
   readAt?: Date;
   deletedForAll?: boolean;
   isSystem?: boolean;
@@ -1097,10 +1102,12 @@ const formatVoiceDuration = (seconds: number) => {
 
 const getReceiptIconState = (status: MessageType['status'], isDark: boolean): ReceiptIconState => {
   switch (status) {
+    case 'queued':
+      return { name: 'clock-outline', color: isDark ? '#CFE1DD' : '#E8F3F0', size: 13 };
     case 'read':
-      return { name: 'check-all', color: isDark ? '#BFFBEA' : '#D4FFF2', size: 14 };
+      return { name: 'check-all', color: isDark ? '#18E0D2' : '#007D78', size: 14 };
     case 'delivered':
-      return { name: 'check-all', color: isDark ? '#F4FBFA' : '#F7FCFB', size: 14 };
+      return { name: 'check-all', color: isDark ? '#CAD8D5' : '#879491', size: 14 };
     case 'sent':
       return { name: 'check', color: isDark ? '#AAB8B4' : '#D0DEDB', size: 14 };
     default:
@@ -1650,6 +1657,9 @@ const MessageRowItem = memo(
 
       previousReactionCount.current = item.reactions.length;
     }, [item.reactions.length, reactionBubblePulse, reactionEntrance]);
+
+    const metaLabel = isMyMessage && item.status === 'queued' ? 'Queued' : timeLabel;
+
     const waveformBars = useMemo(() => {
       if (item.type !== 'voice' || !item.voiceMessage?.waveform) return null;
       return item.voiceMessage.waveform.map((height, idx) => (
@@ -2098,7 +2108,7 @@ const MessageRowItem = memo(
                       isMyMessage ? styles.messageMetaTextInlineMy : styles.messageMetaTextInlineTheir,
                     ]}
                   >
-                    {timeLabel}
+                    {metaLabel}
                   </Text>
                   {isMyMessage && (
                     <Animated.View style={receiptPulseStyle}>
@@ -2214,7 +2224,7 @@ const MessageRowItem = memo(
                         isMyMessage ? styles.mediaMetaTextMy : styles.mediaMetaTextTheir,
                       ]}
                     >
-                      {timeLabel}
+                      {metaLabel}
                     </Text>
                     {isMyMessage && (
                       <MaterialCommunityIcons
@@ -2263,7 +2273,7 @@ const MessageRowItem = memo(
                         isMyMessage ? styles.mediaMetaTextMy : styles.mediaMetaTextTheir,
                       ]}
                     >
-                      {timeLabel}
+                      {metaLabel}
                     </Text>
                     {isMyMessage && (
                       <MaterialCommunityIcons
@@ -3035,7 +3045,7 @@ const MessageRowItem = memo(
                     isMyMessage ? styles.messageMetaTextMy : styles.messageMetaTextTheir,
                   ]}
                 >
-                  {timeLabel}
+                  {metaLabel}
                 </Text>
                 {isMyMessage && (
                   <MaterialCommunityIcons
@@ -3220,7 +3230,8 @@ export default function ConversationScreen() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
-  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const responsive = useResponsiveMetrics();
+  const styles = useMemo(() => createStyles(theme, isDark, responsive), [theme, isDark, responsive]);
   const params = useLocalSearchParams();
   const hasPlacesKey = Boolean(GOOGLE_MAPS_WEB_API_KEY);
   
@@ -3731,14 +3742,12 @@ export default function ConversationScreen() {
       setPendingIntentRequest(null);
       return;
     }
-    const { error } = await supabase.rpc('rpc_decide_intent_request', {
-      p_request_id: pendingIntentRequest.id,
-      p_decision: 'accept',
+    const result = await decideIntentRequestOfflineSafe({
+      requestId: pendingIntentRequest.id,
+      decision: 'accept',
+      insertAcceptanceSystemMessages: true,
     });
-    if (error) return;
-    await supabase.rpc('rpc_insert_request_acceptance_system_messages', {
-      p_request_id: pendingIntentRequest.id,
-    });
+    if (result.status === 'queued') return;
     await ensureMatch();
     setPendingIntentRequest(null);
     setMatchAccepted(true);
@@ -3746,10 +3755,11 @@ export default function ConversationScreen() {
 
   const passPendingIntent = useCallback(async () => {
     if (!pendingIntentRequest) return;
-    await supabase.rpc('rpc_decide_intent_request', {
-      p_request_id: pendingIntentRequest.id,
-      p_decision: 'pass',
+    const result = await decideIntentRequestOfflineSafe({
+      requestId: pendingIntentRequest.id,
+      decision: 'pass',
     });
+    if (result.status === 'queued') return;
     setPendingIntentRequest(null);
   }, [pendingIntentRequest]);
 
@@ -5859,6 +5869,11 @@ export default function ConversationScreen() {
           text,
           replyToMessageId: replyingTo?.id ?? null,
         });
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === tempId ? { ...msg, status: 'queued' as const } : msg
+          )
+        );
         return;
       }
       console.log('[chat] send attachment text error', error);
@@ -6153,6 +6168,71 @@ export default function ConversationScreen() {
       );
     }
   }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replaceMessageById, replyingTo, user?.id]);
+
+  const queueMediaAttachment = useCallback(async ({
+    localUri,
+    fileName,
+    contentType,
+    mediaType,
+    documentSizeLabel,
+    documentTypeLabel,
+  }: {
+    localUri: string;
+    fileName: string;
+    contentType: string;
+    mediaType: 'image' | 'video' | 'document';
+    documentSizeLabel?: string | null;
+    documentTypeLabel?: string | null;
+  }) => {
+    if (!user?.id || !conversationId) return;
+    const stagedUri = await stageOfflineChatUpload(localUri, fileName);
+    const tempId = `temp-${mediaType}-${Date.now()}`;
+    const labelParts = [fileName, documentSizeLabel, documentTypeLabel].filter(Boolean);
+    const optimistic: MessageType = {
+      id: tempId,
+      text: mediaType === 'document' ? `${DOCUMENT_TEXT_PREFIX} ${labelParts.join(' | ')}\n${stagedUri}` : stagedUri,
+      senderId: user.id,
+      timestamp: new Date(),
+      type: mediaType === 'document' ? 'document' : mediaType,
+      reactions: [],
+      status: 'queued',
+      imageUrl: mediaType === 'image' ? stagedUri : undefined,
+      videoUrl: mediaType === 'video' ? stagedUri : undefined,
+      document:
+        mediaType === 'document'
+          ? {
+              name: fileName,
+              url: stagedUri,
+              sizeLabel: documentSizeLabel ?? null,
+              typeLabel: documentTypeLabel ?? null,
+            }
+          : undefined,
+      replyToId: replyingTo?.id ?? null,
+      replyTo: replyingTo || undefined,
+    };
+
+    setMessages((prev) => [...prev, optimistic]);
+    setReplyingTo(null);
+    setEditingMessage(null);
+    setViewOnceMode(false);
+
+    await enqueueChatMediaSendMutation({
+      senderId: user.id,
+      receiverId: conversationId,
+      localUri: stagedUri,
+      fileName,
+      contentType,
+      mediaType,
+      replyToMessageId: optimistic.replyToId ?? null,
+      documentName: mediaType === 'document' ? fileName : null,
+      documentSizeLabel: documentSizeLabel ?? null,
+      documentTypeLabel: documentTypeLabel ?? null,
+    });
+
+    setTimeout(() => {
+      flatListRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+  }, [conversationId, replyingTo, user?.id]);
 
   const sendLocationMessage = useCallback(async ({
     lat,
@@ -6721,7 +6801,7 @@ export default function ConversationScreen() {
             ? 'read'
             : data.delivered_at
               ? 'delivered'
-              : msg.status === 'sending'
+              : msg.status === 'sending' || msg.status === 'queued'
                 ? 'sent'
                 : msg.status;
           resolvedStatus = nextStatus;
@@ -6750,7 +6830,7 @@ export default function ConversationScreen() {
       pendingReceiptSyncTimersRef.current[messageId] = setTimeout(() => {
         delete pendingReceiptSyncTimersRef.current[messageId];
         void syncOutgoingReceiptState(messageId).then((status) => {
-          if ((status === 'sent' || status === 'sending' || status === null) && attempt < 5) {
+          if ((status === 'sent' || status === 'sending' || status === 'queued' || status === null) && attempt < 5) {
             scheduleOutgoingReceiptStateSync(messageId, attempt + 1);
           }
         });
@@ -6949,9 +7029,15 @@ export default function ConversationScreen() {
             if (prev.some((msg) => msg.id === row.id)) return prev;
             const rowType = row.message_type ?? 'text';
             const tempIndex = prev.findIndex((msg) => {
-              if (msg.status !== 'sending' || msg.senderId !== user.id) return false;
+              if ((msg.status !== 'sending' && msg.status !== 'queued') || msg.senderId !== user.id) return false;
               if (rowType === 'voice') {
                 return msg.type === 'voice';
+              }
+              if (rowType === 'image' || rowType === 'video') {
+                return msg.type === rowType;
+              }
+              if (rowType === 'text' && row.text?.startsWith(DOCUMENT_TEXT_PREFIX)) {
+                return msg.type === 'document';
               }
               return msg.text === row.text;
             });
@@ -7700,6 +7786,11 @@ export default function ConversationScreen() {
           text: trimmed,
           replyToMessageId: replyingTo?.id ?? null,
         });
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === tempId ? { ...msg, status: 'queued' as const } : msg
+          )
+        );
         setTimeout(() => {
           flatListRef.current?.scrollToEnd({ animated: true });
         }, 100);
@@ -7798,6 +7889,7 @@ export default function ConversationScreen() {
 
   const addReaction = useCallback(async (messageId: string, emoji: string) => {
     if (!user?.id) return;
+    if (messageId.startsWith('temp-')) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const previousReactions =
       messagesRef.current.find((msg) => msg.id === messageId)?.reactions ?? [];
@@ -7836,6 +7928,14 @@ export default function ConversationScreen() {
         .eq('message_id', messageId)
         .eq('user_id', user.id);
       if (error) {
+        if (isLikelyNetworkError(error)) {
+          await enqueueChatReactionSyncMutation({
+            messageId,
+            userId: user.id,
+            emoji: null,
+          });
+          return;
+        }
         console.log('[chat] remove reaction error', error);
         setMessages((prev) =>
           prev.map((msg) =>
@@ -7859,6 +7959,14 @@ export default function ConversationScreen() {
       );
 
     if (error) {
+      if (isLikelyNetworkError(error)) {
+        await enqueueChatReactionSyncMutation({
+          messageId,
+          userId: user.id,
+          emoji,
+        });
+        return;
+      }
       console.log('[chat] add reaction error', error);
       setMessages((prev) =>
         prev.map((msg) =>
@@ -8061,31 +8169,59 @@ export default function ConversationScreen() {
           duration: durationSeconds,
           waveform,
           isPlaying: false,
+          audioPath: uri,
         },
         replyToId: replyingTo?.id ?? null,
         replyTo: replyingTo || undefined,
       },
     ]);
     setReplyingTo(null);
+    const extension = uri.split('.').pop()?.toLowerCase() || 'm4a';
+    const fileName = `voice-${Date.now()}.${extension}`;
+    const filePath = `${user.id}/${fileName}`;
+    const contentType =
+      extension === 'm4a'
+        ? 'audio/m4a'
+        : extension === 'aac'
+        ? 'audio/aac'
+        : extension === 'wav'
+        ? 'audio/wav'
+        : extension === 'mp3'
+        ? 'audio/mpeg'
+        : extension === 'caf'
+        ? 'audio/x-caf'
+        : extension === '3gp'
+        ? 'audio/3gpp'
+        : 'application/octet-stream';
+
+    const queueVoiceMessage = async () => {
+      const stagedUri = await stageOfflineChatUpload(uri!, fileName);
+      await enqueueChatVoiceSendMutation({
+        senderId: user.id,
+        receiverId: conversationId,
+        localUri: stagedUri,
+        fileName,
+        contentType,
+        durationSeconds,
+        waveform,
+        replyToMessageId: replyingTo?.id ?? null,
+      });
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === tempId
+            ? {
+                ...msg,
+                status: 'queued' as const,
+                voiceMessage: msg.voiceMessage
+                  ? { ...msg.voiceMessage, audioPath: stagedUri }
+                  : msg.voiceMessage,
+              }
+            : msg
+        )
+      );
+    };
 
     try {
-      const extension = uri.split('.').pop()?.toLowerCase() || 'm4a';
-      const fileName = `voice-${Date.now()}.${extension}`;
-      const filePath = `${user.id}/${fileName}`;
-      const contentType =
-        extension === 'm4a'
-          ? 'audio/m4a'
-          : extension === 'aac'
-          ? 'audio/aac'
-          : extension === 'wav'
-          ? 'audio/wav'
-          : extension === 'mp3'
-          ? 'audio/mpeg'
-          : extension === 'caf'
-          ? 'audio/x-caf'
-          : extension === '3gp'
-          ? 'audio/3gpp'
-          : 'application/octet-stream';
       const response = await fetch(uri);
       const arrayBuffer = await response.arrayBuffer();
       const uint8Array = new Uint8Array(arrayBuffer);
@@ -8095,6 +8231,11 @@ export default function ConversationScreen() {
         .upload(filePath, uint8Array, { contentType, upsert: true });
 
       if (uploadError) {
+        if (isLikelyNetworkError(uploadError) || isRetryableUploadError(uploadError)) {
+          await queueVoiceMessage();
+          setIsUploadingVoice(false);
+          return;
+        }
         console.log('[chat] upload voice error', uploadError);
         Alert.alert('Voice message', 'Upload failed. Please try again.');
         setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
@@ -8119,6 +8260,11 @@ export default function ConversationScreen() {
         .single();
 
       if (error || !data) {
+        if (isLikelyNetworkError(error)) {
+          await queueVoiceMessage();
+          setIsUploadingVoice(false);
+          return;
+        }
         console.log('[chat] send voice error', error);
         Alert.alert('Voice message', 'Could not send. Please try again.');
         setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
@@ -8133,6 +8279,10 @@ export default function ConversationScreen() {
         scheduleOutgoingReceiptStateSync(data.id as string);
       }
     } catch (error) {
+      if (isLikelyNetworkError(error) || isRetryableUploadError(error)) {
+        await queueVoiceMessage();
+        return;
+      }
       console.log('[chat] voice message error', error);
       Alert.alert('Voice message', 'Something went wrong. Please try again.');
       setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
@@ -8170,14 +8320,18 @@ export default function ConversationScreen() {
     if (!audioPath) return;
 
     await stopVoicePlayback();
-    const { data, error } = await supabase
-      .storage
-      .from('voice-messages')
-      .createSignedUrl(audioPath, 3600);
-    if (error || !data?.signedUrl) {
-      console.log('[chat] signed url error', error);
-      Alert.alert('Voice message', 'Unable to load this audio.');
-      return;
+    let playbackUri = audioPath;
+    if (!audioPath.startsWith('file://')) {
+      const { data, error } = await supabase
+        .storage
+        .from('voice-messages')
+        .createSignedUrl(audioPath, 3600);
+      if (error || !data?.signedUrl) {
+        console.log('[chat] signed url error', error);
+        Alert.alert('Voice message', 'Unable to load this audio.');
+        return;
+      }
+      playbackUri = data.signedUrl;
     }
 
     try {
@@ -8188,7 +8342,7 @@ export default function ConversationScreen() {
         shouldPlayInBackground: false,
         shouldRouteThroughEarpiece: false,
       });
-      const player = createAudioPlayer({ uri: data.signedUrl }, { updateInterval: 200 });
+      const player = createAudioPlayer({ uri: playbackUri }, { updateInterval: 200 });
       voiceSoundRef.current = player;
       setPlayingVoiceId(messageId);
       (player as any).addListener?.('playbackStatusUpdate', (status: any) => {
@@ -8235,6 +8389,7 @@ export default function ConversationScreen() {
       'Keep this chat open while Betweener prepares your message.',
       viewOnceMode ? 'shield-lock-outline' : 'cloud-upload-outline'
     );
+    let queueCandidate: { uri: string; fileName: string; contentType: string; mediaType: 'image' | 'video' } | null = null;
     try {
       const fallbackName = asset.fileName ?? asset.uri.split('/').pop() ?? `camera-${Date.now()}`;
       const baseContentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
@@ -8242,6 +8397,12 @@ export default function ConversationScreen() {
         asset.type === 'image'
           ? await normalizeHeicImage(asset, fallbackName)
           : { uri: asset.uri, fileName: fallbackName, contentType: baseContentType };
+      queueCandidate = {
+        uri: normalized.uri,
+        fileName: normalized.fileName,
+        contentType: normalized.contentType,
+        mediaType: asset.type === 'video' ? 'video' : 'image',
+      };
 
       if (viewOnceMode) {
         updateMediaUploadStatus(
@@ -8281,7 +8442,16 @@ export default function ConversationScreen() {
         }
       }
     } catch (error) {
-      Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
+      if (!viewOnceMode && queueCandidate && (isLikelyNetworkError(error) || isRetryableUploadError(error))) {
+        await queueMediaAttachment({
+          localUri: queueCandidate.uri,
+          fileName: queueCandidate.fileName,
+          contentType: queueCandidate.contentType,
+          mediaType: queueCandidate.mediaType,
+        });
+      } else {
+        Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
+      }
     } finally {
       clearMediaUploadStatus(uploadStatusId);
     }
@@ -8293,6 +8463,7 @@ export default function ConversationScreen() {
     sendEncryptedMediaAttachment,
     sendImageAttachment,
     sendVideoAttachment,
+    queueMediaAttachment,
     updateMediaUploadStatus,
     uploadChatMedia,
     viewOnceMode,
@@ -8326,6 +8497,7 @@ export default function ConversationScreen() {
       'Keep this chat open while Betweener prepares your message.',
       viewOnceMode ? 'shield-lock-outline' : 'cloud-upload-outline'
     );
+    let queueCandidate: { uri: string; fileName: string; contentType: string; mediaType: 'image' | 'video' } | null = null;
     try {
       const fallbackName = asset.fileName ?? asset.uri.split('/').pop() ?? `library-${Date.now()}`;
       const baseContentType = asset.mimeType ?? (asset.type === 'video' ? 'video/mp4' : 'image/jpeg');
@@ -8333,6 +8505,12 @@ export default function ConversationScreen() {
         asset.type === 'image'
           ? await normalizeHeicImage(asset, fallbackName)
           : { uri: asset.uri, fileName: fallbackName, contentType: baseContentType };
+      queueCandidate = {
+        uri: normalized.uri,
+        fileName: normalized.fileName,
+        contentType: normalized.contentType,
+        mediaType: asset.type === 'video' ? 'video' : 'image',
+      };
 
       if (viewOnceMode) {
         updateMediaUploadStatus(
@@ -8372,7 +8550,16 @@ export default function ConversationScreen() {
         }
       }
     } catch (error) {
-      Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
+      if (!viewOnceMode && queueCandidate && (isLikelyNetworkError(error) || isRetryableUploadError(error))) {
+        await queueMediaAttachment({
+          localUri: queueCandidate.uri,
+          fileName: queueCandidate.fileName,
+          contentType: queueCandidate.contentType,
+          mediaType: queueCandidate.mediaType,
+        });
+      } else {
+        Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
+      }
     } finally {
       clearMediaUploadStatus(uploadStatusId);
     }
@@ -8384,6 +8571,7 @@ export default function ConversationScreen() {
     sendEncryptedMediaAttachment,
     sendImageAttachment,
     sendVideoAttachment,
+    queueMediaAttachment,
     updateMediaUploadStatus,
     uploadChatMedia,
     viewOnceMode,
@@ -8414,7 +8602,20 @@ export default function ConversationScreen() {
       const labelParts = [fileName, sizeLabel, typeLabel].filter(Boolean);
       await sendAttachmentText(`${DOCUMENT_TEXT_PREFIX} ${labelParts.join(' | ')}\n${publicUrl}`);
     } catch (error) {
-      Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
+      if (isLikelyNetworkError(error) || isRetryableUploadError(error)) {
+        const fileName = asset.name ?? asset.uri.split('/').pop() ?? `file-${Date.now()}`;
+        const contentType = asset.mimeType ?? 'application/octet-stream';
+        await queueMediaAttachment({
+          localUri: asset.uri,
+          fileName,
+          contentType,
+          mediaType: 'document',
+          documentSizeLabel: formatFileSize(asset.size),
+          documentTypeLabel: getFileTypeLabel(contentType, fileName),
+        });
+      } else {
+        Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
+      }
     } finally {
       clearMediaUploadStatus(uploadStatusId);
     }
@@ -8423,6 +8624,7 @@ export default function ConversationScreen() {
     clearMediaUploadStatus,
     closeAttachmentSheet,
     mediaUploadStatus,
+    queueMediaAttachment,
     sendAttachmentText,
     updateMediaUploadStatus,
     uploadChatMedia,
@@ -8915,7 +9117,7 @@ export default function ConversationScreen() {
   }, [clearFocus]);
 
   useEffect(() => {
-    const maxWidth = Math.min(screenWidth * 0.72, 340);
+    const maxWidth = Math.min(responsive.width * 0.72, 340);
     const minHeight = 180;
     const maxHeight = 420;
     const pending: string[] = [];
@@ -8972,7 +9174,7 @@ export default function ConversationScreen() {
     return () => {
       cancelled = true;
     };
-  }, [messages]);
+  }, [messages, responsive.width]);
 
   const handleOpenDocument = useCallback((doc?: MessageType['document']) => {
     if (!doc?.url) return;
@@ -12601,8 +12803,12 @@ export default function ConversationScreen() {
 }
 
 // [Include all the same styles from the original chat screen...]
-const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
-  StyleSheet.create({
+const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: ResponsiveMetrics) => {
+  const screenWidth = responsive.width;
+  const screenHeight = responsive.height;
+  const locationPreviewWidth = Math.min(screenWidth * 0.68, 296);
+
+  return StyleSheet.create({
     container: {
       flex: 1,
       backgroundColor: theme.background,
@@ -14800,12 +15006,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderColor: 'rgba(230,247,244,0.12)',
     },
     receiptMetaBadgeDelivered: {
-      backgroundColor: 'rgba(5,18,18,0.34)',
-      borderColor: 'rgba(244,251,250,0.18)',
+      backgroundColor: 'rgba(7,22,21,0.34)',
+      borderColor: 'rgba(202,216,213,0.20)',
     },
     receiptMetaBadgeRead: {
-      backgroundColor: 'rgba(4,26,23,0.38)',
-      borderColor: 'rgba(191,251,234,0.28)',
+      backgroundColor: 'rgba(2,50,47,0.48)',
+      borderColor: 'rgba(24,224,210,0.46)',
     },
     inlineMetaIcon: {
       marginLeft: 4,
@@ -15670,12 +15876,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderColor: 'rgba(230,247,244,0.12)',
     },
     mediaMetaOverlayDelivered: {
-      backgroundColor: 'rgba(6,18,18,0.62)',
-      borderColor: 'rgba(244,251,250,0.18)',
+      backgroundColor: 'rgba(7,22,21,0.62)',
+      borderColor: 'rgba(202,216,213,0.20)',
     },
     mediaMetaOverlayRead: {
-      backgroundColor: 'rgba(4,26,23,0.68)',
-      borderColor: 'rgba(191,251,234,0.26)',
+      backgroundColor: 'rgba(2,50,47,0.72)',
+      borderColor: 'rgba(24,224,210,0.44)',
     },
     mediaMetaOverlayTheir: {
       backgroundColor: 'rgba(0,0,0,0.28)',
@@ -16043,7 +16249,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     // Location Messages
     locationBubble: {
       padding: 8,
-      width: LOCATION_PREVIEW_WIDTH + 16,
+      width: locationPreviewWidth + 16,
     },
     locationMessageContainer: {
       gap: 8,
@@ -16056,12 +16262,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: theme.backgroundSubtle,
     },
     locationMapImage: {
-      width: LOCATION_PREVIEW_WIDTH,
+      width: locationPreviewWidth,
       height: LOCATION_PREVIEW_HEIGHT,
       backgroundColor: theme.backgroundSubtle,
     },
     locationMapPlaceholder: {
-      width: LOCATION_PREVIEW_WIDTH,
+      width: locationPreviewWidth,
       height: LOCATION_PREVIEW_HEIGHT,
       backgroundColor: theme.backgroundSubtle,
       alignItems: 'center',
@@ -17130,3 +17336,4 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: Colors.light.background,
     },
   });
+};

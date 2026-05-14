@@ -1,19 +1,122 @@
-// Example: Animated Get Started Button
-// filepath: c:\Users\HP\OneDrive\Documents\Projects\betweener-app\app\(auth)\welcome.tsx
+import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
+import SignalIcon from "@/components/icons/SignalIcon";
+import { haptics } from "@/lib/haptics";
+import { type ResponsiveMetrics, useResponsiveMetrics } from "@/lib/responsive";
+import { TRUST_LINKS, openExternalUrl } from "@/lib/trust-links";
 import { useRouter } from "expo-router";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { LinearGradient } from "expo-linear-gradient";
-import { Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Image, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { TRUST_LINKS, openExternalUrl } from "@/lib/trust-links";
+import Animated, {
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from "react-native-reanimated";
+
+const getWelcomeMetrics = (responsive: ResponsiveMetrics) => {
+  return {
+    compactHeight: responsive.compactHeight,
+    mediumHeight: responsive.mediumHeight,
+    compactWidth: responsive.compactWidth,
+    safePaddingHorizontal: responsive.compactWidth ? 20 : 24,
+    safePaddingTop: responsive.compactHeight ? 4 : 10,
+    safePaddingBottom: responsive.compactHeight ? 12 : 18,
+    logoFrame: responsive.compactHeight ? 74 : 82,
+    brandFontSize: responsive.compactHeight ? 29 : 32,
+    brandGap: responsive.compactHeight ? 5 : 11,
+    topPadding: responsive.compactHeight ? 4 : 10,
+    topBottomPadding: responsive.compactHeight ? 4 : 8,
+    heroGap: responsive.compactHeight ? 10 : 13,
+    headlineFontSize: responsive.compactWidth ? 34 : responsive.compactHeight ? 35 : 36,
+    headlineLineHeight: responsive.compactWidth ? 39 : responsive.compactHeight ? 40 : 41,
+    subtitleFontSize: responsive.compactHeight ? 13 : 14,
+    subtitleLineHeight: responsive.compactHeight ? 20 : 22,
+    signalPaddingVertical: responsive.compactHeight ? 9 : 11,
+    footerPaddingTop: responsive.compactHeight ? 13 : 15,
+    footerPaddingBottom: responsive.compactHeight ? 10 : 12,
+    ctaPaddingVertical: responsive.compactHeight ? 13 : 14,
+    secondaryPaddingVertical: responsive.compactHeight ? 10 : 11,
+    legalFontSize: responsive.compactHeight ? 10 : 10.5,
+    legalLineHeight: responsive.compactHeight ? 14 : 15,
+  };
+};
 
 export default function WelcomeScreen() {
   const router = useRouter();
+  const responsive = useResponsiveMetrics();
+  const metrics = useMemo(() => getWelcomeMetrics(responsive), [responsive]);
   const gradientColors = useMemo(
-    () => ["#0B2324", "#176A6A", "#886CB8", "#F4E0D0"] as const,
+    () => ["#061719", "#0B2A2D", "#165E63", "#7C5C9F", "#F0D9C7"] as const,
     []
   );
+  const entrance = useSharedValue(0);
+  const ambient = useSharedValue(0);
+
+  useEffect(() => {
+    entrance.value = withTiming(1, { duration: 680, easing: Easing.out(Easing.cubic) });
+    ambient.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 9000, easing: Easing.inOut(Easing.cubic) }),
+        withTiming(0, { duration: 9000, easing: Easing.inOut(Easing.cubic) })
+      ),
+      -1,
+      false
+    );
+  }, [ambient, entrance]);
+
+  const topGlowStyle = useAnimatedStyle(() => ({
+    opacity: 0.62 + ambient.value * 0.14,
+    transform: [
+      { translateX: ambient.value * 8 },
+      { translateY: ambient.value * 5 },
+    ] as const,
+  }));
+
+  const bottomGlowStyle = useAnimatedStyle(() => ({
+    opacity: 0.36 + ambient.value * 0.1,
+    transform: [
+      { translateX: -ambient.value * 7 },
+      { translateY: -ambient.value * 5 },
+    ] as const,
+  }));
+
+  const brandEntranceStyle = useAnimatedStyle(() => ({
+    opacity: entrance.value,
+    transform: [
+      { translateY: (1 - entrance.value) * 10 },
+      { scale: 0.96 + entrance.value * 0.04 },
+    ] as const,
+  }));
+
+  const heroEntranceStyle = useAnimatedStyle(() => ({
+    opacity: entrance.value,
+    transform: [{ translateY: (1 - entrance.value) * 14 }] as const,
+  }));
+
+  const signalEntranceStyle = useAnimatedStyle(() => ({
+    opacity: entrance.value,
+    transform: [{ translateY: (1 - entrance.value) * 18 }] as const,
+  }));
+
+  const footerEntranceStyle = useAnimatedStyle(() => ({
+    opacity: entrance.value,
+    transform: [{ translateY: (1 - entrance.value) * 22 }] as const,
+  }));
+
+  const handleCreateAccount = async () => {
+    await haptics.light();
+    router.replace("/(auth)/signup-options");
+  };
+
+  const handleSignIn = async () => {
+    await haptics.light();
+    router.replace("/(auth)/login");
+  };
 
   return (
     <LinearGradient
@@ -22,20 +125,22 @@ export default function WelcomeScreen() {
       end={{ x: 0.9, y: 0.95 }}
       style={styles.gradient}
     >
-      <LinearGradient
-        colors={["rgba(97,224,218,0.22)", "rgba(97,224,218,0.0)"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.orbTop}
-        pointerEvents="none"
-      />
-      <LinearGradient
-        colors={["rgba(213,164,255,0.32)", "rgba(213,164,255,0.02)"]}
-        start={{ x: 0.1, y: 0 }}
-        end={{ x: 0.9, y: 1 }}
-        style={styles.orbBottom}
-        pointerEvents="none"
-      />
+      <Animated.View style={[styles.orbTop, topGlowStyle]} pointerEvents="none">
+        <LinearGradient
+          colors={["rgba(19,168,168,0.22)", "rgba(19,168,168,0.0)"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+      </Animated.View>
+      <Animated.View style={[styles.orbBottom, bottomGlowStyle]} pointerEvents="none">
+        <LinearGradient
+          colors={["rgba(139,92,255,0.28)", "rgba(244,232,208,0.08)"]}
+          start={{ x: 0.1, y: 0 }}
+          end={{ x: 0.9, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+      </Animated.View>
       <LinearGradient
         colors={["rgba(0,0,0,0.18)", "rgba(0,0,0,0.0)"]}
         start={{ x: 0.5, y: 0 }}
@@ -50,62 +155,182 @@ export default function WelcomeScreen() {
         style={styles.vignetteBottom}
         pointerEvents="none"
       />
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.topRow}>
+      <SafeAreaView
+        style={[
+          styles.safeArea,
+          {
+            paddingHorizontal: metrics.safePaddingHorizontal,
+            paddingTop: metrics.safePaddingTop,
+            paddingBottom: metrics.safePaddingBottom,
+          },
+        ]}
+      >
+        <Animated.View
+          style={[
+            styles.topRow,
+            brandEntranceStyle,
+            { paddingTop: metrics.topPadding, paddingBottom: metrics.topBottomPadding },
+          ]}
+        >
           <View style={styles.brandLockup}>
-            <View style={styles.brandMarkFrame}>
-              <View style={styles.brandHaloPrimary} />
-              <View style={styles.brandHaloSecondary} />
+            <View style={[styles.brandMarkFrame, { width: metrics.logoFrame, height: metrics.logoFrame }]}>
+              <View
+                style={[
+                  styles.brandHaloPrimary,
+                  {
+                    width: metrics.logoFrame * 0.88,
+                    height: metrics.logoFrame * 0.88,
+                    borderRadius: metrics.logoFrame * 0.44,
+                  },
+                ]}
+              />
+              <View
+                style={[
+                  styles.brandHaloSecondary,
+                  {
+                    width: metrics.logoFrame * 0.7,
+                    height: metrics.logoFrame * 0.7,
+                    borderRadius: metrics.logoFrame * 0.35,
+                  },
+                ]}
+              />
               <Image
                 source={require("../../assets/images/foreground-icon.png")}
-                style={styles.brandMark}
+                style={[
+                  styles.brandMark,
+                  { width: metrics.logoFrame * 0.8, height: metrics.logoFrame * 0.8 },
+                ]}
                 resizeMode="contain"
               />
             </View>
-            <Text style={styles.brand}>Betweener</Text>
+            <Text style={[styles.brand, { fontSize: metrics.brandFontSize, marginTop: metrics.brandGap }]}>Betweener</Text>
             <Text style={styles.brandCaption}>Intentional dating with trust and chemistry.</Text>
           </View>
-        </View>
+        </Animated.View>
 
-        <View style={styles.hero}>
-          <Text style={styles.heroText}>Meet with more context.{"\n"}Match the <Text style={styles.heroBold}>Vibe</Text>.</Text>
-          <Text style={styles.heroSubtext}>
-            Verified profiles.{"\n"}Real context.{"\n"}Better chemistry.
+        <Animated.View style={[styles.hero, heroEntranceStyle, { gap: metrics.heroGap }]}>
+          <View style={styles.heroKickerPill}>
+            <View style={styles.heroKickerDot} />
+            <Text style={styles.heroKicker}>Intentional discovery</Text>
+          </View>
+          <Text
+            style={[
+              styles.heroText,
+              { fontSize: metrics.headlineFontSize, lineHeight: metrics.headlineLineHeight },
+            ]}
+          >
+            Find the <Text style={styles.heroBold}>signal</Text>{"\n"}beyond the swipe.
           </Text>
-        </View>
+          <Text
+            style={[
+              styles.heroSubtext,
+              { fontSize: metrics.subtitleFontSize, lineHeight: metrics.subtitleLineHeight },
+            ]}
+          >
+            Verified profiles, shared moments, and clear intent before the first message.
+          </Text>
+          <Animated.View
+            style={[
+              styles.intentArtifact,
+              signalEntranceStyle,
+              { paddingVertical: metrics.signalPaddingVertical },
+            ]}
+          >
+            <BlurViewSafe
+              intensity={Platform.OS === "ios" ? 24 : 0}
+              tint="dark"
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            />
+            <LinearGradient
+              colors={["rgba(7,30,34,0.68)", "rgba(42,24,62,0.30)"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            />
+            <View style={styles.intentIconWrap}>
+              <SignalIcon size={24} color="#13A8A8" accentColor="#8B5CFF" active strokeWidth={2} />
+            </View>
+            <View style={styles.intentCopy}>
+              <Text style={styles.intentLabel}>SIGNAL · 48H</Text>
+              <Text style={styles.intentText}>They noticed your energy.</Text>
+            </View>
+          </Animated.View>
+        </Animated.View>
 
-        <View style={styles.footerWrap}>
+        <Animated.View style={[styles.footerWrap, footerEntranceStyle]}>
           <LinearGradient
-            colors={["rgba(255,255,255,0.20)", "rgba(255,255,255,0.08)"]}
+            colors={
+              Platform.OS === "ios"
+                ? ["rgba(255,255,255,0.13)", "rgba(255,255,255,0.055)"]
+                : ["rgba(7,30,34,0.44)", "rgba(7,30,34,0.24)"]
+            }
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
-            style={styles.footerCard}
+            style={[
+              styles.footerCard,
+              {
+                paddingTop: metrics.footerPaddingTop,
+                paddingBottom: metrics.footerPaddingBottom,
+              },
+            ]}
           >
+            <BlurViewSafe
+              intensity={Platform.OS === "ios" ? 28 : 0}
+              tint="dark"
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            />
+            <View style={styles.footerRim} pointerEvents="none" />
             <View style={styles.signalRow}>
               <View style={styles.signalPill}>
-                <Text style={styles.signalText}>Verified profiles</Text>
+                <Ionicons name="shield-checkmark" size={13} color="#F4E8D0" />
+                <Text style={styles.signalText}>Verified</Text>
               </View>
               <View style={styles.signalPill}>
+                <Ionicons name="people" size={13} color="#F4E8D0" />
                 <Text style={styles.signalText}>Circles</Text>
               </View>
               <View style={styles.signalPill}>
+                <Ionicons name="sparkles" size={13} color="#F4E8D0" />
                 <Text style={styles.signalText}>Moments</Text>
               </View>
             </View>
 
             <Pressable
-              onPress={() => router.replace("/(auth)/signup-options")}
-              style={styles.ctaButtonPrimary}
+              onPress={() => void handleCreateAccount()}
+              style={({ pressed }) => [
+                styles.ctaButtonPrimary,
+                { paddingVertical: metrics.ctaPaddingVertical },
+                pressed && styles.ctaButtonPressed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Create account"
             >
-              <Ionicons name="sparkles" size={18} color="#0F172A" />
+              <Ionicons name="sparkles" size={16} color="#0F172A" />
               <Text style={styles.ctaText}>Create account</Text>
             </Pressable>
 
-            <Pressable onPress={() => router.replace("/(auth)/login")} style={styles.secondaryButton}>
+            <Pressable
+              onPress={() => void handleSignIn()}
+              style={({ pressed }) => [
+                styles.secondaryButton,
+                { paddingVertical: metrics.secondaryPaddingVertical },
+                pressed && styles.secondaryButtonPressed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Sign in"
+            >
               <Text style={styles.secondaryText}>Already have an account? Sign in</Text>
             </Pressable>
 
-            <Text style={styles.legal}>
+            <Text
+              style={[
+                styles.legal,
+                { fontSize: metrics.legalFontSize, lineHeight: metrics.legalLineHeight },
+              ]}
+            >
               {"By tapping \"Create account\" or \"Sign in\", you agree to our "}
               <Text style={styles.legalLink} onPress={() => void openExternalUrl(TRUST_LINKS.terms)}>Terms</Text>.
               {" "}Learn how we process your data in our{" "}
@@ -114,7 +339,7 @@ export default function WelcomeScreen() {
               <Text style={styles.legalLink} onPress={() => void openExternalUrl(TRUST_LINKS.cookies)}>Cookies Policy</Text>.
             </Text>
           </LinearGradient>
-        </View>
+        </Animated.View>
       </SafeAreaView>
     </LinearGradient>
   );
@@ -126,20 +351,23 @@ const styles = StyleSheet.create({
   },
   orbTop: {
     position: "absolute",
-    top: 40,
-    left: -40,
-    width: 220,
-    height: 220,
-    borderRadius: 110,
+    top: 34,
+    left: -72,
+    width: 226,
+    height: 226,
+    borderRadius: 113,
+    opacity: 0.74,
+    overflow: "hidden",
   },
   orbBottom: {
     position: "absolute",
-    right: -96,
-    bottom: 154,
-    width: 228,
-    height: 228,
-    borderRadius: 114,
-    opacity: 0.52,
+    right: -112,
+    bottom: 142,
+    width: 236,
+    height: 236,
+    borderRadius: 118,
+    opacity: 0.42,
+    overflow: "hidden",
   },
   vignetteTop: {
     position: "absolute",
@@ -157,58 +385,42 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 10,
-    paddingBottom: 18,
   },
   topRow: {
-    paddingTop: 12,
-    paddingBottom: 18,
   },
   brandLockup: {
     alignItems: "center",
-    gap: 8,
+    gap: 7,
   },
   brandMarkFrame: {
-    width: 96,
-    height: 96,
     alignItems: "center",
     justifyContent: "center",
     position: "relative",
   },
   brandHaloPrimary: {
     position: "absolute",
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    backgroundColor: "rgba(97,224,218,0.20)",
-    shadowColor: "#61E0DA",
-    shadowOpacity: 0.32,
-    shadowRadius: 28,
+    backgroundColor: "rgba(19,168,168,0.16)",
+    shadowColor: "#13A8A8",
+    shadowOpacity: 0.28,
+    shadowRadius: 26,
     shadowOffset: { width: 0, height: 12 },
     elevation: 10,
   },
   brandHaloSecondary: {
     position: "absolute",
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    backgroundColor: "rgba(213,164,255,0.16)",
+    backgroundColor: "rgba(244,232,208,0.13)",
   },
   brandMark: {
-    width: 76,
-    height: 76,
   },
   brand: {
-    color: "#ffffff",
+    color: "#F8F3E9",
     fontFamily: "Archivo_700Bold",
-    fontSize: 31,
-    letterSpacing: 0.4,
+    letterSpacing: 0,
   },
   brandCaption: {
-    color: "rgba(255,255,255,0.82)",
-    fontSize: 13,
-    lineHeight: 19,
+    color: "rgba(248,243,233,0.78)",
+    fontSize: 12.5,
+    lineHeight: 18,
     textAlign: "center",
     fontFamily: "Manrope_500Medium",
     paddingHorizontal: 28,
@@ -218,42 +430,116 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 10,
-    gap: 12,
+  },
+  heroKickerPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    backgroundColor: "rgba(7,30,34,0.22)",
+    borderWidth: 1,
+    borderColor: "rgba(244,232,208,0.16)",
+  },
+  heroKickerDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: "#13A8A8",
+    shadowColor: "#13A8A8",
+    shadowOpacity: 0.65,
+    shadowRadius: 8,
+  },
+  heroKicker: {
+    color: "rgba(248,243,233,0.86)",
+    fontSize: 11,
+    fontFamily: "Manrope_700Bold",
+    textTransform: "uppercase",
+    letterSpacing: 0.8,
   },
   heroText: {
-    color: "#ffffff",
-    fontSize: 38,
+    color: "#FFF8EF",
     textAlign: "center",
     fontFamily: "Manrope_400Regular",
-    lineHeight: 45,
   },
   heroBold: {
     fontFamily: "Archivo_700Bold",
   },
   heroSubtext: {
-    color: "rgba(255,255,255,0.84)",
+    color: "rgba(248,243,233,0.80)",
     textAlign: "center",
-    fontSize: 15,
-    lineHeight: 26,
-    fontFamily: "Archivo_700Bold",
-    paddingHorizontal: 18,
+    fontFamily: "Manrope_600SemiBold",
+    paddingHorizontal: 24,
+    maxWidth: 350,
+  },
+  intentArtifact: {
+    marginTop: 2,
+    width: "78%",
+    minWidth: 286,
+    maxWidth: 330,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    borderRadius: 24,
+    paddingHorizontal: 14,
+    backgroundColor: Platform.OS === "ios" ? "rgba(7,30,34,0.18)" : "rgba(7,30,34,0.62)",
+    borderWidth: 1,
+    borderColor: "rgba(19,168,168,0.22)",
+    shadowColor: "#13A8A8",
+    shadowOpacity: 0.15,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    overflow: "hidden",
+  },
+  intentIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(19,168,168,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(19,168,168,0.28)",
+  },
+  intentCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  intentLabel: {
+    color: "#F4E8D0",
+    fontSize: 11,
+    fontFamily: "Manrope_700Bold",
+    textTransform: "uppercase",
+    letterSpacing: 0.7,
+    includeFontPadding: false,
+  },
+  intentText: {
+    color: "rgba(248,243,233,0.82)",
+    fontSize: 12.5,
+    lineHeight: 18,
+    fontFamily: "Manrope_500Medium",
+    marginTop: 1,
+    includeFontPadding: false,
   },
   signalRow: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "flex-start",
-    gap: 10,
+    justifyContent: "center",
+    gap: 8,
   },
   signalPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
     borderRadius: 999,
-    paddingHorizontal: 11,
+    paddingHorizontal: 10,
     paddingVertical: 7,
-    backgroundColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "rgba(255,255,255,0.07)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)",
+    borderColor: "rgba(244,232,208,0.15)",
   },
   signalText: {
-    color: "#ffffff",
+    color: "rgba(248,243,233,0.92)",
     fontSize: 12,
     fontFamily: "Manrope_600SemiBold",
   },
@@ -261,19 +547,28 @@ const styles = StyleSheet.create({
     paddingBottom: 2,
   },
   footerCard: {
-    borderRadius: 30,
-    paddingHorizontal: 18,
-    paddingTop: 16,
-    paddingBottom: 12,
+    borderRadius: 32,
+    paddingHorizontal: 17,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
+    borderColor: "rgba(244,232,208,0.13)",
     gap: 9,
     overflow: "hidden",
+    shadowColor: "#000",
+    shadowOpacity: 0.18,
+    shadowRadius: 28,
+    shadowOffset: { width: 0, height: 16 },
+    elevation: 10,
+  },
+  footerRim: {
+    position: "absolute",
+    top: 0,
+    left: 22,
+    right: 22,
+    height: 1,
+    backgroundColor: "rgba(244,232,208,0.30)",
   },
   legal: {
-    color: "rgba(255,255,255,0.62)",
-    fontSize: 10.5,
-    lineHeight: 15,
+    color: "rgba(248,243,233,0.68)",
     textAlign: "center",
     fontFamily: "Manrope_400Regular",
     paddingHorizontal: 4,
@@ -284,19 +579,22 @@ const styles = StyleSheet.create({
     textDecorationStyle: "solid",
   },
   ctaButtonPrimary: {
-    backgroundColor: "#ffffff",
+    backgroundColor: "#FFF8EF",
     borderRadius: 999,
-    paddingVertical: 14,
     paddingHorizontal: 18,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
-    shadowColor: "#FFFFFF",
-    shadowOpacity: 0.22,
+    shadowColor: "#F4E8D0",
+    shadowOpacity: 0.24,
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 8 },
     elevation: 8,
+  },
+  ctaButtonPressed: {
+    opacity: 0.92,
+    transform: [{ scale: 0.985 }],
   },
   ctaText: {
     color: "#0F172A",
@@ -305,15 +603,17 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     borderRadius: 999,
-    paddingVertical: 12,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.05)",
+    backgroundColor: "rgba(7,30,34,0.12)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.12)",
+    borderColor: "rgba(244,232,208,0.13)",
+  },
+  secondaryButtonPressed: {
+    opacity: 0.78,
   },
   secondaryText: {
-    color: "rgba(255,255,255,0.92)",
+    color: "rgba(248,243,233,0.92)",
     textAlign: "center",
     fontSize: 14,
     fontFamily: "Manrope_600SemiBold",

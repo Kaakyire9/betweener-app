@@ -1,7 +1,7 @@
+import BetweenerLoader from '@/components/ui/BetweenerLoader';
 import { useAuth, useAuthGuard } from '@/lib/auth-context';
 import { Redirect, usePathname, useRouter, useSegments } from 'expo-router';
 import { useEffect } from 'react';
-import { ActivityIndicator, View } from 'react-native';
 
 type AuthGuardProps = {
   children: React.ReactNode;
@@ -21,9 +21,7 @@ export function AuthGuard({ children, fallback }: AuthGuardProps) {
   // Show loading spinner while checking auth
   if (isLoading) {
     return fallback || (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#FF6B6B" />
-      </View>
+      <BetweenerLoader label="Opening Betweener" sublabel="Restoring your private session." />
     );
   }
 
@@ -51,9 +49,7 @@ export function AuthGuard({ children, fallback }: AuthGuardProps) {
 
   // Fallback loading state
   return fallback || (
-    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-      <ActivityIndicator size="large" color="#FF6B6B" />
-    </View>
+    <BetweenerLoader label="Opening Betweener" sublabel="Preparing your next screen." />
   );
 }
 
@@ -100,17 +96,13 @@ export function GuestGuard({ children }: { children: React.ReactNode }) {
 
   if (isLoading) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#FF6B6B" />
-      </View>
+      <BetweenerLoader label="Opening Betweener" sublabel="Restoring your private session." />
     );
   }
 
   if (shouldRedirectAuthenticatedUser) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#FF6B6B" />
-      </View>
+      <BetweenerLoader label="Opening your space" sublabel="Taking you back into Betweener." />
     );
   }
 

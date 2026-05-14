@@ -1,8 +1,9 @@
 // ExploreStack.tsx
 import type { Match } from "@/types/match";
+import { useResponsiveMetrics } from "@/lib/responsive";
 import * as Haptics from "expo-haptics";
 import { forwardRef, useEffect, useImperativeHandle } from "react";
-import { Dimensions, StyleSheet, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
     Extrapolate,
@@ -14,8 +15,6 @@ import Animated, {
     withTiming,
 } from "react-native-reanimated";
 import ExploreCard from "./ExploreCard";
-
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
 export type ExploreStackHandle = {
   performSwipe: (dir: "left" | "right" | "superlike") => void;
@@ -30,12 +29,16 @@ type Props = {
   onProfileTap: (id: string) => void;
 };
 
-const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.28;
-const EXIT_DISTANCE = SCREEN_WIDTH * 1.2;
-
 const ExploreStack = forwardRef<ExploreStackHandle, Props>(
   ({ matches, currentIndex, setCurrentIndex, recordSwipe, onProfileTap }, ref) => {
     const list = matches && matches.length > 0 ? matches : [];
+    const responsive = useResponsiveMetrics();
+    const screenWidth = responsive.width;
+    const swipeThreshold = screenWidth * 0.28;
+    const exitDistance = screenWidth * 1.2;
+    const cardFrameStyle = {
+      height: responsive.height * 0.52,
+    };
 
     // Shared values for active card
     const translateX = useSharedValue(0);
@@ -50,15 +53,15 @@ const ExploreStack = forwardRef<ExploreStackHandle, Props>(
         try {
           if (dir === "superlike") {
             cardOpacity.value = withTiming(0, { duration: 420 });
-            translateX.value = withTiming(-SCREEN_WIDTH * 0.08, { duration: 220 }, () => {
+            translateX.value = withTiming(-screenWidth * 0.08, { duration: 220 }, () => {
               translateX.value = withTiming(0, { duration: 320 });
             });
-            translateY.value = withTiming(-EXIT_DISTANCE, { duration: 520 }, () => runOnJS(completeSwipe)(dir));
+            translateY.value = withTiming(-exitDistance, { duration: 520 }, () => runOnJS(completeSwipe)(dir));
             rotate.value = withTiming(-6, { duration: 420 });
             return;
           }
 
-          const targetX = dir === "right" ? EXIT_DISTANCE : -EXIT_DISTANCE;
+          const targetX = dir === "right" ? exitDistance : -exitDistance;
           cardOpacity.value = withTiming(0, { duration: 240 });
           translateX.value = withTiming(targetX, { duration: 300 }, () => {
             runOnJS(completeSwipe)(dir);
@@ -136,21 +139,21 @@ const ExploreStack = forwardRef<ExploreStackHandle, Props>(
     const pan = Gesture.Pan()
       .onUpdate((e) => {
         translateX.value = e.translationX;
-        translateY.value = e.translationY;
+          translateY.value = e.translationY;
         rotate.value = interpolate(
           translateX.value,
-          [-SCREEN_WIDTH, 0, SCREEN_WIDTH],
+          [-screenWidth, 0, screenWidth],
           [-18, 0, 18],
           Extrapolate.CLAMP
         );
-        scale.value = 1 - Math.min(Math.abs(translateX.value) / (SCREEN_WIDTH * 8), 0.08);
-        cardOpacity.value = 1 - Math.min(Math.abs(translateX.value) / (SCREEN_WIDTH * 1.2), 0.6);
+        scale.value = 1 - Math.min(Math.abs(translateX.value) / (screenWidth * 8), 0.08);
+        cardOpacity.value = 1 - Math.min(Math.abs(translateX.value) / (screenWidth * 1.2), 0.6);
       })
       .onEnd((e) => {
-        const shouldExit = Math.abs(e.translationX) > SWIPE_THRESHOLD || Math.abs(e.velocityX) > 1000;
+        const shouldExit = Math.abs(e.translationX) > swipeThreshold || Math.abs(e.velocityX) > 1000;
         if (shouldExit) {
           const dir: "left" | "right" = e.translationX > 0 ? "right" : "left";
-          const targetX = dir === "right" ? EXIT_DISTANCE : -EXIT_DISTANCE;
+          const targetX = dir === "right" ? exitDistance : -exitDistance;
           translateX.value = withTiming(targetX, { duration: 280 }, () => {
             runOnJS(completeSwipe)(dir);
           });
@@ -177,9 +180,9 @@ const ExploreStack = forwardRef<ExploreStackHandle, Props>(
 
           if (isActive) {
             return (
-              <View key={m.id} style={[styles.cardContainer, { zIndex }]}>
+              <View key={m.id} style={[styles.cardContainer, cardFrameStyle, { zIndex }]}>
                 <GestureDetector gesture={pan}>
-                  <Animated.View style={[styles.card, activeStyle]}>
+                  <Animated.View style={[styles.card, cardFrameStyle, activeStyle]}>
                     <ExploreCard match={m} onPress={() => onProfileTap(m.id)} />
                   </Animated.View>
                 </GestureDetector>
@@ -189,7 +192,7 @@ const ExploreStack = forwardRef<ExploreStackHandle, Props>(
 
           const st = stackedStyle(i);
           return (
-            <Animated.View key={m.id} style={[styles.card, st, { zIndex }]}>
+            <Animated.View key={m.id} style={[styles.card, cardFrameStyle, st, { zIndex }]}>
               <ExploreCard match={m} onPress={() => onProfileTap(m.id)} />
             </Animated.View>
           );
@@ -209,14 +212,12 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     top: 0,
-    height: SCREEN_HEIGHT * 0.52,
   },
   card: {
     position: "absolute",
     left: 0,
     right: 0,
     top: 0,
-    height: SCREEN_HEIGHT * 0.52,
     borderRadius: 28,
     overflow: "hidden",
     backgroundColor: "#fff",

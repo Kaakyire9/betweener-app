@@ -18,7 +18,10 @@ import { AuthProvider, useAuthGuard } from "@/lib/auth-context";
 import AccountRecoveryNotice from "@/components/AccountRecoveryNotice";
 import RecoveryMergeSuggestionNotice from "@/components/RecoveryMergeSuggestionNotice";
 import InAppToasts from "@/components/InAppToasts";
+import IntentResponseReminder from "@/components/IntentResponseReminder";
 import NetworkStatusBanner from "@/components/NetworkStatusBanner";
+import OfflineSyncStatusPill from "@/components/OfflineSyncStatusPill";
+import ChatDeliveryReceiptAcknowledger from "@/components/ChatDeliveryReceiptAcknowledger";
 import { drainOfflineMutationQueue, startOfflineMutationQueueAutoDrain } from "@/lib/offline/mutation-queue";
 import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
 import { SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
@@ -544,10 +547,13 @@ function RootLayout() {
       <AuthProvider>
         <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
           <OfflineMutationQueueHydrator />
+          <ChatDeliveryReceiptAcknowledger />
           <PendingNotificationRouteHydrator />
           <Slot />
           <InAppToasts />
+          <IntentResponseReminder />
           <NetworkStatusBanner />
+          <OfflineSyncStatusPill />
           <AccountRecoveryNotice />
           <RecoveryMergeSuggestionNotice />
 

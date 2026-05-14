@@ -1,6 +1,7 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme as useAppColorScheme } from '@/hooks/use-color-scheme';
 import { useVerificationStatus } from '@/hooks/use-verification-status';
+import { useResponsiveMetrics } from '@/lib/responsive';
 import { supabase } from '@/lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
@@ -26,7 +27,6 @@ import { Camera as VisionCamera, useCameraDevice } from 'react-native-vision-cam
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
     Alert,
-    Dimensions,
     KeyboardAvoidingView,
     LayoutChangeEvent,
     Linking,
@@ -363,11 +363,11 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const [, setLiveGuideLayout] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const { status: verificationStatus, refreshStatus } = useVerificationStatus(profile?.user_id);
   const insets = useSafeAreaInsets();
+  const responsive = useResponsiveMetrics();
   const cameraRef = useRef<VisionCamera | null>(null);
   const liveGuideRef = useRef<View | null>(null);
   const verificationScrollRef = useRef<ScrollView | null>(null);
   const device = useCameraDevice('front');
-  const windowSize = useMemo(() => Dimensions.get('window'), []);
   const stopRecordingTriggeredRef = useRef(false);
   const recordingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recordingStartedAtRef = useRef<number | null>(null);
@@ -900,7 +900,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
           setLiveGuideLayout({ x, y, width, height });
         } else {
           setLiveGuideLayout({
-            x: (windowSize.width - fallback.width) / 2,
+            x: (responsive.width - fallback.width) / 2,
             y: fallback.y,
             width: fallback.width,
             height: fallback.height,
@@ -908,7 +908,7 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
         }
       });
     });
-  }, [windowSize.width]);
+  }, [responsive.width]);
 
   useEffect(() => {
     if (!showLiveLivenessCamera || !liveCameraReady || liveRecording || livePreviewAsset) return;

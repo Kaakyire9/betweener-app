@@ -103,6 +103,8 @@ const CHAT_PREFS_STORAGE_KEY = 'chat_header_prefs_v1';
 const CHAT_LIST_REFRESH_INTERVAL_MS = 20_000;
 const BLOCKED_AVATAR_SOURCE = require('../../assets/images/circle-logo.png');
 const STICKER_TEXT_PREFIX = 'sticker::';
+const DOCUMENT_TEXT_PREFIX = '\u{1F4CE}';
+const VIDEO_TEXT_PREFIX = '\u{1F3A5} Video';
 const QUICK_REPORT_REASONS = [
   { id: 'spam', label: 'Spam' },
   { id: 'harassment', label: 'Harassment' },
@@ -177,7 +179,7 @@ const deserializeConversations = (raw: unknown): ConversationType[] => {
 };
 
 type ThreadPreviewMessage = ConversationType['lastMessage'] & {
-  localStatus?: 'sending' | 'sent' | 'delivered' | 'read';
+  localStatus?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read';
 };
 
 const readLastThreadPreviewMessage = (raw: unknown): ThreadPreviewMessage | null => {
@@ -185,7 +187,7 @@ const readLastThreadPreviewMessage = (raw: unknown): ThreadPreviewMessage | null
   const last = raw[raw.length - 1] as any;
   if (!last || typeof last !== 'object') return null;
   const timestamp = last?.timestamp ? new Date(last.timestamp) : new Date();
-  const status = (last?.status ?? 'sent') as 'sending' | 'sent' | 'delivered' | 'read';
+  const status = (last?.status ?? 'sent') as 'queued' | 'sending' | 'sent' | 'delivered' | 'read';
   return {
     id: String(last?.id ?? ''),
     text: typeof last?.text === 'string' ? last.text : '',
@@ -222,15 +224,18 @@ const parseStickerPreview = (text: string) => {
 };
 
 const getConversationReceiptIconState = (
-  lastMessage: ConversationType['lastMessage'],
+  lastMessage: ConversationType['lastMessage'] & { localStatus?: ThreadPreviewMessage['localStatus'] },
   theme: typeof Colors.light,
   isDark: boolean,
 ) => {
+  if (lastMessage.localStatus === 'queued' || lastMessage.localStatus === 'sending') {
+    return { name: 'clock-outline' as const, color: isDark ? '#CFE1DD' : '#8A9895' };
+  }
   if (lastMessage.isRead) {
-    return { name: 'check-all' as const, color: isDark ? '#BFFBEA' : '#0B8F89' };
+    return { name: 'check-all' as const, color: isDark ? '#18E0D2' : '#007D78' };
   }
   if (lastMessage.deliveredAt) {
-    return { name: 'check-all' as const, color: isDark ? '#F4FBFA' : '#C4CFCE' };
+    return { name: 'check-all' as const, color: isDark ? '#CAD8D5' : '#879491' };
   }
   return { name: 'check' as const, color: isDark ? '#AAB8B4' : '#8A9895' };
 };
@@ -331,12 +336,14 @@ export default function ChatScreen() {
           if (!preview) return conversation;
 
           const shouldOverlay =
+            preview.localStatus === 'queued' ||
             preview.localStatus === 'sending' ||
             preview.timestamp.getTime() >= conversation.lastMessage.timestamp.getTime();
 
           if (!shouldOverlay) return conversation;
 
           const nextDeliveredAt = preview.deliveredAt ?? conversation.lastMessage.deliveredAt;
+          const nextIsRead = conversation.lastMessage.isRead || preview.isRead;
           const isSamePreview =
             conversation.lastMessage.id === preview.id &&
             conversation.lastMessage.text === preview.text &&
@@ -344,7 +351,8 @@ export default function ChatScreen() {
             conversation.lastMessage.senderId === preview.senderId &&
             conversation.lastMessage.type === preview.type &&
             conversation.lastMessage.isViewOnce === preview.isViewOnce &&
-            conversation.lastMessage.isRead === preview.isRead &&
+            conversation.lastMessage.isRead === nextIsRead &&
+            (conversation.lastMessage as ThreadPreviewMessage).localStatus === preview.localStatus &&
             (conversation.lastMessage.deliveredAt?.getTime() ?? 0) === (nextDeliveredAt?.getTime() ?? 0);
 
           if (isSamePreview) return conversation;
@@ -361,8 +369,9 @@ export default function ChatScreen() {
               senderId: preview.senderId,
               type: preview.type,
               isViewOnce: preview.isViewOnce,
-              isRead: preview.isRead,
+              isRead: nextIsRead,
               deliveredAt: nextDeliveredAt,
+              localStatus: preview.localStatus,
               reactionPreview,
             },
           };
@@ -1542,12 +1551,32 @@ export default function ChatScreen() {
     if (rowType === 'mood_sticker') {
       return parseStickerPreview(row.text) || row.text || 'Sticker';
     }
+    if (row.text?.startsWith(DOCUMENT_TEXT_PREFIX)) {
+      return 'Document';
+    }
+    if (row.text?.startsWith(`${VIDEO_TEXT_PREFIX}\n`) || row.text?.startsWith('Video\n')) {
+      return 'Video';
+    }
     const datePlanPreview = getDatePlanPreviewText(row.text);
     if (datePlanPreview) return datePlanPreview;
     return row.text || '';
   };
 
-  const getLastMessagePreview = (lastMessage: ConversationType['lastMessage']) => {
+  const getLastMessagePreview = (lastMessage: ConversationType['lastMessage'] & { localStatus?: ThreadPreviewMessage['localStatus'] }) => {
+    if (lastMessage.localStatus === 'queued') {
+      switch (lastMessage.type) {
+        case 'voice':
+          return 'Queued voice message';
+        case 'image':
+          return 'Queued photo';
+        case 'video':
+          return 'Queued video';
+        case 'document':
+          return 'Queued document';
+        default:
+          return 'Queued message';
+      }
+    }
     if (lastMessage.isViewOnce && (lastMessage.type === 'image' || lastMessage.type === 'video')) {
       return lastMessage.type === 'video' ? 'View once video' : 'View once photo';
     }

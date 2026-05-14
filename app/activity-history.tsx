@@ -3,16 +3,15 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/lib/auth-context";
 import { fetchPeerVisibilityPrefs } from "@/lib/peer-visibility";
 import { getUserFacingDisplayName } from "@/lib/profile/display-name";
+import { useResponsiveMetrics, type ResponsiveMetrics } from "@/lib/responsive";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Dimensions, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-
-const { width } = Dimensions.get("window");
 
 type ActivityType =
   | "note"
@@ -88,7 +87,8 @@ export default function ActivityHistoryScreen() {
   const resolvedScheme = (colorScheme ?? "light") === "dark" ? "dark" : "light";
   const theme = Colors[resolvedScheme];
   const isDark = resolvedScheme === "dark";
-  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+  const responsive = useResponsiveMetrics();
+  const styles = useMemo(() => createStyles(theme, isDark, responsive), [theme, isDark, responsive]);
   const { user, profile } = useAuth();
 
   const profileId = profile?.id ?? null;
@@ -272,7 +272,7 @@ export default function ActivityHistoryScreen() {
               actorUserId: profileRow?.user_id ?? null,
               actorName: getUserFacingDisplayName(profileRow, "Someone"),
               actorAvatar: profileRow?.avatar_url ?? null,
-            body: action === "superlike" ? "Superliked your profile" : "Liked your profile",
+            body: action === "superlike" ? "Sent you a Signal" : "Liked your profile",
             createdAt: row.created_at,
             profileId: row.swiper_id,
           });
@@ -475,7 +475,7 @@ export default function ActivityHistoryScreen() {
       case "likes":
         return {
           badge: "Interest signals",
-          title: "No likes or superlikes yet",
+          title: "No likes or Signals yet",
           body: "This part of your history fills fastest when your first photo, headline, and profile energy are doing real work.",
           highlights: [
             { icon: "heart-outline", text: "Lead with a photo that feels confident, recent, and unmistakably you." },
@@ -684,7 +684,7 @@ const withAlpha = (hex: string, alpha: number) => {
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
 };
 
-const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
+const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: ResponsiveMetrics) =>
   StyleSheet.create({
     container: {
       flex: 1,
@@ -697,21 +697,21 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       position: "absolute",
       top: -60,
       left: -80,
-      width: width * 0.9,
-      height: width * 0.9,
-      borderRadius: width,
+      width: responsive.usableWidth * 0.9,
+      height: responsive.usableWidth * 0.9,
+      borderRadius: responsive.usableWidth,
     },
     bgGlowRight: {
       position: "absolute",
       top: 160,
       right: -120,
-      width: width * 0.7,
-      height: width * 0.7,
-      borderRadius: width,
+      width: responsive.usableWidth * 0.7,
+      height: responsive.usableWidth * 0.7,
+      borderRadius: responsive.usableWidth,
     },
     header: {
-      paddingHorizontal: 20,
-      paddingTop: 16,
+      paddingHorizontal: responsive.horizontalGutter,
+      paddingTop: responsive.compactHeight ? 10 : 16,
       paddingBottom: 10,
     },
     backButton: {
@@ -742,8 +742,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontSize: 13,
     },
     scrollContent: {
-      paddingHorizontal: 18,
-      paddingBottom: 30,
+      paddingHorizontal: responsive.compactWidth ? 14 : 18,
+      paddingBottom: responsive.insets.bottom + 30,
     },
     filterRow: {
       flexDirection: "row",

@@ -1,5 +1,6 @@
 import type { EdgeInsets } from "react-native-safe-area-context";
 import { Platform } from "react-native";
+import { RESPONSIVE_BREAKPOINTS, clamp } from "@/lib/responsive";
 
 export type VibesDeviceSize = {
   compactHeight: boolean;
@@ -34,15 +35,14 @@ type MetricsInput = {
   platform?: typeof Platform.OS;
 };
 
-const clamp = (value: number, min: number, max: number) =>
-  Math.max(min, Math.min(max, value));
-
 export function getVibesDeviceSize(screenWidth: number, screenHeight: number): VibesDeviceSize {
   return {
-    compactHeight: screenHeight < 760,
-    mediumHeight: screenHeight >= 760 && screenHeight < 850,
-    tallHeight: screenHeight >= 850,
-    compactWidth: screenWidth < 390,
+    compactHeight: screenHeight < RESPONSIVE_BREAKPOINTS.compactHeight,
+    mediumHeight:
+      screenHeight >= RESPONSIVE_BREAKPOINTS.compactHeight &&
+      screenHeight < RESPONSIVE_BREAKPOINTS.mediumHeight,
+    tallHeight: screenHeight >= RESPONSIVE_BREAKPOINTS.tallHeight,
+    compactWidth: screenWidth < RESPONSIVE_BREAKPOINTS.compactWidth,
   };
 }
 
@@ -55,19 +55,19 @@ export function getVibesLayoutMetrics({
   const device = getVibesDeviceSize(screenWidth, screenHeight);
   const horizontalInset = device.compactWidth ? 16 : 20;
   const cardWidth = clamp(screenWidth - horizontalInset * 2, 312, 430);
-  const actionDockSize = device.compactHeight || device.compactWidth ? 50 : device.tallHeight ? 58 : 54;
+  const actionDockSize = device.compactHeight || device.compactWidth ? 44 : device.tallHeight ? 52 : 49;
   const actionDockBottom = Math.max(insets.bottom + (platform === "android" ? 4 : 6), 8);
-  const actionDockOverlap = device.compactHeight ? 52 : device.mediumHeight ? 44 : 22;
-  const stackBottomReserve = actionDockSize + actionDockBottom + (device.compactHeight ? 26 : 34);
-  const availableHeight = screenHeight - insets.top - insets.bottom - (device.compactHeight ? 326 : device.mediumHeight ? 350 : 374);
-  const aspectHeight = cardWidth * (device.compactHeight ? 1.08 : device.mediumHeight ? 1.2 : 1.28);
-  const screenRatioHeight = screenHeight * (device.compactHeight ? 0.455 : device.mediumHeight ? 0.505 : 0.535);
-  const maxCardHeight = device.tallHeight ? 548 : device.mediumHeight ? 458 : 398;
+  const actionDockOverlap = device.compactHeight ? 72 : device.mediumHeight ? 64 : 42;
+  const stackBottomReserve = actionDockSize + actionDockBottom + (device.compactHeight ? 34 : device.tallHeight ? 58 : 44);
+  const availableHeight = screenHeight - insets.top - insets.bottom - (device.compactHeight ? 314 : device.mediumHeight ? 342 : 392);
+  const aspectHeight = cardWidth * (device.compactHeight ? 1.13 : device.mediumHeight ? 1.26 : 1.27);
+  const screenRatioHeight = screenHeight * (device.compactHeight ? 0.478 : device.mediumHeight ? 0.526 : 0.512);
+  const maxCardHeight = device.tallHeight ? 540 : device.mediumHeight ? 486 : 420;
   const minCardHeight = device.compactHeight ? 334 : 386;
   const cardHeight = clamp(Math.min(aspectHeight, screenRatioHeight, availableHeight), minCardHeight, maxCardHeight);
-  const cardBorderRadius = device.compactHeight || device.compactWidth ? 24 : 28;
-  const nameFontSize = device.compactHeight || device.compactWidth ? 26 : device.tallHeight ? 31 : 29;
-  const overlayBottom = Math.max(34, actionDockOverlap + (device.compactHeight ? 28 : 18));
+  const cardBorderRadius = device.compactHeight || device.compactWidth ? 25 : device.tallHeight ? 32 : 30;
+  const nameFontSize = device.compactHeight || device.compactWidth ? 26 : device.tallHeight ? 29 : 29;
+  const overlayBottom = device.compactHeight ? 118 : device.mediumHeight ? 112 : device.tallHeight ? 116 : 100;
 
   return {
     device,
@@ -88,4 +88,3 @@ export function getVibesLayoutMetrics({
     topRowInset: device.compactHeight || device.compactWidth ? 16 : 22,
   };
 }
-

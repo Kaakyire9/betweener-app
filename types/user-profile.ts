@@ -39,6 +39,9 @@ export type UserProfile = {
   distance: string;
   distanceKm?: number;
   isActiveNow: boolean;
+  online?: boolean;
+  lastActive?: string | null;
+  last_active?: string | null;
   tribe?: string;
   roots?: string[];
   rootsNote?: string;

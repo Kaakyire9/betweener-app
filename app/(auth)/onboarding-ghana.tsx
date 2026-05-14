@@ -3,6 +3,8 @@ import Notice from "@/components/ui/Notice";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
 import { isLikelyNetworkError } from "@/lib/network";
+import { RELIGION_LABELS, isReligionEnumError, normalizeReligionForProfile } from "@/lib/profile/religion";
+import { type ResponsiveMetrics, useResponsiveMetrics } from "@/lib/responsive";
 import { clearSignupSession, consumeSignupMetadata, finalizeSignupPhoneVerification, getSignupPhoneState } from "@/lib/signup-tracking";
 import { supabase } from "@/lib/supabase";
 import { logger } from "@/lib/telemetry/logger";
@@ -11,7 +13,7 @@ import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
 import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -68,12 +70,19 @@ const ROOTS_OPTIONS = [
   "Mixed",
   "Other",
 ];
-const RELIGIONS = ["Christian", "Muslim", "Traditionalist", "Other"];
+const RELIGIONS = RELIGION_LABELS;
 const ROOTS_VISIBILITY_OPTIONS = [
   { value: "VISIBLE", label: "Visible on profile" },
   { value: "MATCHES_ONLY", label: "Matches only" },
   { value: "HIDDEN", label: "Hidden for now" },
 ];
+const LEGACY_ROOTS_VISIBILITY_FALLBACK = "HIDDEN";
+
+const isRootsVisibilityConstraintError = (error: unknown) => {
+  const code = String((error as any)?.code || "");
+  const message = String((error as any)?.message || "").toLowerCase();
+  return code === "23514" && message.includes("profiles_roots_visibility_check");
+};
 const INTERESTS = [
   "Afrobeats",
   "Football",
@@ -121,6 +130,8 @@ export default function Onboarding() {
   const router = useRouter();
   const { updateProfile, user, profile, signOut, refreshProfile, phoneVerified } = useAuth();
   const fontsLoaded = useAppFonts();
+  const responsive = useResponsiveMetrics();
+  const styles = useMemo(() => createStyles(responsive), [responsive]);
   
   const [currentStep, setCurrentStep] = useState(0);
   const [focusedField, setFocusedField] = useState<string | null>(null);
@@ -148,6 +159,7 @@ export default function Onboarding() {
   const [profileCreated, setProfileCreated] = useState(false);
   const [saveNetworkError, setSaveNetworkError] = useState<string | null>(null);
   const [submitDebugId, setSubmitDebugId] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
   const submitAttemptRef = useRef(0);
 
   useEffect(() => {
@@ -467,7 +479,7 @@ export default function Onboarding() {
         roots: normalizedRoots.length > 0 ? normalizedRoots : null,
         roots_note: rootsNote || null,
         roots_visibility: String(form.rootsVisibility || "VISIBLE").toUpperCase(),
-        religion: form.religion.toUpperCase() as any,
+        religion: normalizeReligionForProfile(form.religion) as any,
         avatar_url: imageUrl,
         phone_number: phoneNumber,
         phone_verified: true,
@@ -484,7 +496,37 @@ export default function Onboarding() {
         identity_finalized_at: new Date().toISOString(),
       };
 
-      const { error: updateError } = await withTimeout("profile_upsert", updateProfile(profileData), 20_000);
+      let { error: updateError } = await withTimeout("profile_upsert", updateProfile(profileData), 20_000);
+
+      if (
+        updateError &&
+        profileData.roots_visibility === "MATCHES_ONLY" &&
+        isRootsVisibilityConstraintError(updateError)
+      ) {
+        logger.warn("[onboarding] roots_visibility_matches_only_not_supported", { debugId, attempt });
+        const fallbackProfileData = {
+          ...profileData,
+          roots_visibility: LEGACY_ROOTS_VISIBILITY_FALLBACK,
+        };
+        ({ error: updateError } = await withTimeout(
+          "profile_upsert_roots_visibility_fallback",
+          updateProfile(fallbackProfileData),
+          20_000
+        ));
+      }
+
+      if (updateError && profileData.religion !== "OTHER" && isReligionEnumError(updateError)) {
+        logger.warn("[onboarding] religion_enum_value_not_supported", {
+          debugId,
+          attempt,
+          religion: profileData.religion,
+        });
+        ({ error: updateError } = await withTimeout(
+          "profile_upsert_religion_fallback",
+          updateProfile({ ...profileData, religion: "OTHER" as any }),
+          20_000
+        ));
+      }
 
       if (updateError) {
         if ("code" in updateError && updateError.code === "23505") {
@@ -711,9 +753,9 @@ export default function Onboarding() {
               ]}
             >
             <MaterialCommunityIcons
-              name={isDone || isActive ? 'heart' : 'heart-outline'}
-              size={isActive ? 24 : 20}
-              color={isDone || isActive ? BRAND_LILAC : 'rgba(15,23,42,0.25)'}
+              name={isDone ? 'check-circle' : isActive ? 'circle-slice-8' : 'circle-outline'}
+              size={isActive ? 20 : 17}
+              color={isDone || isActive ? BRAND_TEAL : 'rgba(15,23,42,0.22)'}
             />
             </Animated.View>
           );
@@ -734,7 +776,7 @@ export default function Onboarding() {
                 }}
               >
                 <MaterialCommunityIcons
-                  name="heart"
+                  name="star-four-points"
                   size={14}
                   color={BRAND_LILAC}
                 />
@@ -769,6 +811,7 @@ export default function Onboarding() {
           </>
         ) : (
           <>
+            <Text style={styles.stepKicker}>{`Step ${currentStep + 1} of ${ONBOARDING_STEPS.length}`}</Text>
             <Text style={styles.stepTitle}>{ONBOARDING_STEPS[currentStep].title}</Text>
             <Text style={styles.stepSubtitle}>{ONBOARDING_STEPS[currentStep].subtitle}</Text>
           </>
@@ -842,15 +885,36 @@ export default function Onboarding() {
         </View>
 
         <TouchableOpacity
-          style={styles.welcomeSignOutLink}
-          onPress={signOut}
+          style={[styles.welcomeSignOutLink, signingOut && styles.welcomeSignOutLinkDisabled]}
+          onPress={() => void handleWelcomeSignOut()}
+          disabled={signingOut}
           accessibilityLabel="Sign out"
         >
-          <Text style={styles.welcomeSignOutText}>Using the wrong account? Sign out</Text>
+          {signingOut ? (
+            <ActivityIndicator size="small" color={BRAND_TEAL} />
+          ) : (
+            <Text style={styles.welcomeSignOutText}>Using the wrong account? Sign out</Text>
+          )}
         </TouchableOpacity>
       </View>
     </Animated.View>
   );
+
+  const handleWelcomeSignOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await haptics.light();
+      await clearSignupSession();
+      await signOut();
+      router.replace("/(auth)/welcome");
+    } catch (error) {
+      logger.error("[onboarding] welcome_sign_out_failed", { error });
+      Alert.alert("Sign out failed", "Unable to sign out right now. Please try again.");
+    } finally {
+      setSigningOut(false);
+    }
+  };
 
   const renderBasicInfoStep = () => (
     <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
@@ -1403,7 +1467,7 @@ export default function Onboarding() {
 
   return (
     <LinearGradient
-      colors={['#E9DDCF', '#FFF5EE']}
+      colors={['#EEE0D1', '#FFF8F1', '#E8F5F2']}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={styles.background}
@@ -1427,7 +1491,7 @@ export default function Onboarding() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (responsive: ResponsiveMetrics) => StyleSheet.create({
   background: {
     flex: 1,
   },
@@ -1438,16 +1502,21 @@ const styles = StyleSheet.create({
   
   // Progress Bar
   progressContainer: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 8,
+    marginHorizontal: responsive.compactWidth ? 12 : 16,
+    marginTop: responsive.compactHeight ? 6 : 10,
+    marginBottom: responsive.compactHeight ? 6 : 8,
+    paddingHorizontal: responsive.space(14, { min: 12, max: 16 }),
+    paddingTop: responsive.space(12, { min: 9, max: 13 }),
+    paddingBottom: responsive.space(12, { min: 9, max: 13 }),
+    borderRadius: responsive.compactWidth ? 22 : 24,
+    overflow: 'hidden',
   },
 
   progressBand: {
     ...StyleSheet.absoluteFillObject,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(15,23,42,0.06)',
-    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.72)',
+    borderRadius: 24,
   },
   progressGlow: {
     borderRadius: 999,
@@ -1458,7 +1527,7 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
   progressTrack: {
-    height: 6,
+    height: 5,
     backgroundColor: 'rgba(12,110,122,0.12)',
     borderRadius: 999,
     overflow: 'hidden',
@@ -1477,19 +1546,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 8,
-    marginTop: 8,
+    gap: responsive.space(10, { min: 7, max: 11 }),
+    marginTop: responsive.space(10, { min: 7, max: 11 }),
     position: 'relative',
   },
   progressHeartWrap: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
   },
   progressHeartActive: {
-    backgroundColor: 'rgba(201,167,255,0.12)',
+    backgroundColor: 'rgba(12,110,122,0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(12,110,122,0.20)',
   },
   progressBurstLayer: {
     position: 'absolute',
@@ -1505,10 +1576,14 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    marginHorizontal: responsive.compactWidth ? 12 : 16,
+    marginTop: responsive.compactHeight ? 0 : 2,
+    paddingHorizontal: responsive.space(14, { min: 12, max: 16 }),
+    paddingVertical: responsive.space(12, { min: 9, max: 13 }),
+    borderRadius: responsive.compactWidth ? 22 : 24,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(15,23,42,0.08)',
+    borderBottomColor: 'rgba(255,255,255,0.60)',
+    backgroundColor: 'rgba(255,255,255,0.48)',
   },
   headerLeft: {
     width: 40,
@@ -1531,7 +1606,7 @@ const styles = StyleSheet.create({
     borderColor: BRAND_TEAL,
   },
   signOutText: {
-    fontSize: 13,
+    fontSize: responsive.font(13, { min: 12, max: 14 }),
     fontFamily: 'Archivo_700Bold',
     color: BRAND_TEAL,
   },
@@ -1539,20 +1614,20 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.8)',
+    backgroundColor: 'rgba(255,255,255,0.88)',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(15,23,42,0.12)',
+    borderColor: 'rgba(255,255,255,0.86)',
   },
   stepTitle: {
-    fontSize: 20,
+    fontSize: responsive.font(22, { min: 19, max: 23 }),
     fontFamily: 'Archivo_700Bold',
     color: BRAND_INK,
     textAlign: 'center',
   },
   stepKicker: {
-    fontSize: 11,
+    fontSize: responsive.font(11, { min: 10, max: 12 }),
     fontFamily: 'Manrope_700Bold',
     color: BRAND_TEAL,
     textAlign: 'center',
@@ -1561,24 +1636,25 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   stepSubtitle: {
-    fontSize: 14,
+    fontSize: responsive.font(14, { min: 13, max: 15 }),
     fontFamily: 'Manrope_400Regular',
     color: '#445160',
     textAlign: 'center',
     marginTop: 2,
+    lineHeight: 20,
   },
 
   // Content
   content: {
     flex: 1,
-    paddingHorizontal: 20,
+    paddingHorizontal: responsive.compactWidth ? 12 : 16,
   },
   stepContainer: {
     flex: 1,
-    paddingTop: 32,
+    paddingTop: responsive.compactHeight ? 12 : 18,
   },
   formScrollContent: {
-    paddingBottom: 24,
+    paddingBottom: responsive.space(24, { min: 18, max: 28 }),
   },
 
     // Welcome Step
@@ -1586,11 +1662,11 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: responsive.compactWidth ? 14 : 20,
   },
   heroCard: {
     width: '100%',
-    marginTop: 12,
+    marginTop: responsive.compactHeight ? 6 : 12,
     borderRadius: 28,
     padding: 2,
     backgroundColor: 'rgba(201,167,255,0.28)',
@@ -1602,8 +1678,8 @@ const styles = StyleSheet.create({
   },
   heroCardInner: {
     borderRadius: 26,
-    paddingVertical: 36,
-    paddingHorizontal: 24,
+    paddingVertical: responsive.compactHeight ? 24 : 36,
+    paddingHorizontal: responsive.compactWidth ? 18 : 24,
     alignItems: 'center',
     overflow: 'hidden',
     borderWidth: 1,
@@ -1628,15 +1704,15 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(12,110,122,0.22)',
   },
   logoWrap: {
-    width: 120,
-    height: 120,
-    borderRadius: 36,
+    width: responsive.compactHeight ? 102 : 120,
+    height: responsive.compactHeight ? 102 : 120,
+    borderRadius: responsive.compactHeight ? 31 : 36,
     backgroundColor: 'rgba(255,255,255,0.9)',
     borderWidth: 1,
     borderColor: 'rgba(201,167,255,0.4)',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
+    marginBottom: responsive.space(16, { min: 12, max: 18 }),
     shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.14,
@@ -1648,8 +1724,8 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
   },
   logoImage: {
-    width: 92,
-    height: 92,
+    width: responsive.compactHeight ? 78 : 92,
+    height: responsive.compactHeight ? 78 : 92,
   },
   gradientTitleWrap: {
     marginTop: 6,
@@ -1658,7 +1734,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   gradientTitleText: {
-    fontSize: 44,
+    fontSize: responsive.font(44, { min: 36, max: 46 }),
     fontFamily: 'Archivo_700Bold',
     letterSpacing: 0.8,
     textAlign: 'center',
@@ -1689,23 +1765,23 @@ const styles = StyleSheet.create({
     textShadowRadius: 12,
   },
   taglineText: {
-    fontSize: 16,
+    fontSize: responsive.font(16, { min: 14, max: 17 }),
     fontFamily: 'Manrope_400Regular',
     color: '#445160',
     textAlign: 'center',
   },
   featureChipsRow: {
-    marginTop: 22,
-    gap: 10,
+    marginTop: responsive.compactHeight ? 14 : 22,
+    gap: responsive.space(10, { min: 8, max: 12 }),
     width: '100%',
   },
   featureChip: {
-    minHeight: 48,
+    minHeight: responsive.minTapTarget,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    gap: responsive.space(10, { min: 8, max: 12 }),
+    paddingVertical: responsive.space(12, { min: 9, max: 13 }),
+    paddingHorizontal: responsive.space(16, { min: 14, max: 18 }),
     borderRadius: 999,
     backgroundColor: 'rgba(255,255,255,0.95)',
     borderWidth: 1,
@@ -1725,7 +1801,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   featureChipText: {
-    fontSize: 13,
+    fontSize: responsive.font(13, { min: 12, max: 14 }),
     fontFamily: 'Archivo_700Bold',
     color: '#2f3a45',
   },
@@ -1733,9 +1809,15 @@ const styles = StyleSheet.create({
     marginTop: 18,
     paddingVertical: 10,
     paddingHorizontal: 12,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  welcomeSignOutLinkDisabled: {
+    opacity: 0.7,
   },
   welcomeSignOutText: {
-    fontSize: 13,
+    fontSize: responsive.font(13, { min: 12, max: 14 }),
     fontFamily: 'Manrope_600SemiBold',
     color: '#5A6772',
     textAlign: 'center',
@@ -1743,38 +1825,43 @@ const styles = StyleSheet.create({
 
   // Form Elements
   formCard: {
-    borderRadius: 24,
+    borderRadius: 30,
     padding: 2,
-    backgroundColor: 'rgba(201,167,255,0.22)',
+    backgroundColor: 'rgba(255,255,255,0.58)',
     shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: 12 },
-    shadowOpacity: 0.18,
-    shadowRadius: 22,
-    elevation: 10,
+    shadowOpacity: 0.14,
+    shadowRadius: 26,
+    elevation: 9,
   },
   formCardInner: {
-    borderRadius: 22,
-    paddingHorizontal: 20,
-    paddingVertical: 22,
+    borderRadius: 28,
+    paddingHorizontal: responsive.compactWidth ? 14 : 18,
+    paddingVertical: responsive.compactHeight ? 16 : 20,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.9)',
-    backgroundColor: 'transparent',
+    backgroundColor: 'rgba(255,250,245,0.62)',
   },
   inputContainer: {
-    marginBottom: 24,
+    marginBottom: responsive.space(20, { min: 15, max: 22 }),
+    padding: responsive.space(12, { min: 10, max: 14 }),
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.28)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.52)',
   },
   inputRow: {
     flexDirection: 'row',
-    gap: 16,
+    gap: responsive.space(16, { min: 10, max: 18 }),
   },
   label: {
-    fontSize: 16,
+    fontSize: responsive.font(16, { min: 15, max: 17 }),
     fontFamily: 'Archivo_700Bold',
     color: BRAND_INK,
     marginBottom: 8,
   },
   labelInline: {
-    fontSize: 16,
+    fontSize: responsive.font(16, { min: 15, max: 17 }),
     fontFamily: 'Archivo_700Bold',
     color: BRAND_INK,
   },
@@ -1793,7 +1880,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(12,110,122,0.22)',
   },
   requiredBadgeText: {
-    fontSize: 11,
+    fontSize: responsive.font(11, { min: 10, max: 12 }),
     fontFamily: 'Archivo_700Bold',
     color: BRAND_TEAL,
     letterSpacing: 0.3,
@@ -1801,9 +1888,9 @@ const styles = StyleSheet.create({
   locationChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    gap: responsive.space(8, { min: 6, max: 10 }),
+    paddingHorizontal: responsive.space(14, { min: 12, max: 16 }),
+    paddingVertical: responsive.space(10, { min: 8, max: 11 }),
     borderRadius: 999,
     backgroundColor: 'rgba(12,110,122,0.08)',
     borderWidth: 1,
@@ -1811,7 +1898,7 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   locationChipText: {
-    fontSize: 13,
+    fontSize: responsive.font(13, { min: 12, max: 14 }),
     fontFamily: 'Archivo_700Bold',
     color: BRAND_TEAL,
   },
@@ -1819,19 +1906,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   inputHint: {
-    fontSize: 14,
+    fontSize: responsive.font(14, { min: 13, max: 15 }),
     fontFamily: 'Manrope_400Regular',
     color: '#52606D',
     marginBottom: 12,
   },
   input: {
-    backgroundColor: 'rgba(255,255,255,0.96)',
+    backgroundColor: 'rgba(255,255,255,0.82)',
     borderWidth: 1,
     borderColor: 'rgba(15,23,42,0.1)',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
+    borderRadius: 18,
+    paddingHorizontal: responsive.space(16, { min: 14, max: 18 }),
+    paddingVertical: responsive.space(14, { min: 12, max: 15 }),
+    fontSize: responsive.font(16, { min: 15, max: 17 }),
     fontFamily: 'Manrope_400Regular',
     color: BRAND_INK,
     shadowColor: '#0f172a',
@@ -1848,13 +1935,13 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   textArea: {
-    backgroundColor: 'rgba(255,255,255,0.96)',
+    backgroundColor: 'rgba(255,255,255,0.82)',
     borderWidth: 1,
     borderColor: 'rgba(15,23,42,0.1)',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
+    borderRadius: 18,
+    paddingHorizontal: responsive.space(16, { min: 14, max: 18 }),
+    paddingVertical: responsive.space(14, { min: 12, max: 15 }),
+    fontSize: responsive.font(16, { min: 15, max: 17 }),
     fontFamily: 'Manrope_400Regular',
     color: BRAND_INK,
     minHeight: 100,
@@ -1876,7 +1963,7 @@ const styles = StyleSheet.create({
     borderColor: '#ef4444',
   },
   errorText: {
-    fontSize: 12,
+    fontSize: responsive.font(12, { min: 12, max: 13 }),
     fontFamily: 'Manrope_400Regular',
     color: '#ef4444',
     marginTop: 4,
@@ -1885,14 +1972,14 @@ const styles = StyleSheet.create({
   // Gender Selection
   genderContainer: {
     flexDirection: 'row',
-    gap: 12,
+    gap: responsive.space(12, { min: 8, max: 14 }),
   },
   genderOption: {
     flex: 1,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.92)',
+    paddingVertical: responsive.space(14, { min: 12, max: 15 }),
+    paddingHorizontal: responsive.space(16, { min: 10, max: 18 }),
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.72)',
     borderWidth: 1,
     borderColor: 'rgba(15,23,42,0.1)',
     alignItems: 'center',
@@ -1903,16 +1990,16 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   genderOptionSelected: {
-    backgroundColor: BRAND_LILAC,
-    borderColor: BRAND_LILAC,
+    backgroundColor: 'rgba(12,110,122,0.12)',
+    borderColor: BRAND_TEAL,
   },
   genderText: {
-    fontSize: 16,
+    fontSize: responsive.font(16, { min: 14, max: 17 }),
     fontFamily: 'Manrope_400Regular',
     color: '#334155',
   },
   genderTextSelected: {
-    color: BRAND_INK,
+    color: BRAND_TEAL,
     fontFamily: 'Archivo_700Bold',
   },
 
@@ -1923,20 +2010,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   photoUpload: {
-    marginBottom: 24,
+    marginBottom: responsive.space(24, { min: 18, max: 28 }),
   },
   photoPreview: {
-    width: 200,
-    height: 200,
-    borderRadius: 100,
+    width: responsive.compactHeight ? 196 : 228,
+    height: responsive.compactHeight ? 244 : 284,
+    borderRadius: responsive.compactHeight ? 30 : 34,
     overflow: 'hidden',
-    borderWidth: 4,
+    borderWidth: 2,
     borderColor: '#fff',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 8,
+    shadowOpacity: 0.16,
+    shadowRadius: 24,
+    elevation: 12,
   },
   photoImage: {
     width: '100%',
@@ -1953,47 +2040,47 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(15,23,42,0.18)',
   },
   photoPlaceholderText: {
-    fontSize: 16,
+    fontSize: responsive.font(16, { min: 15, max: 17 }),
     fontFamily: 'Manrope_400Regular',
     color: '#52606D',
     marginTop: 8,
   },
   photoHint: {
-    fontSize: 14,
+    fontSize: responsive.font(14, { min: 13, max: 15 }),
     fontFamily: 'Manrope_400Regular',
     color: '#52606D',
     textAlign: 'center',
     lineHeight: 20,
-    paddingHorizontal: 32,
+    paddingHorizontal: responsive.compactWidth ? 18 : 32,
   },
 
   // Grid Options
   optionsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: responsive.space(12, { min: 8, max: 14 }),
   },
   gridOption: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 25,
-    backgroundColor: 'rgba(255,255,255,0.8)',
-    borderWidth: 2,
-    borderColor: 'rgba(15,23,42,0.12)',
+    paddingVertical: responsive.space(12, { min: 10, max: 13 }),
+    paddingHorizontal: responsive.space(20, { min: 14, max: 22 }),
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.70)',
+    borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.10)',
     minWidth: '45%',
     alignItems: 'center',
   },
   gridOptionSelected: {
-    backgroundColor: BRAND_LILAC,
-    borderColor: BRAND_LILAC,
+    backgroundColor: 'rgba(12,110,122,0.12)',
+    borderColor: BRAND_TEAL,
   },
   gridOptionText: {
-    fontSize: 14,
+    fontSize: responsive.font(14, { min: 13, max: 15 }),
     fontFamily: 'Manrope_400Regular',
     color: '#334155',
   },
   gridOptionTextSelected: {
-    color: BRAND_INK,
+    color: BRAND_TEAL,
     fontFamily: 'Archivo_700Bold',
   },
 
@@ -2001,27 +2088,27 @@ const styles = StyleSheet.create({
   interestsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: responsive.space(12, { min: 8, max: 14 }),
   },
   interestChip: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+    paddingVertical: responsive.space(10, { min: 8, max: 11 }),
+    paddingHorizontal: responsive.space(16, { min: 13, max: 18 }),
     borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.8)',
-    borderWidth: 2,
-    borderColor: 'rgba(15,23,42,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.70)',
+    borderWidth: 1,
+    borderColor: 'rgba(15,23,42,0.10)',
   },
   interestChipSelected: {
-    backgroundColor: BRAND_LILAC,
-    borderColor: BRAND_LILAC,
+    backgroundColor: 'rgba(12,110,122,0.12)',
+    borderColor: BRAND_TEAL,
   },
   interestChipText: {
-    fontSize: 14,
+    fontSize: responsive.font(14, { min: 13, max: 15 }),
     fontFamily: 'Manrope_400Regular',
     color: '#334155',
   },
   interestChipTextSelected: {
-    color: BRAND_INK,
+    color: BRAND_TEAL,
     fontFamily: 'Archivo_700Bold',
   },
 
@@ -2029,14 +2116,14 @@ const styles = StyleSheet.create({
   ageRangeContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    gap: responsive.space(16, { min: 10, max: 18 }),
   },
   ageInputContainer: {
     flex: 1,
     alignItems: 'center',
   },
   ageLabel: {
-    fontSize: 14,
+    fontSize: responsive.font(14, { min: 13, max: 15 }),
     fontFamily: 'Manrope_400Regular',
     color: '#52606D',
     marginBottom: 8,
@@ -2046,9 +2133,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(15,23,42,0.1)',
     borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    fontSize: 18,
+    paddingVertical: responsive.space(14, { min: 12, max: 15 }),
+    paddingHorizontal: responsive.space(16, { min: 14, max: 18 }),
+    fontSize: responsive.font(18, { min: 16, max: 19 }),
     fontFamily: 'Archivo_700Bold',
     color: BRAND_INK,
     textAlign: 'center',
@@ -2067,7 +2154,7 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   ageRangeText: {
-    fontSize: 16,
+    fontSize: responsive.font(16, { min: 15, max: 17 }),
     fontFamily: 'Manrope_400Regular',
     color: '#52606D',
   },
@@ -2077,35 +2164,35 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: responsive.compactWidth ? 16 : 20,
   },
   completeTitle: {
-    fontSize: 28,
+    fontSize: responsive.font(28, { min: 25, max: 30 }),
     fontFamily: 'Archivo_700Bold',
     color: BRAND_INK,
     textAlign: 'center',
-    marginTop: 24,
-    marginBottom: 16,
+    marginTop: responsive.space(24, { min: 18, max: 28 }),
+    marginBottom: responsive.space(16, { min: 12, max: 18 }),
   },
   completeSubtitle: {
-    fontSize: 16,
+    fontSize: responsive.font(16, { min: 15, max: 17 }),
     fontFamily: 'Manrope_400Regular',
     color: '#52606D',
     textAlign: 'center',
     lineHeight: 24,
-    marginBottom: 32,
+    marginBottom: responsive.space(32, { min: 24, max: 36 }),
   },
 
   // Action Buttons
   actionContainer: {
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    backgroundColor: 'rgba(255,255,255,0.92)',
+    paddingHorizontal: responsive.compactWidth ? 12 : 16,
+    paddingVertical: responsive.compactHeight ? 12 : 16,
+    backgroundColor: 'rgba(255,255,255,0.72)',
     borderTopWidth: 1,
     borderTopColor: 'rgba(15,23,42,0.08)',
   },
   nextButton: {
-    borderRadius: 14,
+    borderRadius: 22,
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.5)',
@@ -2114,22 +2201,22 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   nextButtonGradient: {
-    paddingVertical: 16,
-    paddingHorizontal: 24,
+    paddingVertical: responsive.space(17, { min: 15, max: 18 }),
+    paddingHorizontal: responsive.space(24, { min: 20, max: 26 }),
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
   },
   nextButtonText: {
-    fontSize: 16,
+    fontSize: responsive.font(16, { min: 15, max: 17 }),
     fontFamily: 'Archivo_700Bold',
     color: '#fff',
   },
 
   // Message
   messageText: {
-    fontSize: 14,
+    fontSize: responsive.font(14, { min: 13, max: 15 }),
     fontFamily: 'Manrope_400Regular',
     color: BRAND_LILAC,
     textAlign: 'center',
@@ -2145,10 +2232,10 @@ const styles = StyleSheet.create({
 
   // Diaspora Location Styles
   locationChoiceContainer: {
-    gap: 16,
+    gap: responsive.space(16, { min: 12, max: 18 }),
   },
   locationChoice: {
-    padding: 20,
+    padding: responsive.space(20, { min: 16, max: 22 }),
     borderRadius: 16,
     backgroundColor: 'rgba(255,255,255,0.92)',
     borderWidth: 2,
@@ -2165,11 +2252,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#fef7ff',
   },
   locationEmoji: {
-    fontSize: 32,
-    marginBottom: 8,
+    fontSize: responsive.font(32, { min: 28, max: 34 }),
+    marginBottom: responsive.space(8, { min: 6, max: 10 }),
   },
   locationChoiceText: {
-    fontSize: 18,
+    fontSize: responsive.font(18, { min: 16, max: 19 }),
     fontFamily: 'Archivo_700Bold',
     color: BRAND_INK,
     marginBottom: 4,
@@ -2178,7 +2265,7 @@ const styles = StyleSheet.create({
     color: BRAND_LILAC,
   },
   locationChoiceSubtext: {
-    fontSize: 14,
+    fontSize: responsive.font(14, { min: 13, max: 15 }),
     fontFamily: 'Manrope_400Regular',
     color: '#52606D',
     textAlign: 'center',
@@ -2188,7 +2275,7 @@ const styles = StyleSheet.create({
   checkboxContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
+    paddingVertical: responsive.space(12, { min: 10, max: 14 }),
   },
   checkbox: {
     width: 20,
@@ -2210,7 +2297,7 @@ const styles = StyleSheet.create({
     fontFamily: 'Archivo_700Bold',
   },
   checkboxLabel: {
-    fontSize: 16,
+    fontSize: responsive.font(16, { min: 15, max: 17 }),
     fontFamily: 'Manrope_400Regular',
     color: '#334155',
     flex: 1,

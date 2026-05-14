@@ -6,7 +6,6 @@ import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
-  Dimensions,
   Modal,
   PanResponder,
   Pressable,
@@ -21,6 +20,7 @@ import { createSignedUrl } from '@/lib/moments';
 import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
 import type { MomentRelationshipContext } from '@/types/moment-context';
 import MomentCommentsModal from '@/components/MomentCommentsModal';
+import { useResponsiveMetrics } from '@/lib/responsive';
 
 const DEFAULT_MOMENT_DURATION = 6000;
 const VIDEO_MOMENT_DURATION = 15000;
@@ -300,6 +300,7 @@ export default function MomentViewer({
 }: Props) {
   const { user } = useAuth();
   const router = useRouter();
+  const responsive = useResponsiveMetrics();
   const progressAnim = useRef(new Animated.Value(0)).current;
   const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdTriggeredRef = useRef(false);
@@ -553,9 +554,9 @@ export default function MomentViewer({
         }
         if (Math.abs(gesture.dx) < 8 && Math.abs(gesture.dy) < 8) {
           const x = evt.nativeEvent.locationX;
-          if (x <= screenWidth * 0.45) {
+          if (x <= responsive.width * 0.45) {
             handlePrev();
-          } else if (x >= screenWidth * 0.55) {
+          } else if (x >= responsive.width * 0.55) {
             handleNext();
           }
         }
@@ -568,7 +569,7 @@ export default function MomentViewer({
         }
       },
     }),
-    [clearHoldTimeout, commentsVisible, handleNext, handlePrev, pauseProgress, resumeProgress],
+    [clearHoldTimeout, commentsVisible, handleNext, handlePrev, pauseProgress, responsive.width, resumeProgress],
   );
 
   const handleReact = async (emojiValue: string) => {
@@ -1226,4 +1227,3 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
   },
 });
-const { width: screenWidth } = Dimensions.get('window');

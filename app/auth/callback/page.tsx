@@ -92,7 +92,7 @@ export default function AuthCallbackPage() {
 
     fallbackTimerRef.current = setTimeout(() => {
       setPhase('ready');
-      setTitle('Almost there');
+      setTitle('Open Betweener');
       setSubtitle('If Betweener did not open automatically, use the button below to continue.');
 
       if (isIos) {

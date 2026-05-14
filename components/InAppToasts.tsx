@@ -55,6 +55,17 @@ type ProfileLite = {
   avatar_url: string | null;
 };
 
+type MatchCelebrationEvent = {
+  id: string;
+  match_id: string;
+  recipient_user_id: string;
+  recipient_profile_id: string;
+  peer_user_id: string;
+  peer_profile_id: string;
+  seen_at: string | null;
+  created_at: string;
+};
+
 export default function InAppToasts() {
   const { user, profile } = useAuth();
   const colorScheme = useColorScheme();
@@ -72,6 +83,7 @@ export default function InAppToasts() {
   const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
   const timeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const lastToastAtRef = useRef<Record<string, number>>({});
+  const shownMatchCelebrationRef = useRef<Set<string>>(new Set());
   const profileCacheRef = useRef<Map<string, ProfileLite>>(new Map());
   const momentRelationshipCueCacheRef = useRef<Map<string, string | null>>(new Map());
 
@@ -298,7 +310,7 @@ export default function InAppToasts() {
 
   function swipePreview(action?: string | null) {
     return action === 'SUPERLIKE'
-      ? 'Made a stronger move toward you.'
+      ? 'Sent you a Signal.'
       : 'Noticed you and wanted you to know.';
   }
 
@@ -640,6 +652,50 @@ export default function InAppToasts() {
   const matchPreview = useCallback((otherName: string) => {
     return `You and ${otherName || 'them'} saw something in each other. Start with something real.`;
   }, []);
+
+  const markMatchCelebrationSeen = useCallback(async (eventId: string) => {
+    if (!eventId) return;
+    try {
+      await supabase.rpc('rpc_mark_match_celebration_seen', { p_event_id: eventId });
+    } catch {
+      // Best-effort: the toast is already local, the next app open can retry.
+    }
+  }, []);
+
+  const showMatchCelebrationEvent = useCallback(
+    async (row: MatchCelebrationEvent | null | undefined) => {
+      if (!row?.id || !row.match_id || !row.peer_profile_id) return;
+      if (!canInAppNotify('matches')) return;
+
+      if (shownMatchCelebrationRef.current.has(row.match_id)) {
+        void markMatchCelebrationSeen(row.id);
+        return;
+      }
+      shownMatchCelebrationRef.current.add(row.match_id);
+
+      let otherName = 'them';
+      let otherAvatar: string | null = null;
+
+      try {
+        const profileRow = await getProfileLite(row.peer_profile_id);
+        otherName = getUserFacingDisplayName(profileRow, 'them');
+        if (profileRow?.avatar_url) otherAvatar = profileRow.avatar_url;
+      } catch {
+        // best-effort only
+      }
+
+      pushToast({
+        id: `match-${row.match_id}`,
+        title: "It's a match",
+        body: matchPreview(otherName),
+        avatarUrl: otherAvatar,
+        profileId: row.peer_profile_id,
+        chatId: row.peer_profile_id,
+      });
+      void markMatchCelebrationSeen(row.id);
+    },
+    [canInAppNotify, getProfileLite, markMatchCelebrationSeen, matchPreview, pushToast],
+  );
 
   const notePreview = useCallback(
     (note: string | null | undefined, previewsAllowed: boolean) => {
@@ -1448,6 +1504,55 @@ export default function InAppToasts() {
   }, [canInAppNotify, profile?.id, pushToast, swipePreview]);
 
   useEffect(() => {
+    if (!user?.id) return;
+
+    let cancelled = false;
+
+    const loadUnseenMatchCelebrations = async () => {
+      try {
+        const { data, error } = await (supabase as any)
+          .from('match_celebration_events')
+          .select('id,match_id,recipient_user_id,recipient_profile_id,peer_user_id,peer_profile_id,seen_at,created_at')
+          .is('seen_at', null)
+          .order('created_at', { ascending: true })
+          .limit(5);
+        if (error || cancelled) return;
+
+        const rows = (data ?? []) as MatchCelebrationEvent[];
+        for (const row of rows) {
+          if (cancelled) return;
+          await showMatchCelebrationEvent(row);
+        }
+      } catch {
+        // Table may not exist until the launch migration is applied.
+      }
+    };
+
+    void loadUnseenMatchCelebrations();
+
+    const channel = supabase
+      .channel(`inapp_match_celebrations:${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'match_celebration_events',
+          filter: `recipient_user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          void showMatchCelebrationEvent((payload as any)?.new as MatchCelebrationEvent);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [showMatchCelebrationEvent, user?.id]);
+
+  useEffect(() => {
     if (!profile?.id) return;
 
     const handleMatch = async (row: any) => {
@@ -1455,6 +1560,8 @@ export default function InAppToasts() {
       if (row.status !== 'ACCEPTED') return;
       if (row.user1_id !== profile.id && row.user2_id !== profile.id) return;
       if (!canInAppNotify('matches')) return;
+      if (row.id && shownMatchCelebrationRef.current.has(row.id)) return;
+      if (row.id) shownMatchCelebrationRef.current.add(row.id);
 
       const otherId = row.user1_id === profile.id ? row.user2_id : row.user1_id;
       if (!otherId) return;

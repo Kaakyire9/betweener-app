@@ -1,5 +1,6 @@
 import { AuthGuard } from '@/components/auth-guard';
 import { HapticTab } from '@/components/haptic-tab';
+import IntentMark from '@/components/icons/IntentMark';
 // import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -7,16 +8,19 @@ import { useIntentRequests } from '@/hooks/useIntentRequests';
 import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
 import { clearPendingNotificationRoute, peekPendingNotificationRoute } from '@/lib/notifications/notification-routing';
+import { type ResponsiveMetrics, useResponsiveMetrics } from '@/lib/responsive';
 import { Tabs, usePathname, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { MessageCircle, Sparkles, Target, User, Users } from 'lucide-react-native';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, AppStateStatus, StyleSheet, Text, View } from 'react-native';
+import { MessageCircle, Sparkles, User, Users } from 'lucide-react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 import { supabase } from '@/lib/supabase';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
+  const responsive = useResponsiveMetrics();
+  const styles = useMemo(() => createStyles(responsive), [responsive]);
   const pathname = usePathname();
   const router = useRouter();
   const { user, profile } = useAuth();
@@ -24,7 +28,6 @@ export default function TabLayout() {
   const { badgeCount } = useIntentRequests(profileId);
 
   const [unreadChats, setUnreadChats] = useState(0);
-  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   const computeUnreadChats = useMemo(() => {
     return async (pid: string) => {
@@ -84,65 +87,6 @@ export default function TabLayout() {
   }, [computeUnreadChats, user?.id]);
 
   useEffect(() => {
-    const myUserId = user?.id ?? null;
-    if (!myUserId) return;
-
-    const markDelivered = async (messageId?: string) => {
-      try {
-        let query = supabase
-          .from('messages')
-          .update({ delivered_at: new Date().toISOString() })
-          .eq('receiver_id', myUserId)
-          .neq('sender_id', myUserId)
-          .is('delivered_at', null);
-
-        if (messageId) {
-          query = query.eq('id', messageId);
-        }
-
-        await query;
-      } catch {}
-    };
-
-    const catchUpDelivered = () => {
-      if (appStateRef.current !== 'active') return;
-      void markDelivered();
-    };
-
-    catchUpDelivered();
-
-    const appStateSubscription = AppState.addEventListener('change', (nextState) => {
-      appStateRef.current = nextState;
-      if (nextState === 'active') {
-        catchUpDelivered();
-      }
-    });
-
-    const channel = supabase
-      .channel(`delivery:global:${myUserId}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${myUserId}` },
-        (payload) => {
-          if (appStateRef.current !== 'active') return;
-          const messageId = typeof payload.new?.id === 'string' ? payload.new.id : null;
-          if (!messageId) return;
-          void markDelivered(messageId);
-        },
-      )
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          catchUpDelivered();
-        }
-      });
-
-    return () => {
-      appStateSubscription.remove();
-      supabase.removeChannel(channel);
-    };
-  }, [user?.id]);
-
-  useEffect(() => {
     if (!user?.id) return;
     let cancelled = false;
 
@@ -199,6 +143,13 @@ export default function TabLayout() {
           tabBarStyle: {
             backgroundColor: Colors[colorScheme ?? 'light'].background,
             borderTopColor: Colors[colorScheme ?? 'light'].outline,
+            height: responsive.bottomNavReserve,
+            paddingTop: responsive.compactHeight ? 4 : 6,
+            paddingBottom: Math.max(responsive.insets.bottom, responsive.compactHeight ? 6 : 8),
+          },
+          tabBarLabelStyle: {
+            fontSize: responsive.font(11, { min: 10, max: 12 }),
+            fontFamily: 'Manrope_600SemiBold',
           },
           headerShown: false,
           tabBarButton: HapticTab,
@@ -209,7 +160,7 @@ export default function TabLayout() {
             title: 'Vibes',
             tabBarIcon: ({ color }) => (
               <>
-                <Sparkles size={26} color={color} />
+                <Sparkles size={responsive.compactWidth ? 24 : 26} color={color} />
                 {/* <IconSymbol size={28} name="house.fill" color={color} /> */}
               </>
             ),
@@ -227,7 +178,7 @@ export default function TabLayout() {
             title: 'Circles',
             tabBarIcon: ({ color }) => (
               <View style={{ position: 'relative' }}>
-                <Users size={26} color={color} />
+                <Users size={responsive.compactWidth ? 24 : 26} color={color} />
                 {/* <IconSymbol size={28} name="magnifyingglass" color={color} /> */}
               </View>
             ),
@@ -240,26 +191,13 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
-          name="chat"
-          options={{
-            title: 'Lounge',
-            tabBarIcon: ({ color }) => (
-              <View style={{ position: 'relative' }}>
-                <MessageCircle size={26} color={color} />
-                {/* <IconSymbol size={28} name="message.fill" color={color} /> */}
-                <TabBadge count={unreadChats} />
-              </View>
-            ),
-          }}
-        />
-        <Tabs.Screen
           name="intent"
           options={{
             title: 'Intent',
             tabBarIcon: ({ color, focused }) => {
               const intentIconColor = colorScheme === 'light' ? theme.background : theme.text;
               return (
-                <View style={{ position: 'relative' }}>
+                <View style={styles.intentTabIconWrap}>
                   {focused ? (
                     <LinearGradient
                       colors={[theme.accent, theme.tint]}
@@ -267,16 +205,31 @@ export default function TabLayout() {
                       end={{ x: 1, y: 1 }}
                       style={styles.intentGlow}
                     >
-                      <Target size={32} color={intentIconColor} strokeWidth={2.6} />
+                      <IntentMark size={responsive.compactWidth ? 30 : 32} color={intentIconColor} strokeWidth={2.45} />
                     </LinearGradient>
                   ) : (
-                    <Target size={30} color={color} strokeWidth={2.3} />
+                    <View style={styles.intentInactiveIcon}>
+                      <IntentMark size={responsive.compactWidth ? 28 : 30} color={color} strokeWidth={2.25} />
+                    </View>
                   )}
                   {/* <IconSymbol size={28} name="bell.fill" color={color} /> */}
                   <TabBadge count={badgeCount} />
                 </View>
               );
             },
+          }}
+        />
+        <Tabs.Screen
+          name="chat"
+          options={{
+            title: 'Chat',
+            tabBarIcon: ({ color }) => (
+              <View style={{ position: 'relative' }}>
+                <MessageCircle size={responsive.compactWidth ? 24 : 26} color={color} />
+                {/* <IconSymbol size={28} name="message.fill" color={color} /> */}
+                <TabBadge count={unreadChats} />
+              </View>
+            ),
           }}
         />
         <Tabs.Screen
@@ -291,7 +244,7 @@ export default function TabLayout() {
             title: 'Me',
             tabBarIcon: ({ color }) => (
               <>
-                <User size={26} color={color} />
+                <User size={responsive.compactWidth ? 24 : 26} color={color} />
                 {/* <IconSymbol size={28} name="person.fill" color={color} /> */}
               </>
             ),
@@ -302,7 +255,7 @@ export default function TabLayout() {
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (responsive: ResponsiveMetrics) => StyleSheet.create({
   badge: {
     position: 'absolute',
     top: -6,
@@ -318,14 +271,27 @@ const styles = StyleSheet.create({
   },
   badgeText: {
     color: '#fff',
-    fontSize: 12,
+    fontSize: responsive.font(12, { min: 10, max: 12 }),
     fontWeight: 'bold',
     textAlign: 'center',
   },
+  intentTabIconWrap: {
+    position: 'relative',
+    minWidth: responsive.compactWidth ? 34 : 38,
+    minHeight: responsive.compactWidth ? 34 : 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  intentInactiveIcon: {
+    width: responsive.compactWidth ? 34 : 36,
+    height: responsive.compactWidth ? 34 : 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   intentGlow: {
-    width: 36,
-    height: 36,
-    borderRadius: 14,
+    width: responsive.compactWidth ? 34 : 36,
+    height: responsive.compactWidth ? 34 : 36,
+    borderRadius: responsive.compactWidth ? 13 : 14,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 2,

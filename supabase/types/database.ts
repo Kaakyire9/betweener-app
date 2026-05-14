@@ -3429,6 +3429,26 @@ export type Database = {
       clean_expired_distance_cache: { Args: never; Returns: number }
       cleanup_phone_verifications_orphans: { Args: never; Returns: undefined }
       decrement_superlike: { Args: { p_profile_id: string }; Returns: number }
+      rpc_cancel_signal: { Args: { p_signal_id: string }; Returns: string }
+      rpc_get_signal_access: { Args: never; Returns: Json }
+      rpc_refund_undone_superlike: {
+        Args: {
+          p_profile_id: string
+          p_target_profile_id: string
+          p_window_seconds?: number
+        }
+        Returns: number
+      }
+      rpc_send_signal: {
+        Args: {
+          p_receiver_profile_id: string
+          p_reason_key: string
+          p_note?: string | null
+          p_source?: string
+          p_source_moment_id?: string | null
+        }
+        Returns: Json
+      }
       detect_travel_for_user: {
         Args: { p_user_id: string }
         Returns: {
@@ -5032,7 +5052,16 @@ export type Database = {
       gender: "MALE" | "FEMALE" | "NON_BINARY" | "OTHER"
       location_precision: "EXACT" | "CITY"
       match_status: "PENDING" | "ACCEPTED" | "REJECTED"
-      religion: "CHRISTIAN" | "MUSLIM" | "TRADITIONALIST" | "OTHER"
+      religion:
+        | "CHRISTIAN"
+        | "MUSLIM"
+        | "TRADITIONALIST"
+        | "JEWISH"
+        | "HINDU"
+        | "BUDDHIST"
+        | "SPIRITUAL"
+        | "NONE"
+        | "OTHER"
       subscription_type: "FREE" | "SILVER" | "GOLD"
       swipe_action: "LIKE" | "PASS" | "SUPERLIKE"
     }
@@ -5173,7 +5202,7 @@ export const Constants = {
       gender: ["MALE", "FEMALE", "NON_BINARY", "OTHER"],
       location_precision: ["EXACT", "CITY"],
       match_status: ["PENDING", "ACCEPTED", "REJECTED"],
-      religion: ["CHRISTIAN", "MUSLIM", "TRADITIONALIST", "OTHER"],
+      religion: ["CHRISTIAN", "MUSLIM", "TRADITIONALIST", "JEWISH", "HINDU", "BUDDHIST", "SPIRITUAL", "NONE", "OTHER"],
       subscription_type: ["FREE", "SILVER", "GOLD"],
       swipe_action: ["LIKE", "PASS", "SUPERLIKE"],
     },

@@ -1,4 +1,4 @@
-import { Image as ExpoImage, type ImageContentFit } from "expo-image";
+import { Image as ExpoImage, type ImageContentFit, type ImageContentPosition } from "expo-image";
 import React, { useEffect, useState, type ReactNode } from "react";
 import { StyleSheet, View, type StyleProp, type ViewStyle, type ImageStyle } from "react-native";
 
@@ -6,6 +6,7 @@ type OfflineImageProps = {
   uri?: string | null;
   style: StyleProp<ImageStyle>;
   contentFit?: ImageContentFit;
+  contentPosition?: ImageContentPosition;
   transition?: number;
   cachePolicy?: "none" | "disk" | "memory" | "memory-disk";
   fallback?: ReactNode;
@@ -18,6 +19,7 @@ export default function OfflineImage({
   uri,
   style,
   contentFit = "cover",
+  contentPosition,
   transition = 0,
   cachePolicy = "disk",
   fallback = null,
@@ -47,6 +49,7 @@ export default function OfflineImage({
       style={style}
       cachePolicy={cachePolicy}
       contentFit={contentFit}
+      contentPosition={contentPosition}
       transition={transition}
       onLoad={onLoad}
       onError={() => {

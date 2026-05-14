@@ -3,11 +3,16 @@ import { Match } from '@/types/match';
 import { computeCompatibilityPercent } from '@/lib/compat/compatibility-score';
 import {
   pickBetterLocationValue,
-  pickPreferredLocationLabel,
+  pickVibesLocationLabel,
 } from '@/lib/location/location-display';
+import {
+  cancelIntentRequestOfflineSafe,
+  createIntentRequestOfflineSafe,
+} from '@/lib/intents/offline-actions';
 import { isLikelyNetworkError } from '@/lib/network';
 import { enqueueSwipeSyncMutation } from '@/lib/offline/mutation-queue';
 import { readCache, writeCache } from '@/lib/persisted-cache';
+import { isOnlineFromLastActive } from '@/lib/presence';
 import { addBreadcrumb } from '@/lib/telemetry/sentry';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -18,8 +23,7 @@ const ACTIVE_WINDOW_MINUTES = 15;
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const KM_PER_MILE = 1.60934;
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
-const ACTIVE_NOW_MS = 3 * 60 * 1000;
-const getPreferredLocationLabel = pickPreferredLocationLabel;
+const getPreferredLocationLabel = pickVibesLocationLabel;
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
 
@@ -121,16 +125,8 @@ function computeHaversineKm(lat1: number, lon1: number, lat2: number, lon2: numb
   return R * c;
 }
 
-const isActiveNowFromLastActive = (online: boolean | null | undefined, lastActive?: string | null) => {
-  if (online) return true;
-  if (!lastActive) return false;
-  try {
-    const then = new Date(lastActive).getTime();
-    if (Number.isNaN(then)) return false;
-    return Date.now() - then <= ACTIVE_NOW_MS;
-  } catch {
-    return false;
-  }
+const isActiveNowFromLastActive = (_online: boolean | null | undefined, lastActive?: string | null) => {
+  return isOnlineFromLastActive(lastActive);
 };
 
 const computeSharedInterests = (viewerInterestsRaw: string[] | undefined, interestsArr: string[]) => {
@@ -181,6 +177,7 @@ export default function useAIRecommendations(
   const [distanceUnit, setDistanceUnit] = useState<DistanceUnit>('auto');
   const [lastMutualMatch, setLastMutualMatch] = useState<Match | null>(null);
   const [swipeHistory, setSwipeHistory] = useState<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }[]>([]);
+  const swipeHistoryRef = useRef<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }[]>([]);
   const mountedRef = useRef(true);
   const presencePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mode = opts?.mode ?? 'forYou';
@@ -261,9 +258,9 @@ export default function useAIRecommendations(
         const next = prev.map((m) => {
           const row = map.get(String(m.id));
           if (!row) return m;
-          const online = !!row.online;
           const lastActive = row.last_active ?? m.lastActive ?? null;
-          const nextIsActive = isActiveNowFromLastActive(online, lastActive);
+          const online = isOnlineFromLastActive(lastActive);
+          const nextIsActive = isActiveNowFromLastActive(row.online, lastActive);
           if (
             online === (m as any).online &&
             lastActive === m.lastActive &&
@@ -358,15 +355,18 @@ export default function useAIRecommendations(
     };
   }, []);
 
-  // simple mock: when a swipe is recorded, remove the head and append a regenerated match
   const recordSwipe = useCallback((id: string, action: 'like' | 'dislike' | 'superlike', index = 0) => {
-    setSwipeHistory((prev) => {
-      const head = matches[0];
-      if (!head) return prev;
-      return [...prev, { id, action, index, match: head }];
-    });
     setMatches((prev: Match[]) => {
-      const next = prev.slice(1);
+      const resolvedIndex = prev.findIndex((match) => String(match.id) === String(id));
+      const matchIndex = resolvedIndex >= 0 ? resolvedIndex : Math.max(0, Math.min(index, prev.length - 1));
+      const swipedMatch = prev[matchIndex];
+      if (!swipedMatch) return prev;
+
+      const historyEntry = { id, action, index: matchIndex, match: swipedMatch };
+      swipeHistoryRef.current = [...swipeHistoryRef.current, historyEntry].slice(-50);
+      setSwipeHistory(swipeHistoryRef.current);
+
+      const next = prev.filter((_, itemIndex) => itemIndex !== matchIndex);
       void persistMatchesCache(next);
       return next;
     });
@@ -405,20 +405,17 @@ export default function useAIRecommendations(
         // We model a swipe-like as a lightweight intent_request of type `like_with_note` so it shows up
         // in Incoming/Sent and can be accepted/passed using the existing intent flow.
         if (action === 'like' || action === 'superlike') {
-          const { error: intentErr } = await supabase.rpc('rpc_create_intent_request', {
-            p_recipient_id: id,
-            p_type: 'like_with_note',
-            p_message: action === 'superlike' ? 'Superliked you.' : null,
-            p_metadata: {
+          try {
+            await createIntentRequestOfflineSafe({
+              recipientId: id,
+              type: 'like_with_note',
+              message: action === 'superlike' ? 'Superliked you.' : null,
+              metadata: {
               source: 'swipe',
               swipe_action: action,
-            },
-          });
-          if (intentErr) {
-            if (isLikelyNetworkError(intentErr)) {
-              await queueSwipeSync();
-              return;
-            }
+              },
+            });
+          } catch (intentErr) {
             // Best-effort: swipes should still function even if the Intent mirror fails.
             console.log('[recordSwipe] failed to create like intent', intentErr);
           }
@@ -474,6 +471,60 @@ export default function useAIRecommendations(
     } catch (_e) {}
     return false;
   }, [matches]);
+
+  const cleanupUndoneSwipe = useCallback(async (entry: { id: string; action: 'like' | 'dislike' | 'superlike' }) => {
+    if (!userId || !entry?.id) return;
+
+    try {
+      if (entry.action === 'like' || entry.action === 'superlike') {
+        const { data: intentRows, error: intentLookupError } = await supabase
+          .from('intent_requests')
+          .select('id')
+          .eq('actor_id', userId)
+          .eq('recipient_id', entry.id)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        const intentId = Array.isArray(intentRows) ? intentRows[0]?.id : null;
+        if (!intentLookupError && intentId) {
+          try {
+            await cancelIntentRequestOfflineSafe(intentId);
+          } catch (cancelError) {
+            if (typeof __DEV__ !== 'undefined' && __DEV__) {
+              console.log('[undoLastSwipe] failed to cancel mirrored intent', cancelError);
+            }
+          }
+        } else if (intentLookupError && typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.log('[undoLastSwipe] failed to find mirrored intent', intentLookupError);
+        }
+      }
+
+      if (entry.action === 'superlike') {
+        const { error: refundError } = await supabase.rpc('rpc_refund_undone_superlike', {
+          p_profile_id: userId,
+          p_target_profile_id: entry.id,
+        });
+        if (refundError && typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.log('[undoLastSwipe] failed to refund superlike', refundError);
+        }
+      }
+
+      const { error: deleteSwipeError } = await supabase
+        .from('swipes')
+        .delete()
+        .eq('swiper_id', userId)
+        .eq('target_id', entry.id);
+
+      if (deleteSwipeError && typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log('[undoLastSwipe] failed to remove swipe row', deleteSwipeError);
+      }
+    } catch (error) {
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.log('[undoLastSwipe] cleanup failed', error);
+      }
+    }
+  }, [userId]);
 
   // Realtime listener for matches inserts so UI can react even if swipe reciprocal check is skipped by RLS
   const matchesRef = useRef(matches);
@@ -646,27 +697,29 @@ export default function useAIRecommendations(
   }, [triggerMutualMatch]);
 
   const undoLastSwipe = useCallback((): { match: Match; index: number } | null => {
-    let lastEntry: { id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match } | undefined;
-    setSwipeHistory((prev) => {
-      if (prev.length === 0) return prev;
-      lastEntry = prev[prev.length - 1];
-      return prev.slice(0, -1);
-    });
+    const lastEntry = swipeHistoryRef.current[swipeHistoryRef.current.length - 1];
 
     if (!lastEntry) return null;
+    swipeHistoryRef.current = swipeHistoryRef.current.slice(0, -1);
+    setSwipeHistory(swipeHistoryRef.current);
+    void cleanupUndoneSwipe(lastEntry);
 
     // re-insert the match at the front so it becomes the active card again
     // and remove the generated tail element that was appended when the swipe
     // was originally recorded — this keeps the matches array length stable
     setMatches((prev) => {
-      if (prev.length === 0) return [lastEntry!.match];
-      const withoutLast = prev.slice(0, -1);
-      const next = [lastEntry!.match, ...withoutLast];
+      const withoutDuplicate = prev.filter((match) => String(match.id) !== String(lastEntry.match.id));
+      const insertAt = Math.max(0, Math.min(lastEntry.index, withoutDuplicate.length));
+      const next = [
+        ...withoutDuplicate.slice(0, insertAt),
+        lastEntry.match,
+        ...withoutDuplicate.slice(insertAt),
+      ];
       void persistMatchesCache(next);
       return next;
     });
     return { match: lastEntry.match, index: lastEntry.index };
-  }, [persistMatchesCache]);
+  }, [cleanupUndoneSwipe, persistMatchesCache]);
 
   const smartCount = useMemo(() => {
     // pretend some are AI-curated
@@ -934,6 +987,60 @@ export default function useAIRecommendations(
             location_precision: (p as any).location_precision,
           } as Match);
         };
+
+        try {
+          const v2Segment = mode === 'active' ? 'active_now' : mode === 'nearby' ? 'nearby' : 'for_you';
+          const v2Args = {
+            p_user_id: userId,
+            p_segment: v2Segment,
+            p_limit: mode === 'active' ? 50 : 30,
+            p_active_window_minutes: activeWindowMinutes,
+          };
+          const v2 = await rpc('get_vibes_recommendations_v2', v2Args);
+          if (v2?.error?.code === 'client_timeout') {
+            noteRpcFailure(v2.error, 'get_vibes_recommendations_v2');
+            return;
+          }
+          if (!v2?.error && Array.isArray(v2?.data)) {
+            const enriched = await enrichRpcRowsWithInterests(v2.data);
+            const needsDistanceFallback = enriched.some(
+              (p: any) =>
+                toNum(p?.distance_km) == null &&
+                toNum(p?.latitude) != null &&
+                toNum(p?.longitude) != null,
+            );
+            const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
+            const mapped = enriched.map((p: any) => ({
+              ...mapRpcRow(p, true, viewerCoords),
+              recommendationReasons: p?.recommendation_reasons ?? undefined,
+            }));
+            const filtered = filterDiscoverable(mapped);
+            let mergedFiltered = filtered;
+            setMatches((prev) => {
+              mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
+              return mergedFiltered;
+            });
+            setLastError(null);
+            setLastFetchedAt(Date.now());
+            void persistMatchesCache(mergedFiltered);
+            addBreadcrumb('[recs] fetch_ok', { fetchId, mode, fn: 'get_vibes_recommendations_v2', rows: mapped.length });
+            return;
+          }
+          if (v2?.error) {
+            addBreadcrumb('[recs] v2_fallback', {
+              fetchId,
+              mode,
+              errorCode: v2.error.code ?? null,
+              message: String(v2.error.message || 'v2_error'),
+            });
+          }
+        } catch (e) {
+          addBreadcrumb('[recs] v2_throw_fallback', {
+            fetchId,
+            mode,
+            message: String((e as any)?.message || e || 'v2_throw'),
+          });
+        }
 
         if (mode === 'nearby') {
           try {
@@ -1361,6 +1468,7 @@ export default function useAIRecommendations(
   const refreshMatches = useCallback(() => {
     // fire-and-forget: try server, fallback to mock on error
     void fetchMatchesFromServer();
+    swipeHistoryRef.current = [];
     setSwipeHistory(() => []);
   }, [fetchMatchesFromServer]);
 
