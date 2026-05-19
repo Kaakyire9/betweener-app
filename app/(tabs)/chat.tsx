@@ -5,6 +5,7 @@ import { useResolvedProfileId } from "@/hooks/useResolvedProfileId";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
 import { isLikelyNetworkError } from "@/lib/network";
+import { subscribeToNetworkRestored } from "@/lib/network-recovery";
 import {
   buildChatConversationListStoreKey,
   buildChatThreadStoreKey,
@@ -95,6 +96,8 @@ type NewMatch = {
   profileId: string; // profiles.id (used by matches + profile-view)
   name: string;
   avatar_url: string | null;
+  isOnline: boolean;
+  lastSeen: Date;
   age?: number | null;
   location?: string | null;
 };
@@ -199,6 +202,17 @@ const readLastThreadPreviewMessage = (raw: unknown): ThreadPreviewMessage | null
     deliveredAt: status === 'delivered' || status === 'read' ? timestamp : null,
     localStatus: status,
   };
+};
+
+const hasCachedUserThreadMessages = (raw: unknown): boolean => {
+  if (!Array.isArray(raw) || raw.length === 0) return false;
+  return raw.some((entry) => {
+    if (!entry || typeof entry !== 'object') return false;
+    const item = entry as { id?: unknown; type?: unknown };
+    const type = typeof item.type === 'string' ? item.type : '';
+    const id = String(item.id ?? '');
+    return type !== 'system' && !id.startsWith('system:');
+  });
 };
 
 const withAlpha = (hex: string, alpha: number) => {
@@ -560,7 +574,7 @@ export default function ChatScreen() {
 
         const { data: peerProfiles, error: peerProfilesError } = await supabase
           .from('profiles')
-          .select('id,user_id,full_name,avatar_url,age,location,city,region,account_state,deleted_at')
+          .select('id,user_id,full_name,avatar_url,age,location,city,region,account_state,deleted_at,online,updated_at')
           .in('id', otherProfileIds.slice(0, 24));
 
         if (peerProfilesError || !peerProfiles) {
@@ -571,6 +585,18 @@ export default function ChatScreen() {
         }
 
         const messaged = messagedPeerUserIds ?? messagedPeerUserIdsRef.current ?? new Set();
+        const cachedMessagedPeerUserIds = new Set<string>();
+        await Promise.all(
+          (peerProfiles as any[]).map(async (p) => {
+            const peerUserId = typeof p?.user_id === 'string' ? p.user_id : null;
+            if (!peerUserId || !user?.id) return;
+            const threadKey = buildChatThreadStoreKey(user.id, peerUserId);
+            const cachedThread = await readOfflineSnapshot<unknown[]>(threadKey);
+            if (hasCachedUserThreadMessages(cachedThread)) {
+              cachedMessagedPeerUserIds.add(peerUserId);
+            }
+          }),
+        );
         const next: NewMatch[] = [];
 
         (peerProfiles as any[]).forEach((p) => {
@@ -578,7 +604,7 @@ export default function ChatScreen() {
           const hasLeft = Boolean(p?.deleted_at) || String(p?.account_state || '').toLowerCase() === 'deleted';
           if (hasLeft) return;
           const peerUserId = String(p.user_id);
-          if (messaged.has(peerUserId)) return;
+          if (messaged.has(peerUserId) || cachedMessagedPeerUserIds.has(peerUserId)) return;
 
           const loc =
             (typeof p.location === 'string' && p.location) ||
@@ -591,6 +617,8 @@ export default function ChatScreen() {
             profileId: String(p.id),
             name: String(p.full_name || 'New match'),
             avatar_url: getSafeRemoteImageUri(p.avatar_url),
+            isOnline: typeof p.online === 'boolean' ? Boolean(p.online) : false,
+            lastSeen: p.updated_at ? new Date(p.updated_at) : new Date(),
             age: typeof p.age === 'number' ? p.age : null,
             location: loc,
           });
@@ -713,7 +741,96 @@ export default function ChatScreen() {
           });
         }
       }
-      if (otherUserIds.length === 0) {
+      const fallbackPreviewByUser = new Map<string, ThreadPreviewMessage>();
+      const fallbackMatchedAtByUser = new Map<string, Date>();
+      const fallbackProfileByUser = new Map<string, any>();
+
+      if (currentProfileId) {
+        const { data: acceptedMatches, error: acceptedMatchesError } = await supabase
+          .from('matches')
+          .select('user1_id,user2_id,updated_at,status')
+          .eq('status', 'ACCEPTED')
+          .or(`user1_id.eq.${currentProfileId},user2_id.eq.${currentProfileId}`)
+          .order('updated_at', { ascending: false })
+          .limit(60);
+
+        if (acceptedMatchesError) {
+          console.log('[chat] accepted matches fallback fetch error', acceptedMatchesError);
+        } else if (acceptedMatches) {
+          const acceptedOtherProfileIds = Array.from(
+            new Set(
+              (acceptedMatches as any[])
+                .map((m) => (m.user1_id === currentProfileId ? m.user2_id : m.user1_id))
+                .filter((v: any) => typeof v === 'string' && v.length > 0),
+            ),
+          );
+          const matchedAtByProfileId = new Map<string, Date>();
+          (acceptedMatches as any[]).forEach((match) => {
+            const peerProfileId = match.user1_id === currentProfileId ? match.user2_id : match.user1_id;
+            if (!peerProfileId || matchedAtByProfileId.has(peerProfileId)) return;
+            matchedAtByProfileId.set(
+              peerProfileId,
+              match.updated_at ? new Date(match.updated_at) : new Date(),
+            );
+          });
+
+          if (acceptedOtherProfileIds.length > 0) {
+            const { data: acceptedPeerProfiles, error: acceptedPeerProfilesError } = await supabase
+              .from('profiles')
+              .select('id,user_id,full_name,avatar_url,age,online,updated_at,account_state,deleted_at')
+              .in('id', acceptedOtherProfileIds.slice(0, 24));
+
+            if (acceptedPeerProfilesError) {
+              console.log('[chat] accepted match peer profiles fetch error', acceptedPeerProfilesError);
+            } else {
+              await Promise.all(
+                ((acceptedPeerProfiles as any[] | null) ?? []).map(async (peerProfile) => {
+                  if (!peerProfile?.id || !peerProfile?.user_id) return;
+                  const hasLeft =
+                    Boolean(peerProfile?.deleted_at) ||
+                    String(peerProfile?.account_state || '').toLowerCase() === 'deleted';
+                  if (hasLeft) return;
+
+                  const peerUserId = String(peerProfile.user_id);
+                  if (convoMap.has(peerUserId)) return;
+
+                  const threadKey = buildChatThreadStoreKey(user.id, peerUserId);
+                  const cachedThread = await readOfflineSnapshot<unknown[]>(threadKey);
+                  if (!hasCachedUserThreadMessages(cachedThread)) return;
+
+                  const preview = readLastThreadPreviewMessage(cachedThread);
+                  if (!preview) return;
+
+                  fallbackPreviewByUser.set(peerUserId, preview);
+                  fallbackProfileByUser.set(peerUserId, peerProfile);
+                  fallbackMatchedAtByUser.set(
+                    peerUserId,
+                    matchedAtByProfileId.get(String(peerProfile.id)) ?? preview.timestamp,
+                  );
+                }),
+              );
+            }
+          }
+        }
+      }
+
+      const combinedOtherUserIds = Array.from(
+        new Set([...otherUserIds, ...Array.from(fallbackPreviewByUser.keys())]),
+      );
+
+      if (combinedOtherUserIds.length === 0) {
+        const cached = chatCacheKey ? await readOfflineSnapshot<CachedConversation[]>(chatCacheKey) : null;
+        const hydrated = cached ? deserializeConversations(cached) : [];
+        const shouldPreserveExisting = hadExistingConversations || hydrated.length > 0;
+        if (shouldPreserveExisting) {
+          if (!hadExistingConversations && hydrated.length > 0) {
+            setConversations(hydrated);
+          }
+          setLoadError(null);
+          lastConversationsFetchAtRef.current = Date.now();
+          void fetchNewMatches(new Set(hydrated.map((conversation) => conversation.id)));
+          return;
+        }
         setConversations([]);
         setLoadError(null);
         if (chatCacheKey) void writeOfflineSnapshot(chatCacheKey, serializeConversations([]));
@@ -726,7 +843,7 @@ export default function ChatScreen() {
         const { data: profilesData, error: profilesError } = await supabase
           .from('profiles')
           .select('user_id,full_name,avatar_url,age,online,updated_at,account_state,deleted_at')
-          .in('user_id', otherUserIds);
+          .in('user_id', combinedOtherUserIds);
 
       if (profilesError) {
         console.log('[chat] profiles fetch error', profilesError);
@@ -759,19 +876,29 @@ export default function ChatScreen() {
       const profileByUser = new Map(
         (profilesData || []).map((p: any) => [p.user_id, p])
       );
+      fallbackProfileByUser.forEach((profile, userId) => {
+        if (!profileByUser.has(userId)) {
+          profileByUser.set(userId, profile);
+        }
+      });
       const currentByUser = new Map(conversationsRef.current.map((conversation) => [conversation.id, conversation]));
-      const peerVisibilityPrefs = await fetchPeerVisibilityPrefs(user.id, otherUserIds);
+      const peerVisibilityPrefs = await fetchPeerVisibilityPrefs(user.id, combinedOtherUserIds);
 
-      const nextConversations: ConversationType[] = otherUserIds.map((otherUserId) => {
+      const nextConversations: ConversationType[] = combinedOtherUserIds.map((otherUserId) => {
         const entry = convoMap.get(otherUserId);
+        const fallbackPreview = fallbackPreviewByUser.get(otherUserId);
         const profileRow = profileByUser.get(otherUserId);
         const currentConversation = currentByUser.get(otherUserId);
         const peerVisibility = peerVisibilityPrefs[otherUserId];
         const last = entry?.last;
-        const lastTimestamp = last?.created_at ? new Date(last.created_at) : new Date();
-        const lastText = getRowPreviewText(last);
-        const lastType = (last?.message_type ?? 'text') as ConversationType['lastMessage']['type'];
-        const lastIsViewOnce = Boolean(last?.is_view_once);
+        const lastTimestamp = last?.created_at
+          ? new Date(last.created_at)
+          : (fallbackPreview?.timestamp ?? new Date());
+        const lastText = last ? getRowPreviewText(last) : (fallbackPreview?.text ?? '');
+        const lastType = last
+          ? ((last?.message_type ?? 'text') as ConversationType['lastMessage']['type'])
+          : (fallbackPreview?.type ?? 'text');
+        const lastIsViewOnce = last ? Boolean(last?.is_view_once) : Boolean(fallbackPreview?.isViewOnce);
         const blockStatus = blockStatusByUser.get(otherUserId) ?? null;
         return {
           id: otherUserId,
@@ -794,20 +921,22 @@ export default function ChatScreen() {
           },
           blockStatus,
           lastMessage: {
-            id: last?.id || '',
+            id: last?.id || fallbackPreview?.id || '',
             text: lastText,
             timestamp: lastTimestamp,
-            senderId: last?.sender_id || '',
+            senderId: last?.sender_id || fallbackPreview?.senderId || '',
             type: lastType,
             isViewOnce: lastIsViewOnce,
-            isRead: last?.is_read ?? false,
-            deliveredAt: last?.delivered_at ? new Date(last.delivered_at) : null,
+            isRead: last?.is_read ?? (fallbackPreview?.isRead ?? false),
+            deliveredAt: last?.delivered_at
+              ? new Date(last.delivered_at)
+              : (fallbackPreview?.deliveredAt ?? null),
             reactionPreview: reactionPreviewByUser.get(otherUserId),
           },
           unreadCount: entry?.unread || 0,
           isMuted: false,
           isPinned: false,
-          matchedAt: lastTimestamp,
+          matchedAt: fallbackMatchedAtByUser.get(otherUserId) ?? lastTimestamp,
         };
       }).filter((conversation) => !peerVisibilityPrefs[conversation.id]?.hidden);
       const serverPrefs = new Map<string, { muted: boolean; pinned: boolean }>();
@@ -815,7 +944,7 @@ export default function ChatScreen() {
         .from('chat_prefs')
         .select('peer_id,muted,pinned')
         .eq('user_id', user.id)
-        .in('peer_id', otherUserIds);
+        .in('peer_id', combinedOtherUserIds);
       if (prefsError) {
         console.log('[chat] chat prefs fetch error', prefsError);
       }
@@ -831,17 +960,23 @@ export default function ChatScreen() {
       if (chatCacheKey) void writeOfflineSnapshot(chatCacheKey, serializeConversations(hydrated));
 
       // New matches are accepted matches without any message history yet.
-      void fetchNewMatches(new Set(otherUserIds));
+      void fetchNewMatches(new Set(combinedOtherUserIds));
     } finally {
       setIsLoading(false);
     }
-  }, [applyChatPrefs, chatCacheKey, fetchNewMatches, user?.id]);
+  }, [applyChatPrefs, chatCacheKey, currentProfileId, fetchNewMatches, user?.id]);
 
   const refreshConversationsOnFocus = useCallback(() => {
     const hasVisibleRows = conversationsRef.current.length > 0;
     const isFresh = Date.now() - lastConversationsFetchAtRef.current < CHAT_LIST_REFRESH_INTERVAL_MS;
     if (hasVisibleRows && isFresh) return;
     void fetchConversations();
+  }, [fetchConversations]);
+
+  useEffect(() => {
+    return subscribeToNetworkRestored(() => {
+      void fetchConversations();
+    });
   }, [fetchConversations]);
 
   const savePeerVisibilityPref = useCallback(
@@ -1695,6 +1830,8 @@ export default function ChatScreen() {
         id: match.userId,
         userName: match.name,
         userAvatar: match.avatar_url ?? '',
+        isOnline: match.isOnline.toString(),
+        lastSeen: match.lastSeen.toISOString(),
       },
     });
   };

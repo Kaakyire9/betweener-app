@@ -1,11 +1,12 @@
 import GlassSurface from "@/components/vibes/depth/GlassSurface";
+import OfflineImage from "@/components/media/OfflineImage";
 import { Colors } from "@/constants/theme";
 import type { MomentUser } from "@/hooks/useMoments";
 import { getSafeRemoteImageUri } from "@/lib/profile/display-name";
 import type { MomentRelationshipContext } from "@/types/moment-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { memo, useEffect, useMemo, useRef } from "react";
-import { Animated, Easing, Image, Platform, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from "react-native";
+import { Animated, Easing, Platform, Pressable, ScrollView, StyleSheet, Text, View, type ViewStyle } from "react-native";
 import MomentAvatarBubble from "./MomentAvatarBubble";
 import { formatMomentFirstName, MOMENTS_CAPSULE_COPY } from "./momentsCapsuleCopy";
 import type { MomentsCapsuleMetrics } from "./useMomentsCapsuleMetrics";
@@ -146,33 +147,33 @@ function FloatingMomentsCapsule({
               },
             ]}
           >
-            {ownOnlyAvatarUrl ? (
-              <Image
-                source={{ uri: ownOnlyAvatarUrl }}
-                style={[
-                  styles.singleAvatar,
-                  {
-                    width: metrics.isCompactHeight || metrics.isCompactWidth ? 40 : 44,
-                    height: metrics.isCompactHeight || metrics.isCompactWidth ? 40 : 44,
-                    borderRadius: metrics.isCompactHeight || metrics.isCompactWidth ? 20 : 22,
-                  },
-                ]}
-              />
-            ) : (
-              <View
-                style={[
-                  styles.singleAvatarFallback,
-                  {
-                    width: metrics.isCompactHeight || metrics.isCompactWidth ? 40 : 44,
-                    height: metrics.isCompactHeight || metrics.isCompactWidth ? 40 : 44,
-                    borderRadius: metrics.isCompactHeight || metrics.isCompactWidth ? 20 : 22,
-                    backgroundColor: isDark ? "rgba(244,232,208,0.12)" : "rgba(19,168,168,0.12)",
-                  },
-                ]}
-              >
-                <Text style={[styles.singleInitial, { color: theme.text }]}>Y</Text>
-              </View>
-            )}
+            <OfflineImage
+              uri={ownOnlyAvatarUrl}
+              style={[
+                styles.singleAvatar,
+                {
+                  width: metrics.isCompactHeight || metrics.isCompactWidth ? 40 : 44,
+                  height: metrics.isCompactHeight || metrics.isCompactWidth ? 40 : 44,
+                  borderRadius: metrics.isCompactHeight || metrics.isCompactWidth ? 20 : 22,
+                },
+              ]}
+              contentFit="cover"
+              fallback={
+                <View
+                  style={[
+                    styles.singleAvatarFallback,
+                    {
+                      width: metrics.isCompactHeight || metrics.isCompactWidth ? 40 : 44,
+                      height: metrics.isCompactHeight || metrics.isCompactWidth ? 40 : 44,
+                      borderRadius: metrics.isCompactHeight || metrics.isCompactWidth ? 20 : 22,
+                      backgroundColor: isDark ? "rgba(244,232,208,0.12)" : "rgba(19,168,168,0.12)",
+                    },
+                  ]}
+                >
+                  <Text style={[styles.singleInitial, { color: theme.text }]}>Y</Text>
+                </View>
+              }
+            />
             <View style={[styles.singleLiveDot, { backgroundColor: theme.tint }]} />
           </View>
           <View style={styles.singleCopy}>

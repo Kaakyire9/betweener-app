@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  Image as RNImage,
   Modal,
   PanResponder,
   Pressable,
@@ -15,12 +16,22 @@ import {
 } from 'react-native';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth-context';
+import { fetchMomentConversationState } from '@/lib/moments-eligibility';
 import type { Moment, MomentUser } from '@/hooks/useMoments';
 import { createSignedUrl } from '@/lib/moments';
 import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
 import type { MomentRelationshipContext } from '@/types/moment-context';
 import MomentCommentsModal from '@/components/MomentCommentsModal';
+import TextMomentCard from '@/components/moments/TextMomentCard';
+import { syncMomentReactionOfflineSafe } from '@/lib/moment-interactions-offline-actions';
+import {
+  readMomentCommentsSnapshot,
+  readMomentReactorsSnapshot,
+  upsertMomentReactorSnapshot,
+  writeMomentReactorsSnapshot,
+} from '@/lib/offline/moments-store';
 import { useResponsiveMetrics } from '@/lib/responsive';
+import { getMomentOfflineMutationSnapshot, subscribeToOfflineMutationEvents } from '@/lib/offline/mutation-queue';
 
 const DEFAULT_MOMENT_DURATION = 6000;
 const VIDEO_MOMENT_DURATION = 15000;
@@ -272,6 +283,7 @@ type Props = {
   startHighlightedCommentId?: string | null;
   startHighlightedReactionEmoji?: string | null;
   relationshipContextByProfileId?: Record<string, MomentRelationshipContext>;
+  preferredMediaUrlsByMomentId?: Record<string, string>;
   onPressIntent?: (user: MomentUser) => void;
   onClose: () => void;
 };
@@ -295,6 +307,7 @@ export default function MomentViewer({
   startHighlightedCommentId = null,
   startHighlightedReactionEmoji = null,
   relationshipContextByProfileId,
+  preferredMediaUrlsByMomentId = {},
   onPressIntent,
   onClose,
 }: Props) {
@@ -317,10 +330,12 @@ export default function MomentViewer({
   const [reactionCounts, setReactionCounts] = useState<Record<string, number>>({});
   const [commentCount, setCommentCount] = useState(0);
   const [userReaction, setUserReaction] = useState<string | null>(null);
+  const [hasConversationHistory, setHasConversationHistory] = useState<boolean | null>(null);
   const [commentsVisible, setCommentsVisible] = useState(false);
   const [pressPaused, setPressPaused] = useState(false);
   const [entryHintVisible, setEntryHintVisible] = useState(false);
   const [highlightedReactionEmoji, setHighlightedReactionEmoji] = useState<string | null>(null);
+  const [mediaAspectRatios, setMediaAspectRatios] = useState<Record<string, number>>({});
   const pendingInitialCommentsOpenRef = useRef(false);
   const pendingEntryHintSourceRef = useRef<'comment' | 'reaction' | null>(null);
   const pendingHighlightedReactionEmojiRef = useRef<string | null>(null);
@@ -333,9 +348,12 @@ export default function MomentViewer({
       ? relationshipContextByProfileId?.[String(currentUser.profileId)] ?? null
       : null;
   const relationshipCue = relationshipContext?.cue ?? null;
+  const primaryActionUsesIntent = relationshipCue === 'Door reopened' && hasConversationHistory === false && Boolean(onPressIntent);
   const primaryCtaText = useMemo(() => {
     if (!relationshipCue) return 'Say hello';
-    if (relationshipCue === 'Door reopened') return 'Reopen the door';
+    if (relationshipCue === 'Door reopened') {
+      return primaryActionUsesIntent ? 'Send an Intent' : 'Reopen the door';
+    }
     if (relationshipCue === 'You matched') return 'Pick it back up';
     if (relationshipCue === 'You liked each other') return 'Start the spark';
     if (relationshipCue === 'Liked you') return 'Answer the signal';
@@ -343,7 +361,7 @@ export default function MomentViewer({
     if (relationshipCue === 'They reached out') return 'Respond with warmth';
     if (relationshipCue === 'You liked them') return 'Say hello again';
     return 'Say hello again';
-  }, [relationshipCue]);
+  }, [primaryActionUsesIntent, relationshipCue]);
   const secondaryCtaText = useMemo(() => {
     if (relationshipCue === 'Door reopened') return 'Reply with intention';
     if (relationshipCue === 'You matched') return 'Lead with intention';
@@ -370,7 +388,13 @@ export default function MomentViewer({
   });
 
   const ensureSignedUrls = useCallback(async (moments: Moment[]) => {
-    const missing = moments.filter((m) => m.media_url && !m.media_url.startsWith('http') && !signedUrls[m.id]);
+    const missing = moments.filter(
+      (m) =>
+        m.media_url &&
+        !m.media_url.startsWith('http') &&
+        !signedUrls[m.id] &&
+        !preferredMediaUrlsByMomentId[m.id],
+    );
     if (missing.length === 0) return;
     const resolved: Record<string, string> = {};
     await Promise.all(
@@ -382,21 +406,90 @@ export default function MomentViewer({
     if (Object.keys(resolved).length > 0) {
       setSignedUrls((prev) => ({ ...prev, ...resolved }));
     }
-  }, [signedUrls]);
+  }, [preferredMediaUrlsByMomentId, signedUrls]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!visible || !user?.id || !currentUser?.userId || currentUser.isOwn) {
+      setHasConversationHistory(null);
+      return;
+    }
+
+    (async () => {
+      const result = await fetchMomentConversationState({
+        currentUserId: user.id,
+        peerUserId: currentUser.userId,
+      });
+      if (!cancelled) {
+        setHasConversationHistory(result.hasConversation);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.isOwn, currentUser?.userId, user?.id, visible]);
 
   const fetchReactions = useCallback(async (momentId: string) => {
     if (!momentId) return;
-    const { data, error } = await supabase.from('moment_reactions').select('emoji,user_id').eq('moment_id', momentId);
-    if (error || !data) {
-      setReactionCounts({});
-      setUserReaction(null);
-      return;
-    }
     const counts: Record<string, number> = {};
     let mine: string | null = null;
-    data.forEach((row: any) => {
-      counts[row.emoji] = (counts[row.emoji] || 0) + 1;
-      if (row.user_id === user?.id) mine = row.emoji;
+    const cachedReactors = user?.id ? await readMomentReactorsSnapshot(user.id, momentId) : null;
+    if (cachedReactors?.reactions?.length) {
+      cachedReactors.reactions.forEach((row) => {
+        counts[row.emoji] = (counts[row.emoji] || 0) + 1;
+        if (row.user_id === user?.id) mine = row.emoji;
+      });
+    }
+
+    const { data, error } = await supabase
+      .from('moment_reactions')
+      .select('id,emoji,user_id,created_at')
+      .eq('moment_id', momentId);
+    if (!error && data) {
+      Object.keys(counts).forEach((key) => delete counts[key]);
+      mine = null;
+      data.forEach((row: any) => {
+        counts[row.emoji] = (counts[row.emoji] || 0) + 1;
+        if (row.user_id === user?.id) mine = row.emoji;
+      });
+      if (user?.id) {
+        const userIds = Array.from(new Set(data.map((row: any) => row.user_id))).filter(Boolean);
+        const profilesByUserId: Record<string, { id: string | null; full_name: string | null; avatar_url: string | null }> = {};
+        if (userIds.length > 0) {
+          const { data: profileRows } = await supabase
+            .from('profiles')
+            .select('id,user_id,full_name,avatar_url')
+            .in('user_id', userIds);
+          (profileRows || []).forEach((profileRow: any) => {
+            if (!profileRow?.user_id) return;
+            profilesByUserId[profileRow.user_id] = {
+              id: profileRow.id ?? null,
+              full_name: profileRow.full_name ?? null,
+              avatar_url: profileRow.avatar_url ?? null,
+            };
+          });
+        }
+        await writeMomentReactorsSnapshot(user.id, momentId, {
+          reactions: data as Array<{ id: string; emoji: string; user_id: string; created_at: string }>,
+          profilesByUserId,
+        });
+      }
+    }
+    const offlineSnapshot = await getMomentOfflineMutationSnapshot();
+    [...offlineSnapshot.failed, ...offlineSnapshot.pending].forEach((mutation) => {
+      if (mutation.kind !== 'moment_reaction_sync' || mutation.payload.momentId !== momentId || mutation.payload.userId !== user?.id) {
+        return;
+      }
+      const previousEmoji = mutation.payload.previousEmoji ?? mine ?? null;
+      const nextEmoji = mutation.payload.emoji ?? null;
+      if (previousEmoji && previousEmoji !== nextEmoji) {
+        counts[previousEmoji] = Math.max(0, (counts[previousEmoji] || 0) - 1);
+      }
+      if (nextEmoji) {
+        counts[nextEmoji] = (counts[nextEmoji] || 0) + (previousEmoji === nextEmoji ? 0 : 1);
+      }
+      mine = nextEmoji;
     });
     setReactionCounts(counts);
     setUserReaction(mine);
@@ -404,17 +497,31 @@ export default function MomentViewer({
 
   const fetchCommentCount = useCallback(async (momentId: string) => {
     if (!momentId) return;
+    let nextCount = 0;
+    const cachedComments = user?.id ? await readMomentCommentsSnapshot(user.id, momentId) : null;
+    if (cachedComments?.comments?.length) {
+      nextCount = cachedComments.comments.length;
+    }
     const { count, error } = await supabase
       .from('moment_comments')
       .select('id', { count: 'exact', head: true })
       .eq('moment_id', momentId)
       .eq('is_deleted', false);
-    if (error) {
-      setCommentCount(0);
-      return;
+    if (!error) {
+      nextCount = count ?? 0;
     }
-    setCommentCount(count ?? 0);
-  }, []);
+    const offlineSnapshot = await getMomentOfflineMutationSnapshot();
+    [...offlineSnapshot.failed, ...offlineSnapshot.pending].forEach((mutation) => {
+      if (mutation.kind === 'moment_comment_create' && mutation.payload.momentId === momentId) {
+        nextCount += 1;
+        return;
+      }
+      if (mutation.kind === 'moment_comment_delete' && mutation.payload.momentId === momentId) {
+        nextCount = Math.max(0, nextCount - 1);
+      }
+    });
+    setCommentCount(nextCount);
+  }, [user?.id]);
 
   const handleNext = useCallback(() => {
     const usersList = usersRef.current;
@@ -575,10 +682,16 @@ export default function MomentViewer({
   const handleReact = async (emojiValue: string) => {
     if (!currentMoment || !user?.id) return;
     const prevReaction = userReaction;
-    const { error } = await supabase
-      .from('moment_reactions')
-      .upsert({ moment_id: currentMoment.id, user_id: user.id, emoji: emojiValue }, { onConflict: 'moment_id,user_id' });
-    if (error) return;
+    try {
+      await syncMomentReactionOfflineSafe({
+        momentId: currentMoment.id,
+        userId: user.id,
+        emoji: emojiValue,
+        previousEmoji: prevReaction,
+      });
+    } catch {
+      return;
+    }
     setUserReaction(emojiValue);
     setReactionCounts((prev) => {
       const next = { ...prev };
@@ -588,14 +701,42 @@ export default function MomentViewer({
       next[emojiValue] = (next[emojiValue] || 0) + (prevReaction === emojiValue ? 0 : 1);
       return next;
     });
+    await upsertMomentReactorSnapshot(
+      user.id,
+      currentMoment.id,
+      {
+        id: `local-reaction:${currentMoment.id}:${user.id}`,
+        emoji: emojiValue,
+        user_id: user.id,
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: currentUser?.profileId ?? null,
+        full_name: currentUser?.name ?? 'You',
+        avatar_url: safeCurrentAvatarUrl,
+      },
+    );
   };
 
+  useEffect(() => {
+    if (!visible || !currentMoment?.id) return;
+    return subscribeToOfflineMutationEvents((event) => {
+      if (
+        event.mutation.kind === 'moment_reaction_sync' ||
+        event.mutation.kind === 'moment_comment_create'
+      ) {
+        void fetchReactions(currentMoment.id);
+        void fetchCommentCount(currentMoment.id);
+      }
+    });
+  }, [currentMoment?.id, fetchCommentCount, fetchReactions, visible]);
+
   const handleOpenChat = useCallback(() => {
-    if (!currentUser || currentUser.isOwn || !currentUser.profileId) return;
+    if (!currentUser || currentUser.isOwn || !currentUser.userId) return;
     router.push({
       pathname: '/chat/[id]',
       params: {
-        id: String(currentUser.profileId),
+        id: String(currentUser.userId),
         userName: currentUser.name,
         userAvatar: currentUser.avatarUrl ?? '',
       },
@@ -603,12 +744,12 @@ export default function MomentViewer({
   }, [currentUser, router]);
 
   const handleGuidedReply = useCallback((prefill: string) => {
-    if (!currentUser || currentUser.isOwn || !currentUser.profileId) return;
+    if (!currentUser || currentUser.isOwn || !currentUser.userId) return;
     onClose();
     router.push({
       pathname: '/chat/[id]',
       params: {
-        id: String(currentUser.profileId),
+        id: String(currentUser.userId),
         userName: currentUser.name,
         userAvatar: currentUser.avatarUrl ?? '',
         prefill,
@@ -620,6 +761,14 @@ export default function MomentViewer({
     if (!currentUser || currentUser.isOwn || !onPressIntent) return;
     onPressIntent(currentUser);
   }, [currentUser, onPressIntent]);
+
+  const handlePrimaryAction = useCallback(() => {
+    if (primaryActionUsesIntent) {
+      handleOpenIntent();
+      return;
+    }
+    handleOpenChat();
+  }, [handleOpenChat, handleOpenIntent, primaryActionUsesIntent]);
 
   useEffect(() => {
     usersRef.current = users;
@@ -791,12 +940,53 @@ export default function MomentViewer({
   const mediaUrl = useMemo(() => {
     if (!currentMoment?.media_url) return null;
     if (currentMoment.media_url.startsWith('http')) return currentMoment.media_url;
-    return signedUrls[currentMoment.id] || null;
-  }, [currentMoment, signedUrls]);
+    return preferredMediaUrlsByMomentId[currentMoment.id] || signedUrls[currentMoment.id] || null;
+  }, [currentMoment, preferredMediaUrlsByMomentId, signedUrls]);
+
+  const safeMediaUrl = useMemo(() => getSafeRemoteImageUri(mediaUrl), [mediaUrl]);
+  const currentMediaAspectRatio = currentMoment ? mediaAspectRatios[currentMoment.id] ?? null : null;
+  const isWidePhotoMoment =
+    currentMoment?.type === 'photo' &&
+    typeof currentMediaAspectRatio === 'number' &&
+    currentMediaAspectRatio > 1.15;
+  const wideFrameMetrics = useMemo(() => {
+    if (!isWidePhotoMoment || !currentMediaAspectRatio) return null;
+    const frameWidth = Math.min(responsive.usableWidth - 14, 620);
+    const rawHeight = frameWidth / currentMediaAspectRatio;
+    const frameHeight = Math.max(210, Math.min(rawHeight, responsive.usableHeight * 0.48));
+    const offsetY = Math.max(-22, -Math.round(responsive.usableHeight * 0.065));
+    return {
+      width: frameWidth,
+      height: frameHeight,
+      offsetY,
+    };
+  }, [currentMediaAspectRatio, isWidePhotoMoment, responsive.usableHeight, responsive.usableWidth]);
+
+  useEffect(() => {
+    if (!currentMoment || currentMoment.type !== 'photo' || !safeMediaUrl) return;
+    if (mediaAspectRatios[currentMoment.id]) return;
+    let cancelled = false;
+    RNImage.getSize(
+      safeMediaUrl,
+      (width, height) => {
+        if (cancelled || !width || !height) return;
+        setMediaAspectRatios((prev) => {
+          if (prev[currentMoment.id]) return prev;
+          return { ...prev, [currentMoment.id]: width / height };
+        });
+      },
+      () => {},
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [currentMoment, mediaAspectRatios, safeMediaUrl]);
 
   if (!visible || !currentUser || !currentMoment) {
     return null;
   }
+
+  const isWideMoment = Boolean(isWidePhotoMoment && wideFrameMetrics);
 
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
@@ -851,13 +1041,58 @@ export default function MomentViewer({
 
         <View style={styles.mediaWrapper}>
           {currentMoment.type === 'text' ? (
-            <View style={styles.textMoment}>
-              <Text style={styles.textMomentBody}>{currentMoment.text_body || ''}</Text>
-              {currentMoment.caption ? <Text style={styles.textCaption}>{currentMoment.caption}</Text> : null}
-            </View>
+            <TextMomentCard
+              body={currentMoment.text_body || ''}
+              caption={currentMoment.caption}
+              metadata={currentMoment.metadata}
+              variant="viewer"
+              style={styles.textMomentCard}
+            />
           ) : currentMoment.type === 'photo' ? (
-            getSafeRemoteImageUri(mediaUrl) ? (
-              <Image source={{ uri: getSafeRemoteImageUri(mediaUrl)! }} style={styles.media} />
+            safeMediaUrl ? (
+              isWidePhotoMoment ? (
+                <View style={styles.mediaStage}>
+                  <Image
+                    source={{ uri: safeMediaUrl }}
+                    style={styles.mediaBackdrop}
+                    contentFit="cover"
+                    blurRadius={24}
+                  />
+                  <LinearGradient
+                    colors={['rgba(0,0,0,0.06)', 'rgba(0,0,0,0.34)']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 0, y: 1 }}
+                    style={styles.mediaBackdropShade}
+                  />
+                  <View
+                    style={[
+                      styles.wideMediaFrameWrap,
+                      wideFrameMetrics
+                        ? {
+                            width: wideFrameMetrics.width,
+                            transform: [{ translateY: wideFrameMetrics.offsetY }],
+                          }
+                        : null,
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.wideMediaFrame,
+                        wideFrameMetrics
+                          ? {
+                              width: wideFrameMetrics.width,
+                              height: wideFrameMetrics.height,
+                            }
+                          : null,
+                      ]}
+                    >
+                      <Image source={{ uri: safeMediaUrl }} style={styles.wideMediaAsset} contentFit="contain" />
+                    </View>
+                  </View>
+                </View>
+              ) : (
+                <Image source={{ uri: safeMediaUrl }} style={styles.media} contentFit="cover" />
+              )
             ) : (
               <View style={styles.mediaFallback} />
             )
@@ -867,7 +1102,15 @@ export default function MomentViewer({
             <View style={styles.mediaFallback} />
           )}
           {currentMoment.caption && currentMoment.type !== 'text' ? (
-            <View style={styles.captionBubble}>
+            <View
+              style={[
+                styles.captionBubble,
+                isWideMoment ? styles.captionBubbleWide : null,
+                isWideMoment
+                  ? { bottom: Math.max(92, responsive.bottomNavReserve + 18) }
+                  : null,
+              ]}
+            >
               <Text style={styles.captionText}>{currentMoment.caption}</Text>
             </View>
           ) : null}
@@ -877,7 +1120,7 @@ export default function MomentViewer({
         <LinearGradient colors={['transparent', 'rgba(0,0,0,0.6)']} style={styles.bottomGradient} pointerEvents="none" />
 
         {!currentUser.isOwn ? (
-          <View style={styles.replyStack}>
+          <View style={[styles.replyStack, isWideMoment ? styles.replyStackWide : null]}>
             <View style={styles.momentReadCard}>
               <View style={styles.momentReadHeader}>
                 <MaterialCommunityIcons name="star-four-points" size={13} color="#8ed7d2" />
@@ -900,8 +1143,12 @@ export default function MomentViewer({
               ))}
             </View>
             <View style={styles.replyRow}>
-              <Pressable style={styles.replyPrimaryButton} onPress={handleOpenChat}>
-                <MaterialCommunityIcons name="chat-processing-outline" size={16} color="#081313" />
+              <Pressable style={styles.replyPrimaryButton} onPress={handlePrimaryAction}>
+                <MaterialCommunityIcons
+                  name={primaryActionUsesIntent ? 'star-four-points' : 'chat-processing-outline'}
+                  size={16}
+                  color="#081313"
+                />
                 <Text style={styles.replyPrimaryText}>{primaryCtaText}</Text>
               </Pressable>
               {onPressIntent ? (
@@ -914,7 +1161,7 @@ export default function MomentViewer({
           </View>
         ) : null}
 
-        <View style={styles.actions}>
+        <View style={[styles.actions, isWideMoment ? styles.actionsWide : null]}>
           <LinearGradient
             colors={['rgba(15,26,26,0.36)', 'rgba(15,26,26,0.22)']}
             style={styles.actionsRail}
@@ -1023,17 +1270,42 @@ const styles = StyleSheet.create({
   },
   mediaWrapper: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   media: { width: '100%', height: '100%' },
-  mediaFallback: { width: '100%', height: '100%', backgroundColor: '#0f1a1a' },
-  textMoment: {
-    width: '84%',
-    padding: 20,
-    borderRadius: 24,
-    backgroundColor: 'rgba(15,26,26,0.92)',
-    borderWidth: 1,
-    borderColor: 'rgba(91,193,187,0.2)',
+  mediaStage: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#000',
   },
-  textMomentBody: { color: '#f9fafb', fontFamily: 'Manrope_600SemiBold', fontSize: 18, lineHeight: 26 },
-  textCaption: { color: '#9cb3ae', fontFamily: 'Manrope_500Medium', marginTop: 12 },
+  mediaBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    opacity: 0.3,
+  },
+  mediaBackdropShade: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  wideMediaFrameWrap: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  wideMediaFrame: {
+    borderRadius: 24,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(7,11,15,0.3)',
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 8 },
+  },
+  wideMediaAsset: {
+    width: '100%',
+    height: '100%',
+  },
+  mediaFallback: { width: '100%', height: '100%', backgroundColor: '#0f1a1a' },
+  textMomentCard: {
+    width: '84%',
+    maxWidth: 560,
+  },
   captionBubble: {
     position: 'absolute',
     bottom: 120,
@@ -1046,6 +1318,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(91,193,187,0.18)',
   },
+  captionBubbleWide: {
+    left: 18,
+    right: 92,
+    backgroundColor: 'rgba(10,18,18,0.78)',
+    borderColor: 'rgba(91,193,187,0.22)',
+  },
   captionText: { color: '#fff', fontFamily: 'Manrope_500Medium', fontSize: 13, lineHeight: 18 },
   bottomGradient: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 220 },
   replyStack: {
@@ -1054,6 +1332,10 @@ const styles = StyleSheet.create({
     right: 84,
     bottom: 26,
     gap: 10,
+  },
+  replyStackWide: {
+    right: 96,
+    bottom: 18,
   },
   momentReadCard: {
     paddingHorizontal: 13,
@@ -1171,6 +1453,9 @@ const styles = StyleSheet.create({
     top: '50%',
     transform: [{ translateY: -46 }],
     alignItems: 'center',
+  },
+  actionsWide: {
+    right: 10,
   },
   actionsRail: {
     alignItems: 'center',

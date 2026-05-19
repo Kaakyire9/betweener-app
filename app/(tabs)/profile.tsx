@@ -1,4 +1,5 @@
 import { DiasporaVerification } from "@/components/DiasporaVerification";
+import OfflineImage from "@/components/media/OfflineImage";
 import PhotoGallery from "@/components/PhotoGallery";
 import ProfileEditModal from "@/components/ProfileEditModal";
 import { VerificationBadge } from "@/components/VerificationBadge";
@@ -15,12 +16,18 @@ import {
   migrateLegacyMeProfileSnapshot,
   readMeProfileSnapshot,
   writeMeProfileSnapshot,
+  type MeAccountDraftsSnapshot,
+  type MeAccountSnapshot,
   type MeProfileStatsSnapshot,
 } from "@/lib/offline/me-store";
+import { cacheOfflineVideo, getOfflineVideoUri } from "@/lib/offline/video-store";
 import {
+  enqueueNotificationPrefsUpdateMutation,
   getOfflineMutationQueueSnapshot,
+  getPendingProfileMediaSyncMutation,
   subscribeToOfflineMutationEvents,
 } from "@/lib/offline/mutation-queue";
+import { isLikelyNetworkError } from "@/lib/network";
 import { isLocalMediaUri, normalizeProfilePhotoList, normalizeProfilePhotoUri } from "@/lib/profile/media";
 import { getPresenceDisplay } from "@/lib/presence";
 import { formatReligionLabel } from "@/lib/profile/religion";
@@ -52,7 +59,6 @@ import {
   Alert,
   Animated,
   Image,
-  ImageBackground,
   Modal,
   Platform,
   RefreshControl,
@@ -63,6 +69,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from "@react-native-community/netinfo";
 import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -168,6 +175,30 @@ const normalizeMeProfileStatsSnapshot = (
     ? Math.max(0, Math.min(100, Math.round(stats.matchQuality)))
     : null,
 });
+
+const mergeUniqueMediaUris = (...groups: Array<string[] | null | undefined>) =>
+  Array.from(
+    new Set(
+      groups
+        .flatMap((group) => group ?? [])
+        .map((item) => normalizeProfilePhotoUri(item))
+      .filter(Boolean),
+    ),
+  );
+
+const sanitizeLinkedProviderList = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? Array.from(
+        new Set(
+          value
+            .map((item) => String(item || '').trim().toLowerCase())
+            .filter((item) => item === 'email' || item === 'google' || item === 'apple'),
+        ),
+      )
+    : [];
+
+const stringListEqual = (left: string[], right: string[]) =>
+  left.length === right.length && left.every((value, index) => value === right[index]);
 
 const DISTANCE_UNIT_OPTIONS: { value: DistanceUnit; label: string; subtitle?: string }[] = [
   { value: 'auto', label: 'Auto', subtitle: 'Recommended' },
@@ -656,6 +687,7 @@ export default function ProfileScreen() {
   const [recoverySubmitting, setRecoverySubmitting] = useState(false);
   const [recoveryMessage, setRecoveryMessage] = useState('');
   const [recoveryError, setRecoveryError] = useState('');
+  const [accountNetworkReady, setAccountNetworkReady] = useState(true);
   const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
   const [deleteReasonKeys, setDeleteReasonKeys] = useState<string[]>([]);
   const [deleteFeedback, setDeleteFeedback] = useState('');
@@ -918,6 +950,55 @@ export default function ProfileScreen() {
     [cacheProfileId],
   );
 
+  const persistAccountSnapshot = useCallback(
+    (patch: Partial<MeAccountSnapshot>) => {
+      writeMeSnapshot({
+        accountSnapshot: {
+          email: user?.email ?? null,
+          linkedProviders,
+          disconnectedProviders,
+          hasPasswordBackup,
+          ...patch,
+        },
+      });
+    },
+    [disconnectedProviders, hasPasswordBackup, linkedProviders, user?.email, writeMeSnapshot],
+  );
+
+  const persistAccountDrafts = useCallback(
+    (patch: Partial<MeAccountDraftsSnapshot>) => {
+      writeMeSnapshot({
+        accountDrafts: {
+          emailInput,
+          recoveryCurrentMethod,
+          recoveryPreviousMethod,
+          recoveryContactEmail,
+          recoveryPreviousEmail,
+          recoveryNote,
+          ...patch,
+        },
+      });
+    },
+    [
+      emailInput,
+      recoveryContactEmail,
+      recoveryCurrentMethod,
+      recoveryNote,
+      recoveryPreviousEmail,
+      recoveryPreviousMethod,
+      writeMeSnapshot,
+    ],
+  );
+
+  const guardAccountAction = useCallback(
+    (label: string) => {
+      if (accountNetworkReady) return true;
+      Alert.alert('Connection required', `${label} needs a live connection before it can continue.`);
+      return false;
+    },
+    [accountNetworkReady],
+  );
+
   const commitProfileStatsSnapshot = useCallback(
     (stats: Partial<MeProfileStatsSnapshot>) => {
       const next = normalizeMeProfileStatsSnapshot(stats);
@@ -959,11 +1040,132 @@ export default function ProfileScreen() {
         setNotificationPrefs((prev) => ({ ...prev, ...(cached.notificationPrefs as Partial<NotificationPrefs>) }));
         setNotificationPrefsLoaded(true);
       }
+      if (cached.accountSnapshot) {
+        if (cached.accountSnapshot.email && !emailInput) {
+          setEmailInput(String(cached.accountSnapshot.email));
+        }
+        const cachedLinked = sanitizeLinkedProviderList(cached.accountSnapshot.linkedProviders);
+        const cachedDisconnected = sanitizeLinkedProviderList(cached.accountSnapshot.disconnectedProviders);
+        if (cachedLinked.length > 0) {
+          setLinkedProviders((prev) => (prev.length === 0 ? cachedLinked : prev));
+        }
+        if (cachedDisconnected.length > 0) {
+          setDisconnectedProviders((prev) => (prev.length === 0 ? cachedDisconnected : prev));
+        }
+        if (typeof cached.accountSnapshot.hasPasswordBackup === 'boolean') {
+          setHasPasswordBackup((prev) => (prev ? prev : cached.accountSnapshot?.hasPasswordBackup ?? false));
+        }
+      }
+      if (cached.accountDrafts) {
+        if (cached.accountDrafts.emailInput && !emailInput) {
+          setEmailInput(cached.accountDrafts.emailInput);
+        }
+        if (cached.accountDrafts.recoveryCurrentMethod) {
+          setRecoveryCurrentMethod((prev) => prev || cached.accountDrafts?.recoveryCurrentMethod || 'email');
+        }
+        if (cached.accountDrafts.recoveryPreviousMethod) {
+          setRecoveryPreviousMethod((prev) => prev || cached.accountDrafts?.recoveryPreviousMethod || 'google');
+        }
+        if (cached.accountDrafts.recoveryContactEmail && !recoveryContactEmail) {
+          setRecoveryContactEmail(cached.accountDrafts.recoveryContactEmail);
+        }
+        if (cached.accountDrafts.recoveryPreviousEmail && !recoveryPreviousEmail) {
+          setRecoveryPreviousEmail(cached.accountDrafts.recoveryPreviousEmail);
+        }
+        if (cached.accountDrafts.recoveryNote && !recoveryNote) {
+          setRecoveryNote(cached.accountDrafts.recoveryNote);
+        }
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [applyProfileStatsSnapshot, applyPromptAnswers, cacheProfileId, promptAnswers.length]);
+  }, [
+    applyProfileStatsSnapshot,
+    applyPromptAnswers,
+    cacheProfileId,
+    emailInput,
+    promptAnswers.length,
+    recoveryContactEmail,
+    recoveryNote,
+    recoveryPreviousEmail,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const state = await fetchNetInfo();
+      if (!cancelled) {
+        setAccountNetworkReady(Boolean(state.isConnected) && state.isInternetReachable !== false);
+      }
+    })();
+    const unsubscribe = addNetInfoListener((state) => {
+      setAccountNetworkReady(Boolean(state.isConnected) && state.isInternetReachable !== false);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!cacheProfileId) return;
+    persistAccountSnapshot({});
+  }, [cacheProfileId, disconnectedProviders, hasPasswordBackup, linkedProviders, persistAccountSnapshot, user?.email]);
+
+  useEffect(() => {
+    if (!cacheProfileId) return;
+    persistAccountDrafts({});
+  }, [
+    cacheProfileId,
+    emailInput,
+    persistAccountDrafts,
+    recoveryContactEmail,
+    recoveryCurrentMethod,
+    recoveryNote,
+    recoveryPreviousEmail,
+    recoveryPreviousMethod,
+  ]);
+
+  useEffect(() => {
+    if (!cacheProfileId) return;
+    const stablePhotos = normalizeProfilePhotoList((profile as any)?.photos || []);
+    const stableAvatarUrl = normalizeProfilePhotoUri(profile?.avatar_url);
+    const stableProfileVideo = String(
+      (profile as any)?.profile_video || (profile as any)?.profileVideo || ''
+    ).trim();
+    if (!stableAvatarUrl && stablePhotos.length === 0 && !stableProfileVideo) return;
+    let cancelled = false;
+    void (async () => {
+      const pendingMedia = user?.id ? await getPendingProfileMediaSyncMutation(user.id) : null;
+      if (cancelled) return;
+      writeMeSnapshot({
+        avatarUrl:
+          pendingMedia?.payload.avatar?.localUri
+            ? pendingMedia.payload.avatar.localUri
+            : (stableAvatarUrl || null),
+        photos:
+          pendingMedia?.payload.photos?.length
+            ? mergeUniqueMediaUris(stablePhotos, pendingMedia.payload.photos)
+            : stablePhotos,
+        profileVideo:
+          pendingMedia?.payload.video?.localUri
+            ? pendingMedia.payload.video.localUri
+            : (stableProfileVideo || null),
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    cacheProfileId,
+    profile?.avatar_url,
+    (profile as any)?.profile_video,
+    (profile as any)?.profileVideo,
+    JSON.stringify((profile as any)?.photos || []),
+    user?.id,
+    writeMeSnapshot,
+  ]);
 
   const loadPromptAnswers = useCallback(async () => {
     if (!profile?.id) {
@@ -1038,11 +1240,15 @@ export default function ProfileScreen() {
     if (!user?.id) return;
     
     try {
+      const pendingMedia = await getPendingProfileMediaSyncMutation(user.id);
+      const pendingPhotos = normalizeProfilePhotoList(pendingMedia?.payload.photos || []);
+
       // First check if photos exist in profile.photos field
       const profilePhotos = normalizeProfilePhotoList((profile as any)?.photos || []);
       if (profilePhotos.length > 0) {
-        setUserPhotos(profilePhotos);
-        writeMeSnapshot({ photos: profilePhotos });
+        const nextPhotos = mergeUniqueMediaUris(profilePhotos, pendingPhotos);
+        setUserPhotos(nextPhotos);
+        writeMeSnapshot({ photos: nextPhotos });
         return;
       }
 
@@ -1070,8 +1276,15 @@ export default function ProfileScreen() {
             return data.publicUrl;
           });
         
-        setUserPhotos(photoUrls);
-        writeMeSnapshot({ photos: photoUrls });
+        const nextPhotos = mergeUniqueMediaUris(photoUrls, pendingPhotos);
+        setUserPhotos(nextPhotos);
+        writeMeSnapshot({ photos: nextPhotos });
+        return;
+      }
+
+      if (pendingPhotos.length > 0) {
+        setUserPhotos(pendingPhotos);
+        writeMeSnapshot({ photos: pendingPhotos });
       }
     } catch (error) {
       console.error('Error loading photos:', error);
@@ -1653,18 +1866,16 @@ export default function ProfileScreen() {
     setPasswordBackupConfirm('');
     setPasswordBackupMessage('');
     setPasswordBackupError('');
-    setEmailInput(user?.email ?? '');
+    setEmailInput((current) => current || user?.email || '');
     setShowEmailModal(true);
   }, [user?.email]);
 
   const openRecoveryRequestModal = useCallback(() => {
     setRecoveryError('');
     setRecoveryMessage('');
-    setRecoveryCurrentMethod(linkedProviders.includes('google') ? 'google' : 'email');
-    setRecoveryPreviousMethod(linkedProviders.includes('apple') ? 'apple' : 'google');
-    setRecoveryContactEmail(user?.email ?? '');
-    setRecoveryPreviousEmail('');
-    setRecoveryNote('');
+    setRecoveryCurrentMethod((current) => current || (linkedProviders.includes('google') ? 'google' : 'email'));
+    setRecoveryPreviousMethod((current) => current || (linkedProviders.includes('apple') ? 'apple' : 'google'));
+    setRecoveryContactEmail((current) => current || user?.email || '');
     setShowRecoveryRequestModal(true);
   }, [linkedProviders, user?.email]);
 
@@ -1679,6 +1890,7 @@ export default function ProfileScreen() {
   }, []);
 
   const handleEmailUpdate = async () => {
+    if (!guardAccountAction('Changing your email')) return;
     const trimmed = emailInput.trim().toLowerCase();
     setEmailError('');
     setEmailMessage('');
@@ -1709,6 +1921,7 @@ export default function ProfileScreen() {
   };
 
   const handlePasswordBackupSave = async () => {
+    if (!guardAccountAction('Saving a password backup')) return;
     setPasswordBackupError('');
     setPasswordBackupMessage('');
     setIdentityError('');
@@ -1833,9 +2046,12 @@ export default function ProfileScreen() {
             .map((value) => String(value || '').trim().toLowerCase())
             .filter((value) => value === 'google' || value === 'apple')
         : [];
-      setDisconnectedProviders(providers);
+      setDisconnectedProviders((current) => (stringListEqual(current, providers) ? current : providers));
       return providers;
     } catch (error: any) {
+      if (isLikelyNetworkError(error)) {
+        return [];
+      }
       setIdentityError(error?.message ?? 'Unable to load sign-in methods.');
       return [];
     }
@@ -1850,9 +2066,25 @@ export default function ProfileScreen() {
     setIdentitiesLoading(true);
     try {
       const { identities, providers } = await getUserIdentitySnapshot();
-      setLinkedIdentities(identities);
-      setLinkedProviders(providers);
+      setLinkedIdentities((current) => {
+        if (
+          current.length === identities.length &&
+          current.every((identity, index) =>
+            identity.id === identities[index]?.id &&
+            identity.user_id === identities[index]?.user_id &&
+            identity.identity_id === identities[index]?.identity_id &&
+            identity.provider === identities[index]?.provider,
+          )
+        ) {
+          return current;
+        }
+        return identities;
+      });
+      setLinkedProviders((current) => (stringListEqual(current, providers) ? current : providers));
     } catch (error: any) {
+      if (isLikelyNetworkError(error)) {
+        return;
+      }
       setIdentityError(error?.message ?? 'Unable to load sign-in methods.');
     } finally {
       setIdentitiesLoading(false);
@@ -2059,6 +2291,7 @@ export default function ProfileScreen() {
   }, []);
 
   const handleLinkGoogle = useCallback(async () => {
+    if (!guardAccountAction('Linking Google')) return;
     setIdentityError('');
     setIdentityMessage('');
     setLinkingProvider('google');
@@ -2092,9 +2325,10 @@ export default function ProfileScreen() {
       await clearPendingIdentityLink().catch(() => {});
       setLinkingProvider(null);
     }
-  }, [finishIdentityCallback, formatIdentityLinkError, getOAuthRedirectUrl, loadDisconnectedProviders, showProviderSuccess, waitForSession, waitForProviderIdentity]);
+  }, [finishIdentityCallback, formatIdentityLinkError, getOAuthRedirectUrl, guardAccountAction, loadDisconnectedProviders, showProviderSuccess, waitForSession, waitForProviderIdentity]);
 
   const handleLinkApple = useCallback(async () => {
+    if (!guardAccountAction('Linking Apple')) return;
     if (Platform.OS !== 'ios') return;
     setIdentityError('');
     setIdentityMessage('');
@@ -2130,10 +2364,11 @@ export default function ProfileScreen() {
     } finally {
       setLinkingProvider(null);
     }
-  }, [formatIdentityLinkError, loadDisconnectedProviders, loadLinkedIdentities, showProviderSuccess, waitForSession]);
+  }, [formatIdentityLinkError, guardAccountAction, loadDisconnectedProviders, loadLinkedIdentities, showProviderSuccess, waitForSession]);
 
   const handleUnlinkProvider = useCallback(
     (provider: 'google' | 'apple') => {
+      if (!guardAccountAction(`Disconnecting ${RECOVERY_PROVIDER_LABELS[provider] ?? provider}`)) return;
       const providerLabel = RECOVERY_PROVIDER_LABELS[provider] ?? provider;
       const linkedIdentity = findLinkedIdentity(provider);
 
@@ -2194,11 +2429,12 @@ export default function ProfileScreen() {
         ],
       );
     },
-    [canSafelyUnlinkProvider, findLinkedIdentity, loadDisconnectedProviders, loadLinkedIdentities, waitForSession],
+    [canSafelyUnlinkProvider, findLinkedIdentity, guardAccountAction, loadDisconnectedProviders, loadLinkedIdentities, waitForSession],
   );
 
   const handleReconnectProvider = useCallback(
     async (provider: 'google' | 'apple') => {
+      if (!guardAccountAction(`Reconnecting ${RECOVERY_PROVIDER_LABELS[provider] ?? provider}`)) return;
       const providerLabel = RECOVERY_PROVIDER_LABELS[provider] ?? provider;
       setIdentityError('');
       setIdentityMessage('');
@@ -2231,10 +2467,11 @@ export default function ProfileScreen() {
         await handleLinkApple();
       }
     },
-    [handleLinkApple, handleLinkGoogle, linkedProviders, loadDisconnectedProviders, showProviderSuccess],
+    [guardAccountAction, handleLinkApple, handleLinkGoogle, linkedProviders, loadDisconnectedProviders, showProviderSuccess],
   );
 
   const handleSubmitRecoveryRequest = useCallback(async () => {
+    if (!guardAccountAction('Submitting account recovery')) return;
     setRecoveryError('');
     setRecoveryMessage('');
 
@@ -2279,6 +2516,7 @@ export default function ProfileScreen() {
     recoveryNote,
     recoveryPreviousEmail,
     recoveryPreviousMethod,
+    guardAccountAction,
     user?.email,
   ]);
 
@@ -2294,6 +2532,7 @@ export default function ProfileScreen() {
 
   const applyDeleteAlternative = useCallback(
     async (action: DeleteAlternativeAction) => {
+      if (!guardAccountAction('Changing account retention settings')) return;
       setDeleteError('');
       setDeleteAlternativeMessage('');
       setDeleteAlternativeAction(action);
@@ -2340,7 +2579,7 @@ export default function ProfileScreen() {
         setDeleteAlternativeAction(null);
       }
     },
-    [primaryDeleteReason, refreshProfile, writeMeSnapshot],
+    [guardAccountAction, primaryDeleteReason, refreshProfile, writeMeSnapshot],
   );
 
   const readFunctionErrorMessage = useCallback(async (error: any, fallback: string) => {
@@ -2359,6 +2598,7 @@ export default function ProfileScreen() {
   }, []);
 
   const submitDeleteAccount = useCallback(async () => {
+    if (!guardAccountAction('Deleting your account')) return;
     setDeleteError('');
     if (deleteReasonKeys.length === 0) {
       setDeleteError('Select at least one reason before deleting your account.');
@@ -2403,7 +2643,7 @@ export default function ProfileScreen() {
     } finally {
       setDeletingAccount(false);
     }
-  }, [deleteFeedback, deleteReasonKeys, readFunctionErrorMessage, signOut]);
+  }, [deleteFeedback, deleteReasonKeys, guardAccountAction, readFunctionErrorMessage, signOut]);
 
   const confirmDeleteAccount = useCallback(() => {
     if (deleteReasonKeys.length === 0) {
@@ -2432,17 +2672,31 @@ export default function ProfileScreen() {
       setNotificationPrefs(next);
       writeMeSnapshot({ notificationPrefs: next as unknown as Record<string, unknown> });
       if (!user?.id) return;
-      const { error } = await supabase
-        .from('notification_prefs')
-        .upsert(
-          {
-            user_id: user.id,
-            ...next,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'user_id' },
-        );
-      if (error) {
+      const updatedAt = new Date().toISOString();
+      try {
+        const { error } = await supabase
+          .from('notification_prefs')
+          .upsert(
+            {
+              user_id: user.id,
+              ...next,
+              updated_at: updatedAt,
+            },
+            { onConflict: 'user_id' },
+          );
+        if (error) throw error;
+      } catch (error) {
+        if (isLikelyNetworkError(error)) {
+          if (__DEV__) {
+            console.warn('[profile] notification prefs queued offline', error);
+          }
+          await enqueueNotificationPrefsUpdateMutation({
+            userId: user.id,
+            prefs: next as Record<string, boolean | string>,
+            updatedAt,
+          });
+          return;
+        }
         console.log('[profile] notification prefs update error', error);
       }
     },
@@ -2738,8 +2992,18 @@ export default function ProfileScreen() {
         if (mounted) setHeroVideoUrl(source);
         return;
       }
+      const cachedLocal = await getOfflineVideoUri(source);
+      if (cachedLocal && mounted) {
+        setHeroVideoUrl(cachedLocal);
+      }
       if (source.startsWith('http')) {
-        if (mounted) setHeroVideoUrl(source);
+        if (!cachedLocal && mounted) {
+          setHeroVideoUrl(source);
+        }
+        const downloaded = await cacheOfflineVideo(source, source);
+        if (mounted && downloaded) {
+          setHeroVideoUrl(downloaded);
+        }
         return;
       }
       const { data, error } = await supabase.storage
@@ -2747,10 +3011,18 @@ export default function ProfileScreen() {
         .createSignedUrl(source, 3600);
       if (!mounted) return;
       if (error || !data?.signedUrl) {
-        setHeroVideoUrl(null);
+        if (!cachedLocal) {
+          setHeroVideoUrl(null);
+        }
         return;
       }
-      setHeroVideoUrl(data.signedUrl);
+      if (!cachedLocal) {
+        setHeroVideoUrl(data.signedUrl);
+      }
+      const downloaded = await cacheOfflineVideo(source, data.signedUrl);
+      if (mounted && downloaded) {
+        setHeroVideoUrl(downloaded);
+      }
     };
     void resolveHeroVideo();
     return () => {
@@ -3417,6 +3689,14 @@ export default function ProfileScreen() {
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
             >
+            {!accountNetworkReady ? (
+              <View style={[styles.accountOfflineNotice, { backgroundColor: `${theme.tint}12`, borderColor: `${theme.tint}33` }]}>
+                <MaterialCommunityIcons name="wifi-off" size={16} color={theme.tint} />
+                <Text style={[styles.accountOfflineNoticeText, { color: theme.text }]}>
+                  Account state is readable offline. Security actions need a live connection before they can continue.
+                </Text>
+              </View>
+            ) : null}
             <Text style={[styles.emailModalBody, { color: theme.textMuted }]}>
               Update the email you use to sign in. We&apos;ll send a confirmation link to your new email.
             </Text>
@@ -3441,12 +3721,14 @@ export default function ProfileScreen() {
             <TouchableOpacity
               style={[
                 styles.emailSaveButton,
-                { backgroundColor: theme.tint, opacity: emailSaving ? 0.6 : 1 },
+                { backgroundColor: theme.tint, opacity: emailSaving || !accountNetworkReady ? 0.6 : 1 },
               ]}
               onPress={handleEmailUpdate}
-              disabled={emailSaving}
+              disabled={emailSaving || !accountNetworkReady}
             >
-              <Text style={styles.emailSaveText}>{emailSaving ? 'Sending...' : 'Send confirmation'}</Text>
+              <Text style={styles.emailSaveText}>
+                {emailSaving ? 'Sending...' : accountNetworkReady ? 'Send confirmation' : 'Requires connection'}
+              </Text>
             </TouchableOpacity>
             <View style={[styles.emailAccountDivider, { backgroundColor: theme.outline }]} />
             {identitySuccessSheet ? (
@@ -3591,17 +3873,17 @@ export default function ProfileScreen() {
                     </View>
                     <TouchableOpacity
                       onPress={() => void handleReconnectProvider('google')}
-                      disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null}
+                      disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady}
                       style={[
                         styles.identityLinkButton,
                         {
                           backgroundColor: theme.tint,
-                          opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null ? 0.65 : 1,
-                        },
-                      ]}
+                            opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady ? 0.65 : 1,
+                          },
+                        ]}
                     >
                       <Text style={styles.identityLinkButtonText}>
-                        {linkingProvider === 'google' ? 'Reconnecting...' : 'Reconnect'}
+                        {linkingProvider === 'google' ? 'Reconnecting...' : accountNetworkReady ? 'Reconnect' : 'Requires connection'}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -3612,34 +3894,34 @@ export default function ProfileScreen() {
                     </View>
                     <TouchableOpacity
                       onPress={() => handleUnlinkProvider('google')}
-                      disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null}
+                      disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady}
                       style={[
                         styles.identityUnlinkButton,
                         {
                           borderColor: '#ef4444',
-                          opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null ? 0.6 : 1,
+                          opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady ? 0.6 : 1,
                         },
                       ]}
                     >
                       <Text style={styles.identityUnlinkButtonText}>
-                        {unlinkingProvider === 'google' ? 'Disconnecting...' : 'Disconnect'}
+                        {unlinkingProvider === 'google' ? 'Disconnecting...' : accountNetworkReady ? 'Disconnect' : 'Requires connection'}
                       </Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
                   <TouchableOpacity
                     onPress={handleLinkGoogle}
-                    disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null}
+                    disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady}
                     style={[
                       styles.identityLinkButton,
                       {
                         backgroundColor: theme.tint,
-                        opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null ? 0.65 : 1,
+                        opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady ? 0.65 : 1,
                       },
                     ]}
                   >
                     <Text style={styles.identityLinkButtonText}>
-                      {linkingProvider === 'google' ? 'Linking...' : 'Link Google'}
+                      {linkingProvider === 'google' ? 'Linking...' : accountNetworkReady ? 'Link Google' : 'Requires connection'}
                     </Text>
                   </TouchableOpacity>
                 )}
@@ -3674,17 +3956,17 @@ export default function ProfileScreen() {
                       </View>
                       <TouchableOpacity
                         onPress={() => void handleReconnectProvider('apple')}
-                        disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null}
+                        disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady}
                         style={[
                           styles.identityLinkButton,
                           {
                             backgroundColor: theme.tint,
-                            opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null ? 0.65 : 1,
+                            opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady ? 0.65 : 1,
                           },
                         ]}
                       >
                         <Text style={styles.identityLinkButtonText}>
-                          {linkingProvider === 'apple' ? 'Reconnecting...' : 'Reconnect'}
+                          {linkingProvider === 'apple' ? 'Reconnecting...' : accountNetworkReady ? 'Reconnect' : 'Requires connection'}
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -3695,34 +3977,34 @@ export default function ProfileScreen() {
                       </View>
                       <TouchableOpacity
                         onPress={() => handleUnlinkProvider('apple')}
-                        disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null}
+                        disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady}
                         style={[
                           styles.identityUnlinkButton,
                           {
                             borderColor: '#ef4444',
-                            opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null ? 0.6 : 1,
+                            opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady ? 0.6 : 1,
                           },
                         ]}
                       >
                         <Text style={styles.identityUnlinkButtonText}>
-                          {unlinkingProvider === 'apple' ? 'Disconnecting...' : 'Disconnect'}
+                          {unlinkingProvider === 'apple' ? 'Disconnecting...' : accountNetworkReady ? 'Disconnect' : 'Requires connection'}
                         </Text>
                       </TouchableOpacity>
                     </View>
                   ) : (
                     <TouchableOpacity
                       onPress={handleLinkApple}
-                      disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null}
+                      disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady}
                       style={[
                         styles.identityLinkButton,
                         {
                           backgroundColor: theme.tint,
-                          opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null ? 0.65 : 1,
+                          opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady ? 0.65 : 1,
                         },
                       ]}
                     >
                       <Text style={styles.identityLinkButtonText}>
-                        {linkingProvider === 'apple' ? 'Linking...' : 'Link Apple'}
+                        {linkingProvider === 'apple' ? 'Linking...' : accountNetworkReady ? 'Link Apple' : 'Requires connection'}
                       </Text>
                     </TouchableOpacity>
                   )}
@@ -3805,14 +4087,14 @@ export default function ProfileScreen() {
                     ) : null}
                     <TouchableOpacity
                       onPress={handlePasswordBackupSave}
-                      disabled={passwordBackupSaving || !user?.email}
+                      disabled={passwordBackupSaving || !user?.email || !accountNetworkReady}
                       style={[
                         styles.passwordBackupButton,
-                        { backgroundColor: theme.tint, opacity: passwordBackupSaving || !user?.email ? 0.65 : 1 },
+                        { backgroundColor: theme.tint, opacity: passwordBackupSaving || !user?.email || !accountNetworkReady ? 0.65 : 1 },
                       ]}
                     >
                       <Text style={styles.identityLinkButtonText}>
-                        {passwordBackupSaving ? 'Saving...' : 'Save password backup'}
+                        {passwordBackupSaving ? 'Saving...' : accountNetworkReady ? 'Save password backup' : 'Requires connection'}
                       </Text>
                     </TouchableOpacity>
                   </View>
@@ -3840,9 +4122,12 @@ export default function ProfileScreen() {
                 </View>
                 <TouchableOpacity
                   onPress={openRecoveryRequestModal}
-                  style={[styles.recoveryCardButton, { backgroundColor: theme.tint }]}
+                  disabled={!accountNetworkReady}
+                  style={[styles.recoveryCardButton, { backgroundColor: theme.tint, opacity: accountNetworkReady ? 1 : 0.65 }]}
                 >
-                  <Text style={styles.recoveryCardButtonText}>Recover account access</Text>
+                  <Text style={styles.recoveryCardButtonText}>
+                    {accountNetworkReady ? 'Recover account access' : 'Requires connection'}
+                  </Text>
                 </TouchableOpacity>
               </View>
 
@@ -3856,9 +4141,10 @@ export default function ProfileScreen() {
                   </View>
                   <TouchableOpacity
                     onPress={openDeleteAccountModal}
-                    style={[styles.accountDeletionButton, { borderColor: '#ef4444', backgroundColor: theme.background }]}
+                    disabled={!accountNetworkReady}
+                    style={[styles.accountDeletionButton, { borderColor: '#ef4444', backgroundColor: theme.background, opacity: accountNetworkReady ? 1 : 0.6 }]}
                   >
-                    <Text style={styles.accountDeletionButtonText}>Leave now</Text>
+                    <Text style={styles.accountDeletionButtonText}>{accountNetworkReady ? 'Leave now' : 'Requires connection'}</Text>
                   </TouchableOpacity>
                 </View>
                 <Text style={[styles.accountDeletionFootnote, { color: theme.textMuted }]}>
@@ -4119,6 +4405,14 @@ export default function ProfileScreen() {
             <Text style={[styles.emailModalBody, { color: theme.textMuted }]}>
               Tell support which sign-in method opened the wrong account and which one you used before. We will review it before any account merge.
             </Text>
+            {!accountNetworkReady ? (
+              <View style={[styles.accountOfflineNotice, { backgroundColor: `${theme.tint}12`, borderColor: `${theme.tint}33` }]}>
+                <MaterialCommunityIcons name="wifi-off" size={16} color={theme.tint} />
+                <Text style={[styles.accountOfflineNoticeText, { color: theme.text }]}>
+                  Recovery drafts stay here locally. Final submit requires a live connection.
+                </Text>
+              </View>
+            ) : null}
 
             <View style={styles.recoveryFieldGroup}>
               <Text style={[styles.recoveryFieldLabel, { color: theme.text }]}>How did you sign in now?</Text>
@@ -4221,12 +4515,14 @@ export default function ProfileScreen() {
             <TouchableOpacity
               style={[
                 styles.emailSaveButton,
-                { backgroundColor: theme.tint, opacity: recoverySubmitting ? 0.6 : 1 },
+                { backgroundColor: theme.tint, opacity: recoverySubmitting || !accountNetworkReady ? 0.6 : 1 },
               ]}
               onPress={handleSubmitRecoveryRequest}
-              disabled={recoverySubmitting}
+              disabled={recoverySubmitting || !accountNetworkReady}
             >
-              <Text style={styles.emailSaveText}>{recoverySubmitting ? 'Sending...' : 'Send recovery request'}</Text>
+              <Text style={styles.emailSaveText}>
+                {recoverySubmitting ? 'Sending...' : accountNetworkReady ? 'Send recovery request' : 'Requires connection'}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -4309,11 +4605,13 @@ export default function ProfileScreen() {
               </View>
             ) : (
               hasHeroImage ? (
-                <ImageBackground
-                  source={{ uri: heroImageUri }}
-                  style={styles.heroImage}
-                  imageStyle={styles.heroImageStyle}
-                >
+                <View style={styles.heroImage}>
+                  <OfflineImage
+                    uri={heroImageUri}
+                    style={styles.heroImage}
+                    containerStyle={styles.heroImage}
+                    cachePolicy="memory-disk"
+                  />
                   <View style={styles.heroTint} />
                   <LinearGradient
                     colors={["rgba(0,0,0,0.35)", "transparent"]}
@@ -4342,7 +4640,7 @@ export default function ProfileScreen() {
                       </TouchableOpacity>
                     )}
                   </View>
-                </ImageBackground>
+                </View>
               ) : (
                 <LinearGradient
                   colors={[placeholderPalette.start, placeholderPalette.end]}
@@ -4393,9 +4691,10 @@ export default function ProfileScreen() {
             >
               <View style={[styles.avatarInner, { backgroundColor: theme.background }]}>
                 {hasAvatarImage ? (
-                  <Image
-                    source={{ uri: avatarImageUri }}
+                  <OfflineImage
+                    uri={avatarImageUri}
                     style={[styles.avatar, { borderColor: theme.background }]}
+                    cachePolicy="memory-disk"
                   />
                 ) : (
                   <LinearGradient
@@ -7467,6 +7766,22 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
     marginBottom: 16,
+  },
+  accountOfflineNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    marginBottom: 14,
+  },
+  accountOfflineNoticeText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: 'Manrope_500Medium',
   },
   emailInput: {
     borderWidth: 1,

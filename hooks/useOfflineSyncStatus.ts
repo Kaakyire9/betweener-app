@@ -4,6 +4,7 @@ import { AppState } from 'react-native';
 import {
   drainOfflineMutationQueue,
   getOfflineMutationQueueSnapshot,
+  retryFailedOfflineMutations,
   subscribeToOfflineMutationQueue,
 } from '@/lib/offline/mutation-queue';
 
@@ -40,6 +41,7 @@ export function useOfflineSyncStatus(): OfflineSyncStatus {
   }, []);
 
   const retryNow = useCallback(async () => {
+    await retryFailedOfflineMutations();
     await drainOfflineMutationQueue();
     await refresh();
   }, [refresh]);

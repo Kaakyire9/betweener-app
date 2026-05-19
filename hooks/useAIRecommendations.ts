@@ -1434,7 +1434,25 @@ export default function useAIRecommendations(
           console.log('[useAIRecommendations] profiles query error (falling back to mocks)', error);
           setLastError(error as any);
         } else if (Array.isArray(data) && data.length === 0) {
-          if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] profiles query returned 0 rows - leaving matches empty');
+          const cachedMatches = cacheKey
+            ? ((await readCache<{ fetchedAt: number; matches: Match[] }>(cacheKey, 6 * 60_000))?.matches ?? [])
+            : [];
+          const shouldPreserveExisting = matchesRef.current.length > 0 || cachedMatches.length > 0;
+          if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            console.log('[useAIRecommendations] profiles query returned 0 rows', {
+              preservedExisting: shouldPreserveExisting,
+              liveCount: matchesRef.current.length,
+              cachedCount: cachedMatches.length,
+            });
+          }
+          if (shouldPreserveExisting) {
+            if (matchesRef.current.length === 0 && cachedMatches.length > 0) {
+              setMatches(cachedMatches);
+            }
+            setLastError(null);
+            setLastFetchedAt(Date.now());
+            return;
+          }
           setMatches([]);
           setLastError(null);
           setLastFetchedAt(Date.now());

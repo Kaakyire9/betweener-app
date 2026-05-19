@@ -9,6 +9,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Notifications from "expo-notifications";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from '@react-native-community/netinfo';
 
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
@@ -20,11 +21,13 @@ import RecoveryMergeSuggestionNotice from "@/components/RecoveryMergeSuggestionN
 import InAppToasts from "@/components/InAppToasts";
 import IntentResponseReminder from "@/components/IntentResponseReminder";
 import NetworkStatusBanner from "@/components/NetworkStatusBanner";
+import OfflineSyncHistoryHydrator from "@/components/OfflineSyncHistoryHydrator";
 import OfflineSyncStatusPill from "@/components/OfflineSyncStatusPill";
 import ChatDeliveryReceiptAcknowledger from "@/components/ChatDeliveryReceiptAcknowledger";
 import { drainOfflineMutationQueue, startOfflineMutationQueueAutoDrain } from "@/lib/offline/mutation-queue";
+import { emitNetworkRestored } from "@/lib/network-recovery";
 import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
-import { SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
+import { recoverSupabaseConnectivity, SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
 import { initPushNotificationUX } from "@/lib/notifications/push";
 import {
   buildNotificationRoute,
@@ -117,6 +120,70 @@ function OfflineMutationQueueHydrator() {
     return () => {
       stopAutoDrain();
       subscription.remove();
+    };
+  }, []);
+
+  return null;
+}
+
+function NetworkRecoveryHydrator() {
+  const recoveryInFlightRef = useRef(false);
+  const lastReachableRef = useRef<boolean | null>(null);
+
+  useEffect(() => {
+    const isReachable = (state: {
+      isConnected: boolean | null;
+      isInternetReachable: boolean | null;
+    }) => state.isConnected !== false && state.isInternetReachable !== false;
+
+    const runRecovery = async (reason: string) => {
+      if (recoveryInFlightRef.current) return;
+      recoveryInFlightRef.current = true;
+      try {
+        const state = await fetchNetInfo();
+        if (!isReachable(state)) return;
+
+        await recoverSupabaseConnectivity(reason);
+        await drainOfflineMutationQueue();
+        emitNetworkRestored({ reason, at: Date.now() });
+      } finally {
+        setTimeout(() => {
+          recoveryInFlightRef.current = false;
+        }, 1500);
+      }
+    };
+
+    const scheduleRecovery = (reason: string, delayMs: number) => {
+      setTimeout(() => {
+        void runRecovery(reason);
+      }, delayMs);
+    };
+
+    const handleNetInfoState = (state: {
+      isConnected: boolean | null;
+      isInternetReachable: boolean | null;
+    }) => {
+      const reachable = isReachable(state);
+      const previous = lastReachableRef.current;
+      lastReachableRef.current = reachable;
+
+      if (previous === false && reachable) {
+        scheduleRecovery('netinfo_restored', 700);
+      }
+    };
+
+    const netInfoSubscription = addNetInfoListener(handleNetInfoState);
+    fetchNetInfo().then(handleNetInfoState).catch(() => undefined);
+
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        scheduleRecovery('app_active_probe', 500);
+      }
+    });
+
+    return () => {
+      netInfoSubscription();
+      appStateSubscription.remove();
     };
   }, []);
 
@@ -547,6 +614,8 @@ function RootLayout() {
       <AuthProvider>
         <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
           <OfflineMutationQueueHydrator />
+          <OfflineSyncHistoryHydrator />
+          <NetworkRecoveryHydrator />
           <ChatDeliveryReceiptAcknowledger />
           <PendingNotificationRouteHydrator />
           <Slot />

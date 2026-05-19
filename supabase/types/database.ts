@@ -56,6 +56,39 @@ export type Database = {
         }
         Relationships: []
       }
+      account_disconnected_signin_providers: {
+        Row: {
+          active: boolean
+          created_at: string
+          disconnected_at: string
+          id: string
+          provider: string
+          reconnected_at: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          disconnected_at?: string
+          id?: string
+          provider: string
+          reconnected_at?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          disconnected_at?: string
+          id?: string
+          provider?: string
+          reconnected_at?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       account_identity_events: {
         Row: {
           actor_user_id: string | null
@@ -582,27 +615,39 @@ export type Database = {
           created_at: string
           id: string
           is_visible: boolean
+          joined_at: string
+          left_at: string | null
           profile_id: string
           role: string
           status: string
+          updated_at: string
+          user_id: string | null
         }
         Insert: {
           circle_id: string
           created_at?: string
           id?: string
           is_visible?: boolean
+          joined_at?: string
+          left_at?: string | null
           profile_id: string
           role?: string
           status?: string
+          updated_at?: string
+          user_id?: string | null
         }
         Update: {
           circle_id?: string
           created_at?: string
           id?: string
           is_visible?: boolean
+          joined_at?: string
+          left_at?: string | null
           profile_id?: string
           role?: string
           status?: string
+          updated_at?: string
+          user_id?: string | null
         }
         Relationships: [
           {
@@ -621,42 +666,381 @@ export type Database = {
           },
         ]
       }
+      circle_prompt_responses: {
+        Row: {
+          circle_id: string | null
+          created_at: string
+          id: string
+          is_deleted: boolean
+          profile_id: string
+          prompt_id: string
+          reaction_count: number
+          response: string
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          circle_id?: string | null
+          created_at?: string
+          id?: string
+          is_deleted?: boolean
+          profile_id: string
+          prompt_id: string
+          reaction_count?: number
+          response: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          circle_id?: string | null
+          created_at?: string
+          id?: string
+          is_deleted?: boolean
+          profile_id?: string
+          prompt_id?: string
+          reaction_count?: number
+          response?: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_prompt_responses_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_prompt_responses_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_prompt_responses_prompt_id_fkey"
+            columns: ["prompt_id"]
+            isOneToOne: false
+            referencedRelation: "circle_prompts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_prompts: {
+        Row: {
+          circle_id: string | null
+          created_at: string
+          created_by_admin_id: string | null
+          created_by_profile_id: string | null
+          expires_at: string | null
+          id: string
+          prompt: string
+          prompt_type: string
+          starts_at: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          circle_id?: string | null
+          created_at?: string
+          created_by_admin_id?: string | null
+          created_by_profile_id?: string | null
+          expires_at?: string | null
+          id?: string
+          prompt: string
+          prompt_type?: string
+          starts_at?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          circle_id?: string | null
+          created_at?: string
+          created_by_admin_id?: string | null
+          created_by_profile_id?: string | null
+          expires_at?: string | null
+          id?: string
+          prompt?: string
+          prompt_type?: string
+          starts_at?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_prompts_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_prompts_created_by_profile_id_fkey"
+            columns: ["created_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_reports: {
+        Row: {
+          circle_id: string | null
+          created_at: string
+          details: string | null
+          gathering_id: string | null
+          id: string
+          prompt_response_id: string | null
+          reason: string
+          reporter_profile_id: string
+          reporter_user_id: string | null
+          reviewed_at: string | null
+          reviewed_by_admin_id: string | null
+          status: string
+        }
+        Insert: {
+          circle_id?: string | null
+          created_at?: string
+          details?: string | null
+          gathering_id?: string | null
+          id?: string
+          prompt_response_id?: string | null
+          reason: string
+          reporter_profile_id: string
+          reporter_user_id?: string | null
+          reviewed_at?: string | null
+          reviewed_by_admin_id?: string | null
+          status?: string
+        }
+        Update: {
+          circle_id?: string | null
+          created_at?: string
+          details?: string | null
+          gathering_id?: string | null
+          id?: string
+          prompt_response_id?: string | null
+          reason?: string
+          reporter_profile_id?: string
+          reporter_user_id?: string | null
+          reviewed_at?: string | null
+          reviewed_by_admin_id?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_reports_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_reports_gathering_id_fkey"
+            columns: ["gathering_id"]
+            isOneToOne: false
+            referencedRelation: "gatherings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_reports_prompt_response_id_fkey"
+            columns: ["prompt_response_id"]
+            isOneToOne: false
+            referencedRelation: "circle_prompt_responses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_reports_reporter_profile_id_fkey"
+            columns: ["reporter_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_roles: {
+        Row: {
+          assigned_by_admin_id: string | null
+          circle_id: string
+          created_at: string
+          id: string
+          profile_id: string
+          role: string
+          user_id: string | null
+        }
+        Insert: {
+          assigned_by_admin_id?: string | null
+          circle_id: string
+          created_at?: string
+          id?: string
+          profile_id: string
+          role?: string
+          user_id?: string | null
+        }
+        Update: {
+          assigned_by_admin_id?: string | null
+          circle_id?: string
+          created_at?: string
+          id?: string
+          profile_id?: string
+          role?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_roles_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_roles_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       circles: {
         Row: {
+          active_this_week_count: number
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          archived_at: string | null
+          audience_tags: string[]
           category: string | null
+          circle_type: string
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
           created_at: string
-          created_by_profile_id: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          culture_tags: string[]
           description: string | null
+          diaspora_tags: string[]
+          faith_tags: string[]
+          gathering_count: number
+          icon_url: string | null
           id: string
           image_path: string | null
           image_updated_at: string | null
+          interest_tags: string[]
+          is_featured: boolean
+          is_official: boolean
+          is_partner: boolean
+          latitude: number | null
+          longitude: number | null
+          member_count: number
           name: string
+          region: string | null
+          rejected_reason: string | null
+          report_count: number
+          requires_join_approval: boolean
+          rules: string | null
+          safety_note: string | null
+          short_description: string | null
+          slug: string | null
+          status: string
           updated_at: string
           visibility: string
+          visibility_scope: string
         }
         Insert: {
+          active_this_week_count?: number
+          approved_at?: string | null
+          approved_by_admin_id?: string | null
+          archived_at?: string | null
+          audience_tags?: string[]
           category?: string | null
+          circle_type?: string
+          city?: string | null
+          country_code?: string | null
+          country_name?: string | null
+          cover_image_url?: string | null
           created_at?: string
-          created_by_profile_id: string
+          created_by_profile_id?: string | null
+          created_by_user_id?: string | null
+          culture_tags?: string[]
           description?: string | null
+          diaspora_tags?: string[]
+          faith_tags?: string[]
+          gathering_count?: number
+          icon_url?: string | null
           id?: string
           image_path?: string | null
           image_updated_at?: string | null
+          interest_tags?: string[]
+          is_featured?: boolean
+          is_official?: boolean
+          is_partner?: boolean
+          latitude?: number | null
+          longitude?: number | null
+          member_count?: number
           name: string
+          region?: string | null
+          rejected_reason?: string | null
+          report_count?: number
+          requires_join_approval?: boolean
+          rules?: string | null
+          safety_note?: string | null
+          short_description?: string | null
+          slug?: string | null
+          status?: string
           updated_at?: string
           visibility?: string
+          visibility_scope?: string
         }
         Update: {
+          active_this_week_count?: number
+          approved_at?: string | null
+          approved_by_admin_id?: string | null
+          archived_at?: string | null
+          audience_tags?: string[]
           category?: string | null
+          circle_type?: string
+          city?: string | null
+          country_code?: string | null
+          country_name?: string | null
+          cover_image_url?: string | null
           created_at?: string
-          created_by_profile_id?: string
+          created_by_profile_id?: string | null
+          created_by_user_id?: string | null
+          culture_tags?: string[]
           description?: string | null
+          diaspora_tags?: string[]
+          faith_tags?: string[]
+          gathering_count?: number
+          icon_url?: string | null
           id?: string
           image_path?: string | null
           image_updated_at?: string | null
+          interest_tags?: string[]
+          is_featured?: boolean
+          is_official?: boolean
+          is_partner?: boolean
+          latitude?: number | null
+          longitude?: number | null
+          member_count?: number
           name?: string
+          region?: string | null
+          rejected_reason?: string | null
+          report_count?: number
+          requires_join_approval?: boolean
+          rules?: string | null
+          safety_note?: string | null
+          short_description?: string | null
+          slug?: string | null
+          status?: string
           updated_at?: string
           visibility?: string
+          visibility_scope?: string
         }
         Relationships: [
           {
@@ -914,6 +1298,192 @@ export type Database = {
         }
         Relationships: []
       }
+      gathering_attendees: {
+        Row: {
+          checked_in_at: string | null
+          created_at: string
+          gathering_id: string
+          id: string
+          profile_id: string
+          status: string
+          updated_at: string
+          user_id: string | null
+          visible_to_others: boolean
+        }
+        Insert: {
+          checked_in_at?: string | null
+          created_at?: string
+          gathering_id: string
+          id?: string
+          profile_id: string
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+          visible_to_others?: boolean
+        }
+        Update: {
+          checked_in_at?: string | null
+          created_at?: string
+          gathering_id?: string
+          id?: string
+          profile_id?: string
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+          visible_to_others?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gathering_attendees_gathering_id_fkey"
+            columns: ["gathering_id"]
+            isOneToOne: false
+            referencedRelation: "gatherings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "gathering_attendees_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      gatherings: {
+        Row: {
+          address_visibility: string
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          attendee_count: number
+          cancelled_at: string | null
+          circle_id: string | null
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          description: string | null
+          ends_at: string | null
+          gathering_type: string
+          id: string
+          is_official: boolean
+          is_partner_venue: boolean
+          latitude: number | null
+          longitude: number | null
+          max_attendees: number | null
+          online_url: string | null
+          platform: string | null
+          poster_url: string | null
+          region: string | null
+          rejected_reason: string | null
+          safe_first_date_space: boolean
+          safety_note: string | null
+          slug: string | null
+          starts_at: string
+          status: string
+          tags: string[]
+          timezone: string | null
+          title: string
+          updated_at: string
+          venue_address: string | null
+          venue_name: string | null
+        }
+        Insert: {
+          address_visibility?: string
+          approved_at?: string | null
+          approved_by_admin_id?: string | null
+          attendee_count?: number
+          cancelled_at?: string | null
+          circle_id?: string | null
+          city?: string | null
+          country_code?: string | null
+          country_name?: string | null
+          created_at?: string
+          created_by_profile_id?: string | null
+          created_by_user_id?: string | null
+          description?: string | null
+          ends_at?: string | null
+          gathering_type?: string
+          id?: string
+          is_official?: boolean
+          is_partner_venue?: boolean
+          latitude?: number | null
+          longitude?: number | null
+          max_attendees?: number | null
+          online_url?: string | null
+          platform?: string | null
+          poster_url?: string | null
+          region?: string | null
+          rejected_reason?: string | null
+          safe_first_date_space?: boolean
+          safety_note?: string | null
+          slug?: string | null
+          starts_at: string
+          status?: string
+          tags?: string[]
+          timezone?: string | null
+          title: string
+          updated_at?: string
+          venue_address?: string | null
+          venue_name?: string | null
+        }
+        Update: {
+          address_visibility?: string
+          approved_at?: string | null
+          approved_by_admin_id?: string | null
+          attendee_count?: number
+          cancelled_at?: string | null
+          circle_id?: string | null
+          city?: string | null
+          country_code?: string | null
+          country_name?: string | null
+          created_at?: string
+          created_by_profile_id?: string | null
+          created_by_user_id?: string | null
+          description?: string | null
+          ends_at?: string | null
+          gathering_type?: string
+          id?: string
+          is_official?: boolean
+          is_partner_venue?: boolean
+          latitude?: number | null
+          longitude?: number | null
+          max_attendees?: number | null
+          online_url?: string | null
+          platform?: string | null
+          poster_url?: string | null
+          region?: string | null
+          rejected_reason?: string | null
+          safe_first_date_space?: boolean
+          safety_note?: string | null
+          slug?: string | null
+          starts_at?: string
+          status?: string
+          tags?: string[]
+          timezone?: string | null
+          title?: string
+          updated_at?: string
+          venue_address?: string | null
+          venue_name?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "gatherings_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "gatherings_created_by_profile_id_fkey"
+            columns: ["created_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ghana_locations: {
         Row: {
           created_at: string | null
@@ -1086,6 +1656,61 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      match_celebration_events: {
+        Row: {
+          created_at: string
+          id: string
+          match_id: string
+          peer_profile_id: string
+          peer_user_id: string
+          recipient_profile_id: string
+          recipient_user_id: string
+          seen_at: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          match_id: string
+          peer_profile_id: string
+          peer_user_id: string
+          recipient_profile_id: string
+          recipient_user_id: string
+          seen_at?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          match_id?: string
+          peer_profile_id?: string
+          peer_user_id?: string
+          recipient_profile_id?: string
+          recipient_user_id?: string
+          seen_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "match_celebration_events_match_id_fkey"
+            columns: ["match_id"]
+            isOneToOne: false
+            referencedRelation: "matches"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_celebration_events_peer_profile_id_fkey"
+            columns: ["peer_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "match_celebration_events_recipient_profile_id_fkey"
+            columns: ["recipient_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       matches: {
         Row: {
@@ -1538,6 +2163,7 @@ export type Database = {
           id: string
           is_deleted: boolean
           media_url: string | null
+          metadata: Json
           text_body: string | null
           thumbnail_url: string | null
           type: string
@@ -1551,6 +2177,7 @@ export type Database = {
           id?: string
           is_deleted?: boolean
           media_url?: string | null
+          metadata?: Json
           text_body?: string | null
           thumbnail_url?: string | null
           type: string
@@ -1564,6 +2191,7 @@ export type Database = {
           id?: string
           is_deleted?: boolean
           media_url?: string | null
+          metadata?: Json
           text_body?: string | null
           thumbnail_url?: string | null
           type?: string
@@ -2054,6 +2682,81 @@ export type Database = {
           },
         ]
       }
+      profile_signal_gestures: {
+        Row: {
+          created_at: string
+          dismissed_at: string | null
+          expires_at: string
+          id: string
+          note: string | null
+          reason_key: string
+          reason_label: string
+          receiver_profile_id: string
+          receiver_user_id: string
+          responded_at: string | null
+          seen_at: string | null
+          sender_profile_id: string
+          sender_user_id: string
+          source: string
+          source_moment_id: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          dismissed_at?: string | null
+          expires_at?: string
+          id?: string
+          note?: string | null
+          reason_key: string
+          reason_label: string
+          receiver_profile_id: string
+          receiver_user_id: string
+          responded_at?: string | null
+          seen_at?: string | null
+          sender_profile_id: string
+          sender_user_id: string
+          source?: string
+          source_moment_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          dismissed_at?: string | null
+          expires_at?: string
+          id?: string
+          note?: string | null
+          reason_key?: string
+          reason_label?: string
+          receiver_profile_id?: string
+          receiver_user_id?: string
+          responded_at?: string | null
+          seen_at?: string | null
+          sender_profile_id?: string
+          sender_user_id?: string
+          source?: string
+          source_moment_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "profile_signal_gestures_receiver_profile_id_fkey"
+            columns: ["receiver_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "profile_signal_gestures_sender_profile_id_fkey"
+            columns: ["sender_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profile_signals: {
         Row: {
           dwell_score: number
@@ -2472,6 +3175,66 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      relationship_gists: {
+        Row: {
+          audience_tags: string[]
+          body: string
+          city: string | null
+          country_code: string | null
+          created_at: string
+          created_by_admin_id: string | null
+          culture_tags: string[]
+          faith_tags: string[]
+          id: string
+          perspective: string
+          published_at: string | null
+          relationship_intent_tags: string[]
+          scheduled_for: string | null
+          short_body: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          audience_tags?: string[]
+          body: string
+          city?: string | null
+          country_code?: string | null
+          created_at?: string
+          created_by_admin_id?: string | null
+          culture_tags?: string[]
+          faith_tags?: string[]
+          id?: string
+          perspective?: string
+          published_at?: string | null
+          relationship_intent_tags?: string[]
+          scheduled_for?: string | null
+          short_body?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          audience_tags?: string[]
+          body?: string
+          city?: string | null
+          country_code?: string | null
+          created_at?: string
+          created_by_admin_id?: string | null
+          culture_tags?: string[]
+          faith_tags?: string[]
+          id?: string
+          perspective?: string
+          published_at?: string | null
+          relationship_intent_tags?: string[]
+          scheduled_for?: string | null
+          short_body?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       reports: {
         Row: {
@@ -3134,6 +3897,9 @@ export type Database = {
         Row: {
           auto_verification_data: Json | null
           auto_verification_score: number | null
+          cancel_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
           created_at: string | null
           document_url: string | null
           id: string
@@ -3150,6 +3916,9 @@ export type Database = {
         Insert: {
           auto_verification_data?: Json | null
           auto_verification_score?: number | null
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
           created_at?: string | null
           document_url?: string | null
           id?: string
@@ -3166,6 +3935,9 @@ export type Database = {
         Update: {
           auto_verification_data?: Json | null
           auto_verification_score?: number | null
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
           created_at?: string | null
           document_url?: string | null
           id?: string
@@ -3183,6 +3955,153 @@ export type Database = {
           {
             foreignKeyName: "verification_requests_profile_id_fkey"
             columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vibes_events: {
+        Row: {
+          created_at: string
+          dwell_ms: number | null
+          event_type: string
+          id: string
+          metadata: Json
+          position: number | null
+          segment: string
+          target_profile_id: string
+          target_user_id: string | null
+          viewer_profile_id: string
+          viewer_user_id: string
+        }
+        Insert: {
+          created_at?: string
+          dwell_ms?: number | null
+          event_type: string
+          id?: string
+          metadata?: Json
+          position?: number | null
+          segment?: string
+          target_profile_id: string
+          target_user_id?: string | null
+          viewer_profile_id: string
+          viewer_user_id: string
+        }
+        Update: {
+          created_at?: string
+          dwell_ms?: number | null
+          event_type?: string
+          id?: string
+          metadata?: Json
+          position?: number | null
+          segment?: string
+          target_profile_id?: string
+          target_user_id?: string | null
+          viewer_profile_id?: string
+          viewer_user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vibes_events_target_profile_id_fkey"
+            columns: ["target_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vibes_events_viewer_profile_id_fkey"
+            columns: ["viewer_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      warm_introductions: {
+        Row: {
+          accepted_by_a_at: string | null
+          accepted_by_b_at: string | null
+          circle_id: string | null
+          created_at: string
+          declined_by_profile_id: string | null
+          expires_at: string
+          id: string
+          initiator_profile_id: string | null
+          initiator_role: string
+          profile_a_id: string
+          profile_b_id: string
+          reason: string
+          shared_context: string[]
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          accepted_by_a_at?: string | null
+          accepted_by_b_at?: string | null
+          circle_id?: string | null
+          created_at?: string
+          declined_by_profile_id?: string | null
+          expires_at?: string
+          id?: string
+          initiator_profile_id?: string | null
+          initiator_role?: string
+          profile_a_id: string
+          profile_b_id: string
+          reason: string
+          shared_context?: string[]
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          accepted_by_a_at?: string | null
+          accepted_by_b_at?: string | null
+          circle_id?: string | null
+          created_at?: string
+          declined_by_profile_id?: string | null
+          expires_at?: string
+          id?: string
+          initiator_profile_id?: string | null
+          initiator_role?: string
+          profile_a_id?: string
+          profile_b_id?: string
+          reason?: string
+          shared_context?: string[]
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "warm_introductions_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warm_introductions_declined_by_profile_id_fkey"
+            columns: ["declined_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warm_introductions_initiator_profile_id_fkey"
+            columns: ["initiator_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warm_introductions_profile_a_id_fkey"
+            columns: ["profile_a_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warm_introductions_profile_b_id_fkey"
+            columns: ["profile_b_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -3429,26 +4348,6 @@ export type Database = {
       clean_expired_distance_cache: { Args: never; Returns: number }
       cleanup_phone_verifications_orphans: { Args: never; Returns: undefined }
       decrement_superlike: { Args: { p_profile_id: string }; Returns: number }
-      rpc_cancel_signal: { Args: { p_signal_id: string }; Returns: string }
-      rpc_get_signal_access: { Args: never; Returns: Json }
-      rpc_refund_undone_superlike: {
-        Args: {
-          p_profile_id: string
-          p_target_profile_id: string
-          p_window_seconds?: number
-        }
-        Returns: number
-      }
-      rpc_send_signal: {
-        Args: {
-          p_receiver_profile_id: string
-          p_reason_key: string
-          p_note?: string | null
-          p_source?: string
-          p_source_moment_id?: string | null
-        }
-        Returns: Json
-      }
       detect_travel_for_user: {
         Args: { p_user_id: string }
         Returns: {
@@ -3779,6 +4678,42 @@ export type Database = {
           verified: boolean
         }[]
       }
+      get_vibes_recommendations_v2: {
+        Args: {
+          p_active_window_minutes?: number
+          p_limit?: number
+          p_segment?: string
+          p_user_id: string
+        }
+        Returns: {
+          age: number
+          ai_score: number
+          avatar_url: string
+          bio: string
+          city: string
+          current_country: string
+          current_country_code: string
+          distance_km: number
+          full_name: string
+          id: string
+          is_active: boolean
+          last_active: string
+          latitude: number
+          location: string
+          location_precision: string
+          longitude: number
+          online: boolean
+          personality_type: string
+          profile_video: string
+          recommendation_reasons: Json
+          region: string
+          religion: string
+          tribe: string
+          user_id: string
+          verification_level: number
+          verified: boolean
+        }[]
+      }
       get_viewed_profile_prompts: {
         Args: { p_profile_id: string; p_viewer_profile_id?: string }
         Returns: {
@@ -3798,6 +4733,15 @@ export type Database = {
         }[]
       }
       gettransactionid: { Args: never; Returns: unknown }
+      has_gold_entitlement: {
+        Args: { p_profile_id?: string; p_user_id?: string }
+        Returns: boolean
+      }
+      is_admin_user: { Args: { p_user_id?: string }; Returns: boolean }
+      is_circle_host: {
+        Args: { p_circle_id: string; p_profile_id: string }
+        Returns: boolean
+      }
       is_circle_member: {
         Args: { p_circle_id: string; p_user_id: string }
         Returns: boolean
@@ -3810,6 +4754,15 @@ export type Database = {
       is_match: { Args: { a: string; b: string }; Returns: boolean }
       is_quiet_hours: { Args: { p_user_id: string }; Returns: boolean }
       longtransactionsenabled: { Args: never; Returns: boolean }
+      notify_internal_admin_queue_item: {
+        Args: {
+          p_metadata?: Json
+          p_queue_type: string
+          p_record_id: string
+          p_text: string
+        }
+        Returns: undefined
+      }
       populate_geometry_columns:
         | { Args: { tbl_oid: unknown; use_typmod?: boolean }; Returns: number }
         | { Args: { use_typmod?: boolean }; Returns: string }
@@ -4043,6 +4996,60 @@ export type Database = {
           updated_at: string
         }[]
       }
+      rpc_admin_get_circles_queue: {
+        Args: never
+        Returns: {
+          active_this_week_count: number
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          archived_at: string | null
+          audience_tags: string[]
+          category: string | null
+          circle_type: string
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          culture_tags: string[]
+          description: string | null
+          diaspora_tags: string[]
+          faith_tags: string[]
+          gathering_count: number
+          icon_url: string | null
+          id: string
+          image_path: string | null
+          image_updated_at: string | null
+          interest_tags: string[]
+          is_featured: boolean
+          is_official: boolean
+          is_partner: boolean
+          latitude: number | null
+          longitude: number | null
+          member_count: number
+          name: string
+          region: string | null
+          rejected_reason: string | null
+          report_count: number
+          requires_join_approval: boolean
+          rules: string | null
+          safety_note: string | null
+          short_description: string | null
+          slug: string | null
+          status: string
+          updated_at: string
+          visibility: string
+          visibility_scope: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "circles"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       rpc_admin_get_date_plan_concierge_queue: {
         Args: never
         Returns: {
@@ -4064,6 +5071,82 @@ export type Database = {
           requested_by_profile_id: string
           scheduled_for: string
         }[]
+      }
+      rpc_admin_get_gatherings_queue: {
+        Args: never
+        Returns: {
+          address_visibility: string
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          attendee_count: number
+          cancelled_at: string | null
+          circle_id: string | null
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          description: string | null
+          ends_at: string | null
+          gathering_type: string
+          id: string
+          is_official: boolean
+          is_partner_venue: boolean
+          latitude: number | null
+          longitude: number | null
+          max_attendees: number | null
+          online_url: string | null
+          platform: string | null
+          poster_url: string | null
+          region: string | null
+          rejected_reason: string | null
+          safe_first_date_space: boolean
+          safety_note: string | null
+          slug: string | null
+          starts_at: string
+          status: string
+          tags: string[]
+          timezone: string | null
+          title: string
+          updated_at: string
+          venue_address: string | null
+          venue_name: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "gatherings"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      rpc_admin_get_relationship_gists: {
+        Args: never
+        Returns: {
+          audience_tags: string[]
+          body: string
+          city: string | null
+          country_code: string | null
+          created_at: string
+          created_by_admin_id: string | null
+          culture_tags: string[]
+          faith_tags: string[]
+          id: string
+          perspective: string
+          published_at: string | null
+          relationship_intent_tags: string[]
+          scheduled_for: string | null
+          short_body: string | null
+          status: string
+          title: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "relationship_gists"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       rpc_admin_get_reports_queue: {
         Args: never
@@ -4112,6 +5195,32 @@ export type Database = {
           verification_type: string
         }[]
       }
+      rpc_admin_get_warm_introductions: {
+        Args: never
+        Returns: {
+          accepted_by_a_at: string | null
+          accepted_by_b_at: string | null
+          circle_id: string | null
+          created_at: string
+          declined_by_profile_id: string | null
+          expires_at: string
+          id: string
+          initiator_profile_id: string | null
+          initiator_role: string
+          profile_a_id: string
+          profile_b_id: string
+          reason: string
+          shared_context: string[]
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "warm_introductions"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       rpc_admin_preview_account_merge_case: {
         Args: { p_case_id: string }
         Returns: Json
@@ -4150,9 +5259,156 @@ export type Database = {
         Args: { p_report_id: string; p_status: string }
         Returns: boolean
       }
+      rpc_answer_circle_prompt: {
+        Args: { p_prompt_id: string; p_response: string }
+        Returns: {
+          circle_id: string | null
+          created_at: string
+          id: string
+          is_deleted: boolean
+          profile_id: string
+          prompt_id: string
+          reaction_count: number
+          response: string
+          updated_at: string
+          user_id: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circle_prompt_responses"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_approve_circle: {
+        Args: { p_circle_id: string }
+        Returns: {
+          active_this_week_count: number
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          archived_at: string | null
+          audience_tags: string[]
+          category: string | null
+          circle_type: string
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          culture_tags: string[]
+          description: string | null
+          diaspora_tags: string[]
+          faith_tags: string[]
+          gathering_count: number
+          icon_url: string | null
+          id: string
+          image_path: string | null
+          image_updated_at: string | null
+          interest_tags: string[]
+          is_featured: boolean
+          is_official: boolean
+          is_partner: boolean
+          latitude: number | null
+          longitude: number | null
+          member_count: number
+          name: string
+          region: string | null
+          rejected_reason: string | null
+          report_count: number
+          requires_join_approval: boolean
+          rules: string | null
+          safety_note: string | null
+          short_description: string | null
+          slug: string | null
+          status: string
+          updated_at: string
+          visibility: string
+          visibility_scope: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       rpc_approve_circle_member: {
         Args: { p_circle_id: string; p_member_id: string; p_profile_id: string }
         Returns: boolean
+      }
+      rpc_approve_gathering: {
+        Args: { p_gathering_id: string }
+        Returns: {
+          address_visibility: string
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          attendee_count: number
+          cancelled_at: string | null
+          circle_id: string | null
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          description: string | null
+          ends_at: string | null
+          gathering_type: string
+          id: string
+          is_official: boolean
+          is_partner_venue: boolean
+          latitude: number | null
+          longitude: number | null
+          max_attendees: number | null
+          online_url: string | null
+          platform: string | null
+          poster_url: string | null
+          region: string | null
+          rejected_reason: string | null
+          safe_first_date_space: boolean
+          safety_note: string | null
+          slug: string | null
+          starts_at: string
+          status: string
+          tags: string[]
+          timezone: string | null
+          title: string
+          updated_at: string
+          venue_address: string | null
+          venue_name: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "gatherings"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_attend_gathering: {
+        Args: {
+          p_gathering_id: string
+          p_status?: string
+          p_visible_to_others?: boolean
+        }
+        Returns: {
+          checked_in_at: string | null
+          created_at: string
+          gathering_id: string
+          id: string
+          profile_id: string
+          status: string
+          updated_at: string
+          user_id: string | null
+          visible_to_others: boolean
+        }
+        SetofOptions: {
+          from: "*"
+          to: "gathering_attendees"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_backfill_swipe_likes_into_intent_requests: {
         Args: { p_days?: number; p_limit?: number }
@@ -4170,6 +5426,15 @@ export type Database = {
         Args: { p_request_id: string }
         Returns: string
       }
+      rpc_cancel_my_verification_request: {
+        Args: { p_cancel_reason?: string; p_request_id: string }
+        Returns: boolean
+      }
+      rpc_cancel_signal: { Args: { p_signal_id: string }; Returns: string }
+      rpc_clear_signin_provider_disconnected: {
+        Args: { p_provider: string }
+        Returns: boolean
+      }
       rpc_create_circle: {
         Args: {
           p_category?: string
@@ -4179,6 +5444,145 @@ export type Database = {
           p_visibility?: string
         }
         Returns: string
+      }
+      rpc_create_circle_request: {
+        Args: {
+          p_audience_tags?: string[]
+          p_circle_type?: string
+          p_city?: string
+          p_country_code?: string
+          p_country_name?: string
+          p_culture_tags?: string[]
+          p_description?: string
+          p_diaspora_tags?: string[]
+          p_faith_tags?: string[]
+          p_interest_tags?: string[]
+          p_name: string
+          p_region?: string
+          p_requires_join_approval?: boolean
+          p_rules?: string
+          p_short_description?: string
+          p_visibility_scope?: string
+        }
+        Returns: {
+          active_this_week_count: number
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          archived_at: string | null
+          audience_tags: string[]
+          category: string | null
+          circle_type: string
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          culture_tags: string[]
+          description: string | null
+          diaspora_tags: string[]
+          faith_tags: string[]
+          gathering_count: number
+          icon_url: string | null
+          id: string
+          image_path: string | null
+          image_updated_at: string | null
+          interest_tags: string[]
+          is_featured: boolean
+          is_official: boolean
+          is_partner: boolean
+          latitude: number | null
+          longitude: number | null
+          member_count: number
+          name: string
+          region: string | null
+          rejected_reason: string | null
+          report_count: number
+          requires_join_approval: boolean
+          rules: string | null
+          safety_note: string | null
+          short_description: string | null
+          slug: string | null
+          status: string
+          updated_at: string
+          visibility: string
+          visibility_scope: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_create_gathering_request: {
+        Args: {
+          p_address_visibility?: string
+          p_circle_id?: string
+          p_city?: string
+          p_country_code?: string
+          p_country_name?: string
+          p_description?: string
+          p_ends_at?: string
+          p_gathering_type?: string
+          p_max_attendees?: number
+          p_online_url?: string
+          p_platform?: string
+          p_region?: string
+          p_safety_note?: string
+          p_starts_at?: string
+          p_tags?: string[]
+          p_timezone?: string
+          p_title?: string
+          p_venue_address?: string
+          p_venue_name?: string
+        }
+        Returns: {
+          address_visibility: string
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          attendee_count: number
+          cancelled_at: string | null
+          circle_id: string | null
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          description: string | null
+          ends_at: string | null
+          gathering_type: string
+          id: string
+          is_official: boolean
+          is_partner_venue: boolean
+          latitude: number | null
+          longitude: number | null
+          max_attendees: number | null
+          online_url: string | null
+          platform: string | null
+          poster_url: string | null
+          region: string | null
+          rejected_reason: string | null
+          safe_first_date_space: boolean
+          safety_note: string | null
+          slug: string | null
+          starts_at: string
+          status: string
+          tags: string[]
+          timezone: string | null
+          title: string
+          updated_at: string
+          venue_address: string | null
+          venue_name: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "gatherings"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_create_intent_request: {
         Args: {
@@ -4191,7 +5595,65 @@ export type Database = {
         }
         Returns: string
       }
+      rpc_create_moment_comment: {
+        Args: { p_body: string; p_moment_id: string }
+        Returns: {
+          body: string
+          created_at: string
+          id: string
+          is_deleted: boolean
+          moment_id: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "moment_comments"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       rpc_create_profile_boost: { Args: never; Returns: Json }
+      rpc_create_warm_introduction: {
+        Args: {
+          p_circle_id: string
+          p_expires_at?: string
+          p_profile_a_id: string
+          p_profile_b_id: string
+          p_reason: string
+          p_shared_context?: string[]
+        }
+        Returns: {
+          accepted_by_a_at: string | null
+          accepted_by_b_at: string | null
+          circle_id: string | null
+          created_at: string
+          declined_by_profile_id: string | null
+          expires_at: string
+          id: string
+          initiator_profile_id: string | null
+          initiator_role: string
+          profile_a_id: string
+          profile_b_id: string
+          reason: string
+          shared_context: string[]
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "warm_introductions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_debug_message_delivery_receipt: {
+        Args: { p_message_id: string }
+        Returns: Json
+      }
+      rpc_debug_vibes_recommendation_pool: {
+        Args: { p_active_window_minutes?: number; p_profile_id: string }
+        Returns: Json
+      }
       rpc_decide_intent_request: {
         Args: { p_decision: string; p_request_id: string }
         Returns: string
@@ -4204,6 +5666,10 @@ export type Database = {
           status: string
         }[]
       }
+      rpc_delete_moment_comment: {
+        Args: { p_comment_id: string }
+        Returns: boolean
+      }
       rpc_get_account_recovery_options: {
         Args: { p_recovery_token: string }
         Returns: Json
@@ -4212,9 +5678,11 @@ export type Database = {
         Args: { p_recovery_token: string }
         Returns: Json
       }
+      rpc_get_disconnected_signin_providers: { Args: never; Returns: string[] }
       rpc_get_merged_account_redirect: { Args: never; Returns: Json }
       rpc_get_my_premium_state: { Args: never; Returns: Json }
       rpc_get_phone_verification_status: { Args: never; Returns: Json }
+      rpc_get_signal_access: { Args: never; Returns: Json }
       rpc_get_suggested_moves: {
         Args: { p_limit?: number; p_profile_id: string }
         Returns: {
@@ -4244,6 +5712,10 @@ export type Database = {
         Args: { p_request_id: string }
         Returns: undefined
       }
+      rpc_is_signin_provider_disconnected: {
+        Args: { p_provider: string }
+        Returns: boolean
+      }
       rpc_join_circle: {
         Args: { p_circle_id: string; p_profile_id: string }
         Returns: string
@@ -4269,7 +5741,27 @@ export type Database = {
         }
         Returns: boolean
       }
+      rpc_log_vibes_event: {
+        Args: {
+          p_dwell_ms?: number
+          p_event_type?: string
+          p_metadata?: Json
+          p_position?: number
+          p_segment?: string
+          p_target_profile_id: string
+          p_viewer_profile_id: string
+        }
+        Returns: boolean
+      }
       rpc_mark_expired_intent_requests: { Args: never; Returns: number }
+      rpc_mark_match_celebration_seen: {
+        Args: { p_event_id: string }
+        Returns: boolean
+      }
+      rpc_mark_signin_provider_disconnected: {
+        Args: { p_provider: string }
+        Returns: boolean
+      }
       rpc_process_intent_request_jobs: {
         Args: { p_remind_before?: string; p_window?: string }
         Returns: Json
@@ -4277,6 +5769,144 @@ export type Database = {
       rpc_process_relationship_compass_jobs: {
         Args: { p_ready_after?: string }
         Returns: Json
+      }
+      rpc_publish_relationship_gist: {
+        Args: { p_gist_id: string }
+        Returns: {
+          audience_tags: string[]
+          body: string
+          city: string | null
+          country_code: string | null
+          created_at: string
+          created_by_admin_id: string | null
+          culture_tags: string[]
+          faith_tags: string[]
+          id: string
+          perspective: string
+          published_at: string | null
+          relationship_intent_tags: string[]
+          scheduled_for: string | null
+          short_body: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "relationship_gists"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_refund_undone_superlike: {
+        Args: {
+          p_profile_id: string
+          p_target_profile_id: string
+          p_window_seconds?: number
+        }
+        Returns: number
+      }
+      rpc_reject_circle: {
+        Args: { p_circle_id: string; p_reason: string }
+        Returns: {
+          active_this_week_count: number
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          archived_at: string | null
+          audience_tags: string[]
+          category: string | null
+          circle_type: string
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          culture_tags: string[]
+          description: string | null
+          diaspora_tags: string[]
+          faith_tags: string[]
+          gathering_count: number
+          icon_url: string | null
+          id: string
+          image_path: string | null
+          image_updated_at: string | null
+          interest_tags: string[]
+          is_featured: boolean
+          is_official: boolean
+          is_partner: boolean
+          latitude: number | null
+          longitude: number | null
+          member_count: number
+          name: string
+          region: string | null
+          rejected_reason: string | null
+          report_count: number
+          requires_join_approval: boolean
+          rules: string | null
+          safety_note: string | null
+          short_description: string | null
+          slug: string | null
+          status: string
+          updated_at: string
+          visibility: string
+          visibility_scope: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_reject_gathering: {
+        Args: { p_gathering_id: string; p_reason: string }
+        Returns: {
+          address_visibility: string
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          attendee_count: number
+          cancelled_at: string | null
+          circle_id: string | null
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          description: string | null
+          ends_at: string | null
+          gathering_type: string
+          id: string
+          is_official: boolean
+          is_partner_venue: boolean
+          latitude: number | null
+          longitude: number | null
+          max_attendees: number | null
+          online_url: string | null
+          platform: string | null
+          poster_url: string | null
+          region: string | null
+          rejected_reason: string | null
+          safe_first_date_space: boolean
+          safety_note: string | null
+          slug: string | null
+          starts_at: string
+          status: string
+          tags: string[]
+          timezone: string | null
+          title: string
+          updated_at: string
+          venue_address: string | null
+          venue_name: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "gatherings"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_remove_circle_member: {
         Args: { p_circle_id: string; p_member_id: string; p_profile_id: string }
@@ -4304,6 +5934,32 @@ export type Database = {
       rpc_resolve_recovered_duplicate_shell: {
         Args: { p_recovery_token: string }
         Returns: Json
+      }
+      rpc_respond_warm_introduction: {
+        Args: { p_decision: string; p_intro_id: string }
+        Returns: {
+          accepted_by_a_at: string | null
+          accepted_by_b_at: string | null
+          circle_id: string | null
+          created_at: string
+          declined_by_profile_id: string | null
+          expires_at: string
+          id: string
+          initiator_profile_id: string | null
+          initiator_role: string
+          profile_a_id: string
+          profile_b_id: string
+          reason: string
+          shared_context: string[]
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "warm_introductions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_send_date_plan:
         | {
@@ -4350,6 +6006,16 @@ export type Database = {
               plan_id: string
             }[]
           }
+      rpc_send_signal: {
+        Args: {
+          p_note?: string
+          p_reason_key: string
+          p_receiver_profile_id: string
+          p_source?: string
+          p_source_moment_id?: string
+        }
+        Returns: Json
+      }
       rpc_set_circle_member_role: {
         Args: {
           p_circle_id: string
@@ -4402,6 +6068,27 @@ export type Database = {
           status: string
         }[]
       }
+      rpc_sync_moment_reaction: {
+        Args: { p_emoji?: string; p_moment_id: string }
+        Returns: boolean
+      }
+      rpc_update_moment_comment: {
+        Args: { p_body: string; p_comment_id: string }
+        Returns: {
+          body: string
+          created_at: string
+          id: string
+          is_deleted: boolean
+          moment_id: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "moment_comments"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       rpc_upsert_profile_signal: {
         Args: {
           p_dwell_delta?: number
@@ -4416,6 +6103,12 @@ export type Database = {
       }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
+      signal_limit_for_plan: {
+        Args: { p_plan: Database["public"]["Enums"]["subscription_type"] }
+        Returns: number
+      }
+      signal_reason_label: { Args: { p_reason_key: string }; Returns: string }
+      slugify: { Args: { p_value: string }; Returns: string }
       spatial_ref_sys_rows: {
         Args: never
         Returns: {
@@ -5056,12 +6749,12 @@ export type Database = {
         | "CHRISTIAN"
         | "MUSLIM"
         | "TRADITIONALIST"
+        | "OTHER"
         | "JEWISH"
         | "HINDU"
         | "BUDDHIST"
         | "SPIRITUAL"
         | "NONE"
-        | "OTHER"
       subscription_type: "FREE" | "SILVER" | "GOLD"
       swipe_action: "LIKE" | "PASS" | "SUPERLIKE"
     }
@@ -5202,7 +6895,17 @@ export const Constants = {
       gender: ["MALE", "FEMALE", "NON_BINARY", "OTHER"],
       location_precision: ["EXACT", "CITY"],
       match_status: ["PENDING", "ACCEPTED", "REJECTED"],
-      religion: ["CHRISTIAN", "MUSLIM", "TRADITIONALIST", "JEWISH", "HINDU", "BUDDHIST", "SPIRITUAL", "NONE", "OTHER"],
+      religion: [
+        "CHRISTIAN",
+        "MUSLIM",
+        "TRADITIONALIST",
+        "OTHER",
+        "JEWISH",
+        "HINDU",
+        "BUDDHIST",
+        "SPIRITUAL",
+        "NONE",
+      ],
       subscription_type: ["FREE", "SILVER", "GOLD"],
       swipe_action: ["LIKE", "PASS", "SUPERLIKE"],
     },

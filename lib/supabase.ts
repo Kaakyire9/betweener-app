@@ -812,3 +812,41 @@ export async function ensureFreshSession(): Promise<'ok' | 'no_session' | 'refre
     return 'failed';
   }
 }
+
+export async function recoverSupabaseConnectivity(
+  reason: string = 'network_restored',
+): Promise<'ok' | 'no_session' | 'refreshed' | 'failed'> {
+  try {
+    // Airplane-mode recovery should not be blocked by the normal refresh cooldown.
+    lastRefreshAttemptAt = 0;
+
+    const status = await ensureFreshSession();
+
+    try {
+      const { data } = await Promise.race([
+        supabaseAuth.auth.getSession(),
+        new Promise<{ data: { session: null } }>((resolve) =>
+          setTimeout(() => resolve({ data: { session: null } }), 1500),
+        ),
+      ]);
+      const token = data?.session?.access_token ?? cachedAccessToken ?? null;
+      setCachedAccessToken(token);
+      syncRealtimeAuth(token);
+    } catch {
+      // best effort only
+    }
+
+    try {
+      const realtime = supabaseData?.realtime;
+      realtime?.disconnect?.();
+      realtime?.connect?.();
+    } catch {
+      // best effort only
+    }
+
+    addBreadcrumb('[supabase] recover_connectivity', { reason, status });
+    return status;
+  } catch {
+    return 'failed';
+  }
+}

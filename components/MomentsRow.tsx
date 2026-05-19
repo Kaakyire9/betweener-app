@@ -1,10 +1,10 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
 import React from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '@/constants/theme';
 import type { MomentUser } from '@/hooks/useMoments';
+import OfflineImage from '@/components/media/OfflineImage';
 import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
 
 type Props = {
@@ -29,6 +29,11 @@ export default function MomentsRow({ users, isLoading, onPressUser, onPressCreat
           const isOwn = user.isOwn;
           const label = isOwn ? 'Your Moment' : user.name;
           const safeAvatarUrl = getSafeRemoteImageUri(user.avatarUrl);
+          const avatarFallback = (
+            <View style={styles.avatarFallback}>
+              <Text style={styles.avatarInitial}>{label.slice(0, 1).toUpperCase()}</Text>
+            </View>
+          );
           const onPress = isOwn
             ? () => {
                 if (onPressOwn) {
@@ -62,13 +67,12 @@ export default function MomentsRow({ users, isLoading, onPressUser, onPressCreat
                   style={[styles.ring, styles.ringActive]}
                 >
                   <View style={styles.innerRing}>
-                    {safeAvatarUrl ? (
-                      <Image source={{ uri: safeAvatarUrl }} style={styles.avatar} />
-                    ) : (
-                      <View style={styles.avatarFallback}>
-                        <Text style={styles.avatarInitial}>{label.slice(0, 1).toUpperCase()}</Text>
-                      </View>
-                    )}
+                    <OfflineImage
+                      uri={safeAvatarUrl}
+                      style={styles.avatar}
+                      contentFit="cover"
+                      fallback={avatarFallback}
+                    />
                   </View>
                   {isOwn && (
                     <View style={styles.plusBadge}>
@@ -79,13 +83,12 @@ export default function MomentsRow({ users, isLoading, onPressUser, onPressCreat
               ) : (
                 <View style={styles.ring}>
                   <View style={styles.innerRing}>
-                    {safeAvatarUrl ? (
-                      <Image source={{ uri: safeAvatarUrl }} style={styles.avatar} />
-                    ) : (
-                      <View style={styles.avatarFallback}>
-                        <Text style={styles.avatarInitial}>{label.slice(0, 1).toUpperCase()}</Text>
-                      </View>
-                    )}
+                    <OfflineImage
+                      uri={safeAvatarUrl}
+                      style={styles.avatar}
+                      contentFit="cover"
+                      fallback={avatarFallback}
+                    />
                   </View>
                   {isOwn && (
                     <View style={styles.plusBadge}>

@@ -1,17 +1,33 @@
-import MomentCreateModal from '@/components/MomentCreateModal';
 import MomentViewer from '@/components/MomentViewer';
+import MomentCommentsModal from '@/components/MomentCommentsModal';
+import TextMomentCard from '@/components/moments/TextMomentCard';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { Moment, MomentUser } from '@/hooks/useMoments';
 import { useAuth } from '@/lib/auth-context';
+import { deleteMomentOfflineSafe } from '@/lib/moments-offline-actions';
 import { createSignedUrl } from '@/lib/moments';
+import { collectMomentSyncIssues } from '@/lib/offline/moment-sync-issues';
+import { reconcileMomentRowsWithOfflineMutations } from '@/lib/offline/moment-mutation-reconciler';
+import {
+  removeMomentFromFeedSnapshot,
+  readMomentReactorsSnapshot,
+  removeOwnMomentSnapshot,
+  primeOfflineMomentMedia,
+  readOwnMomentsSnapshot,
+  resolveOfflineMomentMediaMap,
+  writeMomentReactorsSnapshot,
+  writeOwnMomentsSnapshot,
+} from '@/lib/offline/moments-store';
+import { getMomentOfflineMutationSnapshot, retryFailedOfflineMutation, retryFailedOfflineMutations, subscribeToOfflineMutationEvents } from '@/lib/offline/mutation-queue';
+import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 const withAlpha = (hex: string, alpha: number) => {
@@ -26,6 +42,32 @@ const withAlpha = (hex: string, alpha: number) => {
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
 };
 
+const getMomentKindLabel = (moment: Moment) => {
+  if (moment.type === 'text') return 'Text Moment';
+  if (moment.type === 'video') return 'Video Moment';
+  return 'Photo Moment';
+};
+
+const getTextPreviewDensity = (body: string | null) => {
+  const text = String(body || '').trim();
+  if (text.length > 140) return { lines: 5, compact: false };
+  if (text.length > 90) return { lines: 4, compact: false };
+  return { lines: 3, compact: true };
+};
+
+type ReactorRow = {
+  id: string;
+  emoji: string;
+  user_id: string;
+  created_at: string;
+};
+
+type ReactorProfile = {
+  id: string;
+  full_name: string | null;
+  avatar_url: string | null;
+};
+
 export default function MyMomentsScreen() {
   const colorScheme = useColorScheme();
   const resolvedScheme = (colorScheme ?? 'light') === 'dark' ? 'dark' : 'light';
@@ -35,11 +77,41 @@ export default function MyMomentsScreen() {
   const { user, profile } = useAuth();
   const [moments, setMoments] = useState<Moment[]>([]);
   const [loading, setLoading] = useState(false);
-  const [createVisible, setCreateVisible] = useState(false);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
+  const [offlineMediaByMomentId, setOfflineMediaByMomentId] = useState<Record<string, string>>({});
   const [reactionCounts, setReactionCounts] = useState<Record<string, number>>({});
+  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
+  const [syncStateByMomentId, setSyncStateByMomentId] = useState<Record<string, { state: 'pending' | 'failed'; label: string }>>({});
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerStartMomentId, setViewerStartMomentId] = useState<string | null>(null);
+  const [commentsVisible, setCommentsVisible] = useState(false);
+  const [commentsMomentId, setCommentsMomentId] = useState<string | null>(null);
+  const [reactorsVisible, setReactorsVisible] = useState(false);
+  const [selectedReactionMoment, setSelectedReactionMoment] = useState<Moment | null>(null);
+  const [reactors, setReactors] = useState<ReactorRow[]>([]);
+  const [reactorProfiles, setReactorProfiles] = useState<Record<string, ReactorProfile>>({});
+  const [reactorsLoading, setReactorsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    (async () => {
+      const snapshot = await readOwnMomentsSnapshot(user.id);
+      if (cancelled || !snapshot) return;
+      if (Array.isArray(snapshot.moments) && snapshot.moments.length > 0) {
+        setMoments((prev) => (prev.length === 0 ? (snapshot.moments as Moment[]) : prev));
+      }
+      if (snapshot.reactionCounts && Object.keys(snapshot.reactionCounts).length > 0) {
+        setReactionCounts((prev) => (Object.keys(prev).length === 0 ? snapshot.reactionCounts : prev));
+      }
+      if (snapshot.commentCounts && Object.keys(snapshot.commentCounts).length > 0) {
+        setCommentCounts((prev) => (Object.keys(prev).length === 0 ? snapshot.commentCounts : prev));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
 
   const fetchMoments = useCallback(async () => {
     if (!user?.id) return;
@@ -47,25 +119,39 @@ export default function MyMomentsScreen() {
     try {
       const { data, error } = await supabase
         .from('moments')
-        .select('id,user_id,type,media_url,thumbnail_url,text_body,caption,created_at,expires_at,visibility,is_deleted,moment_reactions(id)')
+        .select('id,user_id,type,media_url,metadata,thumbnail_url,text_body,caption,created_at,expires_at,visibility,is_deleted,moment_reactions(id),moment_comments(id)')
         .eq('user_id', user.id)
         .eq('is_deleted', false)
         .gt('expires_at', new Date().toISOString())
         .order('created_at', { ascending: false });
       if (error || !data) {
-        setMoments([]);
-        setReactionCounts({});
         return;
       }
       const counts: Record<string, number> = {};
+      const nextCommentCounts: Record<string, number> = {};
       const cleaned = (data as any[]).map((row) => {
         const reactions = Array.isArray(row.moment_reactions) ? row.moment_reactions.length : 0;
+        const comments = Array.isArray(row.moment_comments) ? row.moment_comments.length : 0;
         counts[row.id] = reactions;
-        const { moment_reactions: _momentReactions, ...rest } = row;
+        nextCommentCounts[row.id] = comments;
+        const { moment_reactions: _momentReactions, moment_comments: _momentComments, ...rest } = row;
         return rest as Moment;
       });
-      setReactionCounts(counts);
-      setMoments(cleaned);
+      const reconciled = await reconcileMomentRowsWithOfflineMutations({
+        currentUserId: user.id,
+        moments: cleaned,
+        reactionCounts: counts,
+        commentCounts: nextCommentCounts,
+      });
+      setReactionCounts(reconciled.reactionCounts);
+      setCommentCounts(reconciled.commentCounts);
+      setSyncStateByMomentId(reconciled.syncStateByMomentId);
+      setMoments(reconciled.moments);
+      await writeOwnMomentsSnapshot(user.id, {
+        moments: reconciled.moments,
+        reactionCounts: reconciled.reactionCounts,
+        commentCounts: reconciled.commentCounts,
+      });
     } finally {
       setLoading(false);
     }
@@ -73,6 +159,20 @@ export default function MyMomentsScreen() {
 
   useEffect(() => {
     void fetchMoments();
+  }, [fetchMoments]);
+
+  useEffect(() => {
+    return subscribeToOfflineMutationEvents((event) => {
+      if (
+        event.mutation.kind === 'moment_text_create' ||
+        event.mutation.kind === 'moment_media_create' ||
+        event.mutation.kind === 'moment_delete' ||
+        event.mutation.kind === 'moment_reaction_sync' ||
+        event.mutation.kind === 'moment_comment_create'
+      ) {
+        void fetchMoments();
+      }
+    });
   }, [fetchMoments]);
 
   useEffect(() => {
@@ -88,10 +188,31 @@ export default function MyMomentsScreen() {
       );
       if (Object.keys(resolved).length > 0) {
         setSignedUrls((prev) => ({ ...prev, ...resolved }));
+        const cachedLocals = await primeOfflineMomentMedia(moments, resolved);
+        if (Object.keys(cachedLocals).length > 0) {
+          setOfflineMediaByMomentId((prev) => ({ ...prev, ...cachedLocals }));
+        }
       }
     };
     void resolveUrls();
   }, [moments, signedUrls]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (moments.length === 0) {
+      setOfflineMediaByMomentId({});
+      return;
+    }
+    (async () => {
+      const next = await resolveOfflineMomentMediaMap(moments);
+      if (!cancelled) {
+        setOfflineMediaByMomentId(next);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [moments]);
 
   const handleDelete = (moment: Moment) => {
     Alert.alert('Delete Moment?', 'This will remove the Moment for everyone.', [
@@ -110,33 +231,29 @@ export default function MyMomentsScreen() {
             delete next[moment.id];
             return next;
           });
+          setCommentCounts((prev) => {
+            const next = { ...prev };
+            delete next[moment.id];
+            return next;
+          });
           setSignedUrls((prev) => {
             const next = { ...prev };
             delete next[moment.id];
             return next;
           });
+          setOfflineMediaByMomentId((prev) => {
+            const next = { ...prev };
+            delete next[moment.id];
+            return next;
+          });
+          void removeOwnMomentSnapshot(user.id, moment.id);
+          void removeMomentFromFeedSnapshot(user.id, moment.id);
           try {
-            const { data, error } = await supabase
-              .from('moments')
-              .update({ is_deleted: true })
-              .eq('id', moment.id)
-              .select('id');
-            if (error) {
-              // fallback to hard delete if soft delete fails
-              const { error: deleteError } = await supabase.from('moments').delete().eq('id', moment.id);
-              if (deleteError) {
-                throw deleteError;
-              }
-            } else if (!data || data.length === 0) {
-              // nothing updated; attempt hard delete to ensure removal
-              const { error: deleteError } = await supabase.from('moments').delete().eq('id', moment.id);
-              if (deleteError) {
-                throw deleteError;
-              }
-            }
-            if (moment.media_url && !moment.media_url.startsWith('http')) {
-              await supabase.storage.from('moments').remove([moment.media_url]);
-            }
+            await deleteMomentOfflineSafe({
+              userId: user.id,
+              momentId: moment.id,
+              mediaPath: moment.media_url,
+            });
           } catch (err) {
             console.log('Delete moment failed', err);
             const message = err instanceof Error ? err.message : 'Please try again.';
@@ -149,7 +266,10 @@ export default function MyMomentsScreen() {
   };
 
   const handleShare = async (moment: Moment) => {
-    const url = moment.media_url?.startsWith('http') ? moment.media_url : signedUrls[moment.id];
+    const url =
+      moment.media_url?.startsWith('http')
+        ? moment.media_url
+        : signedUrls[moment.id] || offlineMediaByMomentId[moment.id];
     const message =
       moment.type === 'text'
         ? moment.text_body || 'My Moment'
@@ -164,12 +284,123 @@ export default function MyMomentsScreen() {
   };
 
   const openMomentActions = (moment: Moment) => {
-    Alert.alert('Moment options', undefined, [
-      { text: 'Share', onPress: () => handleShare(moment) },
-      { text: 'Delete', style: 'destructive', onPress: () => handleDelete(moment) },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+    const syncState = syncStateByMomentId[moment.id] ?? null;
+    const open = async () => {
+      const snapshot = await getMomentOfflineMutationSnapshot();
+      const issues = collectMomentSyncIssues([...snapshot.failed, ...snapshot.pending], moment.id);
+      const failedIssues = issues.filter((issue) => issue.state === 'failed');
+      const buttons: NonNullable<Parameters<typeof Alert.alert>[2]> = [
+        { text: 'Share', onPress: () => handleShare(moment) },
+      ];
+      if (issues.length > 0) {
+        buttons.push({
+          text: 'Review sync issues',
+          onPress: () => {
+            Alert.alert(
+              'Moment sync status',
+              issues
+                .slice(0, 4)
+                .map((issue, index) => `${index + 1}. ${issue.title}\n${issue.detail}`)
+                .join('\n\n'),
+            );
+          },
+        });
+      }
+      if (failedIssues.length > 0) {
+        buttons.push({
+          text: 'Retry sync',
+          onPress: async () => {
+            await retryFailedOfflineMutations((mutation) =>
+              failedIssues.some((issue) => issue.id === mutation.id),
+            );
+            void fetchMoments();
+          },
+        });
+      }
+      buttons.push({ text: 'Delete', style: 'destructive', onPress: () => handleDelete(moment) });
+      buttons.push({ text: 'Cancel', style: 'cancel' });
+      Alert.alert('Moment options', undefined, buttons);
+    };
+    void open();
   };
+
+  const openComments = (momentId: string) => {
+    setCommentsMomentId(momentId);
+    setCommentsVisible(true);
+  };
+
+  const openProfileFromMomentContext = useCallback(
+    (profileId?: string | null, actorUserId?: string | null) => {
+      if (actorUserId && actorUserId === user?.id) {
+        setReactorsVisible(false);
+        setSelectedReactionMoment(null);
+        router.push('/(tabs)/profile');
+        return;
+      }
+      if (!profileId) return;
+      setReactorsVisible(false);
+      setSelectedReactionMoment(null);
+      router.push({ pathname: '/profile-view', params: { profileId: String(profileId) } });
+    },
+    [router, user?.id],
+  );
+
+  const openReactors = useCallback(async (moment: Moment) => {
+    setSelectedReactionMoment(moment);
+    setReactorsVisible(true);
+    setReactorsLoading(true);
+    setReactors([]);
+    setReactorProfiles({});
+    try {
+      if (user?.id) {
+        const cached = await readMomentReactorsSnapshot(user.id, moment.id);
+        if (cached) {
+          setReactors(cached.reactions);
+          setReactorProfiles(cached.profilesByUserId as Record<string, ReactorProfile>);
+        }
+      }
+
+      const { data, error } = await supabase
+        .from('moment_reactions')
+        .select('id,emoji,user_id,created_at')
+        .eq('moment_id', moment.id)
+        .order('created_at', { ascending: false });
+
+      if (error || !data) {
+        return;
+      }
+
+      const reactionRows = data as ReactorRow[];
+      setReactors(reactionRows);
+
+      const userIds = Array.from(new Set(reactionRows.map((row) => row.user_id))).filter(Boolean);
+      if (userIds.length === 0) return;
+
+      const { data: profileRows } = await supabase
+        .from('profiles')
+        .select('id,user_id,full_name,avatar_url')
+        .in('user_id', userIds);
+
+      const nextProfiles: Record<string, ReactorProfile> = {};
+      (profileRows || []).forEach((profileRow: any) => {
+        if (!profileRow.user_id) return;
+        nextProfiles[profileRow.user_id] = {
+          id: profileRow.id ?? null,
+          full_name: profileRow.full_name ?? null,
+          avatar_url: profileRow.avatar_url ?? null,
+        };
+      });
+      setReactorProfiles(nextProfiles);
+      if (user?.id) {
+        await writeMomentReactorsSnapshot(user.id, moment.id, {
+          reactions: reactionRows,
+          profilesByUserId: nextProfiles,
+        });
+      }
+    } finally {
+      setReactorsLoading(false);
+    }
+  }, [user?.id]);
 
   const emptyState = !loading && moments.length === 0;
 
@@ -240,7 +471,38 @@ export default function MyMomentsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        <Text style={styles.sectionTitle}>Recent uploads</Text>
+        <LinearGradient
+          colors={
+            isDark
+              ? ['rgba(14,160,160,0.22)', 'rgba(19,33,37,0.92)', 'rgba(117,76,148,0.16)']
+              : ['rgba(14,160,160,0.16)', 'rgba(247,236,226,0.96)', 'rgba(117,76,148,0.08)']
+          }
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.heroCard}
+        >
+          <View style={styles.heroBadge}>
+            <MaterialCommunityIcons name="motion-play-outline" size={14} color={theme.tint} />
+            <Text style={styles.heroBadgeText}>24h archive</Text>
+          </View>
+          <Text style={styles.heroTitle}>Recent uploads</Text>
+          <Text style={styles.heroSubtitle}>
+            Review what is live now, open each Moment in context, and keep your signal feeling fresh.
+          </Text>
+          <View style={styles.heroStatsRow}>
+            <View style={styles.heroStatPill}>
+              <Text style={styles.heroStatValue}>{moments.length}</Text>
+              <Text style={styles.heroStatLabel}>Active</Text>
+            </View>
+            <View style={styles.heroStatPill}>
+              <Text style={styles.heroStatValue}>
+                {moments.reduce((sum, moment) => sum + (reactionCounts[moment.id] ?? 0), 0)}
+              </Text>
+              <Text style={styles.heroStatLabel}>Reactions</Text>
+            </View>
+          </View>
+        </LinearGradient>
+
         {emptyState ? (
           <View style={styles.emptyCard}>
             <View style={styles.emptyBadge}>
@@ -260,63 +522,137 @@ export default function MyMomentsScreen() {
                 <Text style={styles.emptyHighlightText}>Simple updates create easier conversation starters.</Text>
               </View>
             </View>
-            <TouchableOpacity style={styles.emptyActionButton} onPress={() => setCreateVisible(true)}>
+            <TouchableOpacity style={styles.emptyActionButton} onPress={() => router.push('/moments/create')}>
               <Text style={styles.emptyActionText}>Post your first Moment</Text>
             </TouchableOpacity>
           </View>
         ) : (
           moments.map((moment) => {
-            const mediaUrl = moment.media_url?.startsWith('http') ? moment.media_url : signedUrls[moment.id];
+            const mediaUrl =
+              moment.media_url?.startsWith('http')
+                ? moment.media_url
+                : signedUrls[moment.id] || offlineMediaByMomentId[moment.id];
             const timeLabel = formatTimeAgo(moment.created_at);
             const reactions = reactionCounts[moment.id] ?? 0;
-            const title =
-              moment.caption?.trim() ||
-              (moment.type === 'text' ? 'Text Moment' : moment.type === 'video' ? 'Video Moment' : 'Photo Moment');
+            const comments = commentCounts[moment.id] ?? 0;
+            const syncState = syncStateByMomentId[moment.id] ?? null;
+            const title = moment.caption?.trim() || getMomentKindLabel(moment);
+            const textDensity = moment.type === 'text' ? getTextPreviewDensity(moment.text_body) : null;
             return (
-              <View key={moment.id} style={styles.momentRow}>
-                <TouchableOpacity
-                  style={styles.momentPressable}
-                  activeOpacity={0.82}
-                  onPress={() => openViewer(moment.id)}
-                >
-                  <View style={styles.momentCircle}>
-                    {moment.type === 'photo' && mediaUrl ? (
-                      <Image source={{ uri: mediaUrl }} style={styles.momentCircleImage} contentFit="cover" />
-                    ) : moment.type === 'text' ? (
-                      <Text style={styles.textBadge}>Aa</Text>
-                    ) : (
-                      <View style={styles.momentCircleFallback}>
+              <View key={moment.id} style={styles.momentCard}>
+                <View style={styles.momentCardTopRow}>
+                  <View style={styles.kindPill}>
+                    <MaterialCommunityIcons
+                      name={
+                        moment.type === 'text'
+                          ? 'format-text'
+                          : moment.type === 'video'
+                            ? 'play-box-multiple-outline'
+                            : 'image-multiple-outline'
+                      }
+                      size={14}
+                      color={theme.tint}
+                    />
+                    <Text style={styles.kindPillText}>{getMomentKindLabel(moment)}</Text>
+                  </View>
+                  {syncState ? (
+                    <View
+                      style={[
+                        styles.syncStatusPill,
+                        syncState.state === 'failed' ? styles.syncStatusPillFailed : styles.syncStatusPillPending,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.syncStatusText,
+                          syncState.state === 'failed' ? styles.syncStatusTextFailed : styles.syncStatusTextPending,
+                        ]}
+                      >
+                        {syncState.label}
+                      </Text>
+                    </View>
+                  ) : null}
+                  <TouchableOpacity style={styles.moreButton} onPress={() => openMomentActions(moment)}>
+                    <MaterialCommunityIcons name="dots-horizontal" size={20} color={theme.textMuted} />
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity activeOpacity={0.88} onPress={() => openViewer(moment.id)}>
+                  {moment.type === 'text' ? (
+                    <TextMomentCard
+                      body={moment.text_body || ''}
+                      caption={moment.caption}
+                      metadata={moment.metadata}
+                      bodyNumberOfLines={textDensity?.lines}
+                      captionNumberOfLines={2}
+                      style={[
+                        styles.textMomentPreviewCard,
+                        textDensity?.compact ? styles.textMomentPreviewCardCompact : null,
+                      ]}
+                    />
+                  ) : moment.type === 'photo' && mediaUrl ? (
+                    <View style={styles.mediaPreviewCard}>
+                      <Image source={{ uri: mediaUrl }} style={styles.mediaPreview} contentFit="cover" />
+                      {moment.caption ? (
+                        <View style={styles.mediaCaptionOverlay}>
+                          <Text style={styles.mediaCaptionText} numberOfLines={2}>
+                            {moment.caption}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : (
+                    <View style={styles.videoPreviewSurface}>
+                      <View style={styles.videoPreviewIcon}>
                         <MaterialCommunityIcons
-                          name={moment.type === 'video' ? 'video' : 'image-outline'}
-                          size={20}
-                          color={Colors.light.background}
+                          name={moment.type === 'video' ? 'play-circle-outline' : 'image-outline'}
+                          size={30}
+                          color={theme.tint}
                         />
                       </View>
-                    )}
-                  </View>
-                  <View style={styles.momentMeta}>
-                    <Text style={styles.momentTitle}>{title}</Text>
-                    <View style={styles.momentSubRow}>
-                      <View style={styles.momentMetaItem}>
-                        <MaterialCommunityIcons name="clock-outline" size={13} color={theme.textMuted} />
-                        <Text style={styles.momentMetaText}>{timeLabel}</Text>
-                      </View>
-                      <View style={styles.momentMetaItem}>
-                        <MaterialCommunityIcons name="heart" size={13} color={theme.tint} />
-                        <Text style={styles.momentMetaText}>{reactions}</Text>
+                      <View style={styles.videoPreviewBody}>
+                        <Text style={styles.videoPreviewTitle}>{title}</Text>
+                        <Text style={styles.videoPreviewCopy} numberOfLines={2}>
+                          {moment.caption?.trim() || 'Tap to open this Moment in the viewer.'}
+                        </Text>
                       </View>
                     </View>
+                  )}
+
+                  <View style={styles.momentFooterRow}>
+                    <View style={styles.metaPill}>
+                      <MaterialCommunityIcons name="clock-outline" size={13} color={theme.textMuted} />
+                      <Text style={styles.metaPillText}>{timeLabel}</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.metaPill}
+                      activeOpacity={0.8}
+                      onPress={() => openReactors(moment)}
+                      disabled={reactions <= 0}
+                    >
+                      <MaterialCommunityIcons name="heart" size={13} color={theme.tint} />
+                      <Text style={styles.metaPillText}>{reactions}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.metaPill}
+                      activeOpacity={0.8}
+                      onPress={() => openComments(moment.id)}
+                    >
+                      <MaterialCommunityIcons name="comment-outline" size={13} color={theme.textMuted} />
+                      <Text style={styles.metaPillText}>{comments}</Text>
+                    </TouchableOpacity>
+                    <View style={styles.metaPill}>
+                      <MaterialCommunityIcons name="eye-outline" size={13} color={theme.textMuted} />
+                      <Text style={styles.metaPillText}>Open</Text>
+                    </View>
                   </View>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.moreButton} onPress={() => openMomentActions(moment)}>
-                  <MaterialCommunityIcons name="dots-horizontal" size={20} color={theme.textMuted} />
                 </TouchableOpacity>
               </View>
             );
           })
         )}
 
-        <TouchableOpacity style={styles.addButton} onPress={() => setCreateVisible(true)}>
+        <TouchableOpacity style={styles.addButton} onPress={() => router.push('/moments/create')}>
           <MaterialCommunityIcons name="plus-circle" size={20} color="#fff" />
           <Text style={styles.addButtonText}>Add Moment</Text>
         </TouchableOpacity>
@@ -324,18 +660,10 @@ export default function MyMomentsScreen() {
         <Text style={styles.footerText}>Moments expire after 24 hours.</Text>
       </ScrollView>
 
-      <MomentCreateModal
-        visible={createVisible}
-        onClose={() => setCreateVisible(false)}
-        onCreated={() => {
-          setCreateVisible(false);
-          void fetchMoments();
-        }}
-      />
-
       <MomentViewer
         visible={viewerVisible}
         users={viewerUsers}
+        preferredMediaUrlsByMomentId={offlineMediaByMomentId}
         startUserId={user?.id ?? null}
         startMomentId={viewerStartMomentId}
         onClose={() => {
@@ -343,6 +671,72 @@ export default function MyMomentsScreen() {
           setViewerStartMomentId(null);
         }}
       />
+
+      <MomentCommentsModal
+        visible={commentsVisible}
+        momentId={commentsMomentId}
+        onClose={() => {
+          setCommentsVisible(false);
+          setCommentsMomentId(null);
+        }}
+      />
+
+      <Modal visible={reactorsVisible} transparent animationType="fade" onRequestClose={() => setReactorsVisible(false)}>
+        <Pressable style={styles.sheetBackdrop} onPress={() => setReactorsVisible(false)} />
+        <View style={styles.sheetWrap} pointerEvents="box-none">
+          <View style={styles.reactorsSheet}>
+            <View style={styles.reactorsHeader}>
+              <View>
+                <Text style={styles.reactorsTitle}>Reactions</Text>
+                <Text style={styles.reactorsSubtitle}>
+                  {selectedReactionMoment ? getMomentKindLabel(selectedReactionMoment) : 'Moment'}
+                </Text>
+              </View>
+              <TouchableOpacity style={styles.sheetCloseButton} onPress={() => setReactorsVisible(false)}>
+                <MaterialCommunityIcons name="close" size={18} color={theme.text} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.reactorsList} contentContainerStyle={styles.reactorsListContent}>
+              {reactorsLoading ? (
+                <Text style={styles.reactorsEmptyText}>Loading reactions...</Text>
+              ) : reactors.length === 0 ? (
+                <Text style={styles.reactorsEmptyText}>No reactions yet.</Text>
+              ) : (
+                reactors.map((reaction) => {
+                  const reactor = reactorProfiles[reaction.user_id];
+                  const safeAvatarUrl = getSafeRemoteImageUri(reactor?.avatar_url);
+                  const displayName = reaction.user_id === user?.id ? 'You' : reactor?.full_name || 'Member';
+                  return (
+                    <View key={reaction.id} style={styles.reactorRow}>
+                      <TouchableOpacity
+                        activeOpacity={0.82}
+                        style={styles.reactorAvatarPressable}
+                        onPress={() => openProfileFromMomentContext(reactor?.id, reaction.user_id)}
+                      >
+                        {safeAvatarUrl ? (
+                          <Image source={{ uri: safeAvatarUrl }} style={styles.reactorAvatar} contentFit="cover" />
+                        ) : (
+                          <View style={styles.reactorAvatarFallback}>
+                            <Text style={styles.reactorAvatarInitial}>
+                              {displayName.slice(0, 1).toUpperCase()}
+                            </Text>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                      <View style={styles.reactorBody}>
+                        <Text style={styles.reactorName}>{displayName}</Text>
+                        <Text style={styles.reactorTime}>{formatTimeAgo(reaction.created_at)}</Text>
+                      </View>
+                      <Text style={styles.reactorEmoji}>{reaction.emoji}</Text>
+                    </View>
+                  );
+                })
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -381,7 +775,75 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     headerTitle: { fontSize: 18, fontFamily: 'Archivo_700Bold', color: theme.text },
     headerSpacer: { width: 40 },
     content: { padding: 18, paddingBottom: 40 },
-    sectionTitle: { fontSize: 16, fontFamily: 'Archivo_700Bold', color: theme.text, marginBottom: 12 },
+    heroCard: {
+      padding: 18,
+      borderRadius: 24,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
+      marginBottom: 16,
+      overflow: 'hidden',
+    },
+    heroBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      alignSelf: 'flex-start',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.22 : 0.56),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.28 : 0.14),
+      marginBottom: 12,
+    },
+    heroBadgeText: {
+      color: theme.text,
+      fontSize: 11,
+      fontFamily: 'Manrope_800ExtraBold',
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+    },
+    heroTitle: {
+      color: theme.text,
+      fontSize: 28,
+      lineHeight: 34,
+      fontFamily: 'PlayfairDisplay_700Bold',
+      marginBottom: 8,
+    },
+    heroSubtitle: {
+      color: theme.textMuted,
+      fontSize: 14,
+      lineHeight: 21,
+      fontFamily: 'Manrope_600SemiBold',
+      maxWidth: 360,
+    },
+    heroStatsRow: {
+      flexDirection: 'row',
+      gap: 10,
+      marginTop: 14,
+    },
+    heroStatPill: {
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 16,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.18 : 0.48),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+      minWidth: 88,
+    },
+    heroStatValue: {
+      color: theme.text,
+      fontSize: 18,
+      fontFamily: 'Archivo_700Bold',
+      marginBottom: 2,
+    },
+    heroStatLabel: {
+      color: theme.textMuted,
+      fontSize: 11,
+      fontFamily: 'Manrope_700Bold',
+      textTransform: 'uppercase',
+      letterSpacing: 0.7,
+    },
     emptyCard: {
       padding: 18,
       borderRadius: 22,
@@ -421,45 +883,282 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: theme.tint,
     },
     emptyActionText: { color: Colors.light.background, fontFamily: 'Manrope_700Bold', fontSize: 13 },
-    momentRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingVertical: 12,
-      paddingHorizontal: 12,
-      borderRadius: 18,
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.92 : 0.78),
+    momentCard: {
+      padding: 14,
+      borderRadius: 22,
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.94 : 0.84),
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
-      marginBottom: 12,
+      marginBottom: 14,
     },
-    momentPressable: { flexDirection: 'row', alignItems: 'center', flex: 1 },
-    momentCircle: {
-      width: 56,
-      height: 56,
-      borderRadius: 28,
-      backgroundColor: theme.text,
-      overflow: 'hidden',
+    momentCardTopRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 12,
+      gap: 12,
+    },
+    kindPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.26 : 0.14),
+    },
+    kindPillText: {
+      color: theme.text,
+      fontFamily: 'Manrope_700Bold',
+      fontSize: 11,
+      textTransform: 'uppercase',
+      letterSpacing: 0.7,
+    },
+    syncStatusPill: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+    },
+    syncStatusPillPending: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
+      borderColor: withAlpha(theme.tint, isDark ? 0.24 : 0.16),
+    },
+    syncStatusPillFailed: {
+      backgroundColor: withAlpha(theme.danger, isDark ? 0.14 : 0.08),
+      borderColor: withAlpha(theme.danger, isDark ? 0.26 : 0.18),
+    },
+    syncStatusText: {
+      fontFamily: 'Manrope_700Bold',
+      fontSize: 10.5,
+      letterSpacing: 0.2,
+    },
+    syncStatusTextPending: {
+      color: theme.tint,
+    },
+    syncStatusTextFailed: {
+      color: theme.danger,
+    },
+    moreButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
       alignItems: 'center',
       justifyContent: 'center',
+      backgroundColor: withAlpha(theme.background, isDark ? 0.16 : 0.64),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.08 : 0.06),
     },
-    momentCircleImage: { width: '100%', height: '100%' },
-    momentCircleFallback: { alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' },
-    textBadge: { color: Colors.light.background, fontFamily: 'Archivo_700Bold', fontSize: 16 },
-    momentMeta: { marginLeft: 12, flex: 1 },
-    momentTitle: { color: theme.text, fontFamily: 'Manrope_600SemiBold', fontSize: 14 },
-    momentSubRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 4 },
-    momentMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    momentMetaText: { color: theme.textMuted, fontFamily: 'Manrope_500Medium', fontSize: 12 },
-    moreButton: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+    textMomentPreviewCard: {
+      minHeight: 156,
+    },
+    textMomentPreviewCardCompact: {
+      minHeight: 128,
+    },
+    mediaPreviewCard: {
+      borderRadius: 20,
+      overflow: 'hidden',
+      backgroundColor: withAlpha(theme.text, isDark ? 0.06 : 0.04),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.08 : 0.05),
+    },
+    mediaPreview: {
+      width: '100%',
+      aspectRatio: 1.22,
+    },
+    mediaCaptionOverlay: {
+      position: 'absolute',
+      left: 12,
+      right: 12,
+      bottom: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 14,
+      backgroundColor: 'rgba(7,17,18,0.66)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.08)',
+    },
+    mediaCaptionText: {
+      color: '#f8fcfb',
+      fontSize: 13,
+      lineHeight: 18,
+      fontFamily: 'Manrope_700Bold',
+    },
+    videoPreviewSurface: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 14,
+      padding: 16,
+      borderRadius: 20,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.08 : 0.06),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
+    },
+    videoPreviewIcon: {
+      width: 58,
+      height: 58,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.background, isDark ? 0.24 : 0.58),
+    },
+    videoPreviewBody: {
+      flex: 1,
+    },
+    videoPreviewTitle: {
+      color: theme.text,
+      fontSize: 16,
+      fontFamily: 'Archivo_700Bold',
+      marginBottom: 4,
+    },
+    videoPreviewCopy: {
+      color: theme.textMuted,
+      fontSize: 12,
+      lineHeight: 18,
+      fontFamily: 'Manrope_600SemiBold',
+    },
+    momentFooterRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      flexWrap: 'wrap',
+      marginTop: 14,
+    },
+    metaPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.text, isDark ? 0.05 : 0.035),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.08 : 0.05),
+    },
+    metaPillText: {
+      color: theme.textMuted,
+      fontSize: 11,
+      fontFamily: 'Manrope_700Bold',
+    },
+    sheetBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.52)',
+    },
+    sheetWrap: {
+      ...StyleSheet.absoluteFillObject,
+      justifyContent: 'flex-end',
+    },
+    reactorsSheet: {
+      backgroundColor: theme.background,
+      borderTopLeftRadius: 24,
+      borderTopRightRadius: 24,
+      paddingHorizontal: 18,
+      paddingTop: 14,
+      paddingBottom: 22,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      maxHeight: '62%',
+    },
+    reactorsHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 12,
+    },
+    reactorsTitle: {
+      color: theme.text,
+      fontSize: 17,
+      fontFamily: 'Archivo_700Bold',
+    },
+    reactorsSubtitle: {
+      color: theme.textMuted,
+      fontSize: 12,
+      fontFamily: 'Manrope_600SemiBold',
+      marginTop: 2,
+    },
+    sheetCloseButton: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.text, isDark ? 0.05 : 0.04),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.08 : 0.05),
+    },
+    reactorsList: {
+      flexGrow: 0,
+    },
+    reactorsListContent: {
+      gap: 10,
+      paddingBottom: 6,
+    },
+    reactorsEmptyText: {
+      color: theme.textMuted,
+      fontSize: 13,
+      fontFamily: 'Manrope_600SemiBold',
+      textAlign: 'center',
+      paddingVertical: 18,
+    },
+    reactorRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      padding: 12,
+      borderRadius: 16,
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.92 : 0.82),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.06),
+    },
+    reactorAvatar: {
+      width: 42,
+      height: 42,
+      borderRadius: 21,
+    },
+    reactorAvatarPressable: {
+      borderRadius: 21,
+    },
+    reactorAvatarFallback: {
+      width: 42,
+      height: 42,
+      borderRadius: 21,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.06),
+    },
+    reactorAvatarInitial: {
+      color: theme.text,
+      fontFamily: 'Archivo_700Bold',
+      fontSize: 15,
+    },
+    reactorBody: {
+      flex: 1,
+    },
+    reactorName: {
+      color: theme.text,
+      fontSize: 14,
+      fontFamily: 'Manrope_700Bold',
+      marginBottom: 2,
+    },
+    reactorTime: {
+      color: theme.textMuted,
+      fontSize: 12,
+      fontFamily: 'Manrope_500Medium',
+    },
+    reactorEmoji: {
+      fontSize: 22,
+    },
     addButton: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
       gap: 8,
-      paddingVertical: 14,
-      borderRadius: 16,
+      paddingVertical: 15,
+      borderRadius: 18,
       backgroundColor: theme.tint,
-      marginTop: 6,
+      marginTop: 8,
     },
     addButtonText: { color: Colors.light.background, fontFamily: 'Manrope_700Bold' },
     footerText: { marginTop: 16, color: theme.textMuted, textAlign: 'center', fontFamily: 'Manrope_500Medium' },

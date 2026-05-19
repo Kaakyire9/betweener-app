@@ -1,11 +1,11 @@
 import { Colors } from '@/constants/theme';
+import OfflineImage from '@/components/media/OfflineImage';
 import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
 import { useResponsiveMetrics } from '@/lib/responsive';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useState } from 'react';
 import {
     Alert,
-    Image,
     Modal,
     ScrollView,
     StyleSheet,
@@ -37,6 +37,7 @@ export default function PhotoGallery({
   const responsive = useResponsiveMetrics();
   const insets = responsive.insets;
   const safePhotos = photos.map((photo) => getSafeRemoteImageUri(photo)).filter(Boolean) as string[];
+  const hasIntroVideoMedia = Boolean(introVideoUrl || introVideoThumbnail);
   const safeIntroVideoThumbnail = getSafeRemoteImageUri(introVideoThumbnail) || safePhotos[0] || null;
 
   const handlePhotoPress = (index: number) => {
@@ -80,16 +81,16 @@ export default function PhotoGallery({
   return (
     <View style={styles.container}>
       <View style={[styles.grid, { gap: gridGap, paddingHorizontal: gridPadding }]}>
-          {introVideoUrl && safeIntroVideoThumbnail ? (
+          {hasIntroVideoMedia && safeIntroVideoThumbnail ? (
           <TouchableOpacity
             style={[styles.photoContainer, { width: itemWidth, height: itemHeight }]}
             onPress={onOpenVideo}
             activeOpacity={0.85}
           >
-            <Image
-              source={{ uri: safeIntroVideoThumbnail }}
+            <OfflineImage
+              uri={safeIntroVideoThumbnail}
               style={styles.photo}
-              resizeMode="cover"
+              cachePolicy="memory-disk"
             />
             <View style={styles.videoOverlay} />
             <View style={styles.videoBadge}>
@@ -104,10 +105,10 @@ export default function PhotoGallery({
             style={[styles.photoContainer, { width: itemWidth, height: itemHeight }]}
             onPress={() => handlePhotoPress(index)}
           >
-            <Image
-              source={{ uri: photo }}
+            <OfflineImage
+              uri={photo}
               style={styles.photo}
-              resizeMode="cover"
+              cachePolicy="memory-disk"
             />
             {canEdit && (
               <TouchableOpacity
@@ -173,8 +174,8 @@ export default function PhotoGallery({
             {/* Photo */}
             <View style={styles.photoWrapper}>
               {selectedIndex !== null && safePhotos[selectedIndex] ? (
-                <Image
-                  source={{ uri: safePhotos[selectedIndex] }}
+                <OfflineImage
+                  uri={safePhotos[selectedIndex]}
                   style={[
                     styles.fullScreenPhoto,
                     {
@@ -182,7 +183,8 @@ export default function PhotoGallery({
                       height: Math.min(responsive.usableHeight * 0.72, responsive.height - insets.top - insets.bottom - 150),
                     },
                   ]}
-                  resizeMode="contain"
+                  contentFit="contain"
+                  cachePolicy="memory-disk"
                 />
               ) : null}
               
@@ -227,10 +229,10 @@ export default function PhotoGallery({
                     ]}
                     onPress={() => setSelectedIndex(index)}
                   >
-                    <Image
-                      source={{ uri: photo }}
+                    <OfflineImage
+                      uri={photo}
                       style={styles.thumbnailImage}
-                      resizeMode="cover"
+                      cachePolicy="memory-disk"
                     />
                   </TouchableOpacity>
                 ))}

@@ -21,6 +21,7 @@ import {
   writeIntentSignalsSnapshot,
   writeIntentSuggestedMovesSnapshot,
 } from '@/lib/offline/intent-store';
+import { subscribeToNetworkRestored } from '@/lib/network-recovery';
 import { fetchPeerVisibilityPrefs } from '@/lib/peer-visibility';
 import { getSafeRemoteImageUri, getUserFacingDisplayName, hasLeftBetweener } from '@/lib/profile/display-name';
 import { getProfileInitials, getProfilePlaceholderPalette } from '@/lib/profile-placeholders';
@@ -798,6 +799,13 @@ export default function IntentScreen() {
   );
 
   useEffect(() => {
+    return subscribeToNetworkRestored(() => {
+      void refresh();
+      setSignalsRefreshKey((key) => key + 1);
+    });
+  }, [refresh]);
+
+  useEffect(() => {
     let cancelled = false;
 
     const loadSignals = async () => {
@@ -1529,6 +1537,7 @@ export default function IntentScreen() {
 
       return {
         id: item.actor_id,
+        user_id: actor?.user_id ?? item.actor_id,
         name: getUserFacingDisplayName(actor, 'Someone'),
         age: actor?.age ?? 0,
         avatar_url: actor?.avatar_url || undefined,
@@ -1553,6 +1562,7 @@ export default function IntentScreen() {
 
       return {
         id: signal.sender_profile_id,
+        user_id: sender?.user_id ?? undefined,
         name: getUserFacingDisplayName(sender, 'Someone'),
         age: sender?.age ?? 0,
         avatar_url: sender?.avatar_url || undefined,
@@ -3769,12 +3779,14 @@ export default function IntentScreen() {
         onClose={() => setCelebrationMatch(null)}
         onKeepDiscovering={() => setCelebrationMatch(null)}
         onSendMessage={(match) => {
-          const peerId = match?.id ?? null;
+          const peerId = match?.user_id ?? match?.id ?? null;
+          const peerProfileId = match?.id ?? null;
           const peerName = match?.name ?? 'Request';
           const peerAvatar = match?.avatar_url ?? null;
-          const peerInterests = peerId && Array.isArray(interestsByProfile[peerId]) ? interestsByProfile[peerId] : [];
+          const peerInterests =
+            peerProfileId && Array.isArray(interestsByProfile[peerProfileId]) ? interestsByProfile[peerProfileId] : [];
           const sharedInterests = myInterests.length ? peerInterests.filter((i) => myInterests.includes(i)).slice(0, 2) : [];
-          const peerProfile = peerId ? profiles[peerId] : undefined;
+          const peerProfile = peerProfileId ? profiles[peerProfileId] : undefined;
           const reply = buildQuickReplyText({
             name: peerName,
             itemType: 'connect',

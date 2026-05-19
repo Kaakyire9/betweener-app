@@ -9,7 +9,9 @@ import { decideIntentRequestOfflineSafe } from "@/lib/intents/offline-actions";
 import { computeConversationSignalLabel, computeFirstReplyHours, computeInterestOverlapRatio } from "@/lib/match/match-score";
 import { Motion } from "@/lib/motion";
 import { isLikelyNetworkError } from "@/lib/network";
+import { cacheOfflineImage, getOfflineImageUri, rememberOfflineImageUri } from "@/lib/offline/image-store";
 import {
+  buildChatConversationListStoreKey,
   buildChatPeerStoreKey,
   buildChatThreadStoreKey,
   migrateLegacyChatThreadSnapshot,
@@ -23,13 +25,21 @@ import {
   enqueueChatTextSendMutation,
   enqueueChatVoiceSendMutation,
 } from "@/lib/offline/mutation-queue";
+import { cacheOfflineVideo, getOfflineVideoUri, rememberOfflineVideoUri } from "@/lib/offline/video-store";
 import { showOpenSettingsPrompt } from "@/lib/permission-prompts";
 import { getSafeRemoteImageUri, getUserFacingDisplayName, hasLeftBetweener } from "@/lib/profile/display-name";
 import { type ResponsiveMetrics, useResponsiveMetrics } from "@/lib/responsive";
 import { supabase } from "@/lib/supabase";
+import {
+  consumeChatOptionsAction,
+  consumeChatOptionsFeedback,
+  subscribeChatOptionsPrefsPreview,
+  type ChatOptionsActionPayload,
+} from "@/lib/chat-options-bus";
 import type { Database } from "@/supabase/types/database";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from "@react-native-community/netinfo";
 import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import * as Calendar from "expo-calendar";
 import {
@@ -162,7 +172,7 @@ const BLOCKED_BY_ME = 'blocked_by_me';
 const BLOCKED_BY_THEM = 'blocked_me';
 const HEADER_HINT_STORAGE_KEY = 'chat_header_longpress_hint_v1';
 const CHAT_PREFS_STORAGE_KEY = 'chat_header_prefs_v1';
-const CHAT_SAFETY_SEEN_KEY = 'chat_safety_seen_v1';
+const CHAT_SAFETY_SEEN_KEY = 'chat_safety_seen_v2';
 const MESSAGE_SELECT_FIELDS = 'id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,edited_at,reply_to_message_id,is_view_once,encrypted_media,encrypted_media_path,encrypted_key_sender,encrypted_key_receiver,encrypted_key_nonce,encrypted_media_nonce,encrypted_media_alg,encrypted_media_mime,encrypted_media_size';
 const MAP_STYLE_LIGHT = [
   { elementType: 'geometry', stylers: [{ color: '#F3E5D8' }] },
@@ -226,6 +236,13 @@ type DatePlanStatus = 'pending' | 'accepted' | 'declined' | 'cancelled' | 'count
 type DatePlanResponseKind = 'initial' | 'counter_time' | 'counter_place' | 'counter_both';
 type BetweenerVenueRow = Database["public"]["Tables"]["betweener_venues"]["Row"];
 type DatePlanRow = Database["public"]["Tables"]["date_plans"]["Row"];
+type CachedConversationPresenceRow = {
+  id: string;
+  matchedUser?: {
+    isOnline?: boolean;
+    lastSeen?: string;
+  };
+};
 
 type MessageType = {
   id: string;
@@ -264,6 +281,8 @@ type MessageType = {
   };
   imageUrl?: string;
   videoUrl?: string;
+  offlineImageUri?: string;
+  offlineVideoUri?: string;
   document?: {
     name: string;
     url: string;
@@ -406,6 +425,17 @@ const deserializeCachedMessages = (raw: unknown): MessageType[] => {
       : undefined,
     replyTo: undefined,
   }));
+};
+
+const mergeOfflineMediaIntoMessage = (nextMessage: MessageType, previous?: MessageType | null): MessageType => {
+  if (!previous) return nextMessage;
+  if (nextMessage.type === 'image' && !nextMessage.offlineImageUri && previous.offlineImageUri) {
+    return { ...nextMessage, offlineImageUri: previous.offlineImageUri };
+  }
+  if (nextMessage.type === 'video' && !nextMessage.offlineVideoUri && previous.offlineVideoUri) {
+    return { ...nextMessage, offlineVideoUri: previous.offlineVideoUri };
+  }
+  return nextMessage;
 };
 
 type MediaUploadStatus = {
@@ -1044,6 +1074,8 @@ type MessageRowItemProps = {
   currentUserId: string;
   peerName: string;
   imageSize?: { width: number; height: number };
+  cachedImageUrl?: string;
+  cachedVideoUrl?: string;
   theme: typeof Colors.light;
   isDark: boolean;
   styles: ReturnType<typeof createStyles>;
@@ -1205,6 +1237,8 @@ const normalizeHeicImage = async (
 
 type VideoPreviewProps = {
   styles: ReturnType<typeof createStyles>;
+  url: string;
+  resolvedUrl?: string;
 };
 
 type ReplyMeta = {
@@ -1215,14 +1249,25 @@ type ReplyMeta = {
   canJump: boolean;
 };
 
-const VideoPreview = memo(({ styles }: VideoPreviewProps) => {
+const VideoPreview = memo(({ styles, url, resolvedUrl }: VideoPreviewProps) => {
+  const player = useVideoPlayer(resolvedUrl || url, (p) => {
+    p.loop = false;
+    p.muted = true;
+  });
   return (
     <View style={styles.videoPreviewWrap}>
+      <VideoView
+        player={player}
+        style={styles.messageVideo}
+        contentFit="cover"
+        nativeControls={false}
+        pointerEvents="none"
+      />
       <LinearGradient
-        colors={['rgba(8, 22, 22, 0.92)', 'rgba(11, 45, 45, 0.88)', 'rgba(3, 12, 12, 0.95)']}
+        colors={['rgba(2, 8, 8, 0.08)', 'rgba(4, 14, 14, 0.18)', 'rgba(2, 8, 8, 0.34)']}
         start={[0, 0]}
         end={[1, 1]}
-        style={styles.messageVideo}
+        style={StyleSheet.absoluteFillObject}
       />
       <View style={styles.videoOverlay}>
         <MaterialCommunityIcons name="play-circle" size={34} color={Colors.light.background} />
@@ -1241,7 +1286,7 @@ type VideoViewerProps = {
   style?: object;
 };
 
-const VideoViewer = ({ url, visible, styles, style }: VideoViewerProps) => {
+  const VideoViewer = ({ url, visible, styles, style }: VideoViewerProps) => {
   const player = useVideoPlayer(url, (p) => {
     p.loop = false;
     p.muted = false;
@@ -1283,6 +1328,8 @@ const MessageRowItem = memo(
     currentUserId,
     peerName,
     imageSize,
+    cachedImageUrl,
+    cachedVideoUrl,
     theme,
     isDark,
     styles,
@@ -1658,7 +1705,7 @@ const MessageRowItem = memo(
       previousReactionCount.current = item.reactions.length;
     }, [item.reactions.length, reactionBubblePulse, reactionEntrance]);
 
-    const metaLabel = isMyMessage && item.status === 'queued' ? 'Queued' : timeLabel;
+    const metaLabel = timeLabel;
 
     const waveformBars = useMemo(() => {
       if (item.type !== 'voice' || !item.voiceMessage?.waveform) return null;
@@ -1940,10 +1987,10 @@ const MessageRowItem = memo(
               onToggleVoice(item.id);
             }
             if (item.type === 'image' && item.imageUrl) {
-              onViewImage(item.imageUrl);
+              onViewImage(item.offlineImageUri ?? item.imageUrl);
             }
             if (item.type === 'video' && item.videoUrl) {
-              onViewVideo(item.videoUrl);
+              onViewVideo(item.offlineVideoUri ?? item.videoUrl);
             }
             if (item.type === 'document' && item.document?.url) {
               onOpenDocument(item.document);
@@ -2202,12 +2249,15 @@ const MessageRowItem = memo(
               </View>
               ) : item.type === 'image' ? (
                 <View style={[styles.imageMessageContainer, styles.mediaSurface]}>
-                  <Image
-                    source={{ uri: item.imageUrl }}
+                  <ExpoImage
+                    source={{ uri: item.offlineImageUri ?? cachedImageUrl ?? item.imageUrl }}
                     style={[
                       styles.messageImage,
                       imageSize ? { width: imageSize.width, height: imageSize.height } : null,
                     ]}
+                    cachePolicy="disk"
+                    contentFit="cover"
+                    transition={0}
                   />
                   <Animated.View
                     style={[
@@ -2256,6 +2306,8 @@ const MessageRowItem = memo(
                   {item.videoUrl && (
                     <VideoPreview
                       styles={styles}
+                      url={item.videoUrl}
+                      resolvedUrl={item.offlineVideoUri ?? cachedVideoUrl}
                     />
                   )}
                   <Animated.View
@@ -3219,6 +3271,8 @@ const MessageRowItem = memo(
     prev.onHighlightPress === next.onHighlightPress &&
     prev.imageSize?.width === next.imageSize?.width &&
     prev.imageSize?.height === next.imageSize?.height &&
+    prev.cachedImageUrl === next.cachedImageUrl &&
+    prev.cachedVideoUrl === next.cachedVideoUrl &&
     prev.now === next.now
 );
 
@@ -3238,7 +3292,7 @@ export default function ConversationScreen() {
   // Get conversation data from params
   const routeId = params.id as string;
   const [peerUserId, setPeerUserId] = useState<string>(routeId);
-  const [peerProfileId, setPeerProfileId] = useState<string>(routeId);
+  const [peerProfileId, setPeerProfileId] = useState<string | null>(null);
   const [peerResolved, setPeerResolved] = useState(false);
   const userName = params.userName as string;
     const userAvatar = getSafeRemoteImageUri(typeof params.userAvatar === 'string' ? params.userAvatar : null);
@@ -3259,7 +3313,7 @@ export default function ConversationScreen() {
   // Keep both in state so we can query messages by user id and still open profile-view by profile id.
   useEffect(() => {
     setPeerUserId(routeId);
-    setPeerProfileId(routeId);
+    setPeerProfileId(null);
     setPeerResolved(false);
   }, [routeId]);
 
@@ -3325,6 +3379,7 @@ export default function ConversationScreen() {
   const [messages, setMessages] = useState<MessageType[]>([]);
   const [messagesLoaded, setMessagesLoaded] = useState(false);
   const [chatSafetyVisible, setChatSafetyVisible] = useState(false);
+  const [networkReady, setNetworkReady] = useState(true);
   const [peerOnline, setPeerOnline] = useState(initialOnline);
   const [peerLastSeen, setPeerLastSeen] = useState<Date | null>(initialLastSeen);
   const [peerProfile, setPeerProfile] = useState<{
@@ -3339,6 +3394,10 @@ export default function ConversationScreen() {
     account_state?: string | null;
     deleted_at?: string | null;
   } | null>(null);
+  useEffect(() => {
+    if (!peerProfile?.id) return;
+    setPeerProfileId((prev) => (prev === peerProfile.id ? prev : peerProfile.id));
+  }, [peerProfile?.id]);
   const [peerInterests, setPeerInterests] = useState<string[]>([]);
   const [myInterests, setMyInterests] = useState<string[]>([]);
   const [matchAccepted, setMatchAccepted] = useState(false);
@@ -3381,9 +3440,10 @@ export default function ConversationScreen() {
   const [inputText, setInputText] = useState('');
   const prefillConsumedRef = useRef(false);
   const [isTyping, setIsTyping] = useState(false);
+  const chatSafetyThreadKey = conversationId || routeId;
   const chatSafetyStorageKey = useMemo(
-    () => (user?.id ? `${CHAT_SAFETY_SEEN_KEY}:${user.id}` : null),
-    [user?.id],
+    () => (user?.id && chatSafetyThreadKey ? `${CHAT_SAFETY_SEEN_KEY}:${user.id}:${chatSafetyThreadKey}` : null),
+    [chatSafetyThreadKey, user?.id],
   );
   const chatThreadCacheKey = useMemo(
     () => (user?.id && conversationId ? buildChatThreadStoreKey(user.id, conversationId) : null),
@@ -3398,6 +3458,7 @@ export default function ConversationScreen() {
   useEffect(() => {
     // When switching threads, allow the safety prompt to re-evaluate (but it will still be deduped via AsyncStorage).
     setMessagesLoaded(false);
+    setChatSafetyVisible(false);
     seededMessageAnimationsRef.current = false;
     animatedMessageIdsRef.current.clear();
   }, [routeId]);
@@ -3443,6 +3504,8 @@ export default function ConversationScreen() {
   const [keyboardInset, setKeyboardInset] = useState(0);
   const [imageViewerUrl, setImageViewerUrl] = useState<string | null>(null);
   const [videoViewerUrl, setVideoViewerUrl] = useState<string | null>(null);
+  const [cachedImageUris, setCachedImageUris] = useState<Record<string, string>>({});
+  const [cachedVideoUris, setCachedVideoUris] = useState<Record<string, string>>({});
   const [documentViewerUrl, setDocumentViewerUrl] = useState<string | null>(null);
   const [imageSizes, setImageSizes] = useState<Record<string, { width: number; height: number }>>({});
   const measuredImageUrlsRef = useRef<Set<string>>(new Set());
@@ -3463,7 +3526,6 @@ export default function ConversationScreen() {
   const [momentViewerVisible, setMomentViewerVisible] = useState(false);
   const [momentViewerUserId, setMomentViewerUserId] = useState<string | null>(null);
   const [showHeaderHint, setShowHeaderHint] = useState(false);
-  const [headerMenuVisible, setHeaderMenuVisible] = useState(false);
   const [chatSearchVisible, setChatSearchVisible] = useState(false);
   const [chatSearchQuery, setChatSearchQuery] = useState('');
   const [mediaHubVisible, setMediaHubVisible] = useState(false);
@@ -3477,6 +3539,10 @@ export default function ConversationScreen() {
   const [pinnedMessageMap, setPinnedMessageMap] = useState<Record<string, MessageType>>({});
   const [pinnedSheetVisible, setPinnedSheetVisible] = useState(false);
   const [pinnedBannerExpanded, setPinnedBannerExpanded] = useState(false);
+  const [chatActionToast, setChatActionToast] = useState<{
+    label: string;
+    icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
+  } | null>(null);
   const [editHistoryVisible, setEditHistoryVisible] = useState(false);
   const [editHistoryMessage, setEditHistoryMessage] = useState<MessageType | null>(null);
   const [editHistoryEntries, setEditHistoryEntries] = useState<MessageEditRow[]>([]);
@@ -3489,8 +3555,61 @@ export default function ConversationScreen() {
   const pendingReadTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingReceiptSyncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingDeliveredHintTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const chatActionToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chatPrefsSignatureRef = useRef('');
+  const chatPrefsHydratedRef = useRef(false);
+  const chatPrefsStateRef = useRef({ muted: false, pinned: false });
+  const pendingChatPrefsOverrideRef = useRef<{ muted: boolean; pinned: boolean } | null>(null);
   const showLocationLoading = locationLoading && !currentCoords && !locationError;
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const state = await fetchNetInfo();
+      if (!cancelled) {
+        setNetworkReady(Boolean(state.isConnected) && state.isInternetReachable !== false);
+      }
+    })();
+    const unsubscribe = addNetInfoListener((state) => {
+      const nextReady = Boolean(state.isConnected) && state.isInternetReachable !== false;
+      setNetworkReady(nextReady);
+      if (!nextReady) {
+        setPeerOnline(false);
+        setIsTyping(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!user?.id || !conversationId) return;
+    let cancelled = false;
+    const conversationListCacheKey = buildChatConversationListStoreKey(user.id);
+    (async () => {
+      const cached = await readOfflineSnapshot<CachedConversationPresenceRow[]>(conversationListCacheKey);
+      if (cancelled || !Array.isArray(cached)) return;
+      const entry = cached.find((item) => item?.id === conversationId);
+      if (!entry?.matchedUser) return;
+      if (entry.matchedUser.isOnline === true) {
+        setPeerOnline(true);
+        setPeerLastSeen(null);
+        return;
+      }
+      const cachedLastSeen =
+        typeof entry.matchedUser.lastSeen === 'string' ? new Date(entry.matchedUser.lastSeen) : null;
+      if (cachedLastSeen && Number.isFinite(cachedLastSeen.getTime())) {
+        setPeerOnline(false);
+        setPeerLastSeen(cachedLastSeen);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, user?.id]);
 
   useEffect(() => {
     if (!chatPeerStoreKey) return;
@@ -3975,6 +4094,7 @@ export default function ConversationScreen() {
   const mapRef = useRef<MapView>(null);
   const inputRef = useRef<TextInput>(null);
   const reconnectToastOpacity = useRef(new Animated.Value(0)).current;
+  const chatActionToastOpacity = useRef(new Animated.Value(0)).current;
   const momentPulse = useRef(new Animated.Value(0)).current;
   const momentPulseLoop = useRef<Animated.CompositeAnimation | null>(null);
   const headerHintOpacity = useRef(new Animated.Value(0)).current;
@@ -4084,13 +4204,26 @@ export default function ConversationScreen() {
     const diffDays = Math.floor(diffHours / 24);
     return `${diffDays}d ago`;
   };
+
+const resolveQueuedVideoUri = async (
+  url: string,
+  networkReady: boolean,
+): Promise<string> => {
+  if (!url) return url;
+  if (url.startsWith('file://')) return url;
+  const cached = await getOfflineVideoUri(url);
+  if (cached) return cached;
+  if (!networkReady || !url.startsWith('http')) return url;
+  const downloaded = await cacheOfflineVideo(url, url);
+  return downloaded || url;
+};
   const headerStatusLabel = peerHasLeftBetweener
     ? 'No longer on Betweener'
     : isChatBlocked
       ? isBlockedByMe
         ? 'Blocked privately'
         : 'Messaging unavailable'
-      : peerOnline
+      : networkReady && peerOnline
         ? 'Active now'
         : peerLastSeen
           ? `Last seen ${formatLastSeen(peerLastSeen)}`
@@ -4121,19 +4254,30 @@ export default function ConversationScreen() {
     let isMounted = true;
     if (!conversationId) return;
     setChatPrefsLoaded(false);
+    chatPrefsHydratedRef.current = false;
+    chatPrefsSignatureRef.current = '';
     const loadPrefs = async () => {
       let localMuted = false;
       let localPinned = false;
+      let hasLocalPrefs = false;
       try {
         const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
         const parsed = raw ? JSON.parse(raw) : {};
-        const prefs = parsed?.[conversationId] ?? {};
+        const hasConversationPrefs = conversationId
+          ? Object.prototype.hasOwnProperty.call(parsed ?? {}, conversationId)
+          : false;
+        const hasRoutePrefs = routeId ? Object.prototype.hasOwnProperty.call(parsed ?? {}, routeId) : false;
+        hasLocalPrefs = hasConversationPrefs || hasRoutePrefs;
+        const prefs = (conversationId && parsed?.[conversationId]) || (routeId && parsed?.[routeId]) || {};
         localMuted = Boolean(prefs.muted);
         localPinned = Boolean(prefs.pinned);
       } catch {
         localMuted = false;
         localPinned = false;
       }
+
+      let nextMuted = localMuted;
+      let nextPinned = localPinned;
 
       if (user?.id) {
         const { data, error } = await supabase
@@ -4143,37 +4287,160 @@ export default function ConversationScreen() {
           .eq('peer_id', conversationId)
           .maybeSingle();
         if (!isMounted) return;
-        if (!error && data) {
-          setIsChatMuted(Boolean(data.muted));
-          setIsChatPinned(Boolean(data.pinned));
+        if (hasLocalPrefs) {
+          nextMuted = localMuted;
+          nextPinned = localPinned;
+          setIsChatMuted((prev) => (prev === nextMuted ? prev : nextMuted));
+          setIsChatPinned((prev) => (prev === nextPinned ? prev : nextPinned));
+          if (error || !data || Boolean(data.muted) !== nextMuted || Boolean(data.pinned) !== nextPinned) {
+            const { error: syncError } = await supabase
+              .from('chat_prefs')
+              .upsert(
+                {
+                  user_id: user.id,
+                  peer_id: conversationId,
+                  muted: nextMuted,
+                  pinned: nextPinned,
+                  updated_at: new Date().toISOString(),
+                },
+                { onConflict: 'user_id,peer_id' },
+              );
+            if (syncError) {
+              console.log('[chat] chat prefs local-first sync error', syncError);
+            }
+          }
+        } else if (!error && data) {
+          nextMuted = Boolean(data.muted);
+          nextPinned = Boolean(data.pinned);
+          setIsChatMuted((prev) => (prev === nextMuted ? prev : nextMuted));
+          setIsChatPinned((prev) => (prev === nextPinned ? prev : nextPinned));
           try {
             const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
             const parsed = raw ? JSON.parse(raw) : {};
-            parsed[conversationId] = {
-              muted: Boolean(data.muted),
-              pinned: Boolean(data.pinned),
+            const nextSnapshot = {
+              muted: nextMuted,
+              pinned: nextPinned,
             };
+            parsed[conversationId] = nextSnapshot;
+            if (routeId && routeId !== conversationId) {
+              parsed[routeId] = nextSnapshot;
+            }
             await AsyncStorage.setItem(CHAT_PREFS_STORAGE_KEY, JSON.stringify(parsed));
           } catch {
             // Ignore persistence errors.
           }
         } else {
-          setIsChatMuted(localMuted);
-          setIsChatPinned(localPinned);
+          setIsChatMuted((prev) => (prev === localMuted ? prev : localMuted));
+          setIsChatPinned((prev) => (prev === localPinned ? prev : localPinned));
         }
       } else {
         if (!isMounted) return;
-        setIsChatMuted(localMuted);
-        setIsChatPinned(localPinned);
+        setIsChatMuted((prev) => (prev === localMuted ? prev : localMuted));
+        setIsChatPinned((prev) => (prev === localPinned ? prev : localPinned));
       }
 
-      if (isMounted) setChatPrefsLoaded(true);
+      const pendingOverride = pendingChatPrefsOverrideRef.current;
+      if (pendingOverride) {
+        nextMuted = pendingOverride.muted;
+        nextPinned = pendingOverride.pinned;
+        setIsChatMuted((prev) => (prev === nextMuted ? prev : nextMuted));
+        setIsChatPinned((prev) => (prev === nextPinned ? prev : nextPinned));
+        try {
+          const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
+          const parsed = raw ? JSON.parse(raw) : {};
+          const nextSnapshot = {
+            muted: nextMuted,
+            pinned: nextPinned,
+          };
+          parsed[conversationId] = nextSnapshot;
+          if (routeId && routeId !== conversationId) {
+            parsed[routeId] = nextSnapshot;
+          }
+          await AsyncStorage.setItem(CHAT_PREFS_STORAGE_KEY, JSON.stringify(parsed));
+        } catch {
+          // Ignore persistence errors.
+        }
+      }
+
+      if (isMounted) {
+        chatPrefsSignatureRef.current = JSON.stringify({
+          conversationId,
+          userId: user?.id ?? null,
+          muted: nextMuted,
+          pinned: nextPinned,
+        });
+        chatPrefsHydratedRef.current = true;
+        setChatPrefsLoaded(true);
+      }
     };
     void loadPrefs();
     return () => {
       isMounted = false;
     };
-  }, [conversationId, user?.id]);
+  }, [conversationId, routeId, user?.id]);
+
+  const refreshLocalChatPrefs = useCallback(async () => {
+    if (!conversationId && !routeId) return;
+    try {
+      const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      const prefs = (conversationId && parsed?.[conversationId]) || (routeId && parsed?.[routeId]) || {};
+      const nextMuted =
+        typeof prefs.muted === 'boolean' ? Boolean(prefs.muted) : chatPrefsStateRef.current.muted;
+      const nextPinned =
+        typeof prefs.pinned === 'boolean' ? Boolean(prefs.pinned) : chatPrefsStateRef.current.pinned;
+      chatPrefsStateRef.current = {
+        muted: nextMuted,
+        pinned: nextPinned,
+      };
+      setIsChatMuted((prev) => (prev === nextMuted ? prev : nextMuted));
+      setIsChatPinned((prev) => (prev === nextPinned ? prev : nextPinned));
+    } catch {
+      // Ignore storage read failures here.
+    }
+  }, [conversationId, routeId]);
+
+  const persistChatPrefsLocalSnapshot = useCallback(
+    async (nextMuted: boolean, nextPinned: boolean) => {
+      if (!conversationId && !routeId) return;
+      try {
+        const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : {};
+        const nextSnapshot = {
+          muted: nextMuted,
+          pinned: nextPinned,
+        };
+        if (conversationId) {
+          parsed[conversationId] = nextSnapshot;
+        }
+        if (routeId && routeId !== conversationId) {
+          parsed[routeId] = nextSnapshot;
+        }
+        await AsyncStorage.setItem(CHAT_PREFS_STORAGE_KEY, JSON.stringify(parsed));
+      } catch {
+        // Ignore local persistence failures here.
+      }
+    },
+    [conversationId, routeId]
+  );
+
+  useEffect(() => {
+    chatPrefsStateRef.current = {
+      muted: isChatMuted,
+      pinned: isChatPinned,
+    };
+  }, [isChatMuted, isChatPinned]);
+
+  const applyChatPrefsState = useCallback(
+    (nextPrefs: { muted: boolean; pinned: boolean }) => {
+      pendingChatPrefsOverrideRef.current = nextPrefs;
+      chatPrefsStateRef.current = nextPrefs;
+      setIsChatMuted((prev) => (prev === nextPrefs.muted ? prev : nextPrefs.muted));
+      setIsChatPinned((prev) => (prev === nextPrefs.pinned ? prev : nextPrefs.pinned));
+      void persistChatPrefsLocalSnapshot(nextPrefs.muted, nextPrefs.pinned);
+    },
+    [persistChatPrefsLocalSnapshot]
+  );
 
   const fetchHiddenMessages = useCallback(async () => {
     if (!user?.id || !conversationId) return;
@@ -4417,8 +4684,18 @@ export default function ConversationScreen() {
         (payload) => {
           const row = (payload.new || payload.old) as { peer_id?: string; muted?: boolean; pinned?: boolean } | undefined;
           if (!row || row.peer_id !== conversationId) return;
-          if (typeof row.muted === 'boolean') setIsChatMuted(row.muted);
-          if (typeof row.pinned === 'boolean') setIsChatPinned(row.pinned);
+          if (typeof row.muted === 'boolean') {
+            setIsChatMuted((prev) => (prev === row.muted ? prev : row.muted));
+          }
+          if (typeof row.pinned === 'boolean') {
+            setIsChatPinned((prev) => (prev === row.pinned ? prev : row.pinned));
+          }
+          chatPrefsSignatureRef.current = JSON.stringify({
+            conversationId,
+            userId: user?.id ?? null,
+            muted: typeof row.muted === 'boolean' ? row.muted : isChatMuted,
+            pinned: typeof row.pinned === 'boolean' ? row.pinned : isChatPinned,
+          });
         }
       )
       .subscribe();
@@ -4444,10 +4721,23 @@ export default function ConversationScreen() {
   useFocusEffect(
     useCallback(() => {
       lockAutoScrollUntilRef.current = Date.now() + 2500;
+      void refreshLocalChatPrefs();
       forceScrollToBottom();
       return () => {};
-    }, [conversationId, forceScrollToBottom])
+    }, [conversationId, forceScrollToBottom, refreshLocalChatPrefs])
   );
+
+  useEffect(() => {
+    if (!routeId) return () => {};
+    return subscribeChatOptionsPrefsPreview(routeId, (preview) => {
+      applyChatPrefsState(
+        {
+          muted: typeof preview.muted === 'boolean' ? preview.muted : chatPrefsStateRef.current.muted,
+          pinned: typeof preview.pinned === 'boolean' ? preview.pinned : chatPrefsStateRef.current.pinned,
+        }
+      );
+    });
+  }, [applyChatPrefsState, routeId]);
 
   useEffect(() => {
     if (hiddenMessageIds.length === 0) return;
@@ -4455,18 +4745,38 @@ export default function ConversationScreen() {
   }, [hiddenMessageIds]);
 
   useEffect(() => {
-    if (!peerResolved || !chatPrefsLoaded || !conversationId) return;
+    if (!peerResolved || !chatPrefsLoaded || !chatPrefsHydratedRef.current || !conversationId) return;
+    const nextSignature = JSON.stringify({
+      conversationId,
+      userId: user?.id ?? null,
+      muted: isChatMuted,
+      pinned: isChatPinned,
+    });
+    if (chatPrefsSignatureRef.current === nextSignature) return;
+    chatPrefsSignatureRef.current = nextSignature;
     const persistPrefs = async () => {
       try {
         const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
         const parsed = raw ? JSON.parse(raw) : {};
-        parsed[conversationId] = {
+        const nextSnapshot = {
           muted: isChatMuted,
           pinned: isChatPinned,
         };
+        parsed[conversationId] = nextSnapshot;
+        if (routeId && routeId !== conversationId) {
+          parsed[routeId] = nextSnapshot;
+        }
         await AsyncStorage.setItem(CHAT_PREFS_STORAGE_KEY, JSON.stringify(parsed));
       } catch {
         // Ignore persistence errors.
+      }
+      const pendingOverride = pendingChatPrefsOverrideRef.current;
+      if (
+        pendingOverride &&
+        pendingOverride.muted === isChatMuted &&
+        pendingOverride.pinned === isChatPinned
+      ) {
+        pendingChatPrefsOverrideRef.current = null;
       }
       if (!user?.id) return;
       const { error } = await supabase
@@ -4486,7 +4796,7 @@ export default function ConversationScreen() {
       }
     };
     void persistPrefs();
-  }, [peerResolved, chatPrefsLoaded, conversationId, isChatMuted, isChatPinned, user?.id]);
+  }, [peerResolved, chatPrefsLoaded, conversationId, isChatMuted, isChatPinned, routeId, user?.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -4858,6 +5168,92 @@ export default function ConversationScreen() {
     void writeOfflineSnapshot(chatThreadCacheKey, serializeCachedMessages(messages));
   }, [chatThreadCacheKey, messages, messagesLoaded]);
 
+  useEffect(() => {
+    const imageUrls = Array.from(
+      new Set(
+        messages
+          .map((message) => message.imageUrl)
+          .filter((value): value is string => Boolean(value && value.startsWith('http'))),
+      ),
+    );
+    if (!imageUrls.length) return;
+    let cancelled = false;
+    void (async () => {
+      for (const url of imageUrls) {
+        const cached = await getOfflineImageUri(url);
+        if (cancelled) return;
+        if (cached) {
+          setCachedImageUris((prev) => (prev[url] === cached ? prev : { ...prev, [url]: cached }));
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.type === 'image' && msg.imageUrl === url && msg.offlineImageUri !== cached
+                ? { ...msg, offlineImageUri: cached }
+                : msg
+            )
+          );
+          continue;
+        }
+        if (!networkReady) continue;
+        const downloaded = await cacheOfflineImage(url, url);
+        if (cancelled || !downloaded) continue;
+        setCachedImageUris((prev) => (prev[url] === downloaded ? prev : { ...prev, [url]: downloaded }));
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.type === 'image' && msg.imageUrl === url && msg.offlineImageUri !== downloaded
+              ? { ...msg, offlineImageUri: downloaded }
+              : msg
+          )
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, networkReady]);
+
+  useEffect(() => {
+    const videoUrls = Array.from(
+      new Set(
+        messages
+          .map((message) => message.videoUrl)
+          .filter((value): value is string => Boolean(value && value.startsWith('http'))),
+      ),
+    );
+    if (!videoUrls.length) return;
+    let cancelled = false;
+    void (async () => {
+      for (const url of videoUrls) {
+        const cached = await getOfflineVideoUri(url);
+        if (cancelled) return;
+        if (cached) {
+          setCachedVideoUris((prev) => (prev[url] === cached ? prev : { ...prev, [url]: cached }));
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.type === 'video' && msg.videoUrl === url && msg.offlineVideoUri !== cached
+                ? { ...msg, offlineVideoUri: cached }
+                : msg
+            )
+          );
+          continue;
+        }
+        if (!networkReady) continue;
+        const downloaded = await cacheOfflineVideo(url, url);
+        if (cancelled || !downloaded) continue;
+        setCachedVideoUris((prev) => (prev[url] === downloaded ? prev : { ...prev, [url]: downloaded }));
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.type === 'video' && msg.videoUrl === url && msg.offlineVideoUri !== downloaded
+              ? { ...msg, offlineVideoUri: downloaded }
+              : msg
+          )
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, networkReady]);
+
   const replaceMessageById = useCallback((
     items: MessageType[],
     messageId: string,
@@ -5140,6 +5536,27 @@ export default function ConversationScreen() {
     );
     setDatePlannerVisible(true);
   }, [canPlanDate, datePlanUnlockReason, hasPlacesKey, recommendedDatePicks]);
+
+  const openDatePlannerUnlocked = useCallback(() => {
+    const defaultPick = recommendedDatePicks[0];
+    setDatePlannerMode('new');
+    setDatePlannerParentPlanId(null);
+    setDatePlannerBaselineInvite(null);
+    setDatePlannerTab(defaultPick ? 'picks' : hasPlacesKey ? 'search' : 'preferred');
+    setDateSearchQuery('');
+    setDateSuggestions([]);
+    setDateNote('');
+    setDatePickerMode(null);
+    setDateSelectedPlace(
+      defaultPick
+        ? {
+            ...defaultPick,
+            badges: [...defaultPick.badges],
+          }
+        : null,
+    );
+    setDatePlannerVisible(true);
+  }, [hasPlacesKey, recommendedDatePicks]);
 
   const openCounterDatePlanner = useCallback(
     (invite: MessageType['dateInvite'], mode: Extract<DatePlannerMode, 'counter_time' | 'counter_place' | 'counter_both'>) => {
@@ -5979,6 +6396,19 @@ export default function ConversationScreen() {
           ? linkReplies(replaceMessageById(prev, tempId, nextMessage))
           : replaceMessageById(prev, tempId, nextMessage)
       );
+      if (nextMessage.imageUrl?.startsWith('http')) {
+        void cacheOfflineImage(nextMessage.imageUrl, nextMessage.imageUrl).then((cached) => {
+          if (!cached) return;
+          setCachedImageUris((prev) => (prev[nextMessage.imageUrl!] === cached ? prev : { ...prev, [nextMessage.imageUrl!]: cached }));
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === nextMessage.id && msg.type === 'image' && msg.offlineImageUri !== cached
+                ? { ...msg, offlineImageUri: cached }
+                : msg
+            )
+          );
+        });
+      }
     }
   }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replaceMessageById, replyingTo, user?.id]);
 
@@ -6166,6 +6596,19 @@ export default function ConversationScreen() {
           ? linkReplies(replaceMessageById(prev, tempId, nextMessage))
           : replaceMessageById(prev, tempId, nextMessage)
       );
+      if (nextMessage.videoUrl?.startsWith('http')) {
+        void cacheOfflineVideo(nextMessage.videoUrl, nextMessage.videoUrl).then((cached) => {
+          if (!cached) return;
+          setCachedVideoUris((prev) => (prev[nextMessage.videoUrl!] === cached ? prev : { ...prev, [nextMessage.videoUrl!]: cached }));
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === nextMessage.id && msg.type === 'video' && msg.offlineVideoUri !== cached
+                ? { ...msg, offlineVideoUri: cached }
+                : msg
+            )
+          );
+        });
+      }
     }
   }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replaceMessageById, replyingTo, user?.id]);
 
@@ -6190,7 +6633,7 @@ export default function ConversationScreen() {
     const labelParts = [fileName, documentSizeLabel, documentTypeLabel].filter(Boolean);
     const optimistic: MessageType = {
       id: tempId,
-      text: mediaType === 'document' ? `${DOCUMENT_TEXT_PREFIX} ${labelParts.join(' | ')}\n${stagedUri}` : stagedUri,
+      text: mediaType === 'document' ? `${DOCUMENT_TEXT_PREFIX} ${labelParts.join(' | ')}\n${stagedUri}` : '',
       senderId: user.id,
       timestamp: new Date(),
       type: mediaType === 'document' ? 'document' : mediaType,
@@ -6198,6 +6641,8 @@ export default function ConversationScreen() {
       status: 'queued',
       imageUrl: mediaType === 'image' ? stagedUri : undefined,
       videoUrl: mediaType === 'video' ? stagedUri : undefined,
+      offlineImageUri: mediaType === 'image' ? stagedUri : undefined,
+      offlineVideoUri: mediaType === 'video' ? stagedUri : undefined,
       document:
         mediaType === 'document'
           ? {
@@ -6495,6 +6940,33 @@ export default function ConversationScreen() {
     }, 1800);
   }, [reconnectToastOpacity]);
 
+  const triggerChatActionToast = useCallback(
+    (label: string, icon: ComponentProps<typeof MaterialCommunityIcons>['name']) => {
+      if (chatActionToastTimerRef.current) {
+        clearTimeout(chatActionToastTimerRef.current);
+        chatActionToastTimerRef.current = null;
+      }
+      setChatActionToast({ label, icon });
+      chatActionToastOpacity.stopAnimation();
+      chatActionToastOpacity.setValue(0);
+      Animated.timing(chatActionToastOpacity, {
+        toValue: 1,
+        duration: 180,
+        useNativeDriver: true,
+      }).start();
+      chatActionToastTimerRef.current = setTimeout(() => {
+        Animated.timing(chatActionToastOpacity, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }).start(() => {
+          setChatActionToast(null);
+        });
+      }, 1800);
+    },
+    [chatActionToastOpacity]
+  );
+
   const openAttachmentSheet = useCallback(() => {
     if (isChatBlocked) {
       Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
@@ -6698,9 +7170,13 @@ export default function ConversationScreen() {
     }
 
     const hiddenSet = hiddenMessageIdsRef.current;
-    const mapped: MessageType[] = (data || []).map((row: MessageRow) =>
-      mapRowToMessage(row)
-    ).filter((msg) => !hiddenSet.has(msg.id));
+    const previousById = new Map(messagesRef.current.map((message) => [message.id, message] as const));
+    const mapped: MessageType[] = (data || [])
+      .map((row: MessageRow) => {
+        const nextMessage = mapRowToMessage(row);
+        return mergeOfflineMediaIntoMessage(nextMessage, previousById.get(nextMessage.id));
+      })
+      .filter((msg) => !hiddenSet.has(msg.id));
 
     const ordered = mapped.reverse();
     const systemRows = await fetchSystemMessages();
@@ -6995,13 +7471,19 @@ export default function ConversationScreen() {
           const row = payload.new as MessageRow;
           if (row.sender_id !== conversationId) return;
           if (hiddenMessageIdsRef.current.has(row.id)) return;
-          const nextMessage = mapRowToMessage(row);
+          const previous = messagesRef.current.find((msg) => msg.id === row.id);
+          const nextMessage = mergeOfflineMediaIntoMessage(mapRowToMessage(row), previous);
           setMessages((prev) =>
             reconcileDeliveredFallback(
               linkReplies(
               prev.map((msg) =>
                 msg.id === row.id
-                  ? { ...nextMessage, reactions: msg.reactions }
+                  ? {
+                      ...nextMessage,
+                      reactions: msg.reactions,
+                      offlineImageUri: msg.offlineImageUri,
+                      offlineVideoUri: msg.offlineVideoUri,
+                    }
                   : msg
               )
               )
@@ -7041,13 +7523,32 @@ export default function ConversationScreen() {
               }
               return msg.text === row.text;
             });
-            const nextMessage = mapRowToMessage(row);
+            const nextMessage = mergeOfflineMediaIntoMessage(mapRowToMessage(row), prev[tempIndex]);
             if (tempIndex >= 0) {
+              const previous = prev[tempIndex];
+              if (rowType === 'image' && previous?.offlineImageUri && nextMessage.imageUrl) {
+                setCachedImageUris((current) =>
+                  current[nextMessage.imageUrl!] === previous.offlineImageUri
+                    ? current
+                    : { ...current, [nextMessage.imageUrl!]: previous.offlineImageUri! }
+                );
+                void rememberOfflineImageUri(nextMessage.imageUrl, previous.offlineImageUri, nextMessage.imageUrl);
+                nextMessage.offlineImageUri = previous.offlineImageUri;
+              }
+              if (rowType === 'video' && previous?.offlineVideoUri && nextMessage.videoUrl) {
+                setCachedVideoUris((current) =>
+                  current[nextMessage.videoUrl!] === previous.offlineVideoUri
+                    ? current
+                    : { ...current, [nextMessage.videoUrl!]: previous.offlineVideoUri! }
+                );
+                void rememberOfflineVideoUri(nextMessage.videoUrl, previous.offlineVideoUri, nextMessage.videoUrl);
+                nextMessage.offlineVideoUri = previous.offlineVideoUri;
+              }
               const next = [...prev];
               next[tempIndex] = nextMessage;
               return reconcileDeliveredFallback(linkReplies(next));
             }
-            return reconcileDeliveredFallback(linkReplies([...prev, nextMessage]));
+            return reconcileDeliveredFallback(linkReplies([...prev, mergeOfflineMediaIntoMessage(nextMessage, undefined)]));
           });
           if (!hiddenMessageIdsRef.current.has(row.id)) {
             void syncMessageReactions([row.id]);
@@ -7590,7 +8091,7 @@ export default function ConversationScreen() {
       .map((msg) => ({
         id: msg.id,
         type: msg.type as 'image' | 'video',
-        url: msg.type === 'image' ? msg.imageUrl : msg.videoUrl,
+        url: msg.type === 'image' ? (msg.offlineImageUri ?? msg.imageUrl) : (msg.offlineVideoUri ?? msg.videoUrl),
         timestamp: msg.timestamp,
       }))
       .filter((item) => Boolean(item.url));
@@ -8404,6 +8905,24 @@ export default function ConversationScreen() {
         mediaType: asset.type === 'video' ? 'video' : 'image',
       };
 
+      const netState = await fetchNetInfo();
+      const canUseLiveNetwork = Boolean(netState.isConnected) && netState.isInternetReachable !== false;
+      if (!viewOnceMode && !canUseLiveNetwork) {
+        updateMediaUploadStatus(
+          uploadStatusId,
+          `Queueing ${mediaKind}...`,
+          'This will send automatically when connection returns.',
+          'clock-outline'
+        );
+        await queueMediaAttachment({
+          localUri: queueCandidate.uri,
+          fileName: queueCandidate.fileName,
+          contentType: queueCandidate.contentType,
+          mediaType: queueCandidate.mediaType,
+        });
+        return;
+      }
+
       if (viewOnceMode) {
         updateMediaUploadStatus(
           uploadStatusId,
@@ -8511,6 +9030,24 @@ export default function ConversationScreen() {
         contentType: normalized.contentType,
         mediaType: asset.type === 'video' ? 'video' : 'image',
       };
+
+      const netState = await fetchNetInfo();
+      const canUseLiveNetwork = Boolean(netState.isConnected) && netState.isInternetReachable !== false;
+      if (!viewOnceMode && !canUseLiveNetwork) {
+        updateMediaUploadStatus(
+          uploadStatusId,
+          `Queueing ${mediaKind}...`,
+          'This will send automatically when connection returns.',
+          'clock-outline'
+        );
+        await queueMediaAttachment({
+          localUri: queueCandidate.uri,
+          fileName: queueCandidate.fileName,
+          contentType: queueCandidate.contentType,
+          mediaType: queueCandidate.mediaType,
+        });
+        return;
+      }
 
       if (viewOnceMode) {
         updateMediaUploadStatus(
@@ -9118,8 +9655,8 @@ export default function ConversationScreen() {
 
   useEffect(() => {
     const maxWidth = Math.min(responsive.width * 0.72, 340);
-    const minHeight = 180;
-    const maxHeight = 420;
+    const minHeight = 220;
+    const maxHeight = 480;
     const pending: string[] = [];
     messages.forEach((msg) => {
       if (
@@ -9155,7 +9692,7 @@ export default function ConversationScreen() {
         url,
         (width, height) => {
           if (!width || !height) {
-            measuredSizes[url] = { width: maxWidth, height: 240 };
+            measuredSizes[url] = { width: maxWidth, height: 320 };
             commitMeasuredSizes();
             return;
           }
@@ -9166,7 +9703,7 @@ export default function ConversationScreen() {
           commitMeasuredSizes();
         },
         () => {
-          measuredSizes[url] = { width: maxWidth, height: 240 };
+          measuredSizes[url] = { width: maxWidth, height: 320 };
           commitMeasuredSizes();
         }
       );
@@ -9175,6 +9712,39 @@ export default function ConversationScreen() {
       cancelled = true;
     };
   }, [messages, responsive.width]);
+
+  const openVideoViewer = useCallback(async (url: string) => {
+    const resolved = cachedVideoUris[url] ?? await resolveQueuedVideoUri(url, networkReady);
+    if (resolved && resolved !== url) {
+      setCachedVideoUris((prev) => (prev[url] === resolved ? prev : { ...prev, [url]: resolved }));
+    }
+    setVideoViewerUrl(resolved || url);
+  }, [cachedVideoUris, networkReady]);
+
+  const openImageViewer = useCallback(async (url: string) => {
+    if (!url) return;
+    if (!url.startsWith('http')) {
+      setImageViewerUrl(url);
+      return;
+    }
+    const cached = cachedImageUris[url] ?? await getOfflineImageUri(url);
+    if (cached) {
+      setCachedImageUris((prev) => (prev[url] === cached ? prev : { ...prev, [url]: cached }));
+      setImageViewerUrl(cached);
+      return;
+    }
+    if (!networkReady) {
+      setImageViewerUrl(url);
+      return;
+    }
+    const downloaded = await cacheOfflineImage(url, url);
+    if (downloaded) {
+      setCachedImageUris((prev) => (prev[url] === downloaded ? prev : { ...prev, [url]: downloaded }));
+      setImageViewerUrl(downloaded);
+      return;
+    }
+    setImageViewerUrl(url);
+  }, [cachedImageUris, networkReady]);
 
   const handleOpenDocument = useCallback((doc?: MessageType['document']) => {
     if (!doc?.url) return;
@@ -9186,7 +9756,7 @@ export default function ConversationScreen() {
       return;
     }
     if (typeLabel === 'video' || ['mp4', 'mov', 'm4v', 'webm'].includes(ext)) {
-      setVideoViewerUrl(url);
+      void openVideoViewer(url);
       return;
     }
     const isPdf = typeLabel === 'pdf' || ext === 'pdf';
@@ -9195,7 +9765,7 @@ export default function ConversationScreen() {
       ? url
       : `https://docs.google.com/gview?embedded=true&url=${encodeURIComponent(url)}`;
     setDocumentViewerUrl(previewUrl);
-  }, [setImageViewerUrl, setVideoViewerUrl]);
+  }, [openVideoViewer, setImageViewerUrl]);
 
   const onViewableItemsChanged = useCallback(
     ({
@@ -9310,12 +9880,13 @@ export default function ConversationScreen() {
 
   const handleViewProfile = useCallback(() => {
     if (peerHasLeftBetweener) return;
-    if (!peerProfileId) return;
+    const nextProfileId = peerProfile?.id ?? peerProfileId;
+    if (!nextProfileId) return;
     router.push({
       pathname: '/profile-view',
-      params: { profileId: peerProfileId },
+      params: { profileId: nextProfileId },
     });
-  }, [peerHasLeftBetweener, peerProfileId]);
+  }, [peerHasLeftBetweener, peerProfile?.id, peerProfileId]);
 
   const dismissHeaderHint = useCallback(() => {
     headerHintDismissedRef.current = true;
@@ -9620,6 +10191,8 @@ export default function ConversationScreen() {
       const timeLabel = formatTime(item.timestamp);
       const showDateSeparator = !prevMessage || !isSameDay(prevMessage.timestamp, item.timestamp);
       const imageSize = item.type === 'image' && item.imageUrl ? imageSizes[item.imageUrl] : undefined;
+      const cachedImageUrl = item.type === 'image' && item.imageUrl ? cachedImageUris[item.imageUrl] : undefined;
+      const cachedVideoUrl = item.type === 'video' && item.videoUrl ? cachedVideoUris[item.videoUrl] : undefined;
       const now = item.type === 'location' ? messageListNow : null;
       const viewOnceState = viewOnceStatus[item.id];
       const viewOnceViewedByMe = viewOnceState?.viewedByMe ?? false;
@@ -9649,6 +10222,8 @@ export default function ConversationScreen() {
             currentUserId={user?.id || ''}
             peerName={userName}
             imageSize={imageSize}
+            cachedImageUrl={cachedImageUrl}
+            cachedVideoUrl={cachedVideoUrl}
             theme={theme}
             isDark={isDark}
             styles={styles}
@@ -9666,8 +10241,10 @@ export default function ConversationScreen() {
             isActionPinned={isActionPinned}
             onOpenReactionSheet={openReactionSheet}
             onOpenEditHistory={openEditHistory}
-            onViewImage={setImageViewerUrl}
-            onViewVideo={setVideoViewerUrl}
+            onViewImage={(url) => {
+              void openImageViewer(url);
+            }}
+            onViewVideo={(url) => { void openVideoViewer(url); }}
             onOpenDocument={handleOpenDocument}
             onOpenLocation={openLocationViewer}
             onStopLiveShare={stopLiveSharing}
@@ -9876,17 +10453,6 @@ export default function ConversationScreen() {
     );
   }, [unblockUser]);
 
-  const handleCloseHeaderMenu = useCallback(() => {
-    setHeaderMenuVisible(false);
-  }, []);
-
-  const runAfterHeaderMenuClose = useCallback((action: () => void) => {
-    setHeaderMenuVisible(false);
-    setTimeout(() => {
-      InteractionManager.runAfterInteractions(action);
-    }, 90);
-  }, []);
-
   const closeChatSearch = useCallback(() => {
     setChatSearchVisible(false);
   }, []);
@@ -9906,12 +10472,38 @@ export default function ConversationScreen() {
   }, []);
 
   const handleToggleMute = useCallback(() => {
-    setIsChatMuted((prev) => !prev);
-  }, []);
+    const next = !chatPrefsStateRef.current.muted;
+    applyChatPrefsState({
+      muted: next,
+      pinned: chatPrefsStateRef.current.pinned,
+    });
+    triggerChatActionToast(next ? 'Chat muted' : 'Chat unmuted', next ? 'volume-off' : 'volume-high');
+  }, [applyChatPrefsState, triggerChatActionToast]);
+
+  const applyMuteState = useCallback((next: boolean) => {
+    applyChatPrefsState({
+      muted: next,
+      pinned: chatPrefsStateRef.current.pinned,
+    });
+    triggerChatActionToast(next ? 'Chat muted' : 'Chat unmuted', next ? 'volume-off' : 'volume-high');
+  }, [applyChatPrefsState, triggerChatActionToast]);
 
   const handleTogglePin = useCallback(() => {
-    setIsChatPinned((prev) => !prev);
-  }, []);
+    const next = !chatPrefsStateRef.current.pinned;
+    applyChatPrefsState({
+      muted: chatPrefsStateRef.current.muted,
+      pinned: next,
+    });
+    triggerChatActionToast(next ? 'Chat pinned' : 'Chat unpinned', next ? 'pin' : 'pin-off-outline');
+  }, [applyChatPrefsState, triggerChatActionToast]);
+
+  const applyPinState = useCallback((next: boolean) => {
+    applyChatPrefsState({
+      muted: chatPrefsStateRef.current.muted,
+      pinned: next,
+    });
+    triggerChatActionToast(next ? 'Chat pinned' : 'Chat unpinned', next ? 'pin' : 'pin-off-outline');
+  }, [applyChatPrefsState, triggerChatActionToast]);
 
   const clearChatForMe = useCallback(async () => {
     if (!user?.id || !conversationId) return;
@@ -9977,12 +10569,12 @@ export default function ConversationScreen() {
       if (!item.url) return;
       closeMediaHub();
       if (item.type === 'image') {
-        setImageViewerUrl(item.url);
+        void openImageViewer(item.url);
       } else {
-        setVideoViewerUrl(item.url);
+        void openVideoViewer(item.url);
       }
     },
-    [closeMediaHub]
+    [closeMediaHub, openImageViewer, openVideoViewer]
   );
 
   const renderHighlightedText = (text: string, query: string) => {
@@ -10039,12 +10631,137 @@ export default function ConversationScreen() {
   const handleOpenHeaderMenu = useCallback(() => {
     dismissHeaderHint();
     Haptics.selectionAsync().catch(() => {});
-    setHeaderMenuVisible(true);
-  }, [dismissHeaderHint]);
+    void (async () => {
+      let nextMuted = chatPrefsStateRef.current.muted;
+      let nextPinned = chatPrefsStateRef.current.pinned;
+      try {
+        const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : {};
+        const prefs =
+          (conversationId && parsed?.[conversationId]) ||
+          (routeId && parsed?.[routeId]) ||
+          null;
+        if (prefs && typeof prefs.muted === 'boolean') {
+          nextMuted = Boolean(prefs.muted);
+        }
+        if (prefs && typeof prefs.pinned === 'boolean') {
+          nextPinned = Boolean(prefs.pinned);
+        }
+      } catch {
+        // Fall back to in-memory state when local prefs are unavailable.
+      }
+
+      router.push({
+        pathname: '/chat-options',
+        params: {
+          id: routeId,
+          peerUserId: conversationId,
+          peerProfileId: peerProfile?.id ?? peerProfileId ?? '',
+          userName,
+          peerHasLeftBetweener: String(peerHasLeftBetweener),
+          canPlanDate: String(canPlanDate),
+          datePlanUnlockReason,
+          headerStatusLabel,
+          conversationSignal: conversationSignal ?? '',
+          isChatMuted: String(nextMuted),
+          isChatPinned: String(nextPinned),
+          isBlockedByMe: String(isBlockedByMe),
+        },
+      });
+    })();
+  }, [canPlanDate, conversationId, conversationSignal, datePlanUnlockReason, dismissHeaderHint, headerStatusLabel, isBlockedByMe, peerHasLeftBetweener, peerProfileId, routeId, userName]);
 
   const handleHeaderLongPress = useCallback(() => {
     handleOpenHeaderMenu();
   }, [handleOpenHeaderMenu]);
+
+  const runChatOptionsAction = useCallback((action: ChatOptionsActionPayload | null) => {
+    if (!action) return;
+    switch (action.type) {
+      case 'view-profile':
+        handleViewProfile();
+        break;
+      case 'search-chat':
+        handleSearchInChat();
+        break;
+      case 'media-hub':
+        handleFilterMedia();
+        break;
+      case 'suggest-date':
+        if (action.force) {
+          openDatePlannerUnlocked();
+        } else {
+          handleOpenDatePlanner();
+        }
+        break;
+      case 'toggle-mute':
+        if (typeof action.value === 'boolean') {
+          applyMuteState(action.value);
+        } else {
+          handleToggleMute();
+        }
+        break;
+      case 'toggle-pin':
+        if (typeof action.value === 'boolean') {
+          applyPinState(action.value);
+        } else {
+          handleTogglePin();
+        }
+        break;
+      case 'clear-chat':
+        handleClearChat();
+        break;
+      case 'toggle-block':
+        if (isBlockedByMe) {
+          confirmUnblockUser();
+        } else {
+          handleBlockUser();
+        }
+        break;
+      case 'report-user':
+        handleReportUser();
+        break;
+      default:
+        break;
+    }
+  }, [
+    applyMuteState,
+    applyPinState,
+    confirmUnblockUser,
+    handleBlockUser,
+    handleClearChat,
+    handleFilterMedia,
+    handleOpenDatePlanner,
+    openDatePlannerUnlocked,
+    handleReportUser,
+    handleSearchInChat,
+    handleToggleMute,
+    handleTogglePin,
+    handleViewProfile,
+    isBlockedByMe,
+  ]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!routeId) return () => {};
+      const queuedFeedback = consumeChatOptionsFeedback(routeId);
+      if (queuedFeedback) {
+        requestAnimationFrame(() => {
+          triggerChatActionToast(
+            queuedFeedback.label,
+            queuedFeedback.icon as ComponentProps<typeof MaterialCommunityIcons>['name']
+          );
+        });
+      }
+      const queuedAction = consumeChatOptionsAction(routeId);
+      if (queuedAction) {
+        requestAnimationFrame(() => {
+          runChatOptionsAction(queuedAction);
+        });
+      }
+      return () => {};
+    }, [routeId, runChatOptionsAction, triggerChatActionToast])
+  );
 
 
   const renderMoodStickersPanel = () => {
@@ -10091,78 +10808,6 @@ export default function ConversationScreen() {
     );
   };
 
-  const MenuCard = ({
-    title,
-    icon,
-    onPress,
-    wide,
-    destructive,
-    badgeLabel,
-    description,
-  }: {
-    title: string;
-    icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
-    onPress: () => void;
-    wide?: boolean;
-    destructive?: boolean;
-    badgeLabel?: string | null;
-    description?: string;
-  }) => {
-    return (
-      <Pressable
-        hitSlop={10}
-        pressRetentionOffset={12}
-        onPress={onPress}
-        android_ripple={{
-          color: withAlpha(destructive ? '#ef4444' : theme.tint, isDark ? 0.18 : 0.12),
-          borderless: false,
-        }}
-        style={({ pressed }) => [
-          styles.headerMenuRow,
-          wide && styles.headerMenuRowProminent,
-          destructive && styles.headerMenuRowDestructive,
-          pressed && styles.headerMenuRowPressed,
-        ]}
-      >
-        <View style={[styles.headerMenuRowIcon, destructive && styles.headerMenuRowIconDestructive]}>
-          <MaterialCommunityIcons
-            name={icon}
-            size={18}
-            color={destructive ? '#fca5a5' : theme.tint}
-          />
-        </View>
-        <View style={styles.headerMenuRowCopy}>
-          <View style={styles.headerMenuRowTextStack}>
-            <Text
-              style={[
-                styles.headerMenuRowTitle,
-                destructive && styles.headerMenuRowTitleDestructive,
-              ]}
-              numberOfLines={1}
-            >
-              {title}
-            </Text>
-            {description ? (
-              <Text style={styles.headerMenuRowDescription} numberOfLines={1}>
-                {description}
-              </Text>
-            ) : null}
-          </View>
-          {badgeLabel ? (
-            <View style={styles.headerMenuBadge}>
-              <Text style={styles.headerMenuBadgeText}>{badgeLabel}</Text>
-            </View>
-          ) : null}
-        </View>
-        <MaterialCommunityIcons
-          name="chevron-right"
-          size={18}
-          color={withAlpha(theme.text, isDark ? 0.5 : 0.42)}
-        />
-      </Pressable>
-    );
-  };
-
   return (
     <SafeAreaView style={styles.container}>
       <ChatSafetyModal visible={chatSafetyVisible} onGotIt={dismissChatSafety} />
@@ -10186,6 +10831,29 @@ export default function ConversationScreen() {
           <MaterialCommunityIcons name="wifi" size={14} color={Colors.light.background} />
           <Text style={styles.reconnectToastText}>Reconnected</Text>
         </Animated.View>
+      </View>
+      <View style={[styles.chatActionToastHost, { top: insets.top + 84 }]} pointerEvents="none">
+        {chatActionToast ? (
+          <Animated.View
+            style={[
+              styles.chatActionToast,
+              {
+                opacity: chatActionToastOpacity,
+                transform: [
+                  {
+                    translateY: chatActionToastOpacity.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-6, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+          >
+            <MaterialCommunityIcons name={chatActionToast.icon} size={14} color={Colors.light.background} />
+            <Text style={styles.chatActionToastText}>{chatActionToast.label}</Text>
+          </Animated.View>
+        ) : null}
       </View>
       {/* Header */}
       <View style={styles.header}>
@@ -10263,7 +10931,7 @@ export default function ConversationScreen() {
                 </View>
               </View>
             )}
-            {!isChatBlocked && peerOnline && (
+            {!isChatBlocked && networkReady && peerOnline && (
               <View style={styles.onlineIndicator} />
             )}
           </View>
@@ -10272,6 +10940,29 @@ export default function ConversationScreen() {
             <Text style={[styles.headerStatus, peerHasLeftBetweener && styles.headerStatusLeft]}>
               {headerStatusLabel}
             </Text>
+            {false ? (
+              <View style={styles.headerStateRow}>
+                <Text style={styles.headerStateMeta}>
+                  {[isChatMuted ? 'Chat muted' : null, isChatPinned ? 'Pinned to top' : null]
+                    .filter(Boolean)
+                    .join(' • ')}
+                </Text>
+                <View style={styles.headerStatePillRow}>
+                  {isChatMuted ? (
+                    <View style={styles.headerStatePill}>
+                      <MaterialCommunityIcons name="volume-off" size={12} color={theme.tint} />
+                      <Text style={styles.headerStateText}>Muted</Text>
+                    </View>
+                  ) : null}
+                  {isChatPinned ? (
+                    <View style={styles.headerStatePill}>
+                      <MaterialCommunityIcons name="pin-outline" size={12} color={theme.tint} />
+                      <Text style={styles.headerStateText}>Pinned</Text>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+            ) : null}
             {!peerHasLeftBetweener && matchAccepted && conversationSignal ? (
               <View style={styles.headerMatchRow}>
                 <MaterialCommunityIcons name="heart" size={14} color={theme.tint} />
@@ -10285,6 +10976,7 @@ export default function ConversationScreen() {
           style={[
             styles.headerOptionsButton,
             isChatBlocked && styles.headerOptionsButtonBlocked,
+            false && !isChatBlocked && (isChatMuted || isChatPinned) && styles.headerOptionsButtonActive,
           ]}
           hitSlop={10}
           onPress={handleOpenHeaderMenu}
@@ -10297,6 +10989,22 @@ export default function ConversationScreen() {
             size={22}
             color={isChatBlocked ? theme.tint : theme.text}
           />
+          {false ? (
+            <View style={styles.headerOptionsStateStack}>
+              <View style={styles.headerOptionsStateRail}>
+                {isChatPinned ? (
+                  <View style={styles.headerOptionsStateBadge}>
+                    <MaterialCommunityIcons name="pin" size={10} color={Colors.light.background} />
+                  </View>
+                ) : null}
+                {isChatMuted ? (
+                  <View style={[styles.headerOptionsStateBadge, styles.headerOptionsStateBadgeMuted]}>
+                    <MaterialCommunityIcons name="volume-off" size={10} color={Colors.light.background} />
+                  </View>
+                ) : null}
+              </View>
+            </View>
+          ) : null}
         </TouchableOpacity>
       </View>
       {peerHasLeftBetweener ? (
@@ -11012,135 +11720,6 @@ export default function ConversationScreen() {
       </Modal>
       <Modal
         transparent
-        statusBarTranslucent
-        visible={headerMenuVisible}
-        animationType="fade"
-        hardwareAccelerated
-        onRequestClose={handleCloseHeaderMenu}
-      >
-        <View style={styles.headerMenuModalRoot}>
-          <Pressable style={styles.headerMenuBackdrop} onPress={handleCloseHeaderMenu} />
-          <View style={[styles.headerMenuSheet, { marginBottom: Math.max(12, insets.bottom + 10) }]}>
-            <View style={styles.headerMenuHandle} />
-            <ScrollView
-              style={styles.headerMenuScroller}
-              contentContainerStyle={styles.headerMenuContent}
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="always"
-              nestedScrollEnabled
-            >
-              <Text style={styles.headerMenuTitle}>Chat options</Text>
-              <Text style={styles.headerMenuSubtitle}>Private controls for this conversation.</Text>
-              <Text style={styles.headerMenuSectionLabel}>Quick</Text>
-              <View style={styles.headerMenuGrid}>
-                {!peerHasLeftBetweener ? (
-                  <MenuCard
-                    title="View profile"
-                    description="Open trust, photos, and details."
-                    icon="account-outline"
-                    onPress={() => {
-                      runAfterHeaderMenuClose(handleViewProfile);
-                    }}
-                  />
-                ) : null}
-                <MenuCard
-                  title="Search in chat"
-                  description="Find a message in this thread."
-                  icon="magnify"
-                  onPress={() => {
-                    runAfterHeaderMenuClose(handleSearchInChat);
-                  }}
-                />
-                <MenuCard
-                  title="Media, links & docs"
-                  description="Browse shared attachments."
-                  icon="image-multiple-outline"
-                  wide
-                  onPress={() => {
-                    runAfterHeaderMenuClose(handleFilterMedia);
-                  }}
-                />
-                {!peerHasLeftBetweener ? (
-                  <MenuCard
-                    title="Suggest a date"
-                    description="Turn the chat into a real plan."
-                    icon="calendar-heart"
-                    wide
-                    badgeLabel={canPlanDate ? 'Ready' : 'Locked'}
-                    onPress={() => {
-                      runAfterHeaderMenuClose(handleOpenDatePlanner);
-                    }}
-                  />
-                ) : null}
-              </View>
-              <Text style={styles.headerMenuSectionLabel}>Controls</Text>
-              <View style={styles.headerMenuGrid}>
-                <MenuCard
-                  title={isChatMuted ? 'Unmute chat' : 'Mute chat'}
-                  description={isChatMuted ? 'Notifications are silenced.' : 'Silence notifications for this chat.'}
-                  icon={isChatMuted ? 'volume-high' : 'volume-off'}
-                  badgeLabel={isChatMuted ? 'On' : null}
-                  onPress={() => {
-                    runAfterHeaderMenuClose(handleToggleMute);
-                  }}
-                />
-                <MenuCard
-                  title={isChatPinned ? 'Unpin chat' : 'Pin chat'}
-                  description={isChatPinned ? 'Remove from priority chats.' : 'Keep this chat easy to find.'}
-                  icon={isChatPinned ? 'pin-off-outline' : 'pin-outline'}
-                  badgeLabel={isChatPinned ? 'On' : null}
-                  onPress={() => {
-                    runAfterHeaderMenuClose(handleTogglePin);
-                  }}
-                />
-              </View>
-              <Text style={styles.headerMenuSectionLabel}>Safety</Text>
-              <View style={styles.headerMenuGrid}>
-                <MenuCard
-                  title={clearChatLoading ? 'Clearing...' : 'Clear chat'}
-                  description="Remove this thread from your device."
-                  icon="trash-can-outline"
-                  destructive
-                  onPress={() => {
-                    if (clearChatLoading) return;
-                    runAfterHeaderMenuClose(handleClearChat);
-                  }}
-                  badgeLabel={clearChatLoading ? 'Working' : null}
-                />
-                <MenuCard
-                  title={isBlockedByMe ? 'Unblock user' : 'Block user'}
-                  description={isBlockedByMe ? 'Allow messages again.' : 'They will not be notified.'}
-                  icon="block-helper"
-                  destructive
-                  onPress={() => {
-                    runAfterHeaderMenuClose(isBlockedByMe ? confirmUnblockUser : handleBlockUser);
-                  }}
-                />
-                <MenuCard
-                  title="Report user"
-                  description="Send a private safety report."
-                  icon="alert-octagon-outline"
-                  destructive
-                  onPress={() => {
-                    runAfterHeaderMenuClose(handleReportUser);
-                  }}
-                />
-              </View>
-            </ScrollView>
-            <TouchableOpacity
-              style={[styles.headerMenuItem, styles.headerMenuCancel]}
-              onPress={handleCloseHeaderMenu}
-              activeOpacity={0.8}
-              hitSlop={{ top: 4, bottom: 8, left: 0, right: 0 }}
-            >
-              <Text style={styles.headerMenuCancelText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        transparent
         visible={pinnedSheetVisible}
         animationType="fade"
         onRequestClose={closePinnedSheet}
@@ -11425,7 +12004,13 @@ export default function ConversationScreen() {
                         onPress={() => handleOpenMediaItem(item)}
                       >
                         {item.type === 'image' && item.url ? (
-                          <Image source={{ uri: item.url }} style={styles.mediaTileImage} />
+                          <ExpoImage
+                            source={{ uri: item.url }}
+                            style={styles.mediaTileImage}
+                            cachePolicy="disk"
+                            contentFit="cover"
+                            transition={0}
+                          />
                         ) : (
                           <View style={styles.mediaTilePlaceholder}>
                             <MaterialCommunityIcons name="play-circle" size={26} color={theme.textMuted} />
@@ -12798,6 +13383,7 @@ export default function ConversationScreen() {
           </Animated.View>
         )}
       </KeyboardAvoidingView>
+
     </SafeAreaView>
   );
 }
@@ -12913,6 +13499,34 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       borderColor: withAlpha(theme.tint, isDark ? 0.36 : 0.24),
       backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.08),
     },
+    headerOptionsButtonActive: {
+      borderColor: withAlpha(theme.tint, isDark ? 0.34 : 0.22),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
+    },
+    headerOptionsStateStack: {
+      position: 'absolute',
+      right: -6,
+      top: -6,
+    },
+    headerOptionsStateRail: {
+      flexDirection: 'row',
+      gap: 4,
+      alignItems: 'center',
+    },
+    headerOptionsStateBadge: {
+      minWidth: 18,
+      height: 18,
+      borderRadius: 9,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 4,
+      backgroundColor: theme.tint,
+      borderWidth: 2,
+      borderColor: theme.background,
+    },
+    headerOptionsStateBadgeMuted: {
+      backgroundColor: '#f59e0b',
+    },
     avatarContainer: {
       position: 'relative',
       marginRight: 12,
@@ -12996,6 +13610,38 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       alignItems: 'center',
       gap: 6,
       marginTop: 4,
+    },
+    headerStateRow: {
+      alignItems: 'flex-start',
+      flexDirection: 'column',
+      gap: 6,
+      marginTop: 6,
+    },
+    headerStateMeta: {
+      fontSize: 11,
+      fontFamily: 'Manrope_700Bold',
+      color: theme.tint,
+    },
+    headerStatePillRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+    },
+    headerStatePill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.22 : 0.12),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.34 : 0.2),
+    },
+    headerStateText: {
+      fontSize: 10,
+      fontFamily: 'Manrope_700Bold',
+      color: theme.text,
     },
     headerMatchText: {
       fontSize: 12,
@@ -13945,56 +14591,74 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       zIndex: 1,
       elevation: 1,
     },
-    headerMenuModalRoot: {
+    headerMenuScreen: {
       flex: 1,
-      justifyContent: 'flex-end',
-      backgroundColor: 'transparent',
-      position: 'relative',
+      backgroundColor: theme.background,
     },
-    headerMenuSheet: {
-      marginHorizontal: 16,
-      borderRadius: 26,
-      backgroundColor: isDark ? '#0d201f' : '#f7fbf8',
+    headerMenuScreenHeader: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 12,
+      paddingHorizontal: 18,
+      paddingTop: 14,
+      paddingBottom: 10,
+      borderBottomWidth: 1,
+      borderBottomColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+    },
+    headerMenuScreenCopy: {
+      flex: 1,
+    },
+    headerMenuScreenClose: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.05),
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
-      overflow: 'hidden',
-      shadowColor: Colors.dark.background,
-      shadowOpacity: 0.24,
-      shadowRadius: 24,
-      shadowOffset: { width: 0, height: 14 },
-      zIndex: 2,
-      elevation: 12,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
     },
-    headerMenuHandle: {
-      alignSelf: 'center',
-      width: 42,
-      height: 4,
-      borderRadius: 999,
-      marginTop: 10,
-      backgroundColor: withAlpha(theme.text, isDark ? 0.2 : 0.16),
-    },
-    headerMenuScroller: {
-      maxHeight: Math.min(screenHeight * 0.74, 620),
-    },
-    headerMenuContent: {
-      paddingHorizontal: 14,
-      paddingTop: 12,
+    headerMenuQuickBar: {
+      flexDirection: 'row',
+      gap: 8,
+      paddingHorizontal: 18,
       paddingBottom: 10,
     },
-    headerMenuTitle: {
-      fontSize: 13,
-      fontFamily: 'Manrope_800ExtraBold',
+    headerMenuQuickChip: {
+      flex: 1,
+      minHeight: 40,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.08),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.24 : 0.14),
+    },
+    headerMenuQuickChipText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_700Bold',
       color: theme.text,
-      letterSpacing: 0.8,
-      textTransform: 'uppercase',
-      paddingBottom: 4,
+    },
+    headerMenuTitle: {
+      fontSize: 18,
+      fontFamily: 'Manrope_700Bold',
+      color: theme.text,
     },
     headerMenuSubtitle: {
+      marginTop: 4,
       fontSize: 12,
-      lineHeight: 17,
+      lineHeight: 18,
       fontFamily: 'Manrope_500Medium',
       color: theme.textMuted,
-      paddingBottom: 12,
+      paddingBottom: 8,
+    },
+    headerMenuContent: {
+      paddingHorizontal: 18,
+      paddingTop: 14,
+    },
+    headerMenuScroller: {
+      flex: 1,
     },
     headerMenuSectionLabel: {
       fontSize: 11,
@@ -14008,6 +14672,40 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
     headerMenuGrid: {
       gap: 8,
       paddingBottom: 10,
+    },
+    headerMenuActionGrid: {
+      gap: 8,
+    },
+    headerMenuActionButton: {
+      minHeight: 56,
+      borderRadius: 16,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.14 : 0.08),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.24 : 0.14),
+      justifyContent: 'center',
+    },
+    headerMenuActionButtonDestructive: {
+      backgroundColor: withAlpha('#ef4444', isDark ? 0.11 : 0.07),
+      borderColor: withAlpha('#ef4444', isDark ? 0.28 : 0.18),
+    },
+    headerMenuActionButtonCopy: {
+      gap: 3,
+    },
+    headerMenuActionButtonTitle: {
+      fontSize: 14,
+      fontFamily: 'Manrope_700Bold',
+      color: theme.text,
+    },
+    headerMenuActionButtonTitleDestructive: {
+      color: isDark ? '#fecaca' : '#b91c1c',
+    },
+    headerMenuActionButtonDescription: {
+      fontSize: 11,
+      lineHeight: 15,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.textMuted,
     },
     headerMenuRow: {
       minHeight: 54,
@@ -14029,9 +14727,6 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       backgroundColor: withAlpha('#ef4444', isDark ? 0.11 : 0.07),
       borderWidth: 1,
       borderColor: withAlpha('#ef4444', isDark ? 0.28 : 0.18),
-    },
-    headerMenuRowPressed: {
-      opacity: 0.72,
     },
     headerMenuRowIcon: {
       width: 34,
@@ -14087,26 +14782,16 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       color: isDark ? '#b6f4ee' : theme.tint,
       letterSpacing: 0.35,
     },
-    headerMenuDivider: {
-      height: 1,
-      marginHorizontal: 12,
-      marginVertical: 4,
-      backgroundColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
-    },
-    headerMenuItem: {
-      paddingHorizontal: 12,
-      paddingVertical: 14,
-    },
     headerMenuCancel: {
-      borderTopWidth: 1,
-      borderTopColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
-      backgroundColor: withAlpha(theme.text, isDark ? 0.035 : 0.025),
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 44,
+      marginTop: 12,
     },
     headerMenuCancelText: {
-      fontSize: 14,
+      fontSize: 15,
       fontFamily: 'Manrope_600SemiBold',
       color: theme.textMuted,
-      textAlign: 'center',
     },
     searchBackdrop: {
       ...StyleSheet.absoluteFillObject,
@@ -14930,10 +15615,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       borderRadius: 14,
       marginRight: 8,
       marginBottom: 2,
+      alignSelf: 'flex-end',
     },
     messageAvatarSpacer: {
       width: 36,
-      alignSelf: 'stretch',
+      alignSelf: 'flex-end',
+      height: 28,
     },
     messageBubble: {
       maxWidth: screenWidth * 0.72,
@@ -15809,7 +16496,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
     },
     messageImage: {
       width: Math.min(screenWidth * 0.72, 340),
-      height: Math.min(screenWidth * 0.62, 300),
+      height: Math.min(screenWidth * 0.9, 420),
       borderRadius: 14,
       backgroundColor: theme.backgroundSubtle,
     },
@@ -15828,7 +16515,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
     },
     messageVideo: {
       width: Math.min(screenWidth * 0.72, 340),
-      height: Math.min(screenWidth * 0.62, 300),
+      height: Math.min(screenWidth * 0.9, 420),
       borderRadius: 14,
       backgroundColor: theme.backgroundSubtle,
     },
@@ -17333,6 +18020,34 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
     reconnectToastText: {
       fontSize: 12,
       fontFamily: 'Manrope_500Medium',
+      color: Colors.light.background,
+    },
+    chatActionToastHost: {
+      position: 'absolute',
+      left: 0,
+      right: 0,
+      alignItems: 'center',
+      zIndex: 21,
+    },
+    chatActionToast: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      backgroundColor: withAlpha(theme.tint, 0.92),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.98 : 0.86),
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.2,
+      shadowRadius: 10,
+      elevation: 10,
+    },
+    chatActionToastText: {
+      fontSize: 12,
+      fontFamily: 'Manrope_700Bold',
       color: Colors.light.background,
     },
   });

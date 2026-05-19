@@ -10,6 +10,22 @@ export type MeProfileStatsSnapshot = {
   matchQuality: number | null;
 };
 
+export type MeAccountSnapshot = {
+  email?: string | null;
+  linkedProviders?: string[];
+  disconnectedProviders?: string[];
+  hasPasswordBackup?: boolean;
+};
+
+export type MeAccountDraftsSnapshot = {
+  emailInput?: string;
+  recoveryCurrentMethod?: string;
+  recoveryPreviousMethod?: string;
+  recoveryContactEmail?: string;
+  recoveryPreviousEmail?: string;
+  recoveryNote?: string;
+};
+
 export type MeProfileSnapshot = {
   avatarUrl?: string | null;
   promptAnswers?: unknown[];
@@ -18,6 +34,8 @@ export type MeProfileSnapshot = {
   profileVideo?: string | null;
   stats?: MeProfileStatsSnapshot;
   notificationPrefs?: Record<string, unknown>;
+  accountSnapshot?: MeAccountSnapshot;
+  accountDrafts?: MeAccountDraftsSnapshot;
 };
 
 const buildMeProfileSnapshotStoreKey = (profileId: string) =>
@@ -36,7 +54,9 @@ const hasUsefulSnapshotData = (snapshot: MeProfileSnapshot | null) =>
         snapshot.avatarUrl ||
         snapshot.profileVideo ||
         snapshot.stats ||
-        snapshot.notificationPrefs),
+        snapshot.notificationPrefs ||
+        snapshot.accountSnapshot ||
+        snapshot.accountDrafts),
   );
 
 export async function readMeProfileSnapshot(profileId: string): Promise<MeProfileSnapshot | null> {

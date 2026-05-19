@@ -5,6 +5,9 @@ import { readOfflineData, writeOfflineEnvelope } from '@/lib/offline/core';
 
 const VIDEO_CACHE_KEY = 'offline:video-store:v1';
 const VIDEO_CACHE_DIR = `${FileSystem.documentDirectory ?? FileSystem.cacheDirectory ?? ''}offline-videos/`;
+const VIDEO_CACHE_MAX_BYTES = 450 * 1024 * 1024;
+const VIDEO_CACHE_MAX_ENTRIES = 80;
+const VIDEO_CACHE_TOUCH_INTERVAL_MS = 60 * 60 * 1000;
 
 type VideoCacheEntry = {
   localUri: string;
@@ -70,6 +73,63 @@ const buildCachePath = async (sourceKey: string, extension: string) => {
   return `${VIDEO_CACHE_DIR}${hash}.${extension}`;
 };
 
+const pruneVideoCacheMap = async (map: VideoCacheMap): Promise<VideoCacheMap> => {
+  const entries = await Promise.all(
+    Object.entries(map).map(async ([key, entry]) => {
+      try {
+        const info = await FileSystem.getInfoAsync(entry.localUri);
+        if (!info.exists) return null;
+        return {
+          key,
+          entry: {
+            ...entry,
+            savedAt: typeof entry.savedAt === 'number' ? entry.savedAt : Date.now(),
+          },
+          size: 'size' in info && typeof info.size === 'number' ? info.size : 0,
+        };
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  const validEntries = entries.filter(Boolean) as Array<{
+    key: string;
+    entry: VideoCacheEntry & { savedAt: number };
+    size: number;
+  }>;
+  validEntries.sort((a, b) => (b.entry.savedAt ?? 0) - (a.entry.savedAt ?? 0));
+
+  const kept: VideoCacheMap = {};
+  let totalBytes = 0;
+  let keptEntries = 0;
+
+  for (const candidate of validEntries) {
+    const fitsEntryBudget = keptEntries < VIDEO_CACHE_MAX_ENTRIES;
+    const fitsByteBudget =
+      keptEntries === 0 || totalBytes + candidate.size <= VIDEO_CACHE_MAX_BYTES;
+    if (fitsEntryBudget && fitsByteBudget) {
+      kept[candidate.key] = candidate.entry;
+      totalBytes += candidate.size;
+      keptEntries += 1;
+      continue;
+    }
+    try {
+      await FileSystem.deleteAsync(candidate.entry.localUri, { idempotent: true });
+    } catch {
+      // Best effort eviction only.
+    }
+  }
+
+  return kept;
+};
+
+const writePrunedVideoCacheMap = async (map: VideoCacheMap) => {
+  const pruned = await pruneVideoCacheMap(map);
+  await writeVideoCacheMap(pruned);
+  return pruned;
+};
+
 export const getOfflineVideoUri = async (sourceKey?: string | null): Promise<string | null> => {
   if (!sourceKey) return null;
   const map = await readVideoCacheMap();
@@ -77,7 +137,19 @@ export const getOfflineVideoUri = async (sourceKey?: string | null): Promise<str
   if (!cached?.localUri) return null;
   try {
     const info = await FileSystem.getInfoAsync(cached.localUri);
-    if (info.exists) return cached.localUri;
+    if (info.exists) {
+      const lastTouchedAt = typeof cached.savedAt === 'number' ? cached.savedAt : 0;
+      if (Date.now() - lastTouchedAt >= VIDEO_CACHE_TOUCH_INTERVAL_MS) {
+        await writeVideoCacheMap({
+          ...map,
+          [sourceKey]: {
+            ...cached,
+            savedAt: Date.now(),
+          },
+        });
+      }
+      return cached.localUri;
+    }
   } catch {}
   const next = { ...map };
   delete next[sourceKey];
@@ -104,8 +176,32 @@ export const cacheOfflineVideo = async (sourceKey: string, remoteUri?: string | 
       extension,
       savedAt: Date.now(),
     };
-    await writeVideoCacheMap(next);
+    await writePrunedVideoCacheMap(next);
     return targetUri;
+  } catch {
+    return null;
+  }
+};
+
+export const rememberOfflineVideoUri = async (
+  sourceKey: string,
+  localUri?: string | null,
+  remoteUri?: string | null,
+): Promise<string | null> => {
+  if (!sourceKey || !localUri) return null;
+  try {
+    const info = await FileSystem.getInfoAsync(localUri);
+    if (!info.exists) return null;
+    const next = await readVideoCacheMap();
+    next[sourceKey] = {
+      localUri,
+      sourceKey,
+      remoteUri,
+      extension: guessVideoExtension(remoteUri) || guessVideoExtension(localUri),
+      savedAt: Date.now(),
+    };
+    await writePrunedVideoCacheMap(next);
+    return localUri;
   } catch {
     return null;
   }

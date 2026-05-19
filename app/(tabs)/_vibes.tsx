@@ -2,7 +2,6 @@ import ExploreHeader from "@/components/ExploreHeader";
 import type { ExploreStackHandle } from "@/components/ExploreStack.reanimated";
 import ExploreStack from "@/components/ExploreStack.reanimated";
 import MatchModal from '@/components/MatchModal';
-import MomentCreateModal from '@/components/MomentCreateModal';
 import MomentViewer from '@/components/MomentViewer';
 import PremiumUpsellModal from '@/components/premium/PremiumUpsellModal';
 import ProfileVideoModal from '@/components/ProfileVideoModal';
@@ -11,6 +10,7 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { requestAndSavePreciseLocation, saveManualCityLocation } from "@/hooks/useLocationPreference";
 import { useMoments, type MomentUser } from '@/hooks/useMoments';
 import { usePremiumState } from "@/hooks/use-premium-state";
+import { useResolvedProfileId } from "@/hooks/useResolvedProfileId";
 import useSignalAccess from "@/hooks/useSignalAccess";
 import useVibesFeed, { applyVibesFilters, type VibesFilters } from "@/hooks/useVibesFeed";
 import { useAuth } from "@/lib/auth-context";
@@ -18,6 +18,7 @@ import { haptics } from "@/lib/haptics";
 import { cancelIntentRequestOfflineSafe } from "@/lib/intents/offline-actions";
 import { canAccessInternalTools } from "@/lib/internal-tools";
 import { cacheOfflineVideo, getOfflineVideoUri } from "@/lib/offline/video-store";
+import { subscribeToNetworkRestored } from "@/lib/network-recovery";
 import { showOpenSettingsPrompt } from "@/lib/permission-prompts";
 import { recordProfileSignal } from '@/lib/profile-signals';
 import { RELIGION_OPTIONS, formatReligionLabel, normalizeReligionForProfile } from "@/lib/profile/religion";
@@ -271,8 +272,9 @@ export default function ExploreScreen() {
   const layoutMetrics = useVibesResponsiveMetrics();
   const momentsCapsuleMetrics = useMomentsCapsuleMetrics();
   const { profile, user, refreshProfile } = useAuth();
+  const { profileId: resolvedProfileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
   const { hasAccess } = usePremiumState();
-  const { access: signalAccess, refresh: refreshSignalAccess } = useSignalAccess(Boolean(profile?.id));
+  const { access: signalAccess, refresh: refreshSignalAccess } = useSignalAccess(Boolean(resolvedProfileId));
   const hasAdvancedFilters = hasAccess('SILVER');
   const profileCountryCode = (profile as any)?.current_country_code as string | undefined;
   const relationshipCompass = useMemo(() => {
@@ -315,7 +317,7 @@ export default function ExploreScreen() {
     filters: appliedFilters,
     refreshRemaining: _refreshRemaining,
   } = useVibesFeed({
-    userId: profile?.id,
+    userId: resolvedProfileId,
     segment: vibesSegment,
     activeWindowMinutes,
     distanceUnit,
@@ -330,7 +332,6 @@ export default function ExploreScreen() {
   const [offlineNotice, setOfflineNotice] = useState<string | null>(null);
   const lastFeedErrorAtRef = useRef(0);
   const [momentViewerVisible, setMomentViewerVisible] = useState(false);
-  const [momentCreateVisible, setMomentCreateVisible] = useState(false);
   const [momentStartUserId, setMomentStartUserId] = useState<string | null>(null);
   const [allMomentsVisible, setAllMomentsVisible] = useState(false);
   const [momentsCollapsed, setMomentsCollapsed] = useState(true);
@@ -342,7 +343,6 @@ export default function ExploreScreen() {
   const [signalSheetVisible, setSignalSheetVisible] = useState(false);
   const [signalTarget, setSignalTarget] = useState<VibesSignalTarget | null>(null);
   const [intentQueueBadge, setIntentQueueBadge] = useState<{ waiting: number; endingSoon: number } | null>(null);
-
   // when the hook reports a mutual match, show the celebration modal
   useEffect(() => {
     if (lastMutualMatch) {
@@ -355,7 +355,7 @@ export default function ExploreScreen() {
     useCallback(() => {
       let cancelled = false;
       const loadIntentQueueBadge = async () => {
-        if (!profile?.id) {
+        if (!resolvedProfileId) {
           setIntentQueueBadge(null);
           return;
         }
@@ -364,14 +364,14 @@ export default function ExploreScreen() {
           (supabase as any)
             .from('profile_signal_gestures')
             .select('id,expires_at')
-            .eq('receiver_profile_id', profile.id)
+            .eq('receiver_profile_id', resolvedProfileId)
             .in('status', ['sent', 'seen'])
             .gt('expires_at', nowIso)
             .limit(20),
           supabase
             .from('intent_requests')
             .select('id,expires_at')
-            .eq('recipient_id', profile.id)
+            .eq('recipient_id', resolvedProfileId)
             .eq('status', 'pending')
             .gt('expires_at', nowIso)
             .limit(20),
@@ -392,7 +392,7 @@ export default function ExploreScreen() {
       return () => {
         cancelled = true;
       };
-    }, [profile?.id]),
+    }, [resolvedProfileId]),
   );
 
   useEffect(() => {
@@ -640,6 +640,14 @@ export default function ExploreScreen() {
       }
     }, 150);
   }, [refreshMatches]);
+
+  useEffect(() => {
+    return subscribeToNetworkRestored(() => {
+      queueRefreshMatches();
+      void refreshMoments();
+      void refreshSignalAccess();
+    });
+  }, [queueRefreshMatches, refreshMoments, refreshSignalAccess]);
 
   useFocusEffect(
     useCallback(() => {
@@ -1261,7 +1269,7 @@ export default function ExploreScreen() {
       router.push('/my-moments');
       return;
     }
-    setMomentCreateVisible(true);
+    router.push('/moments/create');
   }, [hasMyActiveMoment, router]);
 
   const handlePressUserMoment = useCallback(
@@ -3100,14 +3108,6 @@ export default function ExploreScreen() {
               setMomentStartUserId(null);
             }}
           />
-          <MomentCreateModal
-            visible={momentCreateVisible}
-            onClose={() => setMomentCreateVisible(false)}
-            onCreated={() => {
-              setMomentCreateVisible(false);
-              void refreshMoments();
-            }}
-          />
           <IntentRequestSheet
             visible={intentSheetVisible}
             onClose={() => {
@@ -3177,8 +3177,9 @@ export default function ExploreScreen() {
               // use expo-router's router to open the chat conversation screen
               // use matched id as conversation id for QA/testing
                
-              if (m?.id) {
-                router.push({ pathname: '/chat/[id]', params: { id: String(m.id), userName: m.name, userAvatar: m.avatar_url, isOnline: String(!!m.isActiveNow) } });
+              const chatPeerId = m?.user_id ?? m?.id;
+              if (chatPeerId) {
+                router.push({ pathname: '/chat/[id]', params: { id: String(chatPeerId), userName: m?.name, userAvatar: m?.avatar_url, isOnline: String(!!m?.isActiveNow) } });
               } else {
                 router.push('/(tabs)/chat');
               }

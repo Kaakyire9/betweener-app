@@ -1076,8 +1076,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       return { error };
     } catch (error) {
-      console.error('Profile update error:', error);
       if (isLikelyNetworkError(error)) {
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.warn('Profile update queued offline', error);
+        }
         const optimisticProfile = profile
           ? ({
               ...profile,
@@ -1108,6 +1110,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         return { error: null, queued: true };
       }
+      console.error('Profile update error:', error);
       return { error: error as Error };
     }
   };

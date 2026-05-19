@@ -1,10 +1,11 @@
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
+import OfflineImage from "@/components/media/OfflineImage";
 import { Colors } from "@/constants/theme";
 import { getSafeRemoteImageUri } from "@/lib/profile/display-name";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { memo, useRef } from "react";
-import { Animated, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { Animated, Pressable, StyleSheet, Text, View } from "react-native";
 
 type MomentAvatarBubbleProps = {
   avatarUrl?: string | null;
@@ -58,6 +59,27 @@ function MomentAvatarBubble({
       ? ["rgba(244,232,208,0.95)", "rgba(19,168,168,0.72)"]
       : ["rgba(244,232,208,0.74)", "rgba(19,168,168,0.42)"];
 
+  const avatarFallback = (
+    <View
+      style={[
+        styles.placeholder,
+        {
+          width: avatarSize,
+          height: avatarSize,
+          borderRadius: avatarSize / 2,
+          backgroundColor: isDark ? "rgba(244,232,208,0.12)" : "rgba(19,168,168,0.12)",
+          borderColor: isDark ? "rgba(244,232,208,0.10)" : "rgba(19,168,168,0.12)",
+        },
+      ]}
+    >
+      {isOwn && !isLive ? (
+        <MaterialCommunityIcons name="plus" size={Math.round(avatarSize * 0.42)} color={theme.tint} />
+      ) : (
+        <Text style={[styles.initials, { color: theme.text }]}>{initials}</Text>
+      )}
+    </View>
+  );
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -80,39 +102,20 @@ function MomentAvatarBubble({
             },
           ]}
         >
-          {safeAvatarUrl ? (
-            <Image
-              source={{ uri: safeAvatarUrl }}
-              style={[
-                styles.avatar,
-                {
-                  width: avatarSize,
-                  height: avatarSize,
-                  borderRadius: avatarSize / 2,
-                  borderColor: isDark ? "rgba(7,30,34,0.88)" : "rgba(255,250,244,0.92)",
-                },
-              ]}
-            />
-          ) : (
-            <View
-              style={[
-                styles.placeholder,
-                {
-                  width: avatarSize,
-                  height: avatarSize,
-                  borderRadius: avatarSize / 2,
-                  backgroundColor: isDark ? "rgba(244,232,208,0.12)" : "rgba(19,168,168,0.12)",
-                  borderColor: isDark ? "rgba(244,232,208,0.10)" : "rgba(19,168,168,0.12)",
-                },
-              ]}
-            >
-              {isOwn && !isLive ? (
-                <MaterialCommunityIcons name="plus" size={Math.round(avatarSize * 0.42)} color={theme.tint} />
-              ) : (
-                <Text style={[styles.initials, { color: theme.text }]}>{initials}</Text>
-              )}
-            </View>
-          )}
+          <OfflineImage
+            uri={safeAvatarUrl}
+            style={[
+              styles.avatar,
+              {
+                width: avatarSize,
+                height: avatarSize,
+                borderRadius: avatarSize / 2,
+                borderColor: isDark ? "rgba(7,30,34,0.88)" : "rgba(255,250,244,0.92)",
+              },
+            ]}
+            contentFit="cover"
+            fallback={avatarFallback}
+          />
           {isLive ? <View style={[styles.liveDot, { backgroundColor: theme.tint }]} /> : null}
           {isOwn && !isLive ? (
             <View style={[styles.addDot, { backgroundColor: theme.tint }]}>

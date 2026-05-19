@@ -2,11 +2,13 @@ import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { Motion } from "@/lib/motion";
 import { TRUST_LINKS, openExternalUrl, openSupportEmail } from "@/lib/trust-links";
+import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from "@react-native-community/netinfo";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
+import { useEffect, useState } from "react";
 import Animated, { FadeInDown } from "react-native-reanimated";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const LEGAL_ROWS = [
@@ -39,6 +41,38 @@ export default function TrustCenterScreen() {
   const theme = Colors[resolvedScheme];
   const isDark = resolvedScheme === "dark";
   const styles = createStyles(theme, isDark);
+  const [networkReady, setNetworkReady] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void fetchNetInfo()
+      .then((state) => {
+        if (cancelled) return;
+        setNetworkReady(state.isConnected !== false && state.isInternetReachable !== false);
+      })
+      .catch(() => {});
+
+    const unsubscribe = addNetInfoListener((state) => {
+      setNetworkReady(state.isConnected !== false && state.isInternetReachable !== false);
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
+  const handleExternalAction = async (
+    action: () => Promise<boolean> | Promise<void> | void,
+    label: string,
+  ) => {
+    if (!networkReady) {
+      Alert.alert("Connection required", `${label} needs a live connection before it can open.`);
+      return;
+    }
+    await action();
+  };
 
   return (
     <View style={styles.container}>
@@ -65,6 +99,14 @@ export default function TrustCenterScreen() {
                 Betweener is built around trust. This space gives members one calm place to understand policies,
                 support channels, and the safety tools that protect serious connections.
               </Text>
+              {!networkReady ? (
+                <View style={styles.heroOfflineNotice}>
+                  <MaterialCommunityIcons name="wifi-off" size={16} color={theme.accent} />
+                  <Text style={styles.heroOfflineNoticeText}>
+                    Legal and support links will open again when your connection returns.
+                  </Text>
+                </View>
+              ) : null}
               <View style={styles.heroHighlights}>
                 <View style={styles.heroHighlight}>
                   <MaterialCommunityIcons name="shield-check-outline" size={16} color={theme.tint} />
@@ -81,12 +123,23 @@ export default function TrustCenterScreen() {
           <Animated.View entering={FadeInDown.delay(70).duration(Motion.duration.slow)} style={styles.section}>
             <Text style={styles.sectionTitle}>Legal documents</Text>
             {LEGAL_ROWS.map((item) => (
-              <Pressable key={item.id} style={styles.rowCard} onPress={() => void openExternalUrl(item.url)}>
+              <Pressable
+                key={item.id}
+                style={[styles.rowCard, !networkReady && styles.rowCardDisabled]}
+                onPress={() => void handleExternalAction(() => openExternalUrl(item.url), item.title)}
+              >
                 <View style={styles.rowIcon}>
                   <MaterialCommunityIcons name={item.icon} size={18} color={theme.tint} />
                 </View>
                 <View style={styles.rowCopy}>
-                  <Text style={styles.rowTitle}>{item.title}</Text>
+                  <View style={styles.rowTitleLine}>
+                    <Text style={styles.rowTitle}>{item.title}</Text>
+                    {!networkReady ? (
+                      <View style={styles.offlinePill}>
+                        <Text style={styles.offlinePillText}>Requires connection</Text>
+                      </View>
+                    ) : null}
+                  </View>
                   <Text style={styles.rowBody}>{item.body}</Text>
                 </View>
                 <MaterialCommunityIcons name="open-in-new" size={18} color={theme.textMuted} />
@@ -118,21 +171,42 @@ export default function TrustCenterScreen() {
               <Pressable
                 style={styles.actionRow}
                 onPress={() =>
-                  void openSupportEmail(
-                    "Betweener support",
-                    "Hello Betweener team,%0D%0A%0D%0AI need help with:%0D%0A"
+                  void handleExternalAction(
+                    () =>
+                      openSupportEmail(
+                        "Betweener support",
+                        "Hello Betweener team,%0D%0A%0D%0AI need help with:%0D%0A"
+                      ),
+                    "Email support",
                   )
                 }
               >
                 <View>
-                  <Text style={styles.actionTitle}>Email support</Text>
+                  <View style={styles.rowTitleLine}>
+                    <Text style={styles.actionTitle}>Email support</Text>
+                    {!networkReady ? (
+                      <View style={styles.offlinePill}>
+                        <Text style={styles.offlinePillText}>Requires connection</Text>
+                      </View>
+                    ) : null}
+                  </View>
                   <Text style={styles.actionBody}>{TRUST_LINKS.supportEmail}</Text>
                 </View>
                 <MaterialCommunityIcons name="email-fast-outline" size={20} color={theme.tint} />
               </Pressable>
-              <Pressable style={styles.actionRow} onPress={() => void openExternalUrl(TRUST_LINKS.supportSite)}>
+              <Pressable
+                style={styles.actionRow}
+                onPress={() => void handleExternalAction(() => openExternalUrl(TRUST_LINKS.supportSite), "Support site")}
+              >
                 <View>
-                  <Text style={styles.actionTitle}>Support site</Text>
+                  <View style={styles.rowTitleLine}>
+                    <Text style={styles.actionTitle}>Support site</Text>
+                    {!networkReady ? (
+                      <View style={styles.offlinePill}>
+                        <Text style={styles.offlinePillText}>Requires connection</Text>
+                      </View>
+                    ) : null}
+                  </View>
                   <Text style={styles.actionBody}>Help articles, launch updates, and future billing support</Text>
                 </View>
                 <MaterialCommunityIcons name="lifebuoy" size={20} color={theme.tint} />
@@ -206,6 +280,24 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       lineHeight: 21,
       fontFamily: "Manrope_500Medium",
     },
+    heroOfflineNotice: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 8,
+      borderRadius: 14,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      backgroundColor: withAlpha(theme.accent, isDark ? 0.12 : 0.08),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.accent, 0.2),
+    },
+    heroOfflineNoticeText: {
+      flex: 1,
+      color: theme.text,
+      fontSize: 12,
+      lineHeight: 18,
+      fontFamily: "Manrope_500Medium",
+    },
     heroHighlights: { gap: 10 },
     heroHighlight: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
     heroHighlightText: { flex: 1, color: theme.text, fontSize: 12, lineHeight: 18, fontFamily: "Manrope_500Medium" },
@@ -221,6 +313,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
     },
+    rowCardDisabled: {
+      opacity: 0.92,
+    },
     rowIcon: {
       width: 38,
       height: 38,
@@ -230,8 +325,28 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.12),
     },
     rowCopy: { flex: 1, gap: 4 },
+    rowTitleLine: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      flexWrap: "wrap",
+    },
     rowTitle: { color: theme.text, fontSize: 14, fontFamily: "Archivo_700Bold" },
     rowBody: { color: theme.textMuted, fontSize: 12, lineHeight: 18, fontFamily: "Manrope_500Medium" },
+    offlinePill: {
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.accent, 0.26),
+      backgroundColor: withAlpha(theme.accent, isDark ? 0.12 : 0.08),
+    },
+    offlinePillText: {
+      color: theme.accent,
+      fontSize: 10,
+      fontFamily: "Manrope_800ExtraBold",
+      letterSpacing: 0.2,
+    },
     infoCard: {
       borderRadius: 18,
       padding: 16,

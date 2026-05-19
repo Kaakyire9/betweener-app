@@ -1,4 +1,3 @@
-import MomentCreateModal from '@/components/MomentCreateModal';
 import MomentViewer from '@/components/MomentViewer';
 import MomentsRow from '@/components/MomentsRow';
 import { Colors } from '@/constants/theme';
@@ -6,7 +5,20 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { Moment } from '@/hooks/useMoments';
 import { useMoments } from '@/hooks/useMoments';
 import { useAuth } from '@/lib/auth-context';
+import { fetchMomentPostingEligibility, type MomentPostingEligibility } from '@/lib/moments-eligibility';
+import { deleteMomentOfflineSafe } from '@/lib/moments-offline-actions';
 import { createSignedUrl } from '@/lib/moments';
+import { collectMomentSyncIssues } from '@/lib/offline/moment-sync-issues';
+import { reconcileMomentRowsWithOfflineMutations } from '@/lib/offline/moment-mutation-reconciler';
+import {
+  removeMomentFromFeedSnapshot,
+  removeOwnMomentSnapshot,
+  primeOfflineMomentMedia,
+  readOwnMomentsSnapshot,
+  resolveOfflineMomentMediaMap,
+  writeOwnMomentsSnapshot,
+} from '@/lib/offline/moments-store';
+import { getMomentOfflineMutationSnapshot, retryFailedOfflineMutations, subscribeToOfflineMutationEvents } from '@/lib/offline/mutation-queue';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
@@ -47,22 +59,25 @@ export default function MomentsScreen() {
       : null;
   const highlightCommentIdParam = typeof params.commentId === 'string' ? params.commentId : null;
   const highlightReactionEmojiParam = typeof params.reactionEmoji === 'string' ? params.reactionEmoji : null;
-  const { momentUsers, loading, refresh } = useMoments({
+  const { momentUsers, loading, refresh, offlineMediaByMomentId } = useMoments({
     currentUserId: user?.id,
     currentUserProfile: profile,
   });
   const [viewerVisible, setViewerVisible] = useState(false);
-  const [createVisible, setCreateVisible] = useState(false);
   const [startUserId, setStartUserId] = useState<string | null>(null);
   const [startMomentId, setStartMomentId] = useState<string | null>(null);
   const [startWithCommentsOpen, setStartWithCommentsOpen] = useState(false);
   const [startEntrySource, setStartEntrySource] = useState<'comment' | 'reaction' | null>(null);
   const [startHighlightedCommentId, setStartHighlightedCommentId] = useState<string | null>(null);
   const [startHighlightedReactionEmoji, setStartHighlightedReactionEmoji] = useState<string | null>(null);
+
   const [myMoments, setMyMoments] = useState<Moment[]>([]);
   const [myLoading, setMyLoading] = useState(false);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
+  const [offlineMyMediaByMomentId, setOfflineMyMediaByMomentId] = useState<Record<string, string>>({});
   const [reactionCounts, setReactionCounts] = useState<Record<string, number>>({});
+  const [syncStateByMomentId, setSyncStateByMomentId] = useState<Record<string, { state: 'pending' | 'failed'; label: string }>>({});
+  const [postingEligibility, setPostingEligibility] = useState<MomentPostingEligibility | null>(null);
 
   const momentUsersWithContent = useMemo(
     () => momentUsers.filter((u) => u.moments.length > 0),
@@ -87,7 +102,7 @@ export default function MomentsScreen() {
   };
   const handleOwnPress = () => {
     if (!hasOwnMoment) {
-      setCreateVisible(true);
+      router.push('/moments/create');
       return;
     }
     openOwnMoment();
@@ -108,21 +123,56 @@ export default function MomentsScreen() {
     setViewerVisible(true);
   }, [entrySourceParam, highlightCommentIdParam, highlightReactionEmojiParam, momentUsersWithContent, openCommentsParam, startMomentIdParam, startUserIdParam]);
 
+  useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    (async () => {
+      const snapshot = await readOwnMomentsSnapshot(user.id);
+      if (cancelled || !snapshot) return;
+      if (Array.isArray(snapshot.moments) && snapshot.moments.length > 0) {
+        setMyMoments((prev) => (prev.length === 0 ? (snapshot.moments as Moment[]) : prev));
+      }
+      if (snapshot.reactionCounts && Object.keys(snapshot.reactionCounts).length > 0) {
+        setReactionCounts((prev) => (Object.keys(prev).length === 0 ? snapshot.reactionCounts : prev));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!profile?.id) {
+      setPostingEligibility(null);
+      return;
+    }
+
+    (async () => {
+      const next = await fetchMomentPostingEligibility({ profileId: profile.id });
+      if (!cancelled) {
+        setPostingEligibility(next);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.id]);
+
   const fetchMyMoments = useCallback(async () => {
     if (!user?.id) return;
     setMyLoading(true);
     try {
       const { data, error } = await supabase
         .from('moments')
-        .select('id,user_id,type,media_url,thumbnail_url,text_body,caption,created_at,expires_at,visibility,is_deleted,moment_reactions(id)')
+        .select('id,user_id,type,media_url,metadata,thumbnail_url,text_body,caption,created_at,expires_at,visibility,is_deleted,moment_reactions(id)')
         .eq('user_id', user.id)
         .eq('is_deleted', false)
         .gt('expires_at', new Date().toISOString())
         .order('created_at', { ascending: false });
 
       if (error || !data) {
-        setMyMoments([]);
-        setReactionCounts({});
         return;
       }
 
@@ -133,8 +183,19 @@ export default function MomentsScreen() {
         const { moment_reactions: _momentReactions, ...rest } = row;
         return rest as Moment;
       });
-      setReactionCounts(counts);
-      setMyMoments(cleaned);
+      const reconciled = await reconcileMomentRowsWithOfflineMutations({
+        currentUserId: user.id,
+        moments: cleaned,
+        reactionCounts: counts,
+      });
+      setReactionCounts(reconciled.reactionCounts);
+      setSyncStateByMomentId(reconciled.syncStateByMomentId);
+      setMyMoments(reconciled.moments);
+      await writeOwnMomentsSnapshot(user.id, {
+        moments: reconciled.moments,
+        reactionCounts: reconciled.reactionCounts,
+        commentCounts: {},
+      });
     } finally {
       setMyLoading(false);
     }
@@ -142,6 +203,20 @@ export default function MomentsScreen() {
 
   useEffect(() => {
     void fetchMyMoments();
+  }, [fetchMyMoments]);
+
+  useEffect(() => {
+    return subscribeToOfflineMutationEvents((event) => {
+      if (
+        event.mutation.kind === 'moment_text_create' ||
+        event.mutation.kind === 'moment_media_create' ||
+        event.mutation.kind === 'moment_delete' ||
+        event.mutation.kind === 'moment_reaction_sync' ||
+        event.mutation.kind === 'moment_comment_create'
+      ) {
+        void fetchMyMoments();
+      }
+    });
   }, [fetchMyMoments]);
 
   useEffect(() => {
@@ -157,10 +232,31 @@ export default function MomentsScreen() {
       );
       if (Object.keys(resolved).length > 0) {
         setSignedUrls((prev) => ({ ...prev, ...resolved }));
+        const cachedLocals = await primeOfflineMomentMedia(myMoments, resolved);
+        if (Object.keys(cachedLocals).length > 0) {
+          setOfflineMyMediaByMomentId((prev) => ({ ...prev, ...cachedLocals }));
+        }
       }
     };
     void resolveUrls();
   }, [myMoments, signedUrls]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (myMoments.length === 0) {
+      setOfflineMyMediaByMomentId({});
+      return;
+    }
+    (async () => {
+      const next = await resolveOfflineMomentMediaMap(myMoments);
+      if (!cancelled) {
+        setOfflineMyMediaByMomentId(next);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [myMoments]);
 
   const handleDelete = (moment: Moment) => {
     Alert.alert('Delete Moment?', 'This will remove the Moment for everyone.', [
@@ -184,22 +280,19 @@ export default function MomentsScreen() {
             delete next[moment.id];
             return next;
           });
+          setOfflineMyMediaByMomentId((prev) => {
+            const next = { ...prev };
+            delete next[moment.id];
+            return next;
+          });
+          void removeOwnMomentSnapshot(user.id, moment.id);
+          void removeMomentFromFeedSnapshot(user.id, moment.id);
           try {
-            const { data, error } = await supabase
-              .from('moments')
-              .update({ is_deleted: true })
-              .eq('id', moment.id)
-              .select('id');
-            if (error) {
-              const { error: deleteError } = await supabase.from('moments').delete().eq('id', moment.id);
-              if (deleteError) throw deleteError;
-            } else if (!data || data.length === 0) {
-              const { error: deleteError } = await supabase.from('moments').delete().eq('id', moment.id);
-              if (deleteError) throw deleteError;
-            }
-            if (moment.media_url && !moment.media_url.startsWith('http')) {
-              await supabase.storage.from('moments').remove([moment.media_url]);
-            }
+            await deleteMomentOfflineSafe({
+              userId: user.id,
+              momentId: moment.id,
+              mediaPath: moment.media_url,
+            });
           } catch (err) {
             console.log('Delete moment failed', err);
             const message = err instanceof Error ? err.message : 'Please try again.';
@@ -212,7 +305,10 @@ export default function MomentsScreen() {
   };
 
   const handleShare = async (moment: Moment) => {
-    const url = moment.media_url?.startsWith('http') ? moment.media_url : signedUrls[moment.id];
+    const url =
+      moment.media_url?.startsWith('http')
+        ? moment.media_url
+        : signedUrls[moment.id] || offlineMyMediaByMomentId[moment.id];
     const message =
       moment.type === 'text'
         ? moment.text_body || 'My Moment'
@@ -227,11 +323,44 @@ export default function MomentsScreen() {
   };
 
   const openMomentActions = (moment: Moment) => {
-    Alert.alert('Moment options', undefined, [
-      { text: 'Share', onPress: () => handleShare(moment) },
-      { text: 'Delete', style: 'destructive', onPress: () => handleDelete(moment) },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+    const syncState = syncStateByMomentId[moment.id] ?? null;
+    const open = async () => {
+      const snapshot = await getMomentOfflineMutationSnapshot();
+      const issues = collectMomentSyncIssues([...snapshot.failed, ...snapshot.pending], moment.id);
+      const failedIssues = issues.filter((issue) => issue.state === 'failed');
+      const buttons: NonNullable<Parameters<typeof Alert.alert>[2]> = [
+        { text: 'Share', onPress: () => handleShare(moment) },
+      ];
+      if (issues.length > 0) {
+        buttons.push({
+          text: 'Review sync issues',
+          onPress: () => {
+            Alert.alert(
+              'Moment sync status',
+              issues
+                .slice(0, 4)
+                .map((issue, index) => `${index + 1}. ${issue.title}\n${issue.detail}`)
+                .join('\n\n'),
+            );
+          },
+        });
+      }
+      if (failedIssues.length > 0) {
+        buttons.push({
+          text: 'Retry sync',
+          onPress: async () => {
+            await retryFailedOfflineMutations((mutation) =>
+              failedIssues.some((issue) => issue.id === mutation.id),
+            );
+            void fetchMyMoments();
+          },
+        });
+      }
+      buttons.push({ text: 'Delete', style: 'destructive', onPress: () => handleDelete(moment) });
+      buttons.push({ text: 'Cancel', style: 'cancel' });
+      Alert.alert('Moment options', undefined, buttons);
+    };
+    void open();
   };
 
   const formatTimeAgo = (iso: string) => {
@@ -266,8 +395,20 @@ export default function MomentsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {postingEligibility?.nudgeTitle ? (
+          <View style={styles.nudgeCard}>
+            <View style={styles.nudgeIconWrap}>
+              <MaterialCommunityIcons name="message-text-fast-outline" size={18} color={theme.tint} />
+            </View>
+            <View style={styles.nudgeCopyWrap}>
+              <Text style={styles.nudgeTitle}>{postingEligibility.nudgeTitle}</Text>
+              <Text style={styles.nudgeBody}>{postingEligibility.nudgeBody}</Text>
+            </View>
+          </View>
+        ) : null}
+
         <View style={styles.actionsRow}>
-          <TouchableOpacity style={styles.primaryButton} onPress={() => setCreateVisible(true)}>
+          <TouchableOpacity style={styles.primaryButton} onPress={() => router.push('/moments/create')}>
             <MaterialCommunityIcons name="plus-circle" size={18} color={Colors.light.background} />
             <Text style={styles.primaryButtonText}>Post a Moment</Text>
           </TouchableOpacity>
@@ -278,7 +419,7 @@ export default function MomentsScreen() {
             users={momentUsersWithContent}
             isLoading={loading}
             onPressUser={openViewer}
-            onPressCreate={() => setCreateVisible(true)}
+            onPressCreate={() => router.push('/moments/create')}
             onPressOwn={handleOwnPress}
           />
         ) : (
@@ -318,9 +459,13 @@ export default function MomentsScreen() {
             </View>
 
             {myMoments.map((moment) => {
-              const mediaUrl = moment.media_url?.startsWith('http') ? moment.media_url : signedUrls[moment.id];
+              const mediaUrl =
+                moment.media_url?.startsWith('http')
+                  ? moment.media_url
+                  : signedUrls[moment.id] || offlineMyMediaByMomentId[moment.id];
               const timeLabel = formatTimeAgo(moment.created_at);
               const reactions = reactionCounts[moment.id] ?? 0;
+              const syncState = syncStateByMomentId[moment.id] ?? null;
               const title =
                 moment.caption?.trim() ||
                 (moment.type === 'text' ? 'Text Moment' : moment.type === 'video' ? 'Video Moment' : 'Photo Moment');
@@ -357,6 +502,23 @@ export default function MomentsScreen() {
                           <MaterialCommunityIcons name="heart" size={13} color={theme.tint} />
                           <Text style={styles.momentMetaText}>{reactions}</Text>
                         </View>
+                        {syncState ? (
+                          <View
+                            style={[
+                              styles.syncStatusPill,
+                              syncState.state === 'failed' ? styles.syncStatusPillFailed : styles.syncStatusPillPending,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.syncStatusText,
+                                syncState.state === 'failed' ? styles.syncStatusTextFailed : styles.syncStatusTextPending,
+                              ]}
+                            >
+                              {syncState.label}
+                            </Text>
+                          </View>
+                        ) : null}
                       </View>
                     </View>
                   </TouchableOpacity>
@@ -367,7 +529,7 @@ export default function MomentsScreen() {
               );
             })}
 
-            <TouchableOpacity style={styles.addButton} onPress={() => setCreateVisible(true)}>
+            <TouchableOpacity style={styles.addButton} onPress={() => router.push('/moments/create')}>
               <MaterialCommunityIcons name="plus-circle" size={20} color={Colors.light.background} />
               <Text style={styles.addButtonText}>Add Moment</Text>
             </TouchableOpacity>
@@ -380,6 +542,7 @@ export default function MomentsScreen() {
       <MomentViewer
         visible={viewerVisible}
         users={momentUsersWithContent}
+        preferredMediaUrlsByMomentId={offlineMediaByMomentId}
         startUserId={startUserId}
         startMomentId={startMomentId}
         startWithCommentsOpen={startWithCommentsOpen}
@@ -394,15 +557,6 @@ export default function MomentsScreen() {
           setStartEntrySource(null);
           setStartHighlightedCommentId(null);
           setStartHighlightedReactionEmoji(null);
-        }}
-      />
-      <MomentCreateModal
-        visible={createVisible}
-        onClose={() => setCreateVisible(false)}
-        onCreated={() => {
-          setCreateVisible(false);
-          void refresh();
-          void fetchMyMoments();
         }}
       />
     </SafeAreaView>
@@ -430,6 +584,40 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     content: {
       paddingHorizontal: 16,
       paddingBottom: 24,
+    },
+    nudgeCard: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 12,
+      marginBottom: 12,
+      padding: 14,
+      borderRadius: 18,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.08 : 0.06),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
+    },
+    nudgeIconWrap: {
+      width: 36,
+      height: 36,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.background, isDark ? 0.2 : 0.7),
+    },
+    nudgeCopyWrap: {
+      flex: 1,
+    },
+    nudgeTitle: {
+      color: theme.text,
+      fontSize: 14,
+      fontFamily: 'Archivo_700Bold',
+      marginBottom: 4,
+    },
+    nudgeBody: {
+      color: theme.textMuted,
+      fontSize: 12,
+      lineHeight: 18,
+      fontFamily: 'Manrope_600SemiBold',
     },
     actionsRow: {
       flexDirection: 'row',
@@ -556,6 +744,30 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     momentSubRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 10 },
     momentMetaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     momentMetaText: { color: theme.textMuted, fontSize: 12, fontFamily: 'Manrope_500Medium' },
+    syncStatusPill: {
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 999,
+      borderWidth: 1,
+    },
+    syncStatusPillPending: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
+      borderColor: withAlpha(theme.tint, isDark ? 0.24 : 0.16),
+    },
+    syncStatusPillFailed: {
+      backgroundColor: withAlpha(theme.danger, isDark ? 0.14 : 0.08),
+      borderColor: withAlpha(theme.danger, isDark ? 0.26 : 0.18),
+    },
+    syncStatusText: {
+      fontSize: 10.5,
+      fontFamily: 'Manrope_700Bold',
+    },
+    syncStatusTextPending: {
+      color: theme.tint,
+    },
+    syncStatusTextFailed: {
+      color: theme.danger,
+    },
     moreButton: { padding: 6 },
     addButton: {
       marginTop: 8,

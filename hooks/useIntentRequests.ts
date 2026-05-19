@@ -165,7 +165,7 @@ export const useIntentRequests = (userId?: string | null) => {
 
   const refresh = useCallback(async () => {
     if (!userId) {
-      setItems([]);
+      setLoading(false);
       return;
     }
     setLoading(true);

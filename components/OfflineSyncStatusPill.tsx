@@ -1,5 +1,6 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { router } from 'expo-router';
 import { useMemo } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -21,7 +22,7 @@ export default function OfflineSyncStatusPill() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const insets = useSafeAreaInsets();
-  const { pendingCount, failedCount, readyCount, loading, retryNow } = useOfflineSyncStatus();
+  const { pendingCount, failedCount, readyCount, loading } = useOfflineSyncStatus();
 
   const copy = useMemo(() => {
     if (loading) return null;
@@ -33,27 +34,22 @@ export default function OfflineSyncStatusPill() {
         tone: 'danger' as const,
       };
     }
-    if (pendingCount > 0) {
-      const waiting = pendingCount - readyCount;
-      return {
-        icon: readyCount > 0 ? 'cloud-sync-outline' as const : 'clock-outline' as const,
-        title: `${pendingCount} waiting`,
-        body: waiting > 0 ? 'Will retry shortly' : 'Sending when connected',
-        tone: 'pending' as const,
-      };
-    }
     return null;
-  }, [failedCount, loading, pendingCount, readyCount]);
+  }, [failedCount, loading]);
 
   if (!copy) return null;
 
   const accent = copy.tone === 'danger' ? theme.danger : theme.tint;
 
+  const handlePress = () => {
+    router.push('/sync-activity');
+  };
+
   return (
     <View pointerEvents="box-none" style={[styles.anchor, { bottom: Math.max(insets.bottom + 74, 88) }]}>
       <TouchableOpacity
         activeOpacity={0.9}
-        onPress={() => void retryNow()}
+        onPress={handlePress}
         style={[
           styles.pill,
           {

@@ -9,6 +9,7 @@ import {
   enqueueProfileMediaSyncMutation,
 } from '@/lib/offline/mutation-queue';
 import { readMeProfileSnapshot, writeMeProfileSnapshot } from '@/lib/offline/me-store';
+import { cacheOfflineVideo, getOfflineVideoUri } from '@/lib/offline/video-store';
 import { showOpenSettingsPrompt } from '@/lib/permission-prompts';
 import { isLocalMediaUri, normalizeProfilePhotoList, normalizeProfilePhotoUri } from '@/lib/profile/media';
 import { RELIGION_LABELS, formatReligionLabel, isReligionEnumError, normalizeReligionForProfile } from '@/lib/profile/religion';
@@ -28,7 +29,6 @@ import {
     Alert,
     DeviceEventEmitter,
     FlatList,
-    Image,
     Modal,
     Platform,
     ScrollView,
@@ -40,6 +40,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { VerificationBadge } from './VerificationBadge';
+import OfflineImage from './media/OfflineImage';
 
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
@@ -263,6 +264,20 @@ const normalizeRoots = (items?: string[]) =>
     )
   );
 
+const normalizedString = (value: unknown) => String(value ?? '').trim();
+const sameString = (left: unknown, right: unknown) => normalizedString(left) === normalizedString(right);
+const sameNumber = (left: unknown, right: unknown) => Number(left ?? 0) === Number(right ?? 0);
+const sameStringArray = (left: unknown, right: unknown) => {
+  const normalize = (value: unknown) =>
+    Array.isArray(value)
+      ? value
+          .map((item) => normalizedString(item))
+          .filter(Boolean)
+          .sort()
+      : [];
+  return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+};
+
 const PROFILE_MEDIA_STAGING_FOLDER = 'betweener-profile-media';
 
 const inferMediaUploadMeta = (
@@ -422,6 +437,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const [selectedInterests, setSelectedInterests] = useState<string[]>([]);
   const [showInterestsPicker, setShowInterestsPicker] = useState(false);
   const [loadingInterests, setLoadingInterests] = useState(false);
+  const initialSelectedInterestsRef = useRef<string[]>([]);
   
   // Form state
   const [formData, setFormData] = useState({
@@ -656,21 +672,35 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         if (mounted) setVideoPreviewUrl(null);
         return;
       }
+      const cachedLocalUri = await getOfflineVideoUri(path);
+      if (cachedLocalUri && mounted) {
+        setVideoPreviewUrl(cachedLocalUri);
+      }
       if (isLocalMediaUri(path)) {
         if (mounted) setVideoPreviewUrl(path);
         return;
       }
       if (path.startsWith('http')) {
-        if (mounted) setVideoPreviewUrl(path);
+        if (mounted) setVideoPreviewUrl(cachedLocalUri || path);
+        const warmed = await cacheOfflineVideo(path, path);
+        if (mounted && warmed) {
+          setVideoPreviewUrl(warmed);
+        }
         return;
       }
       const { data, error } = await supabase.storage.from('profile-videos').createSignedUrl(path, 3600);
       if (!mounted) return;
       if (error || !data?.signedUrl) {
-        setVideoPreviewUrl(null);
+        setVideoPreviewUrl(cachedLocalUri || null);
         return;
       }
-      setVideoPreviewUrl(data.signedUrl);
+      if (!cachedLocalUri) {
+        setVideoPreviewUrl(data.signedUrl);
+      }
+      const warmed = await cacheOfflineVideo(path, data.signedUrl);
+      if (mounted && warmed) {
+        setVideoPreviewUrl(warmed);
+      }
     };
     void resolvePreview();
     return () => {
@@ -709,6 +739,15 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   };
 
   const getSnapshotProfileId = () => (profile as any)?.id || user?.id || null;
+  const persistMeMediaSnapshot = (patch: {
+    avatarUrl?: string | null;
+    photos?: string[];
+    profileVideo?: string | null;
+  }) => {
+    const snapshotProfileId = getSnapshotProfileId();
+    if (!snapshotProfileId) return;
+    void writeMeProfileSnapshot(snapshotProfileId, patch);
+  };
 
   const stageImageOffline = async (uri: string, isAvatar: boolean) => {
     const stableUri = await persistProfileMediaUri(uri, isAvatar ? 'profile-avatar' : 'profile-photo', 'image/jpeg');
@@ -717,11 +756,16 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         ...prev,
         avatar_url: stableUri,
       }));
+      persistMeMediaSnapshot({ avatarUrl: stableUri });
     } else {
-      setFormData(prev => ({
-        ...prev,
-        photos: [...prev.photos, stableUri],
-      }));
+      setFormData(prev => {
+        const nextPhotos = [...prev.photos, stableUri];
+        persistMeMediaSnapshot({ photos: nextPhotos });
+        return {
+          ...prev,
+          photos: nextPhotos,
+        };
+      });
     }
     Alert.alert('Saved offline', 'Photo added here. Tap Save and Betweener will upload it when your connection returns.');
   };
@@ -732,6 +776,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       ...prev,
       profile_video: stableUri,
     }));
+    persistMeMediaSnapshot({ profileVideo: stableUri });
     Alert.alert('Saved offline', 'Video added here. Tap Save and Betweener will upload it when your connection returns.');
   };
 
@@ -847,6 +892,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       
       const userInterests = data?.map(item => (item as any).interests.name) || [];
       setSelectedInterests(userInterests);
+      initialSelectedInterestsRef.current = userInterests;
     } catch (error) {
       console.error('Error fetching user interests:', error);
     }
@@ -856,6 +902,12 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const saveUserInterests = async (interests: string[]) => {
     const pid = await resolveProfileId();
     if (!pid) return { queued: false };
+
+    const normalizedNext = normalizeLanguages(interests).sort();
+    const normalizedCurrent = normalizeLanguages(initialSelectedInterestsRef.current).sort();
+    if (JSON.stringify(normalizedNext) === JSON.stringify(normalizedCurrent)) {
+      return { queued: false };
+    }
     
     try {
       // First, delete existing interests for this user
@@ -890,14 +942,17 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       }
       return { queued: false };
     } catch (error) {
-      console.error('Error saving user interests:', error);
       if (isLikelyNetworkError(error)) {
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          console.warn('Interests update queued offline', error);
+        }
         await enqueueProfileInterestsUpdateMutation({
           profileId: pid,
           interests,
         });
         return { queued: true };
       }
+      console.error('Error saving user interests:', error);
       throw error;
     }
   };
@@ -1106,11 +1161,16 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           ...prev,
           avatar_url: publicUrl
         }));
+        persistMeMediaSnapshot({ avatarUrl: publicUrl });
       } else {
-        setFormData(prev => ({
-          ...prev,
-          photos: [...prev.photos, publicUrl]
-        }));
+        setFormData(prev => {
+          const nextPhotos = [...prev.photos, publicUrl];
+          persistMeMediaSnapshot({ photos: nextPhotos });
+          return {
+            ...prev,
+            photos: nextPhotos
+          };
+        });
       }
 
       Alert.alert('Success', 'Photo uploaded successfully!');
@@ -1405,6 +1465,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         ...prev,
         profile_video: filePath,
       }));
+      persistMeMediaSnapshot({ profileVideo: filePath });
 
       if (previousPath && !previousPath.startsWith('http') && previousPath !== filePath) {
         try {
@@ -1444,6 +1505,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
               ...prev,
               profile_video: '',
             }));
+            persistMeMediaSnapshot({ profileVideo: null });
           },
         },
       ],
@@ -1460,10 +1522,14 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           text: 'Remove',
           style: 'destructive',
           onPress: () => {
-            setFormData(prev => ({
-              ...prev,
-              photos: prev.photos.filter((_, i) => i !== index)
-            }));
+            setFormData(prev => {
+              const nextPhotos = prev.photos.filter((_, i) => i !== index);
+              persistMeMediaSnapshot({ photos: nextPhotos });
+              return {
+                ...prev,
+                photos: nextPhotos
+              };
+            });
           }
         }
       ]
@@ -1620,10 +1686,43 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         updateData.future_ghana_plans = formData.future_ghana_plans.trim();
       }
 
+      const hasProfileFieldChanges =
+        !sameString(updateData.full_name, profile?.full_name) ||
+        !sameString(updateData.bio, profile?.bio) ||
+        !sameString(updateData.gender, (profile as any)?.gender) ||
+        !sameNumber(updateData.age, profile?.age) ||
+        !sameString(updateData.region, profile?.region) ||
+        !sameString(updateData.tribe, (profile as any)?.tribe) ||
+        !sameStringArray(updateData.roots, (profile as any)?.roots) ||
+        !sameString(updateData.roots_note, (profile as any)?.roots_note) ||
+        !sameString(updateData.roots_visibility, (profile as any)?.roots_visibility || 'VISIBLE') ||
+        !sameString(updateData.religion, (profile as any)?.religion) ||
+        !sameString(updateData.occupation, (profile as any)?.occupation) ||
+        !sameString(updateData.education, (profile as any)?.education) ||
+        !sameString(updateData.height, (profile as any)?.height) ||
+        !sameString(updateData.looking_for, (profile as any)?.looking_for) ||
+        !sameString(updateData.exercise_frequency, (profile as any)?.exercise_frequency) ||
+        !sameString(updateData.smoking, (profile as any)?.smoking) ||
+        !sameString(updateData.drinking, (profile as any)?.drinking) ||
+        !sameString(updateData.has_children, (profile as any)?.has_children) ||
+        !sameString(updateData.wants_children, (profile as any)?.wants_children) ||
+        !sameString(updateData.personality_type, (profile as any)?.personality_type) ||
+        !sameString(updateData.love_language, (profile as any)?.love_language) ||
+        !sameString(updateData.living_situation, (profile as any)?.living_situation) ||
+        !sameString(updateData.pets, (profile as any)?.pets) ||
+        !sameStringArray(updateData.languages_spoken, (profile as any)?.languages_spoken) ||
+        !sameNumber(updateData.years_in_diaspora, (profile as any)?.years_in_diaspora) ||
+        !sameString(updateData.last_ghana_visit, (profile as any)?.last_ghana_visit) ||
+        !sameString(updateData.future_ghana_plans, (profile as any)?.future_ghana_plans);
+      
       // Update profile using auth context (this will refresh the UI automatically)
-      console.log('Profile update data:', updateData);
-      let saveResult = await updateProfile(updateData);
-      let { error } = saveResult;
+      let saveResult: { error: Error | null; queued?: boolean } = { error: null, queued: false };
+      let error: Error | null = null;
+      if (hasProfileFieldChanges || !mediaSyncPayload) {
+        console.log('Profile update data:', updateData);
+        saveResult = await updateProfile(updateData);
+        error = saveResult.error;
+      }
 
       if (
         error &&
@@ -1676,6 +1775,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       }
 
       const queued = saveResult.queued === true || interestsResult.queued === true || Boolean(mediaSyncPayload);
+      initialSelectedInterestsRef.current = selectedInterests;
       const snapshotProfileId = getSnapshotProfileId();
       if (snapshotProfileId) {
         void writeMeProfileSnapshot(snapshotProfileId, {
@@ -1769,12 +1869,16 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             </View>
             <View style={styles.avatarContainer}>
               {hasAvatarImage ? (
-                <Image
-                  source={{
-                    uri: normalizeProfilePhotoUri(formData.avatar_url),
-                  }}
+                <OfflineImage
+                  uri={normalizeProfilePhotoUri(formData.avatar_url)}
                   style={styles.avatar}
-                  resizeMode="cover"
+                  contentFit="cover"
+                  fallback={
+                    <View style={styles.avatarPlaceholder}>
+                      <Text style={styles.avatarPlaceholderInitials}>{avatarInitials}</Text>
+                      <Text style={styles.avatarPlaceholderCaption}>Add a clear photo to build trust faster</Text>
+                    </View>
+                  }
                 />
               ) : (
                 <View style={styles.avatarPlaceholder}>
@@ -2858,7 +2962,16 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
                 const photoUri = normalizeProfilePhotoUri(photo);
                 return (
                   <View key={`${photoUri}-${index}`} style={styles.photoContainer}>
-                    <Image source={{ uri: photoUri }} style={styles.photo} resizeMode="cover" />
+                    <OfflineImage
+                      uri={photoUri}
+                      style={styles.photo}
+                      contentFit="cover"
+                      fallback={
+                        <View style={styles.photoFallback}>
+                          <MaterialCommunityIcons name="image-off-outline" size={22} color={theme.textMuted} />
+                        </View>
+                      }
+                    />
                     <TouchableOpacity
                       style={styles.removePhotoButton}
                       onPress={() => removePhoto(index)}
@@ -3646,6 +3759,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       width: '100%',
       height: '100%',
       resizeMode: 'cover',
+    },
+    photoFallback: {
+      width: '100%',
+      height: '100%',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.background, isDark ? 0.4 : 0.12),
     },
     videoRow: {
       flexDirection: 'row',

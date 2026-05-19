@@ -1,8 +1,24 @@
 import { addEventListener, fetch as fetchNetInfo } from '@react-native-community/netinfo';
 import * as FileSystem from 'expo-file-system/legacy';
 
+import type { MomentMetadata } from '@/lib/moment-text-style';
+import {
+  createMomentFromMediaStrict,
+  createTextMomentStrict,
+  deleteMomentStrict,
+} from '@/lib/moments';
 import { isLikelyNetworkError } from '@/lib/network';
 import { removeStagedOfflineChatUpload } from '@/lib/offline/chat-store';
+import {
+  moveMomentCommentsSnapshot,
+  moveMomentReactorsSnapshot,
+  removeMomentCommentSnapshot,
+  removeStagedOfflineMomentUpload,
+  replaceMomentCommentSnapshotId,
+  replaceMomentInFeedSnapshot,
+  replaceOwnMomentSnapshot,
+  upsertMomentCommentSnapshot,
+} from '@/lib/offline/moments-store';
 import { readOfflineData, writeOfflineEnvelope } from '@/lib/offline/core';
 import { supabase } from '@/lib/supabase';
 
@@ -125,6 +141,73 @@ type ProfileMediaSyncPayload = {
   photoItems?: LocalProfileMediaUpload[];
   video?: (LocalProfileMediaUpload & { previousPath?: string | null }) | null;
   updatedAt: string;
+};
+
+type NotificationPrefsUpdatePayload = {
+  userId: string;
+  prefs: Record<string, boolean | string>;
+  updatedAt: string;
+};
+
+export type MomentTextCreatePayload = {
+  tempId: string;
+  userId: string;
+  textBody: string;
+  caption?: string | null;
+  visibility?: 'public' | 'matches' | 'vibe_check_approved' | 'private';
+  metadata?: MomentMetadata | Record<string, unknown> | null;
+  createdAt: string;
+  expiresAt: string;
+};
+
+export type MomentMediaCreatePayload = {
+  tempId: string;
+  userId: string;
+  type: 'photo' | 'video';
+  localUri: string;
+  fileName: string;
+  contentType: string;
+  caption?: string | null;
+  visibility?: 'public' | 'matches' | 'vibe_check_approved' | 'private';
+  metadata?: MomentMetadata | Record<string, unknown> | null;
+  createdAt: string;
+  expiresAt: string;
+};
+
+export type MomentDeletePayload = {
+  userId: string;
+  momentId: string;
+  mediaPath?: string | null;
+};
+
+export type MomentReactionSyncPayload = {
+  momentId: string;
+  userId: string;
+  emoji: string | null;
+  previousEmoji?: string | null;
+};
+
+export type MomentCommentCreatePayload = {
+  tempId: string;
+  momentId: string;
+  userId: string;
+  body: string;
+  createdAt: string;
+};
+
+export type MomentCommentUpdatePayload = {
+  commentId: string;
+  momentId: string;
+  userId: string;
+  body: string;
+  updatedAt: string;
+};
+
+export type MomentCommentDeletePayload = {
+  commentId: string;
+  momentId: string;
+  userId: string;
+  deletedAt: string;
 };
 
 export type OfflineMutation =
@@ -270,6 +353,94 @@ export type OfflineMutation =
       nextAttemptAt?: number | null;
       lastError?: string | null;
       payload: ProfileMediaSyncPayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'notification_prefs_update';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: NotificationPrefsUpdatePayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'moment_text_create';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: MomentTextCreatePayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'moment_media_create';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: MomentMediaCreatePayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'moment_delete';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: MomentDeletePayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'moment_reaction_sync';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: MomentReactionSyncPayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'moment_comment_create';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: MomentCommentCreatePayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'moment_comment_update';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: MomentCommentUpdatePayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'moment_comment_delete';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: MomentCommentDeletePayload;
     };
 
 export type FailedOfflineMutation = OfflineMutation & {
@@ -350,6 +521,36 @@ const buildProfileInterestsUpdateDedupeKey = (payload: ProfileInterestsUpdatePay
 const buildProfileMediaSyncDedupeKey = (payload: ProfileMediaSyncPayload) =>
   `profile_media_sync:${payload.userId}`;
 
+const buildNotificationPrefsUpdateDedupeKey = (payload: NotificationPrefsUpdatePayload) =>
+  `notification_prefs_update:${payload.userId}`;
+
+const buildMomentTextCreateDedupeKey = (payload: MomentTextCreatePayload) =>
+  `moment_text_create:${payload.tempId}`;
+
+const buildMomentMediaCreateDedupeKey = (payload: MomentMediaCreatePayload) =>
+  `moment_media_create:${payload.tempId}`;
+
+const buildMomentDeleteDedupeKey = (payload: MomentDeletePayload) =>
+  `moment_delete:${payload.momentId}`;
+
+const buildMomentReactionSyncDedupeKey = (payload: MomentReactionSyncPayload) =>
+  `moment_reaction_sync:${payload.momentId}:${payload.userId}`;
+
+const buildMomentCommentCreateDedupeKey = (payload: MomentCommentCreatePayload) =>
+  `moment_comment_create:${payload.tempId}`;
+
+const buildMomentCommentUpdateDedupeKey = (payload: MomentCommentUpdatePayload) =>
+  `moment_comment_update:${payload.commentId}`;
+
+const buildMomentCommentDeleteDedupeKey = (payload: MomentCommentDeletePayload) =>
+  `moment_comment_delete:${payload.commentId}`;
+
+export const isOfflineMomentId = (momentId?: string | null) =>
+  typeof momentId === 'string' && momentId.startsWith('offline-moment:');
+
+export const isOfflineMomentCommentId = (commentId?: string | null) =>
+  typeof commentId === 'string' && commentId.startsWith('offline-comment:');
+
 const stringifyMutationError = (error: unknown) => {
   const message =
     typeof error === 'string'
@@ -358,6 +559,103 @@ const stringifyMutationError = (error: unknown) => {
   const code = (error as any)?.code || (error as any)?.status || (error as any)?.name;
   return [code, message].filter(Boolean).join(': ').slice(0, 500);
 };
+
+const isExpiredMomentCreateMutation = (
+  mutation: OfflineMutation | FailedOfflineMutation,
+) =>
+  (mutation.kind === 'moment_text_create' || mutation.kind === 'moment_media_create') &&
+  new Date(mutation.payload.expiresAt).getTime() <= Date.now();
+
+const isMomentInteractionMutation = (
+  mutation: OfflineMutation | FailedOfflineMutation,
+): mutation is Extract<
+  OfflineMutation | FailedOfflineMutation,
+  {
+    kind:
+      | 'moment_reaction_sync'
+      | 'moment_comment_create'
+      | 'moment_comment_update'
+      | 'moment_comment_delete';
+  }
+> =>
+  mutation.kind === 'moment_reaction_sync' ||
+  mutation.kind === 'moment_comment_create' ||
+  mutation.kind === 'moment_comment_update' ||
+  mutation.kind === 'moment_comment_delete';
+
+const isMomentCreateMutation = (
+  mutation: OfflineMutation | FailedOfflineMutation,
+): mutation is Extract<
+  OfflineMutation | FailedOfflineMutation,
+  { kind: 'moment_text_create' | 'moment_media_create' }
+> => mutation.kind === 'moment_text_create' || mutation.kind === 'moment_media_create';
+
+const isMomentDeleteMutation = (
+  mutation: OfflineMutation | FailedOfflineMutation,
+): mutation is Extract<
+  OfflineMutation | FailedOfflineMutation,
+  { kind: 'moment_delete' }
+> => mutation.kind === 'moment_delete';
+
+const shouldDropStaleMomentMutation = (
+  mutation: OfflineMutation | FailedOfflineMutation,
+  allMutations: Array<OfflineMutation | FailedOfflineMutation>,
+) => {
+  if (isExpiredMomentCreateMutation(mutation)) return true;
+
+  if (isMomentInteractionMutation(mutation)) {
+    const momentId = mutation.payload.momentId;
+    if (isOfflineMomentId(momentId)) {
+      const hasBackingCreate = allMutations.some(
+        (item) => isMomentCreateMutation(item) && item.payload.tempId === momentId,
+      );
+      if (!hasBackingCreate) return true;
+    }
+    const hasDelete = allMutations.some(
+      (item) => isMomentDeleteMutation(item) && item.payload.momentId === momentId,
+    );
+    if (hasDelete) return true;
+
+    if (
+      (mutation.kind === 'moment_comment_update' || mutation.kind === 'moment_comment_delete') &&
+      isOfflineMomentCommentId(mutation.payload.commentId)
+    ) {
+      const hasBackingCommentCreate = allMutations.some(
+        (item) =>
+          item.kind === 'moment_comment_create' && item.payload.tempId === mutation.payload.commentId,
+      );
+      if (!hasBackingCommentCreate) return true;
+    }
+  }
+
+  if (isMomentDeleteMutation(mutation) && isOfflineMomentId(mutation.payload.momentId)) {
+    const hasBackingCreate = allMutations.some(
+      (item) => isMomentCreateMutation(item) && item.payload.tempId === mutation.payload.momentId,
+    );
+    if (!hasBackingCreate) return true;
+  }
+
+  return false;
+};
+
+async function pruneStaleMomentMutationsFromQueues() {
+  const [pendingQueue, failedQueue] = await Promise.all([
+    readMutationQueue(),
+    readFailedMutationQueue(),
+  ]);
+  const allMutations = [...pendingQueue, ...failedQueue];
+  const nextPending = pendingQueue.filter((mutation) => !shouldDropStaleMomentMutation(mutation, allMutations));
+  const nextFailed = failedQueue.filter((mutation) => !shouldDropStaleMomentMutation(mutation, allMutations));
+
+  if (nextPending.length !== pendingQueue.length) {
+    await writeMutationQueue(nextPending);
+  }
+  if (nextFailed.length !== failedQueue.length) {
+    await writeFailedMutationQueue(nextFailed);
+  }
+
+  return { pending: nextPending, failed: nextFailed };
+}
 
 const getRetryDelayMs = (attempts: number) => {
   const index = Math.max(0, Math.min(attempts - 1, RETRY_DELAYS_MS.length - 1));
@@ -371,6 +669,14 @@ const isRetryableMutationError = (error: unknown) => {
   if (status >= 500 && status <= 599) return true;
   const lower = String((error as any)?.message || error || '').toLowerCase();
   return (
+    lower.includes('jwt expired') ||
+    lower.includes('pgrst303') ||
+    lower.includes('invalid jwt') ||
+    lower.includes('refresh token') ||
+    lower.includes('session expired') ||
+    lower.includes('not authenticated') ||
+    lower.includes('unauthorized') ||
+    lower.includes('unauthenticated_storage') ||
     lower.includes('temporarily unavailable') ||
     lower.includes('service unavailable') ||
     lower.includes('too many requests')
@@ -406,6 +712,223 @@ async function writeMutationQueue(queue: OfflineMutation[]) {
 
 async function writeFailedMutationQueue(queue: FailedOfflineMutation[]) {
   await writeOfflineEnvelope(OFFLINE_MUTATION_FAILED_KEY, queue.slice(-100), { kind: 'mutation-failed' });
+}
+
+export async function clearMomentMutationArtifacts(momentId: string) {
+  if (!momentId) return;
+
+  const [pendingQueue, failedQueue] = await Promise.all([
+    readMutationQueue(),
+    readFailedMutationQueue(),
+  ]);
+
+  const shouldKeep = (item: OfflineMutation | FailedOfflineMutation) => {
+    if (
+      item.kind === 'moment_reaction_sync' ||
+      item.kind === 'moment_comment_create' ||
+      item.kind === 'moment_comment_update' ||
+      item.kind === 'moment_comment_delete' ||
+      item.kind === 'moment_delete'
+    ) {
+      return item.payload.momentId !== momentId;
+    }
+    if ((item.kind === 'moment_text_create' || item.kind === 'moment_media_create') && item.payload.tempId === momentId) {
+      return false;
+    }
+    return true;
+  };
+
+  const nextPending = pendingQueue.filter(shouldKeep);
+  const nextFailed = failedQueue.filter(shouldKeep);
+
+  await Promise.all([
+    nextPending.length === pendingQueue.length ? Promise.resolve() : writeMutationQueue(nextPending),
+    nextFailed.length === failedQueue.length ? Promise.resolve() : writeFailedMutationQueue(nextFailed),
+  ]);
+}
+
+export async function clearMomentCommentMutationArtifacts(commentId: string) {
+  if (!commentId) return;
+
+  const [pendingQueue, failedQueue] = await Promise.all([
+    readMutationQueue(),
+    readFailedMutationQueue(),
+  ]);
+
+  const shouldKeep = (item: OfflineMutation | FailedOfflineMutation) => {
+    if (
+      item.kind === 'moment_comment_create' &&
+      item.payload.tempId === commentId
+    ) {
+      return false;
+    }
+    if (
+      (item.kind === 'moment_comment_update' || item.kind === 'moment_comment_delete') &&
+      item.payload.commentId === commentId
+    ) {
+      return false;
+    }
+    return true;
+  };
+
+  const nextPending = pendingQueue.filter(shouldKeep);
+  const nextFailed = failedQueue.filter(shouldKeep);
+
+  await Promise.all([
+    nextPending.length === pendingQueue.length ? Promise.resolve() : writeMutationQueue(nextPending),
+    nextFailed.length === failedQueue.length ? Promise.resolve() : writeFailedMutationQueue(nextFailed),
+  ]);
+}
+
+const remapMomentReferenceOnMutation = (
+  mutation: OfflineMutation | FailedOfflineMutation,
+  tempMomentId: string,
+  realMomentId: string,
+) => {
+  if (mutation.kind === 'moment_reaction_sync' && mutation.payload.momentId === tempMomentId) {
+    return {
+      ...mutation,
+      dedupeKey: buildMomentReactionSyncDedupeKey({
+        ...mutation.payload,
+        momentId: realMomentId,
+      }),
+      payload: {
+        ...mutation.payload,
+        momentId: realMomentId,
+      },
+    };
+  }
+
+  if (mutation.kind === 'moment_comment_create' && mutation.payload.momentId === tempMomentId) {
+    return {
+      ...mutation,
+      payload: {
+        ...mutation.payload,
+        momentId: realMomentId,
+      },
+    };
+  }
+
+  if (
+    (mutation.kind === 'moment_comment_update' || mutation.kind === 'moment_comment_delete') &&
+    mutation.payload.momentId === tempMomentId
+  ) {
+    return {
+      ...mutation,
+      payload: {
+        ...mutation.payload,
+        momentId: realMomentId,
+      },
+    };
+  }
+
+  if (mutation.kind === 'moment_delete' && mutation.payload.momentId === tempMomentId) {
+    return {
+      ...mutation,
+      dedupeKey: buildMomentDeleteDedupeKey({
+        ...mutation.payload,
+        momentId: realMomentId,
+      }),
+      payload: {
+        ...mutation.payload,
+        momentId: realMomentId,
+      },
+    };
+  }
+
+  return mutation;
+};
+
+async function remapMomentReferenceAcrossQueues(tempMomentId: string, realMomentId: string) {
+  if (!tempMomentId || !realMomentId || tempMomentId === realMomentId) return;
+
+  const [pendingQueue, failedQueue] = await Promise.all([
+    readMutationQueue(),
+    readFailedMutationQueue(),
+  ]);
+
+  const nextPending = pendingQueue.map((mutation) =>
+    remapMomentReferenceOnMutation(mutation, tempMomentId, realMomentId) as OfflineMutation,
+  );
+  const nextFailed = failedQueue.map((mutation) =>
+    remapMomentReferenceOnMutation(mutation, tempMomentId, realMomentId) as FailedOfflineMutation,
+  );
+
+  await Promise.all([
+    writeMutationQueue(nextPending),
+    writeFailedMutationQueue(nextFailed),
+  ]);
+}
+
+const remapCommentReferenceOnMutation = (
+  mutation: OfflineMutation | FailedOfflineMutation,
+  tempCommentId: string,
+  realCommentId: string,
+) => {
+  if (mutation.kind === 'moment_comment_create' && mutation.payload.tempId === tempCommentId) {
+    return {
+      ...mutation,
+      dedupeKey: buildMomentCommentCreateDedupeKey({
+        ...mutation.payload,
+        tempId: realCommentId,
+      }),
+      payload: {
+        ...mutation.payload,
+        tempId: realCommentId,
+      },
+    };
+  }
+
+  if (mutation.kind === 'moment_comment_update' && mutation.payload.commentId === tempCommentId) {
+    return {
+      ...mutation,
+      dedupeKey: buildMomentCommentUpdateDedupeKey({
+        ...mutation.payload,
+        commentId: realCommentId,
+      }),
+      payload: {
+        ...mutation.payload,
+        commentId: realCommentId,
+      },
+    };
+  }
+
+  if (mutation.kind === 'moment_comment_delete' && mutation.payload.commentId === tempCommentId) {
+    return {
+      ...mutation,
+      dedupeKey: buildMomentCommentDeleteDedupeKey({
+        ...mutation.payload,
+        commentId: realCommentId,
+      }),
+      payload: {
+        ...mutation.payload,
+        commentId: realCommentId,
+      },
+    };
+  }
+
+  return mutation;
+};
+
+async function remapCommentReferenceAcrossQueues(tempCommentId: string, realCommentId: string) {
+  if (!tempCommentId || !realCommentId || tempCommentId === realCommentId) return;
+
+  const [pendingQueue, failedQueue] = await Promise.all([
+    readMutationQueue(),
+    readFailedMutationQueue(),
+  ]);
+
+  const nextPending = pendingQueue.map((mutation) =>
+    remapCommentReferenceOnMutation(mutation, tempCommentId, realCommentId) as OfflineMutation,
+  );
+  const nextFailed = failedQueue.map((mutation) =>
+    remapCommentReferenceOnMutation(mutation, tempCommentId, realCommentId) as FailedOfflineMutation,
+  );
+
+  await Promise.all([
+    writeMutationQueue(nextPending),
+    writeFailedMutationQueue(nextFailed),
+  ]);
 }
 
 async function replaceQueue(updater: (current: OfflineMutation[]) => OfflineMutation[]) {
@@ -823,6 +1346,161 @@ async function processProfileMediaSync(payload: ProfileMediaSyncPayload) {
   if (error) throw error;
 }
 
+async function processNotificationPrefsUpdate(payload: NotificationPrefsUpdatePayload) {
+  const { error } = await supabase
+    .from('notification_prefs')
+    .upsert(
+      {
+        user_id: payload.userId,
+        ...payload.prefs,
+        updated_at: payload.updatedAt,
+      },
+      { onConflict: 'user_id' },
+    );
+  if (error) throw error;
+}
+
+async function processMomentTextCreate(payload: MomentTextCreatePayload) {
+  const result = await createTextMomentStrict({
+    userId: payload.userId,
+    type: 'text',
+    textBody: payload.textBody,
+    caption: payload.caption ?? null,
+    visibility: payload.visibility ?? 'matches',
+    metadata: (payload.metadata as MomentMetadata | null | undefined) ?? {},
+  });
+
+  await Promise.all([
+    replaceOwnMomentSnapshot(payload.userId, payload.tempId, {
+      id: result.momentId,
+      userId: payload.userId,
+      type: 'text',
+      textBody: payload.textBody,
+      caption: payload.caption ?? null,
+      metadata: payload.metadata ?? null,
+      visibility: payload.visibility ?? 'matches',
+      createdAt: payload.createdAt,
+      expiresAt: payload.expiresAt,
+    }),
+    replaceMomentInFeedSnapshot(payload.userId, payload.tempId, {
+      id: result.momentId,
+      userId: payload.userId,
+      type: 'text',
+      textBody: payload.textBody,
+      caption: payload.caption ?? null,
+      metadata: payload.metadata ?? null,
+      visibility: payload.visibility ?? 'matches',
+      createdAt: payload.createdAt,
+      expiresAt: payload.expiresAt,
+    }),
+    moveMomentCommentsSnapshot(payload.userId, payload.tempId, result.momentId),
+    moveMomentReactorsSnapshot(payload.userId, payload.tempId, result.momentId),
+    remapMomentReferenceAcrossQueues(payload.tempId, result.momentId),
+  ]);
+}
+
+async function processMomentMediaCreate(payload: MomentMediaCreatePayload) {
+  const result = await createMomentFromMediaStrict({
+    userId: payload.userId,
+    type: payload.type,
+    uri: payload.localUri,
+    caption: payload.caption ?? null,
+    visibility: payload.visibility ?? 'matches',
+    metadata: (payload.metadata as MomentMetadata | null | undefined) ?? {},
+  });
+
+  await Promise.all([
+    replaceOwnMomentSnapshot(payload.userId, payload.tempId, {
+      id: result.momentId,
+      userId: payload.userId,
+      type: payload.type,
+      mediaUrl: result.mediaPath,
+      caption: payload.caption ?? null,
+      metadata: payload.metadata ?? null,
+      visibility: payload.visibility ?? 'matches',
+      createdAt: payload.createdAt,
+      expiresAt: payload.expiresAt,
+    }),
+    replaceMomentInFeedSnapshot(payload.userId, payload.tempId, {
+      id: result.momentId,
+      userId: payload.userId,
+      type: payload.type,
+      mediaUrl: result.mediaPath,
+      caption: payload.caption ?? null,
+      metadata: payload.metadata ?? null,
+      visibility: payload.visibility ?? 'matches',
+      createdAt: payload.createdAt,
+      expiresAt: payload.expiresAt,
+    }),
+    moveMomentCommentsSnapshot(payload.userId, payload.tempId, result.momentId),
+    moveMomentReactorsSnapshot(payload.userId, payload.tempId, result.momentId),
+    remapMomentReferenceAcrossQueues(payload.tempId, result.momentId),
+  ]);
+
+  await removeStagedOfflineMomentUpload(payload.localUri);
+}
+
+async function processMomentDelete(payload: MomentDeletePayload) {
+  if (isOfflineMomentId(payload.momentId)) {
+    return;
+  }
+  await deleteMomentStrict({
+    momentId: payload.momentId,
+    mediaPath: payload.mediaPath ?? null,
+  });
+}
+
+async function processMomentReactionSync(payload: MomentReactionSyncPayload) {
+  const { data, error } = await supabase.rpc('rpc_sync_moment_reaction', {
+    p_moment_id: payload.momentId,
+    p_emoji: payload.emoji,
+  });
+  if (error) throw error;
+  // A false return means the Moment is no longer actionable for this user.
+  // Treat that as a benign stale-target outcome during replay.
+  if (data === false) return;
+}
+
+async function processMomentCommentCreate(payload: MomentCommentCreatePayload) {
+  const { data, error } = await supabase.rpc('rpc_create_moment_comment', {
+    p_moment_id: payload.momentId,
+    p_body: payload.body,
+  });
+  if (error) throw error;
+  // A null return means the Moment is no longer actionable for this user.
+  // Treat that as a benign stale-target outcome during replay.
+  if (!data) return;
+  await Promise.all([
+    replaceMomentCommentSnapshotId(payload.userId, payload.momentId, payload.tempId, data),
+    remapCommentReferenceAcrossQueues(payload.tempId, data.id),
+  ]);
+}
+
+async function processMomentCommentUpdate(payload: MomentCommentUpdatePayload) {
+  const { data, error } = await supabase.rpc('rpc_update_moment_comment', {
+    p_comment_id: payload.commentId,
+    p_body: payload.body,
+  });
+  if (error) throw error;
+  if (!data) return;
+  await upsertMomentCommentSnapshot(payload.userId, payload.momentId, data);
+}
+
+async function processMomentCommentDelete(payload: MomentCommentDeletePayload) {
+  const { data, error } = await supabase.rpc('rpc_delete_moment_comment', {
+    p_comment_id: payload.commentId,
+  });
+  if (error) throw error;
+  if (data === false) {
+    await clearMomentCommentMutationArtifacts(payload.commentId);
+    return;
+  }
+  await Promise.all([
+    removeMomentCommentSnapshot(payload.userId, payload.momentId, payload.commentId),
+    clearMomentCommentMutationArtifacts(payload.commentId),
+  ]);
+}
+
 async function processMutation(mutation: OfflineMutation) {
   switch (mutation.kind) {
     case 'swipe_sync':
@@ -863,6 +1541,30 @@ async function processMutation(mutation: OfflineMutation) {
       return;
     case 'profile_media_sync':
       await processProfileMediaSync(mutation.payload);
+      return;
+    case 'notification_prefs_update':
+      await processNotificationPrefsUpdate(mutation.payload);
+      return;
+    case 'moment_text_create':
+      await processMomentTextCreate(mutation.payload);
+      return;
+    case 'moment_media_create':
+      await processMomentMediaCreate(mutation.payload);
+      return;
+    case 'moment_delete':
+      await processMomentDelete(mutation.payload);
+      return;
+    case 'moment_reaction_sync':
+      await processMomentReactionSync(mutation.payload);
+      return;
+    case 'moment_comment_create':
+      await processMomentCommentCreate(mutation.payload);
+      return;
+    case 'moment_comment_update':
+      await processMomentCommentUpdate(mutation.payload);
+      return;
+    case 'moment_comment_delete':
+      await processMomentCommentDelete(mutation.payload);
       return;
     default:
       return;
@@ -1071,6 +1773,211 @@ export async function enqueueProfileMediaSyncMutation(payload: ProfileMediaSyncP
   emitMutationEvent({ type: 'queued', mutation });
 }
 
+export async function enqueueNotificationPrefsUpdateMutation(payload: NotificationPrefsUpdatePayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildNotificationPrefsUpdateDedupeKey(payload),
+    kind: 'notification_prefs_update',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => {
+    const filtered = current.filter((item) => item.dedupeKey !== mutation.dedupeKey);
+    return [...filtered, mutation];
+  });
+  emitMutationEvent({ type: 'queued', mutation });
+}
+
+export async function enqueueMomentTextCreateMutation(payload: MomentTextCreatePayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildMomentTextCreateDedupeKey(payload),
+    kind: 'moment_text_create',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => [...current, mutation]);
+  emitMutationEvent({ type: 'queued', mutation });
+}
+
+export async function enqueueMomentMediaCreateMutation(payload: MomentMediaCreatePayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildMomentMediaCreateDedupeKey(payload),
+    kind: 'moment_media_create',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => [...current, mutation]);
+  emitMutationEvent({ type: 'queued', mutation });
+}
+
+export async function enqueueMomentDeleteMutation(payload: MomentDeletePayload) {
+  let collapsedQueuedCreate: OfflineMutation | null = null;
+
+  await replaceQueue((current) => {
+    if (isOfflineMomentId(payload.momentId)) {
+      const next = current.filter((item) => {
+        const isMatchingCreate =
+          (item.kind === 'moment_text_create' || item.kind === 'moment_media_create') &&
+          item.payload.tempId === payload.momentId;
+        const isMatchingInteraction =
+          (
+            item.kind === 'moment_reaction_sync' ||
+            item.kind === 'moment_comment_create' ||
+            item.kind === 'moment_comment_update' ||
+            item.kind === 'moment_comment_delete'
+          ) &&
+          item.payload.momentId === payload.momentId;
+        if (isMatchingCreate) {
+          collapsedQueuedCreate = item;
+          return false;
+        }
+        if (isMatchingInteraction) {
+          return false;
+        }
+        return true;
+      });
+      return next;
+    }
+
+    const mutation: OfflineMutation = {
+      id: buildOfflineMutationId(),
+      dedupeKey: buildMomentDeleteDedupeKey(payload),
+      kind: 'moment_delete',
+      createdAt: Date.now(),
+      attempts: 0,
+      payload,
+    };
+    const filtered = current.filter((item) => item.dedupeKey !== mutation.dedupeKey);
+    filtered.push(mutation);
+    emitMutationEvent({ type: 'queued', mutation });
+    return filtered;
+  });
+
+  if (collapsedQueuedCreate?.kind === 'moment_media_create') {
+    await removeStagedOfflineMomentUpload(collapsedQueuedCreate.payload.localUri);
+  }
+
+  await clearMomentMutationArtifacts(payload.momentId);
+}
+
+export async function enqueueMomentReactionSyncMutation(payload: MomentReactionSyncPayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildMomentReactionSyncDedupeKey(payload),
+    kind: 'moment_reaction_sync',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => {
+    const filtered = current.filter((item) => item.dedupeKey !== mutation.dedupeKey);
+    return [...filtered, mutation];
+  });
+  emitMutationEvent({ type: 'queued', mutation });
+}
+
+export async function enqueueMomentCommentCreateMutation(payload: MomentCommentCreatePayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildMomentCommentCreateDedupeKey(payload),
+    kind: 'moment_comment_create',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => [...current, mutation]);
+  emitMutationEvent({ type: 'queued', mutation });
+}
+
+export async function enqueueMomentCommentUpdateMutation(payload: MomentCommentUpdatePayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildMomentCommentUpdateDedupeKey(payload),
+    kind: 'moment_comment_update',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => {
+    const filtered = current.filter((item) => item.dedupeKey !== mutation.dedupeKey);
+    return [...filtered, mutation];
+  });
+  emitMutationEvent({ type: 'queued', mutation });
+}
+
+export async function enqueueMomentCommentDeleteMutation(payload: MomentCommentDeletePayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildMomentCommentDeleteDedupeKey(payload),
+    kind: 'moment_comment_delete',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => {
+    const filtered = current.filter(
+      (item) =>
+        item.dedupeKey !== mutation.dedupeKey &&
+        !(
+          item.kind === 'moment_comment_update' &&
+          item.payload.commentId === payload.commentId
+        ),
+    );
+    return [...filtered, mutation];
+  });
+  emitMutationEvent({ type: 'queued', mutation });
+}
+
+export async function replacePendingMomentCommentCreateBody(commentId: string, body: string) {
+  const apply = <T extends OfflineMutation | FailedOfflineMutation>(mutation: T): T =>
+    mutation.kind === 'moment_comment_create' && mutation.payload.tempId === commentId
+      ? ({
+          ...mutation,
+          payload: {
+            ...mutation.payload,
+            body,
+          },
+        } as T)
+      : mutation;
+
+  const [pendingQueue, failedQueue] = await Promise.all([
+    readMutationQueue(),
+    readFailedMutationQueue(),
+  ]);
+
+  await Promise.all([
+    writeMutationQueue(pendingQueue.map((mutation) => apply(mutation as OfflineMutation))),
+    writeFailedMutationQueue(failedQueue.map((mutation) => apply(mutation as FailedOfflineMutation))),
+  ]);
+}
+
+export async function removePendingMomentCommentCreateMutation(commentId: string) {
+  const [pendingQueue, failedQueue] = await Promise.all([
+    readMutationQueue(),
+    readFailedMutationQueue(),
+  ]);
+
+  const shouldKeep = (mutation: OfflineMutation | FailedOfflineMutation) =>
+    !(mutation.kind === 'moment_comment_create' && mutation.payload.tempId === commentId);
+
+  await Promise.all([
+    writeMutationQueue(pendingQueue.filter(shouldKeep)),
+    writeFailedMutationQueue(failedQueue.filter(shouldKeep)),
+  ]);
+}
+
 export async function hasPendingSwipeSyncMutation(
   userId: string,
   targetId: string,
@@ -1099,16 +2006,24 @@ export async function getPendingProfileImageReactionMap(profileId: string, react
   return next;
 }
 
+export async function getPendingProfileMediaSyncMutation(userId: string) {
+  const queue = await readMutationQueue();
+  for (let index = queue.length - 1; index >= 0; index -= 1) {
+    const item = queue[index];
+    if (item?.kind === 'profile_media_sync' && item.payload.userId === userId) {
+      return item;
+    }
+  }
+  return null;
+}
+
 export async function getPendingOfflineMutationCount() {
   const queue = await readMutationQueue();
   return queue.length;
 }
 
 export async function getOfflineMutationQueueSnapshot() {
-  const [pending, failed] = await Promise.all([
-    readMutationQueue(),
-    readFailedMutationQueue(),
-  ]);
+  const { pending, failed } = await pruneStaleMomentMutationsFromQueues();
   const now = Date.now();
   return {
     pendingCount: pending.length,
@@ -1140,6 +2055,82 @@ export async function getIntentOfflineMutationSnapshot() {
   };
 }
 
+export async function getMomentOfflineMutationSnapshot() {
+  const { pending, failed } = await getOfflineMutationQueueSnapshot();
+  return {
+    pending: pending.filter((item) =>
+      !isExpiredMomentCreateMutation(item) &&
+      (
+        item.kind === 'moment_text_create' ||
+        item.kind === 'moment_media_create' ||
+        item.kind === 'moment_delete' ||
+        item.kind === 'moment_reaction_sync' ||
+        item.kind === 'moment_comment_create' ||
+        item.kind === 'moment_comment_update' ||
+        item.kind === 'moment_comment_delete'
+      ),
+    ),
+    failed: failed.filter((item) =>
+      !isExpiredMomentCreateMutation(item) &&
+      (
+        item.kind === 'moment_text_create' ||
+        item.kind === 'moment_media_create' ||
+        item.kind === 'moment_delete' ||
+        item.kind === 'moment_reaction_sync' ||
+        item.kind === 'moment_comment_create' ||
+        item.kind === 'moment_comment_update' ||
+        item.kind === 'moment_comment_delete'
+      ),
+    ),
+  };
+}
+
+export async function retryFailedOfflineMutation(mutationId: string) {
+  const failedQueue = await readFailedMutationQueue();
+  const target = failedQueue.find((item) => item.id === mutationId);
+  if (!target) return false;
+
+  const { failedAt: _failedAt, failureReason: _failureReason, ...baseMutation } = target;
+  const retriedMutation: OfflineMutation = {
+    ...baseMutation,
+    attempts: 0,
+    lastAttemptAt: null,
+    nextAttemptAt: null,
+    lastError: null,
+  };
+
+  await writeFailedMutationQueue(failedQueue.filter((item) => item.id !== mutationId));
+  await replaceQueue((current) => [...current, retriedMutation]);
+  emitMutationEvent({ type: 'queued', mutation: retriedMutation });
+  void drainOfflineMutationQueue();
+  return true;
+}
+
+export async function retryFailedOfflineMutations(filter?: (mutation: FailedOfflineMutation) => boolean) {
+  const failedQueue = await readFailedMutationQueue();
+  const selected = failedQueue.filter((mutation) => (filter ? filter(mutation) : true));
+  if (selected.length === 0) return 0;
+
+  const retriedMutations: OfflineMutation[] = selected.map((target) => {
+    const { failedAt: _failedAt, failureReason: _failureReason, ...baseMutation } = target;
+    return {
+      ...baseMutation,
+      attempts: 0,
+      lastAttemptAt: null,
+      nextAttemptAt: null,
+      lastError: null,
+    };
+  });
+
+  await writeFailedMutationQueue(
+    failedQueue.filter((mutation) => !selected.some((item) => item.id === mutation.id)),
+  );
+  await replaceQueue((current) => [...current, ...retriedMutations]);
+  retriedMutations.forEach((mutation) => emitMutationEvent({ type: 'queued', mutation }));
+  void drainOfflineMutationQueue();
+  return retriedMutations.length;
+}
+
 export async function drainOfflineMutationQueue() {
   if (drainInFlight) return drainInFlight;
 
@@ -1151,6 +2142,13 @@ export async function drainOfflineMutationQueue() {
 
     while (queue.length > 0) {
       const current = queue[0]!;
+      if (isExpiredMomentCreateMutation(current)) {
+        if (current.kind === 'moment_media_create') {
+          await removeStagedOfflineMomentUpload(current.payload.localUri);
+        }
+        queue = await replaceQueue((existing) => existing.filter((item) => item.id !== current.id));
+        continue;
+      }
       if (current.nextAttemptAt && current.nextAttemptAt > Date.now()) {
         break;
       }

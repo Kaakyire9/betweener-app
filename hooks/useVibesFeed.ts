@@ -214,7 +214,6 @@ export default function useVibesFeed({
 
   useEffect(() => {
     if (!userId) {
-      setCachedMatches([]);
       setSnapshotHydrated(true);
       return;
     }
@@ -250,11 +249,6 @@ export default function useVibesFeed({
 
   useEffect(() => {
     if (!userId) {
-      setBlockedIds(new Set());
-      setSwipedTodayIds(new Set());
-      setPendingIntentPeerIds(new Set());
-      setAcceptedMatchPeerIds(new Set());
-      setChattedPeerIds(new Set());
       setExclusionsHydrated(true);
       return;
     }
