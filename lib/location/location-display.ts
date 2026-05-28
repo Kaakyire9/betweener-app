@@ -1,3 +1,5 @@
+import { findCountryByCode, findCountryByLabel, getCountryCodeByName } from '@/lib/location/countries';
+
 export const BROAD_REGION_LABELS = new Set([
   'africa',
   'north america',
@@ -105,10 +107,51 @@ const getCountry = (source: Record<string, any>) =>
 const getCountryCode = (source: Record<string, any>) =>
   normalizeLocationValue(source?.current_country_code || source?.currentCountryCode);
 
+const resolveCountryMetadata = (source: Record<string, any>) => {
+  const explicitCountry = getCountry(source);
+  const explicitCode = getCountryCode(source).toUpperCase();
+  const inferredCountryFromName = findCountryByLabel(explicitCountry);
+
+  if (inferredCountryFromName) {
+    return {
+      country: inferredCountryFromName.label,
+      countryCode: inferredCountryFromName.code,
+    };
+  }
+
+  if (explicitCode) {
+    const countryFromCode = findCountryByCode(explicitCode);
+    if (countryFromCode) {
+      return {
+        country: explicitCountry || countryFromCode.label,
+        countryCode: countryFromCode.code,
+      };
+    }
+  }
+
+  const fallbackCountrySource = [
+    getFirstLocationPart(source?.location),
+    getFirstLocationPart(source?.city),
+    getFirstLocationPart(source?.region),
+  ].find((value) => Boolean(findCountryByLabel(value)));
+
+  const inferredFallbackCountry = findCountryByLabel(fallbackCountrySource);
+  if (inferredFallbackCountry) {
+    return {
+      country: inferredFallbackCountry.label,
+      countryCode: inferredFallbackCountry.code,
+    };
+  }
+
+  return {
+    country: explicitCountry,
+    countryCode: explicitCountry ? getCountryCodeByName(explicitCountry) || explicitCode : explicitCode,
+  };
+};
+
 const isCountryOnlyValue = (value?: string | null, source?: Record<string, any>) => {
   if (!source) return false;
-  const country = getCountry(source);
-  const code = getCountryCode(source);
+  const { country, countryCode: code } = resolveCountryMetadata(source);
   return sameLocationLabel(value, country) || sameLocationLabel(value, code);
 };
 
@@ -136,8 +179,7 @@ export const buildLocationDisplay = (
   const city = getFirstLocationPart(source?.city);
   const location = getFirstLocationPart(source?.location);
   const region = getFirstLocationPart(source?.region);
-  const currentCountry = getCountry(data);
-  const countryCode = getCountryCode(data);
+  const { country: currentCountry, countryCode } = resolveCountryMetadata(data);
   const flag = opts?.includeFlag === false ? '' : toFlagEmoji(countryCode);
   const precision = normalizeLocationValue(source?.location_precision || source?.locationPrecision).toUpperCase();
   const surface = opts?.surface || 'default';
@@ -165,7 +207,7 @@ export const buildLocationDisplay = (
 
   const specific = nonAdministrativeCity || nonAdministrativeLocation || (cityIsUsable ? city : '') || (locationIsUsable ? location : '');
   const regionLabel = regionIsUsable ? region : '';
-  const country = currentCountry || (countryCode === 'GH' ? 'Ghana' : '');
+  const country = currentCountry || (countryCode ? findCountryByCode(countryCode)?.label || '' : '');
   const profilePlace = [specific || regionLabel, country].filter((value, index, arr) => {
     if (!value) return false;
     return index === 0 || !sameLocationLabel(value, arr[0]);

@@ -1,13 +1,19 @@
 import { getOrCreateDeviceKeypair } from '@/lib/e2ee';
+import { clearAppIconBadgeCount } from '@/lib/notifications/app-badge';
 import { registerPushToken } from '@/lib/notifications/push';
 import { clearSignupSession, consumeSignupMetadata, finalizeSignupPhoneVerification, getSignupPhoneState, updateSignupEventForUser } from '@/lib/signup-tracking';
-import { ensureFreshSession, initSupabaseAuthLifecycle, supabase } from '@/lib/supabase';
+import { persistSessionExpiredReason } from '@/lib/auth-session-reason';
+import { resetChatDbForUserSignOut } from '@/lib/chat/local/chat-db';
+import { clearChatBootCacheForUser } from '@/lib/chat/local/chat-boot-cache';
+import { ensureFreshSession, getRecentSupabaseAuthFailure, hydratePersistedSupabaseSession, initSupabaseAuthLifecycle, supabase } from '@/lib/supabase';
 import { isLikelyNetworkError } from '@/lib/network';
 import { enqueueProfileUpdateMutation } from '@/lib/offline/mutation-queue';
+import { fetchUserPresence, overlayPresence, setCurrentUserPresence } from '@/lib/user-presence';
 import { Session, User } from '@supabase/supabase-js';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from '@react-native-community/netinfo';
 import type { Database } from '@/supabase/types/database';
 import { setSentryUser } from '@/lib/telemetry/sentry';
 
@@ -18,6 +24,10 @@ type PersistedAuthSnapshot = {
   profile: Profile | null;
   phoneVerified: boolean;
   cachedAt: number;
+};
+
+type RestoreSnapshotOptions = {
+  hydrateClient?: boolean;
 };
 
 // Only allow writing actual DB columns (compile-time enforced). Also prevent callers
@@ -44,6 +54,7 @@ type AuthContextType = {
   phoneVerified: boolean;
   authRecoveryPending: boolean;
   hadStableAppAccess: boolean;
+  usingPersistedSessionFallback: boolean;
   
   // Auth Actions
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
@@ -66,9 +77,39 @@ const PROFILE_CACHE_TTL_MS = 60_000;
 const RESUME_REFRESH_THROTTLE_MS = 10_000;
 const RESUME_REFRESH_TIMEOUT_MS = 6_000;
 const AUTH_SNAPSHOT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const NETINFO_TIMEOUT_MS = 1200;
+const PERSISTED_SESSION_HYDRATE_BLOCK_MS = 5 * 60_000;
+const UNREQUESTED_SIGNED_OUT_THROTTLE_MS = 15_000;
+const PRESENCE_HEARTBEAT_MS = 30_000;
+const PRESENCE_OFFLINE_DELAY_MS = 10_000;
+
+const isExpiredJwtError = (error: unknown) => {
+  const code = String((error as any)?.code || '');
+  const message = String((error as any)?.message || '').toLowerCase();
+  return code === 'PGRST303' || message.includes('jwt expired');
+};
 
 const getPhoneVerifiedCacheKey = (userId: string) =>
   `${PHONE_VERIFIED_CACHE_KEY_PREFIX}${userId}`;
+
+const isReachableNetState = (state: {
+  isConnected: boolean | null;
+  isInternetReachable: boolean | null;
+}) => state.isConnected !== false && state.isInternetReachable !== false;
+
+const probeReachableNetwork = async () => {
+  try {
+    const state = await Promise.race([
+      fetchNetInfo(),
+      new Promise<ReturnType<typeof fetchNetInfo>>((_, reject) =>
+        setTimeout(() => reject(new Error('netinfo_timeout')), NETINFO_TIMEOUT_MS),
+      ),
+    ]);
+    return isReachableNetState(state as { isConnected: boolean | null; isInternetReachable: boolean | null });
+  } catch {
+    return true;
+  }
+};
 
 const readPersistedAuthSnapshot = async (): Promise<PersistedAuthSnapshot | null> => {
   try {
@@ -292,7 +333,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [phoneVerified, setPhoneVerified] = useState(false);
   const [authRecoveryPending, setAuthRecoveryPending] = useState(false);
   const [hadStableAppAccess, setHadStableAppAccess] = useState(false);
+  const [usingPersistedSessionFallback, setUsingPersistedSessionFallback] = useState(false);
   const presenceUpdateAtRef = useRef(0);
+  const lastPresenceOnlineRef = useRef<boolean | null>(null);
   const resumeRefreshAtRef = useRef(0);
   const phoneRefreshInFlightRef = useRef(false);
   const phoneRefreshPromiseRef = useRef<Promise<boolean> | null>(null);
@@ -304,6 +347,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const accessTokenRef = useRef<string | null>(null);
   const signOutRequestedRef = useRef(false);
   const currentSessionUserIdRef = useRef<string | null>(null);
+  const persistedSessionHydrateBlockedUntilRef = useRef(0);
+  const lastUnrequestedSignedOutHandledAtRef = useRef(0);
 
   // Computed states
   const isAuthenticated = !!session && !!user;
@@ -317,6 +362,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     currentSessionUserIdRef.current = null;
     setAuthRecoveryPending(false);
     setHadStableAppAccess(false);
+    setUsingPersistedSessionFallback(false);
     setSession(null);
     setUser(null);
     setProfile(null);
@@ -340,12 +386,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const restoreAuthSnapshot = async (reason: string) => {
+  const maybeHydratePersistedSession = async (
+    nextSession: Session | null | undefined,
+    reason: string,
+    options?: RestoreSnapshotOptions
+  ) => {
+    if (!nextSession?.access_token) return false;
+    if (options?.hydrateClient === false) return false;
+    if (Date.now() < persistedSessionHydrateBlockedUntilRef.current) {
+      return false;
+    }
+
+    const restored = await hydratePersistedSupabaseSession(nextSession, reason);
+    if (!restored) {
+      persistedSessionHydrateBlockedUntilRef.current =
+        Date.now() + PERSISTED_SESSION_HYDRATE_BLOCK_MS;
+    }
+    return restored;
+  };
+
+  const restoreAuthSnapshot = async (
+    reason: string,
+    options?: RestoreSnapshotOptions
+  ) => {
     const snapshot = await readPersistedAuthSnapshot();
     if (!snapshot) return null;
 
+    void maybeHydratePersistedSession(snapshot.session, reason, options);
+
     accessTokenRef.current = snapshot.session.access_token ?? null;
     currentSessionUserIdRef.current = snapshot.session.user?.id ?? null;
+    setUsingPersistedSessionFallback(true);
     const restoredStableAccess =
       !!snapshot.session &&
       !!snapshot.session.user &&
@@ -377,6 +448,65 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     return snapshot;
+  };
+
+  const restoreProfileFromPersistedSnapshot = async (
+    userId: string,
+    reason: string,
+    nextSession?: Session | null,
+    options?: RestoreSnapshotOptions
+  ): Promise<Profile | null> => {
+    const snapshot = await readPersistedAuthSnapshot();
+    if (!snapshot?.profile || snapshot.session.user?.id !== userId) return null;
+
+    const resolvedSession = nextSession ?? session ?? snapshot.session;
+    const resolvedUser = resolvedSession?.user ?? snapshot.session.user ?? null;
+    const resolvedPhoneVerified =
+      snapshot.phoneVerified === true || snapshot.profile.phone_verified === true;
+
+    accessTokenRef.current =
+      resolvedSession?.access_token ?? snapshot.session.access_token ?? accessTokenRef.current;
+    currentSessionUserIdRef.current = userId;
+    void maybeHydratePersistedSession(
+      resolvedSession ?? snapshot.session,
+      reason,
+      options
+    );
+    setUsingPersistedSessionFallback(true);
+    profileCacheRef.current = {
+      userId,
+      profile: snapshot.profile,
+      fetchedAt: Date.now(),
+    };
+
+    if (resolvedSession) {
+      setSession(resolvedSession);
+    }
+    if (resolvedUser) {
+      setUser(resolvedUser);
+    }
+    setProfile(snapshot.profile);
+    setPhoneVerified((current) => current || resolvedPhoneVerified);
+
+    if (
+      resolvedUser?.email_confirmed_at &&
+      resolvedPhoneVerified &&
+      snapshot.profile.profile_completed === true
+    ) {
+      setHadStableAppAccess(true);
+      setAuthRecoveryPending(false);
+    }
+
+    if (typeof __DEV__ !== "undefined" && __DEV__) {
+      console.log("[auth] restored persisted profile snapshot", {
+        reason,
+        userId,
+        profileCompleted: snapshot.profile.profile_completed,
+        phoneVerified: resolvedPhoneVerified,
+      });
+    }
+
+    return snapshot.profile;
   };
 
   // Ensure Supabase token refresh is correctly managed across iOS background/foreground.
@@ -460,6 +590,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         accessTokenRef.current = initialSession?.access_token ?? null;
         currentSessionUserIdRef.current = initialSession?.user?.id ?? null;
         setAuthRecoveryPending(false);
+        setUsingPersistedSessionFallback(false);
+        persistedSessionHydrateBlockedUntilRef.current = 0;
+        lastUnrequestedSignedOutHandledAtRef.current = 0;
         setSession(initialSession);
         setUser(initialSession?.user ?? null);
 
@@ -473,7 +606,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (initialSession?.user) {
           // Warm profile state on cold launch so screens don't wait on a later auth event.
           void ensureProfileExists(initialSession.user.id);
-          const initialProfile = await fetchProfile(initialSession.user.id);
+          let initialProfile = await fetchProfile(initialSession.user.id);
+          if (!initialProfile) {
+            initialProfile = await restoreProfileFromPersistedSnapshot(
+              initialSession.user.id,
+              "initial_profile_fetch_failed",
+              initialSession
+            );
+          }
           if (!cancelled && initialProfile?.phone_verified === true) {
             setPhoneVerified(true);
           }
@@ -529,6 +669,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (session?.user) {
           signOutRequestedRef.current = false;
           setAuthRecoveryPending(false);
+          setUsingPersistedSessionFallback(false);
+          persistedSessionHydrateBlockedUntilRef.current = 0;
+          lastUnrequestedSignedOutHandledAtRef.current = 0;
           const nextUserId = session.user.id;
           const isRedundantInitialSession =
             _event === "INITIAL_SESSION" &&
@@ -566,6 +709,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (!finalProfile) {
             finalProfile = await fetchProfile(session.user.id);
           }
+          if (!finalProfile) {
+            finalProfile = await restoreProfileFromPersistedSnapshot(
+              session.user.id,
+              `auth_event:${_event}:profile_fetch_failed`,
+              session
+            );
+          }
           if (
             session.user.email_confirmed_at &&
             (finalProfile?.phone_verified === true || phoneVerified) &&
@@ -587,8 +737,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
 
           if (_event === "SIGNED_OUT") {
+            const now = Date.now();
+            if (
+              now - lastUnrequestedSignedOutHandledAtRef.current <
+              UNREQUESTED_SIGNED_OUT_THROTTLE_MS
+            ) {
+              return;
+            }
+            lastUnrequestedSignedOutHandledAtRef.current = now;
+            persistedSessionHydrateBlockedUntilRef.current =
+              now + PERSISTED_SESSION_HYDRATE_BLOCK_MS;
             setAuthRecoveryPending(true);
-            const restored = await restoreAuthSnapshot("auth_event:SIGNED_OUT_unrequested");
+            const networkReachable = await probeReachableNetwork();
+            const recentAuthFailure = getRecentSupabaseAuthFailure();
+            if (typeof __DEV__ !== "undefined" && __DEV__) {
+              console.log("[auth] signed_out decision", {
+                networkReachable,
+                recentAuthFailureStatus: recentAuthFailure?.status ?? null,
+                recentAuthFailureAgeMs: recentAuthFailure?.ageMs ?? null,
+                action:
+                  networkReachable && recentAuthFailure
+                    ? "route_to_login"
+                    : "preserve_fallback",
+              });
+            }
+            if (networkReachable && recentAuthFailure) {
+              await persistSessionExpiredReason("online_signed_out");
+              await clearPersistedAuthSnapshot();
+              applySignedOutState();
+              return;
+            }
+            const restored = await restoreAuthSnapshot(
+              "auth_event:SIGNED_OUT_unrequested",
+              { hydrateClient: false }
+            );
             if (!restored) {
               applySignedOutState();
             } else {
@@ -655,18 +837,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (typeof __DEV__ !== "undefined" && __DEV__) {
           console.log("[auth] fetchProfile: rest fetch failed");
         }
+        const staleCachedProfile =
+          profileCacheRef.current?.userId === userId ? profileCacheRef.current.profile : null;
+        if (staleCachedProfile) {
+          setProfile(staleCachedProfile);
+          return staleCachedProfile;
+        }
+
+        const restoredProfile = await restoreProfileFromPersistedSnapshot(
+          userId,
+          "fetch_profile_rest_failed"
+        );
+        if (restoredProfile) {
+          return restoredProfile;
+        }
+
         return null;
       }
 
-      profileCacheRef.current = { userId, profile: restProfile, fetchedAt: Date.now() };
-      setProfile(restProfile);
+      const presenceResult = await fetchUserPresence(userId);
+      const mergedProfile = overlayPresence(restProfile as any, (presenceResult.data as any) ?? null);
+      profileCacheRef.current = { userId, profile: mergedProfile, fetchedAt: Date.now() };
+      setProfile(mergedProfile);
       if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.log("[auth] fetchProfile: rest ok");
       }
-      return restProfile;
+      return mergedProfile;
       } catch (error) {
       if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.log("[auth] fetchProfile: error", error);
+      }
+      const staleCachedProfile =
+        profileCacheRef.current?.userId === userId ? profileCacheRef.current.profile : null;
+      if (staleCachedProfile) {
+        setProfile(staleCachedProfile);
+        return staleCachedProfile;
+      }
+      const restoredProfile = await restoreProfileFromPersistedSnapshot(
+        userId,
+        "fetch_profile_exception"
+      );
+      if (restoredProfile) {
+        return restoredProfile;
       }
       return null;
       }
@@ -837,19 +1049,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const updatePresence = async (nextOnline: boolean) => {
     if (!user?.id) return;
+    if (authRecoveryPending || usingPersistedSessionFallback) return;
     const now = Date.now();
-    if (now - presenceUpdateAtRef.current < 5_000) return;
+    const isStateChange = lastPresenceOnlineRef.current !== nextOnline;
+    const shouldThrottle = nextOnline && !isStateChange && now - presenceUpdateAtRef.current < 5_000;
+    if (shouldThrottle) return;
     presenceUpdateAtRef.current = now;
     try {
-      const { error } = await supabase
-        .from('profiles')
-        .update({
-          online: nextOnline,
-          last_active: new Date().toISOString(),
-        })
-        .eq('user_id', user.id);
+      const sessionStatus = await ensureFreshSession();
+      if (sessionStatus === 'failed' || sessionStatus === 'no_session') {
+        await restoreProfileFromPersistedSnapshot(user.id, `presence_skip_${sessionStatus}`);
+        return;
+      }
+      const presenceAt = new Date().toISOString();
+      const { error } = await setCurrentUserPresence(nextOnline);
       if (error) {
-        if (isLikelyNetworkError(error)) {
+        if (isLikelyNetworkError(error) || isExpiredJwtError(error)) {
+          if (isExpiredJwtError(error)) {
+            await restoreProfileFromPersistedSnapshot(user.id, 'presence_expired_jwt');
+          }
           if (typeof __DEV__ !== 'undefined' && __DEV__) {
             console.warn('[presence] update warning', error);
           }
@@ -857,10 +1075,56 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           console.error('[presence] update error', error);
         }
       } else if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        lastPresenceOnlineRef.current = nextOnline;
+        setProfile((prev) =>
+          prev
+            ? overlayPresence(prev as any, {
+                user_id: user.id,
+                online: nextOnline,
+                last_active: presenceAt,
+              })
+            : prev,
+        );
+        if (profileCacheRef.current?.userId === user.id && profileCacheRef.current.profile) {
+          profileCacheRef.current = {
+            ...profileCacheRef.current,
+            profile: overlayPresence(profileCacheRef.current.profile as any, {
+              user_id: user.id,
+              online: nextOnline,
+              last_active: presenceAt,
+            }),
+            fetchedAt: Date.now(),
+          };
+        }
         console.log('[presence] set', { online: nextOnline });
+      } else {
+        lastPresenceOnlineRef.current = nextOnline;
+        setProfile((prev) =>
+          prev
+            ? overlayPresence(prev as any, {
+                user_id: user.id,
+                online: nextOnline,
+                last_active: presenceAt,
+              })
+            : prev,
+        );
+        if (profileCacheRef.current?.userId === user.id && profileCacheRef.current.profile) {
+          profileCacheRef.current = {
+            ...profileCacheRef.current,
+            profile: overlayPresence(profileCacheRef.current.profile as any, {
+              user_id: user.id,
+              online: nextOnline,
+              last_active: presenceAt,
+            }),
+            fetchedAt: Date.now(),
+          };
+        }
       }
     } catch (error) {
-      if (isLikelyNetworkError(error)) {
+      if (isLikelyNetworkError(error) || isExpiredJwtError(error)) {
+        if (isExpiredJwtError(error)) {
+          await restoreProfileFromPersistedSnapshot(user.id, 'presence_exception_expired_jwt');
+        }
         if (typeof __DEV__ !== 'undefined' && __DEV__) {
           console.warn('[presence] update warning', error);
         }
@@ -877,12 +1141,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     resumeRefreshAtRef.current = now;
 
     try {
+      const netState = await Promise.race([
+        fetchNetInfo(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), NETINFO_TIMEOUT_MS)),
+      ]);
+      const reachable =
+        netState == null ? true : netState.isConnected !== false && netState.isInternetReachable !== false;
+
+      if (!reachable) {
+        await restoreProfileFromPersistedSnapshot(user.id, "resume_offline");
+        return;
+      }
+
       const status = await Promise.race([
         ensureFreshSession(),
         new Promise<'failed'>((resolve) => setTimeout(() => resolve('failed'), RESUME_REFRESH_TIMEOUT_MS)),
       ]);
 
-      if (status === 'failed' || status === 'no_session') return;
+      if (status === 'failed' || status === 'no_session') {
+        await restoreProfileFromPersistedSnapshot(user.id, `resume_refresh_${status}`);
+        return;
+      }
 
       // Pull the latest session snapshot so downstream requests have a current token.
       const { data } = await Promise.race([
@@ -903,14 +1182,46 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (typeof __DEV__ !== "undefined" && __DEV__) {
         console.log("[auth] refreshSessionOnResume: exception", error);
       }
+      await restoreProfileFromPersistedSnapshot(user.id, "resume_refresh_exception");
     }
   };
 
   useEffect(() => {
     if (!user?.id) return;
     let mounted = true;
-    const setOnline = () => mounted && void updatePresence(true);
-    const setOffline = () => mounted && void updatePresence(false);
+    let offlineTimer: ReturnType<typeof setTimeout> | null = null;
+    let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    let lastNetworkReady = true;
+    const clearOfflineTimer = () => {
+      if (!offlineTimer) return;
+      clearTimeout(offlineTimer);
+      offlineTimer = null;
+    };
+    const clearHeartbeatTimer = () => {
+      if (!heartbeatTimer) return;
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    };
+    const startHeartbeat = () => {
+      clearHeartbeatTimer();
+      heartbeatTimer = setInterval(() => {
+        if (!mounted || AppState.currentState !== 'active') return;
+        void updatePresence(true);
+      }, PRESENCE_HEARTBEAT_MS);
+    };
+    const setOnline = () => {
+      clearOfflineTimer();
+      if (mounted) void updatePresence(true);
+      startHeartbeat();
+    };
+    const scheduleOffline = () => {
+      clearHeartbeatTimer();
+      clearOfflineTimer();
+      offlineTimer = setTimeout(() => {
+        offlineTimer = null;
+        if (mounted) void updatePresence(false);
+      }, PRESENCE_OFFLINE_DELAY_MS);
+    };
 
     setOnline();
     // Cold start with a persisted session won't emit an AppState transition.
@@ -922,13 +1233,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Fire-and-forget: don't block UI thread on resume.
         void refreshSessionOnResume();
       } else {
-        setOffline();
+        scheduleOffline();
       }
+    });
+    const unsubscribeNetInfo = addNetInfoListener((state) => {
+      const nextReady = isReachableNetState(state);
+      if (nextReady && !lastNetworkReady && AppState.currentState === 'active') {
+        setOnline();
+        void refreshSessionOnResume();
+      }
+      lastNetworkReady = nextReady;
     });
 
     return () => {
       mounted = false;
+      clearHeartbeatTimer();
+      clearOfflineTimer();
       subscription.remove();
+      unsubscribeNetInfo();
       void updatePresence(false);
     };
   }, [user?.id]);
@@ -940,9 +1262,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!user?.id) return;
+    if (authRecoveryPending || usingPersistedSessionFallback) return;
     let cancelled = false;
     (async () => {
       try {
+        const sessionStatus = await ensureFreshSession();
+        if (cancelled) return;
+        if (sessionStatus === 'failed' || sessionStatus === 'no_session') {
+          await restoreProfileFromPersistedSnapshot(user.id, `e2ee_skip_${sessionStatus}`);
+          return;
+        }
         const keypair = await getOrCreateDeviceKeypair();
         if (cancelled) return;
         const { data, error } = await supabase
@@ -951,6 +1280,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .eq('user_id', user.id)
           .maybeSingle();
         if (error) {
+          if (isExpiredJwtError(error)) {
+            await restoreProfileFromPersistedSnapshot(user.id, 'e2ee_fetch_expired_jwt');
+            return;
+          }
           console.error('[e2ee] fetch public key error', error);
           return;
         }
@@ -960,18 +1293,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             .update({ public_key: keypair.publicKeyB64 })
             .eq('user_id', user.id);
           if (updateError) {
+            if (isExpiredJwtError(updateError)) {
+              await restoreProfileFromPersistedSnapshot(user.id, 'e2ee_update_expired_jwt');
+              return;
+            }
             console.error('[e2ee] update public key error', updateError);
           }
         }
         await registerPushToken(user.id);
       } catch (error) {
+        if (isExpiredJwtError(error)) {
+          await restoreProfileFromPersistedSnapshot(user.id, 'e2ee_exception_expired_jwt');
+          return;
+        }
         console.error('[e2ee] ensure identity error', error);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [user?.id]);
+  }, [authRecoveryPending, usingPersistedSessionFallback, user?.id]);
 
   useEffect(() => {
     if (!session?.user) return;
@@ -1034,19 +1375,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     signOutRequestedRef.current = true;
+    const signedOutUserId = user?.id ?? null;
     await clearPersistedAuthSnapshot();
     try {
       await AsyncStorage.setItem(EXPLICIT_SIGN_OUT_KEY, JSON.stringify({ at: Date.now() }));
     } catch {
       // best effort only
     }
-    if (user?.id) {
+    if (signedOutUserId) {
       void updatePresence(false);
     }
     const { error } = await supabase.auth.signOut();
     if (error) {
       console.error('Error signing out:', error);
       signOutRequestedRef.current = false;
+      return;
+    }
+
+    if (signedOutUserId) {
+      try {
+        await resetChatDbForUserSignOut(signedOutUserId);
+        clearChatBootCacheForUser(signedOutUserId);
+        await clearAppIconBadgeCount();
+      } catch (clearError) {
+        console.warn('[chat] clear local data on sign out failed', clearError);
+      }
     }
   };
 
@@ -1130,6 +1483,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     phoneVerified,
     authRecoveryPending,
     hadStableAppAccess,
+    usingPersistedSessionFallback,
     
     // Actions
     signIn,
@@ -1165,6 +1519,7 @@ export function useAuthGuard() {
     phoneVerified,
     authRecoveryPending,
     hadStableAppAccess,
+    usingPersistedSessionFallback,
   } = useAuth();
 
   const stableAccess = isAuthenticated && isEmailVerified && phoneVerified && hasProfile;

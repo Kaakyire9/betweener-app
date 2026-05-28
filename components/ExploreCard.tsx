@@ -17,7 +17,7 @@ import { getPresenceDisplay } from "@/lib/presence";
 import { getProfileInitials, getProfilePlaceholderPalette, hasProfileImage } from "@/lib/profile-placeholders";
 import type { Match } from "@/types/match";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AccessibilityInfo, Animated, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -43,7 +43,7 @@ const toTitleLabel = (value: string) =>
     .replace(/\s+/g, ' ')
     .replace(/\b\p{L}/gu, (letter) => letter.toUpperCase());
 
-export default function ExploreCard({
+function ExploreCard({
   match,
   onPress,
   isPreviewing,
@@ -77,14 +77,14 @@ export default function ExploreCard({
   );
   const gradientColors = useMemo(
     () => (isDark
-      ? ["rgba(0,0,0,0)", "rgba(3,14,18,0.28)", "rgba(2,8,10,0.82)"]
-      : ["rgba(0,0,0,0)", "rgba(4,19,22,0.32)", "rgba(2,8,10,0.74)"] ),
+      ? ["rgba(0,0,0,0)", "rgba(3,14,18,0.18)", "rgba(2,8,10,0.76)"]
+      : ["rgba(0,0,0,0)", "rgba(4,19,22,0.24)", "rgba(2,8,10,0.68)"] ),
     [isDark]
   );
   const bottomGradientColors = useMemo(
     () => (isDark
-      ? ["rgba(0,0,0,0)", "rgba(2,8,10,0.44)", "rgba(2,8,10,0.84)"]
-      : ["rgba(0,0,0,0)", "rgba(5,22,24,0.34)", "rgba(4,14,16,0.72)"]),
+      ? ["rgba(0,0,0,0)", "rgba(2,8,10,0.34)", "rgba(2,8,10,0.88)"]
+      : ["rgba(0,0,0,0)", "rgba(5,22,24,0.28)", "rgba(4,14,16,0.78)"]),
     [isDark],
   );
   const sideVignetteColors = useMemo(
@@ -357,7 +357,7 @@ export default function ExploreCard({
             uri={match.avatar_url}
             style={styles.image}
             contentFit="cover"
-            contentPosition={{ top: "42%", left: "50%" }}
+            contentPosition={{ top: "34%", left: "50%" }}
             fallback={
               <LinearGradientSafe
                 colors={[placeholderPalette.start, placeholderPalette.end]}
@@ -487,7 +487,7 @@ export default function ExploreCard({
             </Text>
             {displayName.ageLabel ? (
               <View style={styles.ageCluster} pointerEvents="none">
-                <Text style={styles.ageDot} allowFontScaling={false}>·</Text>
+                <View style={styles.ageDotMarker} />
                 <Text style={styles.ageText} allowFontScaling={false}>{displayName.ageLabel}</Text>
               </View>
             ) : null}
@@ -573,7 +573,6 @@ const createStyles = (
 ) => {
   const activeNowBgColor = withAlpha(theme.secondary, isDark ? 0.9 : 0.95);
   const recentlyActiveBgColor = withAlpha(theme.accent, isDark ? 0.85 : 0.9);
-  const infoBg = isDark ? 'rgba(3,14,18,0.10)' : 'rgba(4,19,22,0.08)';
   return StyleSheet.create({
     cardShell: {
       position: "absolute",
@@ -627,20 +626,20 @@ const createStyles = (
     },
     atmosphere: {
       position: "absolute",
-      left: -20,
-      right: -20,
-      bottom: metrics.cardHeight * 0.16,
-      height: metrics.cardHeight * 0.42,
+      left: -12,
+      right: -12,
+      bottom: metrics.cardHeight * 0.2,
+      height: metrics.cardHeight * 0.34,
       borderRadius: metrics.cardBorderRadius * 1.5,
       overflow: "hidden",
     },
-    gradient: { position: "absolute", left: 0, right: 0, bottom: 0, height: "68%" },
+    gradient: { position: "absolute", left: 0, right: 0, bottom: 0, height: "62%" },
     bottomReadabilityGradient: {
       position: "absolute",
       left: 0,
       right: 0,
       bottom: 0,
-      height: "54%",
+      height: "48%",
     },
     info: {
       position: "absolute",
@@ -648,37 +647,40 @@ const createStyles = (
       right: 0,
       bottom: 0,
       maxHeight: Math.max(190, metrics.cardHeight * 0.58),
-      paddingHorizontal: metrics.overlayPadding.horizontal,
-      paddingTop: metrics.device.compactHeight ? 14 : metrics.overlayPadding.top,
-      paddingBottom: metrics.overlayPadding.bottom,
-      backgroundColor: infoBg,
+      paddingHorizontal: metrics.overlayPadding.horizontal + 2,
+      paddingTop: metrics.device.compactHeight ? 18 : metrics.overlayPadding.top + 8,
+      paddingBottom: metrics.overlayPadding.bottom + 4,
+      backgroundColor: 'transparent',
       borderTopWidth: 0,
       borderTopColor: 'transparent',
     },
-    nameRow: { flexDirection: "row", alignItems: "baseline", gap: 6, marginBottom: metrics.device.compactHeight ? 6 : 8 },
+    nameRow: { flexDirection: "row", alignItems: "baseline", gap: 6, marginBottom: metrics.device.compactHeight ? 8 : 10 },
     name: {
       color: VIBES_DEPTH_COLORS.cream,
-      fontSize: metrics.device.compactHeight ? Math.max(24, metrics.nameFontSize - 1) : metrics.nameFontSize,
+      fontSize: metrics.device.compactHeight ? Math.max(25, metrics.nameFontSize) : metrics.nameFontSize + 2,
       flexShrink: 1,
       flexGrow: 0,
       maxWidth: Math.max(168, metrics.cardWidth - (metrics.overlayPadding.horizontal * 2) - 88),
       fontFamily: 'PlayfairDisplay_700Bold',
       minWidth: 0,
-      lineHeight: (metrics.device.compactHeight ? Math.max(24, metrics.nameFontSize - 1) : metrics.nameFontSize) + 6,
+      lineHeight: (metrics.device.compactHeight ? Math.max(25, metrics.nameFontSize) : metrics.nameFontSize + 2) + 6,
       textShadowColor: isDark ? 'rgba(0,0,0,0.58)' : 'rgba(0,0,0,0.5)',
       textShadowOffset: { width: 0, height: 4 },
       textShadowRadius: 13,
+      letterSpacing: -0.5,
     },
     ageCluster: {
       flexDirection: "row",
       alignItems: "baseline",
       flexShrink: 0,
     },
-    ageDot: {
-      color: "rgba(255,255,255,0.78)",
-      fontSize: Math.max(18, metrics.nameFontSize - 8),
-      fontFamily: 'Manrope_700Bold',
-      marginRight: 5,
+    ageDotMarker: {
+      width: 5,
+      height: 5,
+      borderRadius: 999,
+      backgroundColor: "rgba(255,255,255,0.72)",
+      marginRight: 8,
+      marginBottom: 6,
     },
     ageText: {
       color: "rgba(244,232,208,0.94)",
@@ -692,16 +694,16 @@ const createStyles = (
     locationRow: {
       flexDirection: "row",
       alignItems: "center",
-      marginBottom: hasIntroVideo ? (metrics.device.compactHeight ? 6 : 7) : (metrics.device.compactHeight ? 7 : 10),
+      marginBottom: hasIntroVideo ? (metrics.device.compactHeight ? 7 : 8) : (metrics.device.compactHeight ? 8 : 11),
     },
-    location: { color: "rgba(255,255,255,0.9)", marginLeft: 6, fontFamily: 'Manrope_600SemiBold', flexShrink: 1, fontSize: metrics.device.compactHeight ? 13 : 14 },
+    location: { color: "rgba(255,255,255,0.92)", marginLeft: 6, fontFamily: 'Manrope_600SemiBold', flexShrink: 1, fontSize: metrics.device.compactHeight ? 13 : 14, letterSpacing: 0.1 },
     locationFlag: { marginLeft: 6, fontSize: 15 },
     contextRow: {
       flexDirection: 'row',
       alignItems: 'flex-start',
       justifyContent: 'space-between',
       gap: 8,
-      marginBottom: 2,
+      marginBottom: 4,
     },
     alignmentChips: { flex: 1, minWidth: 0, flexDirection: 'row', flexWrap: 'wrap', gap: 6, overflow: 'hidden' },
     alignmentChipsEmpty: { flex: 1 },
@@ -860,3 +862,11 @@ const createStyles = (
     },
   });
 };
+
+export default memo(
+  ExploreCard,
+  (prev, next) =>
+    prev.match === next.match &&
+    prev.isPreviewing === next.isPreviewing &&
+    prev.layoutMetrics === next.layoutMetrics,
+);

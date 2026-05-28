@@ -1,29 +1,53 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
-import { getStickerMessagePreview, getStickerReactionTarget, parseStickerPreview } from '@/lib/chat-sticker-preview';
+import { upsertChatPref } from '@/lib/chat/chat-list-actions-service';
+import { ChatOutboxService } from '@/lib/chat/outbox/chat-outbox-service';
+import { getStickerReactionTarget, parseStickerPreview } from '@/lib/chat-sticker-preview';
+import { getChatMessagePreviewText, getDatePlanPreviewText, parseDatePlanPreviewMeta } from '@/lib/message-preview';
 import { getSafeRemoteImageUri, getUserFacingDisplayName } from '@/lib/profile/display-name';
-import { getDatePlanPreviewText } from '@/lib/message-preview';
 import { supabase } from '@/lib/supabase';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Image as ExpoImage } from 'expo-image';
 import * as Notifications from 'expo-notifications';
 import { LinearGradient } from 'expo-linear-gradient';
+import { createVideoPlayer } from 'expo-video';
 import { usePathname, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Animated, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+type ToastKind =
+  | 'message'
+  | 'media'
+  | 'message_reaction'
+  | 'live_location'
+  | 'date_plan'
+  | 'moment'
+  | 'system'
+  | 'generic';
 
 type ToastItem = {
   id: string;
   title: string;
   body: string;
+  kind?: ToastKind;
   emoji?: string | null;
   avatarUrl?: string | null;
   profileId?: string | null;
   chatId?: string | null;
+  peerUserId?: string | null;
+  groupKey?: string | null;
+  groupCount?: number;
+  mediaThumbnailUrl?: string | null;
+  mediaThumbnailKind?: 'image' | 'video' | 'document' | 'location' | 'date_plan' | null;
+  mediaThumbnailLabel?: string | null;
   route?: string | null;
   routeParams?: Record<string, string>;
 };
+
+type ToastThumbnailSource = { uri: string } | unknown | null;
 
 type NotificationPrefs = {
   inapp_enabled: boolean;
@@ -45,9 +69,220 @@ type NotificationPrefs = {
   quiet_hours_tz: string | null;
 };
 
+type MessageToastRow = {
+  id: string;
+  sender_id: string;
+  receiver_id: string;
+  text: string | null;
+  message_type: string | null;
+  is_view_once?: boolean | null;
+};
+
+const LOCATION_LIVE_PREFIX = 'LIVE:';
+const LOCATION_TEXT_PREFIX = '\u{1F4CD}';
+const GOOGLE_MAPS_NATIVE_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+const GOOGLE_MAPS_WEB_API_KEY =
+  process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY || GOOGLE_MAPS_NATIVE_API_KEY;
+const GOOGLE_MAPS_MAP_ID = process.env.EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID;
+
 const TOAST_DURATION_MS = 4200;
 const MOMENT_REACTION_BURST_WINDOW_MS = 30000;
 const MOMENT_POST_BURST_WINDOW_MS = 600000;
+const videoThumbnailCache = new Map<string, ToastThumbnailSource>();
+const videoThumbnailInflight = new Map<string, Promise<ToastThumbnailSource>>();
+
+const isRemoteMediaUrl = (value: string | null | undefined) => /^https?:\/\//i.test(String(value || '').trim());
+const DOCUMENT_TEXT_PREFIX = '\u{1F4CE}';
+
+const parseDocumentPreviewLabel = (text: string | null | undefined) => {
+  const normalized = String(text || '').trim();
+  if (!normalized.startsWith(DOCUMENT_TEXT_PREFIX)) return null;
+  const firstLine = normalized.split('\n')[0]?.trim() || '';
+  const withoutPrefix = firstLine.replace(new RegExp(`^${DOCUMENT_TEXT_PREFIX}\\s*`), '');
+  const [namePart] = withoutPrefix.split('|').map((part) => part.trim()).filter(Boolean);
+  return namePart || 'Document';
+};
+
+const getDocumentPreviewBadge = (label: string | null | undefined) => {
+  const normalized = String(label || '').trim();
+  if (!normalized) return 'FILE';
+  const ext = normalized.split('.').pop()?.trim().toUpperCase();
+  if (!ext || ext === normalized.toUpperCase()) return 'FILE';
+  return ext.slice(0, 4);
+};
+
+const buildMapsLink = (lat: number, lng: number) => `https://maps.google.com/?q=${lat},${lng}`;
+
+const parseCoordsLine = (value?: string | null) => {
+  if (!value) return null;
+  const match = value.match(/(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const lat = Number(match[1]);
+  const lng = Number(match[2]);
+  if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
+  return { lat, lng };
+};
+
+const parseCoordsFromMapsUrl = (url?: string | null) => {
+  if (!url) return null;
+  const match = url.match(/q=([-0-9.]+),([-0-9.]+)/);
+  if (!match) return null;
+  const lat = Number(match[1]);
+  const lng = Number(match[2]);
+  if (Number.isNaN(lat) || Number.isNaN(lng)) return null;
+  return { lat, lng };
+};
+
+const getStaticMapUrl = (lat: number, lng: number) => {
+  if (!GOOGLE_MAPS_WEB_API_KEY) return null;
+  const base = 'https://maps.googleapis.com/maps/api/staticmap';
+  const center = `${lat},${lng}`;
+  const marker = `color:0x0ea5a0|${center}`;
+  const mapId = GOOGLE_MAPS_MAP_ID ? `&map_id=${encodeURIComponent(GOOGLE_MAPS_MAP_ID)}` : '';
+  return `${base}?center=${center}&zoom=15&size=640x360&scale=2&markers=${encodeURIComponent(marker)}&key=${GOOGLE_MAPS_WEB_API_KEY}${mapId}`;
+};
+
+const parseLocationPreview = (text: string | null | undefined) => {
+  const lines = String(text || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return null;
+  const first = lines[0] ?? '';
+  const isLive = first.startsWith(LOCATION_LIVE_PREFIX);
+  const isPinned = first.startsWith(LOCATION_TEXT_PREFIX);
+  if (!isLive && !isPinned) return null;
+
+  let label = '';
+  let address = '';
+  let coordsLine = '';
+  let mapLink = '';
+
+  if (isLive) {
+    coordsLine = lines[1] ?? '';
+    label = lines[2] ?? '';
+    address = lines[3] ?? '';
+    mapLink = lines.find((line) => line.includes('maps.google.com') || line.startsWith('http')) ?? '';
+  } else {
+    label = first.replace(LOCATION_TEXT_PREFIX, '').trim();
+    coordsLine = lines[1] ?? '';
+    mapLink = lines.find((line) => line.includes('maps.google.com') || line.startsWith('http')) ?? '';
+    if (lines.length > 2 && lines[2] !== mapLink) {
+      address = lines[2] ?? '';
+    }
+  }
+
+  const coords = parseCoordsLine(coordsLine) ?? parseCoordsFromMapsUrl(mapLink);
+  if (!coords) return null;
+  return {
+    label: label || address || `${coords.lat.toFixed(4)}, ${coords.lng.toFixed(4)}`,
+    mapUrl: getStaticMapUrl(coords.lat, coords.lng),
+    mapLink: mapLink || buildMapsLink(coords.lat, coords.lng),
+    isLive,
+  };
+};
+
+const parseMediaUrlFromMessage = (messageType: string, text: string) => {
+  const firstLine = text.split('\n')[0]?.trim() || '';
+  if (messageType === 'image' && isRemoteMediaUrl(firstLine)) return firstLine;
+  if (messageType === 'video' && isRemoteMediaUrl(firstLine)) return firstLine;
+  return null;
+};
+
+const resolveVideoThumbnailSource = async (videoUrl: string): Promise<ToastThumbnailSource> => {
+  if (!videoUrl) return null;
+  const cached = videoThumbnailCache.get(videoUrl);
+  if (cached) return cached;
+  const inflight = videoThumbnailInflight.get(videoUrl);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    let player: ReturnType<typeof createVideoPlayer> | null = null;
+    try {
+      player = createVideoPlayer({ uri: videoUrl });
+      const thumbnails = await player.generateThumbnailsAsync([0.15], {
+        maxWidth: 96,
+        maxHeight: 96,
+      });
+      const thumbnail = thumbnails[0] ?? null;
+      if (thumbnail) {
+        videoThumbnailCache.set(videoUrl, thumbnail);
+        return thumbnail;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      videoThumbnailInflight.delete(videoUrl);
+      const releasable = player as { release?: () => void; dispose?: () => void } | null;
+      try {
+        releasable?.release?.();
+      } catch {}
+      try {
+        releasable?.dispose?.();
+      } catch {}
+    }
+  })();
+
+  videoThumbnailInflight.set(videoUrl, promise);
+  return promise;
+};
+
+const getMessageToastKind = (row: MessageToastRow | null | undefined): ToastKind => {
+  const messageType = String(row?.message_type || 'text');
+  const text = String(row?.text || '');
+  if (messageType === 'location' && text.startsWith(LOCATION_LIVE_PREFIX)) return 'live_location';
+  if (messageType === 'location') return 'live_location';
+  if (messageType === 'date_plan' || Boolean(getDatePlanPreviewText(text))) return 'date_plan';
+  if (messageType === 'image' || messageType === 'video' || messageType === 'voice' || messageType === 'document') {
+    return 'media';
+  }
+  return 'message';
+};
+
+const getMessageMediaThumbnail = (
+  row: MessageToastRow | null | undefined,
+): { url: string | null; kind: 'image' | 'video' | 'document' | 'location' | 'date_plan' | null; label: string | null } => {
+  const messageType = String(row?.message_type || 'text');
+  const text = String(row?.text || '').trim();
+  const remoteMediaUrl = parseMediaUrlFromMessage(messageType, text);
+
+  if (messageType === 'image' && remoteMediaUrl) {
+    return { url: remoteMediaUrl, kind: 'image', label: null };
+  }
+
+  if (messageType === 'video') {
+    return { url: remoteMediaUrl, kind: 'video', label: 'Video' };
+  }
+
+  if (messageType === 'document' || text.startsWith(DOCUMENT_TEXT_PREFIX)) {
+    return { url: null, kind: 'document', label: parseDocumentPreviewLabel(text) };
+  }
+
+  if (messageType === 'location') {
+    const locationPreview = parseLocationPreview(text);
+    return {
+      url: locationPreview?.mapUrl || null,
+      kind: 'location',
+      label: locationPreview?.label || (text.startsWith(LOCATION_LIVE_PREFIX) ? 'Live now' : 'Open map'),
+    };
+  }
+
+  if (messageType === 'date_plan' || Boolean(getDatePlanPreviewText(text))) {
+    const datePlanPreview = parseDatePlanPreviewMeta(text);
+    const mapUrl =
+      datePlanPreview?.lat != null && datePlanPreview?.lng != null
+        ? getStaticMapUrl(datePlanPreview.lat, datePlanPreview.lng)
+        : null;
+    return {
+      url: mapUrl,
+      kind: 'date_plan',
+      label: datePlanPreview?.placeName || 'Date plan',
+    };
+  }
+
+  return { url: null, kind: null, label: null };
+};
 
 type ProfileLite = {
   id: string;
@@ -102,7 +337,7 @@ export default function InAppToasts() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const pathname = usePathname();
-  const isChatRoute = useMemo(() => pathname?.startsWith('/chat'), [pathname]);
+  const isChatThreadRoute = useMemo(() => /^\/chat\/[^/]+/.test(pathname ?? ''), [pathname]);
   const isMomentsRoute = useMemo(
     () => pathname?.startsWith('/moments') || pathname === '/my-moments',
     [pathname],
@@ -110,6 +345,9 @@ export default function InAppToasts() {
 
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
+  const recentToastKeysRef = useRef<Map<string, number>>(new Map());
+  const toastGroupsRef = useRef<Map<string, { id: string; count: number }>>(new Map());
+  const pausedToastIdsRef = useRef<Set<string>>(new Set());
   const timeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const lastToastAtRef = useRef<Record<string, number>>({});
   const shownMatchCelebrationRef = useRef<Set<string>>(new Set());
@@ -154,24 +392,60 @@ export default function InAppToasts() {
     [],
   );
 
+  const scheduleToastDismiss = useCallback((toastId: string, groupKey?: string | null, delayMs = TOAST_DURATION_MS) => {
+    if (timeouts.current[toastId]) {
+      clearTimeout(timeouts.current[toastId]);
+    }
+    timeouts.current[toastId] = setTimeout(() => {
+      if (pausedToastIdsRef.current.has(toastId)) {
+        scheduleToastDismiss(toastId, groupKey, 1_200);
+        return;
+      }
+      if (groupKey) {
+        const activeGroup = toastGroupsRef.current.get(groupKey);
+        if (activeGroup?.id === toastId) {
+          toastGroupsRef.current.delete(groupKey);
+        }
+      }
+      setToasts((prev) => prev.filter((item) => item.id !== toastId));
+    }, delayMs);
+  }, []);
+
   const pushToast = useCallback((toast: ToastItem, opts?: { replace?: boolean }) => {
+    let nextToast = toast;
+    let replace = opts?.replace === true;
+    if (toast.groupKey) {
+      const currentGroup = toastGroupsRef.current.get(toast.groupKey);
+      if (currentGroup) {
+        nextToast = {
+          ...toast,
+          id: currentGroup.id,
+          groupCount: currentGroup.count + 1,
+        };
+        toastGroupsRef.current.set(toast.groupKey, {
+          id: currentGroup.id,
+          count: currentGroup.count + 1,
+        });
+        replace = true;
+      } else {
+        toastGroupsRef.current.set(toast.groupKey, {
+          id: toast.id,
+          count: toast.groupCount ?? 1,
+        });
+      }
+    }
     const now = Date.now();
-    const lastShownAt = lastToastAtRef.current[toast.id];
-    if (!opts?.replace && lastShownAt && now - lastShownAt < TOAST_DURATION_MS) {
+    const lastShownAt = lastToastAtRef.current[nextToast.id];
+    if (!replace && lastShownAt && now - lastShownAt < TOAST_DURATION_MS) {
       return;
     }
-    lastToastAtRef.current[toast.id] = now;
-    setToasts((prev) => [toast, ...prev.filter((item) => item.id !== toast.id)].slice(0, 3));
-    if (!opts?.replace) {
+    lastToastAtRef.current[nextToast.id] = now;
+    setToasts((prev) => [nextToast, ...prev.filter((item) => item.id !== nextToast.id)].slice(0, 3));
+    if (!replace) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
     }
-    if (timeouts.current[toast.id]) {
-      clearTimeout(timeouts.current[toast.id]);
-    }
-    timeouts.current[toast.id] = setTimeout(() => {
-      setToasts((prev) => prev.filter((item) => item.id !== toast.id));
-    }, TOAST_DURATION_MS);
-  }, []);
+    scheduleToastDismiss(nextToast.id, nextToast.groupKey ?? null);
+  }, [scheduleToastDismiss]);
 
   const activeChatId = useMemo(() => {
     if (!pathname?.startsWith('/chat/')) return null;
@@ -183,6 +457,22 @@ export default function InAppToasts() {
     (otherId?: string | null) => Boolean(activeChatId && otherId && activeChatId === otherId),
     [activeChatId],
   );
+
+  const shouldSuppressToast = useCallback((key: string, ttlMs = 8_000) => {
+    const now = Date.now();
+    const recent = recentToastKeysRef.current;
+    for (const [entryKey, timestamp] of recent.entries()) {
+      if (now - timestamp > ttlMs) {
+        recent.delete(entryKey);
+      }
+    }
+    const last = recent.get(key);
+    if (last && now - last < ttlMs) {
+      return true;
+    }
+    recent.set(key, now);
+    return false;
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -489,6 +779,7 @@ export default function InAppToasts() {
               id: `system-${row.id}`,
               title: preview.title,
               body: preview.body,
+              kind: officialSystemMessage ? 'system' : 'generic',
               emoji: officialSystemMessage ? 'B' : null,
               avatarUrl: officialSystemMessage ? null : peer?.avatar_url ?? null,
               profileId: officialSystemMessage ? null : peer?.id ?? null,
@@ -577,16 +868,13 @@ export default function InAppToasts() {
 
   const messagePreview = useCallback((row: any, previewsAllowed: boolean) => {
     if (!previewsAllowed) return 'Sent you a message';
-    const datePlanPreview = getDatePlanPreviewText(row?.text);
-    if (datePlanPreview) return datePlanPreview;
-    const stickerPreview = parseStickerPreview(row?.text);
-    if (row?.message_type === 'mood_sticker' || stickerPreview) return `Sticker: ${getStickerMessagePreview(row?.text)}`;
-    if (row?.text) return row.text;
-    if (row?.message_type === 'image') return 'Photo';
-    if (row?.message_type === 'video') return 'Video';
-    if (row?.message_type === 'voice') return 'Voice message';
-    if (row?.message_type === 'location') return 'Location';
-    return 'New message';
+    return (
+      getChatMessagePreviewText({
+        text: row?.text,
+        messageType: row?.message_type,
+        isViewOnce: Boolean(row?.is_view_once),
+      }) || 'New message'
+    );
   }, []);
 
   const messageReactionPreview = useCallback((row: any, emoji: string | null | undefined, previewsAllowed: boolean) => {
@@ -609,6 +897,89 @@ export default function InAppToasts() {
     if (row?.message_type === 'location') return `${reactionPrefix} to your location`;
     return `${reactionPrefix} to your message`;
   }, []);
+
+  const muteToastConversation = useCallback(
+    async (toast: ToastItem) => {
+      if (!user?.id || !toast.peerUserId) return;
+      const { data } = await supabase
+        .from('chat_prefs')
+        .select('pinned,muted')
+        .eq('user_id', user.id)
+        .eq('peer_id', toast.peerUserId)
+        .maybeSingle();
+
+      const { error } = await upsertChatPref(user.id, toast.peerUserId, {
+        pinned: Boolean((data as { pinned?: boolean | null } | null)?.pinned),
+        muted: true,
+      });
+
+      if (!error) {
+        Haptics.selectionAsync().catch(() => undefined);
+        if (toast.groupKey) {
+          const activeGroup = toastGroupsRef.current.get(toast.groupKey);
+          if (activeGroup?.id === toast.id) {
+            toastGroupsRef.current.delete(toast.groupKey);
+          }
+        }
+        setToasts((prev) => prev.filter((item) => item.id !== toast.id));
+      }
+    },
+    [user?.id],
+  );
+
+  const quickReplyToToast = useCallback(
+    async (toast: ToastItem, text: string) => {
+      if (!user?.id || !toast.peerUserId) return false;
+      const trimmed = text.trim();
+      if (!trimmed) return false;
+
+      try {
+        await ChatOutboxService.queueTextMessage({
+          ownerUserId: user.id,
+          threadId: toast.peerUserId,
+          text: trimmed,
+          peerProfileId: toast.profileId ?? null,
+          peerName: toast.title,
+          peerAvatarUrl: toast.avatarUrl ?? null,
+          flush: true,
+        });
+
+        if (toast.groupKey) {
+          const activeGroup = toastGroupsRef.current.get(toast.groupKey);
+          if (activeGroup?.id === toast.id) {
+            toastGroupsRef.current.delete(toast.groupKey);
+          }
+        }
+
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+        setToasts((prev) => prev.filter((item) => item.id !== toast.id));
+        return true;
+      } catch {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
+        return false;
+      }
+    },
+    [user?.id],
+  );
+
+  const setToastReplying = useCallback(
+    (toastId: string, isReplying: boolean, groupKey?: string | null) => {
+      if (isReplying) {
+        pausedToastIdsRef.current.add(toastId);
+        if (timeouts.current[toastId]) {
+          clearTimeout(timeouts.current[toastId]);
+          delete timeouts.current[toastId];
+        }
+        return;
+      }
+
+      pausedToastIdsRef.current.delete(toastId);
+      const stillVisible = toasts.some((toast) => toast.id === toastId);
+      if (!stillVisible) return;
+      scheduleToastDismiss(toastId, groupKey ?? null, 2_400);
+    },
+    [scheduleToastDismiss, toasts],
+  );
 
   const momentPostPreview = useCallback((row: any, previewsAllowed: boolean, relationshipCue?: string | null) => {
     const cueLead = (() => {
@@ -756,6 +1127,7 @@ export default function InAppToasts() {
         id: `moment-reaction-burst-${burstKey}`,
         title: totalActors > 1 ? `${totalActors} reactions` : reactorName,
         body,
+        kind: 'moment',
         avatarUrl: latestActor.avatarUrl,
         profileId: totalActors > 1 ? null : profileId,
         route: '/moments',
@@ -823,6 +1195,7 @@ export default function InAppToasts() {
           nextCount > 1
             ? momentPostBurstPreview(nextCount, relationshipCue)
             : momentPostPreview(momentRow, previewsAllowed, relationshipCue),
+        kind: 'moment',
         avatarUrl,
         profileId,
         route: '/moments',
@@ -1030,7 +1403,9 @@ export default function InAppToasts() {
         router.push({
           pathname: '/chat/[id]',
           params: {
-            id: toast.chatId,
+            id: toast.peerUserId ?? toast.chatId,
+            peerUserId: toast.peerUserId ?? '',
+            peerProfileId: toast.profileId ?? '',
             userName: toast.title,
             userAvatar: toast.avatarUrl ?? '',
           },
@@ -1055,12 +1430,15 @@ export default function InAppToasts() {
         (payload) => {
           const row = payload.new as any;
           if (!row) return;
+          if (shouldSuppressToast(`message:${String(row.id)}`)) return;
           if (row.sender_id === user.id) return;
-          if (isChatRoute) return;
+          if (isChatThreadRoute) return;
           if (isActiveChatWith(row.sender_id)) return;
           if (!canInAppNotify('messages')) return;
           const previewAllowed = prefs?.preview_text !== false;
           const preview = messagePreview(row, previewAllowed);
+          const kind = getMessageToastKind(row);
+          const mediaThumbnail = getMessageMediaThumbnail(row);
           void (async () => {
               let name = 'New message';
             let avatarUrl: string | null = null;
@@ -1075,9 +1453,16 @@ export default function InAppToasts() {
               id: `msg-${row.id}`,
               title: name,
               body: preview,
+              kind,
               avatarUrl,
               profileId: senderProfileId ?? null,
               chatId: senderProfileId ?? String(row.sender_id),
+              peerUserId: String(row.sender_id),
+              groupKey: `chat:${String(row.sender_id)}`,
+              groupCount: 1,
+              mediaThumbnailUrl: mediaThumbnail.url,
+              mediaThumbnailKind: mediaThumbnail.kind,
+              mediaThumbnailLabel: mediaThumbnail.label,
             });
           })();
         },
@@ -1087,7 +1472,7 @@ export default function InAppToasts() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [canInAppNotify, getProfileLite, isActiveChatWith, isChatRoute, messagePreview, prefs?.preview_text, pushToast, user?.id]);
+  }, [canInAppNotify, getProfileLite, isActiveChatWith, isChatThreadRoute, messagePreview, prefs?.preview_text, pushToast, shouldSuppressToast, user?.id]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -1100,8 +1485,9 @@ export default function InAppToasts() {
         (payload) => {
           const row = payload.new as any;
           if (!row) return;
+          if (shouldSuppressToast(`message-reaction:${String(row.id)}`)) return;
           if (row.user_id === user.id) return;
-          if (isChatRoute) return;
+          if (isChatThreadRoute) return;
           if (!canInAppNotify('message_reactions')) return;
           void (async () => {
             let name = 'Someone';
@@ -1109,10 +1495,13 @@ export default function InAppToasts() {
             let otherId: string | null = null;
             let reactorProfileId: string | null = null;
             let reactionBody = row.emoji ? `reacted ${row.emoji}` : 'reacted to your message';
+            let mediaThumbnailUrl: string | null = null;
+            let mediaThumbnailKind: ToastItem['mediaThumbnailKind'] = null;
+            let mediaThumbnailLabel: string | null = null;
             try {
               const { data: messageRow } = await supabase
                 .from('messages')
-                .select('sender_id,receiver_id,text,message_type')
+                .select('sender_id,receiver_id,text,message_type,is_view_once')
                 .eq('id', row.message_id)
                 .maybeSingle();
               if (!messageRow?.sender_id || !messageRow?.receiver_id) return;
@@ -1120,6 +1509,10 @@ export default function InAppToasts() {
               otherId = messageRow.sender_id === user.id ? messageRow.receiver_id : messageRow.sender_id;
               if (isActiveChatWith(otherId)) return;
               reactionBody = messageReactionPreview(messageRow, row.emoji, prefs?.preview_text !== false);
+              const mediaThumbnail = getMessageMediaThumbnail(messageRow as MessageToastRow);
+              mediaThumbnailUrl = mediaThumbnail.url;
+              mediaThumbnailKind = mediaThumbnail.kind;
+              mediaThumbnailLabel = mediaThumbnail.label;
               const p = await getProfileLite(String(row.user_id), { preferUserId: true });
               name = getUserFacingDisplayName(p, 'Someone');
               if (p?.avatar_url) avatarUrl = p.avatar_url;
@@ -1130,9 +1523,16 @@ export default function InAppToasts() {
               id: `message-reaction-${row.id}`,
               title: name,
               body: reactionBody,
+              kind: 'message_reaction',
               avatarUrl,
               profileId: reactorProfileId ?? null,
               chatId: reactorProfileId ?? otherId ?? String(row.user_id),
+              peerUserId: otherId ?? null,
+              groupKey: otherId ? `chat:${String(otherId)}` : null,
+              groupCount: 1,
+              mediaThumbnailUrl,
+              mediaThumbnailKind,
+              mediaThumbnailLabel,
             });
           })();
         },
@@ -1142,7 +1542,7 @@ export default function InAppToasts() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [canInAppNotify, getProfileLite, isActiveChatWith, isChatRoute, messageReactionPreview, prefs?.preview_text, pushToast, user?.id]);
+  }, [canInAppNotify, getProfileLite, isActiveChatWith, isChatThreadRoute, messageReactionPreview, prefs?.preview_text, pushToast, shouldSuppressToast, user?.id]);
 
   useEffect(() => {
     if (!user?.id || !profile?.id) return;
@@ -1340,6 +1740,96 @@ export default function InAppToasts() {
     const subscription = Notifications.addNotificationReceivedListener((notification) => {
       const data = notification.request.content.data as Record<string, any> | undefined;
       const pushType = typeof data?.type === 'string' ? data.type : '';
+      if (pushType === 'message') {
+        if (!user?.id) return;
+        if (!canInAppNotify('messages')) return;
+        const messageId = data?.message_id ? String(data.message_id) : '';
+        const peerUserId = data?.peer_user_id ? String(data.peer_user_id) : '';
+        if (!messageId) return;
+        if (shouldSuppressToast(`message:${messageId}`)) return;
+        if (isChatThreadRoute || (peerUserId && isActiveChatWith(peerUserId))) return;
+        void (async () => {
+          const { data: messageRow } = await supabase
+            .from('messages')
+            .select('id,sender_id,receiver_id,text,message_type,is_view_once')
+            .eq('id', messageId)
+            .maybeSingle();
+          const resolvedRow = messageRow as MessageToastRow | null;
+          const previewAllowed = prefs?.preview_text !== false;
+          const kind = getMessageToastKind(resolvedRow);
+          const mediaThumbnail = getMessageMediaThumbnail(resolvedRow);
+          const body = resolvedRow
+            ? messagePreview(resolvedRow, previewAllowed)
+            : notification.request.content.body || 'New message';
+          pushToast({
+            id: `msg-push-${messageId}`,
+            title: notification.request.content.title || 'New message',
+            body,
+            kind,
+            avatarUrl: typeof data?.avatar_url === 'string' ? data.avatar_url : null,
+            profileId: data?.profile_id ? String(data.profile_id) : null,
+            chatId: data?.profile_id ? String(data.profile_id) : peerUserId || null,
+            peerUserId: peerUserId || null,
+            groupKey: peerUserId ? `chat:${peerUserId}` : null,
+            groupCount: 1,
+            mediaThumbnailUrl: mediaThumbnail.url,
+            mediaThumbnailKind: mediaThumbnail.kind,
+            mediaThumbnailLabel: mediaThumbnail.label,
+          });
+        })();
+        return;
+      }
+
+      if (pushType === 'message_reaction') {
+        if (!user?.id) return;
+        if (!canInAppNotify('message_reactions')) return;
+        const reactionId = data?.reaction_id ? String(data.reaction_id) : notification.request.identifier;
+        const messageId = data?.message_id ? String(data.message_id) : '';
+        const peerUserId = data?.peer_user_id ? String(data.peer_user_id) : '';
+        if (shouldSuppressToast(`message-reaction:${reactionId}`)) return;
+        if (isChatThreadRoute || (peerUserId && isActiveChatWith(peerUserId))) return;
+        void (async () => {
+          let body = notification.request.content.body || 'reacted to your message';
+          let mediaThumbnailUrl: string | null = null;
+          let mediaThumbnailKind: ToastItem['mediaThumbnailKind'] = null;
+          let mediaThumbnailLabel: string | null = null;
+          if (messageId) {
+            const { data: messageRow } = await supabase
+              .from('messages')
+              .select('sender_id,receiver_id,text,message_type,is_view_once')
+              .eq('id', messageId)
+              .maybeSingle();
+            if (messageRow) {
+              body = messageReactionPreview(
+                messageRow,
+                data?.emoji ? String(data.emoji) : null,
+                prefs?.preview_text !== false,
+              );
+              const mediaThumbnail = getMessageMediaThumbnail(messageRow as MessageToastRow);
+              mediaThumbnailUrl = mediaThumbnail.url;
+              mediaThumbnailKind = mediaThumbnail.kind;
+              mediaThumbnailLabel = mediaThumbnail.label;
+            }
+          }
+          pushToast({
+            id: `message-reaction-push-${reactionId}`,
+            title: notification.request.content.title || 'Someone',
+            body,
+            kind: 'message_reaction',
+            avatarUrl: typeof data?.avatar_url === 'string' ? data.avatar_url : null,
+            profileId: data?.profile_id ? String(data.profile_id) : null,
+            chatId: data?.profile_id ? String(data.profile_id) : peerUserId || null,
+            peerUserId: peerUserId || null,
+            groupKey: peerUserId ? `chat:${peerUserId}` : null,
+            groupCount: 1,
+            mediaThumbnailUrl,
+            mediaThumbnailKind,
+            mediaThumbnailLabel,
+          });
+        })();
+        return;
+      }
+
       if (pushType === 'moment_post' || pushType === 'moment_reaction' || pushType === 'moment_comment') {
         if (!canInAppNotify('moments')) return;
         if (isMomentsRoute) return;
@@ -1491,12 +1981,17 @@ export default function InAppToasts() {
     canInAppNotify,
     intentReminderPreview,
     intentRequestPreview,
+    isActiveChatWith,
+    isChatThreadRoute,
     isMomentsRoute,
     isQuietHours,
+    messagePreview,
+    messageReactionPreview,
     prefs,
     pushToast,
     queueMomentPostToast,
     queueMomentReactionToast,
+    shouldSuppressToast,
     user?.id,
     verificationOutcomePreview,
   ]);
@@ -1882,23 +2377,147 @@ export default function InAppToasts() {
   return (
     <View pointerEvents="box-none" style={containerStyle}>
       {toasts.map((toast) => (
-        <ToastCard key={toast.id} toast={toast} theme={theme} onPress={openToastTarget} />
+        <ToastCard
+          key={toast.id}
+          toast={toast}
+          theme={theme}
+          onPress={openToastTarget}
+          onMute={muteToastConversation}
+          onQuickReply={quickReplyToToast}
+          onReplyingChange={setToastReplying}
+        />
       ))}
     </View>
   );
 }
 
+const getToastBadgeLabel = (toast: ToastItem) => {
+  switch (toast.kind) {
+    case 'message':
+      return 'Message';
+    case 'message_reaction':
+      return 'Reaction';
+    case 'live_location':
+      return 'Live location';
+    case 'date_plan':
+      return 'Date plan';
+    case 'media':
+      if (toast.mediaThumbnailKind === 'video') return 'Video';
+      if (toast.mediaThumbnailKind === 'document') return 'Document';
+      if (toast.mediaThumbnailKind === 'location') return 'Location';
+      if (toast.mediaThumbnailKind === 'date_plan') return 'Date plan';
+      return 'Media';
+    case 'moment':
+      return 'Moment';
+    case 'system':
+      return 'Update';
+    default:
+      return 'Alert';
+  }
+};
+
+const getToastIconName = (toast: ToastItem): React.ComponentProps<typeof MaterialCommunityIcons>['name'] => {
+  switch (toast.kind) {
+    case 'message_reaction':
+      return 'emoticon-happy-outline';
+    case 'live_location':
+      return 'map-marker-radius-outline';
+    case 'date_plan':
+      return 'calendar-heart';
+    case 'media':
+      if (toast.mediaThumbnailKind === 'video') return 'video-outline';
+      if (toast.mediaThumbnailKind === 'document') return 'file-document-outline';
+      if (toast.mediaThumbnailKind === 'location') return 'map-marker-outline';
+      if (toast.mediaThumbnailKind === 'date_plan') return 'calendar-heart';
+      return 'image-outline';
+    case 'moment':
+      return 'image-marker-outline';
+    case 'system':
+      return 'bell-outline';
+    default:
+      return 'message-outline';
+  }
+};
+
+const getToastRailColors = (toast: ToastItem, theme: typeof Colors.light): readonly [string, string] => {
+  switch (toast.kind) {
+    case 'message_reaction':
+      return [theme.accent, theme.tint];
+    case 'live_location':
+      return ['#1DBA8A', theme.tint];
+    case 'date_plan':
+      return ['#F59E0B', '#F97316'];
+    case 'media':
+      return ['#06B6D4', theme.tint];
+    case 'moment':
+      return [theme.accent, '#F97316'];
+    case 'system':
+      return [theme.textMuted, theme.text];
+    default:
+      return [theme.tint, theme.accent];
+  }
+};
+
+const shouldShowReplyAction = (toast: ToastItem) =>
+  toast.kind === 'message' || toast.kind === 'media' || toast.kind === 'date_plan' || toast.kind === 'live_location';
+
+const canMuteToastConversation = (toast: ToastItem) =>
+  Boolean(toast.peerUserId) &&
+  (toast.kind === 'message' ||
+    toast.kind === 'media' ||
+    toast.kind === 'date_plan' ||
+    toast.kind === 'live_location' ||
+    toast.kind === 'message_reaction');
+
+const getToastPreviewFallbackIcon = (
+  toast: ToastItem,
+): React.ComponentProps<typeof MaterialCommunityIcons>['name'] => {
+  if (toast.mediaThumbnailKind === 'document') return 'file-document-outline';
+  if (toast.mediaThumbnailKind === 'location') return 'map-marker-radius-outline';
+  if (toast.mediaThumbnailKind === 'date_plan' || toast.kind === 'date_plan') return 'calendar-heart';
+  if (toast.mediaThumbnailKind === 'video') return 'video-outline';
+  return getToastIconName(toast);
+};
+
+const getToastPreviewFallbackTitle = (toast: ToastItem) => {
+  if (toast.mediaThumbnailKind === 'document') return 'Document';
+  if (toast.mediaThumbnailKind === 'location') return toast.body.includes('Live') ? 'Live' : 'Location';
+  if (toast.mediaThumbnailKind === 'date_plan' || toast.kind === 'date_plan') return 'Date plan';
+  if (toast.mediaThumbnailKind === 'video') return 'Video';
+  return null;
+};
+
 function ToastCard({
   toast,
   theme,
   onPress,
+  onMute,
+  onQuickReply,
+  onReplyingChange,
 }: {
   toast: ToastItem;
   theme: typeof Colors.light;
   onPress: (toast: ToastItem) => void;
+  onMute: (toast: ToastItem) => void;
+  onQuickReply: (toast: ToastItem, text: string) => Promise<boolean>;
+  onReplyingChange: (toastId: string, isReplying: boolean, groupKey?: string | null) => void;
 }) {
   const translateY = useRef(new Animated.Value(-14)).current;
   const opacity = useRef(new Animated.Value(0)).current;
+  const [isReplying, setIsReplying] = useState(false);
+  const [replyText, setReplyText] = useState('');
+  const [isSendingReply, setIsSendingReply] = useState(false);
+  const replyIdleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const railColors = getToastRailColors(toast, theme);
+  const canOpen = Boolean(toast.profileId || toast.chatId || toast.route);
+  const safeToastAvatarUrl = getSafeRemoteImageUri(toast.avatarUrl);
+  const safeToastThumbnailUrl = getSafeRemoteImageUri(toast.mediaThumbnailUrl);
+  const [resolvedPreviewSource, setResolvedPreviewSource] = useState<ToastThumbnailSource>(null);
+  const fallbackPreviewTitle = getToastPreviewFallbackTitle(toast);
+  const hasActions = canOpen || canMuteToastConversation(toast);
+  const canInlineReply = shouldShowReplyAction(toast) && Boolean(toast.peerUserId);
+  const documentPreviewBadge =
+    toast.mediaThumbnailKind === 'document' ? getDocumentPreviewBadge(toast.mediaThumbnailLabel) : null;
 
   useEffect(() => {
     Animated.parallel([
@@ -1916,40 +2535,145 @@ function ToastCard({
     ]).start();
   }, [opacity, translateY]);
 
+  useEffect(() => {
+    onReplyingChange(toast.id, isReplying, toast.groupKey ?? null);
+    return () => {
+      onReplyingChange(toast.id, false, toast.groupKey ?? null);
+    };
+  }, [isReplying, onReplyingChange, toast.groupKey, toast.id]);
+
+  const clearReplyIdleTimer = useCallback(() => {
+    if (replyIdleTimeoutRef.current) {
+      clearTimeout(replyIdleTimeoutRef.current);
+      replyIdleTimeoutRef.current = null;
+    }
+  }, []);
+
+  const closeReplyComposer = useCallback(() => {
+    clearReplyIdleTimer();
+    setReplyText('');
+    setIsReplying(false);
+  }, [clearReplyIdleTimer]);
+
+  const scheduleReplyIdleCollapse = useCallback(() => {
+    clearReplyIdleTimer();
+    replyIdleTimeoutRef.current = setTimeout(() => {
+      setReplyText('');
+      setIsReplying(false);
+    }, 12000);
+  }, [clearReplyIdleTimer]);
+
+  useEffect(() => {
+    let active = true;
+
+    if (toast.mediaThumbnailKind !== 'video') {
+      setResolvedPreviewSource(safeToastThumbnailUrl ? { uri: safeToastThumbnailUrl } : null);
+      return () => {
+        active = false;
+      };
+    }
+
+    if (!safeToastThumbnailUrl) {
+      setResolvedPreviewSource(null);
+      return () => {
+        active = false;
+      };
+    }
+
+    const cached = videoThumbnailCache.get(safeToastThumbnailUrl);
+    if (cached) {
+      setResolvedPreviewSource(cached);
+      return () => {
+        active = false;
+      };
+    }
+
+    setResolvedPreviewSource(null);
+    void resolveVideoThumbnailSource(safeToastThumbnailUrl).then((source) => {
+      if (!active) return;
+      setResolvedPreviewSource(source);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [safeToastThumbnailUrl, toast.mediaThumbnailKind]);
+
+  useEffect(() => {
+    if (!isReplying || isSendingReply) {
+      clearReplyIdleTimer();
+      return;
+    }
+
+    scheduleReplyIdleCollapse();
+    return () => {
+      clearReplyIdleTimer();
+    };
+  }, [clearReplyIdleTimer, isReplying, isSendingReply, replyText, scheduleReplyIdleCollapse]);
+
+  const submitQuickReply = useCallback(async () => {
+    if (isSendingReply) return;
+    const trimmed = replyText.trim();
+    if (!trimmed) return;
+    setIsSendingReply(true);
+    const sent = await onQuickReply(toast, trimmed);
+    if (!sent) {
+      setIsSendingReply(false);
+      return;
+    }
+    setReplyText('');
+    setIsReplying(false);
+    setIsSendingReply(false);
+  }, [isSendingReply, onQuickReply, replyText, toast]);
+
   return (
-    <Pressable
-      onPress={() => onPress(toast)}
-      disabled={!toast.profileId && !toast.chatId && !toast.route}
-      style={({ pressed }) => [{ opacity: pressed ? 0.88 : 1 }]}
+    <Animated.View
+      style={[
+        styles.toast,
+        {
+          borderColor: theme.outline,
+          backgroundColor: theme.background,
+          shadowColor: theme.text,
+          opacity,
+          transform: [{ translateY }],
+        },
+      ]}
       pointerEvents="auto"
     >
-      <Animated.View
-        style={[
-          styles.toast,
-          {
-            borderColor: theme.outline,
-            backgroundColor: theme.background,
-            shadowColor: theme.text,
-            opacity,
-            transform: [{ translateY }],
-          },
-        ]}
+      <LinearGradient
+        colors={railColors}
+        start={{ x: 0, y: 0.5 }}
+        end={{ x: 1, y: 0.5 }}
+        style={styles.toastRail}
+      />
+      <Pressable
+        onPress={() => onPress(toast)}
+        disabled={!canOpen}
+        style={({ pressed }) => [styles.toastMainPressable, { opacity: pressed ? 0.88 : 1 }]}
       >
-        <LinearGradient
-          colors={[theme.tint, theme.accent]}
-          start={{ x: 0, y: 0.5 }}
-          end={{ x: 1, y: 0.5 }}
-          style={styles.toastRail}
-        />
+        <View style={styles.toastHeaderRow}>
+          <View style={[styles.toastBadge, { backgroundColor: railColors[0] }]}>
+            <MaterialCommunityIcons name={getToastIconName(toast)} size={11} color={Colors.light.background} />
+            <Text style={styles.toastBadgeText}>{getToastBadgeLabel(toast)}</Text>
+          </View>
+          {(toast.groupCount ?? 1) > 1 ? (
+            <View style={[styles.toastCountPill, { backgroundColor: theme.backgroundSubtle }]}>
+              <Text style={[styles.toastCountText, { color: theme.textMuted }]}>{toast.groupCount} new</Text>
+            </View>
+          ) : null}
+        </View>
+
         <View style={styles.toastContent}>
-          {(() => {
-            const safeToastAvatarUrl = getSafeRemoteImageUri(toast.avatarUrl);
-            return safeToastAvatarUrl ? (
-              <Image source={{ uri: safeToastAvatarUrl }} style={styles.toastAvatar} />
-            ) : null;
-          })() ?? (toast.emoji ? (
+          {safeToastAvatarUrl ? (
+            <Image source={{ uri: safeToastAvatarUrl }} style={styles.toastAvatar} />
+          ) : toast.emoji ? (
             <Text style={[styles.toastEmoji, { color: theme.text }]}>{toast.emoji}</Text>
-          ) : null)}
+          ) : (
+            <View style={[styles.toastIconFallback, { backgroundColor: theme.backgroundSubtle }]}>
+              <MaterialCommunityIcons name={getToastIconName(toast)} size={18} color={railColors[0]} />
+            </View>
+          )}
+
           <View style={styles.toastTextCol}>
             <Text numberOfLines={1} style={[styles.toastTitle, { color: theme.text }]}>
               {toast.title}
@@ -1958,9 +2682,154 @@ function ToastCard({
               {toast.body}
             </Text>
           </View>
+
+          {resolvedPreviewSource ? (
+            <View style={styles.toastThumbWrap}>
+              <ExpoImage source={resolvedPreviewSource} style={styles.toastMediaThumb} contentFit="cover" transition={120} />
+              {toast.mediaThumbnailKind === 'video' ? (
+                <View style={[styles.toastThumbOverlay, { backgroundColor: 'rgba(9, 16, 15, 0.46)' }]}>
+                  <MaterialCommunityIcons name="play" size={14} color={Colors.light.background} />
+                </View>
+              ) : null}
+            </View>
+          ) : toast.mediaThumbnailKind ? (
+            <View style={[styles.toastPreviewCard, { backgroundColor: theme.backgroundSubtle }]}>
+              <View style={styles.toastPreviewCardTopRow}>
+                <MaterialCommunityIcons
+                  name={getToastPreviewFallbackIcon(toast)}
+                  size={18}
+                  color={railColors[0]}
+                />
+                {documentPreviewBadge ? (
+                  <View style={[styles.toastPreviewDocBadge, { backgroundColor: `${railColors[0]}1A` }]}>
+                    <Text style={[styles.toastPreviewDocBadgeText, { color: railColors[0] }]}>
+                      {documentPreviewBadge}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+              {fallbackPreviewTitle ? (
+                <Text numberOfLines={1} style={[styles.toastPreviewTitle, { color: theme.text }]}>
+                  {fallbackPreviewTitle}
+                </Text>
+              ) : null}
+              {toast.mediaThumbnailLabel ? (
+                <Text numberOfLines={1} style={[styles.toastPreviewMeta, { color: theme.textMuted }]}>
+                  {toast.mediaThumbnailLabel}
+                </Text>
+              ) : null}
+            </View>
+          ) : toast.kind === 'date_plan' || toast.kind === 'live_location' ? (
+            <View style={[styles.toastPreviewCard, { backgroundColor: theme.backgroundSubtle }]}>
+              <MaterialCommunityIcons
+                name={getToastPreviewFallbackIcon(toast)}
+                size={18}
+                color={railColors[0]}
+              />
+              {fallbackPreviewTitle ? (
+                <Text numberOfLines={1} style={[styles.toastPreviewTitle, { color: theme.text }]}>
+                  {fallbackPreviewTitle}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
         </View>
-      </Animated.View>
-    </Pressable>
+      </Pressable>
+
+      {hasActions ? (
+        <View style={[styles.toastActionsRow, { borderTopColor: theme.outline }]}>
+          {canInlineReply ? (
+            <Pressable style={styles.toastActionButton} onPress={() => onPress(toast)}>
+              <Text style={[styles.toastActionText, { color: theme.tint }]}>Open</Text>
+            </Pressable>
+          ) : canOpen ? (
+            <Pressable style={styles.toastActionButton} onPress={() => onPress(toast)}>
+              <Text style={[styles.toastActionText, { color: theme.tint }]}>
+                Open
+              </Text>
+            </Pressable>
+          ) : null}
+          {canInlineReply ? (
+            <Pressable
+              style={styles.toastActionButton}
+              onPress={() => {
+                if (isReplying) {
+                  closeReplyComposer();
+                  return;
+                }
+                setIsReplying(true);
+              }}
+            >
+              <Text style={[styles.toastActionText, { color: isReplying ? railColors[0] : theme.textMuted }]}>
+                {isReplying ? 'Cancel' : 'Reply'}
+              </Text>
+            </Pressable>
+          ) : null}
+          {canMuteToastConversation(toast) ? (
+            <Pressable style={styles.toastActionButton} onPress={() => onMute(toast)}>
+              <Text style={[styles.toastActionText, { color: theme.textMuted }]}>Mute</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
+
+      {isReplying ? (
+        <View style={[styles.toastReplyComposer, { borderTopColor: theme.outline }]}>
+          <TextInput
+            value={replyText}
+            onChangeText={setReplyText}
+            placeholder="Reply quickly..."
+            placeholderTextColor={theme.textMuted}
+            style={[
+              styles.toastReplyInput,
+              {
+                color: theme.text,
+                borderColor: theme.outline,
+                backgroundColor: theme.backgroundSubtle,
+              },
+            ]}
+            multiline
+            maxLength={240}
+            editable={!isSendingReply}
+            onFocus={scheduleReplyIdleCollapse}
+            onBlur={() => {
+              if (!replyText.trim() && !isSendingReply) {
+                closeReplyComposer();
+              }
+            }}
+          />
+          <Pressable
+            style={[styles.toastReplyCancel, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle }]}
+            onPress={closeReplyComposer}
+            disabled={isSendingReply}
+          >
+            <MaterialCommunityIcons name="close" size={16} color={theme.textMuted} />
+          </Pressable>
+          <Pressable
+            style={[
+              styles.toastReplySend,
+              {
+                backgroundColor: replyText.trim() && !isSendingReply ? theme.tint : theme.backgroundSubtle,
+              },
+            ]}
+            onPress={() => {
+              void submitQuickReply();
+            }}
+            disabled={!replyText.trim() || isSendingReply}
+          >
+            {isSendingReply ? (
+              <ActivityIndicator size="small" color={Colors.light.background} />
+            ) : (
+              <MaterialCommunityIcons
+                name="send"
+                size={16}
+                color={replyText.trim() ? Colors.light.background : theme.textMuted}
+              />
+            )}
+          </Pressable>
+        </View>
+      ) : null}
+    </Animated.View>
   );
 }
 
@@ -1975,13 +2844,15 @@ const styles = StyleSheet.create({
   toast: {
     borderRadius: 16,
     borderWidth: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
     shadowOpacity: 0.14,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
     overflow: 'hidden',
+  },
+  toastMainPressable: {
+    paddingVertical: 10,
+    paddingHorizontal: 12,
   },
   toastRail: {
     position: 'absolute',
@@ -1990,6 +2861,35 @@ const styles = StyleSheet.create({
     bottom: 0,
     width: 3,
   },
+  toastHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+    gap: 8,
+  },
+  toastBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  toastBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.light.background,
+  },
+  toastCountPill: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  toastCountText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
   toastContent: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1997,6 +2897,13 @@ const styles = StyleSheet.create({
   },
   toastEmoji: {
     fontSize: 20,
+  },
+  toastIconFallback: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   toastAvatar: {
     width: 34,
@@ -2016,5 +2923,114 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 12,
     lineHeight: 16,
+  },
+  toastMediaThumb: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+  },
+  toastThumbWrap: {
+    width: 42,
+    height: 42,
+  },
+  toastThumbOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toastPreviewCard: {
+    width: 64,
+    minHeight: 48,
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    gap: 2,
+  },
+  toastPreviewCardTopRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  toastPreviewDocBadge: {
+    minWidth: 24,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toastPreviewDocBadgeText: {
+    fontSize: 8,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  toastPreviewTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  toastPreviewMeta: {
+    fontSize: 9,
+    lineHeight: 12,
+  },
+  toastActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  toastActionButton: {
+    minWidth: 56,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toastActionText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  toastReplyComposer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  toastReplyInput: {
+    flex: 1,
+    minHeight: 38,
+    maxHeight: 84,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 10,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  toastReplyCancel: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toastReplySend: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

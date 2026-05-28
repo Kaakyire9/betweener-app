@@ -2,7 +2,7 @@ import { supabase } from "@/lib/supabase";
 import * as AppleAuthentication from "expo-apple-authentication";
 import { makeRedirectUri } from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
@@ -43,7 +43,9 @@ const formatAppleFullName = (
 export default function LoginScreen() {
   WebBrowser.maybeCompleteAuthSession();
   const router = useRouter();
+  const params = useLocalSearchParams<{ reason?: string }>();
   const [loadingProvider, setLoadingProvider] = useState<string | null>(null);
+  const showSessionExpiredNotice = params.reason === "session_expired";
 
   useEffect(() => {
     void supabase.auth.getSession();
@@ -151,6 +153,18 @@ export default function LoginScreen() {
         <Text style={styles.subtitle}>
           Sign in with Google or Apple, or use a secure email link.
         </Text>
+
+        {showSessionExpiredNotice ? (
+          <View style={styles.noticeCard}>
+            <MaterialCommunityIcons name="shield-refresh-outline" size={18} color="#0F766E" />
+            <View style={styles.noticeTextWrap}>
+              <Text style={styles.noticeTitle}>Session expired</Text>
+              <Text style={styles.noticeBody}>
+                Your secure session ended while the app was back online. Sign in again to continue.
+              </Text>
+            </View>
+          </View>
+        ) : null}
 
         <Pressable
           onPress={handleGoogle}
@@ -284,6 +298,33 @@ const styles = StyleSheet.create({
     color: "#5B6B6B",
     lineHeight: 22,
     marginBottom: 28,
+  },
+  noticeCard: {
+    flexDirection: "row",
+    gap: 12,
+    alignItems: "flex-start",
+    backgroundColor: "rgba(15, 118, 110, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(15, 118, 110, 0.18)",
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    marginBottom: 18,
+  },
+  noticeTextWrap: {
+    flex: 1,
+  },
+  noticeTitle: {
+    fontFamily: "Archivo_700Bold",
+    fontSize: 14.5,
+    color: "#0F172A",
+    marginBottom: 4,
+  },
+  noticeBody: {
+    fontFamily: "Manrope_400Regular",
+    fontSize: 13.5,
+    lineHeight: 19,
+    color: "#4B5563",
   },
   providerButton: {
     flexDirection: "row",

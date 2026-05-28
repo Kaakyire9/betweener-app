@@ -42,3 +42,24 @@ export const getPresenceDisplay = (lastActive?: string | null, now = Date.now())
     label: online ? 'Online' : activeNow ? 'Active now' : recentlyActive ? 'Recently active' : '',
   };
 };
+
+const hashRealtimeTopic = (value: string) => {
+  let hash = 5381;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = ((hash << 5) + hash) ^ value.charCodeAt(i);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+};
+
+export const buildPairScopedRealtimeTopic = (
+  prefix: string,
+  userA: string,
+  userB: string,
+) => {
+  const seed = [userA, userB].sort().join(':');
+  return `${prefix}:${hashRealtimeTopic(seed)}`;
+};
+
+export const buildUserScopedRealtimeTopic = (prefix: string, userId: string) => {
+  return `${prefix}:${hashRealtimeTopic(userId)}`;
+};

@@ -160,7 +160,7 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
     const { data: currentProfile, error: profileError } = await supabase
       .from('profiles')
-      .select('region, location, city, current_country, current_country_code')
+      .select('region, location, city, current_country, current_country_code, country_lock_policy')
       .eq('user_id', user.id)
       .limit(1)
       .single()
@@ -176,6 +176,10 @@ serve(async (req) => {
     const safeCity = city || null
     const safeCountry = country || currentProfile?.current_country || null
     const safeCountryCode = countryCode || currentProfile?.current_country_code || null
+    const nextCountryLockPolicy =
+      currentProfile?.country_lock_policy === 'ghana_locked' && safeCountryCode && safeCountryCode !== 'GH'
+        ? 'ghana_unlocked_precise_abroad'
+        : currentProfile?.country_lock_policy || 'none'
     const fallbackLocation = buildLocationLabel(safeCity || undefined, safeRegion || undefined, safeCountry || undefined)
     const safeLocation = location || fallbackLocation || null
 
@@ -187,6 +191,7 @@ serve(async (req) => {
         location: safeLocation,
         current_country: safeCountry,
         current_country_code: safeCountryCode,
+        country_lock_policy: nextCountryLockPolicy,
         location_precision: 'EXACT',
         location_updated_at: new Date().toISOString(),
       })

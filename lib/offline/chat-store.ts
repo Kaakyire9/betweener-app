@@ -12,6 +12,25 @@ export type OfflineEnvelope<T> = CoreOfflineEnvelope<T>;
 
 const OFFLINE_VERSION = 1;
 const OFFLINE_CHAT_UPLOAD_DIR = `${FileSystem.documentDirectory ?? ''}offline-chat-uploads/`;
+const offlineSnapshotMemory = new Map<string, unknown>();
+const offlineSnapshotListeners = new Map<string, Set<() => void>>();
+
+const notifyOfflineSnapshotListeners = (key: string) => {
+  const listeners = offlineSnapshotListeners.get(key);
+  if (!listeners || listeners.size === 0) return;
+  listeners.forEach((listener) => {
+    try {
+      listener();
+    } catch {
+      // Listener errors must not break cache propagation.
+    }
+  });
+};
+
+const cacheOfflineSnapshot = <T>(key: string, data: T) => {
+  offlineSnapshotMemory.set(key, data);
+  notifyOfflineSnapshotListeners(key);
+};
 
 export const buildChatConversationListStoreKey = (userId: string) =>
   `offline:chat:list:v${OFFLINE_VERSION}:${userId}`;
@@ -25,16 +44,85 @@ export const buildChatPeerStoreKey = (userId: string, peerUserId: string) =>
 const buildLegacyChatThreadCacheKey = (userId: string, peerUserId: string) =>
   `cache:chat_thread:v1:${userId}:${peerUserId}`;
 
+export function peekOfflineSnapshot<T>(key: string): T | null {
+  return offlineSnapshotMemory.has(key) ? (offlineSnapshotMemory.get(key) as T) : null;
+}
+
+export function subscribeOfflineSnapshot(key: string, listener: () => void): () => void {
+  const listeners = offlineSnapshotListeners.get(key) ?? new Set<() => void>();
+  listeners.add(listener);
+  offlineSnapshotListeners.set(key, listeners);
+
+  return () => {
+    const current = offlineSnapshotListeners.get(key);
+    if (!current) return;
+    current.delete(listener);
+    if (current.size === 0) {
+      offlineSnapshotListeners.delete(key);
+    }
+  };
+}
+
 export async function readOfflineSnapshot<T>(key: string): Promise<T | null> {
-  return readOfflineData<T>(key);
+  const inMemory = peekOfflineSnapshot<T>(key);
+  if (inMemory !== null) return inMemory;
+  const data = await readOfflineData<T>(key);
+  if (data !== null) {
+    cacheOfflineSnapshot(key, data);
+  }
+  return data;
 }
 
 export async function writeOfflineSnapshot<T>(key: string, data: T): Promise<void> {
+  cacheOfflineSnapshot(key, data);
   await writeOfflineEnvelope(key, data, { kind: 'snapshot' });
 }
 
 export async function removeOfflineSnapshot(key: string): Promise<void> {
+  offlineSnapshotMemory.delete(key);
+  notifyOfflineSnapshotListeners(key);
   await removeOfflineEnvelope(key);
+}
+
+export async function patchChatConversationPresenceSnapshot(
+  userId: string,
+  peerUserId: string,
+  presence: { isOnline: boolean; lastSeen?: string | null; typingExpiresAt?: string | null },
+) {
+  const key = buildChatConversationListStoreKey(userId);
+  const cached = await readOfflineSnapshot<any[]>(key);
+  if (!Array.isArray(cached) || cached.length === 0) return;
+
+  let changed = false;
+  const next = cached.map((item) => {
+    if (!item || typeof item !== 'object' || item.id !== peerUserId || !item.matchedUser) {
+      return item;
+    }
+
+    const nextLastSeen =
+      presence.isOnline ? item.matchedUser.lastSeen ?? new Date().toISOString() : presence.lastSeen ?? item.matchedUser.lastSeen;
+    const sameOnline = Boolean(item.matchedUser.isOnline) === presence.isOnline;
+    const sameLastSeen = (item.matchedUser.lastSeen ?? null) === (nextLastSeen ?? null);
+    const sameTypingExpiresAt =
+      (item.matchedUser.typingExpiresAt ?? null) === (presence.typingExpiresAt ?? null);
+    if (sameOnline && sameLastSeen && sameTypingExpiresAt) {
+      return item;
+    }
+
+    changed = true;
+    return {
+      ...item,
+      matchedUser: {
+        ...item.matchedUser,
+        isOnline: presence.isOnline,
+        lastSeen: nextLastSeen,
+        typingExpiresAt: presence.typingExpiresAt ?? null,
+      },
+    };
+  });
+
+  if (!changed) return;
+  await writeOfflineSnapshot(key, next);
 }
 
 export async function migrateLegacyChatThreadSnapshot<T>(

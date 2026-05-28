@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 import { AppState } from 'react-native';
+import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from '@react-native-community/netinfo';
 import { addBreadcrumb, captureMessage } from '@/lib/telemetry/sentry';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
@@ -675,12 +676,98 @@ const supabaseFacade = new Proxy({}, {
 // generics collapsing into `never` under moduleResolution=bundler.
 export const supabase = supabaseFacade as unknown as SupabaseClient<any>;
 
+export async function hydratePersistedSupabaseSession(
+  session: Session | null | undefined,
+  reason: string = 'persisted_snapshot',
+): Promise<boolean> {
+  if (!session?.access_token) return false;
+
+  setCachedAccessToken(session.access_token);
+  syncRealtimeAuth(session.access_token);
+
+  if (!session.refresh_token) {
+    addBreadcrumb('[supabase] hydrate_persisted_session', {
+      reason,
+      restored: false,
+      primedTokenOnly: true,
+    });
+    return false;
+  }
+
+  try {
+    const existing = await Promise.race([
+      supabaseAuth.auth.getSession(),
+      new Promise<{ data: { session: null } }>((resolve) =>
+        setTimeout(() => resolve({ data: { session: null } }), 1200),
+      ),
+    ]);
+
+    const existingSession = existing?.data?.session ?? null;
+    if (
+      existingSession?.user?.id === session.user?.id &&
+      existingSession?.refresh_token === session.refresh_token
+    ) {
+      setCachedAccessToken(existingSession.access_token ?? session.access_token);
+      syncRealtimeAuth(existingSession.access_token ?? session.access_token);
+      addBreadcrumb('[supabase] hydrate_persisted_session', {
+        reason,
+        restored: true,
+        reusedExistingSession: true,
+      });
+      return true;
+    }
+  } catch {
+    // best-effort only
+  }
+
+  try {
+    const res: any = await Promise.race([
+      supabaseAuth.auth.setSession({
+        access_token: session.access_token,
+        refresh_token: session.refresh_token,
+      }),
+      new Promise<{ error: Error; data: { session: null } }>((resolve) =>
+        setTimeout(
+          () => resolve({ error: new Error('hydrate_session_timeout'), data: { session: null } }),
+          4000,
+        ),
+      ),
+    ]);
+
+    const restoredSession = res?.data?.session ?? null;
+    if (restoredSession?.access_token) {
+      setCachedAccessToken(restoredSession.access_token);
+      syncRealtimeAuth(restoredSession.access_token);
+      addBreadcrumb('[supabase] hydrate_persisted_session', {
+        reason,
+        restored: true,
+        reusedExistingSession: false,
+      });
+      return true;
+    }
+  } catch {
+    // best-effort only
+  }
+
+  addBreadcrumb('[supabase] hydrate_persisted_session', {
+    reason,
+    restored: false,
+    primedTokenOnly: true,
+  });
+  return false;
+}
+
 // -----------------------------
 // Auth lifecycle (RN background)
 // -----------------------------
 
 let authLifecycleRefCount = 0;
 let authLifecycleCleanup: (() => void) | null = null;
+
+const isReachableNetState = (state: {
+  isConnected: boolean | null;
+  isInternetReachable: boolean | null;
+}) => state.isConnected !== false && state.isInternetReachable !== false;
 
 export const initSupabaseAuthLifecycle = () => {
   authLifecycleRefCount += 1;
@@ -709,6 +796,11 @@ export const initSupabaseAuthLifecycle = () => {
     } catch {
       // ignore
     }
+    try {
+      supabase.realtime.connect();
+    } catch {
+      // ignore
+    }
   };
 
   const stop = () => {
@@ -717,14 +809,44 @@ export const initSupabaseAuthLifecycle = () => {
     } catch {
       // ignore
     }
+    try {
+      supabase.realtime.disconnect();
+    } catch {
+      // ignore
+    }
   };
 
-  start();
+  let currentAppState = AppState.currentState;
+  let isReachable: boolean | null = null;
+
+  const syncAutoRefresh = () => {
+    if (currentAppState === 'active' && isReachable !== false) {
+      start();
+      return;
+    }
+    stop();
+  };
+
+  syncAutoRefresh();
 
   const sub = AppState.addEventListener('change', (state) => {
-    if (state === 'active') start();
-    else stop();
+    currentAppState = state;
+    syncAutoRefresh();
   });
+
+  const netInfoSubscription = addNetInfoListener((state) => {
+    isReachable = isReachableNetState(state);
+    syncAutoRefresh();
+  });
+
+  void fetchNetInfo()
+    .then((state) => {
+      isReachable = isReachableNetState(state);
+      syncAutoRefresh();
+    })
+    .catch(() => {
+      // keep the current auth refresh state when connectivity cannot be probed
+    });
 
   authLifecycleCleanup = () => {
     try {
@@ -732,6 +854,9 @@ export const initSupabaseAuthLifecycle = () => {
     } catch {}
     try {
       (sub as any)?.remove?.();
+    } catch {}
+    try {
+      netInfoSubscription();
     } catch {}
   };
 
@@ -749,6 +874,17 @@ const AUTH_FAILURE_GRACE_MS = 5 * 60_000;
 
 let refreshInFlight: Promise<'refreshed' | 'failed'> | null = null;
 let lastRefreshAttemptAt = 0;
+
+export const getRecentSupabaseAuthFailure = () => {
+  if (!lastAuthFailureStatus || !lastAuthFailureAt) return null;
+  const ageMs = Date.now() - lastAuthFailureAt;
+  if (ageMs > AUTH_FAILURE_GRACE_MS) return null;
+  return {
+    status: lastAuthFailureStatus,
+    at: lastAuthFailureAt,
+    ageMs,
+  } as const;
+};
 
 const withTimeout = async <T,>(p: Promise<T>, timeoutMs: number): Promise<T> => {
   return await Promise.race([

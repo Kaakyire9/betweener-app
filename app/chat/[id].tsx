@@ -1,46 +1,109 @@
 import MomentViewer from "@/components/MomentViewer";
+import ChatComposer from "@/components/chat/ChatComposer";
+import ChatFailedRetryHint from "@/components/chat/ChatFailedRetryHint";
+import ChatMessageActionsSheet from "@/components/chat/ChatMessageActionsSheet";
+import ChatMessageBubblePressable from "@/components/chat/ChatMessageBubblePressable";
+import ChatQuickReactionsBar from "@/components/chat/ChatQuickReactionsBar";
+import ChatReactionSummarySheet from "@/components/chat/ChatReactionSummarySheet";
 import ChatSafetyModal from "@/components/chat/ChatSafetyModal";
+import {
+  DocumentMessageContent,
+  LocationMessageContent,
+  MediaMessageContent,
+  VoiceMessageContent,
+} from "@/components/chat/message-variants";
+import { getReceiptIconState } from "@/components/chat/message-variants/shared";
+import type { DatePlanResponseKind, DatePlanStatus, MessageType } from "@/components/chat/types";
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useMoments } from "@/hooks/useMoments";
 import { useAuth } from "@/lib/auth-context";
-import { decryptMediaBytes, encryptMediaBytes, getOrCreateDeviceKeypair } from "@/lib/e2ee";
+import { ChatThreadActionsService } from "@/lib/chat/chat-thread-actions-service";
+import { acknowledgeIncomingMessagesDelivered } from "@/lib/chat/delivery-receipts";
+import { useChatMessages } from "@/lib/chat/hooks/use-chat-messages";
+import { useChatThreadBrowseUi } from "@/lib/chat/hooks/use-chat-thread-browse-ui";
+import { useChatThreadMessageUi } from "@/lib/chat/hooks/use-chat-thread-message-ui";
+import { useChatThreadScreenUi } from "@/lib/chat/hooks/use-chat-thread-screen-ui";
+import { useChatThreadStateSync } from "@/lib/chat/hooks/use-chat-thread-state-sync";
+import { useChatThreadLocalState } from "@/lib/chat/hooks/use-chat-thread-local-state";
+import { ChatRepository, type ChatMessageRow, type ChatPendingOutboxRow } from "@/lib/chat/local/chat-db";
+import { ChatThreadRemoteService } from "@/lib/chat/chat-thread-remote-service";
+import {
+  addPinnedMessageId,
+  applyDeleteMessageForEveryone,
+  applyLocalReactionToggle,
+  applyOptimisticMessageEdit,
+  reconcileEditedMessage,
+  removePinnedMessageId,
+  restoreMessageReactions,
+} from "@/lib/chat/message-actions";
+import {
+  appendMessage,
+  applySyncedOutgoingReceiptState,
+  markAllOutgoingMessagesDelivered,
+  markIncomingMessageRead,
+  markOutgoingMessageDelivered,
+  reconcileMessageWithServer,
+  removeMessageById,
+  replaceMessageById,
+  setMessageStatus,
+} from "@/lib/chat/message-state";
+import {
+  buildRetryFailedTextPayload,
+  canRetryFailedTextMessage,
+  CHAT_READ_RECEIPT_DELAY_MS,
+  createDatePlanDraftFromInvite,
+  type DatePlannerMode,
+  getDatePlanUiState,
+  getRetryFailedTextFailureStatus,
+  resolveDatePlanResponseKind,
+  shouldScheduleMessageRead,
+} from "@/lib/chat/thread-behavior";
+import { ChatOutboxService } from "@/lib/chat/outbox/chat-outbox-service";
+import {
+  startThreadPresenceSession,
+  subscribeThreadAncillaryRealtime,
+  subscribeThreadMessageRealtime,
+} from "@/lib/chat/sync/chat-realtime-service";
+import { flushThreadOutboxAndRefresh, startThreadSyncCoordinator } from "@/lib/chat/sync/chat-thread-sync-coordinator";
+import { fetchPeerTypingState, fetchRemoteSystemMessages, fetchRemoteThreadMessages } from "@/lib/chat/sync/chat-sync-service";
+import { encryptMediaBytes, getOrCreateDeviceKeypair } from "@/lib/e2ee";
 import { decideIntentRequestOfflineSafe } from "@/lib/intents/offline-actions";
 import { computeConversationSignalLabel, computeFirstReplyHours, computeInterestOverlapRatio } from "@/lib/match/match-score";
 import { Motion } from "@/lib/motion";
 import { isLikelyNetworkError } from "@/lib/network";
+import {
+  ONLINE_WINDOW_MS,
+  getPresenceDisplay,
+} from "@/lib/presence";
 import { cacheOfflineImage, getOfflineImageUri, rememberOfflineImageUri } from "@/lib/offline/image-store";
 import {
   buildChatConversationListStoreKey,
   buildChatPeerStoreKey,
   buildChatThreadStoreKey,
   migrateLegacyChatThreadSnapshot,
+  patchChatConversationPresenceSnapshot,
+  peekOfflineSnapshot,
   readOfflineSnapshot,
+  subscribeOfflineSnapshot,
   stageOfflineChatUpload,
   writeOfflineSnapshot,
 } from "@/lib/offline/chat-store";
 import {
-  enqueueChatMediaSendMutation,
   enqueueChatReactionSyncMutation,
-  enqueueChatTextSendMutation,
-  enqueueChatVoiceSendMutation,
 } from "@/lib/offline/mutation-queue";
 import { cacheOfflineVideo, getOfflineVideoUri, rememberOfflineVideoUri } from "@/lib/offline/video-store";
 import { showOpenSettingsPrompt } from "@/lib/permission-prompts";
 import { getSafeRemoteImageUri, getUserFacingDisplayName, hasLeftBetweener } from "@/lib/profile/display-name";
 import { type ResponsiveMetrics, useResponsiveMetrics } from "@/lib/responsive";
 import { supabase } from "@/lib/supabase";
-import {
-  consumeChatOptionsAction,
-  consumeChatOptionsFeedback,
-  subscribeChatOptionsPrefsPreview,
-  type ChatOptionsActionPayload,
-} from "@/lib/chat-options-bus";
 import type { Database } from "@/supabase/types/database";
+import { fetchUserPresence } from "@/lib/user-presence";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from "@react-native-community/netinfo";
 import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
+import { FlashList, type FlashListRef } from "@shopify/flash-list";
 import * as Calendar from "expo-calendar";
 import {
   AudioPlayer,
@@ -64,13 +127,13 @@ import * as Location from "expo-location";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { VideoView, useVideoPlayer } from "expo-video";
 import type { ComponentProps, ReactNode } from "react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
     ActivityIndicator,
     Alert,
+    AppState,
     Animated,
     Easing,
-    FlatList,
     Image,
     InteractionManager,
     Keyboard,
@@ -91,9 +154,10 @@ import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import RNSvg, { Path } from "react-native-svg";
 import { WebView } from "react-native-webview";
-import { encodeBase64 } from "tweetnacl-util";
 
-const ATTACHMENT_SHEET_HEIGHT = 300;
+const ATTACHMENT_SHEET_MIN_HEIGHT = 300;
+const ATTACHMENT_SHEET_MAX_HEIGHT = 420;
+const ATTACHMENT_SHEET_SCREEN_RATIO = 0.46;
 const CHAT_MEDIA_BUCKET = 'chat-media';
 const LOCATION_TEXT_PREFIX = '\u{1F4CD}';
 const LOCATION_LIVE_PREFIX = 'LIVE:';
@@ -104,6 +168,7 @@ const GOOGLE_MAPS_WEB_API_KEY =
   process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY || GOOGLE_MAPS_NATIVE_API_KEY;
 const GOOGLE_MAPS_MAP_ID = process.env.EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID;
 const LOCATION_PREVIEW_HEIGHT = 164;
+const UUID_VALUE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LIVE_LOCATION_PRESETS = [15, 60, 480] as const;
 const FALLBACK_BETWEENER_DATE_PICKS = [
   {
@@ -173,7 +238,7 @@ const BLOCKED_BY_THEM = 'blocked_me';
 const HEADER_HINT_STORAGE_KEY = 'chat_header_longpress_hint_v1';
 const CHAT_PREFS_STORAGE_KEY = 'chat_header_prefs_v1';
 const CHAT_SAFETY_SEEN_KEY = 'chat_safety_seen_v2';
-const MESSAGE_SELECT_FIELDS = 'id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,edited_at,reply_to_message_id,is_view_once,encrypted_media,encrypted_media_path,encrypted_key_sender,encrypted_key_receiver,encrypted_key_nonce,encrypted_media_nonce,encrypted_media_alg,encrypted_media_mime,encrypted_media_size';
+const MESSAGE_SELECT_FIELDS = 'id,client_message_id,text,created_at,sender_id,receiver_id,is_read,delivered_at,message_type,audio_path,audio_duration,audio_waveform,deleted_for_all,deleted_at,deleted_by,edited_at,reply_to_message_id,is_view_once,encrypted_media,encrypted_media_path,encrypted_key_sender,encrypted_key_receiver,encrypted_key_nonce,encrypted_media_nonce,encrypted_media_alg,encrypted_media_mime,encrypted_media_size';
 const MAP_STYLE_LIGHT = [
   { elementType: 'geometry', stylers: [{ color: '#F3E5D8' }] },
   { elementType: 'labels.text.fill', stylers: [{ color: '#5F706C' }] },
@@ -232,8 +297,6 @@ const getAttachmentUploadErrorMessage = (error: unknown) => {
 };
 
 // Message type definition
-type DatePlanStatus = 'pending' | 'accepted' | 'declined' | 'cancelled' | 'countered';
-type DatePlanResponseKind = 'initial' | 'counter_time' | 'counter_place' | 'counter_both';
 type BetweenerVenueRow = Database["public"]["Tables"]["betweener_venues"]["Row"];
 type DatePlanRow = Database["public"]["Tables"]["date_plans"]["Row"];
 type CachedConversationPresenceRow = {
@@ -241,86 +304,8 @@ type CachedConversationPresenceRow = {
   matchedUser?: {
     isOnline?: boolean;
     lastSeen?: string;
+    typingExpiresAt?: string | null;
   };
-};
-
-type MessageType = {
-  id: string;
-  text: string;
-  senderId: string;
-  timestamp: Date;
-  type: 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location' | 'date_plan' | 'system';
-  isViewOnce?: boolean;
-  encryptedMedia?: boolean;
-  encryptedMediaPath?: string | null;
-  encryptedKeySender?: string | null;
-  encryptedKeyReceiver?: string | null;
-  encryptedKeyNonce?: string | null;
-  encryptedMediaNonce?: string | null;
-  encryptedMediaAlg?: string | null;
-  encryptedMediaMime?: string | null;
-  encryptedMediaSize?: number | null;
-  reactions: { userId: string; emoji: string; }[];
-  status?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read';
-  readAt?: Date;
-  deletedForAll?: boolean;
-  isSystem?: boolean;
-  deletedAt?: Date | null;
-  deletedBy?: string | null;
-  editedAt?: Date | null;
-  sticker?: {
-    emoji: string;
-    color: string;
-    name: string;
-  };
-  voiceMessage?: {
-    duration: number;
-    waveform: number[];
-    isPlaying: boolean;
-    audioPath?: string;
-  };
-  imageUrl?: string;
-  videoUrl?: string;
-  offlineImageUri?: string;
-  offlineVideoUri?: string;
-  document?: {
-    name: string;
-    url: string;
-    sizeLabel?: string | null;
-    typeLabel?: string | null;
-  };
-  location?: {
-    lat: number;
-    lng: number;
-    label: string;
-    address?: string;
-    mapUrl?: string;
-    mapLink?: string;
-    live?: boolean;
-    expiresAt?: Date | null;
-  };
-  dateInvite?: {
-    planId?: string | null;
-    parentPlanId?: string | null;
-    venueId?: string | null;
-    scheduledFor: Date;
-    placeName: string;
-    placeAddress?: string;
-    note?: string;
-    source: 'betweener_pick' | 'nearby' | 'search' | 'preferred';
-    badges?: string[];
-    summary?: string | null;
-    city?: string | null;
-    lat?: number | null;
-    lng?: number | null;
-    mapUrl?: string | null;
-    mapLink?: string | null;
-    status?: DatePlanStatus;
-    conciergeRequested?: boolean;
-    responseKind?: DatePlanResponseKind;
-  };
-  replyToId?: string | null;
-  replyTo?: MessageType;
 };
 
 type CachedMessageType = Omit<
@@ -339,14 +324,9 @@ type CachedMessageType = Omit<
   };
 };
 
-type ReceiptIconState = {
-  name: ComponentProps<typeof MaterialCommunityIcons>['name'];
-  color: string;
-  size: number;
-};
-
 type MessageRow = {
   id: string;
+  client_message_id?: string | null;
   text: string;
   created_at: string;
   sender_id: string;
@@ -427,6 +407,314 @@ const deserializeCachedMessages = (raw: unknown): MessageType[] => {
   }));
 };
 
+const safeJsonStringify = (value: unknown) => {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
+};
+
+const normalizeLocalChatMessageType = (type: MessageType['type']): ChatMessageRow['message_type'] => {
+  switch (type) {
+    case 'voice':
+    case 'image':
+    case 'video':
+    case 'document':
+    case 'location':
+    case 'date_plan':
+    case 'mood_sticker':
+    case 'system':
+      return type;
+    default:
+      return 'text';
+  }
+};
+
+const normalizeLocalChatMessageStatus = (status: MessageType['status']): ChatMessageRow['status'] => {
+  switch (status) {
+    case 'sending':
+      return 'sending';
+    case 'queued':
+      return 'pending';
+    case 'delivered':
+      return 'delivered';
+    case 'read':
+      return 'read';
+    case 'failed':
+      return 'failed';
+    case 'sent':
+    default:
+      return 'sent';
+  }
+};
+
+const chatMessageToLocalRow = (
+  ownerUserId: string,
+  threadId: string,
+  message: MessageType,
+): ChatMessageRow => {
+  const createdAt = message.timestamp instanceof Date ? message.timestamp.toISOString() : new Date().toISOString();
+  const localStatus: ChatMessageRow['status'] = message.deletedForAll
+    ? 'deleted'
+    : normalizeLocalChatMessageStatus(message.status);
+  const serialized = serializeCachedMessages([message])[0] ?? null;
+  const localId = message.clientMessageId ?? (String(message.id).startsWith('temp-') ? String(message.id) : null);
+  return {
+    id: String(message.id),
+    local_id: localId,
+    thread_id: threadId,
+    owner_user_id: ownerUserId,
+    sender_user_id: String(message.senderId || ''),
+    receiver_user_id: message.senderId === ownerUserId ? threadId : ownerUserId,
+    body: typeof message.text === 'string' ? message.text : null,
+    message_type: normalizeLocalChatMessageType(message.type),
+    status: localStatus,
+    direction: message.senderId === ownerUserId ? 'outgoing' : 'incoming',
+    created_at: createdAt,
+    server_created_at: String(message.id).startsWith('temp-') ? null : createdAt,
+    edited_at: message.editedAt instanceof Date ? message.editedAt.toISOString() : null,
+    deleted_at: message.deletedAt instanceof Date ? message.deletedAt.toISOString() : (message.deletedForAll ? createdAt : null),
+    reply_to_message_id: message.replyToId ? String(message.replyToId) : null,
+    is_view_once: message.isViewOnce ? 1 : 0,
+    local_only: localStatus === 'pending' || localStatus === 'sending' || localStatus === 'failed' ? 1 : 0,
+    error_code: localStatus === 'failed' ? 'send_failed' : null,
+    metadata_json: safeJsonStringify(serialized),
+    remote_updated_at: String(message.id).startsWith('temp-') ? null : createdAt,
+    local_updated_at: new Date().toISOString(),
+  };
+};
+
+const localRowToChatMessage = (row: ChatMessageRow): MessageType => {
+  const structuredStatus: MessageType['status'] =
+    row.status === 'pending' ? 'queued' : row.status === 'deleted' ? 'sent' : row.status;
+
+  if (row.metadata_json) {
+    try {
+      const hydrated = deserializeCachedMessages([JSON.parse(row.metadata_json)])[0];
+      if (hydrated) {
+        return {
+          ...hydrated,
+          status: structuredStatus,
+          deletedForAll: row.status === 'deleted',
+          deletedAt: row.deleted_at ? new Date(row.deleted_at) : hydrated.deletedAt ?? null,
+          editedAt: row.edited_at ? new Date(row.edited_at) : hydrated.editedAt ?? null,
+          replyToId: row.reply_to_message_id ?? hydrated.replyToId ?? undefined,
+        };
+      }
+    } catch {
+      // Fall back to the structured columns below.
+    }
+  }
+
+  return {
+    id: row.id,
+    clientMessageId: row.local_id,
+    text: row.body ?? '',
+    senderId: row.sender_user_id,
+    timestamp: new Date(row.created_at),
+    type: row.message_type === 'audio' ? 'voice' : (row.message_type as MessageType['type']),
+    reactions: [],
+    status: structuredStatus,
+    deletedForAll: row.status === 'deleted',
+    deletedAt: row.deleted_at ? new Date(row.deleted_at) : null,
+    isViewOnce: row.is_view_once === 1,
+    replyToId: row.reply_to_message_id,
+  };
+};
+
+const buildTextOutboxRow = ({
+  ownerUserId,
+  threadId,
+  message,
+  status,
+  error,
+}: {
+  ownerUserId: string;
+  threadId: string;
+  message: MessageType;
+  status: ChatPendingOutboxRow['status'];
+  error?: { code?: string | null; message?: string | null };
+}): ChatPendingOutboxRow => {
+  const now = new Date().toISOString();
+  const localMessageId = message.clientMessageId ?? message.id;
+  const durableOutboxStatus: ChatPendingOutboxRow['status'] = status === 'sending' ? 'queued' : status;
+  return {
+    id: localMessageId,
+    local_message_id: localMessageId,
+    thread_id: threadId,
+    owner_user_id: ownerUserId,
+    payload_json:
+      safeJsonStringify({
+        kind: 'chat_text_send',
+        senderId: ownerUserId,
+        receiverId: threadId,
+        text:
+          message.type === 'image'
+            ? message.imageUrl ?? message.text
+            : message.type === 'video'
+            ? message.videoUrl ?? message.text
+            : message.text,
+        messageType: message.type,
+        clientMessageId: localMessageId,
+        replyToMessageId: message.replyToId ?? null,
+        metadataJson: safeJsonStringify(message),
+    }) ?? '{}',
+    attempt_count: 0,
+    max_attempts: 5,
+    next_retry_at: null,
+    status: durableOutboxStatus,
+    error_code: error?.code ?? null,
+    error_message: error?.message ?? null,
+    created_at: now,
+    updated_at: now,
+  };
+};
+
+const persistLocalTextOutboxState = async ({
+  ownerUserId,
+  threadId,
+  message,
+  outboxStatus,
+  error,
+}: {
+  ownerUserId: string;
+  threadId: string;
+  message: MessageType;
+  outboxStatus: ChatPendingOutboxRow['status'];
+  error?: { code?: string | null; message?: string | null };
+}) => {
+  await ChatRepository.upsertMessages(ownerUserId, threadId, [
+    chatMessageToLocalRow(ownerUserId, threadId, message),
+  ]);
+  await ChatRepository.upsertPendingOutboxItem(
+    ownerUserId,
+    buildTextOutboxRow({ ownerUserId, threadId, message, status: outboxStatus, error }),
+  );
+};
+
+const markLocalTextOutboxStatus = async ({
+  ownerUserId,
+  localMessageId,
+  status,
+  error,
+}: {
+  ownerUserId: string;
+  localMessageId: string;
+  status: ChatPendingOutboxRow['status'];
+  error?: { code?: string | null; message?: string | null };
+}) => {
+  await ChatRepository.markOutboxItemStatus(ownerUserId, localMessageId, status, error);
+};
+
+const flushLocalTextOutbox = async (ownerUserId: string) => {
+  await ChatOutboxService.flushPending(ownerUserId);
+};
+
+const buildMediaOutboxRow = ({
+  ownerUserId,
+  threadId,
+  message,
+  localUri,
+  fileName,
+  contentType,
+  mediaType,
+  documentSizeLabel,
+  documentTypeLabel,
+}: {
+  ownerUserId: string;
+  threadId: string;
+  message: MessageType;
+  localUri: string;
+  fileName: string;
+  contentType: string;
+  mediaType: 'image' | 'video' | 'document';
+  documentSizeLabel?: string | null;
+  documentTypeLabel?: string | null;
+}): ChatPendingOutboxRow => {
+  const now = new Date().toISOString();
+  const localMessageId = message.clientMessageId ?? message.id;
+  return {
+    id: localMessageId,
+    local_message_id: localMessageId,
+    thread_id: threadId,
+    owner_user_id: ownerUserId,
+    payload_json:
+      safeJsonStringify({
+        kind: 'chat_media_send',
+        senderId: ownerUserId,
+        receiverId: threadId,
+        clientMessageId: localMessageId,
+        localUri,
+        fileName,
+        contentType,
+        mediaType,
+        replyToMessageId: message.replyToId ?? null,
+        documentName: mediaType === 'document' ? fileName : null,
+        documentSizeLabel: documentSizeLabel ?? null,
+        documentTypeLabel: documentTypeLabel ?? null,
+      }) ?? '{}',
+    attempt_count: 0,
+    max_attempts: 5,
+    next_retry_at: null,
+    status: 'queued',
+    error_code: null,
+    error_message: null,
+    created_at: now,
+    updated_at: now,
+  };
+};
+
+const buildVoiceOutboxRow = ({
+  ownerUserId,
+  threadId,
+  message,
+  localUri,
+  fileName,
+  contentType,
+  durationSeconds,
+  waveform,
+}: {
+  ownerUserId: string;
+  threadId: string;
+  message: MessageType;
+  localUri: string;
+  fileName: string;
+  contentType: string;
+  durationSeconds: number;
+  waveform: number[];
+}): ChatPendingOutboxRow => {
+  const now = new Date().toISOString();
+  const localMessageId = message.clientMessageId ?? message.id;
+  return {
+    id: localMessageId,
+    local_message_id: localMessageId,
+    thread_id: threadId,
+    owner_user_id: ownerUserId,
+    payload_json:
+      safeJsonStringify({
+        kind: 'chat_voice_send',
+        senderId: ownerUserId,
+        receiverId: threadId,
+        clientMessageId: localMessageId,
+        localUri,
+        fileName,
+        contentType,
+        durationSeconds,
+        waveform,
+        replyToMessageId: message.replyToId ?? null,
+      }) ?? '{}',
+    attempt_count: 0,
+    max_attempts: 5,
+    next_retry_at: null,
+    status: 'queued',
+    error_code: null,
+    error_message: null,
+    created_at: now,
+    updated_at: now,
+  };
+};
+
 const mergeOfflineMediaIntoMessage = (nextMessage: MessageType, previous?: MessageType | null): MessageType => {
   if (!previous) return nextMessage;
   if (nextMessage.type === 'image' && !nextMessage.offlineImageUri && previous.offlineImageUri) {
@@ -436,6 +724,153 @@ const mergeOfflineMediaIntoMessage = (nextMessage: MessageType, previous?: Messa
     return { ...nextMessage, offlineVideoUri: previous.offlineVideoUri };
   }
   return nextMessage;
+};
+
+const PENDING_LOCAL_MESSAGE_STATUSES: ReadonlySet<NonNullable<MessageType['status']>> = new Set([
+  'sending',
+  'queued',
+  'failed',
+]);
+
+const hasLikelyServerMatch = (
+  localMessage: MessageType,
+  serverMessages: MessageType[],
+  currentUserId: string,
+) => {
+  if (localMessage.senderId !== currentUserId) return false;
+  if (localMessage.clientMessageId) {
+    return serverMessages.some(
+      (serverMessage) =>
+        serverMessage.senderId === currentUserId &&
+        serverMessage.clientMessageId === localMessage.clientMessageId,
+    );
+  }
+  const localTimestamp = localMessage.timestamp.getTime();
+  return serverMessages.some((serverMessage) => {
+    if (serverMessage.senderId !== currentUserId) return false;
+    if (serverMessage.type !== localMessage.type) return false;
+    if ((serverMessage.replyToId ?? null) !== (localMessage.replyToId ?? null)) return false;
+    if (Math.abs(serverMessage.timestamp.getTime() - localTimestamp) > 120000) return false;
+
+    switch (localMessage.type) {
+      case 'voice':
+        return true;
+      case 'image':
+        return Boolean(localMessage.imageUrl) ? localMessage.imageUrl === serverMessage.imageUrl : true;
+      case 'video':
+        return Boolean(localMessage.videoUrl) ? localMessage.videoUrl === serverMessage.videoUrl : true;
+      case 'document':
+        return localMessage.document?.name
+          ? localMessage.document.name === serverMessage.document?.name
+          : localMessage.text === serverMessage.text;
+      case 'location':
+      case 'date_plan':
+      case 'mood_sticker':
+      case 'text':
+        return localMessage.text === serverMessage.text;
+      case 'system':
+        return false;
+      default:
+        return localMessage.text === serverMessage.text;
+    }
+  });
+};
+
+const mergeFetchedMessagesWithLocalPending = ({
+  fetchedMessages,
+  previousMessages,
+  currentUserId,
+  debug,
+}: {
+  fetchedMessages: MessageType[];
+  previousMessages: MessageType[];
+  currentUserId: string;
+  debug?: (payload: {
+    preservedPendingCount: number;
+    droppedPendingCount: number;
+    preservedPendingIds: string[];
+    droppedPendingIds: string[];
+    preservedPendingTypes: string[];
+    droppedPendingTypes: string[];
+  }) => void;
+}) => {
+  const fetchedIds = new Set(fetchedMessages.map((message) => message.id));
+  const preservedPending: MessageType[] = [];
+  const droppedPending: MessageType[] = [];
+  const pendingLocals = previousMessages.filter((message) => {
+    if (fetchedIds.has(message.id)) return false;
+    if (!message.status || !PENDING_LOCAL_MESSAGE_STATUSES.has(message.status)) return false;
+    if (message.senderId !== currentUserId) return false;
+    if (message.type === 'system' || message.isSystem) return false;
+    const shouldKeep = !message.id.startsWith('temp-')
+      ? message.status === 'failed'
+      : !hasLikelyServerMatch(message, fetchedMessages, currentUserId);
+    if (shouldKeep) preservedPending.push(message);
+    else droppedPending.push(message);
+    return shouldKeep;
+  });
+
+  if (debug && (preservedPending.length > 0 || droppedPending.length > 0)) {
+    debug({
+      preservedPendingCount: preservedPending.length,
+      droppedPendingCount: droppedPending.length,
+      preservedPendingIds: preservedPending.map((message) => message.id),
+      droppedPendingIds: droppedPending.map((message) => message.id),
+      preservedPendingTypes: preservedPending.map((message) => `${message.type}:${message.status ?? 'none'}`),
+      droppedPendingTypes: droppedPending.map((message) => `${message.type}:${message.status ?? 'none'}`),
+    });
+  }
+
+  if (pendingLocals.length === 0) return fetchedMessages;
+
+  return [...fetchedMessages, ...pendingLocals].sort(
+    (a, b) => a.timestamp.getTime() - b.timestamp.getTime(),
+  );
+};
+
+const mergeIncrementalFetchedMessages = (
+  previousMessages: MessageType[],
+  fetchedMessages: MessageType[],
+) => {
+  if (fetchedMessages.length === 0) return previousMessages;
+  const byId = new Map(previousMessages.map((message) => [message.id, message] as const));
+  const findExistingIdByClientMessageId = (clientMessageId: string, nextId: string) => {
+    for (const [id, message] of byId.entries()) {
+      if (id !== nextId && message.clientMessageId === clientMessageId) {
+        return id;
+      }
+    }
+    return null;
+  };
+
+  fetchedMessages.forEach((message) => {
+    const existingClientId = message.clientMessageId
+      ? findExistingIdByClientMessageId(message.clientMessageId, message.id)
+      : null;
+    const previous = byId.get(existingClientId ?? message.id);
+    if (existingClientId) {
+      byId.delete(existingClientId);
+    }
+    byId.set(
+      message.id,
+      previous
+        ? {
+            ...previous,
+            ...message,
+            reactions: message.reactions?.length ? message.reactions : previous.reactions,
+            replyTo: message.replyTo ?? previous.replyTo,
+            offlineImageUri: message.offlineImageUri ?? previous.offlineImageUri,
+            offlineVideoUri: message.offlineVideoUri ?? previous.offlineVideoUri,
+            voiceMessage:
+              message.voiceMessage && previous.voiceMessage
+                ? { ...message.voiceMessage, isPlaying: previous.voiceMessage.isPlaying }
+                : message.voiceMessage ?? previous.voiceMessage,
+          }
+        : message,
+    );
+  });
+
+  return Array.from(byId.values()).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
 };
 
 type MediaUploadStatus = {
@@ -479,14 +914,6 @@ type IntentRequestSummary = {
   message?: string | null;
   expires_at: string;
   status: 'pending' | 'accepted' | 'passed' | 'expired' | 'cancelled' | 'matched';
-};
-
-type MessageEditRow = {
-  id: string;
-  message_id: string;
-  editor_user_id: string;
-  previous_text: string;
-  created_at: string;
 };
 
 type ReactionRow = {
@@ -783,47 +1210,57 @@ const formatDateInviteWhen = (date: Date) =>
     minute: '2-digit',
   })}`;
 
-const normalizeDatePlanText = (value?: string | null) =>
-  value?.trim().toLowerCase().replace(/\s+/g, ' ') ?? '';
-
-const isSameDatePlanPlace = (invite: NonNullable<MessageType['dateInvite']>, place: DatePlaceOption) => {
-  if (invite.venueId && place.venueId) return invite.venueId === place.venueId;
-  if (invite.lat != null && invite.lng != null) {
-    const sameLat = Math.abs(invite.lat - place.lat) < 0.000001;
-    const sameLng = Math.abs(invite.lng - place.lng) < 0.000001;
-    if (sameLat && sameLng) return true;
-  }
-  return (
-    normalizeDatePlanText(invite.placeName) === normalizeDatePlanText(place.name) &&
-    normalizeDatePlanText(invite.placeAddress) === normalizeDatePlanText(place.address)
-  );
-};
-
 const dedupeMessagesById = (items: MessageType[]) => {
   if (items.length <= 1) return items;
   const seen = new Set<string>();
   const deduped: MessageType[] = [];
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
-    if (seen.has(item.id)) continue;
-    seen.add(item.id);
+    const idKey = `id:${item.id}`;
+    const clientKey = item.clientMessageId ? `client:${item.clientMessageId}` : null;
+    if (seen.has(idKey) || (clientKey && seen.has(clientKey))) continue;
+    seen.add(idKey);
+    if (clientKey) seen.add(clientKey);
     deduped.unshift(item);
   }
   return deduped;
 };
 
-const areReactionListsEqual = (
-  current: MessageType['reactions'] | undefined,
-  next: MessageType['reactions'] | undefined,
-) => {
-  const currentList = current ?? [];
-  const nextList = next ?? [];
-  if (currentList.length !== nextList.length) return false;
-  return currentList.every(
-    (reaction, index) =>
-      reaction.userId === nextList[index]?.userId &&
-      reaction.emoji === nextList[index]?.emoji,
-  );
+const getMessageLocalObserverKey = (message: MessageType) =>
+  [
+    message.id,
+    message.clientMessageId ?? '',
+    message.text,
+    message.senderId,
+    message.timestamp.getTime(),
+    message.type,
+    message.status ?? '',
+    message.deletedForAll ? 'deleted' : 'active',
+    message.deletedAt?.getTime() ?? 0,
+    message.editedAt?.getTime() ?? 0,
+    message.replyToId ?? '',
+    message.imageUrl ?? '',
+    message.videoUrl ?? '',
+    message.document?.url ?? '',
+    message.location ? `${message.location.lat}:${message.location.lng}:${message.location.label}` : '',
+    message.dateInvite?.planId ?? '',
+    message.reactions?.map((reaction) => `${reaction.userId}:${reaction.emoji}`).join(',') ?? '',
+  ].join('\u001f');
+
+type MessageRenderMeta = {
+  isMyMessage: boolean;
+  showAvatar: boolean;
+  showAvatarSpacer: boolean;
+  isGroupedWithPrev: boolean;
+  isGroupedWithNext: boolean;
+  showDateSeparator: boolean;
+  timeLabel: string;
+  imageSize?: { width: number; height: number };
+  cachedImageUrl?: string;
+  cachedVideoUrl?: string;
+  viewOnceViewedByMe: boolean;
+  viewOnceViewedByPeer: boolean;
+  isActionPinned: boolean;
 };
 
 const buildDateQuickSlots = (baseNow: Date) => {
@@ -1055,8 +1492,6 @@ type DatePlaceOption = PlaceResult & {
   metadata?: Record<string, unknown> | null;
 };
 
-type DatePlannerMode = 'new' | 'counter_time' | 'counter_place' | 'counter_both' | 'reschedule';
-
 type MessageRowItemProps = {
   item: MessageType;
   isMyMessage: boolean;
@@ -1080,6 +1515,7 @@ type MessageRowItemProps = {
   isDark: boolean;
   styles: ReturnType<typeof createStyles>;
   onLongPress: (messageId: string) => void;
+  onRetryFailedMessage: (messageId: string) => void;
   onToggleVoice: (messageId: string) => void;
   onFocus: (messageId: string) => void;
   onReply: (message: MessageType) => void;
@@ -1113,7 +1549,6 @@ type MessageRowItemProps = {
   viewOnceViewedByPeer: boolean;
   highlightQuery?: string;
   onHighlightPress?: (messageId: string) => void;
-  now?: number | null;
 };
 
 const withAlpha = (hex: string, alpha: number) => {
@@ -1123,28 +1558,6 @@ const withAlpha = (hex: string, alpha: number) => {
   const g = (bigint >> 8) & 255;
   const b = bigint & 255;
   return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
-};
-
-const formatVoiceDuration = (seconds: number) => {
-  const safeSeconds = Math.max(0, Math.round(seconds || 0));
-  const minutes = Math.floor(safeSeconds / 60);
-  const remaining = `${safeSeconds % 60}`.padStart(2, '0');
-  return `${minutes}:${remaining}`;
-};
-
-const getReceiptIconState = (status: MessageType['status'], isDark: boolean): ReceiptIconState => {
-  switch (status) {
-    case 'queued':
-      return { name: 'clock-outline', color: isDark ? '#CFE1DD' : '#E8F3F0', size: 13 };
-    case 'read':
-      return { name: 'check-all', color: isDark ? '#18E0D2' : '#007D78', size: 14 };
-    case 'delivered':
-      return { name: 'check-all', color: isDark ? '#CAD8D5' : '#879491', size: 14 };
-    case 'sent':
-      return { name: 'check', color: isDark ? '#AAB8B4' : '#D0DEDB', size: 14 };
-    default:
-      return { name: 'clock-outline', color: '#C6D7D3', size: 13 };
-  }
 };
 
 const formatFileSize = (bytes?: number | null) => {
@@ -1235,10 +1648,24 @@ const normalizeHeicImage = async (
   };
 };
 
-type VideoPreviewProps = {
+type DatePlanMessageContentProps = {
+  item: MessageType;
+  isMyMessage: boolean;
+  userAvatar?: string | null;
+  peerName: string;
+  theme: typeof Colors.light;
+  isDark: boolean;
   styles: ReturnType<typeof createStyles>;
-  url: string;
-  resolvedUrl?: string;
+  datePlanActionId: string | null;
+  datePlanCalendarActionId: string | null;
+  onAcceptDatePlan: (planId: string) => void;
+  onSuggestAnotherTime: (invite: MessageType['dateInvite']) => void;
+  onSuggestAnotherPlace: (invite: MessageType['dateInvite']) => void;
+  onSuggestBoth: (invite: MessageType['dateInvite']) => void;
+  onRescheduleDatePlan: (invite: MessageType['dateInvite']) => void;
+  onCancelDatePlan: (planId: string) => void;
+  onRequestDatePlanConcierge: (planId: string) => void;
+  onAddDatePlanToCalendar: (invite: MessageType['dateInvite']) => void;
 };
 
 type ReplyMeta = {
@@ -1247,37 +1674,662 @@ type ReplyMeta = {
   preview: string;
   time: string;
   canJump: boolean;
+  thumbnailUri?: string | null;
+  thumbnailKind?: 'image' | 'video' | 'location' | 'date_plan' | null;
 };
 
-const VideoPreview = memo(({ styles, url, resolvedUrl }: VideoPreviewProps) => {
-  const player = useVideoPlayer(resolvedUrl || url, (p) => {
-    p.loop = false;
-    p.muted = true;
-  });
-  return (
-    <View style={styles.videoPreviewWrap}>
-      <VideoView
-        player={player}
-        style={styles.messageVideo}
-        contentFit="cover"
-        nativeControls={false}
-        pointerEvents="none"
-      />
-      <LinearGradient
-        colors={['rgba(2, 8, 8, 0.08)', 'rgba(4, 14, 14, 0.18)', 'rgba(2, 8, 8, 0.34)']}
-        start={[0, 0]}
-        end={[1, 1]}
-        style={StyleSheet.absoluteFillObject}
-      />
-      <View style={styles.videoOverlay}>
-        <MaterialCommunityIcons name="play-circle" size={34} color={Colors.light.background} />
-        <Text style={styles.videoOverlayLabel}>Video</Text>
-      </View>
-    </View>
-  );
-});
+const DatePlanMessageContent = memo(
+  ({
+    item,
+    isMyMessage,
+    userAvatar,
+    peerName,
+    theme,
+    isDark,
+    styles,
+    datePlanActionId,
+    datePlanCalendarActionId,
+    onAcceptDatePlan,
+    onSuggestAnotherTime,
+    onSuggestAnotherPlace,
+    onSuggestBoth,
+    onRescheduleDatePlan,
+    onCancelDatePlan,
+    onRequestDatePlanConcierge,
+    onAddDatePlanToCalendar,
+  }: DatePlanMessageContentProps) => {
+    const {
+      datePlanStatus,
+      datePlanPlanId,
+      datePlanBusy,
+      canAcceptDatePlan,
+      canRequestDatePlanConcierge,
+      canRescheduleDatePlan,
+      canAddDatePlanToCalendar,
+      canCancelDatePlan,
+      datePlanCalendarBusy,
+      datePlanBadgeLabel,
+      datePlanBadgeIcon,
+      isAcceptedDatePlan,
+    } = getDatePlanUiState({
+      item,
+      isMyMessage,
+      datePlanActionId,
+      datePlanCalendarActionId,
+    });
+    const acceptedLockIn = useRef(new Animated.Value(isAcceptedDatePlan ? 1 : 0)).current;
+    const previousDatePlanStatus = useRef(datePlanStatus);
+    const acceptedLockInHeaderStyle = useMemo(() => ({
+      opacity: acceptedLockIn.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0.72, 1],
+      }),
+      transform: [
+        {
+          translateY: acceptedLockIn.interpolate({
+            inputRange: [0, 1],
+            outputRange: [Motion.transform.enterTranslateY, 0],
+          }),
+        },
+        {
+          scale: acceptedLockIn.interpolate({
+            inputRange: [0, 0.68, 1],
+            outputRange: [0.985, Motion.transform.popScale, 1],
+          }),
+        },
+      ],
+    }) as const, [acceptedLockIn]);
+    const acceptedLockInLiftStyle = useMemo(() => ({
+      opacity: acceptedLockIn.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0.68, 1],
+      }),
+      transform: [
+        {
+          translateY: acceptedLockIn.interpolate({
+            inputRange: [0, 1],
+            outputRange: [6, 0],
+          }),
+        },
+      ],
+    }) as const, [acceptedLockIn]);
 
-VideoPreview.displayName = "VideoPreview";
+    useEffect(() => {
+      const previousStatus = previousDatePlanStatus.current;
+      if (datePlanStatus === 'accepted' && previousStatus !== 'accepted') {
+        acceptedLockIn.stopAnimation();
+        acceptedLockIn.setValue(0);
+        Animated.timing(acceptedLockIn, {
+          toValue: 1,
+          duration: Motion.duration.slow,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }).start();
+      } else if (datePlanStatus !== 'accepted') {
+        acceptedLockIn.stopAnimation();
+        acceptedLockIn.setValue(0);
+      }
+
+      previousDatePlanStatus.current = datePlanStatus;
+    }, [acceptedLockIn, datePlanStatus]);
+
+    return (
+      <View
+        style={[
+          styles.datePlanMessageContainer,
+          isAcceptedDatePlan && styles.datePlanMessageContainerConfirmed,
+        ]}
+      >
+        <View style={styles.datePlanHeader}>
+          <View style={styles.datePlanHeaderTop}>
+            <View style={[styles.datePlanBadge, { backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.16) : withAlpha(theme.tint, 0.14) }]}>
+              <MaterialCommunityIcons
+                name={datePlanBadgeIcon}
+                size={14}
+                color={isMyMessage ? Colors.light.background : theme.tint}
+              />
+              <Text style={[styles.datePlanBadgeText, { color: isMyMessage ? Colors.light.background : theme.tint }]}>
+                {datePlanBadgeLabel}
+              </Text>
+            </View>
+            {userAvatar ? (
+              <View
+                style={[
+                  styles.datePlanPersonChip,
+                  {
+                    backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.12) : withAlpha(theme.tint, 0.1),
+                    borderColor: isMyMessage ? withAlpha(Colors.light.background, 0.14) : withAlpha(theme.tint, 0.14),
+                  },
+                ]}
+              >
+                <ExpoImage
+                  source={{ uri: userAvatar }}
+                  style={styles.datePlanPersonAvatar}
+                  cachePolicy="disk"
+                  contentFit="cover"
+                  transition={0}
+                />
+                <Text
+                  style={[
+                    styles.datePlanPersonText,
+                    { color: isMyMessage ? Colors.light.background : theme.text },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {isMyMessage ? `For ${peerName || 'your match'}` : peerName || 'Your match'}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+          {isAcceptedDatePlan ? (
+            <Text
+              style={[
+                styles.datePlanWhenEyebrow,
+                { color: isMyMessage ? withAlpha(Colors.light.background, 0.76) : theme.textMuted },
+              ]}
+            >
+              Confirmed plan
+            </Text>
+          ) : null}
+          {isAcceptedDatePlan ? (
+            <Animated.View style={acceptedLockInHeaderStyle as any}>
+              <View
+                style={[
+                  styles.datePlanWhenRowConfirmed,
+                  {
+                    backgroundColor: isMyMessage
+                      ? withAlpha(Colors.light.background, 0.1)
+                      : withAlpha(theme.text, 0.05),
+                  },
+                ]}
+              >
+                <MaterialCommunityIcons
+                  name="calendar-check-outline"
+                  size={16}
+                  color={isMyMessage ? Colors.light.background : theme.tint}
+                />
+                <Text
+                  style={[
+                    styles.datePlanWhen,
+                    styles.datePlanWhenConfirmed,
+                    { color: isMyMessage ? Colors.light.background : theme.text },
+                  ]}
+                >
+                  {item.dateInvite ? formatDateInviteWhen(item.dateInvite.scheduledFor) : 'Date suggestion'}
+                </Text>
+              </View>
+            </Animated.View>
+          ) : (
+            <Text
+              style={[
+                styles.datePlanWhen,
+                { color: isMyMessage ? Colors.light.background : theme.text },
+              ]}
+            >
+              {item.dateInvite ? formatDateInviteWhen(item.dateInvite.scheduledFor) : 'Date suggestion'}
+            </Text>
+          )}
+          {datePlanStatus !== 'pending' || item.dateInvite?.conciergeRequested ? (
+            <Animated.View style={isAcceptedDatePlan ? acceptedLockInLiftStyle as any : undefined}>
+              <View style={styles.datePlanStatusRow}>
+                {datePlanStatus !== 'pending' ? (
+                  <View
+                    style={[
+                      styles.datePlanStatusChip,
+                      {
+                        backgroundColor: isMyMessage
+                          ? withAlpha(Colors.light.background, 0.16)
+                          : withAlpha(theme.tint, 0.12),
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.datePlanStatusText,
+                        { color: isMyMessage ? Colors.light.background : theme.tint },
+                      ]}
+                    >
+                      {datePlanStatus === 'accepted'
+                        ? 'Confirmed'
+                        : datePlanStatus === 'declined'
+                        ? 'Passed'
+                        : datePlanStatus === 'countered'
+                        ? 'Updated'
+                        : 'Cancelled'}
+                    </Text>
+                  </View>
+                ) : null}
+                {item.dateInvite?.conciergeRequested ? (
+                  <View
+                    style={[
+                      styles.datePlanStatusChip,
+                      {
+                        backgroundColor: isMyMessage
+                          ? withAlpha(Colors.light.background, 0.12)
+                          : withAlpha(theme.text, 0.08),
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.datePlanStatusText,
+                        { color: isMyMessage ? Colors.light.background : theme.text },
+                      ]}
+                    >
+                      Betweener helping
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            </Animated.View>
+          ) : null}
+        </View>
+        {item.dateInvite?.mapUrl ? (
+          <Image
+            source={{ uri: item.dateInvite.mapUrl }}
+            style={[
+              styles.datePlanMapImage,
+              isAcceptedDatePlan && styles.datePlanMapImageConfirmed,
+            ]}
+          />
+        ) : null}
+        <View style={styles.datePlanPlaceBlock}>
+          <Text
+            style={[
+              styles.datePlanVenue,
+              isAcceptedDatePlan && styles.datePlanVenueConfirmed,
+              { color: isMyMessage ? Colors.light.background : theme.text },
+            ]}
+            numberOfLines={1}
+          >
+            {item.dateInvite?.placeName || 'Chosen venue'}
+          </Text>
+          {item.dateInvite?.placeAddress ? (
+            <Text
+              style={[
+                styles.datePlanAddress,
+                isAcceptedDatePlan && styles.datePlanAddressConfirmed,
+                { color: isMyMessage ? withAlpha(Colors.light.background, 0.78) : theme.textMuted },
+              ]}
+              numberOfLines={2}
+            >
+              {item.dateInvite.placeAddress}
+            </Text>
+          ) : null}
+          {item.dateInvite?.summary ? (
+            <Text
+              style={[
+                styles.datePlanSummary,
+                isAcceptedDatePlan && styles.datePlanSummaryConfirmed,
+                { color: isMyMessage ? withAlpha(Colors.light.background, 0.78) : theme.textMuted },
+              ]}
+              numberOfLines={isAcceptedDatePlan ? 1 : 2}
+            >
+              {item.dateInvite.summary}
+            </Text>
+          ) : null}
+        </View>
+        {item.dateInvite?.badges?.length ? (
+          <View style={[styles.datePlanBadgeRow, isAcceptedDatePlan && styles.datePlanBadgeRowCompact]}>
+            {item.dateInvite.badges.slice(0, 3).map((badge) => {
+              const badgeMeta = getDateBadgeMeta(badge);
+              const badgePalette = getDateBadgePalette({
+                tone: badgeMeta.tone,
+                theme,
+                isDark,
+                surface: 'message',
+                isMyMessage,
+                confirmed: isAcceptedDatePlan,
+              });
+              return (
+                <View
+                  key={badge}
+                  style={[
+                    styles.datePlanTag,
+                    isAcceptedDatePlan && styles.datePlanTagCompact,
+                    isAcceptedDatePlan && styles.datePlanTagConfirmed,
+                    {
+                      backgroundColor: badgePalette.backgroundColor,
+                      borderColor: badgePalette.borderColor,
+                      borderWidth: 1,
+                    },
+                  ]}
+                >
+                  <View style={styles.datePlanTagContent}>
+                    <MaterialCommunityIcons
+                      name={badgeMeta.icon}
+                      size={12}
+                      color={badgePalette.foregroundColor}
+                      style={styles.datePlanTagIcon}
+                    />
+                    <Text
+                      style={[
+                        styles.datePlanTagText,
+                        isAcceptedDatePlan && styles.datePlanTagTextCompact,
+                        { color: badgePalette.foregroundColor },
+                      ]}
+                    >
+                      {badge}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        ) : null}
+        {item.dateInvite?.note ? (
+          <View
+            style={[
+              styles.datePlanNoteCard,
+              isAcceptedDatePlan && styles.datePlanNoteCardLight,
+              { borderColor: isMyMessage ? withAlpha(Colors.light.background, 0.18) : withAlpha(theme.text, 0.12) },
+            ]}
+          >
+            <Text
+              style={[
+                styles.datePlanNoteLabel,
+                isAcceptedDatePlan && styles.datePlanNoteLabelCompact,
+                { color: isMyMessage ? withAlpha(Colors.light.background, 0.7) : theme.textMuted },
+              ]}
+            >
+              Note
+            </Text>
+            <Text
+              style={[
+                styles.datePlanNoteText,
+                isAcceptedDatePlan && styles.datePlanNoteTextCompact,
+                { color: isMyMessage ? Colors.light.background : theme.text },
+              ]}
+            >
+              {item.dateInvite.note}
+            </Text>
+          </View>
+        ) : null}
+        {canAcceptDatePlan ? (
+          <View style={styles.datePlanActionRow}>
+            <TouchableOpacity
+              style={[
+                styles.datePlanPrimaryAction,
+                {
+                  backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.14) : theme.tint,
+                  opacity: datePlanBusy ? 0.7 : 1,
+                },
+              ]}
+              disabled={datePlanBusy}
+              onPress={() => datePlanPlanId && onAcceptDatePlan(datePlanPlanId)}
+            >
+              <Text
+                style={[
+                  styles.datePlanPrimaryActionText,
+                  { color: Colors.light.background },
+                ]}
+              >
+                {datePlanBusy ? 'Accepting...' : 'Accept'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.datePlanSecondaryAction,
+                {
+                  borderColor: isMyMessage
+                    ? withAlpha(Colors.light.background, 0.2)
+                    : withAlpha(theme.text, 0.14),
+                  opacity: datePlanBusy ? 0.7 : 1,
+                },
+              ]}
+              disabled={datePlanBusy}
+              onPress={() => item.dateInvite && onSuggestAnotherTime(item.dateInvite)}
+            >
+              <Text
+                style={[
+                  styles.datePlanSecondaryActionText,
+                  { color: isMyMessage ? Colors.light.background : theme.text },
+                ]}
+              >
+                Suggest another time
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.datePlanSecondaryAction,
+                {
+                  borderColor: isMyMessage
+                    ? withAlpha(Colors.light.background, 0.2)
+                    : withAlpha(theme.text, 0.14),
+                  opacity: datePlanBusy ? 0.7 : 1,
+                },
+              ]}
+              disabled={datePlanBusy}
+              onPress={() => item.dateInvite && onSuggestAnotherPlace(item.dateInvite)}
+            >
+              <Text
+                style={[
+                  styles.datePlanSecondaryActionText,
+                  { color: isMyMessage ? Colors.light.background : theme.text },
+                ]}
+              >
+                Suggest another place
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.datePlanSecondaryAction,
+                {
+                  borderColor: isMyMessage
+                    ? withAlpha(Colors.light.background, 0.2)
+                    : withAlpha(theme.text, 0.14),
+                  opacity: datePlanBusy ? 0.7 : 1,
+                },
+              ]}
+              disabled={datePlanBusy}
+              onPress={() => item.dateInvite && onSuggestBoth(item.dateInvite)}
+            >
+              <Text
+                style={[
+                  styles.datePlanSecondaryActionText,
+                  { color: isMyMessage ? Colors.light.background : theme.text },
+                ]}
+              >
+                Suggest both
+              </Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+        {canRescheduleDatePlan ? (
+          <Animated.View style={acceptedLockInLiftStyle as any}>
+            <View style={styles.datePlanActionRow}>
+              {canAddDatePlanToCalendar ? (
+                <TouchableOpacity
+                  style={[
+                    styles.datePlanPrimaryAction,
+                    styles.datePlanPrimaryActionWide,
+                    {
+                      backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.16) : theme.tint,
+                      opacity: datePlanCalendarBusy ? 0.7 : 1,
+                    },
+                  ]}
+                  disabled={datePlanCalendarBusy}
+                  onPress={() => item.dateInvite && onAddDatePlanToCalendar(item.dateInvite)}
+                >
+                  <View style={styles.datePlanPrimaryActionContent}>
+                    <MaterialCommunityIcons
+                      name="calendar-plus"
+                      size={14}
+                      color={Colors.light.background}
+                    />
+                    <Text
+                      style={[
+                        styles.datePlanPrimaryActionText,
+                        { color: Colors.light.background },
+                      ]}
+                    >
+                      {datePlanCalendarBusy ? 'Adding...' : 'Add to Calendar'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ) : null}
+              {item.dateInvite?.mapLink ? (
+                <TouchableOpacity
+                  style={[
+                    styles.datePlanSecondaryAction,
+                    styles.datePlanSecondaryActionStrong,
+                    {
+                      borderColor: isMyMessage
+                        ? withAlpha(Colors.light.background, 0.2)
+                        : withAlpha(theme.text, 0.14),
+                      opacity: datePlanBusy ? 0.7 : 1,
+                    },
+                  ]}
+                  disabled={datePlanBusy}
+                  onPress={() => item.dateInvite?.mapLink && Linking.openURL(item.dateInvite.mapLink).catch(() => {})}
+                >
+                  <View style={styles.datePlanSecondaryActionContent}>
+                    <MaterialCommunityIcons
+                      name="map-marker-path"
+                      size={14}
+                      color={isMyMessage ? Colors.light.background : theme.text}
+                    />
+                    <Text
+                      style={[
+                        styles.datePlanSecondaryActionText,
+                        { color: isMyMessage ? Colors.light.background : theme.text },
+                      ]}
+                    >
+                      Open in Maps
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity
+                style={[
+                  styles.datePlanSecondaryAction,
+                  styles.datePlanSecondaryActionStrong,
+                  {
+                    borderColor: isMyMessage
+                      ? withAlpha(Colors.light.background, 0.2)
+                      : withAlpha(theme.text, 0.14),
+                    opacity: datePlanBusy ? 0.7 : 1,
+                  },
+                ]}
+                disabled={datePlanBusy}
+                onPress={() => item.dateInvite && onRescheduleDatePlan(item.dateInvite)}
+              >
+                <Text
+                  style={[
+                    styles.datePlanSecondaryActionText,
+                    { color: isMyMessage ? Colors.light.background : theme.text },
+                  ]}
+                >
+                  Reschedule date
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+        ) : null}
+        {isMyMessage && datePlanStatus === 'pending' ? (
+          <>
+            <Text style={[styles.datePlanPendingText, { color: withAlpha(Colors.light.background, 0.82) }]}>
+              Waiting for their reply
+            </Text>
+            {canCancelDatePlan ? (
+              <View style={styles.datePlanActionRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.datePlanSecondaryAction,
+                    {
+                      borderColor: withAlpha(Colors.light.background, 0.2),
+                      opacity: datePlanBusy ? 0.7 : 1,
+                    },
+                  ]}
+                  disabled={datePlanBusy}
+                  onPress={() => datePlanPlanId && onCancelDatePlan(datePlanPlanId)}
+                >
+                  <Text style={[styles.datePlanSecondaryActionText, { color: Colors.light.background }]}>
+                    {datePlanBusy ? 'Cancelling...' : 'Cancel suggestion'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+          </>
+        ) : null}
+        {canRequestDatePlanConcierge ? (
+          <Animated.View style={acceptedLockInLiftStyle as any}>
+            <TouchableOpacity
+              style={[
+                styles.datePlanConciergeButton,
+                {
+                  borderColor: isMyMessage
+                    ? withAlpha(Colors.light.background, 0.22)
+                    : withAlpha(theme.tint, 0.18),
+                  backgroundColor: isMyMessage
+                    ? withAlpha(Colors.light.background, 0.08)
+                    : withAlpha(theme.tint, 0.08),
+                  opacity: datePlanBusy ? 0.7 : 1,
+                },
+              ]}
+              disabled={datePlanBusy}
+              onPress={() => datePlanPlanId && onRequestDatePlanConcierge(datePlanPlanId)}
+            >
+              <MaterialCommunityIcons
+                name="account-tie-hat-outline"
+                size={14}
+                color={isMyMessage ? Colors.light.background : theme.tint}
+              />
+              <Text
+                style={[
+                  styles.datePlanConciergeText,
+                  { color: isMyMessage ? Colors.light.background : theme.tint },
+                ]}
+              >
+                {datePlanBusy ? 'Notifying Betweener...' : 'Get Betweener help'}
+              </Text>
+            </TouchableOpacity>
+          </Animated.View>
+        ) : null}
+        {canRescheduleDatePlan && canCancelDatePlan ? (
+          <TouchableOpacity
+            style={[
+              styles.datePlanTertiaryAction,
+              { opacity: datePlanBusy ? 0.7 : 1 },
+            ]}
+            disabled={datePlanBusy}
+            onPress={() => datePlanPlanId && onCancelDatePlan(datePlanPlanId)}
+          >
+            <Text
+              style={[
+                styles.datePlanTertiaryActionText,
+                { color: isMyMessage ? withAlpha(Colors.light.background, 0.84) : '#d96b6b' },
+              ]}
+            >
+              {datePlanBusy ? 'Cancelling...' : 'Cancel date'}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+        {item.dateInvite?.mapLink && !canRescheduleDatePlan ? (
+          <View style={styles.datePlanFooterRow}>
+            <View style={styles.datePlanFooterLead}>
+              <MaterialCommunityIcons
+                name="map-marker-path"
+                size={13}
+                color={isMyMessage ? withAlpha(Colors.light.background, 0.82) : theme.textMuted}
+              />
+              <Text style={[styles.datePlanFooterText, { color: isMyMessage ? withAlpha(Colors.light.background, 0.82) : theme.textMuted }]}>
+                Open in Maps
+              </Text>
+            </View>
+            <MaterialCommunityIcons
+              name="chevron-right"
+              size={16}
+              color={isMyMessage ? withAlpha(Colors.light.background, 0.72) : theme.textMuted}
+            />
+          </View>
+        ) : null}
+      </View>
+    );
+  }
+);
+
+DatePlanMessageContent.displayName = "DatePlanMessageContent";
 
 type VideoViewerProps = {
   url: string;
@@ -1334,6 +2386,7 @@ const MessageRowItem = memo(
     isDark,
     styles,
     onLongPress,
+    onRetryFailedMessage,
     onToggleVoice,
     onFocus,
     onReply,
@@ -1363,62 +2416,14 @@ const MessageRowItem = memo(
     onAddDatePlanToCalendar,
     datePlanActionId,
     datePlanCalendarActionId,
-    viewOnceViewedByMe,
-    viewOnceViewedByPeer,
+      viewOnceViewedByMe,
+      viewOnceViewedByPeer,
       highlightQuery,
       onHighlightPress,
-      now,
     }: MessageRowItemProps) => {
     const isSystemRow = item.type === 'system' || item.isSystem;
     const focusPulse = useRef(new Animated.Value(0)).current;
     const accent = isMyMessage ? Colors.light.background : theme.tint;
-    const datePlanStatus = item.dateInvite?.status ?? 'pending';
-    const datePlanPlanId = item.dateInvite?.planId ?? null;
-    const datePlanBusy = Boolean(datePlanPlanId) && datePlanActionId === datePlanPlanId;
-    const canAcceptDatePlan =
-      item.type === 'date_plan' &&
-      !isMyMessage &&
-      datePlanStatus === 'pending' &&
-      Boolean(datePlanPlanId);
-    const canRequestDatePlanConcierge =
-      item.type === 'date_plan' &&
-      datePlanStatus === 'accepted' &&
-      !item.dateInvite?.conciergeRequested &&
-      Boolean(datePlanPlanId);
-    const canRescheduleDatePlan =
-      item.type === 'date_plan' &&
-      datePlanStatus === 'accepted' &&
-      Boolean(datePlanPlanId);
-    const canAddDatePlanToCalendar =
-      item.type === 'date_plan' &&
-      datePlanStatus === 'accepted' &&
-      Boolean(item.dateInvite);
-    const canCancelDatePlan =
-      item.type === 'date_plan' &&
-      Boolean(datePlanPlanId) &&
-      ((datePlanStatus === 'pending' && isMyMessage) || datePlanStatus === 'accepted');
-    const datePlanCalendarBusy = Boolean(datePlanPlanId) && datePlanCalendarActionId === datePlanPlanId;
-    const datePlanBadgeLabel =
-      datePlanStatus === 'accepted'
-        ? 'Plan confirmed'
-        : item.dateInvite?.responseKind === 'counter_time'
-        ? 'Suggested another time'
-        : item.dateInvite?.responseKind === 'counter_place'
-        ? 'Suggested another place'
-        : item.dateInvite?.responseKind === 'counter_both'
-        ? 'Updated suggestion'
-        : 'Date suggestion';
-    const datePlanBadgeIcon =
-      datePlanStatus === 'accepted'
-        ? 'calendar-check'
-        : item.dateInvite?.responseKind === 'counter_time' ||
-          item.dateInvite?.responseKind === 'counter_place' ||
-          item.dateInvite?.responseKind === 'counter_both'
-        ? 'calendar-refresh'
-        : 'calendar-heart';
-    const isAcceptedDatePlan = item.type === 'date_plan' && datePlanStatus === 'accepted';
-    const acceptedLockIn = useRef(new Animated.Value(isAcceptedDatePlan ? 1 : 0)).current;
-    const previousDatePlanStatus = useRef(datePlanStatus);
     const reactionEntrance = useRef(new Animated.Value(item.reactions.length > 0 ? 1 : 0)).current;
     const previousReactionCount = useRef(item.reactions.length);
     const entryAnim = useRef(new Animated.Value(shouldAnimateEntry ? 0 : 1)).current;
@@ -1459,19 +2464,6 @@ const MessageRowItem = memo(
           return styles.receiptMetaBadgeSent;
       }
     }, [isMyMessage, item.status, styles.receiptMetaBadgeDelivered, styles.receiptMetaBadgeRead, styles.receiptMetaBadgeSent]);
-    const mediaReceiptToneStyle = useMemo(() => {
-      if (!isMyMessage) return null;
-      switch (item.status) {
-        case 'read':
-          return styles.mediaMetaOverlayRead;
-        case 'delivered':
-          return styles.mediaMetaOverlayDelivered;
-        case 'sent':
-          return styles.mediaMetaOverlaySent;
-        default:
-          return styles.mediaMetaOverlaySent;
-      }
-    }, [isMyMessage, item.status, styles.mediaMetaOverlayDelivered, styles.mediaMetaOverlayRead, styles.mediaMetaOverlaySent]);
     const rowSpotlightStyle = useMemo(() => ({
       opacity: focusPulse,
     }) as const, [focusPulse]);
@@ -1543,40 +2535,6 @@ const MessageRowItem = memo(
     const reactionBubblePulseStyle = useMemo(() => ({
       transform: [{ scale: reactionBubblePulse }],
     }) as const, [reactionBubblePulse]);
-    const acceptedLockInHeaderStyle = useMemo(() => ({
-      opacity: acceptedLockIn.interpolate({
-        inputRange: [0, 1],
-        outputRange: [0.72, 1],
-      }),
-      transform: [
-        {
-          translateY: acceptedLockIn.interpolate({
-            inputRange: [0, 1],
-            outputRange: [Motion.transform.enterTranslateY, 0],
-          }),
-        },
-        {
-          scale: acceptedLockIn.interpolate({
-            inputRange: [0, 0.68, 1],
-            outputRange: [0.985, Motion.transform.popScale, 1],
-          }),
-        },
-      ],
-    }) as const, [acceptedLockIn]);
-    const acceptedLockInLiftStyle = useMemo(() => ({
-      opacity: acceptedLockIn.interpolate({
-        inputRange: [0, 1],
-        outputRange: [0.68, 1],
-      }),
-      transform: [
-        {
-          translateY: acceptedLockIn.interpolate({
-            inputRange: [0, 1],
-            outputRange: [6, 0],
-          }),
-        },
-      ],
-    }) as const, [acceptedLockIn]);
     const rowVignetteColor = useMemo(
       () => withAlpha(theme.text, isDark ? 0.22 : 0.1),
       [isDark, theme.text]
@@ -1641,30 +2599,6 @@ const MessageRowItem = memo(
     }, [isMyMessage, item.status, receiptPulse]);
 
     useEffect(() => {
-      const previousStatus = previousDatePlanStatus.current;
-      if (item.type !== 'date_plan') {
-        previousDatePlanStatus.current = datePlanStatus;
-        return;
-      }
-
-      if (datePlanStatus === 'accepted' && previousStatus !== 'accepted') {
-        acceptedLockIn.stopAnimation();
-        acceptedLockIn.setValue(0);
-        Animated.timing(acceptedLockIn, {
-          toValue: 1,
-          duration: Motion.duration.slow,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }).start();
-      } else if (datePlanStatus !== 'accepted') {
-        acceptedLockIn.stopAnimation();
-        acceptedLockIn.setValue(0);
-      }
-
-      previousDatePlanStatus.current = datePlanStatus;
-    }, [acceptedLockIn, datePlanStatus, item.type]);
-
-    useEffect(() => {
       if (item.reactions.length === 0) {
         reactionEntrance.setValue(0);
         reactionBubblePulse.setValue(1);
@@ -1707,24 +2641,6 @@ const MessageRowItem = memo(
 
     const metaLabel = timeLabel;
 
-    const waveformBars = useMemo(() => {
-      if (item.type !== 'voice' || !item.voiceMessage?.waveform) return null;
-      return item.voiceMessage.waveform.map((height, idx) => (
-        <Animated.View
-          key={idx}
-          style={[
-            styles.waveformBar,
-            {
-              height: height * 20,
-              backgroundColor: isPlaying
-                ? (isMyMessage ? Colors.light.background : theme.tint)
-                : (isMyMessage ? withAlpha(Colors.light.background, 0.62) : withAlpha(theme.text, isDark ? 0.42 : 0.28)),
-            },
-          ]}
-        />
-      ));
-    }, [item.type, item.voiceMessage?.waveform, isPlaying, isMyMessage, isDark, theme.text, theme.tint]);
-
     const reactionNodes = useMemo(() => {
       if (item.deletedForAll) return null;
       if (item.reactions.length === 0) return null;
@@ -1762,12 +2678,6 @@ const MessageRowItem = memo(
     }, [item.deletedForAll, item.reactions, isMyMessage, onOpenReactionSheet, reactionEntranceStyle, styles]);
     const hasReactionSummary = !item.deletedForAll && item.reactions.length > 0;
 
-    const documentMeta = useMemo(() => {
-      if (item.type !== 'document') return null;
-      const parts = [item.document?.sizeLabel, item.document?.typeLabel].filter(Boolean);
-      return parts.length ? parts.join(' | ') : null;
-    }, [item.type, item.document?.sizeLabel, item.document?.typeLabel]);
-
     const canEdit = useMemo(
       () =>
         isMyMessage &&
@@ -1775,6 +2685,10 @@ const MessageRowItem = memo(
         !item.deletedForAll &&
         !item.id.startsWith('temp-'),
       [isMyMessage, item.deletedForAll, item.id, item.type]
+    );
+    const canRetryFailedText = useMemo(
+      () => canRetryFailedTextMessage({ item, isMyMessage }),
+      [isMyMessage, item]
     );
 
     const showEdited = Boolean(item.editedAt) && !item.deletedForAll;
@@ -1790,18 +2704,6 @@ const MessageRowItem = memo(
       : viewOnceViewedByMe
       ? 'Viewed'
       : mediaLabel;
-
-    const locationRemaining = useMemo(() => {
-      if (item.type !== 'location' || !item.location?.live) return null;
-      const nowValue = typeof now === 'number' ? now : Date.now();
-      return formatRemainingTime(item.location.expiresAt, nowValue);
-    }, [item.location?.expiresAt, item.location?.live, item.type, now]);
-
-    const locationIsActive = useMemo(() => {
-      if (item.type !== 'location' || !item.location?.live || !item.location?.expiresAt) return false;
-      const nowValue = typeof now === 'number' ? now : Date.now();
-      return item.location.expiresAt.getTime() > nowValue;
-    }, [item.location?.expiresAt, item.location?.live, item.type, now]);
 
     const replyMeta = useMemo<ReplyMeta | null>(() => {
       if (!item.replyTo) {
@@ -1840,6 +2742,8 @@ const MessageRowItem = memo(
         mood_sticker: 'emoticon-happy-outline',
       };
       let preview = '';
+      let thumbnailUri: string | null = null;
+      let thumbnailKind: ReplyMeta['thumbnailKind'] = null;
       switch (item.replyTo.type) {
         case 'text':
           preview = item.replyTo.text || 'Message';
@@ -1852,9 +2756,12 @@ const MessageRowItem = memo(
           break;
         case 'image':
           preview = 'Photo';
+          thumbnailUri = item.replyTo.offlineImageUri ?? item.replyTo.imageUrl ?? null;
+          thumbnailKind = 'image';
           break;
         case 'video':
           preview = 'Video';
+          thumbnailKind = 'video';
           break;
         case 'document':
           preview = item.replyTo.document?.name || 'Document';
@@ -1863,9 +2770,13 @@ const MessageRowItem = memo(
           preview = item.replyTo.dateInvite?.placeName
             ? `Date: ${item.replyTo.dateInvite.placeName}`
             : 'Date plan';
+          thumbnailUri = item.replyTo.dateInvite?.mapUrl ?? null;
+          thumbnailKind = 'date_plan';
           break;
         case 'location':
           preview = item.replyTo.location?.label ? `Location: ${item.replyTo.location.label}` : 'Location';
+          thumbnailUri = item.replyTo.location?.mapUrl ?? null;
+          thumbnailKind = 'location';
           break;
         case 'mood_sticker':
           preview = item.replyTo.sticker?.name ? `Sticker: ${item.replyTo.sticker.name}` : 'Sticker';
@@ -1881,6 +2792,8 @@ const MessageRowItem = memo(
           preview: replyLabel,
           time: replyTime,
           canJump: true,
+          thumbnailUri: null,
+          thumbnailKind: null,
         };
       }
       return {
@@ -1889,6 +2802,8 @@ const MessageRowItem = memo(
         preview,
         time: replyTime,
         canJump: true,
+        thumbnailUri,
+        thumbnailKind,
       };
     }, [currentUserId, item.replyTo, item.replyToId, peerName]);
 
@@ -1978,34 +2893,38 @@ const MessageRowItem = memo(
             />
           </Animated.View>
         ) : null}
-        <Pressable
+        <ChatMessageBubblePressable
+          messageId={item.id}
+          canRetryFailedText={canRetryFailedText}
+          styles={styles}
+          isMyMessage={isMyMessage}
+          onFocus={onFocus}
+          onRetryFailedMessage={onRetryFailedMessage}
           onLongPress={() => onLongPress(item.id)}
-          delayLongPress={600}
-          onPress={() => {
-            onFocus(item.id);
+          onPressContent={() => {
             if (item.type === 'voice') {
-              onToggleVoice(item.id);
+              return;
             }
             if (item.type === 'image' && item.imageUrl) {
               onViewImage(item.offlineImageUri ?? item.imageUrl);
+              return;
             }
             if (item.type === 'video' && item.videoUrl) {
               onViewVideo(item.offlineVideoUri ?? item.videoUrl);
+              return;
             }
             if (item.type === 'document' && item.document?.url) {
               onOpenDocument(item.document);
+              return;
             }
             if (item.type === 'date_plan' && item.dateInvite?.mapLink) {
               Linking.openURL(item.dateInvite.mapLink).catch(() => {});
+              return;
             }
             if (item.type === 'location' && item.location) {
               onOpenLocation(item);
             }
           }}
-          style={[
-            styles.messageBubbleContainer,
-            isMyMessage ? styles.myMessageContainer : styles.theirMessageContainer,
-          ]}
         >
           {showAvatar ? (
             userAvatar ? (
@@ -2076,20 +2995,81 @@ const MessageRowItem = memo(
                     isMyMessage ? styles.replyChipLineMy : styles.replyChipLineTheir,
                   ]}
                 />
+                {replyMeta.thumbnailKind ? (
+                  <View
+                    style={[
+                      styles.replyChipThumb,
+                      isMyMessage ? styles.replyChipThumbMy : styles.replyChipThumbTheir,
+                    ]}
+                  >
+                    {replyMeta.thumbnailUri && replyMeta.thumbnailKind !== 'video' ? (
+                      <ExpoImage
+                        source={{ uri: replyMeta.thumbnailUri }}
+                        style={styles.replyChipThumbImage}
+                        cachePolicy="disk"
+                        contentFit="cover"
+                        transition={0}
+                      />
+                    ) : (
+                      <View
+                        style={[
+                          styles.replyChipThumbFallback,
+                          isMyMessage ? styles.replyChipThumbFallbackMy : styles.replyChipThumbFallbackTheir,
+                        ]}
+                      >
+                        <MaterialCommunityIcons
+                          name={
+                            replyMeta.thumbnailKind === 'video'
+                              ? 'play'
+                              : replyMeta.thumbnailKind === 'location' || replyMeta.thumbnailKind === 'date_plan'
+                                ? 'map-marker-outline'
+                                : replyMeta.icon
+                          }
+                          size={16}
+                          color={isMyMessage ? Colors.light.background : theme.text}
+                        />
+                      </View>
+                    )}
+                    {(replyMeta.thumbnailKind === 'video' ||
+                      replyMeta.thumbnailKind === 'location' ||
+                      replyMeta.thumbnailKind === 'date_plan') ? (
+                      <View
+                        style={[
+                          styles.replyChipThumbOverlay,
+                          isMyMessage ? styles.replyChipThumbOverlayMy : styles.replyChipThumbOverlayTheir,
+                        ]}
+                      >
+                        <MaterialCommunityIcons
+                          name={
+                            replyMeta.thumbnailKind === 'video'
+                              ? 'play'
+                              : replyMeta.thumbnailKind === 'date_plan'
+                                ? 'calendar-heart'
+                                : 'navigation-variant-outline'
+                          }
+                          size={12}
+                          color={isMyMessage ? Colors.light.background : theme.text}
+                        />
+                      </View>
+                    ) : null}
+                  </View>
+                ) : null}
                 <View style={styles.replyChipContent}>
                   <View style={styles.replyChipHeader}>
-                    <View
-                      style={[
-                        styles.replyChipIconWrap,
-                        isMyMessage ? styles.replyChipIconWrapMy : styles.replyChipIconWrapTheir,
-                      ]}
-                    >
-                      <MaterialCommunityIcons
-                        name={replyMeta.icon}
-                        size={12}
-                        color={isMyMessage ? Colors.light.background : theme.text}
-                      />
-                    </View>
+                    {!replyMeta.thumbnailKind ? (
+                      <View
+                        style={[
+                          styles.replyChipIconWrap,
+                          isMyMessage ? styles.replyChipIconWrapMy : styles.replyChipIconWrapTheir,
+                        ]}
+                      >
+                        <MaterialCommunityIcons
+                          name={replyMeta.icon}
+                          size={12}
+                          color={isMyMessage ? Colors.light.background : theme.text}
+                        />
+                      </View>
+                    ) : null}
                     <Text
                       style={[
                         styles.replyChipLabel,
@@ -2115,7 +3095,7 @@ const MessageRowItem = memo(
                       styles.replyChipPreview,
                       isMyMessage && styles.replyChipPreviewMy,
                     ]}
-                    numberOfLines={1}
+                    numberOfLines={2}
                   >
                     {replyMeta.preview}
                   </Text>
@@ -2168,6 +3148,11 @@ const MessageRowItem = memo(
                     </Animated.View>
                   )}
                 </View>
+                <ChatFailedRetryHint
+                  visible={canRetryFailedText}
+                  isMyMessage={isMyMessage}
+                  styles={styles}
+                />
               </View>
             ) : isEncryptedViewOnce ? (
               <Pressable
@@ -2204,873 +3189,64 @@ const MessageRowItem = memo(
                 </Text>
               </Pressable>
             ) : item.type === 'voice' ? (
-              <View style={styles.voiceMessageContainer}>
-                <TouchableOpacity
-                  style={[
-                    styles.voicePlayButton,
-                    isMyMessage ? styles.voicePlayButtonMy : styles.voicePlayButtonTheir,
-                    isPlaying && (isMyMessage ? styles.voicePlayButtonMyActive : styles.voicePlayButtonTheirActive),
-                  ]}
-                  onPress={() => onToggleVoice(item.id)}
-                >
-                  <MaterialCommunityIcons
-                    name={isPlaying ? 'pause' : 'play'}
-                    size={16}
-                    color={isMyMessage ? theme.tint : Colors.light.background}
-                  />
-                </TouchableOpacity>
-
-                <View
-                  style={[
-                    styles.voiceWaveformCard,
-                    isMyMessage ? styles.voiceWaveformCardMy : styles.voiceWaveformCardTheir,
-                    isPlaying && (isMyMessage ? styles.voiceWaveformCardMyActive : styles.voiceWaveformCardTheirActive),
-                  ]}
-                >
-                  <View style={styles.voiceWaveform}>
-                    {waveformBars}
-                  </View>
-                  <View
-                    style={[
-                      styles.voiceDurationPill,
-                      isMyMessage ? styles.voiceDurationPillMy : styles.voiceDurationPillTheir,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.voiceDuration,
-                        isMyMessage ? styles.voiceDurationMy : styles.voiceDurationTheir,
-                      ]}
-                    >
-                      {formatVoiceDuration(item.voiceMessage?.duration || 0)}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-              ) : item.type === 'image' ? (
-                <View style={[styles.imageMessageContainer, styles.mediaSurface]}>
-                  <ExpoImage
-                    source={{ uri: item.offlineImageUri ?? cachedImageUrl ?? item.imageUrl }}
-                    style={[
-                      styles.messageImage,
-                      imageSize ? { width: imageSize.width, height: imageSize.height } : null,
-                    ]}
-                    cachePolicy="disk"
-                    contentFit="cover"
-                    transition={0}
-                  />
-                  <Animated.View
-                    style={[
-                      styles.mediaMetaOverlay,
-                      isMyMessage ? styles.mediaMetaOverlayMy : styles.mediaMetaOverlayTheir,
-                      isMyMessage ? mediaReceiptToneStyle : null,
-                      isMyMessage ? receiptPulseStyle : null,
-                    ]}
-                    pointerEvents="none"
-                  >
-                    <Text
-                      style={[
-                        styles.mediaMetaText,
-                        isMyMessage ? styles.mediaMetaTextMy : styles.mediaMetaTextTheir,
-                      ]}
-                    >
-                      {metaLabel}
-                    </Text>
-                    {isMyMessage && (
-                      <MaterialCommunityIcons
-                        name={receiptIcon?.name || 'clock-outline'}
-                        size={receiptIcon?.size || 13}
-                        color={receiptIcon?.color || '#C6D7D3'}
-                        style={styles.mediaMetaIcon}
-                      />
-                    )}
-                  </Animated.View>
-                  {item.text && (
-                    <View
-                      style={[
-                        styles.mediaCaptionCard,
-                        isMyMessage ? styles.mediaCaptionCardMy : styles.mediaCaptionCardTheir,
-                      ]}
-                    >
-                      <Text style={[
-                        styles.imageCaption,
-                        isMyMessage ? styles.myMessageText : styles.theirMessageText,
-                      ]}>
-                        {item.text}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              ) : item.type === 'video' ? (
-                <View style={[styles.videoMessageContainer, styles.mediaSurface]}>
-                  {item.videoUrl && (
-                    <VideoPreview
-                      styles={styles}
-                      url={item.videoUrl}
-                      resolvedUrl={item.offlineVideoUri ?? cachedVideoUrl}
-                    />
-                  )}
-                  <Animated.View
-                    style={[
-                      styles.mediaMetaOverlay,
-                      isMyMessage ? styles.mediaMetaOverlayMy : styles.mediaMetaOverlayTheir,
-                      isMyMessage ? mediaReceiptToneStyle : null,
-                      isMyMessage ? receiptPulseStyle : null,
-                    ]}
-                    pointerEvents="none"
-                  >
-                    <Text
-                      style={[
-                        styles.mediaMetaText,
-                        isMyMessage ? styles.mediaMetaTextMy : styles.mediaMetaTextTheir,
-                      ]}
-                    >
-                      {metaLabel}
-                    </Text>
-                    {isMyMessage && (
-                      <MaterialCommunityIcons
-                        name={receiptIcon?.name || 'clock-outline'}
-                        size={receiptIcon?.size || 13}
-                        color={receiptIcon?.color || '#C6D7D3'}
-                        style={styles.mediaMetaIcon}
-                      />
-                    )}
-                  </Animated.View>
-                  {item.text && (
-                    <View
-                      style={[
-                        styles.mediaCaptionCard,
-                        isMyMessage ? styles.mediaCaptionCardMy : styles.mediaCaptionCardTheir,
-                      ]}
-                    >
-                      <Text style={[
-                        styles.imageCaption,
-                        isMyMessage ? styles.myMessageText : styles.theirMessageText,
-                      ]}>
-                        {item.text}
-                      </Text>
-                    </View>
-                  )}
-                </View>
+              <VoiceMessageContent
+                item={item}
+                isMyMessage={isMyMessage}
+                isPlaying={isPlaying}
+                styles={styles}
+                theme={theme}
+                isDark={isDark}
+                onToggleVoice={onToggleVoice}
+              />
+              ) : item.type === 'image' || item.type === 'video' ? (
+                <MediaMessageContent
+                  item={item}
+                  isMyMessage={isMyMessage}
+                  imageSize={imageSize}
+                  cachedImageUrl={cachedImageUrl}
+                  cachedVideoUrl={cachedVideoUrl}
+                  timeLabel={metaLabel}
+                  styles={styles}
+                  theme={theme}
+                  isDark={isDark}
+                  receiptPulseStyle={receiptPulseStyle}
+                />
               ) : item.type === 'date_plan' ? (
-                <View
-                  style={[
-                    styles.datePlanMessageContainer,
-                    isAcceptedDatePlan && styles.datePlanMessageContainerConfirmed,
-                  ]}
-                >
-                  <View style={styles.datePlanHeader}>
-                    <View style={styles.datePlanHeaderTop}>
-                      <View style={[styles.datePlanBadge, { backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.16) : withAlpha(theme.tint, 0.14) }]}>
-                        <MaterialCommunityIcons
-                          name={datePlanBadgeIcon}
-                          size={14}
-                          color={isMyMessage ? Colors.light.background : theme.tint}
-                        />
-                        <Text style={[styles.datePlanBadgeText, { color: isMyMessage ? Colors.light.background : theme.tint }]}>
-                          {datePlanBadgeLabel}
-                        </Text>
-                      </View>
-                      {userAvatar ? (
-                          <View
-                          style={[
-                            styles.datePlanPersonChip,
-                            {
-                              backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.12) : withAlpha(theme.tint, 0.1),
-                              borderColor: isMyMessage ? withAlpha(Colors.light.background, 0.14) : withAlpha(theme.tint, 0.14),
-                            },
-                          ]}
-                        >
-                           <ExpoImage
-                             source={{ uri: userAvatar }}
-                             style={styles.datePlanPersonAvatar}
-                             cachePolicy="disk"
-                             contentFit="cover"
-                             transition={0}
-                           />
-                          <Text
-                            style={[
-                              styles.datePlanPersonText,
-                              { color: isMyMessage ? Colors.light.background : theme.text },
-                            ]}
-                            numberOfLines={1}
-                          >
-                            {isMyMessage ? `For ${peerName || 'your match'}` : peerName || 'Your match'}
-                          </Text>
-                        </View>
-                      ) : null}
-                    </View>
-                    {isAcceptedDatePlan ? (
-                      <Text
-                        style={[
-                          styles.datePlanWhenEyebrow,
-                          { color: isMyMessage ? withAlpha(Colors.light.background, 0.76) : theme.textMuted },
-                        ]}
-                      >
-                        Confirmed plan
-                      </Text>
-                    ) : null}
-                    {isAcceptedDatePlan ? (
-                      <Animated.View style={acceptedLockInHeaderStyle as any}>
-                        <View
-                          style={[
-                            styles.datePlanWhenRowConfirmed,
-                            {
-                              backgroundColor: isMyMessage
-                                ? withAlpha(Colors.light.background, 0.1)
-                                : withAlpha(theme.text, 0.05),
-                            },
-                          ]}
-                        >
-                          <MaterialCommunityIcons
-                            name="calendar-check-outline"
-                            size={16}
-                            color={isMyMessage ? Colors.light.background : theme.tint}
-                          />
-                          <Text
-                            style={[
-                              styles.datePlanWhen,
-                              styles.datePlanWhenConfirmed,
-                              { color: isMyMessage ? Colors.light.background : theme.text },
-                            ]}
-                          >
-                            {item.dateInvite ? formatDateInviteWhen(item.dateInvite.scheduledFor) : 'Date suggestion'}
-                          </Text>
-                        </View>
-                      </Animated.View>
-                    ) : (
-                      <Text
-                        style={[
-                          styles.datePlanWhen,
-                          { color: isMyMessage ? Colors.light.background : theme.text },
-                        ]}
-                      >
-                        {item.dateInvite ? formatDateInviteWhen(item.dateInvite.scheduledFor) : 'Date suggestion'}
-                      </Text>
-                    )}
-                    {datePlanStatus !== 'pending' || item.dateInvite?.conciergeRequested ? (
-                      <Animated.View style={isAcceptedDatePlan ? acceptedLockInLiftStyle as any : undefined}>
-                        <View style={styles.datePlanStatusRow}>
-                        {datePlanStatus !== 'pending' ? (
-                          <View
-                            style={[
-                              styles.datePlanStatusChip,
-                              {
-                                backgroundColor: isMyMessage
-                                  ? withAlpha(Colors.light.background, 0.16)
-                                  : withAlpha(theme.tint, 0.12),
-                              },
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.datePlanStatusText,
-                                { color: isMyMessage ? Colors.light.background : theme.tint },
-                              ]}
-                            >
-                              {datePlanStatus === 'accepted'
-                                ? 'Confirmed'
-                                : datePlanStatus === 'declined'
-                                ? 'Passed'
-                                : datePlanStatus === 'countered'
-                                ? 'Updated'
-                                : 'Cancelled'}
-                            </Text>
-                          </View>
-                        ) : null}
-                        {item.dateInvite?.conciergeRequested ? (
-                          <View
-                            style={[
-                              styles.datePlanStatusChip,
-                              {
-                                backgroundColor: isMyMessage
-                                  ? withAlpha(Colors.light.background, 0.12)
-                                  : withAlpha(theme.text, 0.08),
-                              },
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.datePlanStatusText,
-                                { color: isMyMessage ? Colors.light.background : theme.text },
-                              ]}
-                            >
-                              Betweener helping
-                            </Text>
-                          </View>
-                        ) : null}
-                        </View>
-                      </Animated.View>
-                    ) : null}
-                  </View>
-                  {item.dateInvite?.mapUrl ? (
-                    <Image
-                      source={{ uri: item.dateInvite.mapUrl }}
-                      style={[
-                        styles.datePlanMapImage,
-                        isAcceptedDatePlan && styles.datePlanMapImageConfirmed,
-                      ]}
-                    />
-                  ) : null}
-                  <View style={styles.datePlanPlaceBlock}>
-                    <Text
-                      style={[
-                        styles.datePlanVenue,
-                        isAcceptedDatePlan && styles.datePlanVenueConfirmed,
-                        { color: isMyMessage ? Colors.light.background : theme.text },
-                      ]}
-                      numberOfLines={1}
-                    >
-                      {item.dateInvite?.placeName || 'Chosen venue'}
-                    </Text>
-                    {item.dateInvite?.placeAddress ? (
-                      <Text
-                        style={[
-                          styles.datePlanAddress,
-                          isAcceptedDatePlan && styles.datePlanAddressConfirmed,
-                          { color: isMyMessage ? withAlpha(Colors.light.background, 0.78) : theme.textMuted },
-                        ]}
-                        numberOfLines={2}
-                      >
-                        {item.dateInvite.placeAddress}
-                      </Text>
-                    ) : null}
-                    {item.dateInvite?.summary ? (
-                      <Text
-                        style={[
-                          styles.datePlanSummary,
-                          isAcceptedDatePlan && styles.datePlanSummaryConfirmed,
-                          { color: isMyMessage ? withAlpha(Colors.light.background, 0.78) : theme.textMuted },
-                        ]}
-                        numberOfLines={isAcceptedDatePlan ? 1 : 2}
-                      >
-                        {item.dateInvite.summary}
-                      </Text>
-                    ) : null}
-                  </View>
-                  {item.dateInvite?.badges?.length ? (
-                    <View style={[styles.datePlanBadgeRow, isAcceptedDatePlan && styles.datePlanBadgeRowCompact]}>
-                      {item.dateInvite.badges.slice(0, 3).map((badge) => {
-                        const badgeMeta = getDateBadgeMeta(badge);
-                        const badgePalette = getDateBadgePalette({
-                          tone: badgeMeta.tone,
-                          theme,
-                          isDark,
-                          surface: 'message',
-                          isMyMessage,
-                          confirmed: isAcceptedDatePlan,
-                        });
-                        return (
-                          <View
-                            key={badge}
-                            style={[
-                              styles.datePlanTag,
-                              isAcceptedDatePlan && styles.datePlanTagCompact,
-                              isAcceptedDatePlan && styles.datePlanTagConfirmed,
-                              {
-                                backgroundColor: badgePalette.backgroundColor,
-                                borderColor: badgePalette.borderColor,
-                                borderWidth: 1,
-                              },
-                            ]}
-                          >
-                            <View style={styles.datePlanTagContent}>
-                              <MaterialCommunityIcons
-                                name={badgeMeta.icon}
-                                size={12}
-                                color={badgePalette.foregroundColor}
-                                style={styles.datePlanTagIcon}
-                              />
-                              <Text
-                                style={[
-                                  styles.datePlanTagText,
-                                  isAcceptedDatePlan && styles.datePlanTagTextCompact,
-                                  { color: badgePalette.foregroundColor },
-                                ]}
-                              >
-                                {badge}
-                              </Text>
-                            </View>
-                          </View>
-                        );
-                      })}
-                    </View>
-                  ) : null}
-                  {item.dateInvite?.note ? (
-                    <View
-                      style={[
-                        styles.datePlanNoteCard,
-                        isAcceptedDatePlan && styles.datePlanNoteCardLight,
-                        { borderColor: isMyMessage ? withAlpha(Colors.light.background, 0.18) : withAlpha(theme.text, 0.12) },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.datePlanNoteLabel,
-                          isAcceptedDatePlan && styles.datePlanNoteLabelCompact,
-                          { color: isMyMessage ? withAlpha(Colors.light.background, 0.7) : theme.textMuted },
-                        ]}
-                      >
-                        Note
-                      </Text>
-                      <Text
-                        style={[
-                          styles.datePlanNoteText,
-                          isAcceptedDatePlan && styles.datePlanNoteTextCompact,
-                          { color: isMyMessage ? Colors.light.background : theme.text },
-                        ]}
-                      >
-                        {item.dateInvite.note}
-                      </Text>
-                    </View>
-                  ) : null}
-                  {canAcceptDatePlan ? (
-                    <View style={styles.datePlanActionRow}>
-                      <TouchableOpacity
-                        style={[
-                          styles.datePlanPrimaryAction,
-                          {
-                            backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.14) : theme.tint,
-                            opacity: datePlanBusy ? 0.7 : 1,
-                          },
-                        ]}
-                        disabled={datePlanBusy}
-                        onPress={() => datePlanPlanId && onAcceptDatePlan(datePlanPlanId)}
-                      >
-                        <Text
-                          style={[
-                            styles.datePlanPrimaryActionText,
-                            { color: isMyMessage ? Colors.light.background : Colors.light.background },
-                          ]}
-                        >
-                          {datePlanBusy ? 'Accepting...' : 'Accept'}
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[
-                          styles.datePlanSecondaryAction,
-                          {
-                            borderColor: isMyMessage
-                              ? withAlpha(Colors.light.background, 0.2)
-                              : withAlpha(theme.text, 0.14),
-                            opacity: datePlanBusy ? 0.7 : 1,
-                          },
-                        ]}
-                        disabled={datePlanBusy}
-                        onPress={() => item.dateInvite && onSuggestAnotherTime(item.dateInvite)}
-                      >
-                        <Text
-                          style={[
-                            styles.datePlanSecondaryActionText,
-                            { color: isMyMessage ? Colors.light.background : theme.text },
-                          ]}
-                        >
-                          Suggest another time
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[
-                          styles.datePlanSecondaryAction,
-                          {
-                            borderColor: isMyMessage
-                              ? withAlpha(Colors.light.background, 0.2)
-                              : withAlpha(theme.text, 0.14),
-                            opacity: datePlanBusy ? 0.7 : 1,
-                          },
-                        ]}
-                        disabled={datePlanBusy}
-                        onPress={() => item.dateInvite && onSuggestAnotherPlace(item.dateInvite)}
-                      >
-                        <Text
-                          style={[
-                            styles.datePlanSecondaryActionText,
-                            { color: isMyMessage ? Colors.light.background : theme.text },
-                          ]}
-                        >
-                          Suggest another place
-                        </Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[
-                          styles.datePlanSecondaryAction,
-                          {
-                            borderColor: isMyMessage
-                              ? withAlpha(Colors.light.background, 0.2)
-                              : withAlpha(theme.text, 0.14),
-                            opacity: datePlanBusy ? 0.7 : 1,
-                          },
-                        ]}
-                        disabled={datePlanBusy}
-                        onPress={() => item.dateInvite && onSuggestBoth(item.dateInvite)}
-                      >
-                        <Text
-                          style={[
-                            styles.datePlanSecondaryActionText,
-                            { color: isMyMessage ? Colors.light.background : theme.text },
-                          ]}
-                        >
-                          Suggest both
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
-                  {canRescheduleDatePlan ? (
-                    <Animated.View style={acceptedLockInLiftStyle as any}>
-                      <View style={styles.datePlanActionRow}>
-                      {canAddDatePlanToCalendar ? (
-                        <TouchableOpacity
-                          style={[
-                            styles.datePlanPrimaryAction,
-                            styles.datePlanPrimaryActionWide,
-                            {
-                              backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.16) : theme.tint,
-                              opacity: datePlanCalendarBusy ? 0.7 : 1,
-                            },
-                          ]}
-                          disabled={datePlanCalendarBusy}
-                          onPress={() => item.dateInvite && onAddDatePlanToCalendar(item.dateInvite)}
-                        >
-                          <View style={styles.datePlanPrimaryActionContent}>
-                            <MaterialCommunityIcons
-                              name="calendar-plus"
-                              size={14}
-                              color={Colors.light.background}
-                            />
-                            <Text
-                              style={[
-                                styles.datePlanPrimaryActionText,
-                                { color: Colors.light.background },
-                              ]}
-                            >
-                              {datePlanCalendarBusy ? 'Adding...' : 'Add to Calendar'}
-                            </Text>
-                          </View>
-                        </TouchableOpacity>
-                      ) : null}
-                      {item.dateInvite?.mapLink ? (
-                        <TouchableOpacity
-                          style={[
-                            styles.datePlanSecondaryAction,
-                            styles.datePlanSecondaryActionStrong,
-                            {
-                              borderColor: isMyMessage
-                                ? withAlpha(Colors.light.background, 0.2)
-                                : withAlpha(theme.text, 0.14),
-                              opacity: datePlanBusy ? 0.7 : 1,
-                            },
-                          ]}
-                          disabled={datePlanBusy}
-                          onPress={() => item.dateInvite?.mapLink && Linking.openURL(item.dateInvite.mapLink).catch(() => {})}
-                        >
-                          <View style={styles.datePlanSecondaryActionContent}>
-                            <MaterialCommunityIcons
-                              name="map-marker-path"
-                              size={14}
-                              color={isMyMessage ? Colors.light.background : theme.text}
-                            />
-                            <Text
-                              style={[
-                                styles.datePlanSecondaryActionText,
-                                { color: isMyMessage ? Colors.light.background : theme.text },
-                              ]}
-                            >
-                              Open in Maps
-                            </Text>
-                          </View>
-                        </TouchableOpacity>
-                      ) : null}
-                      <TouchableOpacity
-                        style={[
-                          styles.datePlanSecondaryAction,
-                          styles.datePlanSecondaryActionStrong,
-                          {
-                            borderColor: isMyMessage
-                              ? withAlpha(Colors.light.background, 0.2)
-                              : withAlpha(theme.text, 0.14),
-                            opacity: datePlanBusy ? 0.7 : 1,
-                          },
-                        ]}
-                        disabled={datePlanBusy}
-                        onPress={() => item.dateInvite && onRescheduleDatePlan(item.dateInvite)}
-                        >
-                          <Text
-                            style={[
-                              styles.datePlanSecondaryActionText,
-                              { color: isMyMessage ? Colors.light.background : theme.text },
-                            ]}
-                          >
-                            Reschedule date
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    </Animated.View>
-                  ) : null}
-                  {item.type === 'date_plan' && isMyMessage && datePlanStatus === 'pending' ? (
-                    <>
-                      <Text style={[styles.datePlanPendingText, { color: withAlpha(Colors.light.background, 0.82) }]}>
-                        Waiting for their reply
-                      </Text>
-                      {canCancelDatePlan ? (
-                        <View style={styles.datePlanActionRow}>
-                          <TouchableOpacity
-                            style={[
-                              styles.datePlanSecondaryAction,
-                              {
-                                borderColor: withAlpha(Colors.light.background, 0.2),
-                                opacity: datePlanBusy ? 0.7 : 1,
-                              },
-                            ]}
-                            disabled={datePlanBusy}
-                            onPress={() => datePlanPlanId && onCancelDatePlan(datePlanPlanId)}
-                          >
-                            <Text style={[styles.datePlanSecondaryActionText, { color: Colors.light.background }]}>
-                              {datePlanBusy ? 'Cancelling...' : 'Cancel suggestion'}
-                            </Text>
-                          </TouchableOpacity>
-                        </View>
-                      ) : null}
-                    </>
-                  ) : null}
-                  {canRequestDatePlanConcierge ? (
-                    <Animated.View style={acceptedLockInLiftStyle as any}>
-                      <TouchableOpacity
-                        style={[
-                          styles.datePlanConciergeButton,
-                          {
-                            borderColor: isMyMessage
-                              ? withAlpha(Colors.light.background, 0.22)
-                              : withAlpha(theme.tint, 0.18),
-                            backgroundColor: isMyMessage
-                              ? withAlpha(Colors.light.background, 0.08)
-                              : withAlpha(theme.tint, 0.08),
-                            opacity: datePlanBusy ? 0.7 : 1,
-                          },
-                        ]}
-                        disabled={datePlanBusy}
-                        onPress={() => datePlanPlanId && onRequestDatePlanConcierge(datePlanPlanId)}
-                      >
-                        <MaterialCommunityIcons
-                          name="account-tie-hat-outline"
-                          size={14}
-                          color={isMyMessage ? Colors.light.background : theme.tint}
-                        />
-                        <Text
-                          style={[
-                            styles.datePlanConciergeText,
-                            { color: isMyMessage ? Colors.light.background : theme.tint },
-                          ]}
-                        >
-                          {datePlanBusy ? 'Notifying Betweener...' : 'Get Betweener help'}
-                        </Text>
-                      </TouchableOpacity>
-                    </Animated.View>
-                  ) : null}
-                  {canRescheduleDatePlan && canCancelDatePlan ? (
-                    <TouchableOpacity
-                      style={[
-                        styles.datePlanTertiaryAction,
-                        { opacity: datePlanBusy ? 0.7 : 1 },
-                      ]}
-                      disabled={datePlanBusy}
-                      onPress={() => datePlanPlanId && onCancelDatePlan(datePlanPlanId)}
-                    >
-                      <Text
-                        style={[
-                          styles.datePlanTertiaryActionText,
-                          { color: isMyMessage ? withAlpha(Colors.light.background, 0.84) : '#d96b6b' },
-                        ]}
-                      >
-                        {datePlanBusy ? 'Cancelling...' : 'Cancel date'}
-                      </Text>
-                    </TouchableOpacity>
-                  ) : null}
-                  {item.dateInvite?.mapLink && !canRescheduleDatePlan ? (
-                    <View style={styles.datePlanFooterRow}>
-                      <View style={styles.datePlanFooterLead}>
-                        <MaterialCommunityIcons
-                          name="map-marker-path"
-                          size={13}
-                          color={isMyMessage ? withAlpha(Colors.light.background, 0.82) : theme.textMuted}
-                        />
-                        <Text style={[styles.datePlanFooterText, { color: isMyMessage ? withAlpha(Colors.light.background, 0.82) : theme.textMuted }]}>
-                          Open in Maps
-                        </Text>
-                      </View>
-                      <MaterialCommunityIcons
-                        name="chevron-right"
-                        size={16}
-                        color={isMyMessage ? withAlpha(Colors.light.background, 0.72) : theme.textMuted}
-                      />
-                    </View>
-                  ) : null}
-                </View>
+                <DatePlanMessageContent
+                  item={item}
+                  isMyMessage={isMyMessage}
+                  userAvatar={userAvatar}
+                  peerName={peerName}
+                  theme={theme}
+                  isDark={isDark}
+                  styles={styles}
+                  datePlanActionId={datePlanActionId}
+                  datePlanCalendarActionId={datePlanCalendarActionId}
+                  onAcceptDatePlan={onAcceptDatePlan}
+                  onSuggestAnotherTime={onSuggestAnotherTime}
+                  onSuggestAnotherPlace={onSuggestAnotherPlace}
+                  onSuggestBoth={onSuggestBoth}
+                  onRescheduleDatePlan={onRescheduleDatePlan}
+                  onCancelDatePlan={onCancelDatePlan}
+                  onRequestDatePlanConcierge={onRequestDatePlanConcierge}
+                  onAddDatePlanToCalendar={onAddDatePlanToCalendar}
+                />
               ) : item.type === 'location' ? (
-                <View style={styles.locationMessageContainer}>
-                  <View style={styles.locationMapFrame}>
-                    {item.location?.mapUrl ? (
-                      <Image
-                        source={{ uri: item.location.mapUrl }}
-                        style={styles.locationMapImage}
-                      />
-                    ) : (
-                      <View style={styles.locationMapPlaceholder}>
-                        <MaterialCommunityIcons name="map-outline" size={28} color={theme.textMuted} />
-                        <Text style={[styles.locationPlaceholderText, { color: theme.textMuted }]}>
-                          Map preview
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                  <View
-                    style={[
-                      styles.locationDetailsCard,
-                      isMyMessage ? styles.locationDetailsCardMy : styles.locationDetailsCardTheir,
-                    ]}
-                  >
-                    <View style={styles.locationInfoRow}>
-                      <View style={[styles.locationIconBadge, { backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.15) : withAlpha(theme.tint, 0.14) }]}>
-                        <MaterialCommunityIcons
-                          name={item.location?.live ? "map-marker-radius-outline" : "map-marker-outline"}
-                          size={16}
-                          color={isMyMessage ? Colors.light.background : theme.tint}
-                        />
-                      </View>
-                      <View style={styles.locationTextBlock}>
-                        <Text
-                          style={[
-                            styles.locationLabelText,
-                            { color: isMyMessage ? Colors.light.background : theme.text },
-                          ]}
-                          numberOfLines={1}
-                        >
-                          {item.location?.label || 'Shared location'}
-                        </Text>
-                        {item.location?.address ? (
-                          <Text
-                            style={[
-                              styles.locationAddressText,
-                              { color: isMyMessage ? withAlpha(Colors.light.background, 0.75) : theme.textMuted },
-                            ]}
-                            numberOfLines={1}
-                          >
-                            {item.location.address}
-                          </Text>
-                        ) : null}
-                      </View>
-                    </View>
-                    <View
-                      style={[
-                        styles.locationRouteRow,
-                        isMyMessage ? styles.locationRoutePillMy : styles.locationRoutePillTheir,
-                      ]}
-                    >
-                      <MaterialCommunityIcons
-                        name="navigation-variant-outline"
-                        size={12}
-                        color={isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted}
-                      />
-                      <Text
-                        style={[
-                          styles.locationRouteText,
-                          { color: isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted },
-                        ]}
-                      >
-                        Tap for directions
-                      </Text>
-                      <MaterialCommunityIcons
-                        name="chevron-right"
-                        size={14}
-                        color={isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted}
-                      />
-                    </View>
-                    {item.location?.live && (
-                      <View style={styles.locationLiveRow}>
-                        <View style={[styles.locationLiveBadge, { backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.18) : withAlpha(theme.secondary, 0.18) }]}>
-                          <Text
-                            style={[
-                              styles.locationLiveBadgeText,
-                              { color: isMyMessage ? Colors.light.background : theme.secondary },
-                            ]}
-                          >
-                            Live
-                          </Text>
-                        </View>
-                        <Text
-                          style={[
-                            styles.locationLiveText,
-                            { color: isMyMessage ? withAlpha(Colors.light.background, 0.8) : theme.textMuted },
-                          ]}
-                        >
-                          {locationRemaining || 'Live'}
-                        </Text>
-                        {isMyMessage && locationIsActive && (
-                          <TouchableOpacity
-                            style={[
-                              styles.locationStopButton,
-                              { borderColor: isMyMessage ? withAlpha(Colors.light.background, 0.45) : withAlpha(theme.text, 0.2) },
-                            ]}
-                            onPress={(event) => {
-                              if (event?.stopPropagation) {
-                                event.stopPropagation();
-                              }
-                              onStopLiveShare(item.id);
-                            }}
-                          >
-                            <Text
-                              style={[
-                                styles.locationStopText,
-                                { color: isMyMessage ? Colors.light.background : theme.text },
-                              ]}
-                            >
-                              Stop sharing
-                            </Text>
-                          </TouchableOpacity>
-                        )}
-                      </View>
-                    )}
-                  </View>
-                </View>
+                <LocationMessageContent
+                  item={item}
+                  isMyMessage={isMyMessage}
+                  styles={styles}
+                  theme={theme}
+                  onStopLiveShare={onStopLiveShare}
+                  formatRemainingTime={formatRemainingTime}
+                />
               ) : item.type === 'document' ? (
-                <View style={styles.documentMessageContainer}>
-                  <View
-                    style={[
-                      styles.documentIcon,
-                      { backgroundColor: isMyMessage ? withAlpha(Colors.light.background, 0.2) : withAlpha(theme.tint, 0.15) },
-                    ]}
-                  >
-                    <MaterialCommunityIcons
-                      name="file-document-outline"
-                      size={18}
-                      color={isMyMessage ? Colors.light.background : theme.tint}
-                    />
-                  </View>
-                  <View style={styles.documentInfo}>
-                    <Text
-                      style={[
-                        styles.documentName,
-                        { color: isMyMessage ? Colors.light.background : theme.text },
-                      ]}
-                      numberOfLines={1}
-                    >
-                      {item.document?.name || 'Document'}
-                    </Text>
-                    <View
-                      style={[
-                        styles.documentMetaPill,
-                        isMyMessage ? styles.documentMetaPillMy : styles.documentMetaPillTheir,
-                      ]}
-                    >
-                      <Text style={[styles.documentHint, { color: isMyMessage ? withAlpha(Colors.light.background, 0.78) : theme.textMuted }]}>
-                        {documentMeta || 'Tap to open'}
-                      </Text>
-                    </View>
-                  </View>
-                  <MaterialCommunityIcons
-                    name="chevron-right"
-                    size={18}
-                    color={isMyMessage ? withAlpha(Colors.light.background, 0.76) : theme.textMuted}
-                  />
-                </View>
+                <DocumentMessageContent
+                  item={item}
+                  isMyMessage={isMyMessage}
+                  styles={styles}
+                  theme={theme}
+                />
               ) : item.type === 'mood_sticker' ? (
                 <View style={[styles.moodStickerContainer, { backgroundColor: withAlpha(item.sticker?.color || theme.tint, 0.12) }]}>
                   <Text style={styles.moodStickerEmoji}>{item.sticker?.emoji}</Text>
@@ -3136,100 +3312,26 @@ const MessageRowItem = memo(
               </View>
             ) : null}
           </Animated.View>
-        </Pressable>
+        </ChatMessageBubblePressable>
 
-        {isReactionOpen && (
-          <View style={[
-            styles.quickReactionsContainer,
-            isMyMessage ? styles.quickReactionsRight : styles.quickReactionsLeft,
-          ]}>
-            {!item.deletedForAll && (
-              <>
-                {QUICK_REACTIONS.map((emoji, idx) => (
-                  <TouchableOpacity
-                    key={idx}
-                    style={styles.quickReactionButton}
-                    onPress={() => onAddReaction(item.id, emoji)}
-                  >
-                    <Text style={styles.quickReactionEmoji}>{emoji}</Text>
-                  </TouchableOpacity>
-                ))}
-              </>
-            )}
-          </View>
-        )}
-
-        {isReactionOpen && !item.deletedForAll && (
-          <View
-            style={[
-              styles.messageActionRow,
-              isMyMessage ? styles.messageActionRowRight : styles.messageActionRowLeft,
-            ]}
-          >
-            <TouchableOpacity
-              style={styles.messageActionPill}
-              onPress={() => {
-                onReply(item);
-                onCloseReactions();
-              }}
-            >
-              <MaterialCommunityIcons name="reply" size={14} color={theme.text} />
-              <Text style={styles.messageActionPillLabel}>Reply</Text>
-            </TouchableOpacity>
-            {!item.isViewOnce && (
-              <TouchableOpacity
-                style={styles.messageActionPill}
-                onPress={() => {
-                  onCopyMessage(item);
-                  onCloseReactions();
-                }}
-              >
-                <MaterialCommunityIcons name="content-copy" size={14} color={theme.text} />
-                <Text style={styles.messageActionPillLabel}>Copy</Text>
-              </TouchableOpacity>
-            )}
-            {canEdit ? (
-              <TouchableOpacity
-                style={styles.messageActionPill}
-                onPress={() => {
-                  onEditMessage(item);
-                  onCloseReactions();
-                }}
-              >
-                <MaterialCommunityIcons name="pencil-outline" size={14} color={theme.text} />
-                <Text style={styles.messageActionPillLabel}>Edit</Text>
-              </TouchableOpacity>
-            ) : null}
-            <TouchableOpacity
-              style={styles.messageActionPill}
-              onPress={() => {
-                onTogglePin(item, isActionPinned);
-                onCloseReactions();
-              }}
-            >
-              <MaterialCommunityIcons
-                name={isActionPinned ? "pin-off-outline" : "pin-outline"}
-                size={14}
-                color={theme.text}
-              />
-              <Text style={styles.messageActionPillLabel}>
-                {isActionPinned ? 'Unpin' : 'Pin'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.messageActionPill, styles.messageActionPillDanger]}
-              onPress={() => {
-                onDeleteMessage(item);
-                onCloseReactions();
-              }}
-            >
-              <MaterialCommunityIcons name="trash-can-outline" size={14} color={theme.danger} />
-              <Text style={[styles.messageActionPillLabel, styles.messageActionPillLabelDanger]}>
-                Delete
-              </Text>
-            </TouchableOpacity>
-          </View>
-        )}
+        {isReactionOpen ? (
+          <ChatQuickReactionsBar
+            item={item}
+            isMyMessage={isMyMessage}
+            isActionPinned={isActionPinned}
+            canEdit={canEdit}
+            quickReactions={QUICK_REACTIONS}
+            styles={styles}
+            theme={theme}
+            onAddReaction={onAddReaction}
+            onCloseReactions={onCloseReactions}
+            onReply={onReply}
+            onCopyMessage={onCopyMessage}
+            onEditMessage={onEditMessage}
+            onTogglePin={onTogglePin}
+            onDeleteMessage={onDeleteMessage}
+          />
+        ) : null}
       </Animated.View>
     );
   },
@@ -3246,6 +3348,7 @@ const MessageRowItem = memo(
     prev.isFocused === next.isFocused &&
     prev.focusToken === next.focusToken &&
     prev.isActionPinned === next.isActionPinned &&
+    prev.onRetryFailedMessage === next.onRetryFailedMessage &&
     prev.onOpenReactionSheet === next.onOpenReactionSheet &&
     prev.onEditMessage === next.onEditMessage &&
     prev.onOpenEditHistory === next.onOpenEditHistory &&
@@ -3272,8 +3375,7 @@ const MessageRowItem = memo(
     prev.imageSize?.width === next.imageSize?.width &&
     prev.imageSize?.height === next.imageSize?.height &&
     prev.cachedImageUrl === next.cachedImageUrl &&
-    prev.cachedVideoUrl === next.cachedVideoUrl &&
-    prev.now === next.now
+    prev.cachedVideoUrl === next.cachedVideoUrl
 );
 
 MessageRowItem.displayName = "MessageRowItem";
@@ -3285,22 +3387,51 @@ export default function ConversationScreen() {
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
   const responsive = useResponsiveMetrics();
-  const styles = useMemo(() => createStyles(theme, isDark, responsive), [theme, isDark, responsive]);
+  const attachmentSheetHeight = useMemo(() => {
+    const safeVerticalSpace = Math.max(0, responsive.height - insets.top - 140);
+    const preferredHeight = Math.round(safeVerticalSpace * ATTACHMENT_SHEET_SCREEN_RATIO);
+    return Math.max(
+      ATTACHMENT_SHEET_MIN_HEIGHT,
+      Math.min(ATTACHMENT_SHEET_MAX_HEIGHT, preferredHeight)
+    );
+  }, [insets.top, responsive.height]);
+  const styles = useMemo(
+    () => createStyles(theme, isDark, responsive, attachmentSheetHeight, insets.bottom),
+    [attachmentSheetHeight, insets.bottom, isDark, responsive, theme]
+  );
   const params = useLocalSearchParams();
   const hasPlacesKey = Boolean(GOOGLE_MAPS_WEB_API_KEY);
+  const chatDebugInstanceRef = useRef(
+    `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+  );
+  const isChatInstanceMountedRef = useRef(true);
+  const debugChatBootstrap = useCallback((event: string, payload?: Record<string, unknown>) => {
+    if (!(typeof __DEV__ !== 'undefined' && __DEV__)) return;
+    if (!(globalThis as { __BETWEENER_CHAT_BOOTSTRAP_DEBUG__?: boolean }).__BETWEENER_CHAT_BOOTSTRAP_DEBUG__) return;
+    console.log('[chat-bootstrap]', {
+      instance: chatDebugInstanceRef.current,
+      event,
+      ...(payload ?? {}),
+    });
+  }, []);
   
   // Get conversation data from params
   const routeId = params.id as string;
-  const [peerUserId, setPeerUserId] = useState<string>(routeId);
-  const [peerProfileId, setPeerProfileId] = useState<string | null>(null);
-  const [peerResolved, setPeerResolved] = useState(false);
+  const routePeerUserId = typeof params.peerUserId === 'string' ? String(params.peerUserId) : '';
+  const routePeerProfileId = typeof params.peerProfileId === 'string' ? String(params.peerProfileId) : '';
+  const routeRequiresProfileResolution = !routePeerUserId && !!routePeerProfileId;
+  const [peerUserId, setPeerUserId] = useState<string>(routePeerUserId || (routeRequiresProfileResolution ? '' : routeId));
+  const [peerProfileId, setPeerProfileId] = useState<string | null>(routePeerProfileId || null);
+  const [peerResolved, setPeerResolved] = useState(Boolean(routePeerUserId) || !routeRequiresProfileResolution);
   const userName = params.userName as string;
     const userAvatar = getSafeRemoteImageUri(typeof params.userAvatar === 'string' ? params.userAvatar : null);
   const prefillParam = typeof (params as any)?.prefill === 'string' ? String((params as any).prefill) : '';
-  const initialOnline = params.isOnline === 'true';
   const lastSeenParam = params.lastSeen;
   const initialLastSeen =
     typeof lastSeenParam === 'string' ? new Date(lastSeenParam) : null;
+  const initialOnline =
+    params.isOnline === 'true' &&
+    getPresenceDisplay(initialLastSeen && Number.isFinite(initialLastSeen.getTime()) ? initialLastSeen.toISOString() : null).online;
 
   const { momentUsers } = useMoments({
     currentUserId: user?.id,
@@ -3312,20 +3443,64 @@ export default function ConversationScreen() {
   // Resolve peer ids: many entry points pass profile.id, but chat tables use auth.users ids.
   // Keep both in state so we can query messages by user id and still open profile-view by profile id.
   useEffect(() => {
-    setPeerUserId(routeId);
-    setPeerProfileId(null);
-    setPeerResolved(false);
-  }, [routeId]);
+    isChatInstanceMountedRef.current = true;
+    debugChatBootstrap('mount', {
+      routeId,
+      routePeerUserId,
+      routePeerProfileId,
+    });
+    return () => {
+      isChatInstanceMountedRef.current = false;
+      debugChatBootstrap('unmount', {
+        routeId,
+      });
+    };
+  }, [debugChatBootstrap, routeId, routePeerProfileId, routePeerUserId]);
 
   useEffect(() => {
+    setPeerUserId(routePeerUserId || (routeRequiresProfileResolution ? '' : routeId));
+    setPeerProfileId(routePeerProfileId || null);
+    setPeerResolved(Boolean(routePeerUserId) || !routeRequiresProfileResolution);
+    debugChatBootstrap('route_params_applied', {
+      routeId,
+      nextPeerUserId: routePeerUserId || (routeRequiresProfileResolution ? '' : routeId),
+      nextPeerProfileId: routePeerProfileId || null,
+      preResolved: Boolean(routePeerUserId),
+    });
+  }, [debugChatBootstrap, routeId, routePeerProfileId, routePeerUserId, routeRequiresProfileResolution]);
+
+  useEffect(() => {
+    if (routePeerUserId) return;
     if (!routeId) return;
     let cancelled = false;
-    const t = setTimeout(() => {
+    const t = routeRequiresProfileResolution ? null : setTimeout(() => {
       // If we couldn't resolve (profile row missing or slow network), assume routeId is an auth user id.
-      if (!cancelled) setPeerResolved(true);
+      if (!cancelled) {
+        setPeerResolved(true);
+        debugChatBootstrap('peer_resolve_timeout_fallback', { routeId });
+      }
     }, 900);
     (async () => {
       try {
+        if (user?.id) {
+          const localThread =
+            (await ChatRepository.getThreadById(user.id, routeId)) ??
+            (await ChatRepository.getThreadByPeerProfileId(user.id, routeId));
+
+          if (!cancelled && localThread?.peer_user_id) {
+            setPeerProfileId(localThread.peer_profile_id ?? (routePeerProfileId || null));
+            setPeerUserId(localThread.peer_user_id);
+            setPeerResolved(true);
+            debugChatBootstrap('peer_resolved_from_local_thread', {
+              routeId,
+              peerUserId: localThread.peer_user_id,
+              peerProfileId: localThread.peer_profile_id,
+            });
+            if (t) clearTimeout(t);
+            return;
+          }
+        }
+
         // 1) routeId is a profile id
         const byProfile = await supabase
           .from('profiles')
@@ -3336,7 +3511,12 @@ export default function ConversationScreen() {
           setPeerProfileId(String((byProfile.data as any).id));
           setPeerUserId(String((byProfile.data as any).user_id));
           setPeerResolved(true);
-          clearTimeout(t);
+          debugChatBootstrap('peer_resolved_from_profile_id', {
+            routeId,
+            peerUserId: String((byProfile.data as any).user_id),
+            peerProfileId: String((byProfile.data as any).id),
+          });
+          if (t) clearTimeout(t);
           return;
         }
 
@@ -3350,7 +3530,12 @@ export default function ConversationScreen() {
           setPeerProfileId(String((byUser.data as any).id));
           setPeerUserId(String((byUser.data as any).user_id));
           setPeerResolved(true);
-          clearTimeout(t);
+          debugChatBootstrap('peer_resolved_from_user_id', {
+            routeId,
+            peerUserId: String((byUser.data as any).user_id),
+            peerProfileId: String((byUser.data as any).id),
+          });
+          if (t) clearTimeout(t);
         }
       } catch (_e) {
         // best-effort; fall back to routeId
@@ -3358,12 +3543,20 @@ export default function ConversationScreen() {
     })();
     return () => {
       cancelled = true;
-      clearTimeout(t);
+      if (t) clearTimeout(t);
     };
-  }, [routeId]);
+  }, [debugChatBootstrap, routeId, routePeerProfileId, routePeerUserId, routeRequiresProfileResolution, user?.id]);
 
   // For historical readability, most of this screen uses `conversationId` for the peer auth user id.
   const conversationId = peerUserId;
+  const chatPrefsPeerUserId = peerResolved && conversationId ? conversationId : null;
+  const resolvedPeerAuthUserId = chatPrefsPeerUserId;
+  const activePeerMessageUserId = routeRequiresProfileResolution ? resolvedPeerAuthUserId : conversationId;
+  const { rows: localObservedMessageRows, hasLoadedLocal: hasLoadedLocalThreadRows } = useChatMessages({
+    ownerUserId: user?.id ?? null,
+    threadId: activePeerMessageUserId ?? null,
+    limit: PAGE_SIZE,
+  });
 
   const momentUsersWithContent = useMemo(
     () => momentUsers.filter((entry) => entry.moments.length > 0),
@@ -3378,10 +3571,15 @@ export default function ConversationScreen() {
 
   const [messages, setMessages] = useState<MessageType[]>([]);
   const [messagesLoaded, setMessagesLoaded] = useState(false);
+  const [threadBootstrapSettled, setThreadBootstrapSettled] = useState(false);
+  const [remoteMessagesChecked, setRemoteMessagesChecked] = useState(false);
   const [chatSafetyVisible, setChatSafetyVisible] = useState(false);
   const [networkReady, setNetworkReady] = useState(true);
   const [peerOnline, setPeerOnline] = useState(initialOnline);
+  const [peerThreadActive, setPeerThreadActive] = useState(false);
+  const peerThreadActiveRef = useRef(false);
   const [peerLastSeen, setPeerLastSeen] = useState<Date | null>(initialLastSeen);
+  const peerLastSeenRef = useRef<Date | null>(initialLastSeen);
   const [peerProfile, setPeerProfile] = useState<{
     id: string;
     user_id: string;
@@ -3391,6 +3589,8 @@ export default function ConversationScreen() {
     city?: string | null;
     region?: string | null;
     location?: string | null;
+    online?: boolean | null;
+    last_active?: string | null;
     account_state?: string | null;
     deleted_at?: string | null;
   } | null>(null);
@@ -3454,10 +3654,33 @@ export default function ConversationScreen() {
     [conversationId, user?.id],
   );
   const chatThreadCacheLoadedKeyRef = useRef<string | null>(null);
+  const chatThreadLocalLoadedKeyRef = useRef<string | null>(null);
+  const subscribeWarmThreadSnapshot = useCallback(
+    (onStoreChange: () => void) =>
+      chatThreadCacheKey ? subscribeOfflineSnapshot(chatThreadCacheKey, onStoreChange) : () => {},
+    [chatThreadCacheKey],
+  );
+  const getWarmThreadSnapshot = useCallback(
+    () => (chatThreadCacheKey ? peekOfflineSnapshot<CachedMessageType[]>(chatThreadCacheKey) : null),
+    [chatThreadCacheKey],
+  );
+  const warmThreadSnapshot = useSyncExternalStore<CachedMessageType[] | null>(
+    subscribeWarmThreadSnapshot,
+    getWarmThreadSnapshot,
+    () => null,
+  );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     // When switching threads, allow the safety prompt to re-evaluate (but it will still be deduped via AsyncStorage).
-    setMessagesLoaded(false);
+    const hasWarmThreadSnapshot = Boolean(warmThreadSnapshot && warmThreadSnapshot.length > 0);
+    if (!hasWarmThreadSnapshot) {
+      setMessages([]);
+      setHasMore(false);
+      setOldestTimestamp(null);
+    }
+    setMessagesLoaded(hasWarmThreadSnapshot);
+    setThreadBootstrapSettled(hasWarmThreadSnapshot);
+    setRemoteMessagesChecked(false);
     setChatSafetyVisible(false);
     seededMessageAnimationsRef.current = false;
     animatedMessageIdsRef.current.clear();
@@ -3470,15 +3693,6 @@ export default function ConversationScreen() {
     prefillConsumedRef.current = true;
   }, [prefillParam]);
   const [showReactions, setShowReactions] = useState<string | null>(null);
-  const [messageActionsVisible, setMessageActionsVisible] = useState(false);
-  const [actionMessageId, setActionMessageId] = useState<string | null>(null);
-  const [reportModalVisible, setReportModalVisible] = useState(false);
-  const [reportReasonId, setReportReasonId] = useState<string | null>(null);
-  const [reportDetails, setReportDetails] = useState('');
-  const [reportShouldBlock, setReportShouldBlock] = useState(false);
-  const [reportEvidenceMessage, setReportEvidenceMessage] = useState<MessageType | null>(null);
-  const [reportSubmitting, setReportSubmitting] = useState(false);
-  const [blockStatus, setBlockStatus] = useState<string | null>(null);
   const [showMoodStickers, setShowMoodStickers] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isRecordingPaused, setIsRecordingPaused] = useState(false);
@@ -3492,9 +3706,6 @@ export default function ConversationScreen() {
   const [editingMessage, setEditingMessage] = useState<MessageType | null>(null);
   const [viewOnceMode, setViewOnceMode] = useState(false);
   const [viewOnceStatus, setViewOnceStatus] = useState<Record<string, { viewedByMe: boolean; viewedByPeer: boolean }>>({});
-  const [viewOnceModalMessage, setViewOnceModalMessage] = useState<MessageType | null>(null);
-  const [viewOnceMediaUri, setViewOnceMediaUri] = useState<string | null>(null);
-  const [viewOnceDecrypting, setViewOnceDecrypting] = useState(false);
   const [focusedMessageId, setFocusedMessageId] = useState<string | null>(null);
   const [focusTick, setFocusTick] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -3523,45 +3734,172 @@ export default function ConversationScreen() {
   const [selectedPlace, setSelectedPlace] = useState<PlaceResult | null>(null);
   const [liveDurationMinutes, setLiveDurationMinutes] = useState(60);
   const [nowTick, setNowTick] = useState(Date.now());
-  const [momentViewerVisible, setMomentViewerVisible] = useState(false);
-  const [momentViewerUserId, setMomentViewerUserId] = useState<string | null>(null);
   const [showHeaderHint, setShowHeaderHint] = useState(false);
-  const [chatSearchVisible, setChatSearchVisible] = useState(false);
   const [chatSearchQuery, setChatSearchQuery] = useState('');
-  const [mediaHubVisible, setMediaHubVisible] = useState(false);
-  const [mediaTab, setMediaTab] = useState<'media' | 'links' | 'docs'>('media');
-  const [clearChatLoading, setClearChatLoading] = useState(false);
-  const [isChatMuted, setIsChatMuted] = useState(false);
-  const [isChatPinned, setIsChatPinned] = useState(false);
-  const [chatPrefsLoaded, setChatPrefsLoaded] = useState(false);
   const [hiddenMessageIds, setHiddenMessageIds] = useState<string[]>([]);
   const [pinnedMessageIds, setPinnedMessageIds] = useState<string[]>([]);
   const [pinnedMessageMap, setPinnedMessageMap] = useState<Record<string, MessageType>>({});
-  const [pinnedSheetVisible, setPinnedSheetVisible] = useState(false);
-  const [pinnedBannerExpanded, setPinnedBannerExpanded] = useState(false);
   const [chatActionToast, setChatActionToast] = useState<{
     label: string;
     icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
   } | null>(null);
-  const [editHistoryVisible, setEditHistoryVisible] = useState(false);
-  const [editHistoryMessage, setEditHistoryMessage] = useState<MessageType | null>(null);
-  const [editHistoryEntries, setEditHistoryEntries] = useState<MessageEditRow[]>([]);
-  const [editHistoryLoading, setEditHistoryLoading] = useState(false);
-  const [reactionSheetVisible, setReactionSheetVisible] = useState(false);
-  const [reactionSheetMessageId, setReactionSheetMessageId] = useState<string | null>(null);
-  const [reactionSheetEmoji, setReactionSheetEmoji] = useState<string | null>(null);
   const [reactionProfiles, setReactionProfiles] = useState<Record<string, { name: string; avatar?: string | null }>>({});
   const [reactionProfilesLoading, setReactionProfilesLoading] = useState(false);
   const pendingReadTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const viewableReadCandidateIdsRef = useRef<Set<string>>(new Set());
   const pendingReceiptSyncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingDeliveredHintTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const textSendInFlightRef = useRef(false);
   const chatActionToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const chatPrefsSignatureRef = useRef('');
-  const chatPrefsHydratedRef = useRef(false);
-  const chatPrefsStateRef = useRef({ muted: false, pinned: false });
-  const pendingChatPrefsOverrideRef = useRef<{ muted: boolean; pinned: boolean } | null>(null);
   const showLocationLoading = locationLoading && !currentCoords && !locationError;
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const peerTypingClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const RECENT_LAST_SEEN_WINDOW_MS = 2 * 60 * 1000;
+
+  const coercePresenceDate = useCallback((value?: string | Date | null) => {
+    if (!value) return new Date();
+    if (value instanceof Date) {
+      return Number.isFinite(value.getTime()) ? value : new Date();
+    }
+    const parsed = new Date(value);
+    return Number.isFinite(parsed.getTime()) ? parsed : new Date();
+  }, []);
+
+  const markPeerRecentlyActive = useCallback((value?: string | Date | null) => {
+    setPeerLastSeen(coercePresenceDate(value));
+  }, [coercePresenceDate]);
+
+  const markPeerThreadInactive = useCallback((value?: string | Date | null) => {
+    const inactiveAt = coercePresenceDate(value);
+    setPeerThreadActive(false);
+    setPeerLastSeen(inactiveAt);
+    setNowTick(Date.now());
+  }, [coercePresenceDate]);
+
+  const refreshPeerOnlineWindow = useCallback((value?: string | Date | null) => {
+    const activityAt = coercePresenceDate(value);
+    setPeerLastSeen(activityAt);
+    setNowTick(Date.now());
+  }, [coercePresenceDate]);
+
+  const setPeerOnlineFromLastActive = useCallback((value?: string | Date | null) => {
+    if (!value) {
+      setPeerOnline(false);
+      return;
+    }
+    const lastActive = value instanceof Date ? value : new Date(value);
+    if (!Number.isFinite(lastActive.getTime())) {
+      setPeerOnline(false);
+      return;
+    }
+
+    setPeerLastSeen(lastActive);
+    const presence = getPresenceDisplay(lastActive.toISOString());
+    if (!presence.online) {
+      setPeerOnline(false);
+      return;
+    }
+
+    setPeerOnline(true);
+  }, []);
+
+  const setPeerTypingUntil = useCallback((typingUntilValue?: string | null) => {
+    if (peerTypingClearTimerRef.current) {
+      clearTimeout(peerTypingClearTimerRef.current);
+      peerTypingClearTimerRef.current = null;
+    }
+
+    const typingUntil = typingUntilValue ? new Date(typingUntilValue).getTime() : 0;
+    const isPeerTyping = Number.isFinite(typingUntil) && typingUntil > Date.now();
+    setIsTyping(isPeerTyping);
+    if (isPeerTyping) {
+      peerTypingClearTimerRef.current = setTimeout(() => {
+        setIsTyping(false);
+        peerTypingClearTimerRef.current = null;
+      }, Math.max(250, typingUntil - Date.now()));
+    }
+    return isPeerTyping;
+  }, []);
+
+  const persistTypingState = useCallback(async (typing: boolean) => {
+    if (!user?.id || !resolvedPeerAuthUserId) return;
+    const now = Date.now();
+    if (typing && now - lastTypingStatePersistAtRef.current < 1500) return;
+    lastTypingStatePersistAtRef.current = now;
+    const { error } = await supabase.rpc('rpc_set_chat_typing_state' as never, {
+      p_peer_user_id: resolvedPeerAuthUserId,
+      p_typing: typing,
+      p_typing_for_ms: 5000,
+    } as never);
+    if (error && !isLikelyNetworkError(error)) {
+      console.log('[chat] typing state upsert error', error);
+    }
+  }, [resolvedPeerAuthUserId, user?.id]);
+
+  const applyBackendPresence = useCallback((row?: { online?: boolean | null; last_active?: string | null } | null) => {
+    if (!row) return;
+    const incomingLastActive = row.last_active ? new Date(row.last_active) : null;
+    const currentLastSeen = peerLastSeenRef.current;
+    if (
+      incomingLastActive &&
+      currentLastSeen &&
+      Number.isFinite(incomingLastActive.getTime()) &&
+      incomingLastActive.getTime() < currentLastSeen.getTime()
+    ) {
+      return;
+    }
+    if (incomingLastActive && Number.isFinite(incomingLastActive.getTime())) {
+      setPeerLastSeen(incomingLastActive);
+    }
+    if (row.online === false) {
+      setPeerOnline(false);
+      return;
+    }
+    if (row.online === true) {
+      setPeerOnlineFromLastActive(row.last_active ?? new Date().toISOString());
+      return;
+    }
+    setPeerOnlineFromLastActive(row.last_active ?? null);
+  }, [setPeerOnlineFromLastActive]);
+
+  const applyBackendTypingState = useCallback((row?: {
+    user_id?: string;
+    peer_user_id?: string;
+    typing_until?: string | null;
+    updated_at?: string | null;
+  } | null) => {
+    if (!row || row.user_id !== resolvedPeerAuthUserId || row.peer_user_id !== user?.id) return;
+    const isPeerTyping = setPeerTypingUntil(row.typing_until ?? null);
+    if (isPeerTyping) {
+      setPeerThreadActive(true);
+      refreshPeerOnlineWindow(row.updated_at ?? row.typing_until ?? null);
+    }
+  }, [refreshPeerOnlineWindow, resolvedPeerAuthUserId, setPeerTypingUntil, user?.id]);
+
+  const refreshPeerStatus = useCallback(async () => {
+    if (!resolvedPeerAuthUserId || !user?.id) return;
+    const [presenceResult, typingResult] = await Promise.all([
+      fetchUserPresence(resolvedPeerAuthUserId),
+      supabase
+        .from('chat_typing_state')
+        .select('user_id,peer_user_id,typing_until,updated_at')
+        .eq('user_id', resolvedPeerAuthUserId)
+        .eq('peer_user_id', user.id)
+        .maybeSingle(),
+    ]);
+
+    if (!presenceResult.error) {
+      applyBackendPresence(presenceResult.data as { online?: boolean | null; last_active?: string | null } | null);
+    } else if (!isLikelyNetworkError(presenceResult.error)) {
+      console.log('[chat] peer presence refresh error', presenceResult.error);
+    }
+
+    if (!typingResult.error) {
+      applyBackendTypingState(typingResult.data as any);
+    } else if (!isLikelyNetworkError(typingResult.error)) {
+      console.log('[chat] typing state refresh error', typingResult.error);
+    }
+  }, [applyBackendPresence, applyBackendTypingState, resolvedPeerAuthUserId, user?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3576,6 +3914,7 @@ export default function ConversationScreen() {
       setNetworkReady(nextReady);
       if (!nextReady) {
         setPeerOnline(false);
+        setPeerThreadActive(false);
         setIsTyping(false);
       }
     });
@@ -3594,22 +3933,44 @@ export default function ConversationScreen() {
       if (cancelled || !Array.isArray(cached)) return;
       const entry = cached.find((item) => item?.id === conversationId);
       if (!entry?.matchedUser) return;
-      if (entry.matchedUser.isOnline === true) {
-        setPeerOnline(true);
-        setPeerLastSeen(null);
-        return;
-      }
+      const hasCachedTyping =
+        Boolean(
+          entry.matchedUser.typingExpiresAt &&
+            new Date(entry.matchedUser.typingExpiresAt).getTime() > Date.now(),
+        );
       const cachedLastSeen =
-        typeof entry.matchedUser.lastSeen === 'string' ? new Date(entry.matchedUser.lastSeen) : null;
-      if (cachedLastSeen && Number.isFinite(cachedLastSeen.getTime())) {
-        setPeerOnline(false);
-        setPeerLastSeen(cachedLastSeen);
+        typeof entry.matchedUser.lastSeen === 'string' ? entry.matchedUser.lastSeen : null;
+      if (cachedLastSeen) {
+        setPeerOnlineFromLastActive(cachedLastSeen);
       }
+      setPeerThreadActive(hasCachedTyping);
+      setPeerTypingUntil(hasCachedTyping ? entry.matchedUser.typingExpiresAt ?? null : null);
     })();
     return () => {
       cancelled = true;
     };
-  }, [conversationId, user?.id]);
+  }, [conversationId, setPeerOnlineFromLastActive, setPeerTypingUntil, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || !activePeerMessageUserId) return;
+    void patchChatConversationPresenceSnapshot(user.id, conversationId, {
+      isOnline: peerOnline,
+      lastSeen: peerLastSeen ? peerLastSeen.toISOString() : null,
+      typingExpiresAt: isTyping ? new Date(Date.now() + 2000).toISOString() : null,
+    });
+  }, [conversationId, isTyping, peerLastSeen, peerOnline, user?.id]);
+
+  useEffect(() => {
+    peerOnlineRef.current = peerOnline;
+  }, [peerOnline]);
+
+  useEffect(() => {
+    peerLastSeenRef.current = peerLastSeen;
+  }, [peerLastSeen]);
+
+  useEffect(() => {
+    peerThreadActiveRef.current = peerThreadActive;
+  }, [peerThreadActive]);
 
   useEffect(() => {
     if (!chatPeerStoreKey) return;
@@ -3627,15 +3988,18 @@ export default function ConversationScreen() {
   useEffect(() => {
     let cancelled = false;
     const fetchPeerProfile = async () => {
-      if (!conversationId) {
+      if (!resolvedPeerAuthUserId) {
         setPeerProfile(null);
         return;
       }
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id,user_id,verification_level,full_name,avatar_url,city,region,location,account_state,deleted_at')
-        .eq('user_id', conversationId)
-        .maybeSingle();
+      const [{ data, error }, presenceResult] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('id,user_id,verification_level,full_name,avatar_url,city,region,location,online,last_active,account_state,deleted_at')
+          .eq('user_id', resolvedPeerAuthUserId)
+          .maybeSingle(),
+        fetchUserPresence(resolvedPeerAuthUserId),
+      ]);
       if (error) {
         console.log('[chat] fetch peer profile error', error);
         if (isLikelyNetworkError(error)) {
@@ -3643,9 +4007,18 @@ export default function ConversationScreen() {
         }
       }
       if (!cancelled && data) {
-        setPeerProfile(data);
+        const mergedProfile = {
+          ...data,
+          online:
+            typeof (presenceResult.data as any)?.online === 'boolean'
+              ? Boolean((presenceResult.data as any)?.online)
+              : (data as any)?.online ?? null,
+          last_active: (presenceResult.data as any)?.last_active ?? (data as any)?.last_active ?? null,
+        };
+        setPeerProfile(mergedProfile);
+        applyBackendPresence(mergedProfile as { online?: boolean | null; last_active?: string | null });
         if (chatPeerStoreKey) {
-          void writeOfflineSnapshot(chatPeerStoreKey, data);
+          void writeOfflineSnapshot(chatPeerStoreKey, mergedProfile);
         }
       } else if (!cancelled && !error) {
         setPeerProfile(null);
@@ -3655,7 +4028,35 @@ export default function ConversationScreen() {
     return () => {
       cancelled = true;
     };
-  }, [chatPeerStoreKey, conversationId]);
+  }, [applyBackendPresence, chatPeerStoreKey, resolvedPeerAuthUserId]);
+
+  useEffect(() => {
+    if (!resolvedPeerAuthUserId) return;
+
+    if (peerProfile) {
+      applyBackendPresence(peerProfile);
+    }
+
+    const channel = supabase
+      .channel(`user_presence:${resolvedPeerAuthUserId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'user_presence',
+          filter: `user_id=eq.${resolvedPeerAuthUserId}`,
+        },
+        (payload) => {
+          applyBackendPresence(payload.new as { online?: boolean | null; last_active?: string | null });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [applyBackendPresence, peerProfile, resolvedPeerAuthUserId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3810,6 +4211,19 @@ export default function ConversationScreen() {
     }, [refreshPendingIntent]),
   );
 
+  useFocusEffect(
+    useCallback(() => {
+      if (!conversationId || !user?.id) return () => {};
+      void refreshPeerStatus();
+      const interval = setInterval(() => {
+        void refreshPeerStatus();
+      }, 30000);
+      return () => {
+        clearInterval(interval);
+      };
+    }, [conversationId, refreshPeerStatus, user?.id]),
+  );
+
   useEffect(() => {
     let cancelled = false;
     const loadDateEligibilityMeta = async () => {
@@ -3957,17 +4371,7 @@ export default function ConversationScreen() {
   }, [betweenerVenues, peerProfile?.city, peerProfile?.location, peerProfile?.region]);
 
   const renderedMessages = useMemo(() => dedupeMessagesById(messages), [messages]);
-  const hasActiveLiveLocationMessage = useMemo(
-    () =>
-      renderedMessages.some((message) => {
-      if (message.type !== 'location' || !message.location?.live || !message.location.expiresAt) {
-        return false;
-      }
-      return message.location.expiresAt.getTime() > nowTick;
-      }),
-    [nowTick, renderedMessages],
-  );
-  const messageListNow = hasActiveLiveLocationMessage ? nowTick : null;
+  const pinnedMessageIdSet = useMemo(() => new Set(pinnedMessageIds), [pinnedMessageIds]);
   const chatMessageCount = useMemo(
     () => renderedMessages.filter((message) => !message.isSystem).length,
     [renderedMessages],
@@ -4073,7 +4477,10 @@ export default function ConversationScreen() {
   }, [upsertDatePlanRows]);
   
   const messagesRef = useRef<MessageType[]>([]);
-  const flatListRef = useRef<FlatList>(null);
+  const activePeerMessageUserIdRef = useRef<string | null>(null);
+  const fetchMessagesInFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
+  const isScreenFocusedRef = useRef(false);
+  const flatListRef = useRef<FlashListRef<MessageType>>(null);
   const messageListViewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current;
   const animatedMessageIdsRef = useRef<Set<string>>(new Set());
   const seededMessageAnimationsRef = useRef(false);
@@ -4105,10 +4512,11 @@ export default function ConversationScreen() {
   const locationSheetAnim = useRef(new Animated.Value(0)).current;
   const suppressDateSuggestionRef = useRef(false);
   const pinnedBannerAnim = useRef(new Animated.Value(0)).current;
-  const reconnectPendingRef = useRef(false);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const presenceChannelRef = useRef<any>(null);
-  const typingListChannelRef = useRef<any>(null);
+  const threadPresenceSessionRef = useRef<ReturnType<typeof startThreadPresenceSession> | null>(null);
+  const threadSyncCoordinatorRef = useRef<ReturnType<typeof startThreadSyncCoordinator> | null>(null);
+  const peerOnlineRef = useRef(false);
+  const lastTypingStatePersistAtRef = useRef(0);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const hasAutoScrolledRef = useRef(false);
@@ -4130,6 +4538,18 @@ export default function ConversationScreen() {
   const initialAutoScrollDoneRef = useRef(false);
   const initialAutoScrollAttemptsRef = useRef(0);
   const lockAutoScrollUntilRef = useRef(0);
+
+  useFocusEffect(
+    useCallback(() => {
+      isScreenFocusedRef.current = true;
+      return () => {
+        isScreenFocusedRef.current = false;
+        viewableReadCandidateIdsRef.current.clear();
+        Object.values(pendingReadTimersRef.current).forEach((timer) => clearTimeout(timer));
+        pendingReadTimersRef.current = {};
+      };
+    }, []),
+  );
 
   const forceScrollToBottom = useCallback(() => {
     if (!flatListRef.current) return;
@@ -4157,8 +4577,7 @@ export default function ConversationScreen() {
     wasAtBottomRef.current = true;
     listMetricsRef.current = { contentHeight: 0, layoutHeight: 0, offsetY: 0 };
     setShowJumpToBottom(false);
-    forceScrollToBottom();
-  }, [conversationId]);
+  }, [routeId]);
   
   useEffect(() => {
     return () => {
@@ -4183,6 +4602,76 @@ export default function ConversationScreen() {
     pinnedMessageIdsRef.current = new Set(ids);
     setPinnedMessageIds(ids);
   }, []);
+
+  const {
+    isChatMuted,
+    isChatPinned,
+    chatPrefsLoaded,
+    blockStatus,
+    setBlockStatus,
+    chatPrefsStateRef,
+    applyChatPrefsState,
+    refreshLocalChatPrefs,
+    fetchHiddenMessages,
+    syncMessageReactions,
+    syncViewOnceStatus,
+    applyReactionUpdate,
+    fetchBlockStatus,
+  } = useChatThreadStateSync({
+    userId: user?.id,
+    routeId,
+    conversationId,
+    chatPrefsPeerUserId,
+    activePeerMessageUserId,
+    peerResolved,
+    chatPrefsStorageKey: CHAT_PREFS_STORAGE_KEY,
+    blockedByMeValue: BLOCKED_BY_ME,
+    blockedByThemValue: BLOCKED_BY_THEM,
+    hiddenMessageIds,
+    hiddenMessageIdsRef,
+    updateHiddenMessageIds,
+    setMessages,
+    setViewOnceStatus,
+  });
+
+  const {
+    messageActionsVisible,
+    actionMessage,
+    isActionPinned,
+    canEditAction,
+    canRetryActionMessage,
+    canReportActionMessage,
+    viewOnceModalMessage,
+    viewOnceMediaUri,
+    viewOnceDecrypting,
+    editHistoryVisible,
+    editHistoryMessage,
+    editHistoryEntries,
+    editHistoryLoading,
+    reactionSheetVisible,
+    reactionSheetEmoji,
+    setReactionSheetEmoji,
+    reactionSheetMessage,
+    reactionSummary,
+    reactionSheetList,
+    openReactionSheet,
+    closeReactionSheet,
+    openEditHistory,
+    closeEditHistory,
+    openViewOnceMessage,
+    closeViewOnceMessage,
+    closeMessageActions,
+    handleLongPress,
+  } = useChatThreadMessageUi({
+    currentUserId: user?.id,
+    conversationId,
+    renderedMessages,
+    pinnedMessageIds,
+    setShowReactions,
+    viewOnceStatusRef,
+    setViewOnceStatus,
+    chatMediaBucket: CHAT_MEDIA_BUCKET,
+  });
 
   const isBlockedByMe = blockStatus === BLOCKED_BY_ME;
   const isBlockedByThem = blockStatus === BLOCKED_BY_THEM;
@@ -4217,25 +4706,27 @@ const resolveQueuedVideoUri = async (
   const downloaded = await cacheOfflineVideo(url, url);
   return downloaded || url;
 };
+  const recentLastSeen =
+    peerLastSeen && nowTick - peerLastSeen.getTime() <= RECENT_LAST_SEEN_WINDOW_MS;
   const headerStatusLabel = peerHasLeftBetweener
     ? 'No longer on Betweener'
     : isChatBlocked
       ? isBlockedByMe
         ? 'Blocked privately'
         : 'Messaging unavailable'
-      : networkReady && peerOnline
+      : isTyping
+        ? 'Typing...'
+      : peerThreadActive
         ? 'Active now'
-        : peerLastSeen
-          ? `Last seen ${formatLastSeen(peerLastSeen)}`
-          : 'Last seen recently';
-
-  useEffect(() => {
-    if (!hasActiveLiveLocationMessage) return;
-    const interval = setInterval(() => {
-      setNowTick(Date.now());
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [hasActiveLiveLocationMessage]);
+      : peerOnline || recentLastSeen
+          ? 'Recently active'
+          : peerLastSeen
+            ? `Last seen ${formatLastSeen(peerLastSeen)}`
+            : 'Last seen recently';
+  const needsRouteIdentityResolution = routeRequiresProfileResolution && !peerResolved;
+  const showThreadBootstrapLoader = false;
+  const showThreadBootstrapPlaceholder =
+    messages.length === 0 && (needsRouteIdentityResolution || !remoteMessagesChecked);
 
   useEffect(() => {
     if (!locationModalVisible) {
@@ -4249,475 +4740,6 @@ const resolveQueuedVideoUri = async (
     }).start();
   }, [locationModalVisible, locationSheetAnim]);
 
-
-  useEffect(() => {
-    let isMounted = true;
-    if (!conversationId) return;
-    setChatPrefsLoaded(false);
-    chatPrefsHydratedRef.current = false;
-    chatPrefsSignatureRef.current = '';
-    const loadPrefs = async () => {
-      let localMuted = false;
-      let localPinned = false;
-      let hasLocalPrefs = false;
-      try {
-        const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
-        const parsed = raw ? JSON.parse(raw) : {};
-        const hasConversationPrefs = conversationId
-          ? Object.prototype.hasOwnProperty.call(parsed ?? {}, conversationId)
-          : false;
-        const hasRoutePrefs = routeId ? Object.prototype.hasOwnProperty.call(parsed ?? {}, routeId) : false;
-        hasLocalPrefs = hasConversationPrefs || hasRoutePrefs;
-        const prefs = (conversationId && parsed?.[conversationId]) || (routeId && parsed?.[routeId]) || {};
-        localMuted = Boolean(prefs.muted);
-        localPinned = Boolean(prefs.pinned);
-      } catch {
-        localMuted = false;
-        localPinned = false;
-      }
-
-      let nextMuted = localMuted;
-      let nextPinned = localPinned;
-
-      if (user?.id) {
-        const { data, error } = await supabase
-          .from('chat_prefs')
-          .select('muted,pinned')
-          .eq('user_id', user.id)
-          .eq('peer_id', conversationId)
-          .maybeSingle();
-        if (!isMounted) return;
-        if (hasLocalPrefs) {
-          nextMuted = localMuted;
-          nextPinned = localPinned;
-          setIsChatMuted((prev) => (prev === nextMuted ? prev : nextMuted));
-          setIsChatPinned((prev) => (prev === nextPinned ? prev : nextPinned));
-          if (error || !data || Boolean(data.muted) !== nextMuted || Boolean(data.pinned) !== nextPinned) {
-            const { error: syncError } = await supabase
-              .from('chat_prefs')
-              .upsert(
-                {
-                  user_id: user.id,
-                  peer_id: conversationId,
-                  muted: nextMuted,
-                  pinned: nextPinned,
-                  updated_at: new Date().toISOString(),
-                },
-                { onConflict: 'user_id,peer_id' },
-              );
-            if (syncError) {
-              console.log('[chat] chat prefs local-first sync error', syncError);
-            }
-          }
-        } else if (!error && data) {
-          nextMuted = Boolean(data.muted);
-          nextPinned = Boolean(data.pinned);
-          setIsChatMuted((prev) => (prev === nextMuted ? prev : nextMuted));
-          setIsChatPinned((prev) => (prev === nextPinned ? prev : nextPinned));
-          try {
-            const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
-            const parsed = raw ? JSON.parse(raw) : {};
-            const nextSnapshot = {
-              muted: nextMuted,
-              pinned: nextPinned,
-            };
-            parsed[conversationId] = nextSnapshot;
-            if (routeId && routeId !== conversationId) {
-              parsed[routeId] = nextSnapshot;
-            }
-            await AsyncStorage.setItem(CHAT_PREFS_STORAGE_KEY, JSON.stringify(parsed));
-          } catch {
-            // Ignore persistence errors.
-          }
-        } else {
-          setIsChatMuted((prev) => (prev === localMuted ? prev : localMuted));
-          setIsChatPinned((prev) => (prev === localPinned ? prev : localPinned));
-        }
-      } else {
-        if (!isMounted) return;
-        setIsChatMuted((prev) => (prev === localMuted ? prev : localMuted));
-        setIsChatPinned((prev) => (prev === localPinned ? prev : localPinned));
-      }
-
-      const pendingOverride = pendingChatPrefsOverrideRef.current;
-      if (pendingOverride) {
-        nextMuted = pendingOverride.muted;
-        nextPinned = pendingOverride.pinned;
-        setIsChatMuted((prev) => (prev === nextMuted ? prev : nextMuted));
-        setIsChatPinned((prev) => (prev === nextPinned ? prev : nextPinned));
-        try {
-          const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
-          const parsed = raw ? JSON.parse(raw) : {};
-          const nextSnapshot = {
-            muted: nextMuted,
-            pinned: nextPinned,
-          };
-          parsed[conversationId] = nextSnapshot;
-          if (routeId && routeId !== conversationId) {
-            parsed[routeId] = nextSnapshot;
-          }
-          await AsyncStorage.setItem(CHAT_PREFS_STORAGE_KEY, JSON.stringify(parsed));
-        } catch {
-          // Ignore persistence errors.
-        }
-      }
-
-      if (isMounted) {
-        chatPrefsSignatureRef.current = JSON.stringify({
-          conversationId,
-          userId: user?.id ?? null,
-          muted: nextMuted,
-          pinned: nextPinned,
-        });
-        chatPrefsHydratedRef.current = true;
-        setChatPrefsLoaded(true);
-      }
-    };
-    void loadPrefs();
-    return () => {
-      isMounted = false;
-    };
-  }, [conversationId, routeId, user?.id]);
-
-  const refreshLocalChatPrefs = useCallback(async () => {
-    if (!conversationId && !routeId) return;
-    try {
-      const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
-      const parsed = raw ? JSON.parse(raw) : {};
-      const prefs = (conversationId && parsed?.[conversationId]) || (routeId && parsed?.[routeId]) || {};
-      const nextMuted =
-        typeof prefs.muted === 'boolean' ? Boolean(prefs.muted) : chatPrefsStateRef.current.muted;
-      const nextPinned =
-        typeof prefs.pinned === 'boolean' ? Boolean(prefs.pinned) : chatPrefsStateRef.current.pinned;
-      chatPrefsStateRef.current = {
-        muted: nextMuted,
-        pinned: nextPinned,
-      };
-      setIsChatMuted((prev) => (prev === nextMuted ? prev : nextMuted));
-      setIsChatPinned((prev) => (prev === nextPinned ? prev : nextPinned));
-    } catch {
-      // Ignore storage read failures here.
-    }
-  }, [conversationId, routeId]);
-
-  const persistChatPrefsLocalSnapshot = useCallback(
-    async (nextMuted: boolean, nextPinned: boolean) => {
-      if (!conversationId && !routeId) return;
-      try {
-        const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
-        const parsed = raw ? JSON.parse(raw) : {};
-        const nextSnapshot = {
-          muted: nextMuted,
-          pinned: nextPinned,
-        };
-        if (conversationId) {
-          parsed[conversationId] = nextSnapshot;
-        }
-        if (routeId && routeId !== conversationId) {
-          parsed[routeId] = nextSnapshot;
-        }
-        await AsyncStorage.setItem(CHAT_PREFS_STORAGE_KEY, JSON.stringify(parsed));
-      } catch {
-        // Ignore local persistence failures here.
-      }
-    },
-    [conversationId, routeId]
-  );
-
-  useEffect(() => {
-    chatPrefsStateRef.current = {
-      muted: isChatMuted,
-      pinned: isChatPinned,
-    };
-  }, [isChatMuted, isChatPinned]);
-
-  const applyChatPrefsState = useCallback(
-    (nextPrefs: { muted: boolean; pinned: boolean }) => {
-      pendingChatPrefsOverrideRef.current = nextPrefs;
-      chatPrefsStateRef.current = nextPrefs;
-      setIsChatMuted((prev) => (prev === nextPrefs.muted ? prev : nextPrefs.muted));
-      setIsChatPinned((prev) => (prev === nextPrefs.pinned ? prev : nextPrefs.pinned));
-      void persistChatPrefsLocalSnapshot(nextPrefs.muted, nextPrefs.pinned);
-    },
-    [persistChatPrefsLocalSnapshot]
-  );
-
-  const fetchHiddenMessages = useCallback(async () => {
-    if (!user?.id || !conversationId) return;
-    const { data, error } = await supabase
-      .from('message_hides')
-      .select('message_id')
-      .eq('user_id', user.id)
-      .eq('peer_id', conversationId);
-    if (error) {
-      console.log('[chat] fetch hidden messages error', error);
-      return;
-    }
-    const ids = (data || []).map((row: { message_id: string }) => row.message_id);
-    updateHiddenMessageIds(ids);
-  }, [conversationId, updateHiddenMessageIds, user?.id]);
-
-  const syncMessageReactions = useCallback(async (messageIds: string[]) => {
-    if (!user?.id || messageIds.length === 0) return;
-    const uniqueIds = Array.from(new Set(messageIds)).filter(Boolean);
-    if (uniqueIds.length === 0) return;
-    const { data, error } = await supabase
-      .from('message_reactions')
-      .select('message_id,user_id,emoji,created_at')
-      .in('message_id', uniqueIds);
-    if (error) {
-      console.log('[chat] fetch reactions error', error);
-      return;
-    }
-    const grouped = new Map<string, MessageType['reactions']>();
-    (data || []).forEach((row: ReactionRow) => {
-      if (!row.message_id || !row.user_id || !row.emoji) return;
-      const existing = grouped.get(row.message_id) ?? [];
-      const index = existing.findIndex((reaction) => reaction.userId === row.user_id);
-      const nextReaction = { userId: row.user_id, emoji: row.emoji };
-      if (index >= 0) {
-        existing[index] = nextReaction;
-        grouped.set(row.message_id, [...existing]);
-      } else {
-        grouped.set(row.message_id, [...existing, nextReaction]);
-      }
-    });
-    const idSet = new Set(uniqueIds);
-    setMessages((prev) => {
-      let changed = false;
-      const next = prev.map((msg) => {
-        if (!idSet.has(msg.id)) return msg;
-        const nextReactions = grouped.get(msg.id) ?? [];
-        if (areReactionListsEqual(msg.reactions, nextReactions)) return msg;
-        changed = true;
-        return { ...msg, reactions: nextReactions };
-      });
-      return changed ? next : prev;
-    });
-  }, [user?.id]);
-
-  const syncViewOnceStatus = useCallback(async (messageIds: string[]) => {
-    if (!user?.id || !conversationId || messageIds.length === 0) return;
-    const uniqueIds = Array.from(new Set(messageIds)).filter(Boolean);
-    if (uniqueIds.length === 0) return;
-    const { data, error } = await supabase
-      .from('message_views')
-      .select('message_id,viewer_id')
-      .in('message_id', uniqueIds);
-    if (error) {
-      console.log('[chat] fetch view-once status error', error);
-      return;
-    }
-    setViewOnceStatus((prev) => {
-      const next = { ...prev };
-      uniqueIds.forEach((id) => {
-        next[id] = { viewedByMe: false, viewedByPeer: false };
-      });
-      (data || []).forEach((row: any) => {
-        if (!row?.message_id || !row?.viewer_id) return;
-        const current = next[row.message_id] ?? { viewedByMe: false, viewedByPeer: false };
-        if (row.viewer_id === user.id) {
-          current.viewedByMe = true;
-        }
-        if (row.viewer_id === conversationId) {
-          current.viewedByPeer = true;
-        }
-        next[row.message_id] = current;
-      });
-      return next;
-    });
-  }, [conversationId, user?.id]);
-
-  const applyReactionUpdate = useCallback((row: ReactionRow, mode: 'upsert' | 'delete') => {
-    if (!row?.message_id || !row.user_id) return;
-    setMessages((prev) =>
-      prev.map((msg) => {
-        if (msg.id !== row.message_id) return msg;
-        const reactions = msg.reactions ?? [];
-        if (mode === 'delete') {
-          return {
-            ...msg,
-            reactions: reactions.filter((reaction) => reaction.userId !== row.user_id),
-          };
-        }
-        const index = reactions.findIndex((reaction) => reaction.userId === row.user_id);
-        if (index >= 0) {
-          const next = [...reactions];
-          next[index] = { userId: row.user_id, emoji: row.emoji };
-          return { ...msg, reactions: next };
-        }
-        return { ...msg, reactions: [...reactions, { userId: row.user_id, emoji: row.emoji }] };
-      })
-    );
-  }, []);
-
-  const fetchBlockStatus = useCallback(async () => {
-    if (!user?.id || !conversationId) return;
-    const { data, error } = await supabase
-      .from('blocks')
-      .select('blocker_id,blocked_id')
-      .or(
-        `and(blocker_id.eq.${user.id},blocked_id.eq.${conversationId}),and(blocker_id.eq.${conversationId},blocked_id.eq.${user.id})`
-      );
-    if (error) {
-      console.log('[chat] fetch block status error', error);
-      setBlockStatus(null);
-      return;
-    }
-    const rows = (data || []) as { blocker_id: string; blocked_id: string }[];
-    if (rows.length === 0) {
-      setBlockStatus(null);
-      return;
-    }
-    const blockedByMe = rows.some((row) => row.blocker_id === user.id);
-    const blockedByThem = rows.some((row) => row.blocker_id === conversationId);
-    setBlockStatus(blockedByMe ? BLOCKED_BY_ME : blockedByThem ? BLOCKED_BY_THEM : null);
-  }, [conversationId, user?.id]);
-
-  useEffect(() => {
-    if (!user?.id || !conversationId) return;
-    const channel = supabase
-      .channel(`message_hides:${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'message_hides',
-          filter: `user_id=eq.${user.id}`,
-        },
-        (payload) => {
-          const row = payload.new as { message_id: string; peer_id?: string | null };
-          if (row.peer_id && row.peer_id !== conversationId) return;
-          const nextSet = new Set(hiddenMessageIdsRef.current);
-          nextSet.add(row.message_id);
-          updateHiddenMessageIds(Array.from(nextSet));
-          setMessages((prev) => prev.filter((msg) => msg.id !== row.message_id));
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [conversationId, updateHiddenMessageIds, user?.id]);
-
-  useEffect(() => {
-    if (!user?.id || !conversationId) return;
-    const channel = supabase
-      .channel(`blocks:${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'blocks',
-          filter: `blocker_id=eq.${user.id}`,
-        },
-        (payload) => {
-          const row = payload.new as { blocker_id: string; blocked_id: string };
-          if (row.blocked_id !== conversationId) return;
-          setBlockStatus(BLOCKED_BY_ME);
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'blocks',
-          filter: `blocked_id=eq.${user.id}`,
-        },
-        (payload) => {
-          const row = payload.new as { blocker_id: string; blocked_id: string };
-          if (row.blocker_id !== conversationId) return;
-          setBlockStatus(BLOCKED_BY_THEM);
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'DELETE',
-          schema: 'public',
-          table: 'blocks',
-          filter: `blocker_id=eq.${user.id}`,
-        },
-        (payload) => {
-          const row = payload.old as { blocker_id: string; blocked_id: string };
-          if (row.blocked_id !== conversationId) return;
-          void fetchBlockStatus();
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'DELETE',
-          schema: 'public',
-          table: 'blocks',
-          filter: `blocked_id=eq.${user.id}`,
-        },
-        (payload) => {
-          const row = payload.old as { blocker_id: string; blocked_id: string };
-          if (row.blocker_id !== conversationId) return;
-          void fetchBlockStatus();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [conversationId, fetchBlockStatus, user?.id]);
-
-  useEffect(() => {
-    if (!user?.id || !conversationId) return;
-    const channel = supabase
-      .channel(`chat_prefs:${user.id}:${conversationId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'chat_prefs',
-          filter: `user_id=eq.${user.id}`,
-        },
-        (payload) => {
-          const row = (payload.new || payload.old) as { peer_id?: string; muted?: boolean; pinned?: boolean } | undefined;
-          if (!row || row.peer_id !== conversationId) return;
-          if (typeof row.muted === 'boolean') {
-            setIsChatMuted((prev) => (prev === row.muted ? prev : row.muted));
-          }
-          if (typeof row.pinned === 'boolean') {
-            setIsChatPinned((prev) => (prev === row.pinned ? prev : row.pinned));
-          }
-          chatPrefsSignatureRef.current = JSON.stringify({
-            conversationId,
-            userId: user?.id ?? null,
-            muted: typeof row.muted === 'boolean' ? row.muted : isChatMuted,
-            pinned: typeof row.pinned === 'boolean' ? row.pinned : isChatPinned,
-          });
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [conversationId, user?.id]);
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!user?.id || !conversationId) return () => {};
-      const intervalMs = isChatBlocked ? 5000 : 15000;
-      const interval = setInterval(() => {
-        void fetchBlockStatus();
-      }, intervalMs);
-      return () => {
-        clearInterval(interval);
-      };
-    }, [conversationId, fetchBlockStatus, isChatBlocked, user?.id])
-  );
-
   useFocusEffect(
     useCallback(() => {
       lockAutoScrollUntilRef.current = Date.now() + 2500;
@@ -4726,77 +4748,6 @@ const resolveQueuedVideoUri = async (
       return () => {};
     }, [conversationId, forceScrollToBottom, refreshLocalChatPrefs])
   );
-
-  useEffect(() => {
-    if (!routeId) return () => {};
-    return subscribeChatOptionsPrefsPreview(routeId, (preview) => {
-      applyChatPrefsState(
-        {
-          muted: typeof preview.muted === 'boolean' ? preview.muted : chatPrefsStateRef.current.muted,
-          pinned: typeof preview.pinned === 'boolean' ? preview.pinned : chatPrefsStateRef.current.pinned,
-        }
-      );
-    });
-  }, [applyChatPrefsState, routeId]);
-
-  useEffect(() => {
-    if (hiddenMessageIds.length === 0) return;
-    setMessages((prev) => prev.filter((msg) => !hiddenMessageIdsRef.current.has(msg.id)));
-  }, [hiddenMessageIds]);
-
-  useEffect(() => {
-    if (!peerResolved || !chatPrefsLoaded || !chatPrefsHydratedRef.current || !conversationId) return;
-    const nextSignature = JSON.stringify({
-      conversationId,
-      userId: user?.id ?? null,
-      muted: isChatMuted,
-      pinned: isChatPinned,
-    });
-    if (chatPrefsSignatureRef.current === nextSignature) return;
-    chatPrefsSignatureRef.current = nextSignature;
-    const persistPrefs = async () => {
-      try {
-        const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
-        const parsed = raw ? JSON.parse(raw) : {};
-        const nextSnapshot = {
-          muted: isChatMuted,
-          pinned: isChatPinned,
-        };
-        parsed[conversationId] = nextSnapshot;
-        if (routeId && routeId !== conversationId) {
-          parsed[routeId] = nextSnapshot;
-        }
-        await AsyncStorage.setItem(CHAT_PREFS_STORAGE_KEY, JSON.stringify(parsed));
-      } catch {
-        // Ignore persistence errors.
-      }
-      const pendingOverride = pendingChatPrefsOverrideRef.current;
-      if (
-        pendingOverride &&
-        pendingOverride.muted === isChatMuted &&
-        pendingOverride.pinned === isChatPinned
-      ) {
-        pendingChatPrefsOverrideRef.current = null;
-      }
-      if (!user?.id) return;
-      const { error } = await supabase
-        .from('chat_prefs')
-        .upsert(
-          {
-            user_id: user.id,
-            peer_id: conversationId,
-            muted: isChatMuted,
-            pinned: isChatPinned,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'user_id,peer_id' },
-        );
-      if (error) {
-        console.log('[chat] chat prefs upsert error', error);
-      }
-    };
-    void persistPrefs();
-  }, [peerResolved, chatPrefsLoaded, conversationId, isChatMuted, isChatPinned, routeId, user?.id]);
 
   useEffect(() => {
     let isMounted = true;
@@ -5031,6 +4982,7 @@ const resolveQueuedVideoUri = async (
 
       return {
         id: row.id,
+        clientMessageId: row.client_message_id ?? null,
         text: messageText,
         senderId: row.sender_id,
         timestamp: new Date(row.created_at),
@@ -5133,6 +5085,85 @@ const resolveQueuedVideoUri = async (
     });
   }, []);
 
+  const localThreadState = useChatThreadLocalState({
+    rows: localObservedMessageRows,
+    hasLoadedLocal: hasLoadedLocalThreadRows,
+    pageSize: PAGE_SIZE,
+    currentMessages: messages,
+    mapRow: localRowToChatMessage,
+    mergeOfflineMediaIntoMessage,
+    linkReplies,
+    reconcileDeliveredFallback,
+    getMessageLocalObserverKey,
+  });
+
+  const localHydrationActionRefs = useRef<{
+    fetchHiddenMessages: () => Promise<void>;
+    fetchBlockStatus: () => Promise<void>;
+    fetchPinnedMessages: () => Promise<void>;
+    fetchMessages: () => Promise<void>;
+  }>({
+    fetchHiddenMessages: async () => {},
+    fetchBlockStatus: async () => {},
+    fetchPinnedMessages: async () => {},
+    fetchMessages: async () => {},
+  });
+
+  const hydrateCachedThreadMessages = useCallback(
+    (cached: CachedMessageType[]) => {
+      const hydrated = reconcileDeliveredFallback(linkReplies(deserializeCachedMessages(cached)));
+      if (hydrated.length === 0) {
+        return false;
+      }
+      setMessages((prev) => (prev.length === 0 ? hydrated : prev));
+      setMessagesLoaded(true);
+      setThreadBootstrapSettled(true);
+      setHasMore(hydrated.length >= PAGE_SIZE);
+      setOldestTimestamp(hydrated[0]?.timestamp ?? null);
+      return true;
+    },
+    [linkReplies, reconcileDeliveredFallback],
+  );
+
+  useEffect(() => {
+    if (!user?.id || !activePeerMessageUserId) return;
+    if (!localThreadState.mergedMessages || localThreadState.mergedMessages.length === 0) return;
+
+    const localKey = `${user.id}:${activePeerMessageUserId}`;
+    if (chatThreadLocalLoadedKeyRef.current !== localKey) {
+      chatThreadLocalLoadedKeyRef.current = localKey;
+      debugChatBootstrap('local_sqlite_thread_hydrated', {
+        routeId,
+        conversationId: activePeerMessageUserId,
+      });
+    }
+
+    if (messagesRef.current !== localThreadState.mergedMessages) {
+      setMessages(localThreadState.mergedMessages);
+    }
+    setMessagesLoaded((prev) => (prev ? prev : true));
+    setThreadBootstrapSettled((prev) => (prev ? prev : true));
+    setHasMore((prev) => (prev === localThreadState.hasMore ? prev : localThreadState.hasMore));
+    setOldestTimestamp((prev) => {
+      const prevTime = prev?.getTime() ?? null;
+      const nextTime = localThreadState.oldestTimestamp?.getTime() ?? null;
+      return prevTime === nextTime ? prev : localThreadState.oldestTimestamp;
+    });
+  }, [
+    activePeerMessageUserId,
+    debugChatBootstrap,
+    localThreadState,
+    routeId,
+    user?.id,
+  ]);
+
+  useLayoutEffect(() => {
+    if (!chatThreadCacheKey) return;
+    if (!warmThreadSnapshot || warmThreadSnapshot.length === 0) return;
+    chatThreadCacheLoadedKeyRef.current = chatThreadCacheKey;
+    hydrateCachedThreadMessages(warmThreadSnapshot);
+  }, [chatThreadCacheKey, hydrateCachedThreadMessages, warmThreadSnapshot]);
+
   useEffect(() => {
     if (!chatThreadCacheKey) return;
     if (chatThreadCacheLoadedKeyRef.current === chatThreadCacheKey) return;
@@ -5146,21 +5177,13 @@ const resolveQueuedVideoUri = async (
           ? await migrateLegacyChatThreadSnapshot<CachedMessageType[]>(user.id, conversationId)
           : null);
       if (cancelled || !cached) return;
-      const hydrated = reconcileDeliveredFallback(linkReplies(deserializeCachedMessages(cached)));
-      if (hydrated.length === 0) {
-        setMessagesLoaded(true);
-        return;
-      }
-      setMessages((prev) => (prev.length === 0 ? hydrated : prev));
-      setMessagesLoaded(true);
-      setHasMore(hydrated.length >= PAGE_SIZE);
-      setOldestTimestamp(hydrated[0]?.timestamp ?? null);
+      void hydrateCachedThreadMessages(cached);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [chatThreadCacheKey, conversationId, linkReplies, reconcileDeliveredFallback, user?.id]);
+  }, [chatThreadCacheKey, conversationId, hydrateCachedThreadMessages, user?.id]);
 
   useEffect(() => {
     if (!chatThreadCacheKey) return;
@@ -5254,16 +5277,8 @@ const resolveQueuedVideoUri = async (
     };
   }, [messages, networkReady]);
 
-  const replaceMessageById = useCallback((
-    items: MessageType[],
-    messageId: string,
-    replacement: MessageType
-  ) => {
-    const index = items.findIndex((msg) => msg.id === messageId);
-    if (index === -1) return items;
-    const next = items.slice();
-    next[index] = replacement;
-    return next;
+  const markLocalMessageFailed = useCallback((messageId: string) => {
+    setMessages((prev) => setMessageStatus(prev, messageId, 'failed'));
   }, []);
 
   const fetchPinnedMessages = useCallback(async () => {
@@ -5311,65 +5326,25 @@ const resolveQueuedVideoUri = async (
     if (!locationViewerMessageId) return null;
     return renderedMessages.find((msg) => msg.id === locationViewerMessageId) ?? null;
   }, [locationViewerMessageId, renderedMessages]);
-
-  const actionMessage = useMemo(() => {
-    if (!actionMessageId) return null;
-    return renderedMessages.find((msg) => msg.id === actionMessageId) ?? null;
-  }, [actionMessageId, renderedMessages]);
-
-  const isActionPinned = useMemo(() => {
-    if (!actionMessage) return false;
-    return pinnedMessageIds.includes(actionMessage.id);
-  }, [actionMessage, pinnedMessageIds]);
-
-  const canEditAction = useMemo(() => {
-    if (!actionMessage || !user?.id) return false;
-    return (
-      actionMessage.senderId === user.id &&
-      actionMessage.type === 'text' &&
-      !actionMessage.deletedForAll &&
-      !actionMessage.id.startsWith('temp-')
-    );
-  }, [actionMessage, user?.id]);
-
-  const canReportActionMessage = useMemo(() => {
-    if (!actionMessage || !user?.id) return false;
-    return (
-      actionMessage.senderId !== user.id &&
-      actionMessage.type !== 'system' &&
-      !actionMessage.isSystem &&
-      !actionMessage.deletedForAll &&
-      !actionMessage.id.startsWith('temp-')
-    );
-  }, [actionMessage, user?.id]);
-
-  const reportEvidencePreview = useMemo(
-    () => getReportEvidencePreview(reportEvidenceMessage),
-    [reportEvidenceMessage]
+  const shouldTickLocationViewer = Boolean(
+    locationModalVisible &&
+      locationViewerMessage?.location?.live &&
+      locationViewerMessage.location.expiresAt &&
+      locationViewerMessage.location.expiresAt.getTime() > nowTick,
   );
+  useEffect(() => {
+    if (!peerLastSeen || peerOnline || peerThreadActive) return;
+    const interval = setInterval(() => setNowTick(Date.now()), 30000);
+    return () => clearInterval(interval);
+  }, [peerLastSeen, peerOnline, peerThreadActive]);
 
-  const reactionSheetMessage = useMemo(() => {
-    if (!reactionSheetMessageId) return null;
-    return renderedMessages.find((msg) => msg.id === reactionSheetMessageId) ?? null;
-  }, [renderedMessages, reactionSheetMessageId]);
-
-  const reactionSummary = useMemo(() => {
-    if (!reactionSheetMessage) return [];
-    const counts = new Map<string, number>();
-    reactionSheetMessage.reactions.forEach((reaction) => {
-      counts.set(reaction.emoji, (counts.get(reaction.emoji) ?? 0) + 1);
-    });
-    return Array.from(counts.entries())
-      .map(([emoji, count]) => ({ emoji, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [reactionSheetMessage]);
-
-  const reactionSheetList = useMemo(() => {
-    if (!reactionSheetMessage) return [];
-    const list = reactionSheetMessage.reactions;
-    if (!reactionSheetEmoji) return list;
-    return list.filter((reaction) => reaction.emoji === reactionSheetEmoji);
-  }, [reactionSheetEmoji, reactionSheetMessage]);
+  useEffect(() => {
+    if (!shouldTickLocationViewer) return;
+    const interval = setInterval(() => {
+      setNowTick(Date.now());
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [shouldTickLocationViewer]);
 
   const fetchNearbyPlaces = useCallback(
     async (coords: { lat: number; lng: number }) => {
@@ -5561,35 +5536,17 @@ const resolveQueuedVideoUri = async (
   const openCounterDatePlanner = useCallback(
     (invite: MessageType['dateInvite'], mode: Extract<DatePlannerMode, 'counter_time' | 'counter_place' | 'counter_both'>) => {
       if (!invite?.planId) return;
-      setDatePlannerMode(mode);
-      setDatePlannerParentPlanId(invite.planId);
-      setDatePlannerBaselineInvite(invite);
-      setDateNote('');
+      const draft = createDatePlanDraftFromInvite({ invite, mode });
+      setDatePlannerMode(draft.mode);
+      setDatePlannerParentPlanId(draft.parentPlanId);
+      setDatePlannerBaselineInvite(draft.baselineInvite);
+      setDateNote(draft.note);
       setDateSuggestions([]);
       setDateSearchQuery('');
       setDatePickerMode(null);
-      setDatePlannerDate(new Date(invite.scheduledFor));
-      setDateSelectedPlace({
-        id: invite.venueId || invite.planId,
-        venueId: invite.venueId ?? null,
-        name: invite.placeName,
-        address: invite.placeAddress ?? null,
-        lat: invite.lat ?? 0,
-        lng: invite.lng ?? 0,
-        source: invite.source,
-        badges: [...(invite.badges ?? [])],
-        summary: invite.summary ?? null,
-        city: invite.city ?? null,
-      });
-      setDatePlannerTab(
-        mode === 'counter_time'
-          ? 'preferred'
-          : invite.source === 'betweener_pick'
-          ? 'picks'
-          : invite.source === 'preferred'
-          ? 'preferred'
-          : 'search',
-      );
+      setDatePlannerDate(draft.plannerDate);
+      setDateSelectedPlace(draft.selectedPlace);
+      setDatePlannerTab(draft.plannerTab);
       setDatePlannerVisible(true);
     },
     [],
@@ -5606,33 +5563,17 @@ const resolveQueuedVideoUri = async (
 
   const openRescheduleDatePlanner = useCallback((invite: MessageType['dateInvite']) => {
     if (!invite?.planId) return;
-    setDatePlannerMode('reschedule');
-    setDatePlannerParentPlanId(invite.planId);
-    setDatePlannerBaselineInvite(invite);
-    setDateNote(invite.note ?? '');
+    const draft = createDatePlanDraftFromInvite({ invite, mode: 'reschedule' });
+    setDatePlannerMode(draft.mode);
+    setDatePlannerParentPlanId(draft.parentPlanId);
+    setDatePlannerBaselineInvite(draft.baselineInvite);
+    setDateNote(draft.note);
     setDateSuggestions([]);
     setDateSearchQuery('');
     setDatePickerMode(null);
-    setDatePlannerDate(new Date(invite.scheduledFor));
-    setDateSelectedPlace({
-      id: invite.venueId || invite.planId,
-      venueId: invite.venueId ?? null,
-      name: invite.placeName,
-      address: invite.placeAddress ?? null,
-      lat: invite.lat ?? 0,
-      lng: invite.lng ?? 0,
-      source: invite.source,
-      badges: [...(invite.badges ?? [])],
-      summary: invite.summary ?? null,
-      city: invite.city ?? null,
-    });
-    setDatePlannerTab(
-      invite.source === 'betweener_pick'
-        ? 'picks'
-        : invite.source === 'preferred'
-        ? 'preferred'
-        : 'search',
-    );
+    setDatePlannerDate(draft.plannerDate);
+    setDateSelectedPlace(draft.selectedPlace);
+    setDatePlannerTab(draft.plannerTab);
     setDatePlannerVisible(true);
   }, []);
 
@@ -5701,16 +5642,19 @@ const resolveQueuedVideoUri = async (
     }
     let responseKind: DatePlanResponseKind = 'initial';
     if (datePlannerParentPlanId && datePlannerBaselineInvite) {
-      const timeChanged = scheduledFor.getTime() !== datePlannerBaselineInvite.scheduledFor.getTime();
-      const placeChanged = !isSameDatePlanPlace(datePlannerBaselineInvite, dateSelectedPlace);
-      if (!timeChanged && !placeChanged) {
+      const resolvedResponseKind = resolveDatePlanResponseKind({
+        baselineInvite: datePlannerBaselineInvite,
+        scheduledFor,
+        selectedPlace: dateSelectedPlace,
+      });
+      if (!resolvedResponseKind) {
         Alert.alert(
           datePlannerMode === 'reschedule' ? 'Reschedule date' : 'Update suggestion',
           'Change the time, the place, or both before sending the update.',
         );
         return;
       }
-      responseKind = timeChanged && placeChanged ? 'counter_both' : timeChanged ? 'counter_time' : 'counter_place';
+      responseKind = resolvedResponseKind;
     }
     setDateSending(true);
     const tempId = `temp-date-${Date.now()}`;
@@ -5742,22 +5686,22 @@ const resolveQueuedVideoUri = async (
       if (!peerProfile?.id) {
         throw new Error('Unable to resolve the person you are chatting with.');
       }
-      const { data: sendData, error: sendError } = await supabase.rpc('rpc_send_date_plan', {
-        p_recipient_profile_id: peerProfile.id,
-        p_scheduled_for: scheduledFor.toISOString(),
-        p_place_name: dateSelectedPlace.name,
-        p_place_address: dateSelectedPlace.address ?? null,
-        p_place_source: dateSelectedPlace.source,
-        p_place_badges: dateSelectedPlace.badges ?? [],
-        p_place_summary: dateSelectedPlace.summary ?? null,
-        p_city: dateSelectedPlace.city ?? null,
-        p_lat: dateSelectedPlace.lat,
-        p_lng: dateSelectedPlace.lng,
-        p_note: dateNote.trim() || null,
-        p_venue_id: dateSelectedPlace.venueId ?? null,
-        p_parent_plan_id: datePlannerParentPlanId,
-        p_response_kind: responseKind,
-        p_reply_to_message_id: replyingTo?.id ?? null,
+      const { data: sendData, error: sendError } = await ChatThreadRemoteService.sendDatePlan({
+        recipientProfileId: peerProfile.id,
+        scheduledForIso: scheduledFor.toISOString(),
+        placeName: dateSelectedPlace.name,
+        placeAddress: dateSelectedPlace.address ?? null,
+        placeSource: dateSelectedPlace.source,
+        placeBadges: dateSelectedPlace.badges ?? [],
+        placeSummary: dateSelectedPlace.summary ?? null,
+        city: dateSelectedPlace.city ?? null,
+        lat: dateSelectedPlace.lat,
+        lng: dateSelectedPlace.lng,
+        note: dateNote.trim() || null,
+        venueId: dateSelectedPlace.venueId ?? null,
+        parentPlanId: datePlannerParentPlanId,
+        responseKind,
+        replyToMessageId: replyingTo?.id ?? null,
       });
       const created = sendData?.[0];
       if (sendError || !created?.message_id) {
@@ -5795,8 +5739,8 @@ const resolveQueuedVideoUri = async (
     if (datePlanActionId === planId) return;
     setDatePlanActionId(planId);
     try {
-      const { error } = await supabase.rpc('rpc_accept_date_plan', {
-        p_plan_id: planId,
+      const { error } = await ChatThreadRemoteService.acceptDatePlan({
+        planId,
       });
       if (error) {
         console.log('[chat] accept date plan error', error);
@@ -5814,8 +5758,8 @@ const resolveQueuedVideoUri = async (
     if (datePlanActionId === planId) return;
     setDatePlanActionId(planId);
     try {
-      const { error } = await supabase.rpc('rpc_cancel_date_plan', {
-        p_plan_id: planId,
+      const { error } = await ChatThreadRemoteService.cancelDatePlan({
+        planId,
       });
       if (error) {
         console.log('[chat] cancel date plan error', error);
@@ -5912,9 +5856,9 @@ const resolveQueuedVideoUri = async (
         .filter(Boolean)
         .join('\n');
 
-      const { error } = await supabase.rpc('rpc_request_date_plan_concierge', {
-        p_plan_id: planId,
-        p_note: conciergeBrief || null,
+      const { error } = await ChatThreadRemoteService.requestDatePlanConcierge({
+        planId,
+        note: conciergeBrief || null,
       });
       if (error) {
         console.log('[chat] concierge request error', error);
@@ -6245,69 +6189,56 @@ const resolveQueuedVideoUri = async (
       Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
       return;
     }
-    if (!text.trim() || !user?.id || !conversationId) return;
+    if (!text.trim() || !user?.id || !activePeerMessageUserId) return;
     const tempId = `temp-attachment-${Date.now()}`;
+    const clientMessageId = tempId;
+    const optimistic: MessageType = {
+      id: tempId,
+      clientMessageId,
+      text,
+      senderId: user.id,
+      timestamp: new Date(),
+      type: 'text',
+      reactions: [],
+      status: 'sending',
+      replyToId: replyingTo?.id ?? null,
+      replyTo: replyingTo || undefined,
+    };
     setMessages((prev) => [
       ...prev,
-      {
-        id: tempId,
-        text,
-        senderId: user.id,
-        timestamp: new Date(),
-        type: 'text',
-        reactions: [],
-        status: 'sending',
-        replyToId: replyingTo?.id ?? null,
-        replyTo: replyingTo || undefined,
-      },
+      optimistic,
     ]);
+    await persistLocalTextOutboxState({
+      ownerUserId: user.id,
+      threadId: activePeerMessageUserId,
+      message: optimistic,
+      outboxStatus: 'sending',
+    }).catch((persistError) => console.log('[chat] persist attachment text outbox error', persistError));
     setReplyingTo(null);
     setViewOnceMode(false);
     setEditingMessage(null);
 
-    const { data, error } = await supabase
-      .from('messages')
-      .insert({
-        text,
-        sender_id: user.id,
-        receiver_id: conversationId,
-        is_read: false,
-        message_type: 'text',
-        reply_to_message_id: replyingTo?.id ?? null,
-      })
-      .select(MESSAGE_SELECT_FIELDS)
-      .single();
-
-    if (error || !data) {
-      if (isLikelyNetworkError(error)) {
-        await enqueueChatTextSendMutation({
-          senderId: user.id,
-          receiverId: conversationId,
-          text,
-          replyToMessageId: replyingTo?.id ?? null,
-        });
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === tempId ? { ...msg, status: 'queued' as const } : msg
-          )
-        );
-        return;
-      }
-      console.log('[chat] send attachment text error', error);
+    if (!networkReady) {
+      const queuedMessage: MessageType = { ...optimistic, status: 'queued' };
+      void persistLocalTextOutboxState({
+        ownerUserId: user.id,
+        threadId: activePeerMessageUserId,
+        message: queuedMessage,
+        outboxStatus: 'queued',
+      }).catch((persistError) => console.log('[chat] persist queued attachment text outbox error', persistError));
       setMessages((prev) =>
         prev.map((msg) =>
-          msg.id === tempId ? { ...msg, status: 'sent' } : msg
+          msg.id === tempId ? { ...msg, status: 'queued' as const } : msg
         )
       );
-    } else {
-      const nextMessage = mapRowToMessage(data as MessageRow);
-      setMessages((prev) =>
-        replyingTo
-          ? linkReplies(replaceMessageById(prev, tempId, nextMessage))
-          : replaceMessageById(prev, tempId, nextMessage)
-      );
+      return;
     }
-  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replaceMessageById, replyingTo, user?.id]);
+    await flushLocalTextOutbox(user.id).catch((error) => {
+      if (!isLikelyNetworkError(error)) {
+        console.log('[chat] flush attachment text outbox error', error);
+      }
+    });
+  }, [activePeerMessageUserId, isBlockedByMe, isChatBlocked, networkReady, replyingTo, user?.id]);
 
   const sendImageAttachment = useCallback(async ({
     imageUrl,
@@ -6335,82 +6266,60 @@ const resolveQueuedVideoUri = async (
     }
     if (!user?.id || !conversationId) return;
     const tempId = `temp-image-${Date.now()}`;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: tempId,
-        text: imageUrl ?? '',
-        senderId: user.id,
-        timestamp: new Date(),
-        type: 'image',
-        isViewOnce,
-        encryptedMedia: Boolean(encryptedPayload),
-        encryptedMediaPath: encryptedPath ?? null,
-        encryptedKeySender: encryptedPayload?.encryptedKeySender ?? null,
-        encryptedKeyReceiver: encryptedPayload?.encryptedKeyReceiver ?? null,
-        encryptedKeyNonce: encryptedPayload?.encryptedKeyNonce ?? null,
-        encryptedMediaNonce: encryptedPayload?.encryptedMediaNonce ?? null,
-        encryptedMediaAlg: encryptedPayload ? 'nacl-secretbox' : null,
-        encryptedMediaMime: mimeType ?? null,
-        encryptedMediaSize: size ?? null,
-        reactions: [],
-        status: 'sending',
-        imageUrl: isViewOnce ? undefined : imageUrl,
-        replyToId: replyingTo?.id ?? null,
-        replyTo: replyingTo || undefined,
-      },
-    ]);
+    const clientMessageId = tempId;
+    const optimisticImageMessage: MessageType = {
+      id: tempId,
+      clientMessageId,
+      text: '',
+      senderId: user.id,
+      timestamp: new Date(),
+      type: 'image',
+      isViewOnce,
+      encryptedMedia: Boolean(encryptedPayload),
+      encryptedMediaPath: encryptedPath ?? null,
+      encryptedKeySender: encryptedPayload?.encryptedKeySender ?? null,
+      encryptedKeyReceiver: encryptedPayload?.encryptedKeyReceiver ?? null,
+      encryptedKeyNonce: encryptedPayload?.encryptedKeyNonce ?? null,
+      encryptedMediaNonce: encryptedPayload?.encryptedMediaNonce ?? null,
+      encryptedMediaAlg: encryptedPayload ? 'nacl-secretbox' : null,
+      encryptedMediaMime: mimeType ?? null,
+      encryptedMediaSize: size ?? null,
+      reactions: [],
+      status: 'sending',
+      imageUrl: isViewOnce ? undefined : imageUrl,
+      replyToId: replyingTo?.id ?? null,
+      replyTo: replyingTo || undefined,
+    };
+    setMessages((prev) => [...prev, optimisticImageMessage]);
+    await persistLocalTextOutboxState({
+      ownerUserId: user.id,
+      threadId: activePeerMessageUserId,
+      message: optimisticImageMessage,
+      outboxStatus: 'queued',
+    }).catch((persistError) => console.log('[chat] persist image outbox error', persistError));
     setReplyingTo(null);
     setEditingMessage(null);
-
-    const { data, error } = await supabase
-      .from('messages')
-      .insert({
-        text: imageUrl ?? '',
-        sender_id: user.id,
-        receiver_id: conversationId,
-        is_read: false,
-        message_type: 'image',
-        reply_to_message_id: replyingTo?.id ?? null,
-        is_view_once: isViewOnce,
-        encrypted_media: Boolean(encryptedPayload),
-        encrypted_media_path: encryptedPath ?? null,
-        encrypted_key_sender: encryptedPayload?.encryptedKeySender ?? null,
-        encrypted_key_receiver: encryptedPayload?.encryptedKeyReceiver ?? null,
-        encrypted_key_nonce: encryptedPayload?.encryptedKeyNonce ?? null,
-        encrypted_media_nonce: encryptedPayload?.encryptedMediaNonce ?? null,
-        encrypted_media_alg: encryptedPayload ? 'nacl-secretbox' : null,
-        encrypted_media_mime: mimeType ?? null,
-        encrypted_media_size: size ?? null,
-      })
-      .select(MESSAGE_SELECT_FIELDS)
-      .single();
-
-    if (error || !data) {
-      console.log('[chat] send image error', error);
-      setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
-    } else {
-      const nextMessage = mapRowToMessage(data as MessageRow);
+    if (!networkReady) {
+      void persistLocalTextOutboxState({
+        ownerUserId: user.id,
+        threadId: activePeerMessageUserId,
+        message: {
+          ...optimisticImageMessage,
+          status: 'queued',
+        },
+        outboxStatus: 'queued',
+      }).catch((persistError) => console.log('[chat] persist queued image outbox error', persistError));
       setMessages((prev) =>
-        replyingTo
-          ? linkReplies(replaceMessageById(prev, tempId, nextMessage))
-          : replaceMessageById(prev, tempId, nextMessage)
+        prev.map((msg) => (msg.id === tempId ? { ...msg, status: 'queued' as const } : msg))
       );
-      if (nextMessage.imageUrl?.startsWith('http')) {
-        void cacheOfflineImage(nextMessage.imageUrl, nextMessage.imageUrl).then((cached) => {
-          if (!cached) return;
-          setCachedImageUris((prev) => (prev[nextMessage.imageUrl!] === cached ? prev : { ...prev, [nextMessage.imageUrl!]: cached }));
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === nextMessage.id && msg.type === 'image' && msg.offlineImageUri !== cached
-                ? { ...msg, offlineImageUri: cached }
-                : msg
-            )
-          );
-        });
-      }
+      return;
     }
-  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replaceMessageById, replyingTo, user?.id]);
+    await flushLocalTextOutbox(user.id).catch((error) => {
+      if (!isLikelyNetworkError(error)) {
+        console.log('[chat] flush image outbox error', error);
+      }
+    });
+  }, [activePeerMessageUserId, conversationId, isBlockedByMe, isChatBlocked, networkReady, replyingTo, user?.id]);
 
   const sendEncryptedMediaAttachment = useCallback(async ({
     uri,
@@ -6434,8 +6343,10 @@ const resolveQueuedVideoUri = async (
     const { keypair, recipientPublicKey } = keys;
 
     const tempId = `temp-viewonce-${Date.now()}`;
+    const clientMessageId = tempId;
     const optimistic: MessageType = {
       id: tempId,
+      clientMessageId,
       text: '',
       senderId: user.id,
       timestamp: new Date(),
@@ -6446,7 +6357,7 @@ const resolveQueuedVideoUri = async (
       encryptedMedia: true,
       encryptedMediaPath: null,
     };
-    setMessages((prev) => [...prev, optimistic]);
+    setMessages((prev) => appendMessage(prev, optimistic));
     setReplyingTo(null);
     setEditingMessage(null);
     setViewOnceMode(false);
@@ -6472,8 +6383,9 @@ const resolveQueuedVideoUri = async (
         .from('messages')
         .insert({
           text: '',
+          client_message_id: clientMessageId,
           sender_id: user.id,
-          receiver_id: conversationId,
+          receiver_id: activePeerMessageUserId,
           is_read: false,
           message_type: kind,
           reply_to_message_id: replyingTo?.id ?? null,
@@ -6535,82 +6447,60 @@ const resolveQueuedVideoUri = async (
     }
     if (!user?.id || !conversationId) return;
     const tempId = `temp-video-${Date.now()}`;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: tempId,
-        text: videoUrl ?? '',
-        senderId: user.id,
-        timestamp: new Date(),
-        type: 'video',
-        isViewOnce,
-        encryptedMedia: Boolean(encryptedPayload),
-        encryptedMediaPath: encryptedPath ?? null,
-        encryptedKeySender: encryptedPayload?.encryptedKeySender ?? null,
-        encryptedKeyReceiver: encryptedPayload?.encryptedKeyReceiver ?? null,
-        encryptedKeyNonce: encryptedPayload?.encryptedKeyNonce ?? null,
-        encryptedMediaNonce: encryptedPayload?.encryptedMediaNonce ?? null,
-        encryptedMediaAlg: encryptedPayload ? 'nacl-secretbox' : null,
-        encryptedMediaMime: mimeType ?? null,
-        encryptedMediaSize: size ?? null,
-        reactions: [],
-        status: 'sending',
-        videoUrl: isViewOnce ? undefined : videoUrl,
-        replyToId: replyingTo?.id ?? null,
-        replyTo: replyingTo || undefined,
-      },
-    ]);
+    const clientMessageId = tempId;
+    const optimisticVideoMessage: MessageType = {
+      id: tempId,
+      clientMessageId,
+      text: '',
+      senderId: user.id,
+      timestamp: new Date(),
+      type: 'video',
+      isViewOnce,
+      encryptedMedia: Boolean(encryptedPayload),
+      encryptedMediaPath: encryptedPath ?? null,
+      encryptedKeySender: encryptedPayload?.encryptedKeySender ?? null,
+      encryptedKeyReceiver: encryptedPayload?.encryptedKeyReceiver ?? null,
+      encryptedKeyNonce: encryptedPayload?.encryptedKeyNonce ?? null,
+      encryptedMediaNonce: encryptedPayload?.encryptedMediaNonce ?? null,
+      encryptedMediaAlg: encryptedPayload ? 'nacl-secretbox' : null,
+      encryptedMediaMime: mimeType ?? null,
+      encryptedMediaSize: size ?? null,
+      reactions: [],
+      status: 'sending',
+      videoUrl: isViewOnce ? undefined : videoUrl,
+      replyToId: replyingTo?.id ?? null,
+      replyTo: replyingTo || undefined,
+    };
+    setMessages((prev) => [...prev, optimisticVideoMessage]);
+    await persistLocalTextOutboxState({
+      ownerUserId: user.id,
+      threadId: activePeerMessageUserId,
+      message: optimisticVideoMessage,
+      outboxStatus: 'queued',
+    }).catch((persistError) => console.log('[chat] persist video outbox error', persistError));
     setReplyingTo(null);
     setEditingMessage(null);
-
-    const { data, error } = await supabase
-      .from('messages')
-      .insert({
-        text: videoUrl ?? '',
-        sender_id: user.id,
-        receiver_id: conversationId,
-        is_read: false,
-        message_type: 'video',
-        reply_to_message_id: replyingTo?.id ?? null,
-        is_view_once: isViewOnce,
-        encrypted_media: Boolean(encryptedPayload),
-        encrypted_media_path: encryptedPath ?? null,
-        encrypted_key_sender: encryptedPayload?.encryptedKeySender ?? null,
-        encrypted_key_receiver: encryptedPayload?.encryptedKeyReceiver ?? null,
-        encrypted_key_nonce: encryptedPayload?.encryptedKeyNonce ?? null,
-        encrypted_media_nonce: encryptedPayload?.encryptedMediaNonce ?? null,
-        encrypted_media_alg: encryptedPayload ? 'nacl-secretbox' : null,
-        encrypted_media_mime: mimeType ?? null,
-        encrypted_media_size: size ?? null,
-      })
-      .select(MESSAGE_SELECT_FIELDS)
-      .single();
-
-    if (error || !data) {
-      console.log('[chat] send video error', error);
-      setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
-    } else {
-      const nextMessage = mapRowToMessage(data as MessageRow);
+    if (!networkReady) {
+      void persistLocalTextOutboxState({
+        ownerUserId: user.id,
+        threadId: activePeerMessageUserId,
+        message: {
+          ...optimisticVideoMessage,
+          status: 'queued',
+        },
+        outboxStatus: 'queued',
+      }).catch((persistError) => console.log('[chat] persist queued video outbox error', persistError));
       setMessages((prev) =>
-        replyingTo
-          ? linkReplies(replaceMessageById(prev, tempId, nextMessage))
-          : replaceMessageById(prev, tempId, nextMessage)
+        prev.map((msg) => (msg.id === tempId ? { ...msg, status: 'queued' as const } : msg))
       );
-      if (nextMessage.videoUrl?.startsWith('http')) {
-        void cacheOfflineVideo(nextMessage.videoUrl, nextMessage.videoUrl).then((cached) => {
-          if (!cached) return;
-          setCachedVideoUris((prev) => (prev[nextMessage.videoUrl!] === cached ? prev : { ...prev, [nextMessage.videoUrl!]: cached }));
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === nextMessage.id && msg.type === 'video' && msg.offlineVideoUri !== cached
-                ? { ...msg, offlineVideoUri: cached }
-                : msg
-            )
-          );
-        });
-      }
+      return;
     }
-  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replaceMessageById, replyingTo, user?.id]);
+    await flushLocalTextOutbox(user.id).catch((error) => {
+      if (!isLikelyNetworkError(error)) {
+        console.log('[chat] flush video outbox error', error);
+      }
+    });
+  }, [activePeerMessageUserId, conversationId, isBlockedByMe, isChatBlocked, networkReady, replyingTo, user?.id]);
 
   const queueMediaAttachment = useCallback(async ({
     localUri,
@@ -6630,9 +6520,11 @@ const resolveQueuedVideoUri = async (
     if (!user?.id || !conversationId) return;
     const stagedUri = await stageOfflineChatUpload(localUri, fileName);
     const tempId = `temp-${mediaType}-${Date.now()}`;
+    const clientMessageId = tempId;
     const labelParts = [fileName, documentSizeLabel, documentTypeLabel].filter(Boolean);
     const optimistic: MessageType = {
       id: tempId,
+      clientMessageId,
       text: mediaType === 'document' ? `${DOCUMENT_TEXT_PREFIX} ${labelParts.join(' | ')}\n${stagedUri}` : '',
       senderId: user.id,
       timestamp: new Date(),
@@ -6661,23 +6553,33 @@ const resolveQueuedVideoUri = async (
     setEditingMessage(null);
     setViewOnceMode(false);
 
-    await enqueueChatMediaSendMutation({
-      senderId: user.id,
-      receiverId: conversationId,
-      localUri: stagedUri,
-      fileName,
-      contentType,
-      mediaType,
-      replyToMessageId: optimistic.replyToId ?? null,
-      documentName: mediaType === 'document' ? fileName : null,
-      documentSizeLabel: documentSizeLabel ?? null,
-      documentTypeLabel: documentTypeLabel ?? null,
+    await ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
+      chatMessageToLocalRow(user.id, activePeerMessageUserId, optimistic),
+    ]);
+    await ChatRepository.upsertPendingOutboxItem(
+      user.id,
+      buildMediaOutboxRow({
+        ownerUserId: user.id,
+        threadId: activePeerMessageUserId,
+        message: optimistic,
+        localUri: stagedUri,
+        fileName,
+        contentType,
+        mediaType,
+        documentSizeLabel: documentSizeLabel ?? null,
+        documentTypeLabel: documentTypeLabel ?? null,
+      }),
+    );
+    void ChatOutboxService.flushPending(user.id).catch((error) => {
+      if (!isLikelyNetworkError(error)) {
+        console.log('[chat] flush queued media outbox error', error);
+      }
     });
 
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
     }, 100);
-  }, [conversationId, replyingTo, user?.id]);
+  }, [activePeerMessageUserId, replyingTo, user?.id]);
 
   const sendLocationMessage = useCallback(async ({
     lat,
@@ -6698,8 +6600,9 @@ const resolveQueuedVideoUri = async (
       Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
       return null;
     }
-    if (!user?.id || !conversationId) return null;
+    if (!user?.id || !activePeerMessageUserId) return null;
     const tempId = `temp-location-${Date.now()}`;
+    const clientMessageId = tempId;
     const text = buildLocationMessageText({
       lat,
       lng,
@@ -6714,6 +6617,7 @@ const resolveQueuedVideoUri = async (
       ...prev,
       {
         id: tempId,
+        clientMessageId,
         text,
         senderId: user.id,
         timestamp: new Date(),
@@ -6734,36 +6638,93 @@ const resolveQueuedVideoUri = async (
         replyTo: replyingTo || undefined,
       },
     ]);
+    const optimisticLocationMessage: MessageType = {
+      id: tempId,
+      clientMessageId,
+      text,
+      senderId: user.id,
+      timestamp: new Date(),
+      type: 'location',
+      reactions: [],
+      status: 'sending',
+      location: {
+        lat,
+        lng,
+        label,
+        address: address || undefined,
+        mapUrl: mapUrl || undefined,
+        mapLink,
+        live: Boolean(live),
+        expiresAt: live ? expiresAt ?? null : null,
+      },
+      replyToId: replyingTo?.id ?? null,
+      replyTo: replyingTo || undefined,
+    };
     setReplyingTo(null);
 
-    const { data, error } = await supabase
-      .from('messages')
-      .insert({
-        text,
-        sender_id: user.id,
-        receiver_id: conversationId,
-        is_read: false,
-        message_type: 'location',
-        reply_to_message_id: replyingTo?.id ?? null,
-      })
-      .select(MESSAGE_SELECT_FIELDS)
-      .single();
+    if (live) {
+      if (!networkReady) {
+        setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
+        Alert.alert('Live location', 'Live location needs an active connection.');
+        return null;
+      }
 
-    if (error || !data) {
-      console.log('[chat] send location error', error);
-      setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
+      const { data, error } = await supabase
+        .from('messages')
+        .insert({
+          text,
+          client_message_id: clientMessageId,
+          sender_id: user.id,
+          receiver_id: activePeerMessageUserId,
+          is_read: false,
+          message_type: 'location',
+          reply_to_message_id: replyingTo?.id ?? null,
+        })
+        .select(MESSAGE_SELECT_FIELDS)
+        .single();
+
+      if (error || !data) {
+        console.log('[chat] send live location error', error);
+        setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
+        return null;
+      }
+
+      const nextMessage = mapRowToMessage(data as MessageRow);
+      void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
+        chatMessageToLocalRow(user.id, activePeerMessageUserId, nextMessage),
+      ]).catch((persistError) => console.log('[chat] persist sent live location error', persistError));
+      setMessages((prev) =>
+        linkReplies(prev.map((msg) => (msg.id === tempId ? nextMessage : msg))),
+      );
+      return data.id as string;
+    }
+
+    await persistLocalTextOutboxState({
+      ownerUserId: user.id,
+      threadId: activePeerMessageUserId,
+      message: optimisticLocationMessage,
+      outboxStatus: 'sending',
+    }).catch((persistError) => console.log('[chat] persist location outbox error', persistError));
+
+    if (!networkReady) {
+      const queuedMessage: MessageType = { ...optimisticLocationMessage, status: 'queued' };
+      void persistLocalTextOutboxState({
+        ownerUserId: user.id,
+        threadId: activePeerMessageUserId,
+        message: queuedMessage,
+        outboxStatus: 'queued',
+      }).catch((persistError) => console.log('[chat] persist queued location outbox error', persistError));
+      setMessages((prev) => setMessageStatus(prev, tempId, 'queued'));
       return null;
     }
 
-    setMessages((prev) =>
-      linkReplies(
-        prev.map((msg) =>
-          msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
-        )
-      )
-    );
-    return data.id as string;
-  }, [conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, user?.id]);
+    await flushLocalTextOutbox(user.id).catch((error) => {
+      if (!isLikelyNetworkError(error)) {
+        console.log('[chat] flush location outbox error', error);
+      }
+    });
+    return null;
+  }, [activePeerMessageUserId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, networkReady, replyingTo, user?.id]);
 
   const updateLiveLocationMessage = useCallback(async ({
     messageId,
@@ -6788,6 +6749,23 @@ const resolveQueuedVideoUri = async (
     });
     const mapUrl = getStaticMapUrl(coords.lat, coords.lng);
     const mapLink = buildMapsLink(coords.lat, coords.lng);
+    const existingMessage = messagesRef.current.find((msg) => msg.id === messageId);
+    const nextMessage: MessageType | null = existingMessage
+      ? {
+          ...existingMessage,
+          text,
+          location: {
+            lat: coords.lat,
+            lng: coords.lng,
+            label,
+            address: address || undefined,
+            mapUrl: mapUrl || existingMessage.location?.mapUrl,
+            mapLink,
+            live: true,
+            expiresAt,
+          },
+        }
+      : null;
     setMessages((prev) =>
       prev.map((msg) => {
         if (msg.id !== messageId) return msg;
@@ -6807,14 +6785,21 @@ const resolveQueuedVideoUri = async (
         };
       })
     );
+    if (user?.id && activePeerMessageUserId && nextMessage) {
+      void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
+        chatMessageToLocalRow(user.id, activePeerMessageUserId, nextMessage),
+      ]).catch((persistError) => console.log('[chat] persist live location update error', persistError));
+    }
+    if (!user?.id) return;
     const { error } = await supabase
       .from('messages')
       .update({ text })
-      .eq('id', messageId);
+      .eq('id', messageId)
+      .eq('sender_id', user.id);
     if (error) {
       console.log('[chat] live location update error', error);
     }
-  }, []);
+  }, [activePeerMessageUserId, user?.id]);
 
   const stopLiveSharing = useCallback(async (messageId?: string) => {
     const liveShare = liveShareRef.current;
@@ -6996,6 +6981,22 @@ const resolveQueuedVideoUri = async (
     });
   }, [attachmentAnim, isBlockedByMe, isChatBlocked]);
 
+  const toggleComposerAttachmentSheet = useCallback(() => {
+    if (showImagePicker) {
+      closeAttachmentSheet();
+      requestAnimationFrame(() => inputRef.current?.focus());
+      return;
+    }
+    openAttachmentSheet();
+  }, [closeAttachmentSheet, openAttachmentSheet, showImagePicker]);
+
+  const toggleComposerMoodStickers = useCallback(() => {
+    if (showImagePicker) {
+      closeAttachmentSheet();
+    }
+    setShowMoodStickers((prev) => !prev);
+  }, [closeAttachmentSheet, showImagePicker]);
+
   const beginMediaUploadStatus = useCallback((
     title: string,
     subtitle: string,
@@ -7119,33 +7120,75 @@ const resolveQueuedVideoUri = async (
   }, []);
 
   const fetchSystemMessages = useCallback(async () => {
-    if (!user?.id || !conversationId) return [] as MessageType[];
-    const { data, error } = await supabase
-      .from('system_messages')
-      .select('id,user_id,peer_user_id,text,created_at,event_type,intent_request_id,metadata')
-      .eq('user_id', user.id)
-      .eq('peer_user_id', conversationId)
-      .order('created_at', { ascending: false });
-
-    if (error) {
+    if (!user?.id || !activePeerMessageUserId) return [] as MessageType[];
+    try {
+      return await fetchRemoteSystemMessages({
+        currentUserId: user.id,
+        peerUserId: activePeerMessageUserId,
+        mapRow: (row) => mapSystemRowToMessage(row as SystemMessageRow),
+      });
+    } catch (error) {
       console.log('[chat] fetch system messages error', error);
       return [] as MessageType[];
     }
-    return (data || []).map((row: SystemMessageRow) => mapSystemRowToMessage(row));
-  }, [conversationId, mapSystemRowToMessage, user?.id]);
+  }, [activePeerMessageUserId, mapSystemRowToMessage, user?.id]);
 
   const fetchMessages = useCallback(async () => {
-    if (!user?.id || !conversationId) return;
-    const { data, error } = await supabase
-      .from('messages')
-      .select(MESSAGE_SELECT_FIELDS)
-      .or(
-        `and(sender_id.eq.${user.id},receiver_id.eq.${conversationId}),and(sender_id.eq.${conversationId},receiver_id.eq.${user.id})`
-      )
-      .order('created_at', { ascending: false })
-      .limit(PAGE_SIZE);
+    if (!user?.id || !activePeerMessageUserId) return;
+    if (!isScreenFocusedRef.current) return;
+    const fetchKey = `${user.id}:${activePeerMessageUserId}`;
+    if (fetchMessagesInFlightRef.current?.key === fetchKey) {
+      debugChatBootstrap('fetch_messages_deduped', {
+        routeId,
+        conversationId: activePeerMessageUserId,
+      });
+      await fetchMessagesInFlightRef.current.promise;
+      return;
+    }
+    const run = async () => {
+    debugChatBootstrap('fetch_messages_start', {
+      routeId,
+      conversationId: activePeerMessageUserId,
+      currentMessageCount: messagesRef.current.length,
+      hasCacheKey: Boolean(chatThreadCacheKey),
+    });
+    const { data, error, isIncrementalFetch, syncCursor, threadSyncCursor } = await fetchRemoteThreadMessages({
+      currentUserId: user.id,
+      peerUserId: activePeerMessageUserId,
+      pageSize: PAGE_SIZE,
+      selectFields: MESSAGE_SELECT_FIELDS,
+      currentMessages: messagesRef.current,
+    });
+    const isStaleFetch = activePeerMessageUserIdRef.current !== activePeerMessageUserId;
+    if (isStaleFetch) {
+      debugChatBootstrap('fetch_messages_stale_drop', {
+        routeId,
+        fetchedConversationId: activePeerMessageUserId,
+        currentConversationId: activePeerMessageUserIdRef.current,
+      });
+      return;
+    }
+    if (!isChatInstanceMountedRef.current) {
+      debugChatBootstrap('fetch_messages_unmounted_drop', {
+        routeId,
+        conversationId: activePeerMessageUserId,
+        phase: 'post_messages_query',
+      });
+      return;
+    }
 
     if (error) {
+      void ChatRepository.markSyncFailed(user.id, 'thread_messages', {
+        code: (error as { code?: string })?.code ?? null,
+        message: error.message || 'Failed to load thread messages',
+      }, { threadId: activePeerMessageUserId });
+      debugChatBootstrap('fetch_messages_error', {
+        routeId,
+        conversationId: activePeerMessageUserId,
+        code: (error as any)?.code ?? null,
+        message: (error as any)?.message ?? null,
+        likelyNetwork: isLikelyNetworkError(error),
+      });
       console.log('[chat] fetch messages error', error);
       if (isLikelyNetworkError(error)) {
         if (messagesRef.current.length === 0 && chatThreadCacheKey) {
@@ -7155,17 +7198,45 @@ const resolveQueuedVideoUri = async (
               ? await migrateLegacyChatThreadSnapshot<CachedMessageType[]>(user.id, conversationId)
               : null);
           if (cached) {
+            if (!isChatInstanceMountedRef.current) {
+              debugChatBootstrap('fetch_messages_unmounted_drop', {
+                routeId,
+                conversationId: activePeerMessageUserId,
+                phase: 'network_fallback_cache_hydrate',
+              });
+              return;
+            }
             const hydrated = reconcileDeliveredFallback(linkReplies(deserializeCachedMessages(cached)));
             setMessages(hydrated);
             setHasMore(hydrated.length >= PAGE_SIZE);
             setOldestTimestamp(hydrated[0]?.timestamp ?? null);
           }
         }
+        if (!isChatInstanceMountedRef.current) {
+          debugChatBootstrap('fetch_messages_unmounted_drop', {
+            routeId,
+            conversationId: activePeerMessageUserId,
+            phase: 'network_fallback_finalize',
+          });
+          return;
+        }
         setMessagesLoaded(true);
+        setThreadBootstrapSettled(true);
+        debugChatBootstrap('fetch_messages_network_fallback', {
+          routeId,
+          conversationId: activePeerMessageUserId,
+          cachedCount: messagesRef.current.length,
+        });
         return;
       }
       setMessages([]);
       setMessagesLoaded(true);
+      setThreadBootstrapSettled(true);
+      setRemoteMessagesChecked(true);
+      debugChatBootstrap('fetch_messages_hard_empty', {
+        routeId,
+        conversationId: activePeerMessageUserId,
+      });
       return;
     }
 
@@ -7178,28 +7249,146 @@ const resolveQueuedVideoUri = async (
       })
       .filter((msg) => !hiddenSet.has(msg.id));
 
-    const ordered = mapped.reverse();
+    const ordered = isIncrementalFetch ? mapped : mapped.reverse();
     const systemRows = await fetchSystemMessages();
+    if (!isChatInstanceMountedRef.current) {
+      debugChatBootstrap('fetch_messages_unmounted_drop', {
+        routeId,
+        conversationId: activePeerMessageUserId,
+        phase: 'post_system_messages_query',
+      });
+      return;
+    }
     const combined = [...ordered, ...systemRows].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
     const linked = reconcileDeliveredFallback(linkReplies(combined));
-    setMessages(linked);
+    let mergedForState: MessageType[] = linked;
+    setMessages((prev) => {
+      const fetchedMessages = isIncrementalFetch ? mergeIncrementalFetchedMessages(prev, linked) : linked;
+      mergedForState = reconcileDeliveredFallback(
+        linkReplies(
+          mergeFetchedMessagesWithLocalPending({
+            fetchedMessages,
+            previousMessages: prev,
+            currentUserId: user.id,
+            debug: (payload) => {
+              debugChatBootstrap('fetch_messages_pending_merge', {
+                routeId,
+                conversationId: activePeerMessageUserId,
+                ...payload,
+              });
+            },
+          }),
+        ),
+      );
+      return mergedForState;
+    });
     setMessagesLoaded(true);
+    setThreadBootstrapSettled(true);
+    setRemoteMessagesChecked(true);
+    debugChatBootstrap('fetch_messages_success', {
+      routeId,
+      conversationId: activePeerMessageUserId,
+      mode: isIncrementalFetch ? 'incremental' : 'latest_page',
+      serverCount: Array.isArray(data) ? data.length : 0,
+      linkedCount: mergedForState.length,
+    });
     if (chatThreadCacheKey) {
-      void writeOfflineSnapshot(chatThreadCacheKey, serializeCachedMessages(linked));
+      void writeOfflineSnapshot(chatThreadCacheKey, serializeCachedMessages(mergedForState));
     }
-    void syncMessageReactions(linked.map((msg) => msg.id).filter((id) => !id.startsWith('system:')));
-    const viewOnceIds = linked.filter((msg) => msg.isViewOnce).map((msg) => msg.id);
+    void ChatRepository.markSyncSucceeded(user.id, 'thread_messages', {
+      threadId: activePeerMessageUserId,
+      cursor: threadSyncCursor,
+    });
+    void syncMessageReactions(mergedForState.map((msg) => msg.id).filter((id) => !id.startsWith('system:')));
+    const viewOnceIds = mergedForState.filter((msg) => msg.isViewOnce).map((msg) => msg.id);
     void syncViewOnceStatus(viewOnceIds);
-    setHasMore((data || []).length === PAGE_SIZE);
-    setOldestTimestamp(ordered[0]?.timestamp ?? null);
+    if (!isIncrementalFetch) {
+      setHasMore((data || []).length === PAGE_SIZE);
+      setOldestTimestamp(ordered[0]?.timestamp ?? null);
+    }
 
-    await supabase
-      .from('messages')
-      .update({ delivered_at: new Date().toISOString() })
-      .eq('receiver_id', user.id)
-      .eq('sender_id', conversationId)
-      .is('delivered_at', null);
-  }, [chatThreadCacheKey, conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, reconcileDeliveredFallback, syncMessageReactions, syncViewOnceStatus, user?.id]);
+    await acknowledgeIncomingMessagesDelivered(user.id, null, activePeerMessageUserId);
+    };
+    const promise = run().finally(() => {
+      if (fetchMessagesInFlightRef.current?.key === fetchKey) {
+        fetchMessagesInFlightRef.current = null;
+      }
+    });
+    fetchMessagesInFlightRef.current = { key: fetchKey, promise };
+    await promise;
+  }, [activePeerMessageUserId, chatThreadCacheKey, debugChatBootstrap, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, reconcileDeliveredFallback, routeId, syncMessageReactions, syncViewOnceStatus, user?.id]);
+
+  useEffect(() => {
+    localHydrationActionRefs.current = {
+      fetchHiddenMessages,
+      fetchBlockStatus,
+      fetchPinnedMessages,
+      fetchMessages,
+    };
+  }, [fetchBlockStatus, fetchHiddenMessages, fetchMessages, fetchPinnedMessages]);
+
+  useEffect(() => {
+    debugChatBootstrap('bootstrap_state', {
+      routeId,
+      conversationId,
+      peerResolved,
+      resolvedPeerAuthUserId,
+      messagesLoaded,
+      remoteMessagesChecked,
+      threadBootstrapSettled,
+      messageCount: messages.length,
+    });
+  }, [
+    conversationId,
+    debugChatBootstrap,
+    messages.length,
+    messagesLoaded,
+    peerResolved,
+    remoteMessagesChecked,
+    resolvedPeerAuthUserId,
+    routeId,
+    threadBootstrapSettled,
+  ]);
+
+  useEffect(() => {
+    activePeerMessageUserIdRef.current = activePeerMessageUserId ?? null;
+  }, [activePeerMessageUserId]);
+
+  useEffect(() => {
+    if (!user?.id || !activePeerMessageUserId || !networkReady) return;
+    void flushThreadOutboxAndRefresh({
+      currentUserId: user.id,
+      peerUserId: activePeerMessageUserId,
+      fetchMessages,
+      onUnexpectedError: (error) => {
+        console.log('[chat] local outbox flush error', error);
+      },
+    }).catch(() => {});
+  }, [activePeerMessageUserId, fetchMessages, networkReady, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || !activePeerMessageUserId) return;
+    const coordinator = startThreadSyncCoordinator({
+      currentUserId: user.id,
+      peerUserId: activePeerMessageUserId,
+      networkReady,
+      fetchMessages,
+      refreshPeerStatus,
+      onReconnectRecovered: () => {
+        triggerReconnectToast();
+      },
+      onReconnectPending: () => {},
+      onUnexpectedError: (error) => {
+        console.log('[chat] resume outbox flush error', error);
+      },
+    });
+    threadSyncCoordinatorRef.current = coordinator;
+
+    return () => {
+      threadSyncCoordinatorRef.current = null;
+      coordinator.stop();
+    };
+  }, [activePeerMessageUserId, fetchMessages, networkReady, refreshPeerStatus, triggerReconnectToast, user?.id]);
 
   const clearPendingReadTimer = useCallback((messageId: string) => {
     const timer = pendingReadTimersRef.current[messageId];
@@ -7241,16 +7430,13 @@ const resolveQueuedVideoUri = async (
       if (pendingDeliveredHintTimersRef.current[messageId]) return;
       pendingDeliveredHintTimersRef.current[messageId] = setTimeout(() => {
         delete pendingDeliveredHintTimersRef.current[messageId];
-        setMessages((prev) => {
-          let changed = false;
-          const next = prev.map((msg) => {
-            if (msg.id !== messageId || msg.senderId !== user?.id) return msg;
-            if (msg.status === 'read' || msg.status === 'delivered') return msg;
-            changed = true;
-            return { ...msg, status: 'delivered' as const };
-          });
-          return changed ? next : prev;
-        });
+        setMessages((prev) =>
+          markOutgoingMessageDelivered({
+            items: prev,
+            messageId,
+            currentUserId: user?.id,
+          })
+        );
       }, 320);
     },
     [user?.id]
@@ -7258,7 +7444,7 @@ const resolveQueuedVideoUri = async (
 
   const syncOutgoingReceiptState = useCallback(
     async (messageId: string): Promise<MessageType['status'] | null> => {
-      if (!user?.id) return null;
+      if (!user?.id || !activePeerMessageUserId) return null;
       clearPendingReceiptSyncTimer(messageId);
       const { data, error } = await supabase
         .from('messages')
@@ -7270,31 +7456,27 @@ const resolveQueuedVideoUri = async (
       clearPendingDeliveredHintTimer(messageId);
       let resolvedStatus: MessageType['status'] | null = null;
       setMessages((prev) => {
-        let changed = false;
-        const next = prev.map((msg) => {
-          if (msg.id !== messageId || msg.senderId !== user.id) return msg;
-          const nextStatus: MessageType['status'] = data.is_read
-            ? 'read'
-            : data.delivered_at
-              ? 'delivered'
-              : msg.status === 'sending' || msg.status === 'queued'
-                ? 'sent'
-                : msg.status;
-          resolvedStatus = nextStatus;
-          const nextReadAt = data.is_read ? (msg.readAt ?? new Date()) : msg.readAt;
-          if (msg.status === nextStatus && msg.readAt === nextReadAt) return msg;
-          changed = true;
-          return {
-            ...msg,
-            status: nextStatus,
-            readAt: nextReadAt,
-          };
+        const nextState = applySyncedOutgoingReceiptState({
+          items: prev,
+          messageId,
+          currentUserId: user.id,
+          isRead: Boolean(data.is_read),
+          deliveredAt: data.delivered_at,
         });
-        return changed ? next : prev;
+        resolvedStatus = nextState.resolvedStatus;
+        return nextState.items;
       });
+      if (resolvedStatus === 'sent' || resolvedStatus === 'delivered' || resolvedStatus === 'read') {
+        void ChatRepository.markMessageReceiptState(
+          user.id,
+          activePeerMessageUserId,
+          messageId,
+          resolvedStatus,
+        ).catch((localError) => console.log('[chat] local receipt state persist error', localError));
+      }
       return resolvedStatus;
     },
-    [clearPendingDeliveredHintTimer, clearPendingReceiptSyncTimer, user?.id]
+    [activePeerMessageUserId, clearPendingDeliveredHintTimer, clearPendingReceiptSyncTimer, user?.id]
   );
 
   const scheduleOutgoingReceiptStateSync = useCallback(
@@ -7317,20 +7499,183 @@ const resolveQueuedVideoUri = async (
 
   const markOutgoingMessagesDelivered = useCallback(() => {
     setMessages((prev) => {
-      let changed = false;
-      const next = prev.map((msg) => {
-        if (msg.senderId !== user?.id) return msg;
-        if (msg.status === 'read' || msg.status === 'delivered') return msg;
-        clearPendingDeliveredHintTimer(msg.id);
-        changed = true;
-        return { ...msg, status: 'delivered' as const };
+      prev.forEach((msg) => {
+        if (
+          msg.senderId === user?.id &&
+          msg.status !== 'read' &&
+          msg.status !== 'delivered' &&
+          msg.status !== 'failed'
+        ) {
+          clearPendingDeliveredHintTimer(msg.id);
+        }
       });
-      return changed ? next : prev;
+      return markAllOutgoingMessagesDelivered({
+        items: prev,
+        currentUserId: user?.id,
+      });
     });
   }, [clearPendingDeliveredHintTimer, user?.id]);
 
+  const retryFailedTextMessage = useCallback(async (messageId: string) => {
+    if (!user?.id || !activePeerMessageUserId || isChatBlocked) return;
+
+    const failedMessage = messagesRef.current.find((msg) => msg.id === messageId);
+    const retryPayload = buildRetryFailedTextPayload({
+      failedMessage,
+      currentUserId: user.id,
+    });
+    if (!failedMessage || !retryPayload) return;
+    const clientMessageId =
+      failedMessage.clientMessageId ??
+      (messageId.startsWith('temp-') ? messageId : `retry-${messageId}-${Date.now()}`);
+    const sendingRetryMessage: MessageType = { ...failedMessage, clientMessageId, status: 'sending' };
+
+    Haptics.selectionAsync().catch(() => {});
+
+    setMessages((prev) =>
+      setMessageStatus(
+        prev.map((msg) => (msg.id === messageId ? { ...msg, clientMessageId } : msg)),
+        messageId,
+        'sending',
+      )
+    );
+    await persistLocalTextOutboxState({
+      ownerUserId: user.id,
+      threadId: activePeerMessageUserId,
+      message: sendingRetryMessage,
+      outboxStatus: 'sending',
+    }).catch((persistError) => console.log('[chat] persist retry text outbox error', persistError));
+
+    if (!networkReady) {
+      const queuedRetryMessage: MessageType = {
+        ...sendingRetryMessage,
+        status: getRetryFailedTextFailureStatus({
+          isNetworkFailure: true,
+        }),
+      };
+      void persistLocalTextOutboxState({
+        ownerUserId: user.id,
+        threadId: activePeerMessageUserId,
+        message: queuedRetryMessage,
+        outboxStatus: 'queued',
+      }).catch((persistError) => console.log('[chat] persist queued retry text outbox error', persistError));
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId
+            ? {
+                ...msg,
+                status: getRetryFailedTextFailureStatus({
+                  isNetworkFailure: true,
+                }),
+              }
+            : msg
+        )
+      );
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('messages')
+      .insert({
+        text: retryPayload.text,
+        client_message_id: clientMessageId,
+        sender_id: user.id,
+        receiver_id: activePeerMessageUserId,
+        is_read: false,
+        message_type: 'text',
+        reply_to_message_id: retryPayload.replyToMessageId,
+      })
+      .select(MESSAGE_SELECT_FIELDS)
+      .single();
+
+    if (error || !data) {
+      if (isLikelyNetworkError(error)) {
+        const queuedRetryMessage: MessageType = {
+          ...sendingRetryMessage,
+          status: getRetryFailedTextFailureStatus({
+            isNetworkFailure: true,
+          }),
+        };
+        void persistLocalTextOutboxState({
+          ownerUserId: user.id,
+          threadId: activePeerMessageUserId,
+          message: queuedRetryMessage,
+          outboxStatus: 'queued',
+        }).catch((persistError) => console.log('[chat] persist queued retry text outbox error', persistError));
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === messageId
+              ? {
+                  ...msg,
+                status: getRetryFailedTextFailureStatus({
+                  isNetworkFailure: true,
+                }),
+              }
+            : msg
+        )
+        );
+        return;
+      }
+      console.log('[chat] retry failed message error', error);
+      const failedRetryMessage: MessageType = {
+        ...sendingRetryMessage,
+        status: getRetryFailedTextFailureStatus({
+          isNetworkFailure: false,
+        }),
+      };
+      void persistLocalTextOutboxState({
+        ownerUserId: user.id,
+        threadId: activePeerMessageUserId,
+        message: failedRetryMessage,
+        outboxStatus: 'failed',
+        error: {
+          code: (error as { code?: string } | null)?.code ?? 'retry_failed',
+          message: (error as { message?: string } | null)?.message ?? 'Unable to retry message',
+        },
+      }).catch((persistError) => console.log('[chat] persist failed retry text outbox error', persistError));
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId
+              ? {
+                  ...msg,
+                  status: getRetryFailedTextFailureStatus({
+                    isNetworkFailure: false,
+                  }),
+                }
+              : msg
+        )
+      );
+      Alert.alert('Retry failed', 'Unable to resend this message right now.');
+      return;
+    }
+
+    const mapped = mapRowToMessage(data as MessageRow);
+    void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
+      chatMessageToLocalRow(user.id, activePeerMessageUserId, mapped),
+    ])
+      .then(() =>
+        markLocalTextOutboxStatus({
+          ownerUserId: user.id,
+          localMessageId: clientMessageId,
+          status: 'sent',
+        }),
+      )
+      .catch((persistError) => console.log('[chat] persist sent retry text outbox error', persistError));
+    setMessages((prev) =>
+      linkReplies(
+        reconcileMessageWithServer({
+          items: prev,
+          messageId,
+          serverMessage: mapped,
+        })
+      )
+    );
+    scheduleOutgoingReceiptStateSync(data.id as string);
+  }, [activePeerMessageUserId, isChatBlocked, linkReplies, mapRowToMessage, markLocalMessageFailed, networkReady, scheduleOutgoingReceiptStateSync, user?.id]);
+
   useEffect(() => {
     if (!messagesLoaded) return;
+    if (!remoteMessagesChecked) return;
     if (!chatSafetyStorageKey) return;
     if (chatSafetyVisible) return;
 
@@ -7349,7 +7694,7 @@ const resolveQueuedVideoUri = async (
     return () => {
       cancelled = true;
     };
-  }, [chatSafetyStorageKey, chatSafetyVisible, messages, messagesLoaded]);
+  }, [chatSafetyStorageKey, chatSafetyVisible, messages, messagesLoaded, remoteMessagesChecked]);
 
   const dismissChatSafety = useCallback(() => {
     setChatSafetyVisible(false);
@@ -7359,33 +7704,66 @@ const resolveQueuedVideoUri = async (
   }, [chatSafetyStorageKey]);
 
   const loadEarlier = useCallback(async () => {
-    if (!user?.id || !conversationId || loadingEarlier || !oldestTimestamp) return;
+    if (!user?.id || !activePeerMessageUserId || loadingEarlier || !oldestTimestamp) return;
     setLoadingEarlier(true);
     shouldAutoScrollRef.current = false;
     wasAtBottomRef.current = false;
+    const localRows = await ChatRepository.getMessages(user.id, activePeerMessageUserId, {
+      limit: PAGE_SIZE,
+      before: oldestTimestamp.toISOString(),
+    });
+    const localEarlierMessages = localRows.map(localRowToChatMessage);
+    let networkBefore = oldestTimestamp;
+
+    if (localEarlierMessages.length > 0) {
+      setMessages((prev) => {
+        const existing = new Set(prev.map((msg) => msg.id));
+        const merged = localEarlierMessages.filter((msg) => !existing.has(msg.id));
+        const combined = [...merged, ...prev].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+        return linkReplies(combined);
+      });
+      networkBefore = localEarlierMessages[0]?.timestamp ?? oldestTimestamp;
+      setOldestTimestamp(networkBefore);
+
+      if (localEarlierMessages.length >= PAGE_SIZE) {
+        setHasMore(true);
+        setLoadingEarlier(false);
+        return;
+      }
+    }
+
     const { data, error } = await supabase
       .from('messages')
       .select(MESSAGE_SELECT_FIELDS)
       .or(
-        `and(sender_id.eq.${user.id},receiver_id.eq.${conversationId}),and(sender_id.eq.${conversationId},receiver_id.eq.${user.id})`
+        `and(sender_id.eq.${user.id},receiver_id.eq.${activePeerMessageUserId}),and(sender_id.eq.${activePeerMessageUserId},receiver_id.eq.${user.id})`
       )
-      .lt('created_at', oldestTimestamp.toISOString())
+      .lt('created_at', networkBefore.toISOString())
       .order('created_at', { ascending: false })
       .limit(PAGE_SIZE);
 
     if (error) {
       console.log('[chat] load earlier error', error);
+      if (localEarlierMessages.length > 0) {
+        setHasMore(localEarlierMessages.length >= PAGE_SIZE);
+      }
       setLoadingEarlier(false);
       return;
     }
 
     const hiddenSet = hiddenMessageIdsRef.current;
+    const previousById = new Map(messagesRef.current.map((message) => [message.id, message] as const));
     const mapped: MessageType[] = (data || []).map((row: MessageRow) =>
-      mapRowToMessage(row)
+      mergeOfflineMediaIntoMessage(mapRowToMessage(row), previousById.get(row.id))
     ).filter((msg) => !hiddenSet.has(msg.id));
 
     const ordered = mapped.reverse();
       if (ordered.length > 0) {
+        void ChatRepository.upsertMessages(
+          user.id,
+          activePeerMessageUserId,
+          ordered.map((message) => chatMessageToLocalRow(user.id, activePeerMessageUserId, message)),
+        );
         setMessages((prev) => {
           const existing = new Set(prev.map((msg) => msg.id));
           const merged = ordered.filter((msg) => !existing.has(msg.id));
@@ -7395,87 +7773,75 @@ const resolveQueuedVideoUri = async (
         void syncMessageReactions(ordered.map((msg) => msg.id).filter((id) => !id.startsWith('system:')));
         const viewOnceIds = ordered.filter((msg) => msg.isViewOnce).map((msg) => msg.id);
         void syncViewOnceStatus(viewOnceIds);
-        setOldestTimestamp(ordered[0]?.timestamp ?? oldestTimestamp);
+        setOldestTimestamp(ordered[0]?.timestamp ?? networkBefore);
       }
     setHasMore((data || []).length === PAGE_SIZE);
     setLoadingEarlier(false);
-  }, [conversationId, linkReplies, loadingEarlier, mapRowToMessage, oldestTimestamp, syncMessageReactions, syncViewOnceStatus, user?.id]);
+  }, [activePeerMessageUserId, linkReplies, loadingEarlier, mapRowToMessage, oldestTimestamp, syncMessageReactions, syncViewOnceStatus, user?.id]);
 
   useFocusEffect(
     useCallback(() => {
+      if (!user?.id || !activePeerMessageUserId) return () => {};
       void (async () => {
-        await fetchHiddenMessages();
-        await fetchBlockStatus();
-        await fetchPinnedMessages();
-        await fetchMessages();
+        await localHydrationActionRefs.current.fetchHiddenMessages();
+        await localHydrationActionRefs.current.fetchBlockStatus();
+        await localHydrationActionRefs.current.fetchPinnedMessages();
+        await localHydrationActionRefs.current.fetchMessages();
       })();
-    }, [fetchBlockStatus, fetchHiddenMessages, fetchMessages, fetchPinnedMessages])
+      return () => {};
+    }, [activePeerMessageUserId, user?.id])
   );
 
   useEffect(() => {
-    if (!user?.id) return;
+    if (!user?.id || !activePeerMessageUserId) return;
     const handleRealtimeStatus = (status: string) => {
-      if (status === 'SUBSCRIBED') {
-        if (reconnectPendingRef.current) {
-          reconnectPendingRef.current = false;
-          triggerReconnectToast();
-        }
-        return;
-      }
-      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-        reconnectPendingRef.current = true;
-      }
+      threadSyncCoordinatorRef.current?.handleRealtimeStatus(status);
     };
 
-    const inboxChannel = supabase
-      .channel(`messages:inbox:${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `receiver_id=eq.${user.id}`,
-        },
-        (payload) => {
-          const row = payload.new as MessageRow;
-          if (row.sender_id !== conversationId) return;
-          setMessages((prev) => {
-            if (hiddenMessageIdsRef.current.has(row.id)) return prev;
-            if (prev.some((msg) => msg.id === row.id)) return prev;
-            return reconcileDeliveredFallback(linkReplies([...prev, mapRowToMessage(row)]));
-          });
-          if (!hiddenMessageIdsRef.current.has(row.id)) {
-            void syncMessageReactions([row.id]);
-            if (row.is_view_once) {
-              void syncViewOnceStatus([row.id]);
-            }
+    const stopRealtime = subscribeThreadMessageRealtime({
+      currentUserId: user.id,
+      peerUserId: activePeerMessageUserId,
+      onStatus: handleRealtimeStatus,
+      onInboxInsert: (row) => {
+        setIsTyping(false);
+        markPeerRecentlyActive(row.created_at);
+        const incomingMessage = mapRowToMessage(row as MessageRow);
+        void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
+          chatMessageToLocalRow(user.id, activePeerMessageUserId, incomingMessage),
+        ]).catch((error) => console.log('[chat] inbox realtime insert local persist error', error));
+        void ChatRepository.markSyncSucceeded(user.id, 'thread_messages', {
+          threadId: activePeerMessageUserId,
+          cursor: row.created_at,
+        });
+        setMessages((prev) => {
+          if (hiddenMessageIdsRef.current.has(row.id)) return prev;
+          if (prev.some((msg) => msg.id === row.id)) return prev;
+          return reconcileDeliveredFallback(linkReplies([...prev, incomingMessage]));
+        });
+        if (!hiddenMessageIdsRef.current.has(row.id)) {
+          void syncMessageReactions([row.id]);
+          if (row.is_view_once) {
+            void syncViewOnceStatus([row.id]);
           }
-          void supabase
-            .from('messages')
-            .update({ delivered_at: new Date().toISOString() })
-            .eq('id', row.id)
-            .eq('receiver_id', user.id)
-            .is('delivered_at', null);
         }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'messages',
-          filter: `receiver_id=eq.${user.id}`,
-        },
-        (payload) => {
-          const row = payload.new as MessageRow;
-          if (row.sender_id !== conversationId) return;
-          if (hiddenMessageIdsRef.current.has(row.id)) return;
-          const previous = messagesRef.current.find((msg) => msg.id === row.id);
-          const nextMessage = mergeOfflineMediaIntoMessage(mapRowToMessage(row), previous);
-          setMessages((prev) =>
-            reconcileDeliveredFallback(
-              linkReplies(
+        void acknowledgeIncomingMessagesDelivered(user.id, row.id, activePeerMessageUserId);
+      },
+      onInboxUpdate: (row) => {
+        if (hiddenMessageIdsRef.current.has(row.id)) return;
+        setIsTyping(false);
+        markPeerRecentlyActive(row.created_at);
+        const previous = messagesRef.current.find((msg) => msg.id === row.id);
+        const nextMessage = mergeOfflineMediaIntoMessage(mapRowToMessage(row as MessageRow), previous);
+        void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
+          chatMessageToLocalRow(user.id, activePeerMessageUserId, nextMessage),
+        ]).catch((error) => console.log('[chat] inbox realtime update local persist error', error));
+        void ChatRepository.markSyncSucceeded(user.id, 'thread_messages', {
+          threadId: activePeerMessageUserId,
+          cursor: row.created_at,
+        });
+        setMessages((prev) =>
+          reconcileDeliveredFallback(
+            linkReplies(
               prev.map((msg) =>
                 msg.id === row.id
                   ? {
@@ -7485,356 +7851,301 @@ const resolveQueuedVideoUri = async (
                       offlineVideoUri: msg.offlineVideoUri,
                     }
                   : msg
-              )
-              )
-            )
-          );
-        }
-      )
-      .subscribe(handleRealtimeStatus);
-
-    const sentChannel = supabase
-      .channel(`messages:sent:${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `sender_id=eq.${user.id}`,
-        },
-        (payload) => {
-          const row = payload.new as MessageRow;
-          if (row.receiver_id !== conversationId) return;
-          setMessages((prev) => {
-            if (hiddenMessageIdsRef.current.has(row.id)) return prev;
-            if (prev.some((msg) => msg.id === row.id)) return prev;
-            const rowType = row.message_type ?? 'text';
-            const tempIndex = prev.findIndex((msg) => {
-              if ((msg.status !== 'sending' && msg.status !== 'queued') || msg.senderId !== user.id) return false;
-              if (rowType === 'voice') {
-                return msg.type === 'voice';
-              }
-              if (rowType === 'image' || rowType === 'video') {
-                return msg.type === rowType;
-              }
-              if (rowType === 'text' && row.text?.startsWith(DOCUMENT_TEXT_PREFIX)) {
-                return msg.type === 'document';
-              }
-              return msg.text === row.text;
-            });
-            const nextMessage = mergeOfflineMediaIntoMessage(mapRowToMessage(row), prev[tempIndex]);
-            if (tempIndex >= 0) {
-              const previous = prev[tempIndex];
-              if (rowType === 'image' && previous?.offlineImageUri && nextMessage.imageUrl) {
-                setCachedImageUris((current) =>
-                  current[nextMessage.imageUrl!] === previous.offlineImageUri
-                    ? current
-                    : { ...current, [nextMessage.imageUrl!]: previous.offlineImageUri! }
-                );
-                void rememberOfflineImageUri(nextMessage.imageUrl, previous.offlineImageUri, nextMessage.imageUrl);
-                nextMessage.offlineImageUri = previous.offlineImageUri;
-              }
-              if (rowType === 'video' && previous?.offlineVideoUri && nextMessage.videoUrl) {
-                setCachedVideoUris((current) =>
-                  current[nextMessage.videoUrl!] === previous.offlineVideoUri
-                    ? current
-                    : { ...current, [nextMessage.videoUrl!]: previous.offlineVideoUri! }
-                );
-                void rememberOfflineVideoUri(nextMessage.videoUrl, previous.offlineVideoUri, nextMessage.videoUrl);
-                nextMessage.offlineVideoUri = previous.offlineVideoUri;
-              }
-              const next = [...prev];
-              next[tempIndex] = nextMessage;
-              return reconcileDeliveredFallback(linkReplies(next));
-            }
-            return reconcileDeliveredFallback(linkReplies([...prev, mergeOfflineMediaIntoMessage(nextMessage, undefined)]));
+              ),
+            ),
+          ),
+        );
+      },
+      onSentInsert: (row) => {
+        const sentMessage = mapRowToMessage(row as MessageRow);
+        void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
+          chatMessageToLocalRow(user.id, activePeerMessageUserId, sentMessage),
+        ]).catch((error) => console.log('[chat] sent realtime insert local persist error', error));
+        void ChatRepository.markSyncSucceeded(user.id, 'thread_messages', {
+          threadId: activePeerMessageUserId,
+          cursor: row.created_at,
+        });
+        setMessages((prev) => {
+          if (hiddenMessageIdsRef.current.has(row.id)) return prev;
+          if (prev.some((msg) => msg.id === row.id)) return prev;
+          const rowType = row.message_type ?? 'text';
+          const tempIndex = prev.findIndex((msg) => {
+            if (row.client_message_id && msg.clientMessageId === row.client_message_id) return true;
+            if ((msg.status !== 'sending' && msg.status !== 'queued') || msg.senderId !== user.id) return false;
+            if (rowType === 'voice') return msg.type === 'voice';
+            if (rowType === 'image' || rowType === 'video') return msg.type === rowType;
+            if (rowType === 'text' && row.text?.startsWith(DOCUMENT_TEXT_PREFIX)) return msg.type === 'document';
+            return msg.text === row.text;
           });
-          if (!hiddenMessageIdsRef.current.has(row.id)) {
-            void syncMessageReactions([row.id]);
-            if (row.is_view_once) {
-              void syncViewOnceStatus([row.id]);
+          const nextMessage = mergeOfflineMediaIntoMessage(sentMessage, prev[tempIndex]);
+          if (tempIndex >= 0) {
+            const previous = prev[tempIndex];
+            if (rowType === 'image' && previous?.offlineImageUri && nextMessage.imageUrl) {
+              setCachedImageUris((current) =>
+                current[nextMessage.imageUrl!] === previous.offlineImageUri
+                  ? current
+                  : { ...current, [nextMessage.imageUrl!]: previous.offlineImageUri! }
+              );
+              void rememberOfflineImageUri(nextMessage.imageUrl, previous.offlineImageUri, nextMessage.imageUrl);
+              nextMessage.offlineImageUri = previous.offlineImageUri;
             }
+            if (rowType === 'video' && previous?.offlineVideoUri && nextMessage.videoUrl) {
+              setCachedVideoUris((current) =>
+                current[nextMessage.videoUrl!] === previous.offlineVideoUri
+                  ? current
+                  : { ...current, [nextMessage.videoUrl!]: previous.offlineVideoUri! }
+              );
+              void rememberOfflineVideoUri(nextMessage.videoUrl, previous.offlineVideoUri, nextMessage.videoUrl);
+              nextMessage.offlineVideoUri = previous.offlineVideoUri;
+            }
+            const next = [...prev];
+            next[tempIndex] = nextMessage;
+            return reconcileDeliveredFallback(linkReplies(next));
           }
-          if (!row.is_read && !row.delivered_at) {
-            scheduleOutgoingReceiptStateSync(row.id);
+          return reconcileDeliveredFallback(linkReplies([...prev, mergeOfflineMediaIntoMessage(nextMessage, undefined)]));
+        });
+        if (!hiddenMessageIdsRef.current.has(row.id)) {
+          void syncMessageReactions([row.id]);
+          if (row.is_view_once) {
+            void syncViewOnceStatus([row.id]);
           }
         }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'messages',
-          filter: `sender_id=eq.${user.id}`,
-        },
-        (payload) => {
-          const row = payload.new as MessageRow;
-          if (row.receiver_id !== conversationId) return;
-          if (hiddenMessageIdsRef.current.has(row.id)) return;
-          const nextMessage = mapRowToMessage(row);
-          setMessages((prev) =>
-            reconcileDeliveredFallback(
-              linkReplies(
+        if (!row.is_read && !row.delivered_at) {
+          scheduleOutgoingReceiptStateSync(row.id);
+        }
+      },
+      onSentUpdate: (row) => {
+        if (hiddenMessageIdsRef.current.has(row.id)) return;
+        const nextMessage = mapRowToMessage(row as MessageRow);
+        void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
+          chatMessageToLocalRow(user.id, activePeerMessageUserId, nextMessage),
+        ]).catch((error) => console.log('[chat] sent realtime update local persist error', error));
+        void ChatRepository.markSyncSucceeded(user.id, 'thread_messages', {
+          threadId: activePeerMessageUserId,
+          cursor: row.created_at,
+        });
+        setMessages((prev) =>
+          reconcileDeliveredFallback(
+            linkReplies(
               prev.map((msg) =>
                 msg.id === row.id
                   ? { ...nextMessage, reactions: msg.reactions }
                   : msg
-              )
-              )
-            )
+              ),
+            ),
+          ),
+        );
+      },
+      onSystemInsert: (row) => {
+        const nextMessage = mapSystemRowToMessage(row as SystemMessageRow);
+        setMessages((prev) => {
+          if (prev.some((msg) => msg.id === nextMessage.id)) return prev;
+          const combined = [...prev, nextMessage].sort(
+            (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
           );
-        }
-      )
-      .subscribe(handleRealtimeStatus);
-
-    const systemChannel = supabase
-      .channel(`system_messages:${user.id}:${conversationId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'system_messages',
-          filter: `user_id=eq.${user.id}`,
-        },
-        (payload) => {
-          const row = payload.new as SystemMessageRow;
-          if (row.peer_user_id !== conversationId) return;
-          const nextMessage = mapSystemRowToMessage(row);
-          setMessages((prev) => {
-            if (prev.some((msg) => msg.id === nextMessage.id)) return prev;
-            const combined = [...prev, nextMessage].sort(
-              (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
-            );
-            return linkReplies(combined);
-          });
-        }
-      )
-      .subscribe(handleRealtimeStatus);
+          return linkReplies(combined);
+        });
+      },
+    });
 
     return () => {
-      supabase.removeChannel(inboxChannel);
-      supabase.removeChannel(sentChannel);
-      supabase.removeChannel(systemChannel);
+      stopRealtime();
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
       }
     };
   }, [
+    activePeerMessageUserId,
     conversationId,
+    fetchMessages,
     linkReplies,
+    markPeerRecentlyActive,
     mapRowToMessage,
     mapSystemRowToMessage,
     reconcileDeliveredFallback,
     scheduleOutgoingReceiptStateSync,
     syncMessageReactions,
     syncViewOnceStatus,
-    triggerReconnectToast,
     user?.id,
   ]);
 
-  useEffect(() => {
-    if (!user?.id || !conversationId) return;
-    const channel = supabase
-      .channel(`message_reactions:${conversationId}:${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'message_reactions',
-        },
-        (payload) => {
-          const row = payload.new as ReactionRow;
-          if (!messagesRef.current.some((msg) => msg.id === row.message_id)) return;
-          applyReactionUpdate(row, 'upsert');
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'message_reactions',
-        },
-        (payload) => {
-          const row = payload.new as ReactionRow;
-          if (!messagesRef.current.some((msg) => msg.id === row.message_id)) return;
-          applyReactionUpdate(row, 'upsert');
-        }
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'DELETE',
-          schema: 'public',
-          table: 'message_reactions',
-        },
-        (payload) => {
-          const row = payload.old as ReactionRow;
-          if (!messagesRef.current.some((msg) => msg.id === row.message_id)) return;
-          applyReactionUpdate(row, 'delete');
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [applyReactionUpdate, conversationId, user?.id]);
+  const applyPeerTypingStateRow = useCallback((row?: {
+    user_id?: string;
+    peer_user_id?: string;
+    typing_until?: string | null;
+    updated_at?: string | null;
+  } | null) => {
+    if (!row || !user?.id || !resolvedPeerAuthUserId) return;
+    if (row.user_id !== resolvedPeerAuthUserId || row.peer_user_id !== user.id) return;
+    const isPeerTyping = setPeerTypingUntil(row.typing_until ?? null);
+    if (isPeerTyping) {
+      refreshPeerOnlineWindow(row.updated_at ?? row.typing_until ?? null);
+    } else {
+      markPeerRecentlyActive(row.updated_at ?? row.typing_until ?? null);
+    }
+  }, [markPeerRecentlyActive, refreshPeerOnlineWindow, resolvedPeerAuthUserId, setPeerTypingUntil, user?.id]);
 
   useEffect(() => {
-    if (!user?.id || !conversationId) return;
-    const channel = supabase
-      .channel(`message_views:${conversationId}:${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'message_views',
-        },
-        (payload) => {
-          const row = payload.new as { message_id: string; viewer_id: string };
-          if (!row?.message_id || !row?.viewer_id) return;
-          if (!messagesRef.current.some((msg) => msg.id === row.message_id)) return;
-          setViewOnceStatus((prev) => {
-            const current = prev[row.message_id] ?? { viewedByMe: false, viewedByPeer: false };
-            const next = {
-              viewedByMe: current.viewedByMe || row.viewer_id === user.id,
-              viewedByPeer: current.viewedByPeer || row.viewer_id === conversationId,
-            };
-            return { ...prev, [row.message_id]: next };
-          });
+    if (!user?.id || !conversationId || !resolvedPeerAuthUserId) return;
+
+    void (async () => {
+      try {
+        const row = await fetchPeerTypingState({
+          currentUserId: user.id,
+          peerUserId: resolvedPeerAuthUserId,
+        });
+        applyPeerTypingStateRow(row);
+      } catch (error) {
+        if (!isLikelyNetworkError(error)) {
+          console.log('[chat] typing state fetch error', error);
         }
-      )
-      .subscribe();
+      }
+    })();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [conversationId, user?.id]);
-
-  useEffect(() => {
-    if (!user?.id || !conversationId) return;
-    const presenceRoom = [user.id, conversationId].sort().join(':');
-    const presenceChannel = supabase.channel(`presence:chat:${presenceRoom}`, {
-      config: {
-        presence: { key: user.id },
+    const stopAncillaryRealtime = subscribeThreadAncillaryRealtime({
+      currentUserId: user.id,
+      conversationId,
+      peerUserId: resolvedPeerAuthUserId,
+      onReactionInsert: (row) => {
+        if (!messagesRef.current.some((msg) => msg.id === row.message_id)) return;
+        applyReactionUpdate(row as ReactionRow, 'upsert');
+      },
+      onReactionUpdate: (row) => {
+        if (!messagesRef.current.some((msg) => msg.id === row.message_id)) return;
+        applyReactionUpdate(row as ReactionRow, 'upsert');
+      },
+      onReactionDelete: (row) => {
+        if (!messagesRef.current.some((msg) => msg.id === row.message_id)) return;
+        applyReactionUpdate(row as ReactionRow, 'delete');
+      },
+      onMessageViewInsert: (row) => {
+        if (!row?.message_id || !row?.viewer_id) return;
+        if (!messagesRef.current.some((msg) => msg.id === row.message_id)) return;
+        setViewOnceStatus((prev) => {
+          const current = prev[row.message_id] ?? { viewedByMe: false, viewedByPeer: false };
+          const next = {
+            viewedByMe: current.viewedByMe || row.viewer_id === user.id,
+            viewedByPeer: current.viewedByPeer || row.viewer_id === conversationId,
+          };
+          return { ...prev, [row.message_id]: next };
+        });
+      },
+      onTypingUpsert: (row) => {
+        applyPeerTypingStateRow(row);
+      },
+      onTypingDelete: (row) => {
+        if (row?.user_id === resolvedPeerAuthUserId) {
+          setIsTyping(false);
+        }
       },
     });
-    presenceChannelRef.current = presenceChannel;
-
-    const syncPeerPresence = () => {
-      const state = presenceChannel.presenceState();
-      const peer = (state as any)[conversationId] as { typing?: boolean }[] | undefined;
-      setPeerOnline(Boolean(peer && peer.length > 0));
-      setIsTyping(Boolean(peer?.some((p) => p.typing)));
-    };
-
-    presenceChannel
-      .on('presence', { event: 'sync' }, syncPeerPresence)
-      .on('presence', { event: 'join' }, ({ key }) => {
-        if (key === conversationId) {
-          setPeerLastSeen(null);
-          syncPeerPresence();
-        }
-      })
-      .on('presence', { event: 'leave' }, ({ key }) => {
-        if (key === conversationId) {
-          setPeerOnline(false);
-          setIsTyping(false);
-          setPeerLastSeen(new Date());
-        }
-      })
-      .on('broadcast', { event: 'opened_thread' }, ({ payload }) => {
-        if (!payload || payload.senderId !== conversationId) return;
-        setPeerOnline(true);
-        setPeerLastSeen(null);
-        markOutgoingMessagesDelivered();
-      })
-      .on('broadcast', { event: 'typing' }, ({ payload }) => {
-        if (!payload || payload.senderId !== conversationId) return;
-        setIsTyping(Boolean(payload.typing));
-        if (payload.typing) {
-          setPeerOnline(true);
-          setPeerLastSeen(null);
-          markOutgoingMessagesDelivered();
-        }
-      })
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          void presenceChannel.track({ onlineAt: new Date().toISOString(), typing: false });
-          void presenceChannel.send({
-            type: 'broadcast',
-            event: 'opened_thread',
-            payload: { senderId: user.id, threadWith: conversationId, openedAt: new Date().toISOString() },
-          });
-        }
-      });
 
     return () => {
-      presenceChannelRef.current = null;
-      presenceChannel.unsubscribe();
+      stopAncillaryRealtime();
+    };
+  }, [applyPeerTypingStateRow, applyReactionUpdate, conversationId, resolvedPeerAuthUserId, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || !resolvedPeerAuthUserId) return;
+    const session = startThreadPresenceSession({
+      currentUserId: user.id,
+      peerUserId: resolvedPeerAuthUserId,
+      persistTypingState,
+      onPeerPresenceSync: ({ hasPeer, peerTyping }) => {
+        if (!hasPeer && peerThreadActiveRef.current) {
+          markPeerThreadInactive();
+          void refreshPeerStatus();
+          return;
+        }
+        setPeerThreadActive(hasPeer);
+        if (hasPeer) {
+          refreshPeerOnlineWindow();
+        }
+        if (peerTyping) {
+          setPeerTypingUntil(new Date(Date.now() + 5000).toISOString());
+        }
+      },
+      onPeerJoin: () => {
+        setPeerThreadActive(true);
+        refreshPeerOnlineWindow();
+      },
+      onPeerLeave: () => {
+        markPeerThreadInactive();
+        void refreshPeerStatus();
+      },
+      onPeerOpenedThread: ({ openedAt }) => {
+        setPeerThreadActive(true);
+        refreshPeerOnlineWindow(openedAt ?? undefined);
+        markOutgoingMessagesDelivered();
+      },
+      onPeerTypingBroadcast: ({ typing, at }) => {
+        if (typing) {
+          setPeerThreadActive(true);
+          setPeerTypingUntil(new Date(Date.now() + 5000).toISOString());
+          refreshPeerOnlineWindow(at ?? undefined);
+          markOutgoingMessagesDelivered();
+          return;
+        }
+        void refreshPeerStatus();
+      },
+      onAppActive: () => {
+        void refreshPeerStatus();
+      },
+    });
+    threadPresenceSessionRef.current = session;
+
+    return () => {
+      threadPresenceSessionRef.current = null;
+      session.stop();
+      setPeerThreadActive(false);
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
       }
+      if (peerTypingClearTimerRef.current) {
+        clearTimeout(peerTypingClearTimerRef.current);
+        peerTypingClearTimerRef.current = null;
+      }
     };
-  }, [conversationId, markOutgoingMessagesDelivered, user?.id]);
-
-  useEffect(() => {
-    if (!user?.id || !conversationId) return;
-    const typingListChannel = supabase.channel(`typing:chatlist:${conversationId}`, {
-      config: {
-        broadcast: { self: false },
-      },
-    });
-    typingListChannelRef.current = typingListChannel;
-    typingListChannel.subscribe();
-
-    return () => {
-      typingListChannelRef.current = null;
-      typingListChannel.unsubscribe();
-    };
-  }, [conversationId, user?.id]);
+  }, [markOutgoingMessagesDelivered, markPeerThreadInactive, persistTypingState, refreshPeerOnlineWindow, refreshPeerStatus, resolvedPeerAuthUserId, setPeerTypingUntil, user?.id]);
 
   const markAsRead = useCallback(
     async (messageId: string) => {
-      if (!user?.id || !conversationId) return;
+      if (!user?.id || !activePeerMessageUserId) return;
       clearPendingReadTimer(messageId);
-      setMessages((prev) => {
-        let changed = false;
-        const next = prev.map((msg) => {
-          if (msg.id === messageId && msg.senderId !== user.id) {
-            if (msg.status === 'read' && msg.readAt) return msg;
-            changed = true;
-            return { ...msg, status: 'read' as const, readAt: new Date() };
-          }
-          return msg;
-        });
-        return changed ? next : prev;
+      if (!isScreenFocusedRef.current || AppState.currentState !== 'active') return;
+      if (!viewableReadCandidateIdsRef.current.has(messageId)) return;
+      const targetMessage = messagesRef.current.find((message) => message.id === messageId);
+      if (!shouldScheduleMessageRead({ item: targetMessage, currentUserId: user.id })) return;
+      setMessages((prev) =>
+        markIncomingMessageRead({
+          items: prev,
+          messageId,
+          currentUserId: user.id,
+        })
+      );
+      void ChatRepository.markThreadRead(user.id, activePeerMessageUserId).catch((localError) =>
+        console.log('[chat] local mark thread read error', localError),
+      );
+      const { error } = await ChatThreadActionsService.markMessageRead({
+        messageId,
+        currentUserId: user.id,
       });
-      const { error } = await supabase
-        .from('messages')
-        .update({ is_read: true })
-        .eq('id', messageId)
-        .eq('receiver_id', user.id);
       if (error) {
         console.log('[chat] markAsRead error', error);
       }
     },
-    [clearPendingReadTimer, conversationId, user?.id]
+    [activePeerMessageUserId, clearPendingReadTimer, user?.id]
   );
 
   const scheduleMarkAsRead = useCallback(
     (messageId: string) => {
+      if (!isScreenFocusedRef.current || AppState.currentState !== 'active') return;
+      if (!viewableReadCandidateIdsRef.current.has(messageId)) return;
       if (pendingReadTimersRef.current[messageId]) return;
       pendingReadTimersRef.current[messageId] = setTimeout(() => {
         delete pendingReadTimersRef.current[messageId];
         void markAsRead(messageId);
-      }, 2400);
+      }, CHAT_READ_RECEIPT_DELAY_MS);
     },
     [markAsRead]
   );
@@ -7900,6 +8211,84 @@ const resolveQueuedVideoUri = async (
     const day = date.getDate();
     const month = monthsShort[date.getMonth()];
     return `${weekday} ${day} ${month}`;
+  }, []);
+
+  const messageRenderMetaById = useMemo(() => {
+    const next = new Map<string, MessageRenderMeta>();
+    renderedMessages.forEach((item, index) => {
+      const isSystemMessage = item.type === 'system' || item.isSystem;
+      const isMyMessage = !isSystemMessage && item.senderId === (user?.id || '');
+      const prevMessage = renderedMessages[index - 1];
+      const nextMessage = renderedMessages[index + 1];
+      const prevIsSystemMessage = prevMessage?.type === 'system' || prevMessage?.isSystem;
+      const nextIsSystemMessage = nextMessage?.type === 'system' || nextMessage?.isSystem;
+      const isGroupedWithPrev =
+        !isSystemMessage &&
+        Boolean(
+          prevMessage &&
+            !prevIsSystemMessage &&
+            prevMessage.senderId === item.senderId &&
+            isSameDay(prevMessage.timestamp, item.timestamp),
+        );
+      const isGroupedWithNext =
+        !isSystemMessage &&
+        Boolean(
+          nextMessage &&
+            !nextIsSystemMessage &&
+            nextMessage.senderId === item.senderId &&
+            isSameDay(nextMessage.timestamp, item.timestamp),
+        );
+      const showAvatar = !isSystemMessage && !isMyMessage && !isChatBlocked && !isGroupedWithNext;
+      const showAvatarSpacer =
+        !isSystemMessage && !isMyMessage && !isChatBlocked && isGroupedWithNext;
+      next.set(item.id, {
+        isMyMessage,
+        showAvatar,
+        showAvatarSpacer,
+        isGroupedWithPrev,
+        isGroupedWithNext,
+        showDateSeparator: !prevMessage || !isSameDay(prevMessage.timestamp, item.timestamp),
+        timeLabel: formatTime(item.timestamp),
+        imageSize: item.type === 'image' && item.imageUrl ? imageSizes[item.imageUrl] : undefined,
+        cachedImageUrl:
+          item.type === 'image' && item.imageUrl ? cachedImageUris[item.imageUrl] : undefined,
+        cachedVideoUrl:
+          item.type === 'video' && item.videoUrl ? cachedVideoUris[item.videoUrl] : undefined,
+        viewOnceViewedByMe: viewOnceStatus[item.id]?.viewedByMe ?? false,
+        viewOnceViewedByPeer: viewOnceStatus[item.id]?.viewedByPeer ?? false,
+        isActionPinned: pinnedMessageIdSet.has(item.id),
+      });
+    });
+    return next;
+  }, [
+    cachedImageUris,
+    cachedVideoUris,
+    formatTime,
+    imageSizes,
+    isChatBlocked,
+    isSameDay,
+    pinnedMessageIdSet,
+    renderedMessages,
+    user?.id,
+    viewOnceStatus,
+  ]);
+
+  const getMessageItemType = useCallback((item: MessageType) => {
+    if (item.type === 'system' || item.isSystem) return 'system';
+    switch (item.type) {
+      case 'image':
+      case 'video':
+      case 'voice':
+      case 'document':
+      case 'date_plan':
+      case 'mood_sticker':
+        return item.type;
+      case 'location':
+        return item.location?.live ? 'location-live' : 'location';
+      case 'text':
+      default:
+        return 'text';
+    }
   }, []);
 
   const focusMessage = useCallback((messageId: string) => {
@@ -8011,6 +8400,31 @@ const resolveQueuedVideoUri = async (
     [getPinnedPreview, primaryPinnedMessage]
   );
 
+  const {
+    pinnedSheetVisible,
+    pinnedBannerExpanded,
+    setPinnedBannerExpanded,
+    openPinnedSheet,
+    closePinnedSheet,
+    trimmedChatSearchQuery,
+    searchResults,
+    matchMessageIds,
+    matchMessageIdSet,
+    mediaItems,
+    linkItems,
+    docItems,
+    jumpToNextMatch,
+    togglePinnedBanner,
+    handlePinnedJump,
+    handlePinnedSeeAll,
+  } = useChatThreadBrowseUi({
+    chatSearchQuery,
+    renderedMessages,
+    pinnedMessageCount,
+    primaryPinnedMessage,
+    jumpToMessage,
+  });
+
   useEffect(() => {
     if (pinnedMessageCount === 0 && pinnedBannerExpanded) {
       setPinnedBannerExpanded(false);
@@ -8051,120 +8465,17 @@ const resolveQueuedVideoUri = async (
     [pinnedBannerAnim]
   );
 
-  const openPinnedSheet = useCallback(() => {
-    if (pinnedMessageCount === 0) return;
-    setPinnedSheetVisible(true);
-  }, [pinnedMessageCount]);
-
-  const closePinnedSheet = useCallback(() => {
-    setPinnedSheetVisible(false);
-  }, []);
-
-
-  const openReactionSheet = useCallback((message: MessageType) => {
-    setReactionSheetMessageId(message.id);
-    setReactionSheetEmoji(null);
-    setReactionSheetVisible(true);
-  }, []);
-
-  const closeReactionSheet = useCallback(() => {
-    setReactionSheetVisible(false);
-    setReactionSheetMessageId(null);
-    setReactionSheetEmoji(null);
-  }, []);
-
-  const searchResults = useMemo(() => {
-    const query = chatSearchQuery.trim().toLowerCase();
-    if (!query) return [];
-    return messages.filter((msg) => {
-      if (msg.deletedForAll) return false;
-      if (msg.type !== 'text') return false;
-      return (msg.text || '').toLowerCase().includes(query);
-    });
-  }, [chatSearchQuery, messages]);
-
-  const matchMessageIds = useMemo(() => searchResults.map((result) => result.id), [searchResults]);
-
-  const mediaItems = useMemo(() => {
-    return messages
-      .filter((msg) => !msg.deletedForAll && (msg.type === 'image' || msg.type === 'video'))
-      .map((msg) => ({
-        id: msg.id,
-        type: msg.type as 'image' | 'video',
-        url: msg.type === 'image' ? (msg.offlineImageUri ?? msg.imageUrl) : (msg.offlineVideoUri ?? msg.videoUrl),
-        timestamp: msg.timestamp,
-      }))
-      .filter((item) => Boolean(item.url));
-  }, [messages]);
-
-  const linkItems = useMemo(() => {
-    const urlRegex = /(https?:\/\/[^\s]+)/gi;
-    const items: { id: string; url: string; timestamp: Date; snippet: string }[] = [];
-    messages.forEach((msg) => {
-      if (msg.deletedForAll || msg.type !== 'text' || !msg.text) return;
-      const matches = msg.text.match(urlRegex);
-      if (!matches) return;
-      matches.forEach((url) => {
-        items.push({
-          id: msg.id,
-          url,
-          timestamp: msg.timestamp,
-          snippet: msg.text,
-        });
-      });
-    });
-    return items;
-  }, [messages]);
-
-  const docItems = useMemo(() => {
-    return messages
-      .filter((msg) => !msg.deletedForAll && msg.type === 'document' && msg.document?.url)
-      .map((msg) => ({
-        id: msg.id,
-        name: msg.document?.name || 'Document',
-        url: msg.document?.url || '',
-        typeLabel: msg.document?.typeLabel || null,
-        sizeLabel: msg.document?.sizeLabel || null,
-        timestamp: msg.timestamp,
-      }))
-      .filter((item) => Boolean(item.url));
-  }, [messages]);
-
-  const jumpToNextMatch = useCallback(
-    (messageId: string) => {
-      if (matchMessageIds.length === 0) return;
-      const index = matchMessageIds.indexOf(messageId);
-      const nextId = matchMessageIds[(index + 1) % matchMessageIds.length] || matchMessageIds[0];
-      jumpToMessage(nextId);
-    },
-    [jumpToMessage, matchMessageIds]
-  );
-
   const updateTyping = useCallback(
     (text: string) => {
       if (isChatBlocked) return;
       if (!user?.id) return;
-      const presenceChannel = presenceChannelRef.current;
-      const listChannel = typingListChannelRef.current;
-      if (!presenceChannel && !listChannel) return;
+      const presenceSession = threadPresenceSessionRef.current;
+      if (!presenceSession) return;
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
       }
       const sendTypingStatus = (typing: boolean) => {
-        if (presenceChannel) {
-          void presenceChannel.send({
-            type: 'broadcast',
-            event: 'typing',
-            payload: { senderId: user.id, typing },
-          });
-        }
-        if (listChannel) {
-          void listChannel.send({
-            type: 'broadcast',
-            event: 'typing',
-            payload: { senderId: user.id, typing },
-          });
-        }
+        presenceSession.broadcastTyping(typing);
       };
       if (text.trim().length === 0) {
         sendTypingStatus(false);
@@ -8196,19 +8507,20 @@ const resolveQueuedVideoUri = async (
     const targetId = editingMessage.id;
     const optimisticEditedAt = new Date();
     setMessages((prev) =>
-      prev.map((msg) =>
-        msg.id === targetId
-          ? { ...msg, text: trimmed, editedAt: optimisticEditedAt }
-          : msg
-      )
+      applyOptimisticMessageEdit({
+        items: prev,
+        messageId: targetId,
+        text: trimmed,
+        editedAt: optimisticEditedAt,
+      })
     );
     setEditingMessage(null);
     setInputText('');
     updateTyping('');
 
-    const { data, error } = await supabase.rpc('edit_message', {
-      message_id: targetId,
-      new_text: trimmed,
+    const { data, error } = await ChatThreadActionsService.editMessage({
+      messageId: targetId,
+      newText: trimmed,
     });
 
     if (error) {
@@ -8222,11 +8534,12 @@ const resolveQueuedVideoUri = async (
     if (!row) return;
     const mapped = mapRowToMessage(row as MessageRow);
     setMessages((prev) =>
-      prev.map((msg) =>
-        msg.id === mapped.id
-          ? { ...msg, text: mapped.text, editedAt: mapped.editedAt ?? optimisticEditedAt }
-          : msg
-      )
+      reconcileEditedMessage({
+        items: prev,
+        messageId: mapped.id,
+        text: mapped.text,
+        editedAt: mapped.editedAt ?? optimisticEditedAt,
+      })
     );
   }, [editingMessage, fetchMessages, inputText, mapRowToMessage, updateTyping, user?.id]);
 
@@ -8244,12 +8557,16 @@ const resolveQueuedVideoUri = async (
       return;
     }
     const trimmed = inputText.trim();
-    if (!trimmed || !user?.id || !conversationId) return;
+    if (!trimmed || !user?.id || !activePeerMessageUserId) return;
+    if (textSendInFlightRef.current) return;
+    textSendInFlightRef.current = true;
     Haptics.selectionAsync().catch(() => {});
     const nextType: MessageType['type'] = 'text';
     const tempId = `temp-${Date.now()}`;
+    const clientMessageId = tempId;
     const optimistic: MessageType = {
       id: tempId,
+      clientMessageId,
       text: trimmed,
       senderId: user.id,
       timestamp: new Date(),
@@ -8261,64 +8578,41 @@ const resolveQueuedVideoUri = async (
     };
 
     setMessages((prev) => [...prev, optimistic]);
+    await persistLocalTextOutboxState({
+      ownerUserId: user.id,
+      threadId: activePeerMessageUserId,
+      message: optimistic,
+      outboxStatus: 'sending',
+    }).catch((persistError) => console.log('[chat] persist text outbox error', persistError));
     setInputText('');
     updateTyping('');
     setReplyingTo(null);
     setEditingMessage(null);
 
-    const { data, error } = await supabase
-      .from('messages')
-      .insert({
-        text: trimmed,
-        sender_id: user.id,
-        receiver_id: conversationId,
-        is_read: false,
-        message_type: 'text',
-        reply_to_message_id: replyingTo?.id ?? null,
-      })
-      .select(MESSAGE_SELECT_FIELDS)
-      .single();
-
-    if (error || !data) {
-      if (isLikelyNetworkError(error)) {
-        await enqueueChatTextSendMutation({
-          senderId: user.id,
-          receiverId: conversationId,
-          text: trimmed,
-          replyToMessageId: replyingTo?.id ?? null,
-        });
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === tempId ? { ...msg, status: 'queued' as const } : msg
-          )
-        );
-        setTimeout(() => {
-          flatListRef.current?.scrollToEnd({ animated: true });
-        }, 100);
-        return;
-      }
-      console.log('[chat] send message error', error);
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === tempId ? { ...msg, status: 'sent' } : msg
-        )
-      );
-    } else {
-      setMessages((prev) =>
-        linkReplies(
-          prev.map((msg) => {
-            if (msg.id !== tempId) return msg;
-            const mapped = mapRowToMessage(data as MessageRow);
-            return {
-              ...mapped,
-              replyToId: msg.replyToId ?? mapped.replyToId ?? null,
-              replyTo: msg.replyTo ?? mapped.replyTo,
-            };
-          })
-        )
-      );
-      scheduleOutgoingReceiptStateSync(data.id as string);
+    if (!networkReady) {
+      const queuedMessage: MessageType = { ...optimistic, status: 'queued' };
+      void persistLocalTextOutboxState({
+        ownerUserId: user.id,
+        threadId: activePeerMessageUserId,
+        message: queuedMessage,
+        outboxStatus: 'queued',
+      }).catch((persistError) => console.log('[chat] persist queued text outbox error', persistError));
+      setMessages((prev) => setMessageStatus(prev, tempId, 'queued'));
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+      textSendInFlightRef.current = false;
+      return;
     }
+    await flushLocalTextOutbox(user.id)
+      .catch((error) => {
+        if (!isLikelyNetworkError(error)) {
+          console.log('[chat] flush text outbox error', error);
+        }
+      })
+      .finally(() => {
+        textSendInFlightRef.current = false;
+      });
 
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
@@ -8330,13 +8624,15 @@ const resolveQueuedVideoUri = async (
       Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
       return;
     }
-    if (!peerResolved || !user?.id || !conversationId) return;
+    if (!peerResolved || !user?.id || !activePeerMessageUserId) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const tempId = `temp-sticker-${Date.now()}`;
+    const clientMessageId = tempId;
     setMessages((prev) => [
       ...prev,
       {
         id: tempId,
+        clientMessageId,
         text: sticker.name,
         senderId: user.id,
         timestamp: new Date(),
@@ -8352,82 +8648,89 @@ const resolveQueuedVideoUri = async (
         replyTo: replyingTo || undefined,
       },
     ]);
+    const optimisticStickerMessage: MessageType = {
+      id: tempId,
+      clientMessageId,
+      text: sticker.name,
+      senderId: user.id,
+      timestamp: new Date(),
+      type: 'mood_sticker',
+      reactions: [],
+      status: 'sending',
+      sticker: {
+        emoji: sticker.emoji,
+        name: sticker.name,
+        color: sticker.color,
+      },
+      replyToId: replyingTo?.id ?? null,
+      replyTo: replyingTo || undefined,
+    };
+    await persistLocalTextOutboxState({
+      ownerUserId: user.id,
+      threadId: activePeerMessageUserId,
+      message: optimisticStickerMessage,
+      outboxStatus: 'sending',
+    }).catch((persistError) => console.log('[chat] persist sticker outbox error', persistError));
     setShowMoodStickers(false);
     setReplyingTo(null);
     setEditingMessage(null);
     setViewOnceMode(false);
 
     const payload = buildStickerPayload(sticker);
-    const { data, error } = await supabase
-      .from('messages')
-      .insert({
-        text: payload,
-        sender_id: user.id,
-        receiver_id: conversationId,
-        is_read: false,
-        message_type: 'mood_sticker',
-        reply_to_message_id: replyingTo?.id ?? null,
-      })
-      .select(MESSAGE_SELECT_FIELDS)
-      .single();
+    const sendingStickerMessage: MessageType = {
+      ...optimisticStickerMessage,
+      text: payload,
+      sticker: {
+        emoji: sticker.emoji,
+        name: sticker.name,
+        color: sticker.color,
+      },
+    };
+    await persistLocalTextOutboxState({
+      ownerUserId: user.id,
+      threadId: activePeerMessageUserId,
+      message: sendingStickerMessage,
+      outboxStatus: 'sending',
+    }).catch((persistError) => console.log('[chat] persist sticker payload outbox error', persistError));
 
-    if (error || !data) {
-      console.log('[chat] send sticker error', error);
-      setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
-      Alert.alert('Sticker failed', 'Unable to send this sticker right now.');
+    if (!networkReady) {
+      const queuedMessage: MessageType = { ...sendingStickerMessage, status: 'queued' };
+      void persistLocalTextOutboxState({
+        ownerUserId: user.id,
+        threadId: activePeerMessageUserId,
+        message: queuedMessage,
+        outboxStatus: 'queued',
+      }).catch((persistError) => console.log('[chat] persist queued sticker outbox error', persistError));
+      setMessages((prev) => setMessageStatus(prev, tempId, 'queued'));
       return;
     }
 
-    setMessages((prev) =>
-      linkReplies(
-        prev.map((msg) =>
-          msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
-        )
-      )
-    );
-    scheduleOutgoingReceiptStateSync(data.id as string);
-  }, [peerResolved, conversationId, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, replyingTo, scheduleOutgoingReceiptStateSync, user?.id]);
+    await flushLocalTextOutbox(user.id).catch((error) => {
+      if (!isLikelyNetworkError(error)) {
+        console.log('[chat] flush sticker outbox error', error);
+      }
+    });
+  }, [peerResolved, activePeerMessageUserId, isBlockedByMe, isChatBlocked, networkReady, replyingTo, user?.id]);
 
   const addReaction = useCallback(async (messageId: string, emoji: string) => {
     if (!user?.id) return;
     if (messageId.startsWith('temp-')) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const previousReactions =
-      messagesRef.current.find((msg) => msg.id === messageId)?.reactions ?? [];
-    const existingReaction = previousReactions.find((reaction) => reaction.userId === user.id);
-    const shouldRemove = existingReaction?.emoji === emoji;
-
-    setMessages((prev) =>
-      prev.map((msg) => {
-        if (msg.id !== messageId) return msg;
-        if (shouldRemove) {
-          return {
-            ...msg,
-            reactions: msg.reactions.filter((reaction) => reaction.userId !== user.id),
-          };
-        }
-        if (existingReaction) {
-          return {
-            ...msg,
-            reactions: msg.reactions.map((reaction) =>
-              reaction.userId === user.id ? { ...reaction, emoji } : reaction
-            ),
-          };
-        }
-        return {
-          ...msg,
-          reactions: [...msg.reactions, { userId: user.id, emoji }],
-        };
-      })
-    );
+    const reactionMutation = applyLocalReactionToggle({
+      items: messagesRef.current,
+      messageId,
+      userId: user.id,
+      emoji,
+    });
+    const { previousReactions, shouldRemove } = reactionMutation;
+    setMessages(reactionMutation.items);
     setShowReactions(null);
 
     if (shouldRemove) {
-      const { error } = await supabase
-        .from('message_reactions')
-        .delete()
-        .eq('message_id', messageId)
-        .eq('user_id', user.id);
+      const { error } = await ChatThreadRemoteService.removeReaction({
+        messageId,
+        currentUserId: user.id,
+      });
       if (error) {
         if (isLikelyNetworkError(error)) {
           await enqueueChatReactionSyncMutation({
@@ -8439,25 +8742,22 @@ const resolveQueuedVideoUri = async (
         }
         console.log('[chat] remove reaction error', error);
         setMessages((prev) =>
-          prev.map((msg) =>
-            msg.id === messageId ? { ...msg, reactions: previousReactions } : msg
-          )
+          restoreMessageReactions({
+            items: prev,
+            messageId,
+            reactions: previousReactions,
+          })
         );
         Alert.alert('Reaction', 'Unable to remove your reaction right now.');
       }
       return;
     }
 
-    const { error } = await supabase
-      .from('message_reactions')
-      .upsert(
-        {
-          message_id: messageId,
-          user_id: user.id,
-          emoji,
-        },
-        { onConflict: 'message_id,user_id' }
-      );
+    const { error } = await ChatThreadRemoteService.upsertReaction({
+      messageId,
+      currentUserId: user.id,
+      emoji,
+    });
 
     if (error) {
       if (isLikelyNetworkError(error)) {
@@ -8470,9 +8770,11 @@ const resolveQueuedVideoUri = async (
       }
       console.log('[chat] add reaction error', error);
       setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === messageId ? { ...msg, reactions: previousReactions } : msg
-        )
+        restoreMessageReactions({
+          items: prev,
+          messageId,
+          reactions: previousReactions,
+        })
       );
       Alert.alert('Reaction', 'Unable to react right now.');
     }
@@ -8558,7 +8860,10 @@ const resolveQueuedVideoUri = async (
       });
 
       const recording = recordingRef.current ?? audioRecorder;
-      await recording.prepareToRecordAsync();
+      const recorderState = recording.getStatus();
+      if (!recorderState.canRecord && !recorderState.isRecording) {
+        await recording.prepareToRecordAsync();
+      }
       recording.record();
       recordingRef.current = recording;
       setIsRecording(true);
@@ -8656,30 +8961,30 @@ const resolveQueuedVideoUri = async (
 
     const waveform = DEFAULT_VOICE_WAVEFORM;
     const tempId = `temp-voice-${Date.now()}`;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: tempId,
-        text: '',
-        senderId: user.id,
-        timestamp: new Date(),
-        type: 'voice',
-        reactions: [],
-        status: 'sending',
-        voiceMessage: {
-          duration: durationSeconds,
-          waveform,
-          isPlaying: false,
-          audioPath: uri,
-        },
-        replyToId: replyingTo?.id ?? null,
-        replyTo: replyingTo || undefined,
+    const clientMessageId = tempId;
+    const optimistic: MessageType = {
+      id: tempId,
+      clientMessageId,
+      text: '',
+      senderId: user.id,
+      timestamp: new Date(),
+      type: 'voice',
+      reactions: [],
+      status: 'sending',
+      voiceMessage: {
+        duration: durationSeconds,
+        waveform,
+        isPlaying: false,
+        audioPath: uri,
       },
-    ]);
+      replyToId: replyingTo?.id ?? null,
+      replyTo: replyingTo || undefined,
+    };
+    setMessages((prev) => [...prev, optimistic]);
     setReplyingTo(null);
+    setEditingMessage(null);
     const extension = uri.split('.').pop()?.toLowerCase() || 'm4a';
     const fileName = `voice-${Date.now()}.${extension}`;
-    const filePath = `${user.id}/${fileName}`;
     const contentType =
       extension === 'm4a'
         ? 'audio/m4a'
@@ -8695,24 +9000,37 @@ const resolveQueuedVideoUri = async (
         ? 'audio/3gpp'
         : 'application/octet-stream';
 
-    const queueVoiceMessage = async () => {
-      const stagedUri = await stageOfflineChatUpload(uri!, fileName);
-      await enqueueChatVoiceSendMutation({
-        senderId: user.id,
-        receiverId: conversationId,
-        localUri: stagedUri,
-        fileName,
-        contentType,
-        durationSeconds,
-        waveform,
-        replyToMessageId: replyingTo?.id ?? null,
-      });
+    try {
+      const stagedUri = await stageOfflineChatUpload(uri, fileName);
+      const localVoiceMessage: MessageType = {
+        ...optimistic,
+        status: networkReady ? 'sending' : 'queued',
+        voiceMessage: optimistic.voiceMessage
+          ? { ...optimistic.voiceMessage, audioPath: stagedUri }
+          : optimistic.voiceMessage,
+      };
+      await ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
+        chatMessageToLocalRow(user.id, activePeerMessageUserId, localVoiceMessage),
+      ]);
+      await ChatRepository.upsertPendingOutboxItem(
+        user.id,
+        buildVoiceOutboxRow({
+          ownerUserId: user.id,
+          threadId: activePeerMessageUserId,
+          message: localVoiceMessage,
+          localUri: stagedUri,
+          fileName,
+          contentType,
+          durationSeconds,
+          waveform,
+        }),
+      );
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === tempId
             ? {
                 ...msg,
-                status: 'queued' as const,
+                status: networkReady ? ('sending' as const) : ('queued' as const),
                 voiceMessage: msg.voiceMessage
                   ? { ...msg.voiceMessage, audioPath: stagedUri }
                   : msg.voiceMessage,
@@ -8720,77 +9038,21 @@ const resolveQueuedVideoUri = async (
             : msg
         )
       );
-    };
-
-    try {
-      const response = await fetch(uri);
-      const arrayBuffer = await response.arrayBuffer();
-      const uint8Array = new Uint8Array(arrayBuffer);
-
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('voice-messages')
-        .upload(filePath, uint8Array, { contentType, upsert: true });
-
-      if (uploadError) {
-        if (isLikelyNetworkError(uploadError) || isRetryableUploadError(uploadError)) {
-          await queueVoiceMessage();
-          setIsUploadingVoice(false);
-          return;
-        }
-        console.log('[chat] upload voice error', uploadError);
-        Alert.alert('Voice message', 'Upload failed. Please try again.');
-        setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
-        setIsUploadingVoice(false);
-        return;
-      }
-
-      const { data, error } = await supabase
-        .from('messages')
-      .insert({
-        text: '',
-        sender_id: user.id,
-        receiver_id: conversationId,
-        is_read: false,
-        message_type: 'voice',
-        audio_path: uploadData?.path ?? filePath,
-        audio_duration: durationSeconds,
-        audio_waveform: waveform,
-        reply_to_message_id: replyingTo?.id ?? null,
-      })
-        .select(MESSAGE_SELECT_FIELDS)
-        .single();
-
-      if (error || !data) {
-        if (isLikelyNetworkError(error)) {
-          await queueVoiceMessage();
-          setIsUploadingVoice(false);
-          return;
-        }
-        console.log('[chat] send voice error', error);
-        Alert.alert('Voice message', 'Could not send. Please try again.');
-        setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
-      } else {
-        setMessages((prev) =>
-          linkReplies(
-            prev.map((msg) =>
-              msg.id === tempId ? mapRowToMessage(data as MessageRow) : msg
-            )
-          )
-        );
-        scheduleOutgoingReceiptStateSync(data.id as string);
+      if (networkReady) {
+        void ChatOutboxService.flushPending(user.id).catch((error) => {
+          if (!isLikelyNetworkError(error)) {
+            console.log('[chat] flush queued voice outbox error', error);
+          }
+        });
       }
     } catch (error) {
-      if (isLikelyNetworkError(error) || isRetryableUploadError(error)) {
-        await queueVoiceMessage();
-        return;
-      }
-      console.log('[chat] voice message error', error);
+      console.log('[chat] queue voice message error', error);
       Alert.alert('Voice message', 'Something went wrong. Please try again.');
       setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
     } finally {
       setIsUploadingVoice(false);
     }
-  }, [conversationId, isUploadingVoice, linkReplies, mapRowToMessage, recordingDuration, replyingTo, resetRecordingState, scheduleOutgoingReceiptStateSync, user?.id]);
+  }, [activePeerMessageUserId, conversationId, isUploadingVoice, networkReady, recordingDuration, replyingTo, resetRecordingState, user?.id]);
 
   const stopVoicePlayback = useCallback(async () => {
     if (!voiceSoundRef.current) {
@@ -8861,7 +9123,7 @@ const resolveQueuedVideoUri = async (
     }
   }, [playingVoiceId, stopVoicePlayback]);
 
-  const handleCameraPress = useCallback(async () => {
+  const captureCameraMedia = useCallback(async (captureMode: 'image' | 'video' | 'mixed') => {
     if (mediaUploadStatus) {
       Alert.alert('Upload in progress', 'Please wait for the current media upload to finish.');
       return;
@@ -8875,7 +9137,12 @@ const resolveQueuedVideoUri = async (
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: PICKER_MEDIA_TYPES_ALL,
+      mediaTypes:
+        captureMode === 'image'
+          ? ['images']
+          : captureMode === 'video'
+          ? ['videos']
+          : PICKER_MEDIA_TYPES_ALL,
       quality: 0.85,
       videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
       videoMaxDuration: 30,
@@ -8987,6 +9254,18 @@ const resolveQueuedVideoUri = async (
     uploadChatMedia,
     viewOnceMode,
   ]);
+
+  const handleCameraPress = useCallback(() => {
+    if (Platform.OS === 'android') {
+      Alert.alert('Camera', 'Choose what you want to capture.', [
+        { text: 'Photo', onPress: () => void captureCameraMedia('image') },
+        { text: 'Video', onPress: () => void captureCameraMedia('video') },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+      return;
+    }
+    void captureCameraMedia('mixed');
+  }, [captureCameraMedia]);
 
   const handleLibraryPress = useCallback(async () => {
     if (mediaUploadStatus) {
@@ -9125,34 +9404,29 @@ const resolveQueuedVideoUri = async (
     const asset = result.assets?.[0];
     if (!asset?.uri) return;
     const uploadStatusId = beginMediaUploadStatus(
-      'Uploading file...',
-      asset.name ? `Preparing ${asset.name}` : 'Keep this chat open while Betweener prepares your file.',
-      'file-upload-outline'
+      'Preparing file...',
+      asset.name ? `Queueing ${asset.name}` : 'Keep this chat open while Betweener prepares your file.',
+      'file-document-outline'
     );
     try {
       const fileName = asset.name ?? asset.uri.split('/').pop() ?? `file-${Date.now()}`;
       const contentType = asset.mimeType ?? 'application/octet-stream';
-      const { publicUrl } = await uploadChatMedia({ uri: asset.uri, fileName, contentType });
-      updateMediaUploadStatus(uploadStatusId, 'Sending file...', 'Almost done.', 'send-outline');
-      const sizeLabel = formatFileSize(asset.size);
-      const typeLabel = getFileTypeLabel(contentType, fileName);
-      const labelParts = [fileName, sizeLabel, typeLabel].filter(Boolean);
-      await sendAttachmentText(`${DOCUMENT_TEXT_PREFIX} ${labelParts.join(' | ')}\n${publicUrl}`);
+      updateMediaUploadStatus(
+        uploadStatusId,
+        'Queueing file...',
+        'Betweener will upload and send this file safely.',
+        'clock-outline'
+      );
+      await queueMediaAttachment({
+        localUri: asset.uri,
+        fileName,
+        contentType,
+        mediaType: 'document',
+        documentSizeLabel: formatFileSize(asset.size),
+        documentTypeLabel: getFileTypeLabel(contentType, fileName),
+      });
     } catch (error) {
-      if (isLikelyNetworkError(error) || isRetryableUploadError(error)) {
-        const fileName = asset.name ?? asset.uri.split('/').pop() ?? `file-${Date.now()}`;
-        const contentType = asset.mimeType ?? 'application/octet-stream';
-        await queueMediaAttachment({
-          localUri: asset.uri,
-          fileName,
-          contentType,
-          mediaType: 'document',
-          documentSizeLabel: formatFileSize(asset.size),
-          documentTypeLabel: getFileTypeLabel(contentType, fileName),
-        });
-      } else {
-        Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
-      }
+      Alert.alert('Attachment', getAttachmentUploadErrorMessage(error));
     } finally {
       clearMediaUploadStatus(uploadStatusId);
     }
@@ -9162,9 +9436,7 @@ const resolveQueuedVideoUri = async (
     closeAttachmentSheet,
     mediaUploadStatus,
     queueMediaAttachment,
-    sendAttachmentText,
     updateMediaUploadStatus,
-    uploadChatMedia,
   ]);
 
   const handleLocationPress = useCallback(() => {
@@ -9202,155 +9474,8 @@ const resolveQueuedVideoUri = async (
     setEditingMessage(null);
   };
 
-  const openEditHistory = useCallback(async (message: MessageType) => {
-    if (!message.editedAt) return;
-    setEditHistoryMessage(message);
-    setEditHistoryVisible(true);
-    setEditHistoryEntries([]);
-    setEditHistoryLoading(true);
-    const { data, error } = await supabase
-      .from('message_edits')
-      .select('id,message_id,editor_user_id,previous_text,created_at')
-      .eq('message_id', message.id)
-      .order('created_at', { ascending: false });
-    if (error) {
-      console.log('[chat] edit history error', error);
-      setEditHistoryEntries([]);
-      setEditHistoryLoading(false);
-      return;
-    }
-    setEditHistoryEntries((data || []) as MessageEditRow[]);
-    setEditHistoryLoading(false);
-  }, []);
-
-  const closeEditHistory = useCallback(() => {
-    setEditHistoryVisible(false);
-    setEditHistoryMessage(null);
-    setEditHistoryEntries([]);
-  }, []);
-
-  const markViewOnceSeen = useCallback(async (message: MessageType) => {
-    if (!user?.id) return;
-    if (message.senderId === user.id) return;
-    if (!message.isViewOnce) return;
-    const current = viewOnceStatusRef.current[message.id];
-    if (current?.viewedByMe) return;
-    setViewOnceStatus((prev) => ({
-      ...prev,
-      [message.id]: {
-        viewedByMe: true,
-        viewedByPeer: prev[message.id]?.viewedByPeer ?? false,
-      },
-    }));
-    const { error } = await supabase
-      .from('message_views')
-      .upsert(
-        {
-          message_id: message.id,
-          viewer_id: user.id,
-        },
-        { onConflict: 'message_id,viewer_id' }
-      );
-    if (error) {
-      console.log('[chat] mark view-once error', error);
-    }
-  }, [user?.id]);
-
-  const closeViewOnceMessage = useCallback(async () => {
-    if (!viewOnceModalMessage) return;
-    const message = viewOnceModalMessage;
-    setViewOnceModalMessage(null);
-    setViewOnceDecrypting(false);
-    if (viewOnceMediaUri) {
-      try {
-        await FileSystem.deleteAsync(viewOnceMediaUri, { idempotent: true });
-      } catch (error) {
-        console.log('[chat] view-once cleanup error', error);
-      }
-    }
-    setViewOnceMediaUri(null);
-    await markViewOnceSeen(message);
-  }, [markViewOnceSeen, viewOnceMediaUri, viewOnceModalMessage]);
-
-  const openViewOnceMessage = useCallback(async (message: MessageType) => {
-    if (!user?.id) return;
-    if (!message.isViewOnce || !message.encryptedMedia) return;
-    if (message.senderId === user.id) return;
-    if (viewOnceStatusRef.current[message.id]?.viewedByMe) return;
-    if (!message.encryptedMediaPath || !message.encryptedKeyReceiver || !message.encryptedKeyNonce || !message.encryptedMediaNonce) {
-      Alert.alert('View once', 'Missing decryption info.');
-      return;
-    }
-    setViewOnceModalMessage(message);
-    setViewOnceDecrypting(true);
-
-    try {
-      const keypair = await ensureOwnKeypair();
-      if (!keypair) {
-        throw new Error('missing_keypair');
-      }
-      const senderPublicKey = await fetchPeerPublicKey();
-      if (!senderPublicKey) {
-        throw new Error('missing_sender_key');
-      }
-      const { data: signed, error: signedError } = await supabase
-        .storage
-        .from(CHAT_MEDIA_BUCKET)
-        .createSignedUrl(message.encryptedMediaPath, 120);
-      if (signedError || !signed?.signedUrl) {
-        console.log('[view-once] signed url error', signedError);
-        throw new Error('signed_url');
-      }
-      const res = await fetch(signed.signedUrl);
-      const buf = await res.arrayBuffer();
-      const cipherBytes = new Uint8Array(buf);
-      const plaintext = await decryptMediaBytes({
-        cipherBytes,
-        mediaNonceB64: message.encryptedMediaNonce,
-        keyNonceB64: message.encryptedKeyNonce,
-        encryptedKeyB64: message.encryptedKeyReceiver,
-        senderPublicKeyB64: senderPublicKey,
-        receiverSecretKeyB64: keypair.secretKeyB64,
-      });
-      cipherBytes.fill(0);
-      if (!plaintext) {
-        throw new Error('decrypt_failed');
-      }
-
-      const isVideo = message.type === 'video' || (message.encryptedMediaMime || '').includes('video');
-      const ext = isVideo ? 'mp4' : 'jpg';
-      const tempPath = `${FileSystem.cacheDirectory ?? ''}viewonce-${message.id}.${ext}`;
-      const base64 = encodeBase64(plaintext);
-      plaintext.fill(0);
-      await FileSystem.writeAsStringAsync(tempPath, base64, {
-        encoding: FileSystem.EncodingType?.Base64 ?? 'base64',
-      });
-
-      setViewOnceMediaUri(tempPath);
-    } catch (error) {
-      console.log('[view-once] open error', error);
-      Alert.alert('View once', 'Unable to open media.');
-      setViewOnceModalMessage(null);
-      setViewOnceMediaUri(null);
-    } finally {
-      setViewOnceDecrypting(false);
-    }
-  }, [ensureOwnKeypair, fetchPeerPublicKey, user?.id]);
-
   const triggerActionHaptic = useCallback((style: Haptics.ImpactFeedbackStyle) => {
     Haptics.impactAsync(style).catch(() => {});
-  }, []);
-
-  const closeMessageActions = useCallback(() => {
-    setMessageActionsVisible(false);
-    setActionMessageId(null);
-  }, []);
-
-  const handleLongPress = useCallback((messageId: string) => {
-    const target = messagesRef.current.find((msg) => msg.id === messageId);
-    if (!target) return;
-    setShowReactions((prev) => (prev === messageId ? null : messageId));
-    Haptics.selectionAsync().catch(() => {});
   }, []);
 
   const renderTypingIndicator = () => {
@@ -9370,7 +9495,6 @@ const resolveQueuedVideoUri = async (
             <Image source={BLOCKED_AVATAR_SOURCE} style={styles.typingAvatar} />
           )}
         <View style={styles.typingBubble}>
-          <Text style={styles.typingLabel}>{userName || 'Your match'} is typing</Text>
           <Animated.View style={styles.typingDots}>
             {[0, 1, 2].map((index) => (
               <Animated.View
@@ -9401,26 +9525,7 @@ const resolveQueuedVideoUri = async (
 
   const ensureInitialScrollToBottom = useCallback(() => {
     if (initialAutoScrollDoneRef.current) return;
-    const { contentHeight, layoutHeight } = listMetricsRef.current;
-    if (!contentHeight || !layoutHeight) return;
-    const distanceToBottom = getDistanceToBottom();
-    const threshold = keyboardVisibleRef.current ? 240 : 120;
-    if (distanceToBottom <= threshold) {
-      initialAutoScrollDoneRef.current = true;
-      initialAutoScrollAttemptsRef.current = 0;
-      return;
-    }
-    if (initialAutoScrollAttemptsRef.current >= 20) {
-      initialAutoScrollDoneRef.current = true;
-      return;
-    }
-    initialAutoScrollAttemptsRef.current += 1;
-    const targetOffset = Math.max(0, contentHeight - layoutHeight);
-    flatListRef.current?.scrollToOffset({ offset: targetOffset, animated: false });
-    const timer = setTimeout(() => {
-      ensureInitialScrollToBottom();
-    }, 200 + initialAutoScrollAttemptsRef.current * 120);
-    initialScrollTimersRef.current.push(timer);
+    return;
   }, [getDistanceToBottom]);
 
   const updateJumpToBottomVisibility = useCallback((distanceToBottom: number) => {
@@ -9464,12 +9569,14 @@ const resolveQueuedVideoUri = async (
   }, [hasMore, loadEarlier, loadingEarlier, updateJumpToBottomVisibility]);
 
   useEffect(() => {
+    if (!threadBootstrapSettled) return;
     if (messages.length === 0) return;
     if (!hasAutoScrolledRef.current) {
       hasAutoScrolledRef.current = true;
       shouldAutoScrollRef.current = true;
       InteractionManager.runAfterInteractions(() => {
         flatListRef.current?.scrollToEnd({ animated: false });
+        initialAutoScrollDoneRef.current = true;
       });
       return;
     }
@@ -9485,7 +9592,7 @@ const resolveQueuedVideoUri = async (
     InteractionManager.runAfterInteractions(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
     });
-  }, [messages.length]);
+  }, [messages.length, threadBootstrapSettled]);
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
@@ -9603,6 +9710,9 @@ const resolveQueuedVideoUri = async (
 
   const handleMessagesContentSizeChange = useCallback((_width: number, height: number) => {
     listMetricsRef.current.contentHeight = height;
+    if (!threadBootstrapSettled) return;
+    if (renderedMessages.length === 0) return;
+    if (!initialAutoScrollDoneRef.current) return;
     const paddingToBottom = keyboardVisibleRef.current ? 200 : 60;
     updateJumpToBottomVisibility(getDistanceToBottom());
     if (
@@ -9612,18 +9722,19 @@ const resolveQueuedVideoUri = async (
     ) {
       maybeScrollToEnd(true);
     }
-    ensureInitialScrollToBottom();
-  }, [ensureInitialScrollToBottom, getDistanceToBottom, maybeScrollToEnd, updateJumpToBottomVisibility]);
+  }, [ensureInitialScrollToBottom, getDistanceToBottom, maybeScrollToEnd, renderedMessages.length, threadBootstrapSettled, updateJumpToBottomVisibility]);
 
   const handleMessagesLayout = useCallback((event: any) => {
     listMetricsRef.current.layoutHeight = event.nativeEvent.layout.height;
+    if (!threadBootstrapSettled) return;
+    if (renderedMessages.length === 0) return;
+    if (!initialAutoScrollDoneRef.current) return;
     wasAtBottomRef.current = true;
     updateJumpToBottomVisibility(getDistanceToBottom());
     if (shouldAutoScrollRef.current) {
       maybeScrollToEnd(false);
     }
-    ensureInitialScrollToBottom();
-  }, [ensureInitialScrollToBottom, getDistanceToBottom, maybeScrollToEnd, updateJumpToBottomVisibility]);
+  }, [ensureInitialScrollToBottom, getDistanceToBottom, maybeScrollToEnd, renderedMessages.length, threadBootstrapSettled, updateJumpToBottomVisibility]);
 
   const handleScrollToIndexFailed = useCallback(({ index, averageItemLength }: any) => {
     const offset = Math.max(0, averageItemLength * index);
@@ -9658,7 +9769,7 @@ const resolveQueuedVideoUri = async (
     const minHeight = 220;
     const maxHeight = 480;
     const pending: string[] = [];
-    messages.forEach((msg) => {
+    renderedMessages.forEach((msg) => {
       if (
         msg.type === 'image' &&
         msg.imageUrl &&
@@ -9711,7 +9822,7 @@ const resolveQueuedVideoUri = async (
     return () => {
       cancelled = true;
     };
-  }, [messages, responsive.width]);
+  }, [imageSizes, renderedMessages, responsive.width]);
 
   const openVideoViewer = useCallback(async (url: string) => {
     const resolved = cachedVideoUris[url] ?? await resolveQueuedVideoUri(url, networkReady);
@@ -9772,15 +9883,23 @@ const resolveQueuedVideoUri = async (
       viewableItems,
       changed,
     }: {
-      viewableItems: { item: MessageType }[];
-      changed?: { item: MessageType; isViewable: boolean }[];
+      viewableItems: Array<{ item?: MessageType | null }>;
+      changed?: Array<{ item?: MessageType | null; isViewable: boolean }>;
     }) => {
+      if (!isScreenFocusedRef.current || AppState.currentState !== 'active') return;
       changed?.forEach(({ item, isViewable }) => {
-        if (isViewable) return;
+        if (!item?.id) return;
+        if (isViewable && shouldScheduleMessageRead({ item, currentUserId: user?.id || '' })) {
+          viewableReadCandidateIdsRef.current.add(item.id);
+          return;
+        }
+        viewableReadCandidateIdsRef.current.delete(item.id);
         clearPendingReadTimer(item.id);
       });
       viewableItems.forEach(({ item }) => {
-        if (item.senderId !== (user?.id || '') && item.status !== 'read') {
+        if (!item?.id) return;
+        if (shouldScheduleMessageRead({ item, currentUserId: user?.id || '' })) {
+          viewableReadCandidateIdsRef.current.add(item.id);
           scheduleMarkAsRead(item.id);
         }
       });
@@ -9874,51 +9993,80 @@ const resolveQueuedVideoUri = async (
     );
   }, [hasMore, loadEarlier, loadingEarlier]);
 
-  const handleGoBack = useCallback(() => {
-    router.replace('/(tabs)/chat');
-  }, []);
+  const {
+    reportModalVisible,
+    reportReasonId,
+    setReportReasonId,
+    reportDetails,
+    setReportDetails,
+    reportShouldBlock,
+    setReportShouldBlock,
+    reportEvidenceMessage,
+    reportSubmitting,
+    momentViewerVisible,
+    momentViewerUserId,
+    chatSearchVisible,
+    mediaHubVisible,
+    mediaTab,
+    setMediaTab,
+    handleGoBack,
+    handleHeaderPress,
+    handleCloseMomentViewer,
+    closeReportModal,
+    submitReport,
+    confirmUnblockUser,
+    closeChatSearch,
+    closeMediaHub,
+    handleToggleMute,
+    handleReportMessage,
+    handleOpenHeaderMenu,
+    handleHeaderLongPress,
+  } = useChatThreadScreenUi({
+    userId: user?.id,
+    routeId,
+    conversationId,
+    activePeerMessageUserId,
+    peerProfileId,
+    resolvedPeerProfileId: peerProfile?.id ?? null,
+    peerHasLeftBetweener,
+    peerHasMoment,
+    isChatBlocked,
+    isBlockedByMe,
+    canPlanDate,
+    datePlanUnlockReason,
+    headerStatusLabel,
+    conversationSignal,
+    userName,
+    chatPrefsStorageKey: CHAT_PREFS_STORAGE_KEY,
+    headerHintStorageKey: HEADER_HINT_STORAGE_KEY,
+    blockedByMeValue: BLOCKED_BY_ME,
+    reportReasons: REPORT_REASONS,
+    showHeaderHint,
+    setShowHeaderHint,
+    headerHintOpacity,
+    headerHintDismissedRef,
+    chatPrefsStateRef,
+    applyChatPrefsState,
+    triggerChatActionToast,
+    openDatePlannerUnlocked,
+    handleOpenDatePlanner,
+    fetchMessages,
+    fetchHiddenMessages,
+    updateHiddenMessageIds,
+    setMessages,
+    setHasMore,
+    setOldestTimestamp,
+    setBlockStatus,
+    setChatSearchQuery,
+  });
 
-  const handleViewProfile = useCallback(() => {
-    if (peerHasLeftBetweener) return;
-    const nextProfileId = peerProfile?.id ?? peerProfileId;
-    if (!nextProfileId) return;
-    router.push({
-      pathname: '/profile-view',
-      params: { profileId: nextProfileId },
-    });
-  }, [peerHasLeftBetweener, peerProfile?.id, peerProfileId]);
-
-  const dismissHeaderHint = useCallback(() => {
-    headerHintDismissedRef.current = true;
-    void AsyncStorage.setItem(HEADER_HINT_STORAGE_KEY, '1');
-    if (!showHeaderHint) return;
-    Animated.timing(headerHintOpacity, {
-      toValue: 0,
-      duration: 180,
-      useNativeDriver: true,
-    }).start(() => {
-      setShowHeaderHint(false);
-    });
-  }, [headerHintOpacity, showHeaderHint]);
-
-  const handleHeaderPress = useCallback(() => {
-    if (!conversationId || isChatBlocked || peerHasLeftBetweener) return;
-    dismissHeaderHint();
-    if (peerHasMoment) {
-      setMomentViewerUserId(conversationId);
-      setMomentViewerVisible(true);
-      return;
-    }
-    handleViewProfile();
-  }, [conversationId, dismissHeaderHint, handleViewProfile, isChatBlocked, peerHasLeftBetweener, peerHasMoment]);
-
-  const handleCloseMomentViewer = useCallback(() => {
-    setMomentViewerVisible(false);
-    setMomentViewerUserId(null);
-  }, []);
+  const reportEvidencePreview = useMemo(
+    () => getReportEvidencePreview(reportEvidenceMessage),
+    [reportEvidenceMessage]
+  );
 
   const hideMessageForMe = useCallback(async (message: MessageType) => {
-    if (!user?.id || !conversationId) return;
+    if (!user?.id || !activePeerMessageUserId) return;
     closeMessageActions();
     setShowReactions(null);
 
@@ -9932,10 +10080,10 @@ const resolveQueuedVideoUri = async (
     updateHiddenMessageIds(Array.from(nextSet));
     setMessages((prev) => prev.filter((msg) => msg.id !== message.id));
 
-    const { error } = await supabase.from('message_hides').insert({
-      message_id: message.id,
-      user_id: user.id,
-      peer_id: conversationId,
+    const { error } = await ChatThreadActionsService.hideMessageForUser({
+      messageId: message.id,
+      currentUserId: user.id,
+      peerUserId: activePeerMessageUserId,
     });
 
     if (error) {
@@ -9943,8 +10091,13 @@ const resolveQueuedVideoUri = async (
       Alert.alert('Hide message', 'Unable to hide this message right now.');
       await fetchHiddenMessages();
       await fetchMessages();
+      return;
     }
-  }, [closeMessageActions, conversationId, fetchHiddenMessages, fetchMessages, updateHiddenMessageIds, user?.id]);
+
+    void ChatRepository.deleteMessages(user.id, activePeerMessageUserId, [message.id]).catch((deleteError) =>
+      console.log('[chat] delete hidden local message error', deleteError),
+    );
+  }, [activePeerMessageUserId, closeMessageActions, fetchHiddenMessages, fetchMessages, updateHiddenMessageIds, user?.id]);
 
   const deleteMessageForEveryone = useCallback(async (message: MessageType) => {
     if (!user?.id) return;
@@ -9958,54 +10111,55 @@ const resolveQueuedVideoUri = async (
     }
 
     const deletedAt = new Date();
+    const deletedMessage: MessageType = {
+      ...message,
+      type: 'text',
+      text: 'Message deleted',
+      deletedForAll: true,
+      deletedAt,
+      deletedBy: user.id,
+      imageUrl: undefined,
+      videoUrl: undefined,
+      document: undefined,
+      location: undefined,
+      voiceMessage: undefined,
+      reactions: [],
+    };
     setMessages((prev) =>
-      prev.map((msg) =>
-        msg.id === message.id
-          ? {
-              ...msg,
-              type: 'text',
-              text: 'Message deleted',
-              deletedForAll: true,
-              deletedAt,
-              deletedBy: user.id,
-              imageUrl: undefined,
-              videoUrl: undefined,
-              document: undefined,
-              location: undefined,
-              voiceMessage: undefined,
-              reactions: [],
-            }
-          : msg
-      )
-    );
-
-    const { error } = await supabase
-      .from('messages')
-      .update({
-        deleted_for_all: true,
-        deleted_at: deletedAt.toISOString(),
-        deleted_by: user.id,
+      applyDeleteMessageForEveryone({
+        items: prev,
+        messageId: message.id,
+        deletedAt,
+        deletedBy: user.id,
       })
-      .eq('id', message.id)
-      .eq('sender_id', user.id);
+    );
+    if (activePeerMessageUserId) {
+      void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
+        chatMessageToLocalRow(user.id, activePeerMessageUserId, deletedMessage),
+      ]).catch((localError) => console.log('[chat] local delete tombstone persist error', localError));
+    }
+
+    const { error } = await ChatThreadActionsService.deleteMessageForEveryone({
+      messageId: message.id,
+      currentUserId: user.id,
+      deletedAtIso: deletedAt.toISOString(),
+    });
 
     if (error) {
       console.log('[chat] delete message error', error);
       Alert.alert('Delete message', 'Unable to delete this message for everyone.');
       await fetchMessages();
     }
-  }, [closeMessageActions, fetchMessages, user?.id]);
+  }, [closeMessageActions, conversationId, fetchMessages, user?.id]);
 
   const pinMessage = useCallback(async (message: MessageType) => {
     if (!user?.id || !conversationId) return;
     if (message.id.startsWith('temp-')) return;
-    const nextSet = new Set(pinnedMessageIdsRef.current);
-    nextSet.add(message.id);
-    updatePinnedMessageIds(Array.from(nextSet));
-    const { error } = await supabase.from('message_pins').insert({
-      message_id: message.id,
-      user_id: user.id,
-      peer_id: conversationId,
+    updatePinnedMessageIds(addPinnedMessageId(Array.from(pinnedMessageIdsRef.current), message.id));
+    const { error } = await ChatThreadActionsService.pinMessageForUser({
+      messageId: message.id,
+      currentUserId: user.id,
+      peerUserId: conversationId,
     });
     if (error) {
       console.log('[chat] pin message error', error);
@@ -10017,14 +10171,11 @@ const resolveQueuedVideoUri = async (
   const unpinMessage = useCallback(async (message: MessageType) => {
     if (!user?.id || !conversationId) return;
     if (message.id.startsWith('temp-')) return;
-    const nextSet = new Set(pinnedMessageIdsRef.current);
-    nextSet.delete(message.id);
-    updatePinnedMessageIds(Array.from(nextSet));
-    const { error } = await supabase
-      .from('message_pins')
-      .delete()
-      .eq('message_id', message.id)
-      .eq('user_id', user.id);
+    updatePinnedMessageIds(removePinnedMessageId(Array.from(pinnedMessageIdsRef.current), message.id));
+    const { error } = await ChatThreadActionsService.unpinMessageForUser({
+      messageId: message.id,
+      currentUserId: user.id,
+    });
     if (error) {
       console.log('[chat] unpin message error', error);
       Alert.alert('Unpin message', 'Unable to unpin this message right now.');
@@ -10043,27 +10194,11 @@ const resolveQueuedVideoUri = async (
     [pinMessage, unpinMessage]
   );
 
-  const togglePinnedBanner = useCallback(() => {
-    if (pinnedMessageCount === 0) return;
-    setPinnedBannerExpanded((prev) => !prev);
-  }, [pinnedMessageCount]);
-
-  const handlePinnedJump = useCallback(() => {
-    if (!primaryPinnedMessage) return;
-    jumpToMessage(primaryPinnedMessage.id);
-    setPinnedBannerExpanded(false);
-  }, [jumpToMessage, primaryPinnedMessage]);
-
   const handlePinnedUnpin = useCallback(() => {
     if (!primaryPinnedMessage) return;
     void unpinMessage(primaryPinnedMessage);
     setPinnedBannerExpanded(false);
-  }, [primaryPinnedMessage, unpinMessage]);
-
-  const handlePinnedSeeAll = useCallback(() => {
-    openPinnedSheet();
-    setPinnedBannerExpanded(false);
-  }, [openPinnedSheet]);
+  }, [primaryPinnedMessage, setPinnedBannerExpanded, unpinMessage]);
 
   useEffect(() => {
     if (!reactionSheetVisible || !reactionSheetMessage) return;
@@ -10152,32 +10287,14 @@ const resolveQueuedVideoUri = async (
 
   const renderMessage = useCallback(
     ({ item, index }: { item: MessageType; index: number }) => {
+      const meta = messageRenderMetaById.get(item.id);
       const isSystemMessage = item.type === 'system' || item.isSystem;
-      const isMyMessage = !isSystemMessage && item.senderId === (user?.id || '');
+      const isMyMessage = meta?.isMyMessage ?? (!isSystemMessage && item.senderId === (user?.id || ''));
       const prevMessage = messagesRef.current[index - 1];
-      const nextMessage = messagesRef.current[index + 1];
-      const prevIsSystemMessage = prevMessage?.type === 'system' || prevMessage?.isSystem;
-      const nextIsSystemMessage = nextMessage?.type === 'system' || nextMessage?.isSystem;
-      const isGroupedWithPrev =
-        !isSystemMessage &&
-        Boolean(
-          prevMessage &&
-            !prevIsSystemMessage &&
-            prevMessage.senderId === item.senderId &&
-            isSameDay(prevMessage.timestamp, item.timestamp)
-        );
-      const isGroupedWithNext =
-        !isSystemMessage &&
-        Boolean(
-          nextMessage &&
-            !nextIsSystemMessage &&
-            nextMessage.senderId === item.senderId &&
-            isSameDay(nextMessage.timestamp, item.timestamp)
-        );
-      const showAvatar =
-        !isSystemMessage && !isMyMessage && !isChatBlocked && !isGroupedWithNext;
-      const showAvatarSpacer =
-        !isSystemMessage && !isMyMessage && !isChatBlocked && isGroupedWithNext;
+      const isGroupedWithPrev = meta?.isGroupedWithPrev ?? false;
+      const isGroupedWithNext = meta?.isGroupedWithNext ?? false;
+      const showAvatar = meta?.showAvatar ?? false;
+      const showAvatarSpacer = meta?.showAvatarSpacer ?? false;
       const shouldAnimateEntry =
         seededMessageAnimationsRef.current &&
         !animatedMessageIdsRef.current.has(item.id);
@@ -10187,16 +10304,21 @@ const resolveQueuedVideoUri = async (
       const isPlaying = playingVoiceId === item.id;
       const isReactionOpen = showReactions === item.id;
       const isFocused = focusedMessageId === item.id;
-      const isActionPinned = pinnedMessageIds.includes(item.id);
-      const timeLabel = formatTime(item.timestamp);
-      const showDateSeparator = !prevMessage || !isSameDay(prevMessage.timestamp, item.timestamp);
-      const imageSize = item.type === 'image' && item.imageUrl ? imageSizes[item.imageUrl] : undefined;
-      const cachedImageUrl = item.type === 'image' && item.imageUrl ? cachedImageUris[item.imageUrl] : undefined;
-      const cachedVideoUrl = item.type === 'video' && item.videoUrl ? cachedVideoUris[item.videoUrl] : undefined;
-      const now = item.type === 'location' ? messageListNow : null;
-      const viewOnceState = viewOnceStatus[item.id];
-      const viewOnceViewedByMe = viewOnceState?.viewedByMe ?? false;
-      const viewOnceViewedByPeer = viewOnceState?.viewedByPeer ?? false;
+      const isActionPinned = meta?.isActionPinned ?? false;
+      const timeLabel = meta?.timeLabel ?? formatTime(item.timestamp);
+      const showDateSeparator =
+        meta?.showDateSeparator ??
+        (!prevMessage || !isSameDay(prevMessage.timestamp, item.timestamp));
+      const imageSize = meta?.imageSize;
+      const cachedImageUrl = meta?.cachedImageUrl;
+      const cachedVideoUrl = meta?.cachedVideoUrl;
+      const viewOnceViewedByMe = meta?.viewOnceViewedByMe ?? false;
+      const viewOnceViewedByPeer = meta?.viewOnceViewedByPeer ?? false;
+      const rowHighlightQuery =
+        item.type === 'text' && matchMessageIdSet.has(item.id) ? trimmedChatSearchQuery : undefined;
+      const rowHighlightPress = rowHighlightQuery ? jumpToNextMatch : undefined;
+      const rowDatePlanActionId = item.type === 'date_plan' ? datePlanActionId : null;
+      const rowDatePlanCalendarActionId = item.type === 'date_plan' ? datePlanCalendarActionId : null;
 
       return (
         <View>
@@ -10228,6 +10350,7 @@ const resolveQueuedVideoUri = async (
             isDark={isDark}
             styles={styles}
             onLongPress={handleLongPress}
+            onRetryFailedMessage={retryFailedTextMessage}
             onToggleVoice={toggleVoicePlayback}
             onFocus={focusMessage}
             onReply={replyToMessage}
@@ -10257,13 +10380,12 @@ const resolveQueuedVideoUri = async (
             onCancelDatePlan={handleCancelDatePlan}
             onRequestDatePlanConcierge={handleRequestDatePlanConcierge}
             onAddDatePlanToCalendar={handleAddDatePlanToCalendar}
-            datePlanActionId={datePlanActionId}
-            datePlanCalendarActionId={datePlanCalendarActionId}
+            datePlanActionId={rowDatePlanActionId}
+            datePlanCalendarActionId={rowDatePlanCalendarActionId}
             viewOnceViewedByMe={viewOnceViewedByMe}
             viewOnceViewedByPeer={viewOnceViewedByPeer}
-            highlightQuery={chatSearchQuery}
-            onHighlightPress={chatSearchQuery.trim() ? jumpToNextMatch : undefined}
-            now={now}
+            highlightQuery={rowHighlightQuery}
+            onHighlightPress={rowHighlightPress}
           />
         </View>
       );
@@ -10271,27 +10393,26 @@ const resolveQueuedVideoUri = async (
     [
       focusedMessageId,
       focusTick,
+      formatTime,
       datePlanActionId,
       datePlanCalendarActionId,
+      isChatBlocked,
+      isSameDay,
       playingVoiceId,
       showReactions,
+      messageRenderMetaById,
       user?.id,
       userAvatar,
       userName,
       theme,
       isDark,
-      imageSizes,
-      isChatBlocked,
       handleLongPress,
       toggleVoicePlayback,
       replyToMessage,
       startEditMessage,
       addReaction,
-      isSameDay,
       formatDayLabel,
-      formatTime,
       chatSearchQuery,
-      chatSearchVisible,
       handleAcceptDatePlan,
       handleCancelDatePlan,
       handleAddDatePlanToCalendar,
@@ -10303,7 +10424,6 @@ const resolveQueuedVideoUri = async (
       handleRequestDatePlanConcierge,
       openLocationViewer,
       stopLiveSharing,
-      viewOnceStatus,
       openViewOnceMessage,
       handleCopyMessage,
       handleToggleMessagePin,
@@ -10312,269 +10432,10 @@ const resolveQueuedVideoUri = async (
       openEditHistory,
       jumpToMessage,
       jumpToNextMatch,
-      messageListNow,
+      matchMessageIdSet,
       focusMessage,
-      pinnedMessageIds,
+      trimmedChatSearchQuery,
     ]
-  );
-
-  const openReportModal = useCallback((message?: MessageType | null) => {
-    setReportEvidenceMessage(message ?? null);
-    setReportModalVisible(true);
-  }, []);
-
-  const closeReportModal = useCallback(() => {
-    setReportModalVisible(false);
-    setReportReasonId(null);
-    setReportDetails('');
-    setReportShouldBlock(false);
-    setReportEvidenceMessage(null);
-    setReportSubmitting(false);
-  }, []);
-
-  const performBlockUser = useCallback(async (
-    options: { redirect?: boolean; showSuccessAlert?: boolean } = {}
-  ) => {
-    if (!user?.id || !conversationId) return;
-    const { redirect = true, showSuccessAlert = true } = options;
-    const { error } = await supabase
-      .from('blocks')
-      .insert({ blocker_id: user.id, blocked_id: conversationId });
-
-    if (error) {
-      if (error.code === '23505') {
-        if (showSuccessAlert) {
-          Alert.alert('Blocked', 'This member is already blocked.');
-        }
-        if (redirect) {
-          router.replace('/(tabs)/chat');
-        }
-        return true;
-      }
-      console.log('[chat] block user error', error);
-      Alert.alert('Block user', 'Unable to block this user right now.');
-      return false;
-    }
-
-    setBlockStatus(BLOCKED_BY_ME);
-    if (showSuccessAlert) {
-      Alert.alert('Blocked', 'This member has been blocked. They will not be notified.');
-    }
-    if (redirect) {
-      router.replace('/(tabs)/chat');
-    }
-    return true;
-  }, [conversationId, user?.id]);
-
-  const submitReport = useCallback(async () => {
-    if (!user?.id || !conversationId) return;
-    if (!reportReasonId) {
-      Alert.alert('Report user', 'Select a reason to continue.');
-      return;
-    }
-    setReportSubmitting(true);
-    const reasonLabel =
-      REPORT_REASONS.find((reason) => reason.id === reportReasonId)?.label ?? reportReasonId;
-    const details = reportDetails.trim();
-    const reason = details ? `${reasonLabel}: ${details}` : reasonLabel;
-
-    const { error } = await supabase.rpc('rpc_submit_report', {
-      p_reported_id: conversationId,
-      p_reason: reason,
-      p_evidence_message_id: reportEvidenceMessage?.id ?? null,
-      p_client_evidence: {
-        entry_point: reportEvidenceMessage ? 'message_options' : 'chat_options',
-        message_type: reportEvidenceMessage?.type ?? null,
-      },
-    });
-
-    if (error) {
-      console.log('[chat] report user error', error);
-      Alert.alert('Report user', 'Unable to send this report right now.');
-      setReportSubmitting(false);
-      return;
-    }
-
-    const shouldBlockAfterReport = reportShouldBlock && !isBlockedByMe;
-    setReportSubmitting(false);
-    closeReportModal();
-
-    let didBlock = false;
-    if (shouldBlockAfterReport) {
-      didBlock = Boolean(await performBlockUser({ redirect: true, showSuccessAlert: false }));
-    }
-
-    Alert.alert(
-      'Report sent',
-      didBlock
-        ? 'We will review this privately. This member is now blocked and will not be notified.'
-        : 'We will review this privately. They will not be notified.'
-    );
-  }, [
-    closeReportModal,
-    conversationId,
-    isBlockedByMe,
-    performBlockUser,
-    reportDetails,
-    reportEvidenceMessage,
-    reportReasonId,
-    reportShouldBlock,
-    user?.id,
-  ]);
-
-  const blockUser = useCallback(async () => {
-    await performBlockUser();
-  }, [performBlockUser]);
-
-  const unblockUser = useCallback(async () => {
-    if (!user?.id || !conversationId) return;
-    const { error } = await supabase
-      .from('blocks')
-      .delete()
-      .eq('blocker_id', user.id)
-      .eq('blocked_id', conversationId);
-    if (error) {
-      console.log('[chat] unblock user error', error);
-      Alert.alert('Unblock user', 'Unable to unblock this user right now.');
-      return;
-    }
-    setBlockStatus(null);
-    Alert.alert('Unblocked', 'You can message each other again.');
-  }, [conversationId, user?.id]);
-
-  const confirmUnblockUser = useCallback(() => {
-    Alert.alert(
-      'Unblock user?',
-      'You will be able to message each other again.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Unblock', style: 'default', onPress: () => void unblockUser() },
-      ]
-    );
-  }, [unblockUser]);
-
-  const closeChatSearch = useCallback(() => {
-    setChatSearchVisible(false);
-  }, []);
-
-  const closeMediaHub = useCallback(() => {
-    setMediaHubVisible(false);
-  }, []);
-
-  const handleFilterMedia = useCallback(() => {
-    setMediaTab('media');
-    setMediaHubVisible(true);
-  }, []);
-
-  const handleSearchInChat = useCallback(() => {
-    setChatSearchQuery('');
-    setChatSearchVisible(true);
-  }, []);
-
-  const handleToggleMute = useCallback(() => {
-    const next = !chatPrefsStateRef.current.muted;
-    applyChatPrefsState({
-      muted: next,
-      pinned: chatPrefsStateRef.current.pinned,
-    });
-    triggerChatActionToast(next ? 'Chat muted' : 'Chat unmuted', next ? 'volume-off' : 'volume-high');
-  }, [applyChatPrefsState, triggerChatActionToast]);
-
-  const applyMuteState = useCallback((next: boolean) => {
-    applyChatPrefsState({
-      muted: next,
-      pinned: chatPrefsStateRef.current.pinned,
-    });
-    triggerChatActionToast(next ? 'Chat muted' : 'Chat unmuted', next ? 'volume-off' : 'volume-high');
-  }, [applyChatPrefsState, triggerChatActionToast]);
-
-  const handleTogglePin = useCallback(() => {
-    const next = !chatPrefsStateRef.current.pinned;
-    applyChatPrefsState({
-      muted: chatPrefsStateRef.current.muted,
-      pinned: next,
-    });
-    triggerChatActionToast(next ? 'Chat pinned' : 'Chat unpinned', next ? 'pin' : 'pin-off-outline');
-  }, [applyChatPrefsState, triggerChatActionToast]);
-
-  const applyPinState = useCallback((next: boolean) => {
-    applyChatPrefsState({
-      muted: chatPrefsStateRef.current.muted,
-      pinned: next,
-    });
-    triggerChatActionToast(next ? 'Chat pinned' : 'Chat unpinned', next ? 'pin' : 'pin-off-outline');
-  }, [applyChatPrefsState, triggerChatActionToast]);
-
-  const clearChatForMe = useCallback(async () => {
-    if (!user?.id || !conversationId) return;
-    setClearChatLoading(true);
-    const currentIds = messagesRef.current
-      .map((msg) => msg.id)
-      .filter((id) => !id.startsWith('temp-'));
-    const hiddenSet = hiddenMessageIdsRef.current;
-    const idsToHide = currentIds.filter((id) => !hiddenSet.has(id));
-    if (idsToHide.length === 0) {
-      setMessages([]);
-      setHasMore(false);
-      setOldestTimestamp(null);
-      setClearChatLoading(false);
-      return;
-    }
-    const nextSet = new Set(hiddenSet);
-    idsToHide.forEach((id) => nextSet.add(id));
-    updateHiddenMessageIds(Array.from(nextSet));
-    setMessages([]);
-    setHasMore(false);
-    setOldestTimestamp(null);
-
-    try {
-      const batchSize = 200;
-      for (let i = 0; i < idsToHide.length; i += batchSize) {
-        const slice = idsToHide.slice(i, i + batchSize);
-        const rows = slice.map((id) => ({
-          message_id: id,
-          user_id: user.id,
-          peer_id: conversationId,
-        }));
-        const { error } = await supabase.from('message_hides').insert(rows);
-        if (error) throw error;
-      }
-    } catch (error) {
-      console.log('[chat] clear chat error', error);
-      Alert.alert('Clear chat', 'Unable to clear this chat right now.');
-      await fetchHiddenMessages();
-      await fetchMessages();
-    } finally {
-      setClearChatLoading(false);
-    }
-  }, [conversationId, fetchHiddenMessages, fetchMessages, updateHiddenMessageIds, user?.id]);
-
-  const handleClearChat = useCallback(() => {
-    Alert.alert(
-      'Clear chat?',
-      'This removes the chat history for you only.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear',
-          style: 'destructive',
-          onPress: () => void clearChatForMe(),
-        },
-      ]
-    );
-  }, [clearChatForMe]);
-
-  const handleOpenMediaItem = useCallback(
-    (item: { type: 'image' | 'video'; url?: string | null }) => {
-      if (!item.url) return;
-      closeMediaHub();
-      if (item.type === 'image') {
-        void openImageViewer(item.url);
-      } else {
-        void openVideoViewer(item.url);
-      }
-    },
-    [closeMediaHub, openImageViewer, openVideoViewer]
   );
 
   const renderHighlightedText = (text: string, query: string) => {
@@ -10606,163 +10467,18 @@ const resolveQueuedVideoUri = async (
     );
   };
 
-  const handleBlockUser = useCallback(() => {
-    if (!conversationId) return;
-    Alert.alert(
-      'Block user',
-      'They will no longer be able to message you and you will no longer see them.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Block', style: 'destructive', onPress: () => void blockUser() },
-      ]
-    );
-  }, [blockUser, conversationId]);
-
-  const handleReportUser = useCallback(() => {
-    if (!conversationId) return;
-    openReportModal();
-  }, [conversationId, openReportModal]);
-
-  const handleReportMessage = useCallback((message: MessageType) => {
-    if (!conversationId) return;
-    openReportModal(message);
-  }, [conversationId, openReportModal]);
-
-  const handleOpenHeaderMenu = useCallback(() => {
-    dismissHeaderHint();
-    Haptics.selectionAsync().catch(() => {});
-    void (async () => {
-      let nextMuted = chatPrefsStateRef.current.muted;
-      let nextPinned = chatPrefsStateRef.current.pinned;
-      try {
-        const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
-        const parsed = raw ? JSON.parse(raw) : {};
-        const prefs =
-          (conversationId && parsed?.[conversationId]) ||
-          (routeId && parsed?.[routeId]) ||
-          null;
-        if (prefs && typeof prefs.muted === 'boolean') {
-          nextMuted = Boolean(prefs.muted);
-        }
-        if (prefs && typeof prefs.pinned === 'boolean') {
-          nextPinned = Boolean(prefs.pinned);
-        }
-      } catch {
-        // Fall back to in-memory state when local prefs are unavailable.
+  const handleOpenMediaItem = useCallback(
+    (item: { type: 'image' | 'video'; url?: string | null }) => {
+      if (!item.url) return;
+      closeMediaHub();
+      if (item.type === 'image') {
+        void openImageViewer(item.url);
+      } else {
+        void openVideoViewer(item.url);
       }
-
-      router.push({
-        pathname: '/chat-options',
-        params: {
-          id: routeId,
-          peerUserId: conversationId,
-          peerProfileId: peerProfile?.id ?? peerProfileId ?? '',
-          userName,
-          peerHasLeftBetweener: String(peerHasLeftBetweener),
-          canPlanDate: String(canPlanDate),
-          datePlanUnlockReason,
-          headerStatusLabel,
-          conversationSignal: conversationSignal ?? '',
-          isChatMuted: String(nextMuted),
-          isChatPinned: String(nextPinned),
-          isBlockedByMe: String(isBlockedByMe),
-        },
-      });
-    })();
-  }, [canPlanDate, conversationId, conversationSignal, datePlanUnlockReason, dismissHeaderHint, headerStatusLabel, isBlockedByMe, peerHasLeftBetweener, peerProfileId, routeId, userName]);
-
-  const handleHeaderLongPress = useCallback(() => {
-    handleOpenHeaderMenu();
-  }, [handleOpenHeaderMenu]);
-
-  const runChatOptionsAction = useCallback((action: ChatOptionsActionPayload | null) => {
-    if (!action) return;
-    switch (action.type) {
-      case 'view-profile':
-        handleViewProfile();
-        break;
-      case 'search-chat':
-        handleSearchInChat();
-        break;
-      case 'media-hub':
-        handleFilterMedia();
-        break;
-      case 'suggest-date':
-        if (action.force) {
-          openDatePlannerUnlocked();
-        } else {
-          handleOpenDatePlanner();
-        }
-        break;
-      case 'toggle-mute':
-        if (typeof action.value === 'boolean') {
-          applyMuteState(action.value);
-        } else {
-          handleToggleMute();
-        }
-        break;
-      case 'toggle-pin':
-        if (typeof action.value === 'boolean') {
-          applyPinState(action.value);
-        } else {
-          handleTogglePin();
-        }
-        break;
-      case 'clear-chat':
-        handleClearChat();
-        break;
-      case 'toggle-block':
-        if (isBlockedByMe) {
-          confirmUnblockUser();
-        } else {
-          handleBlockUser();
-        }
-        break;
-      case 'report-user':
-        handleReportUser();
-        break;
-      default:
-        break;
-    }
-  }, [
-    applyMuteState,
-    applyPinState,
-    confirmUnblockUser,
-    handleBlockUser,
-    handleClearChat,
-    handleFilterMedia,
-    handleOpenDatePlanner,
-    openDatePlannerUnlocked,
-    handleReportUser,
-    handleSearchInChat,
-    handleToggleMute,
-    handleTogglePin,
-    handleViewProfile,
-    isBlockedByMe,
-  ]);
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!routeId) return () => {};
-      const queuedFeedback = consumeChatOptionsFeedback(routeId);
-      if (queuedFeedback) {
-        requestAnimationFrame(() => {
-          triggerChatActionToast(
-            queuedFeedback.label,
-            queuedFeedback.icon as ComponentProps<typeof MaterialCommunityIcons>['name']
-          );
-        });
-      }
-      const queuedAction = consumeChatOptionsAction(routeId);
-      if (queuedAction) {
-        requestAnimationFrame(() => {
-          runChatOptionsAction(queuedAction);
-        });
-      }
-      return () => {};
-    }, [routeId, runChatOptionsAction, triggerChatActionToast])
+    },
+    [closeMediaHub, openImageViewer, openVideoViewer]
   );
-
 
   const renderMoodStickersPanel = () => {
     if (!showMoodStickers) return null;
@@ -11797,97 +11513,23 @@ const resolveQueuedVideoUri = async (
         animationType="fade"
         onRequestClose={closeReactionSheet}
       >
-        <Pressable style={styles.reactionSheetBackdrop} onPress={closeReactionSheet} />
-        <View style={styles.reactionSheet}>
-          <BlurView
-            intensity={32}
-            tint={isDark ? 'dark' : 'light'}
-            style={styles.reactionSheetBlur}
-          />
-          <View style={styles.reactionSheetHeader}>
-            <View>
-              <Text style={styles.reactionSheetTitle}>Reactions</Text>
-              <Text style={styles.reactionSheetCount}>
-                {reactionSheetMessage?.reactions.length ?? 0} total
-              </Text>
-            </View>
-            <TouchableOpacity onPress={closeReactionSheet} style={styles.reactionSheetClose}>
-              <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
-            </TouchableOpacity>
-          </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.reactionSheetPills}
-          >
-            <Pressable
-              style={[
-                styles.reactionSheetPill,
-                reactionSheetEmoji === null && styles.reactionSheetPillActive,
-              ]}
-              onPress={() => setReactionSheetEmoji(null)}
-            >
-              <Text
-                style={[
-                  styles.reactionSheetPillText,
-                  reactionSheetEmoji === null && styles.reactionSheetPillTextActive,
-                ]}
-              >
-                All
-              </Text>
-            </Pressable>
-            {reactionSummary.map((summary) => (
-              <Pressable
-                key={summary.emoji}
-                style={[
-                  styles.reactionSheetPill,
-                  reactionSheetEmoji === summary.emoji && styles.reactionSheetPillActive,
-                ]}
-                onPress={() => setReactionSheetEmoji(summary.emoji)}
-              >
-                <Text style={styles.reactionSheetPillEmoji}>{summary.emoji}</Text>
-                <Text
-                  style={[
-                    styles.reactionSheetPillText,
-                    reactionSheetEmoji === summary.emoji && styles.reactionSheetPillTextActive,
-                  ]}
-                >
-                  {summary.count}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-          <ScrollView contentContainerStyle={styles.reactionSheetList}>
-            {reactionSheetMessage && reactionSheetList.length === 0 ? (
-              <Text style={styles.reactionSheetEmpty}>No reactions yet.</Text>
-            ) : (
-              reactionSheetList.map((reaction) => {
-                const profileEntry = reactionProfiles[reaction.userId];
-                const label =
-                  reaction.userId === user?.id
-                    ? 'You'
-                    : profileEntry?.name || 'Unknown';
-                const avatarSource =
-                  reaction.userId === user?.id
-                    ? profile?.avatar_url
-                    : profileEntry?.avatar;
-                return (
-                  <View key={`${reaction.userId}-${reaction.emoji}`} style={styles.reactionSheetRow}>
-                    <Image
-                      source={avatarSource ? { uri: avatarSource } : BLOCKED_AVATAR_SOURCE}
-                      style={styles.reactionSheetAvatar}
-                    />
-                    <Text style={styles.reactionSheetName}>{label}</Text>
-                    <Text style={styles.reactionSheetEmoji}>{reaction.emoji}</Text>
-                  </View>
-                );
-              })
-            )}
-            {reactionProfilesLoading ? (
-              <Text style={styles.reactionSheetHint}>Loading profiles…</Text>
-            ) : null}
-          </ScrollView>
-        </View>
+        <ChatReactionSummarySheet
+          visible={reactionSheetVisible}
+          styles={styles}
+          theme={theme}
+          isDark={isDark}
+          currentUserId={user?.id}
+          currentUserAvatarUrl={profile?.avatar_url}
+          reactionSheetMessage={reactionSheetMessage}
+          reactionSummary={reactionSummary}
+          reactionSheetList={reactionSheetList}
+          reactionSheetEmoji={reactionSheetEmoji}
+          reactionProfiles={reactionProfiles}
+          reactionProfilesLoading={reactionProfilesLoading}
+          fallbackAvatarSource={BLOCKED_AVATAR_SOURCE}
+          onClose={closeReactionSheet}
+          onSelectEmoji={setReactionSheetEmoji}
+        />
       </Modal>
 
       <Modal
@@ -12081,195 +11723,59 @@ const resolveQueuedVideoUri = async (
         </View>
       </Modal>
 
-      <Modal
-        transparent
+      <ChatMessageActionsSheet
         visible={messageActionsVisible}
-        animationType="fade"
-        onRequestClose={closeMessageActions}
-      >
-        <Pressable style={styles.messageActionBackdrop} onPress={closeMessageActions} />
-        <View style={styles.messageActionSheet}>
-          <BlurView
-            intensity={34}
-            tint={isDark ? 'dark' : 'light'}
-            style={styles.messageActionBlur}
-          />
-          <View style={styles.messageActionContent}>
-            <Text style={styles.messageActionTitle}>Message options</Text>
-            {actionMessage ? (
-              <>
-                <TouchableOpacity
-                  style={styles.messageActionCard}
-                  onPress={() => {
-                    triggerActionHaptic(Haptics.ImpactFeedbackStyle.Light);
-                    closeMessageActions();
-                    replyToMessage(actionMessage);
-                  }}
-                >
-                  <View style={styles.messageActionIcon}>
-                    <MaterialCommunityIcons name="reply" size={22} color={theme.text} />
-                  </View>
-                  <View style={styles.messageActionText}>
-                    <Text style={styles.messageActionLabel}>Reply</Text>
-                    <Text style={styles.messageActionHint}>Respond to this message.</Text>
-                  </View>
-                </TouchableOpacity>
-
-                {canEditAction ? (
-                  <TouchableOpacity
-                    style={styles.messageActionCard}
-                    onPress={() => {
-                      triggerActionHaptic(Haptics.ImpactFeedbackStyle.Medium);
-                      closeMessageActions();
-                      startEditMessage(actionMessage);
-                    }}
-                  >
-                    <View style={styles.messageActionIcon}>
-                      <MaterialCommunityIcons name="pencil-outline" size={22} color={theme.text} />
-                    </View>
-                    <View style={styles.messageActionText}>
-                      <Text style={styles.messageActionLabel}>Edit message</Text>
-                      <Text style={styles.messageActionHint}>Update the text in place.</Text>
-                    </View>
-                  </TouchableOpacity>
-                ) : null}
-
-                {!actionMessage.isViewOnce ? (
-                  <TouchableOpacity
-                    style={styles.messageActionCard}
-                    onPress={() => {
-                      triggerActionHaptic(Haptics.ImpactFeedbackStyle.Light);
-                      closeMessageActions();
-                      void handleCopyMessage(actionMessage);
-                    }}
-                  >
-                    <View style={styles.messageActionIcon}>
-                      <MaterialCommunityIcons name="content-copy" size={22} color={theme.text} />
-                    </View>
-                    <View style={styles.messageActionText}>
-                      <Text style={styles.messageActionLabel}>Copy</Text>
-                      <Text style={styles.messageActionHint}>Copy to clipboard.</Text>
-                    </View>
-                  </TouchableOpacity>
-                ) : null}
-
-                {actionMessage.editedAt ? (
-                  <TouchableOpacity
-                    style={styles.messageActionCard}
-                    onPress={() => {
-                      triggerActionHaptic(Haptics.ImpactFeedbackStyle.Light);
-                      closeMessageActions();
-                      void openEditHistory(actionMessage);
-                    }}
-                  >
-                    <View style={styles.messageActionIcon}>
-                      <MaterialCommunityIcons name="history" size={22} color={theme.text} />
-                    </View>
-                    <View style={styles.messageActionText}>
-                      <Text style={styles.messageActionLabel}>View edit history</Text>
-                      <Text style={styles.messageActionHint}>See previous versions.</Text>
-                    </View>
-                  </TouchableOpacity>
-                ) : null}
-
-                <TouchableOpacity
-                  style={styles.messageActionCard}
-                  onPress={() => {
-                    triggerActionHaptic(Haptics.ImpactFeedbackStyle.Medium);
-                    closeMessageActions();
-                    if (isActionPinned) {
-                      void unpinMessage(actionMessage);
-                    } else {
-                      void pinMessage(actionMessage);
-                    }
-                  }}
-                >
-                  <View style={styles.messageActionIcon}>
-                    <MaterialCommunityIcons name="pin-outline" size={22} color={theme.text} />
-                  </View>
-                  <View style={styles.messageActionText}>
-                    <Text style={styles.messageActionLabel}>
-                      {isActionPinned ? 'Unpin message' : 'Pin message'}
-                    </Text>
-                    <Text style={styles.messageActionHint}>
-                      {isActionPinned ? 'Remove this pin.' : 'Keep it at the top for you.'}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={styles.messageActionCard}
-                  onPress={() => {
-                    triggerActionHaptic(Haptics.ImpactFeedbackStyle.Light);
-                    closeMessageActions();
-                    handleToggleMute();
-                  }}
-                >
-                  <View style={styles.messageActionIcon}>
-                    <MaterialCommunityIcons
-                      name={isChatMuted ? 'volume-high' : 'volume-off'}
-                      size={22}
-                      color={theme.text}
-                    />
-                  </View>
-                  <View style={styles.messageActionText}>
-                    <Text style={styles.messageActionLabel}>
-                      {isChatMuted ? 'Unmute chat' : 'Mute chat'}
-                    </Text>
-                    <Text style={styles.messageActionHint}>Silence notifications for this chat.</Text>
-                  </View>
-                </TouchableOpacity>
-
-                {canReportActionMessage ? (
-                  <TouchableOpacity
-                    style={[styles.messageActionCard, styles.messageActionDanger]}
-                    onPress={() => {
-                      triggerActionHaptic(Haptics.ImpactFeedbackStyle.Medium);
-                      closeMessageActions();
-                      handleReportMessage(actionMessage);
-                    }}
-                  >
-                    <View style={[styles.messageActionIcon, styles.messageActionIconDanger]}>
-                      <MaterialCommunityIcons name="alert-octagon-outline" size={22} color={Colors.light.background} />
-                    </View>
-                    <View style={styles.messageActionText}>
-                      <Text style={[styles.messageActionLabel, styles.messageActionLabelDanger]}>
-                        Report message
-                      </Text>
-                      <Text style={styles.messageActionHint}>Attach this message for review.</Text>
-                    </View>
-                  </TouchableOpacity>
-                ) : null}
-
-                <TouchableOpacity
-                  style={[styles.messageActionCard, styles.messageActionDanger]}
-                  onPress={() => {
-                    triggerActionHaptic(Haptics.ImpactFeedbackStyle.Heavy);
-                    closeMessageActions();
-                    handleDeleteAction(actionMessage);
-                  }}
-                >
-                  <View style={[styles.messageActionIcon, styles.messageActionIconDanger]}>
-                    <MaterialCommunityIcons name="trash-can-outline" size={22} color={Colors.light.background} />
-                  </View>
-                  <View style={styles.messageActionText}>
-                    <Text style={[styles.messageActionLabel, styles.messageActionLabelDanger]}>
-                      Delete
-                    </Text>
-                    <Text style={styles.messageActionHint}>Remove this message.</Text>
-                  </View>
-                </TouchableOpacity>
-              </>
-            ) : null}
-          </View>
-          <TouchableOpacity
-            style={styles.messageActionCancel}
-            onPress={closeMessageActions}
-          >
-            <Text style={styles.messageActionCancelText}>Cancel</Text>
-          </TouchableOpacity>
-        </View>
-      </Modal>
+        actionMessage={actionMessage}
+        styles={styles}
+        theme={theme}
+        isDark={isDark}
+        canRetryActionMessage={canRetryActionMessage}
+        canEditAction={canEditAction}
+        canReportActionMessage={canReportActionMessage}
+        isActionPinned={isActionPinned}
+        isChatMuted={isChatMuted}
+        onClose={closeMessageActions}
+        onReply={(message) => {
+          triggerActionHaptic(Haptics.ImpactFeedbackStyle.Light);
+          replyToMessage(message);
+        }}
+        onRetry={(message) => {
+          triggerActionHaptic(Haptics.ImpactFeedbackStyle.Medium);
+          void retryFailedTextMessage(message.id);
+        }}
+        onEdit={(message) => {
+          triggerActionHaptic(Haptics.ImpactFeedbackStyle.Medium);
+          startEditMessage(message);
+        }}
+        onCopy={(message) => {
+          triggerActionHaptic(Haptics.ImpactFeedbackStyle.Light);
+          void handleCopyMessage(message);
+        }}
+        onViewEditHistory={(message) => {
+          triggerActionHaptic(Haptics.ImpactFeedbackStyle.Light);
+          void openEditHistory(message);
+        }}
+        onTogglePin={(message, currentlyPinned) => {
+          triggerActionHaptic(Haptics.ImpactFeedbackStyle.Medium);
+          if (currentlyPinned) {
+            void unpinMessage(message);
+            return;
+          }
+          void pinMessage(message);
+        }}
+        onToggleMute={() => {
+          triggerActionHaptic(Haptics.ImpactFeedbackStyle.Light);
+          handleToggleMute();
+        }}
+        onReport={(message) => {
+          triggerActionHaptic(Haptics.ImpactFeedbackStyle.Medium);
+          handleReportMessage(message);
+        }}
+        onDelete={(message) => {
+          triggerActionHaptic(Haptics.ImpactFeedbackStyle.Heavy);
+          handleDeleteAction(message);
+        }}
+      />
 
       <Modal
         transparent
@@ -12978,7 +12484,7 @@ const resolveQueuedVideoUri = async (
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={0}
       >
-        {showJumpToBottom && (
+        {showJumpToBottom && !showThreadBootstrapLoader && (
           <Pressable
             style={[
               styles.jumpToBottomButton,
@@ -12996,31 +12502,63 @@ const resolveQueuedVideoUri = async (
             <MaterialCommunityIcons name="chevron-down" size={20} color={Colors.light.background} />
           </Pressable>
         )}
-        <FlatList
-          key={conversationId}
-          ref={flatListRef}
-          data={renderedMessages}
-          renderItem={renderMessage}
-          keyExtractor={keyExtractor}
-          contentContainerStyle={styles.messagesList}
-          ListHeaderComponent={renderLoadEarlier}
-          initialNumToRender={12}
-          maxToRenderPerBatch={12}
-          windowSize={7}
-          updateCellsBatchingPeriod={50}
-          removeClippedSubviews={Platform.OS === 'android'}
-          showsVerticalScrollIndicator={false}
-          onScroll={handleScroll}
-          scrollEventThrottle={16}
-          onContentSizeChange={handleMessagesContentSizeChange}
-          onLayout={handleMessagesLayout}
-          onScrollBeginDrag={onScrollBeginDrag}
-          onScrollToIndexFailed={handleScrollToIndexFailed}
-          onViewableItemsChanged={onViewableItemsChanged}
-          viewabilityConfig={messageListViewabilityConfig}
-        />
-        
-        {renderTypingIndicator()}
+        {showThreadBootstrapLoader ? (
+          <View style={styles.threadBootstrapLoader}>
+            <ActivityIndicator size="small" color={theme.tint} />
+          </View>
+        ) : (
+          <>
+            <FlashList
+              key={routeId}
+              ref={flatListRef}
+              data={renderedMessages}
+              renderItem={renderMessage}
+              getItemType={getMessageItemType}
+              keyExtractor={keyExtractor}
+              contentContainerStyle={styles.messagesList}
+              ListHeaderComponent={renderLoadEarlier}
+              ListEmptyComponent={
+                showThreadBootstrapPlaceholder ? (
+                  <View style={styles.threadBootstrapPlaceholder}>
+                    <View
+                      style={[
+                        styles.threadBootstrapBubble,
+                        styles.threadBootstrapBubblePeer,
+                        { backgroundColor: withAlpha(theme.text, isDark ? 0.14 : 0.08) },
+                      ]}
+                    />
+                    <View
+                      style={[
+                        styles.threadBootstrapBubble,
+                        styles.threadBootstrapBubblePeerShort,
+                        { backgroundColor: withAlpha(theme.text, isDark ? 0.1 : 0.06) },
+                      ]}
+                    />
+                    <View
+                      style={[
+                        styles.threadBootstrapBubble,
+                        styles.threadBootstrapBubbleMine,
+                        { backgroundColor: withAlpha(theme.tint, isDark ? 0.22 : 0.14) },
+                      ]}
+                    />
+                  </View>
+                ) : null
+              }
+              drawDistance={900}
+              removeClippedSubviews={Platform.OS === 'android'}
+              showsVerticalScrollIndicator={false}
+              onScroll={handleScroll}
+              scrollEventThrottle={16}
+              onContentSizeChange={handleMessagesContentSizeChange}
+              onLayout={handleMessagesLayout}
+              onScrollBeginDrag={onScrollBeginDrag}
+              onViewableItemsChanged={onViewableItemsChanged}
+              viewabilityConfig={messageListViewabilityConfig}
+            />
+            
+            {renderTypingIndicator()}
+          </>
+        )}
         {renderMoodStickersPanel()}
 
         {mediaUploadStatus ? (
@@ -13036,217 +12574,43 @@ const resolveQueuedVideoUri = async (
           </View>
         ) : null}
 
-        {/* Reply Preview */}
-        {replyingTo && (
-          <View style={styles.replyPreview}>
-            <View style={styles.replyPreviewContent}>
-              <MaterialCommunityIcons name="reply" size={16} color={theme.tint} />
-              <Text style={styles.replyPreviewText} numberOfLines={1}>
-                Replying to: {replyingTo.type === 'text' ? replyingTo.text : 
-                            replyingTo.type === 'voice' ? 'Voice message' :
-                            replyingTo.type === 'image' ? 'Photo' : 'Sticker'}
-              </Text>
-            </View>
-            <TouchableOpacity onPress={cancelReply} style={styles.cancelReplyButton}>
-              <MaterialCommunityIcons name="close" size={16} color={theme.textMuted} />
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {editingMessage && (
-          <View style={styles.editPreview}>
-            <View style={styles.editPreviewContent}>
-              <View style={styles.editPreviewBadge}>
-                <MaterialCommunityIcons name="pencil-outline" size={14} color={theme.tint} />
-              </View>
-              <Text style={styles.editPreviewText} numberOfLines={1}>
-                Editing: {editingMessage.text || 'Message'}
-              </Text>
-            </View>
-            <TouchableOpacity onPress={cancelEdit} style={styles.cancelEditButton}>
-              <MaterialCommunityIcons name="close" size={16} color={theme.textMuted} />
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {isChatBlocked ? (
-          <View style={styles.blockedInput}>
-            <View style={styles.blockedInputIcon}>
-              <MaterialCommunityIcons
-                name={isBlockedByMe ? 'shield-lock-outline' : 'lock-alert-outline'}
-                size={18}
-                color={theme.tint}
-              />
-            </View>
-            <View style={styles.blockedInputCopy}>
-              <Text style={styles.blockedInputTitle}>
-                {isBlockedByMe ? 'Blocked privately' : 'Messaging unavailable'}
-              </Text>
-              <Text style={styles.blockedInputText}>
-                {isBlockedByMe
-                  ? 'You blocked this member. They cannot message you, and they were not notified.'
-                  : 'This conversation is paused for safety.'}
-              </Text>
-            </View>
-            {isBlockedByMe ? (
-              <TouchableOpacity style={styles.blockedInputAction} onPress={confirmUnblockUser}>
-                <Text style={styles.blockedInputActionText}>Unblock</Text>
-              </TouchableOpacity>
-            ) : null}
-          </View>
-        ) : (
-          <>
-            {/* Enhanced Input Area */}
-            <View style={[styles.inputContainer, showImagePicker && styles.inputContainerRaised]}>
-              <View
-                style={[
-                  styles.composerShell,
-                  isInputFocused && styles.composerShellFocused,
-                  showMoodStickers && styles.composerShellAccent,
-                ]}
-              >
-                {/* Left Actions */}
-                <View style={styles.inputLeftActions}>
-                  <TouchableOpacity 
-                    style={[
-                      styles.inputActionButton,
-                      showImagePicker && styles.inputActionButtonActive,
-                    ]}
-                    onPress={() => {
-                      if (showImagePicker) {
-                        closeAttachmentSheet();
-                        requestAnimationFrame(() => inputRef.current?.focus());
-                      } else {
-                        openAttachmentSheet();
-                      }
-                    }}
-                  >
-                    <MaterialCommunityIcons
-                      name={showImagePicker ? "keyboard-outline" : "plus"}
-                      size={20}
-                      color={showImagePicker ? Colors.light.background : theme.textMuted}
-                    />
-                  </TouchableOpacity>
-                  
-                  <TouchableOpacity 
-                    style={[
-                      styles.inputActionButton,
-                      showMoodStickers && styles.inputActionButtonSecondaryActive,
-                    ]}
-                    onPress={() => {
-                      if (showImagePicker) {
-                        closeAttachmentSheet();
-                      }
-                      setShowMoodStickers((prev) => !prev);
-                    }}
-                  >
-                    <MaterialCommunityIcons 
-                      name="emoticon-happy" 
-                      size={20} 
-                      color={showMoodStickers ? theme.tint : theme.textMuted} 
-                    />
-                  </TouchableOpacity>
-                </View>
-                
-                {/* Text Input */}
-                <TextInput
-                  ref={inputRef}
-                  style={styles.textInput}
-                  value={inputText}
-                  onChangeText={handleInputChange}
-                  onFocus={handleInputFocus}
-                  onBlur={handleInputBlur}
-                  placeholder={isRecording ? "Recording voice..." : replyingTo ? "Reply..." : "Say something thoughtful..."}
-                  placeholderTextColor={withAlpha(theme.textMuted, isDark ? 0.66 : 0.72)}
-                  multiline
-                  maxLength={500}
-                  editable={!isRecording}
-                />
-                
-                {/* Right Actions */}
-                <View style={styles.inputRightActions}>
-                  {!inputText.trim() && !isRecording && (
-                    <Animated.View style={{ transform: [{ scale: voiceButtonScale }] }}>
-                      <Pressable
-                        style={styles.voiceButton}
-                        onPress={startVoiceRecording}
-                      >
-                        <Animated.View
-                          style={[
-                            styles.voiceButtonInner,
-                            {
-                              opacity: recordingAnimation.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: [1, 0.3],
-                              }),
-                            },
-                          ]}
-                        >
-                          <MaterialCommunityIcons 
-                            name="microphone"
-                            size={19} 
-                            color={Colors.light.background} 
-                          />
-                        </Animated.View>
-                      </Pressable>
-                    </Animated.View>
-                  )}
-
-                  {!inputText.trim() && isRecording && (
-                    <View style={styles.recordingControls}>
-                      <TouchableOpacity
-                        style={[styles.recordingControlButton, styles.recordingControlDanger]}
-                        onPress={discardVoiceRecording}
-                        disabled={isUploadingVoice}
-                      >
-                        <MaterialCommunityIcons name="trash-can-outline" size={18} color={Colors.light.background} />
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={[styles.recordingControlButton, styles.recordingControlPause]}
-                        onPress={isRecordingPaused ? resumeVoiceRecording : pauseVoiceRecording}
-                        disabled={isUploadingVoice}
-                      >
-                        <MaterialCommunityIcons
-                          name={isRecordingPaused ? "play" : "pause"}
-                          size={18}
-                          color={Colors.light.background}
-                        />
-                      </TouchableOpacity>
-
-                      <View style={styles.recordingTimerPill}>
-                        <Text style={styles.recordingTimerText}>
-                          {Math.floor(recordingDuration / 60)}:{`${Math.floor(recordingDuration % 60)}`.padStart(2, '0')}
-                        </Text>
-                      </View>
-
-                      <TouchableOpacity
-                        style={[
-                          styles.recordingControlButton,
-                          styles.recordingControlSend,
-                          isUploadingVoice && styles.recordingControlDisabled,
-                        ]}
-                        onPress={sendVoiceRecording}
-                        disabled={isUploadingVoice}
-                      >
-                        <MaterialCommunityIcons name="send" size={16} color={Colors.light.background} />
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                  
-                  {inputText.trim() && (
-                    <TouchableOpacity 
-                      style={styles.sendButtonActive}
-                      onPress={sendMessage}
-                    >
-                      <MaterialCommunityIcons name="send" size={19} color={Colors.light.background} />
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-            </View>
-          </>
-        )}
+        {!needsRouteIdentityResolution ? (
+          <ChatComposer
+            styles={styles}
+            theme={theme}
+            isDark={isDark}
+            inputRef={inputRef}
+            inputText={inputText}
+            onChangeText={handleInputChange}
+            onFocus={handleInputFocus}
+            onBlur={handleInputBlur}
+            placeholderTextColor={withAlpha(theme.textMuted, isDark ? 0.66 : 0.72)}
+            isRecording={isRecording}
+            isRecordingPaused={isRecordingPaused}
+            isUploadingVoice={isUploadingVoice}
+            recordingDuration={recordingDuration}
+            voiceButtonScale={voiceButtonScale}
+            recordingAnimation={recordingAnimation}
+            showImagePicker={showImagePicker}
+            showMoodStickers={showMoodStickers}
+            isInputFocused={isInputFocused}
+            replyingTo={replyingTo}
+            editingMessage={editingMessage}
+            isChatBlocked={isChatBlocked}
+            isBlockedByMe={isBlockedByMe}
+            onConfirmUnblock={confirmUnblockUser}
+            onCancelReply={cancelReply}
+            onCancelEdit={cancelEdit}
+            onToggleAttachment={toggleComposerAttachmentSheet}
+            onToggleMoodStickers={toggleComposerMoodStickers}
+            onStartVoiceRecording={startVoiceRecording}
+            onDiscardVoiceRecording={discardVoiceRecording}
+            onPauseVoiceRecording={pauseVoiceRecording}
+            onResumeVoiceRecording={resumeVoiceRecording}
+            onSendVoiceRecording={sendVoiceRecording}
+            onSendMessage={sendMessage}
+          />
+        ) : null}
 
         {/* Image Picker Actions */}
         {showImagePicker && (
@@ -13260,7 +12624,7 @@ const resolveQueuedVideoUri = async (
                   {
                     translateY: attachmentAnim.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [ATTACHMENT_SHEET_HEIGHT, 0],
+                      outputRange: [attachmentSheetHeight + insets.bottom + 24, 0],
                     }),
                   },
                 ],
@@ -13277,109 +12641,117 @@ const resolveQueuedVideoUri = async (
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity
-              style={[
-                styles.viewOnceAttachmentRow,
-                viewOnceMode && styles.viewOnceAttachmentRowActive,
-              ]}
-              onPress={async () => {
-                Haptics.selectionAsync().catch(() => {});
-                if (!viewOnceMode) {
-                  const keys = await ensureViewOnceKeys();
-                  if (!keys) return;
-                }
-                setViewOnceMode((prev) => !prev);
-              }}
+            <ScrollView
+              style={styles.attachmentSheetScroll}
+              contentContainerStyle={styles.attachmentSheetContent}
+              showsVerticalScrollIndicator={false}
+              bounces={false}
+              keyboardShouldPersistTaps="handled"
             >
-              <View style={styles.viewOnceAttachmentLeft}>
+              <TouchableOpacity
+                style={[
+                  styles.viewOnceAttachmentRow,
+                  viewOnceMode && styles.viewOnceAttachmentRowActive,
+                ]}
+                onPress={async () => {
+                  Haptics.selectionAsync().catch(() => {});
+                  if (!viewOnceMode) {
+                    const keys = await ensureViewOnceKeys();
+                    if (!keys) return;
+                  }
+                  setViewOnceMode((prev) => !prev);
+                }}
+              >
+                <View style={styles.viewOnceAttachmentLeft}>
+                  <View
+                    style={[
+                      styles.viewOnceAttachmentIcon,
+                      viewOnceMode && styles.viewOnceAttachmentIconActive,
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name={viewOnceMode ? 'shield-lock' : 'shield-lock-outline'}
+                      size={18}
+                      color={viewOnceMode ? Colors.light.background : theme.textMuted}
+                    />
+                  </View>
+                  <View>
+                    <Text style={styles.viewOnceAttachmentTitle}>View once (encrypted)</Text>
+                    <Text style={styles.viewOnceAttachmentSubtitle}>Only for photos & videos</Text>
+                  </View>
+                </View>
                 <View
                   style={[
-                    styles.viewOnceAttachmentIcon,
-                    viewOnceMode && styles.viewOnceAttachmentIconActive,
+                    styles.viewOnceAttachmentToggle,
+                    viewOnceMode && styles.viewOnceAttachmentToggleActive,
                   ]}
                 >
                   <MaterialCommunityIcons
-                    name={viewOnceMode ? 'shield-lock' : 'shield-lock-outline'}
-                    size={18}
+                    name={viewOnceMode ? 'lock' : 'lock-open-variant'}
+                    size={16}
                     color={viewOnceMode ? Colors.light.background : theme.textMuted}
                   />
                 </View>
-                <View>
-                  <Text style={styles.viewOnceAttachmentTitle}>View once (encrypted)</Text>
-                  <Text style={styles.viewOnceAttachmentSubtitle}>Only for photos & videos</Text>
-                </View>
-              </View>
-              <View
-                style={[
-                  styles.viewOnceAttachmentToggle,
-                  viewOnceMode && styles.viewOnceAttachmentToggleActive,
-                ]}
-              >
-                <MaterialCommunityIcons
-                  name={viewOnceMode ? 'lock' : 'lock-open-variant'}
-                  size={16}
-                  color={viewOnceMode ? Colors.light.background : theme.textMuted}
-                />
-              </View>
-            </TouchableOpacity>
+              </TouchableOpacity>
 
-            <View style={styles.imagePickerGrid}>
-              <TouchableOpacity
-                style={styles.imagePickerOption}
-                onPress={handleCameraPress}
-              >
-                <View style={styles.imagePickerIcon}>
-                  <MaterialCommunityIcons name="camera-outline" size={22} color={theme.tint} />
-                </View>
-                {viewOnceMode && (
-                  <View style={styles.viewOnceMediaBadge}>
-                    <MaterialCommunityIcons name="lock" size={12} color={Colors.light.background} />
-                    <Text style={styles.viewOnceMediaBadgeText}>Once</Text>
+              <View style={styles.imagePickerGrid}>
+                <TouchableOpacity
+                  style={styles.imagePickerOption}
+                  onPress={handleCameraPress}
+                >
+                  <View style={styles.imagePickerIcon}>
+                    <MaterialCommunityIcons name="camera-outline" size={22} color={theme.tint} />
                   </View>
-                )}
-                <Text style={styles.imagePickerLabel}>Camera</Text>
-                <Text style={styles.imagePickerSubLabel}>Photo & video</Text>
-              </TouchableOpacity>
+                  {viewOnceMode && (
+                    <View style={styles.viewOnceMediaBadge}>
+                      <MaterialCommunityIcons name="lock" size={12} color={Colors.light.background} />
+                      <Text style={styles.viewOnceMediaBadgeText}>Once</Text>
+                    </View>
+                  )}
+                  <Text style={styles.imagePickerLabel}>Camera</Text>
+                  <Text style={styles.imagePickerSubLabel}>Photo & video</Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.imagePickerOption}
-                onPress={handleLibraryPress}
-              >
-                <View style={styles.imagePickerIcon}>
-                  <MaterialCommunityIcons name="image-multiple-outline" size={22} color={theme.tint} />
-                </View>
-                {viewOnceMode && (
-                  <View style={styles.viewOnceMediaBadge}>
-                    <MaterialCommunityIcons name="lock" size={12} color={Colors.light.background} />
-                    <Text style={styles.viewOnceMediaBadgeText}>Once</Text>
+                <TouchableOpacity
+                  style={styles.imagePickerOption}
+                  onPress={handleLibraryPress}
+                >
+                  <View style={styles.imagePickerIcon}>
+                    <MaterialCommunityIcons name="image-multiple-outline" size={22} color={theme.tint} />
                   </View>
-                )}
-                <Text style={styles.imagePickerLabel}>Photos</Text>
-                <Text style={styles.imagePickerSubLabel}>Library</Text>
-              </TouchableOpacity>
+                  {viewOnceMode && (
+                    <View style={styles.viewOnceMediaBadge}>
+                      <MaterialCommunityIcons name="lock" size={12} color={Colors.light.background} />
+                      <Text style={styles.viewOnceMediaBadgeText}>Once</Text>
+                    </View>
+                  )}
+                  <Text style={styles.imagePickerLabel}>Photos</Text>
+                  <Text style={styles.imagePickerSubLabel}>Library</Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.imagePickerOption}
-                onPress={handleDocumentPress}
-              >
-                <View style={styles.imagePickerIcon}>
-                  <MaterialCommunityIcons name="file-document-outline" size={22} color={theme.tint} />
-                </View>
-                <Text style={styles.imagePickerLabel}>Documents</Text>
-                <Text style={styles.imagePickerSubLabel}>Files & media</Text>
-              </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.imagePickerOption}
+                  onPress={handleDocumentPress}
+                >
+                  <View style={styles.imagePickerIcon}>
+                    <MaterialCommunityIcons name="file-document-outline" size={22} color={theme.tint} />
+                  </View>
+                  <Text style={styles.imagePickerLabel}>Documents</Text>
+                  <Text style={styles.imagePickerSubLabel}>Files & media</Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.imagePickerOption}
-                onPress={handleLocationPress}
-              >
-                <View style={styles.imagePickerIcon}>
-                  <MaterialCommunityIcons name="map-marker-outline" size={22} color={theme.tint} />
-                </View>
-                <Text style={styles.imagePickerLabel}>Location</Text>
-                <Text style={styles.imagePickerSubLabel}>Send a pin</Text>
-              </TouchableOpacity>
-            </View>
+                <TouchableOpacity
+                  style={styles.imagePickerOption}
+                  onPress={handleLocationPress}
+                >
+                  <View style={styles.imagePickerIcon}>
+                    <MaterialCommunityIcons name="map-marker-outline" size={22} color={theme.tint} />
+                  </View>
+                  <Text style={styles.imagePickerLabel}>Location</Text>
+                  <Text style={styles.imagePickerSubLabel}>Send a pin</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </Animated.View>
         )}
       </KeyboardAvoidingView>
@@ -13389,7 +12761,13 @@ const resolveQueuedVideoUri = async (
 }
 
 // [Include all the same styles from the original chat screen...]
-const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: ResponsiveMetrics) => {
+const createStyles = (
+  theme: typeof Colors.light,
+  isDark: boolean,
+  responsive: ResponsiveMetrics,
+  attachmentSheetHeight: number,
+  bottomInset: number
+) => {
   const screenWidth = responsive.width;
   const screenHeight = responsive.height;
   const locationPreviewWidth = Math.min(screenWidth * 0.68, 296);
@@ -13577,14 +12955,20 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
     },
     onlineIndicator: {
       position: 'absolute',
-      bottom: 2,
-      right: 2,
-      width: 12,
-      height: 12,
-      borderRadius: 6,
+      bottom: -1,
+      right: -1,
+      width: 13,
+      height: 13,
+      borderRadius: 6.5,
       backgroundColor: theme.secondary,
       borderWidth: 2,
       borderColor: theme.background,
+      zIndex: 2,
+      elevation: 6,
+      shadowColor: '#000',
+      shadowOpacity: 0.18,
+      shadowRadius: 4,
+      shadowOffset: { width: 0, height: 1 },
     },
     headerInfo: {
       flex: 1,
@@ -15487,6 +14871,32 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       flex: 1,
       backgroundColor: theme.background,
     },
+    threadBootstrapLoader: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    threadBootstrapPlaceholder: {
+      paddingTop: 24,
+      gap: 12,
+    },
+    threadBootstrapBubble: {
+      borderRadius: 18,
+      height: 42,
+    },
+    threadBootstrapBubblePeer: {
+      alignSelf: 'flex-start',
+      width: '62%',
+    },
+    threadBootstrapBubblePeerShort: {
+      alignSelf: 'flex-start',
+      width: '42%',
+      height: 34,
+    },
+    threadBootstrapBubbleMine: {
+      alignSelf: 'flex-end',
+      width: '56%',
+    },
     jumpToBottomButton: {
       position: 'absolute',
       right: 16,
@@ -15705,6 +15115,18 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
     },
     inlineMetaIconText: {
       marginLeft: 2,
+    },
+    failedRetryHint: {
+      marginTop: 4,
+      fontSize: 10,
+      fontFamily: 'Manrope_700Bold',
+      letterSpacing: 0.2,
+    },
+    failedRetryHintMy: {
+      color: withAlpha(Colors.light.background, 0.84),
+    },
+    failedRetryHintTheir: {
+      color: theme.danger,
     },
     myMessageBubble: {
       backgroundColor: theme.tint,
@@ -16146,10 +15568,10 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
     },
     typingBubble: {
       backgroundColor: isDark ? withAlpha(theme.backgroundSubtle, 0.92) : withAlpha('#fffaf5', 0.96),
-      borderRadius: 18,
+      borderRadius: 16,
       borderBottomLeftRadius: 8,
-      paddingHorizontal: 14,
-      paddingVertical: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
       shadowColor: Colors.dark.background,
       shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.08,
@@ -16157,13 +15579,6 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       elevation: 2,
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
-      gap: 6,
-    },
-    typingLabel: {
-      fontSize: 10.5,
-      fontFamily: 'Manrope_600SemiBold',
-      letterSpacing: 0.4,
-      color: theme.textMuted,
     },
     typingDots: {
       flexDirection: 'row',
@@ -16320,7 +15735,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       color: Colors.light.background,
     },
     inputContainerRaised: {
-      marginBottom: ATTACHMENT_SHEET_HEIGHT,
+      marginBottom: attachmentSheetHeight,
     },
     textInput: {
       flex: 1,
@@ -16896,13 +16311,29 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       gap: 10,
       minWidth: 180,
       maxWidth: screenWidth * 0.6,
-      paddingHorizontal: 2,
-      paddingVertical: 2,
+      paddingHorizontal: 10,
+      paddingVertical: 10,
+      borderRadius: 18,
+      borderWidth: 1,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.08,
+      shadowRadius: 12,
+      elevation: 2,
+    },
+    documentMessageSurfaceMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.08),
+      borderColor: withAlpha(Colors.light.background, 0.14),
+      shadowColor: Colors.light.background,
+    },
+    documentMessageSurfaceTheir: {
+      backgroundColor: withAlpha(theme.text, isDark ? 0.05 : 0.03),
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+      shadowColor: Colors.dark.background,
     },
     documentIcon: {
-      width: 38,
-      height: 38,
-      borderRadius: 13,
+      width: 40,
+      height: 40,
+      borderRadius: 14,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -16942,11 +16373,16 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       gap: 8,
     },
     locationMapFrame: {
-      borderRadius: 14,
+      borderRadius: 16,
       overflow: 'hidden',
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
       backgroundColor: theme.backgroundSubtle,
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 5 },
+      shadowOpacity: 0.08,
+      shadowRadius: 12,
+      elevation: 2,
     },
     locationMapImage: {
       width: locationPreviewWidth,
@@ -16962,11 +16398,16 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       gap: 6,
     },
     locationDetailsCard: {
-      borderRadius: 14,
-      paddingHorizontal: 10,
-      paddingVertical: 10,
-      gap: 8,
+      borderRadius: 16,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      gap: 9,
       borderWidth: 1,
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.06,
+      shadowRadius: 10,
+      elevation: 1,
     },
     locationDetailsCardMy: {
       backgroundColor: withAlpha(Colors.light.background, 0.08),
@@ -17526,17 +16967,19 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
     },
     replyChip: {
       flexDirection: 'row',
-      alignItems: 'center',
-      gap: 9,
-      paddingHorizontal: 11,
-      paddingVertical: 9,
-      borderRadius: 16,
-      marginBottom: 9,
+      alignItems: 'flex-start',
+      gap: 10,
+      minWidth: 158,
+      maxWidth: '100%',
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 18,
+      marginBottom: 10,
       borderWidth: 1,
-      shadowOffset: { width: 0, height: 3 },
+      shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.08,
-      shadowRadius: 10,
-      elevation: 1,
+      shadowRadius: 12,
+      elevation: 2,
     },
     replyChipMy: {
       backgroundColor: withAlpha(Colors.light.background, 0.13),
@@ -17550,8 +16993,55 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
     },
     replyChipLine: {
       width: 3,
-      height: 30,
-      borderRadius: 3,
+      minHeight: 42,
+      borderRadius: 999,
+    },
+    replyChipThumb: {
+      width: 46,
+      height: 46,
+      borderRadius: 14,
+      overflow: 'hidden',
+      borderWidth: 1,
+      position: 'relative',
+    },
+    replyChipThumbMy: {
+      borderColor: withAlpha(Colors.light.background, 0.22),
+      backgroundColor: withAlpha(Colors.light.background, 0.12),
+    },
+    replyChipThumbTheir: {
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      backgroundColor: withAlpha(theme.text, isDark ? 0.06 : 0.035),
+    },
+    replyChipThumbImage: {
+      width: '100%',
+      height: '100%',
+    },
+    replyChipThumbFallback: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    replyChipThumbFallbackMy: {
+      backgroundColor: withAlpha(Colors.light.background, 0.08),
+    },
+    replyChipThumbFallbackTheir: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
+    },
+    replyChipThumbOverlay: {
+      position: 'absolute',
+      right: 5,
+      bottom: 5,
+      width: 18,
+      height: 18,
+      borderRadius: 9,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    replyChipThumbOverlayMy: {
+      backgroundColor: withAlpha('#071E22', 0.34),
+    },
+    replyChipThumbOverlayTheir: {
+      backgroundColor: withAlpha(theme.background, isDark ? 0.62 : 0.78),
     },
     replyChipLineMy: {
       backgroundColor: withAlpha(Colors.light.background, 0.74),
@@ -17561,7 +17051,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
     },
     replyChipContent: {
       flex: 1,
-      gap: 3,
+      gap: 4,
     },
     replyChipHeader: {
       flexDirection: 'row',
@@ -17569,9 +17059,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       gap: 6,
     },
     replyChipIconWrap: {
-      width: 22,
-      height: 22,
-      borderRadius: 11,
+      width: 20,
+      height: 20,
+      borderRadius: 10,
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -17583,18 +17073,18 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
     },
     replyChipLabel: {
       flexShrink: 1,
-      fontSize: 10.5,
+      fontSize: 10,
       fontFamily: 'Manrope_600SemiBold',
       color: theme.textMuted,
       textTransform: 'uppercase',
-      letterSpacing: 0.55,
+      letterSpacing: 0.6,
     },
     replyChipLabelMy: {
       color: withAlpha(Colors.light.background, 0.76),
     },
     replyChipTime: {
       marginLeft: 'auto',
-      fontSize: 9.5,
+      fontSize: 9,
       fontFamily: 'Manrope_500Medium',
       color: withAlpha(theme.textMuted, 0.86),
     },
@@ -17602,8 +17092,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       color: withAlpha(Colors.light.background, 0.62),
     },
     replyChipPreview: {
-      fontSize: 12.5,
-      lineHeight: 16,
+      fontSize: 13,
+      lineHeight: 18,
       fontFamily: 'Manrope_500Medium',
       color: theme.text,
     },
@@ -17857,9 +17347,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       borderTopColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
       paddingHorizontal: 16,
       paddingTop: 12,
-      paddingBottom: 24,
+      paddingBottom: Math.max(bottomInset + 12, 24),
       gap: 12,
-      height: ATTACHMENT_SHEET_HEIGHT,
+      maxHeight: attachmentSheetHeight,
       position: 'absolute',
       left: 0,
       right: 0,
@@ -17870,6 +17360,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       shadowOpacity: 0.12,
       shadowRadius: 12,
       elevation: 12,
+    },
+    attachmentSheetScroll: {
+      flexGrow: 0,
+    },
+    attachmentSheetContent: {
+      gap: 12,
+      paddingBottom: 4,
     },
     imagePickerHeader: {
       flexDirection: 'row',

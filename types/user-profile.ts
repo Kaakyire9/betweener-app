@@ -54,6 +54,8 @@ export type UserProfile = {
   languages?: string[];
   currentCountry?: string;
   currentCountryCode?: string;
+  originCountry?: string;
+  originCountryCode?: string;
   exerciseFrequency?: string;
   smoking?: string;
   drinking?: string;

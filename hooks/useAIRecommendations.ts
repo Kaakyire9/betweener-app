@@ -50,12 +50,43 @@ const parseDistanceKmFromLabel = (label?: string | null): number | undefined => 
   return undefined;
 };
 
+const arePrimitiveArraysEqual = (left: unknown, right: unknown) => {
+  if (!Array.isArray(left) || !Array.isArray(right)) return false;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+};
+
+const areMatchObjectsEquivalent = (left: Match, right: Match) => {
+  const leftKeys = Object.keys(left as Record<string, unknown>);
+  const rightKeys = Object.keys(right as Record<string, unknown>);
+  if (leftKeys.length !== rightKeys.length) return false;
+
+  for (const key of rightKeys) {
+    const leftValue = (left as any)[key];
+    const rightValue = (right as any)[key];
+    if (Array.isArray(leftValue) || Array.isArray(rightValue)) {
+      if (!arePrimitiveArraysEqual(leftValue, rightValue)) return false;
+      continue;
+    }
+    if (leftValue !== rightValue) return false;
+  }
+
+  return true;
+};
+
 const mergePreservingLocationMetadata = (prev: Match[], next: Match[]): Match[] => {
   if (!prev.length || !next.length) return next;
   const prevById = new Map(prev.map((item) => [String(item.id), item]));
-  return next.map((item) => {
+  let changed = false;
+  const mergedList = next.map((item) => {
     const prior = prevById.get(String(item.id));
-    if (!prior) return item;
+    if (!prior) {
+      changed = true;
+      return item;
+    }
     const incomingPrecision = String((item as any).location_precision || '').toUpperCase();
     const shouldTrustIncomingExactLocation = incomingPrecision === 'EXACT';
     const mergedCity = pickBetterLocationValue((item as any).city, (prior as any).city, {
@@ -71,7 +102,7 @@ const mergePreservingLocationMetadata = (prev: Match[], next: Match[]): Match[] 
       preferShorter: true,
       avoidAdministrative: true,
     });
-    return {
+    const mergedCandidate = {
       ...prior,
       ...item,
       city: shouldTrustIncomingExactLocation ? ((item as any).city || undefined) : mergedCity || undefined,
@@ -87,7 +118,20 @@ const mergePreservingLocationMetadata = (prev: Match[], next: Match[]): Match[] 
       distanceKm: typeof (item as any).distanceKm === 'number' ? (item as any).distanceKm : (prior as any).distanceKm,
       distance: (item as any).distance || (prior as any).distance,
     } as Match;
+
+    if (areMatchObjectsEquivalent(prior, mergedCandidate)) {
+      return prior;
+    }
+
+    changed = true;
+    return mergedCandidate;
   });
+
+  if (!changed && prev.length === mergedList.length && mergedList.every((item, index) => item === prev[index])) {
+    return prev;
+  }
+
+  return mergedList;
 };
 
 // Format distance with sensible rounding and short strings
@@ -167,6 +211,7 @@ export default function useAIRecommendations(
     mode?: 'forYou' | 'nearby' | 'active';
     activeWindowMinutes?: number;
     distanceUnit?: DistanceUnit;
+    liveFetchEnabled?: boolean;
   }
 ) {
   // Start empty; prefer server-sourced profiles. Mocks are only a fallback
@@ -182,6 +227,7 @@ export default function useAIRecommendations(
   const presencePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mode = opts?.mode ?? 'forYou';
   const activeWindowMinutes = opts?.activeWindowMinutes ?? ACTIVE_WINDOW_MINUTES;
+  const liveFetchEnabled = opts?.liveFetchEnabled !== false;
   const effectiveDistanceUnit =
     opts?.distanceUnit && opts.distanceUnit !== 'auto' ? opts.distanceUnit : distanceUnit;
   const resolvedDistanceUnit = useMemo(
@@ -192,7 +238,7 @@ export default function useAIRecommendations(
   const cacheKey = useMemo(() => {
     if (!userId) return null;
     const win = mode === 'active' ? String(activeWindowMinutes) : '-';
-    return `cache:ai_recs:v2:${userId}:${mode}:${win}`;
+    return `cache:ai_recs:v3:${userId}:${mode}:${win}`;
   }, [activeWindowMinutes, mode, userId]);
   const cacheLoadedKeyRef = useRef<string | null>(null);
   const cacheWriteInFlightRef = useRef(false);
@@ -284,8 +330,9 @@ export default function useAIRecommendations(
   }, []);
 
   useEffect(() => {
-    setMatches((prev) =>
-      prev.map((m) => {
+    setMatches((prev) => {
+      let changed = false;
+      const next = prev.map((m) => {
         const fallback = getPreferredLocationLabel(m as any) || m.distance;
         let distanceKm = (m as any).distanceKm;
         if (typeof distanceKm !== 'number' || Number.isNaN(distanceKm)) {
@@ -294,13 +341,19 @@ export default function useAIRecommendations(
         if (typeof distanceKm !== 'number' || Number.isNaN(distanceKm)) {
           return m;
         }
+        const nextDistance = formatDistance(distanceKm, fallback, resolvedDistanceUnit);
+        if (nextDistance === m.distance && distanceKm === (m as any).distanceKm) {
+          return m;
+        }
+        changed = true;
         return {
           ...m,
-          distance: formatDistance(distanceKm, fallback, resolvedDistanceUnit),
+          distance: nextDistance,
           distanceKm,
         } as Match;
-      })
-    );
+      });
+      return changed ? next : prev;
+    });
   }, [resolvedDistanceUnit]);
 
   const presenceIdsKey = useMemo(
@@ -740,6 +793,7 @@ export default function useAIRecommendations(
   }, []);
 
   const fetchMatchesFromServer = useCallback(async () => {
+    if (!liveFetchEnabled) return;
     try {
       const storedUnit = await getStoredDistanceUnit();
       const unitForFormat: DistanceUnit = storedUnit === 'auto' ? resolveAutoUnit() : storedUnit;
@@ -985,8 +1039,65 @@ export default function useAIRecommendations(
             current_country: (p as any).current_country,
             current_country_code: (p as any).current_country_code,
             location_precision: (p as any).location_precision,
+            recommendationReasons: p?.recommendation_reasons ?? undefined,
+            recommendationVersion:
+              typeof p?.recommendation_reasons?.version === 'string'
+                ? p.recommendation_reasons.version
+                : undefined,
+            serverRanked: Boolean(p?.recommendation_reasons),
           } as Match);
         };
+
+        try {
+          const v2Segment = mode === 'active' ? 'active_now' : mode === 'nearby' ? 'nearby' : 'for_you';
+          const v2Args = {
+            p_user_id: userId,
+            p_segment: v2Segment,
+            p_limit: mode === 'active' ? 50 : 30,
+            p_active_window_minutes: activeWindowMinutes,
+          };
+          const v3 = await rpc('get_vibes_recommendations_v3', v2Args);
+          if (v3?.error?.code === 'client_timeout') {
+            noteRpcFailure(v3.error, 'get_vibes_recommendations_v3');
+            return;
+          }
+          if (!v3?.error && Array.isArray(v3?.data)) {
+            const enriched = await enrichRpcRowsWithInterests(v3.data);
+            const needsDistanceFallback = enriched.some(
+              (p: any) =>
+                toNum(p?.distance_km) == null &&
+                toNum(p?.latitude) != null &&
+                toNum(p?.longitude) != null,
+            );
+            const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
+            const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
+            const filtered = filterDiscoverable(mapped);
+            let mergedFiltered = filtered;
+            setMatches((prev) => {
+              mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
+              return mergedFiltered;
+            });
+            setLastError(null);
+            setLastFetchedAt(Date.now());
+            void persistMatchesCache(mergedFiltered);
+            addBreadcrumb('[recs] fetch_ok', { fetchId, mode, fn: 'get_vibes_recommendations_v3', rows: mapped.length });
+            return;
+          }
+          if (v3?.error) {
+            addBreadcrumb('[recs] v3_fallback', {
+              fetchId,
+              mode,
+              errorCode: v3.error.code ?? null,
+              message: String(v3.error.message || 'v3_error'),
+            });
+          }
+        } catch (e) {
+          addBreadcrumb('[recs] v3_throw_fallback', {
+            fetchId,
+            mode,
+            message: String((e as any)?.message || e || 'v3_throw'),
+          });
+        }
 
         try {
           const v2Segment = mode === 'active' ? 'active_now' : mode === 'nearby' ? 'nearby' : 'for_you';
@@ -1010,10 +1121,7 @@ export default function useAIRecommendations(
                 toNum(p?.longitude) != null,
             );
             const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
-            const mapped = enriched.map((p: any) => ({
-              ...mapRpcRow(p, true, viewerCoords),
-              recommendationReasons: p?.recommendation_reasons ?? undefined,
-            }));
+            const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
             const filtered = filterDiscoverable(mapped);
             let mergedFiltered = filtered;
             setMatches((prev) => {
@@ -1476,7 +1584,7 @@ export default function useAIRecommendations(
     console.log('[useAIRecommendations] fetch failed (keeping existing matches if any)');
     setLastError((prev) => prev ?? new Error('fetch_failed'));
     setLastFetchedAt((prev) => prev ?? Date.now());
-  }, [userId, mode, activeWindowMinutes, resolvedDistanceUnit, getStoredDistanceUnit, persistMatchesCache]);
+  }, [activeWindowMinutes, getStoredDistanceUnit, liveFetchEnabled, mode, persistMatchesCache, resolvedDistanceUnit, userId]);
 
     // Fetch matches on mount and when userId changes
     useEffect(() => {
@@ -1529,6 +1637,7 @@ export default function useAIRecommendations(
       // merge into existing matches
       let merged: any = null;
       setMatches((prev) => {
+        let changed = false;
         const next = prev.map((m) => {
           if (String(m.id) !== String(profileId)) return m;
           const personality = profileData?.personality_type
@@ -1578,9 +1687,13 @@ export default function useAIRecommendations(
               : profileData?.current_country_code ?? (m as any).current_country_code,
             location_precision: profileData?.location_precision ?? (m as any).location_precision,
           } as Match;
+          if (areMatchObjectsEquivalent(m, merged)) {
+            return m;
+          }
+          changed = true;
           return merged;
         });
-        return next;
+        return changed ? next : prev;
       });
 
       return merged;

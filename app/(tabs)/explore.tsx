@@ -185,7 +185,6 @@ export default function CirclesScreen() {
     [currentProfileId, scope],
   );
   const cacheLoadedRef = useRef<string | null>(null);
-
   useEffect(() => {
     let cancelled = false;
     if (profile?.id) {

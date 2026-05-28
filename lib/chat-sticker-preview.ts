@@ -1,5 +1,7 @@
 export const STICKER_TEXT_PREFIX = 'sticker::';
 
+const LEGACY_STICKER_EMOJI_TOKEN = /^(?:\p{Extended_Pictographic}|\p{Regional_Indicator}|\uFE0F|\u200D)+$/u;
+
 export type StickerPreview = {
   emoji: string;
   name: string;
@@ -26,6 +28,7 @@ export const parseStickerPreview = (text?: string | null): StickerPreview | null
 
   const [emoji, ...rest] = value.split(' ');
   if (!emoji) return null;
+  if (!LEGACY_STICKER_EMOJI_TOKEN.test(emoji)) return null;
   const name = rest.join(' ').trim() || 'Sticker';
   return { emoji, name, color: null };
 };

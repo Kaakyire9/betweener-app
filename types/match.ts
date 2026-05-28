@@ -32,7 +32,12 @@ export type Match = {
   region?: string;
   current_country?: string;
   current_country_code?: string;
+  origin_country?: string;
+  origin_country_code?: string;
   location_precision?: string;
   matchmaking_mode?: boolean;
   discoverable_in_vibes?: boolean;
+  recommendationReasons?: Record<string, unknown>;
+  recommendationVersion?: string;
+  serverRanked?: boolean;
 };

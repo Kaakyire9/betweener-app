@@ -1,6 +1,8 @@
 import { addEventListener, fetch as fetchNetInfo } from '@react-native-community/netinfo';
 import * as FileSystem from 'expo-file-system/legacy';
+import { AppState, type AppStateStatus } from 'react-native';
 
+import { ChatRepository, type ChatMessageRow, type ChatPendingOutboxRow } from '@/lib/chat/local/chat-db';
 import type { MomentMetadata } from '@/lib/moment-text-style';
 import {
   createMomentFromMediaStrict,
@@ -65,6 +67,7 @@ type ChatTextSendPayload = {
   senderId: string;
   receiverId: string;
   text: string;
+  clientMessageId?: string | null;
   replyToMessageId?: string | null;
 };
 
@@ -77,6 +80,7 @@ type ChatReactionSyncPayload = {
 type ChatMediaSendPayload = {
   senderId: string;
   receiverId: string;
+  clientMessageId?: string | null;
   localUri: string;
   fileName: string;
   contentType: string;
@@ -90,6 +94,7 @@ type ChatMediaSendPayload = {
 type ChatVoiceSendPayload = {
   senderId: string;
   receiverId: string;
+  clientMessageId?: string | null;
   localUri: string;
   fileName: string;
   contentType: string;
@@ -491,17 +496,21 @@ const buildProfileImageReactionDedupeKey = (payload: ProfileImageReactionSyncPay
 const buildProfileNoteDedupeKey = (payload: ProfileNoteCreatePayload) =>
   `profile_note_create:${payload.profileId}:${payload.senderId}:${payload.note.trim().toLowerCase()}`;
 
-const buildChatTextSendDedupeKey = (payload: ChatTextSendPayload) =>
-  `chat_text_send:${payload.senderId}:${payload.receiverId}:${payload.text.trim().toLowerCase()}:${payload.replyToMessageId ?? 'root'}:${Date.now()}`;
+const buildChatTextSendDedupeKey = (payload: ChatTextSendPayload) => {
+  const stablePart =
+    payload.clientMessageId ??
+    `${payload.text.trim().toLowerCase()}:${payload.replyToMessageId ?? 'root'}:${Date.now()}`;
+  return `chat_text_send:${payload.senderId}:${payload.receiverId}:${stablePart}`;
+};
 
 const buildChatReactionDedupeKey = (payload: ChatReactionSyncPayload) =>
   `chat_reaction_sync:${payload.messageId}:${payload.userId}`;
 
 const buildChatMediaSendDedupeKey = (payload: ChatMediaSendPayload) =>
-  `chat_media_send:${payload.senderId}:${payload.receiverId}:${payload.localUri}:${Date.now()}`;
+  `chat_media_send:${payload.senderId}:${payload.receiverId}:${payload.clientMessageId ?? `${payload.localUri}:${Date.now()}`}`;
 
 const buildChatVoiceSendDedupeKey = (payload: ChatVoiceSendPayload) =>
-  `chat_voice_send:${payload.senderId}:${payload.receiverId}:${payload.localUri}:${Date.now()}`;
+  `chat_voice_send:${payload.senderId}:${payload.receiverId}:${payload.clientMessageId ?? `${payload.localUri}:${Date.now()}`}`;
 
 const buildIntentRequestCreateDedupeKey = (payload: IntentRequestCreatePayload) =>
   `intent_request_create:${payload.recipientId}:${payload.type}:${String(payload.message ?? '').trim().toLowerCase()}:${Date.now()}`;
@@ -712,6 +721,240 @@ async function writeMutationQueue(queue: OfflineMutation[]) {
 
 async function writeFailedMutationQueue(queue: FailedOfflineMutation[]) {
   await writeOfflineEnvelope(OFFLINE_MUTATION_FAILED_KEY, queue.slice(-100), { kind: 'mutation-failed' });
+}
+
+type LegacyChatSendMutation = Extract<
+  OfflineMutation,
+  { kind: 'chat_text_send' | 'chat_media_send' | 'chat_voice_send' }
+>;
+type LegacyChatSendQueueMutation = Extract<
+  OfflineMutation | FailedOfflineMutation,
+  { kind: 'chat_text_send' | 'chat_media_send' | 'chat_voice_send' }
+>;
+
+const isLegacyChatSendMutation = (
+  mutation: OfflineMutation | FailedOfflineMutation,
+): mutation is LegacyChatSendQueueMutation =>
+  mutation.kind === 'chat_text_send' ||
+  mutation.kind === 'chat_media_send' ||
+  mutation.kind === 'chat_voice_send';
+
+const toLegacyChatIso = (timestamp?: number | null) => {
+  const value = typeof timestamp === 'number' && Number.isFinite(timestamp) ? timestamp : Date.now();
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+};
+
+const safeStringifyLegacyChat = (value: unknown) => {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
+};
+
+const getLegacyChatLocalMessageId = (mutation: LegacyChatSendQueueMutation) =>
+  mutation.payload.clientMessageId || mutation.id;
+
+const getLegacyChatMessageType = (mutation: LegacyChatSendQueueMutation): ChatMessageRow['message_type'] => {
+  if (mutation.kind === 'chat_media_send') return mutation.payload.mediaType;
+  if (mutation.kind === 'chat_voice_send') return 'voice';
+  return 'text';
+};
+
+const buildLegacyChatMessageBody = (mutation: LegacyChatSendQueueMutation) => {
+  if (mutation.kind === 'chat_text_send') return mutation.payload.text;
+  if (mutation.kind === 'chat_media_send' && mutation.payload.mediaType === 'document') {
+    return `${DOCUMENT_TEXT_PREFIX} ${[
+      mutation.payload.documentName || mutation.payload.fileName,
+      mutation.payload.documentSizeLabel,
+      mutation.payload.documentTypeLabel,
+    ].filter(Boolean).join(' | ')}\n${mutation.payload.localUri}`;
+  }
+  return mutation.kind === 'chat_media_send' ? mutation.payload.localUri : '';
+};
+
+const buildLegacyChatMessageMetadata = (
+  mutation: LegacyChatSendQueueMutation,
+  localMessageId: string,
+  createdAt: string,
+  status: 'queued' | 'failed',
+) => {
+  const base = {
+    id: localMessageId,
+    clientMessageId: localMessageId,
+    senderId: mutation.payload.senderId,
+    timestamp: createdAt,
+    reactions: [],
+    status,
+    replyToId: mutation.payload.replyToMessageId ?? null,
+  };
+
+  if (mutation.kind === 'chat_text_send') {
+    return {
+      ...base,
+      text: mutation.payload.text,
+      type: 'text',
+    };
+  }
+
+  if (mutation.kind === 'chat_voice_send') {
+    return {
+      ...base,
+      text: '',
+      type: 'voice',
+      voice: {
+        audioPath: mutation.payload.localUri,
+        durationSeconds: mutation.payload.durationSeconds,
+        waveform: mutation.payload.waveform,
+      },
+    };
+  }
+
+  if (mutation.payload.mediaType === 'document') {
+    return {
+      ...base,
+      text: buildLegacyChatMessageBody(mutation),
+      type: 'document',
+      document: {
+        name: mutation.payload.documentName || mutation.payload.fileName,
+        uri: mutation.payload.localUri,
+        sizeLabel: mutation.payload.documentSizeLabel ?? null,
+        typeLabel: mutation.payload.documentTypeLabel ?? null,
+      },
+    };
+  }
+
+  if (mutation.payload.mediaType === 'video') {
+    return {
+      ...base,
+      text: '',
+      type: 'video',
+      videoUrl: mutation.payload.localUri,
+      offlineVideoUri: mutation.payload.localUri,
+    };
+  }
+
+  return {
+    ...base,
+    text: '',
+    type: 'image',
+    imageUrl: mutation.payload.localUri,
+    offlineImageUri: mutation.payload.localUri,
+  };
+};
+
+const buildLegacyChatMessageRow = (
+  mutation: LegacyChatSendQueueMutation,
+  failed: boolean,
+): ChatMessageRow => {
+  const localMessageId = getLegacyChatLocalMessageId(mutation);
+  const createdAt = toLegacyChatIso(mutation.createdAt);
+  const updatedAt = new Date().toISOString();
+  const status: ChatMessageRow['status'] = failed ? 'failed' : 'pending';
+  const metadata = buildLegacyChatMessageMetadata(
+    mutation,
+    localMessageId,
+    createdAt,
+    failed ? 'failed' : 'queued',
+  );
+
+  return {
+    id: localMessageId,
+    local_id: localMessageId,
+    thread_id: mutation.payload.receiverId,
+    owner_user_id: mutation.payload.senderId,
+    sender_user_id: mutation.payload.senderId,
+    receiver_user_id: mutation.payload.receiverId,
+    body: buildLegacyChatMessageBody(mutation),
+    message_type: getLegacyChatMessageType(mutation),
+    status,
+    direction: 'outgoing',
+    created_at: createdAt,
+    server_created_at: null,
+    edited_at: null,
+    deleted_at: null,
+    reply_to_message_id: mutation.payload.replyToMessageId ?? null,
+    is_view_once: 0,
+    local_only: 1,
+    error_code: failed ? 'legacy_queue_failed' : null,
+    metadata_json: safeStringifyLegacyChat(metadata),
+    remote_updated_at: null,
+    local_updated_at: updatedAt,
+  };
+};
+
+const buildLegacyChatOutboxRow = (
+  mutation: LegacyChatSendQueueMutation,
+  failed: boolean,
+): ChatPendingOutboxRow => {
+  const localMessageId = getLegacyChatLocalMessageId(mutation);
+  const createdAt = toLegacyChatIso(mutation.createdAt);
+  const updatedAt = new Date().toISOString();
+  return {
+    id: localMessageId,
+    local_message_id: localMessageId,
+    thread_id: mutation.payload.receiverId,
+    owner_user_id: mutation.payload.senderId,
+    payload_json: safeStringifyLegacyChat({
+      kind: mutation.kind,
+      ...mutation.payload,
+      clientMessageId: localMessageId,
+    }) ?? '{}',
+    attempt_count: Math.max(0, mutation.attempts ?? 0),
+    max_attempts: MAX_MUTATION_ATTEMPTS,
+    next_retry_at: failed ? null : (mutation.nextAttemptAt ? toLegacyChatIso(mutation.nextAttemptAt) : null),
+    status: failed ? 'failed' : 'queued',
+    error_code: failed ? 'legacy_queue_failed' : null,
+    error_message: mutation.lastError ?? ('failureReason' in mutation ? String(mutation.failureReason) : null),
+    created_at: createdAt,
+    updated_at: updatedAt,
+  };
+};
+
+const persistLegacyChatSendMutationToSQLiteOutbox = async (
+  mutation: LegacyChatSendQueueMutation,
+  options?: { failed?: boolean },
+) => {
+  const failed = Boolean(options?.failed);
+  const messageRow = buildLegacyChatMessageRow(mutation, failed);
+  const outboxRow = buildLegacyChatOutboxRow(mutation, failed);
+  await ChatRepository.upsertMessages(mutation.payload.senderId, mutation.payload.receiverId, [messageRow]);
+  await ChatRepository.upsertPendingOutboxItem(mutation.payload.senderId, outboxRow);
+};
+
+export async function migrateLegacyChatSendMutationsToSQLiteOutbox() {
+  const [pendingQueue, failedQueue] = await Promise.all([
+    readMutationQueue(),
+    readFailedMutationQueue(),
+  ]);
+
+  const pendingChatMutations = pendingQueue.filter(isLegacyChatSendMutation) as LegacyChatSendQueueMutation[];
+  const failedChatMutations = failedQueue.filter(isLegacyChatSendMutation) as LegacyChatSendQueueMutation[];
+
+  if (pendingChatMutations.length === 0 && failedChatMutations.length === 0) {
+    return { migrated: 0, purged: 0 };
+  }
+
+  let migrated = 0;
+  for (const mutation of pendingChatMutations) {
+    await persistLegacyChatSendMutationToSQLiteOutbox(mutation);
+    migrated += 1;
+  }
+  for (const mutation of failedChatMutations) {
+    await persistLegacyChatSendMutationToSQLiteOutbox(mutation, { failed: true });
+    migrated += 1;
+  }
+
+  await Promise.all([
+    writeMutationQueue(pendingQueue.filter((mutation) => !isLegacyChatSendMutation(mutation))),
+    writeFailedMutationQueue(failedQueue.filter((mutation) => !isLegacyChatSendMutation(mutation))),
+  ]);
+
+  return {
+    migrated,
+    purged: pendingChatMutations.length + failedChatMutations.length,
+  };
 }
 
 export async function clearMomentMutationArtifacts(momentId: string) {
@@ -1029,13 +1272,14 @@ async function processProfileNoteCreate(payload: ProfileNoteCreatePayload) {
 async function processChatTextSend(payload: ChatTextSendPayload) {
   const { error } = await supabase.from('messages').insert({
     text: payload.text,
+    client_message_id: payload.clientMessageId ?? null,
     sender_id: payload.senderId,
     receiver_id: payload.receiverId,
     is_read: false,
     message_type: 'text',
     reply_to_message_id: payload.replyToMessageId ?? null,
   });
-  if (error) throw error;
+  if (error && (error as { code?: string }).code !== '23505') throw error;
 }
 
 const encodeStoragePath = (path: string) =>
@@ -1130,13 +1374,14 @@ async function processChatMediaSend(payload: ChatMediaSendPayload) {
 
   const { error } = await supabase.from('messages').insert({
     text: documentText,
+    client_message_id: payload.clientMessageId ?? null,
     sender_id: payload.senderId,
     receiver_id: payload.receiverId,
     is_read: false,
     message_type: payload.mediaType === 'document' ? 'text' : payload.mediaType,
     reply_to_message_id: payload.replyToMessageId ?? null,
   });
-  if (error) throw error;
+  if (error && (error as { code?: string }).code !== '23505') throw error;
   await removeStagedOfflineChatUpload(payload.localUri);
 }
 
@@ -1144,6 +1389,7 @@ async function processChatVoiceSend(payload: ChatVoiceSendPayload) {
   const audioPath = await uploadQueuedVoice(payload);
   const { error } = await supabase.from('messages').insert({
     text: '',
+    client_message_id: payload.clientMessageId ?? null,
     sender_id: payload.senderId,
     receiver_id: payload.receiverId,
     is_read: false,
@@ -1153,7 +1399,7 @@ async function processChatVoiceSend(payload: ChatVoiceSendPayload) {
     audio_waveform: payload.waveform,
     reply_to_message_id: payload.replyToMessageId ?? null,
   });
-  if (error) throw error;
+  if (error && (error as { code?: string }).code !== '23505') throw error;
   await removeStagedOfflineChatUpload(payload.localUri);
 }
 
@@ -1513,16 +1759,16 @@ async function processMutation(mutation: OfflineMutation) {
       await processProfileNoteCreate(mutation.payload);
       return;
     case 'chat_text_send':
-      await processChatTextSend(mutation.payload);
+      await persistLegacyChatSendMutationToSQLiteOutbox(mutation);
       return;
     case 'chat_reaction_sync':
       await processChatReactionSync(mutation.payload);
       return;
     case 'chat_media_send':
-      await processChatMediaSend(mutation.payload);
+      await persistLegacyChatSendMutationToSQLiteOutbox(mutation);
       return;
     case 'chat_voice_send':
-      await processChatVoiceSend(mutation.payload);
+      await persistLegacyChatSendMutationToSQLiteOutbox(mutation);
       return;
     case 'intent_request_create':
       await processIntentRequestCreate(mutation.payload);
@@ -1629,7 +1875,7 @@ export async function enqueueChatTextSendMutation(payload: ChatTextSendPayload) 
     payload,
   };
 
-  await replaceQueue((current) => [...current, mutation]);
+  await persistLegacyChatSendMutationToSQLiteOutbox(mutation);
 }
 
 export async function enqueueChatReactionSyncMutation(payload: ChatReactionSyncPayload) {
@@ -1658,7 +1904,7 @@ export async function enqueueChatMediaSendMutation(payload: ChatMediaSendPayload
     payload,
   };
 
-  await replaceQueue((current) => [...current, mutation]);
+  await persistLegacyChatSendMutationToSQLiteOutbox(mutation);
 }
 
 export async function enqueueChatVoiceSendMutation(payload: ChatVoiceSendPayload) {
@@ -1671,7 +1917,7 @@ export async function enqueueChatVoiceSendMutation(payload: ChatVoiceSendPayload
     payload,
   };
 
-  await replaceQueue((current) => [...current, mutation]);
+  await persistLegacyChatSendMutationToSQLiteOutbox(mutation);
 }
 
 export async function enqueueIntentRequestCreateMutation(payload: IntentRequestCreatePayload) {
@@ -2225,21 +2471,36 @@ export function subscribeToOfflineMutationEvents(listener: QueueMutationListener
 }
 
 export function startOfflineMutationQueueAutoDrain() {
-  void drainOfflineMutationQueue();
+  let currentAppState: AppStateStatus = AppState.currentState;
+  const isActive = () => currentAppState === 'active';
+
+  if (isActive()) {
+    void drainOfflineMutationQueue();
+  }
 
   const interval = setInterval(() => {
+    if (!isActive()) return;
     void drainOfflineMutationQueue();
   }, AUTO_DRAIN_INTERVAL_MS);
 
   const unsubscribe = addEventListener((state) => {
+    if (!isActive()) return;
     if (state.isConnected === false || state.isInternetReachable === false) {
       return;
     }
     void drainOfflineMutationQueue();
   });
 
+  const appStateSubscription = AppState.addEventListener('change', (state) => {
+    currentAppState = state;
+    if (state === 'active') {
+      void drainOfflineMutationQueue();
+    }
+  });
+
   return () => {
     clearInterval(interval);
     unsubscribe();
+    appStateSubscription.remove();
   };
 }

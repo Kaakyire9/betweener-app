@@ -7,119 +7,67 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useIntentRequests } from '@/hooks/useIntentRequests';
 import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
-import { clearPendingNotificationRoute, peekPendingNotificationRoute } from '@/lib/notifications/notification-routing';
+import { ChatRepository } from '@/lib/chat/local/chat-db';
 import { type ResponsiveMetrics, useResponsiveMetrics } from '@/lib/responsive';
-import { Tabs, usePathname, useRouter } from 'expo-router';
+import { Tabs } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MessageCircle, Sparkles, User, Users } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { supabase } from '@/lib/supabase';
+import { setAppIconBadgeCount } from '@/lib/notifications/app-badge';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const responsive = useResponsiveMetrics();
   const styles = useMemo(() => createStyles(responsive), [responsive]);
-  const pathname = usePathname();
-  const router = useRouter();
   const { user, profile } = useAuth();
   const { profileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
-  const { badgeCount } = useIntentRequests(profileId);
+  const { badgeCount } = useIntentRequests(profileId, {
+    snapshotOwnerIds: [profileId, user?.id],
+  });
 
   const [unreadChats, setUnreadChats] = useState(0);
-
-  const computeUnreadChats = useMemo(() => {
-    return async (pid: string) => {
-      try {
-        // Count distinct senders with unread messages (best-effort; keep query light).
-        const { data, error } = await supabase
-          .from('messages')
-          .select('sender_id,is_read')
-          .eq('receiver_id', pid)
-          .eq('is_read', false)
-          .order('created_at', { ascending: false })
-          .limit(250);
-
-        if (error || !data) {
-          setUnreadChats(0);
-          return;
-        }
-
-        const senders = new Set<string>();
-        (data as any[]).forEach((row) => {
-          if (row?.sender_id) senders.add(String(row.sender_id));
-        });
-        setUnreadChats(senders.size);
-      } catch {
-        setUnreadChats(0);
-      }
-    };
-  }, []);
 
   useEffect(() => {
     const myUserId = user?.id ?? null;
     if (!myUserId) {
       setUnreadChats(0);
+      void setAppIconBadgeCount(0);
       return;
     }
 
-    void computeUnreadChats(myUserId);
-
-    // Refresh the badge when a new message arrives for this user.
-    const channel = supabase
-      .channel(`badge:unread:${myUserId}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${myUserId}` },
-        () => void computeUnreadChats(myUserId),
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'messages', filter: `receiver_id=eq.${myUserId}` },
-        () => void computeUnreadChats(myUserId),
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [computeUnreadChats, user?.id]);
-
-  useEffect(() => {
-    if (!user?.id) return;
     let cancelled = false;
 
-    void (async () => {
-      const target = await peekPendingNotificationRoute();
-      if (!target || cancelled) return;
-
-      const currentPath = typeof pathname === 'string' ? pathname : '';
-      const targetId = target.params?.id ? String(target.params.id) : '';
-      const alreadyAtTarget =
-        currentPath === target.pathname ||
-        (targetId.length > 0 && currentPath.endsWith(`/${targetId}`));
-
-      if (alreadyAtTarget) {
-        await clearPendingNotificationRoute();
-        return;
+    const refreshUnreadChats = async () => {
+      try {
+        const threads = await ChatRepository.getThreads(myUserId, { includeArchived: true, limit: 500 });
+        if (cancelled) return;
+        setUnreadChats(
+          threads.filter((thread) => thread.is_archived === 0 && Number(thread.unread_count) > 0).length,
+        );
+      } catch {
+        if (cancelled) return;
+        setUnreadChats(0);
       }
+    };
 
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.log('[tabs] hydrating pending notification route', {
-          currentPath,
-          target,
-        });
-      }
+    void refreshUnreadChats();
 
-      router.replace(target as any);
-    })();
+    const unsubscribe = ChatRepository.observeThreads(myUserId, () => {
+      void refreshUnreadChats();
+    });
 
     return () => {
       cancelled = true;
+      unsubscribe();
     };
-  }, [pathname, router, user?.id]);
-  
+  }, [user?.id]);
+
+  useEffect(() => {
+    void setAppIconBadgeCount(unreadChats + badgeCount);
+  }, [badgeCount, unreadChats]);
+
   // Badge component for tab notifications
   const TabBadge = ({ count }: { count: number }) => {
     if (count === 0) return null;

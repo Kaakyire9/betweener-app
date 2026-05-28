@@ -2,7 +2,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import * as Linking from "expo-linking";
 import { Slot, usePathname, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Animated, AppState, Easing, StyleSheet, Text, View } from "react-native";
 import { InteractionManager } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -15,7 +15,7 @@ import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 
 import { useAppFonts } from "@/constants/fonts";
-import { AuthProvider, useAuthGuard } from "@/lib/auth-context";
+import { AuthProvider, useAuth, useAuthGuard } from "@/lib/auth-context";
 import AccountRecoveryNotice from "@/components/AccountRecoveryNotice";
 import RecoveryMergeSuggestionNotice from "@/components/RecoveryMergeSuggestionNotice";
 import InAppToasts from "@/components/InAppToasts";
@@ -24,7 +24,12 @@ import NetworkStatusBanner from "@/components/NetworkStatusBanner";
 import OfflineSyncHistoryHydrator from "@/components/OfflineSyncHistoryHydrator";
 import OfflineSyncStatusPill from "@/components/OfflineSyncStatusPill";
 import ChatDeliveryReceiptAcknowledger from "@/components/ChatDeliveryReceiptAcknowledger";
-import { drainOfflineMutationQueue, startOfflineMutationQueueAutoDrain } from "@/lib/offline/mutation-queue";
+import {
+  drainOfflineMutationQueue,
+  migrateLegacyChatSendMutationsToSQLiteOutbox,
+  startOfflineMutationQueueAutoDrain,
+} from "@/lib/offline/mutation-queue";
+import { ChatOutboxService } from "@/lib/chat/outbox/chat-outbox-service";
 import { emitNetworkRestored } from "@/lib/network-recovery";
 import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
 import { recoverSupabaseConnectivity, SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
@@ -33,9 +38,11 @@ import {
   buildNotificationRoute,
   clearPendingNotificationRoute,
   getNotificationResponseKey,
+  getPendingNotificationRouteVersion,
   peekPendingNotificationRoute,
   persistPendingNotificationRoute,
   shouldDeferNotificationNavigation,
+  subscribePendingNotificationRouteChanges,
 } from "@/lib/notifications/notification-routing";
 import {
   getFreshPendingIdentityLink,
@@ -56,11 +63,34 @@ function PendingNotificationRouteHydrator() {
   const segments = useSegments();
   const router = useRouter();
   const inFlightRef = useRef(false);
+  const routeRef = useRef<{ pathname: string; currentScreen: string | null }>({
+    pathname: "",
+    currentScreen: null,
+  });
+  const pendingRouteVersion = useSyncExternalStore(
+    subscribePendingNotificationRouteChanges,
+    getPendingNotificationRouteVersion,
+    getPendingNotificationRouteVersion,
+  );
+  const debugNotificationHydrator = useCallback((event: string, payload?: Record<string, unknown>) => {
+    if (!(typeof __DEV__ !== "undefined" && __DEV__)) return;
+    console.log("[notif-hydrator]", {
+      event,
+      ...(payload ?? {}),
+    });
+  }, []);
 
   useEffect(() => {
+    routeRef.current = {
+      pathname: typeof pathname === "string" ? pathname : "",
+      currentScreen: segments.length > 0 ? segments[segments.length - 1] : null,
+    };
+  }, [pathname, segments]);
+
+  const hydratePendingRoute = useCallback(async (reason: string) => {
     if (isLoading || !canAccessApp || inFlightRef.current) return;
 
-    const currentScreen = segments.length > 0 ? segments[segments.length - 1] : null;
+    const { pathname: currentPath, currentScreen } = routeRef.current;
     const isAuthRecoveryScreen =
       currentScreen === "gate" ||
       currentScreen === "callback" ||
@@ -70,58 +100,171 @@ function PendingNotificationRouteHydrator() {
 
     if (isAuthRecoveryScreen) return;
 
-    let cancelled = false;
     inFlightRef.current = true;
 
-    void (async () => {
-      try {
-        const target = await peekPendingNotificationRoute();
-        if (!target || cancelled) return;
+    try {
+      const target = await peekPendingNotificationRoute();
+      if (!target) return;
 
-        const currentPath = typeof pathname === "string" ? pathname : "";
-        const samePath = currentPath === target.pathname;
-        const sameId =
-          target.params?.id &&
-          typeof currentPath === "string" &&
-          currentPath.endsWith(`/${target.params.id}`);
+      debugNotificationHydrator("target", {
+        reason,
+        pathname: currentPath,
+        currentScreen,
+        target,
+      });
 
-        if (samePath || sameId) {
-          await clearPendingNotificationRoute();
-          return;
-        }
+      const samePath = currentPath === target.pathname;
+      const sameId =
+        target.params?.id &&
+        typeof currentPath === "string" &&
+        currentPath.endsWith(`/${target.params.id}`);
 
-        if (typeof __DEV__ !== "undefined" && __DEV__) {
-          console.log("[root] hydrating pending notification route", target);
-        }
-        router.replace(target as any);
-      } finally {
-        inFlightRef.current = false;
+      if (samePath || sameId) {
+        debugNotificationHydrator("clear_already_at_target", {
+          pathname: currentPath,
+          target,
+        });
+        await clearPendingNotificationRoute();
+        return;
       }
-    })();
 
-    return () => {
-      cancelled = true;
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
+        console.log("[root] hydrating pending notification route", target);
+      }
+      debugNotificationHydrator("replace", {
+        pathname: currentPath,
+        target,
+      });
+      router.replace(target as any);
+    } finally {
       inFlightRef.current = false;
+    }
+  }, [canAccessApp, debugNotificationHydrator, isLoading, router]);
+
+  useEffect(() => {
+    void hydratePendingRoute("pending_route_changed");
+  }, [hydratePendingRoute, pendingRouteVersion]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        setTimeout(() => {
+          void hydratePendingRoute("app_active");
+        }, 250);
+      }
+    });
+    return () => {
+      subscription.remove();
     };
-  }, [canAccessApp, isLoading, pathname, router, segments]);
+  }, [hydratePendingRoute]);
 
   return null;
 }
 
 function OfflineMutationQueueHydrator() {
   useEffect(() => {
-    const stopAutoDrain = startOfflineMutationQueueAutoDrain();
+    let cancelled = false;
+    let stopAutoDrain: (() => void) | null = null;
+
+    void migrateLegacyChatSendMutationsToSQLiteOutbox()
+      .catch((error) => {
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[offline-queue] legacy chat migration error", error);
+        }
+      })
+      .finally(() => {
+        if (cancelled) return;
+        stopAutoDrain = startOfflineMutationQueueAutoDrain();
+      });
+
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
-        void drainOfflineMutationQueue();
+        void migrateLegacyChatSendMutationsToSQLiteOutbox().finally(() => {
+          void drainOfflineMutationQueue();
+        });
       }
     });
 
     return () => {
-      stopAutoDrain();
+      cancelled = true;
+      stopAutoDrain?.();
       subscription.remove();
     };
   }, []);
+
+  return null;
+}
+
+function ChatOutboxHydrator() {
+  const { user } = useAuth();
+  const { canAccessApp, isLoading } = useAuthGuard();
+  const flushInFlightRef = useRef<Promise<void> | null>(null);
+  const lastReachableRef = useRef<boolean | null>(null);
+
+  useEffect(() => {
+    if (isLoading || !canAccessApp || !user?.id) return;
+
+    const isReachable = (state: {
+      isConnected: boolean | null;
+      isInternetReachable: boolean | null;
+    }) => state.isConnected !== false && state.isInternetReachable !== false;
+
+    const flush = (reason: string) => {
+      if (flushInFlightRef.current) return flushInFlightRef.current;
+      const promise = (async () => {
+        const state = await fetchNetInfo();
+        if (!isReachable(state)) return;
+        const result = await ChatOutboxService.flushPending(user.id);
+        if (typeof __DEV__ !== "undefined" && __DEV__ && result.attemptedCount > 0) {
+          console.log("[chat-outbox]", {
+            reason,
+            attempted: result.attemptedCount,
+            sent: result.sentCount,
+            failed: result.failedCount,
+          });
+        }
+      })()
+        .catch((error) => {
+          if (typeof __DEV__ !== "undefined" && __DEV__) {
+            console.log("[chat-outbox] flush error", error);
+          }
+        })
+        .finally(() => {
+          flushInFlightRef.current = null;
+        });
+      flushInFlightRef.current = promise;
+      return promise;
+    };
+
+    void flush("mount");
+
+    const netInfoSubscription = addNetInfoListener((state) => {
+      const reachable = isReachable(state);
+      const previous = lastReachableRef.current;
+      lastReachableRef.current = reachable;
+      if (previous === false && reachable) {
+        setTimeout(() => {
+          void flush("network_restored");
+        }, 600);
+      }
+    });
+    fetchNetInfo().then((state) => {
+      lastReachableRef.current = isReachable(state);
+    }).catch(() => undefined);
+
+    const appStateSubscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        setTimeout(() => {
+          void flush("app_active");
+        }, 400);
+      }
+    });
+
+    return () => {
+      netInfoSubscription();
+      appStateSubscription.remove();
+    };
+  }, [canAccessApp, isLoading, user?.id]);
 
   return null;
 }
@@ -614,6 +757,7 @@ function RootLayout() {
       <AuthProvider>
         <View style={{ flex: 1, backgroundColor: Colors[colorScheme].background }}>
           <OfflineMutationQueueHydrator />
+          <ChatOutboxHydrator />
           <OfflineSyncHistoryHydrator />
           <NetworkRecoveryHydrator />
           <ChatDeliveryReceiptAcknowledger />

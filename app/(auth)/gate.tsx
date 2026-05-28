@@ -1,4 +1,5 @@
 import BetweenerLoader from "@/components/ui/BetweenerLoader";
+import { consumeSessionExpiredReason } from "@/lib/auth-session-reason";
 import { useAuth } from "@/lib/auth-context";
 import { getSignupSessionId } from "@/lib/signup-tracking";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -266,6 +267,17 @@ export default function AuthGateScreen() {
     }
   };
 
+  const consumeSessionExpiredRoute = async () => {
+    const expired = await consumeSessionExpiredReason();
+    if (!expired) return null;
+    return {
+      pathname: "/(auth)/login" as const,
+      params: {
+        reason: "session_expired",
+      },
+    };
+  };
+
   useEffect(() => {
     activeRef.current = true;
     if (routedRef.current) return;
@@ -346,6 +358,7 @@ export default function AuthGateScreen() {
           }
           const retiredRoute = await consumeRetiredDuplicateRoute();
           const disconnectedProviderRoute = await consumeDisconnectedProviderRoute();
+          const sessionExpiredRoute = await consumeSessionExpiredRoute();
           routedRef.current = true;
           if (retiredRoute) {
             if (typeof __DEV__ !== "undefined" && __DEV__) {
@@ -359,6 +372,13 @@ export default function AuthGateScreen() {
               console.log("[auth-gate] hard fallback route", disconnectedProviderRoute);
             }
             router.replace(disconnectedProviderRoute);
+            return;
+          }
+          if (sessionExpiredRoute) {
+            if (typeof __DEV__ !== "undefined" && __DEV__) {
+              console.log("[auth-gate] hard fallback route", sessionExpiredRoute);
+            }
+            router.replace(sessionExpiredRoute);
             return;
           }
           if (typeof __DEV__ !== "undefined" && __DEV__) {
@@ -550,7 +570,8 @@ export default function AuthGateScreen() {
           }
           const retiredRoute = await consumeRetiredDuplicateRoute();
           const disconnectedProviderRoute = await consumeDisconnectedProviderRoute();
-          guardRoute(retiredRoute ?? disconnectedProviderRoute ?? "/(auth)/welcome");
+          const sessionExpiredRoute = await consumeSessionExpiredRoute();
+          guardRoute(retiredRoute ?? disconnectedProviderRoute ?? sessionExpiredRoute ?? "/(auth)/welcome");
           return;
         }
 

@@ -123,6 +123,7 @@ export default function Onboarding() {
   const [focusedField, setFocusedField] = useState<string | null>(null);
   const [customOccupation, setCustomOccupation] = useState("");
   const [countryModalVisible, setCountryModalVisible] = useState(false);
+  const [countryPickerTarget, setCountryPickerTarget] = useState<"current" | "origin">("current");
   const [countrySearch, setCountrySearch] = useState("");
   const [form, setForm] = useState({
     fullName: "",
@@ -137,6 +138,7 @@ export default function Onboarding() {
     minAgeInterest: "18",
     maxAgeInterest: "35",
     currentCountry: "",
+    originCountry: "",
   });
 
   const [image, setImage] = useState<string | null>(null);
@@ -152,11 +154,16 @@ export default function Onboarding() {
     () => findCountryByLabel(form.currentCountry),
     [form.currentCountry],
   );
+  const selectedOriginCountry = useMemo(
+    () => findCountryByLabel(form.originCountry),
+    [form.originCountry],
+  );
   const countryPickerData = useMemo(
     () => getPrioritizedCountries(countrySearch),
     [countrySearch],
   );
   const selectedCountryFlag = selectedCountry ? toFlagEmoji(selectedCountry.code) : '';
+  const selectedOriginCountryFlag = selectedOriginCountry ? toFlagEmoji(selectedOriginCountry.code) : '';
 
   useEffect(() => {
     let active = true;
@@ -500,6 +507,14 @@ export default function Onboarding() {
         location: form.currentCountry,
         current_country: form.currentCountry,
         current_country_code: getCountryCodeByName(form.currentCountry),
+        origin_country: form.originCountry || (form.currentCountry === "Ghana" ? "Ghana" : null),
+        origin_country_code: form.originCountry
+          ? getCountryCodeByName(form.originCountry)
+          : form.currentCountry === "Ghana"
+            ? "GH"
+            : null,
+        origin_country_source: form.originCountry ? "explicit" : form.currentCountry === "Ghana" ? "residence_backfill" : "unknown",
+        country_lock_policy: "none",
         years_in_diaspora: 0,
         profile_completed: true,
         identity_status: "active",
@@ -1115,8 +1130,14 @@ export default function Onboarding() {
   );
 
   const selectCountry = (country: CountryOption) => {
-    setForm((prev) => ({ ...prev, currentCountry: country.label }));
-    setErrors((prev) => ({ ...prev, currentCountry: "" }));
+    setForm((prev) => (
+      countryPickerTarget === "origin"
+        ? { ...prev, originCountry: country.label }
+        : { ...prev, currentCountry: country.label }
+    ));
+    if (countryPickerTarget === "current") {
+      setErrors((prev) => ({ ...prev, currentCountry: "" }));
+    }
     setCountrySearch("");
     setCountryModalVisible(false);
   };
@@ -1133,7 +1154,9 @@ export default function Onboarding() {
           <TouchableOpacity onPress={() => setCountryModalVisible(false)} style={styles.countryModalClose}>
             <MaterialCommunityIcons name="close" size={22} color={BRAND_INK} />
           </TouchableOpacity>
-          <Text style={styles.countryModalTitle}>Current country</Text>
+          <Text style={styles.countryModalTitle}>
+            {countryPickerTarget === "origin" ? "Origin country" : "Current country"}
+          </Text>
           <View style={styles.countryModalClose} />
         </View>
 
@@ -1161,7 +1184,8 @@ export default function Onboarding() {
             )
           }
           renderItem={({ item }) => {
-            const selected = selectedCountry?.code === item.code;
+            const selected =
+              (countryPickerTarget === "origin" ? selectedOriginCountry?.code : selectedCountry?.code) === item.code;
             const flag = toFlagEmoji(item.code);
             return (
               <TouchableOpacity
@@ -1194,7 +1218,10 @@ export default function Onboarding() {
           </View>
           <TouchableOpacity
             style={[styles.countrySelect, errors.currentCountry && styles.inputError]}
-            onPress={() => setCountryModalVisible(true)}
+            onPress={() => {
+              setCountryPickerTarget("current");
+              setCountryModalVisible(true);
+            }}
             activeOpacity={0.88}
           >
             <View style={styles.countrySelectLeft}>
@@ -1214,6 +1241,41 @@ export default function Onboarding() {
             We may suggest this from your verified phone. Change it if you currently live elsewhere.
           </Text>
           {errors.currentCountry && <Text style={styles.errorText}>{errors.currentCountry}</Text>}
+        </View>
+
+        <View style={styles.inputContainer}>
+          <View style={styles.labelRow}>
+            <Text style={styles.labelInline}>Origin Country</Text>
+            <View style={styles.optionalBadge}>
+              <Text style={styles.optionalBadgeText}>Optional</Text>
+            </View>
+          </View>
+          <TouchableOpacity
+            style={styles.countrySelect}
+            onPress={() => {
+              setCountryPickerTarget("origin");
+              setCountryModalVisible(true);
+            }}
+            activeOpacity={0.88}
+          >
+            <View style={styles.countrySelectLeft}>
+              <Text style={styles.countrySelectFlag}>{selectedOriginCountryFlag || '--'}</Text>
+              <View style={styles.countrySelectCopy}>
+                <Text style={[styles.countrySelectText, !form.originCountry && styles.countrySelectPlaceholder]}>
+                  {form.originCountry || 'Select origin country'}
+                </Text>
+                <Text style={styles.countrySelectHint}>
+                  {selectedOriginCountry
+                    ? `${selectedOriginCountry.dial} - ${selectedOriginCountry.code}`
+                    : 'Helps us connect diaspora with shared roots'}
+                </Text>
+              </View>
+            </View>
+            <MaterialCommunityIcons name="chevron-down" size={22} color={BRAND_TEAL} />
+          </TouchableOpacity>
+          <Text style={styles.countryHelperText}>
+            This is where your roots are from, not necessarily where you live now.
+          </Text>
         </View>
 
         <View style={styles.inputContainer}>
@@ -1913,6 +1975,20 @@ const createStyles = (responsive: ResponsiveMetrics) => StyleSheet.create({
     fontSize: responsive.font(11, { min: 10, max: 12 }),
     fontFamily: 'Archivo_700Bold',
     color: BRAND_TEAL,
+    letterSpacing: 0.3,
+  },
+  optionalBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: 'rgba(100,116,139,0.10)',
+    borderWidth: 1,
+    borderColor: 'rgba(100,116,139,0.18)',
+  },
+  optionalBadgeText: {
+    fontSize: responsive.font(11, { min: 10, max: 12 }),
+    fontFamily: 'Archivo_700Bold',
+    color: '#64748B',
     letterSpacing: 0.3,
   },
   inputHint: {

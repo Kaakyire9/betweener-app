@@ -14,6 +14,7 @@ import type { MomentsCapsuleMetrics } from "./useMomentsCapsuleMetrics";
 type FloatingMomentsCapsuleProps = {
   users: MomentUser[];
   relationshipContextByProfileId?: Record<string, MomentRelationshipContext>;
+  viewedMomentIds?: Set<string>;
   onPressMyMoment: () => void;
   onPressUserMoment: (userId: string) => void;
   onPressSeeAll: () => void;
@@ -27,6 +28,7 @@ type FloatingMomentsCapsuleProps = {
 function FloatingMomentsCapsule({
   users,
   relationshipContextByProfileId,
+  viewedMomentIds,
   onPressMyMoment,
   onPressUserMoment,
   onPressSeeAll,
@@ -52,19 +54,26 @@ function FloatingMomentsCapsule({
   }, [relationshipContextByProfileId, users]);
 
   const activeMomentUsers = orderedUsers.filter((item) => item.moments.length > 0);
+  const unseenMomentCount = activeMomentUsers.reduce((count, item) => {
+    if (item.isOwn) return count;
+    return count + item.moments.filter((moment) => !viewedMomentIds?.has(String(moment.id))).length;
+  }, 0);
+  const hasUnseenMoments = unseenMomentCount > 0;
+  const hasRichMomentState = activeMomentUsers.length >= 3 || unseenMomentCount >= 2;
   const isOwnOnlyMoment = activeMomentUsers.length === 1 && Boolean(activeMomentUsers[0]?.isOwn);
   const isCompactRail = activeMomentUsers.length <= 3;
+  const shouldShowSeeAllLabel = isCompactRail || !metrics.isCompactWidth || activeMomentUsers.length >= 3;
   const maxVisibleUsers = isCompactRail ? orderedUsers.length : Math.max(metrics.maxVisibleAvatars, 5);
   const visibleUsers = isOwnOnlyMoment ? activeMomentUsers : orderedUsers.slice(0, maxVisibleUsers);
+  const compactPreviewSlots = Math.min(3, Math.max(1, visibleUsers.length));
+  const compactSeeAllWidth = shouldShowSeeAllLabel ? 78 : 40;
+  const compactAvatarLaneWidth =
+    compactPreviewSlots * metrics.avatarRingSize + Math.max(0, compactPreviewSlots - 1) * 7;
   const overflowCount = isOwnOnlyMoment ? 0 : Math.max(0, orderedUsers.length - visibleUsers.length);
   const ownHasMoment = Boolean(orderedUsers.find((item) => item.isOwn)?.moments.length);
   const ownOnlyUser = activeMomentUsers[0] ?? null;
   const ownOnlyAvatarUrl = getSafeRemoteImageUri(ownOnlyUser?.avatarUrl || null);
   const railHeight = isCompactRail ? (metrics.isCompactHeight || metrics.isCompactWidth ? 64 : 68) : metrics.capsuleHeight;
-  const compactAvatarLaneWidth = Math.min(
-    metrics.isCompactWidth ? 132 : 188,
-    visibleUsers.length * (metrics.avatarRingSize + 10) + (overflowCount > 0 ? metrics.avatarRingSize + 8 : 0),
-  );
   const countPulse = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -93,10 +102,16 @@ function FloatingMomentsCapsule({
   }, [activeMomentUsers.length, countPulse]);
 
   const countPulseStyle = {
-    opacity: countPulse.interpolate({ inputRange: [0, 1], outputRange: [0.82, 1] }),
+    opacity: countPulse.interpolate({
+      inputRange: [0, 1],
+      outputRange: [hasRichMomentState ? 0.88 : 0.82, 1],
+    }),
     transform: [
       {
-        scale: countPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.055] }),
+        scale: countPulse.interpolate({
+          inputRange: [0, 1],
+          outputRange: [1, hasRichMomentState ? 1.09 : 1.055],
+        }),
       },
     ],
   };
@@ -242,7 +257,17 @@ function FloatingMomentsCapsule({
             <Text style={[styles.railTitle, { color: isDark ? "#F4E8D0" : "#173C3B" }]}>Moments</Text>
           ) : null}
           {isCompactRail ? (
-            <Animated.View style={[styles.railCount, { borderColor: "rgba(19,168,168,0.16)" }, countPulseStyle]}>
+            <Animated.View
+              style={[
+                styles.railCount,
+                hasRichMomentState ? styles.railCountElevated : null,
+                {
+                  borderColor: hasUnseenMoments ? "rgba(72,229,220,0.30)" : "rgba(19,168,168,0.16)",
+                  backgroundColor: hasRichMomentState ? "rgba(19,168,168,0.16)" : "rgba(19,168,168,0.09)",
+                },
+                countPulseStyle,
+              ]}
+            >
               <Text style={[styles.railCountText, { color: theme.tint }]}>
                 {activeMomentUsers.length > 9 ? "9+" : activeMomentUsers.length}
               </Text>
@@ -250,42 +275,91 @@ function FloatingMomentsCapsule({
           ) : null}
         </View>
         {isCompactRail ? (
-          <View style={[styles.avatarRow, styles.compactAvatarRow, { width: compactAvatarLaneWidth }]}>
-            {visibleUsers.map((item) => {
-                const isOwn = item.isOwn;
-                const hasMoment = item.moments.length > 0;
-                const relationshipContext =
-                  !isOwn && item.profileId ? relationshipContextByProfileId?.[String(item.profileId)] ?? null : null;
-                const label = isOwn ? MOMENTS_CAPSULE_COPY.ownLabel : formatMomentFirstName(item.name, metrics.isCompactWidth ? 8 : 10);
-                const statusLabel = isOwn
-                  ? hasMoment ? MOMENTS_CAPSULE_COPY.liveStatus : MOMENTS_CAPSULE_COPY.addStatus
-                  : relationshipContext?.cue || "New";
-                return (
-                  <MomentAvatarBubble
-                    key={item.userId}
-                    avatarUrl={item.avatarUrl}
-                    label={label}
-                    statusLabel={statusLabel}
-                    isOwn={isOwn}
-                    hasUnseenMoment={!isOwn && hasMoment}
-                    isLive={hasMoment}
-                    onPress={() => {
-                      if (isOwn) {
-                        if (hasMoment) onPressMyMoment();
-                        else onPressPostMoment();
-                        return;
-                      }
-                      onPressUserMoment(item.userId);
-                    }}
-                    avatarSize={metrics.avatarSize}
-                    ringSize={metrics.avatarRingSize}
-                    showLabel={false}
-                    showStatus={false}
-                    isDark={isDark}
-                    theme={theme}
-                  />
-                );
-              })}
+          <View
+            style={[
+              styles.compactLane,
+              {
+                backgroundColor: isDark ? "rgba(12,44,47,0.34)" : "rgba(255,255,255,0.34)",
+                borderColor: isDark ? "rgba(255,255,255,0.07)" : "rgba(15,61,62,0.08)",
+              },
+            ]}
+          >
+            <View
+              pointerEvents="none"
+              style={[
+                styles.compactLaneGlow,
+                {
+                  opacity: hasRichMomentState ? (isDark ? 1 : 0.82) : isDark ? 0.9 : 0.7,
+                  backgroundColor: hasUnseenMoments
+                    ? "rgba(61,235,226,0.18)"
+                    : hasRichMomentState
+                      ? "rgba(19,168,168,0.16)"
+                      : "rgba(19,168,168,0.12)",
+                },
+              ]}
+            />
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={[styles.avatarRow, styles.compactAvatarRow]}
+              style={[styles.compactAvatarScroller, { width: compactAvatarLaneWidth }]}
+            >
+              {visibleUsers.map((item) => {
+                  const isOwn = item.isOwn;
+                  const hasMoment = item.moments.length > 0;
+                  const relationshipContext =
+                    !isOwn && item.profileId ? relationshipContextByProfileId?.[String(item.profileId)] ?? null : null;
+                  const hasUnseenMoment = !isOwn && hasMoment && item.moments.some((moment) => !viewedMomentIds?.has(String(moment.id)));
+                  const label = isOwn ? MOMENTS_CAPSULE_COPY.ownLabel : formatMomentFirstName(item.name, metrics.isCompactWidth ? 8 : 10);
+                  const statusLabel = isOwn
+                    ? hasMoment ? MOMENTS_CAPSULE_COPY.liveStatus : MOMENTS_CAPSULE_COPY.addStatus
+                    : relationshipContext?.cue || "New";
+                  return (
+                    <MomentAvatarBubble
+                      key={item.userId}
+                      avatarUrl={item.avatarUrl}
+                      label={label}
+                      statusLabel={statusLabel}
+                      isOwn={isOwn}
+                      hasUnseenMoment={hasUnseenMoment}
+                      isLive={hasMoment}
+                      onPress={() => {
+                        if (isOwn) {
+                          if (hasMoment) onPressMyMoment();
+                          else onPressPostMoment();
+                          return;
+                        }
+                        onPressUserMoment(item.userId);
+                      }}
+                      avatarSize={metrics.avatarSize}
+                      ringSize={metrics.avatarRingSize}
+                      showLabel={false}
+                      showStatus={false}
+                      isDark={isDark}
+                      theme={theme}
+                    />
+                  );
+                })}
+            </ScrollView>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="See all Moments"
+              onPress={onPressSeeAll}
+              style={[
+                styles.railSeeAll,
+                styles.compactRailSeeAll,
+                {
+                  minWidth: compactSeeAllWidth,
+                  backgroundColor: isDark ? "rgba(19,168,168,0.16)" : "rgba(19,168,168,0.11)",
+                  borderColor: isDark ? "rgba(19,168,168,0.26)" : "rgba(19,168,168,0.18)",
+                },
+              ]}
+            >
+              {shouldShowSeeAllLabel ? (
+                <Text style={[styles.railSeeAllText, { color: theme.tint }]}>See all</Text>
+              ) : null}
+              <MaterialCommunityIcons name="chevron-right" size={14} color={theme.tint} />
+            </Pressable>
           </View>
         ) : (
           <ScrollView
@@ -299,6 +373,7 @@ function FloatingMomentsCapsule({
               const hasMoment = item.moments.length > 0;
               const relationshipContext =
                 !isOwn && item.profileId ? relationshipContextByProfileId?.[String(item.profileId)] ?? null : null;
+              const hasUnseenMoment = !isOwn && hasMoment && item.moments.some((moment) => !viewedMomentIds?.has(String(moment.id)));
               const label = isOwn ? MOMENTS_CAPSULE_COPY.ownLabel : formatMomentFirstName(item.name, metrics.isCompactWidth ? 8 : 10);
               const statusLabel = isOwn
                 ? hasMoment ? MOMENTS_CAPSULE_COPY.liveStatus : MOMENTS_CAPSULE_COPY.addStatus
@@ -310,7 +385,7 @@ function FloatingMomentsCapsule({
                   label={label}
                   statusLabel={statusLabel}
                   isOwn={isOwn}
-                  hasUnseenMoment={!isOwn && hasMoment}
+                  hasUnseenMoment={hasUnseenMoment}
                   isLive={hasMoment}
                   onPress={() => {
                     if (isOwn) {
@@ -350,17 +425,26 @@ function FloatingMomentsCapsule({
             ) : null}
           </ScrollView>
         )}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="See all Moments"
-          onPress={onPressSeeAll}
-          style={[styles.railSeeAll, isCompactRail && styles.compactRailSeeAll]}
-        >
-          {!metrics.isCompactWidth ? (
-            <Text style={[styles.railSeeAllText, { color: theme.tint }]}>See all</Text>
-          ) : null}
-          <MaterialCommunityIcons name="chevron-right" size={14} color={theme.tint} />
-        </Pressable>
+        {!isCompactRail ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="See all Moments"
+            onPress={onPressSeeAll}
+            style={[
+              styles.railSeeAll,
+              {
+                minWidth: 60,
+                backgroundColor: isDark ? "rgba(19,168,168,0.14)" : "rgba(19,168,168,0.10)",
+                borderColor: isDark ? "rgba(19,168,168,0.24)" : "rgba(19,168,168,0.18)",
+              },
+            ]}
+          >
+            {shouldShowSeeAllLabel ? (
+              <Text style={[styles.railSeeAllText, { color: theme.tint }]}>See all</Text>
+            ) : null}
+            <MaterialCommunityIcons name="chevron-right" size={14} color={theme.tint} />
+          </Pressable>
+        ) : null}
       </View>
       {metrics.shouldUseCompactEmptyState && !ownHasMoment && visibleUsers.length <= 1 ? (
         <Pressable accessibilityRole="button" accessibilityLabel="Add your Moment" onPress={onPressPostMoment} style={styles.compactAdd}>
@@ -389,8 +473,8 @@ const styles = StyleSheet.create({
   },
   compactRailShell: {
     alignSelf: "flex-start",
-    minWidth: 286,
-    maxWidth: "92%",
+    minWidth: 336,
+    maxWidth: "96%",
   },
   content: {
     justifyContent: "center",
@@ -486,7 +570,7 @@ const styles = StyleSheet.create({
   compactRail: {
     flex: 0,
     minHeight: 52,
-    gap: 8,
+    gap: 10,
   },
   railIdentity: {
     flexDirection: "row",
@@ -495,32 +579,60 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   compactRailIdentity: {
-    gap: 6,
+    gap: 5,
   },
   railCount: {
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 4,
-    backgroundColor: "rgba(19,168,168,0.075)",
+    paddingHorizontal: 5,
+    backgroundColor: "rgba(19,168,168,0.09)",
     borderWidth: 1,
   },
+  railCountElevated: {
+    shadowColor: "#39d6cf",
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
   railCountText: {
-    fontSize: 8.5,
+    fontSize: 9,
     fontFamily: "Manrope_800ExtraBold",
   },
   railIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     alignItems: "center",
     justifyContent: "center",
   },
   railTitle: {
-    fontSize: 13,
+    fontSize: 12.5,
     fontFamily: "Manrope_800ExtraBold",
+    letterSpacing: 0.15,
+  },
+  compactLane: {
+    position: "relative",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  compactLaneGlow: {
+    position: "absolute",
+    left: 18,
+    right: 54,
+    top: 6,
+    bottom: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(19,168,168,0.12)",
   },
   avatarScroller: {
     flex: 1,
@@ -528,9 +640,10 @@ const styles = StyleSheet.create({
   compactAvatarScroller: {
     flexGrow: 0,
     flexShrink: 0,
+    marginRight: 2,
   },
   compactAvatarRow: {
-    flexShrink: 0,
+    paddingRight: 0,
     overflow: "visible",
   },
   railSeeAll: {
@@ -538,15 +651,17 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 2,
-    paddingLeft: 8,
+    gap: 4,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    borderWidth: 1,
     flexShrink: 0,
   },
   compactRailSeeAll: {
-    paddingLeft: 2,
+    marginLeft: 2,
   },
   railSeeAllText: {
-    fontSize: 10.5,
+    fontSize: 10,
     fontFamily: "Manrope_800ExtraBold",
   },
   overflowBubble: {

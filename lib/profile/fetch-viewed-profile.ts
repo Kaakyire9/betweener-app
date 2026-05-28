@@ -2,6 +2,7 @@ import { isDistanceLabel, parseDistanceKmFromLabel } from '@/lib/profile/distanc
 import { getPresenceDisplay } from '@/lib/presence';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
 import { supabase } from '@/lib/supabase';
+import { fetchUserPresence, overlayPresence } from '@/lib/user-presence';
 import type { Interest, ProfilePromptAnswer, UserProfile } from '@/types/user-profile';
 
 export type FetchViewedProfileOptions = {
@@ -19,9 +20,9 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
   const { viewedProfileId, viewerProfileId, fallbackDistanceLabel, fallbackDistanceKm } = options;
 
   const selectFull =
-    'id, user_id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, height, looking_for, love_language, languages_spoken, current_country, current_country_code, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, last_active, verification_level';
+    'id, user_id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, height, looking_for, love_language, languages_spoken, current_country, current_country_code, origin_country, origin_country_code, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, last_active, verification_level';
   const selectMinimal =
-    'id, user_id, full_name, age, region, city, location, avatar_url, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, love_language, is_active, online, last_active, verification_level, current_country_code';
+    'id, user_id, full_name, age, region, city, location, avatar_url, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, love_language, is_active, online, last_active, verification_level, current_country_code, origin_country, origin_country_code';
 
   let data: any = null;
   let error: any = null;
@@ -42,6 +43,12 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
   }
 
   if (error || !data) throw error || new Error('Profile not found');
+
+  const presenceResult =
+    typeof data?.user_id === 'string' && data.user_id.length > 0
+      ? await fetchUserPresence(data.user_id)
+      : { data: null, error: null };
+  const profileWithPresence = overlayPresence(data, (presenceResult.data as any) ?? null);
 
   let interestsArr: Interest[] = [];
   let promptAnswers: ProfilePromptAnswer[] = [];
@@ -100,7 +107,11 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
     // non-fatal
   }
 
-  const photos = Array.isArray((data as any).photos) ? (data as any).photos : data.avatar_url ? [data.avatar_url] : [];
+  const photos = Array.isArray((profileWithPresence as any).photos)
+    ? (profileWithPresence as any).photos
+    : profileWithPresence.avatar_url
+      ? [profileWithPresence.avatar_url]
+      : [];
   const computedFallbackKm =
     typeof fallbackDistanceKm === 'number'
       ? fallbackDistanceKm
@@ -108,56 +119,58 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
         ? parseDistanceKmFromLabel(fallbackDistanceLabel)
         : undefined;
 
-  const presence = getPresenceDisplay(data.last_active ?? null);
+  const presence = getPresenceDisplay(profileWithPresence.last_active ?? null);
 
   const mapped: UserProfile = {
-    id: data.id,
-    userId: data.user_id || undefined,
-    name: data.full_name || 'Profile',
-    age: data.age || 0,
-    location: data.location || data.region || '',
-    city: data.city || undefined,
-    region: data.region || undefined,
-    latitude: typeof data.latitude === 'number' ? data.latitude : undefined,
-    longitude: typeof data.longitude === 'number' ? data.longitude : undefined,
-    profilePicture: data.avatar_url || photos[0] || '',
+    id: profileWithPresence.id,
+    userId: profileWithPresence.user_id || undefined,
+    name: profileWithPresence.full_name || 'Profile',
+    age: profileWithPresence.age || 0,
+    location: profileWithPresence.location || profileWithPresence.region || '',
+    city: profileWithPresence.city || undefined,
+    region: profileWithPresence.region || undefined,
+    latitude: typeof (profileWithPresence as any).latitude === 'number' ? (profileWithPresence as any).latitude : undefined,
+    longitude: typeof (profileWithPresence as any).longitude === 'number' ? (profileWithPresence as any).longitude : undefined,
+    profilePicture: profileWithPresence.avatar_url || photos[0] || '',
     photos,
-    profileVideoPath: data.profile_video || undefined,
-    occupation: data.occupation || '',
-    education: data.education || '',
-    verified: !!data.verification_level,
-    verificationLevel: typeof data.verification_level === 'number' ? data.verification_level : undefined,
-    bio: data.bio || '',
-    distance: isDistanceLabel(fallbackDistanceLabel) ? fallbackDistanceLabel || '' : data.region || data.location || '',
+    profileVideoPath: (profileWithPresence as any).profile_video || undefined,
+    occupation: (profileWithPresence as any).occupation || '',
+    education: (profileWithPresence as any).education || '',
+    verified: !!profileWithPresence.verification_level,
+    verificationLevel: typeof profileWithPresence.verification_level === 'number' ? profileWithPresence.verification_level : undefined,
+    bio: profileWithPresence.bio || '',
+    distance: isDistanceLabel(fallbackDistanceLabel) ? fallbackDistanceLabel || '' : profileWithPresence.region || profileWithPresence.location || '',
     distanceKm: computedFallbackKm,
     isActiveNow: presence.online || presence.activeNow,
     online: presence.online,
-    lastActive: data.last_active ?? null,
-    last_active: data.last_active ?? null,
-    personalityType: data.personality_type || undefined,
-    height: data.height || undefined,
-    lookingFor: data.looking_for || undefined,
-    loveLanguage: data.love_language || undefined,
-    languages: Array.isArray((data as any).languages_spoken) ? (data as any).languages_spoken : undefined,
-    currentCountry: data.current_country || undefined,
-    currentCountryCode: data.current_country_code || undefined,
-    exerciseFrequency: data.exercise_frequency || undefined,
-    smoking: data.smoking || undefined,
-    drinking: data.drinking || undefined,
-    hasChildren: data.has_children || undefined,
-    wantsChildren: data.wants_children || undefined,
-    locationPrecision: data.location_precision || undefined,
-    compatibility: typeof (data as any).compatibility === 'number' ? (data as any).compatibility : 0,
-    tribe: data.tribe || undefined,
+    lastActive: profileWithPresence.last_active ?? null,
+    last_active: profileWithPresence.last_active ?? null,
+    personalityType: (profileWithPresence as any).personality_type || undefined,
+    height: (profileWithPresence as any).height || undefined,
+    lookingFor: (profileWithPresence as any).looking_for || undefined,
+    loveLanguage: profileWithPresence.love_language || undefined,
+    languages: Array.isArray((profileWithPresence as any).languages_spoken) ? (profileWithPresence as any).languages_spoken : undefined,
+    currentCountry: (profileWithPresence as any).current_country || undefined,
+    currentCountryCode: (profileWithPresence as any).current_country_code || undefined,
+    originCountry: (profileWithPresence as any).origin_country || undefined,
+    originCountryCode: (profileWithPresence as any).origin_country_code || undefined,
+    exerciseFrequency: (profileWithPresence as any).exercise_frequency || undefined,
+    smoking: (profileWithPresence as any).smoking || undefined,
+    drinking: (profileWithPresence as any).drinking || undefined,
+    hasChildren: (profileWithPresence as any).has_children || undefined,
+    wantsChildren: (profileWithPresence as any).wants_children || undefined,
+    locationPrecision: (profileWithPresence as any).location_precision || undefined,
+    compatibility: typeof (profileWithPresence as any).compatibility === 'number' ? (profileWithPresence as any).compatibility : 0,
+    tribe: profileWithPresence.tribe || undefined,
     roots:
-      Array.isArray((data as any).roots) && (data as any).roots.length > 0
-        ? (data as any).roots.filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0)
-        : data.tribe
-          ? [String(data.tribe)]
+      Array.isArray((profileWithPresence as any).roots) && (profileWithPresence as any).roots.length > 0
+        ? (profileWithPresence as any).roots.filter((item: unknown): item is string => typeof item === 'string' && item.trim().length > 0)
+        : profileWithPresence.tribe
+          ? [String(profileWithPresence.tribe)]
           : undefined,
-    rootsNote: (data as any).roots_note || undefined,
-    rootsVisibility: (data as any).roots_visibility || undefined,
-    religion: data.religion || undefined,
+    rootsNote: (profileWithPresence as any).roots_note || undefined,
+    rootsVisibility: (profileWithPresence as any).roots_visibility || undefined,
+    religion: profileWithPresence.religion || undefined,
     interests: interestsArr,
     promptAnswers,
   };

@@ -173,11 +173,18 @@ export default function ActivityScreen() {
 
   const openChat = useCallback((actorId?: string | null, actorName?: string, actorAvatar?: string | null) => {
     if (!actorId) return;
+    const actor = actorMap[actorId];
     router.push({
       pathname: "/chat/[id]",
-      params: { id: actorId, userName: actorName ?? "", userAvatar: actorAvatar ?? "" },
+      params: {
+        id: actorId,
+        peerUserId: actor?.user_id ?? "",
+        peerProfileId: actor?.id ?? "",
+        userName: actorName ?? "",
+        userAvatar: actorAvatar ?? "",
+      },
     });
-  }, []);
+  }, [actorMap]);
 
   const openMoments = useCallback((actorId?: string | null, momentId?: string | null) => {
     if (!actorId) return;

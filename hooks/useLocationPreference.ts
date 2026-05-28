@@ -1,5 +1,10 @@
 import { supabase } from '@/lib/supabase';
-import { isKnownGhanaRegionLabel } from '@/lib/location/location-display';
+import {
+  isAdministrativeLocationLabel,
+  isBroadRegionLabel,
+  isKnownGhanaRegionLabel,
+} from '@/lib/location/location-display';
+import { findCountryByCode, findCountryByLabel } from '@/lib/location/countries';
 
 type Result =
   | { ok: true }
@@ -80,13 +85,45 @@ export async function saveManualCityLocation(
     const label = locationLabel.trim();
     if (!label) return { ok: false, error: 'Please enter a city or region.' };
 
-    const city = label.split(',')[0]?.trim() || label;
+    const parts = label
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+    const primary = parts[0] || label;
+    const secondary = parts[1] || null;
     const normalizedCountryCode = countryCode ? countryCode.trim().toUpperCase() : '';
-    const isGhanaRegionOnly = normalizedCountryCode === 'GH' && isKnownGhanaRegionLabel(city);
+    const { data: profileRow, error: profileError } = await supabase
+      .from('profiles')
+      .select('country_lock_policy')
+      .eq('id', profileId)
+      .single();
+    if (profileError) {
+      return { ok: false, error: profileError.message };
+    }
+    if (profileRow?.country_lock_policy === 'ghana_locked' && normalizedCountryCode && normalizedCountryCode !== 'GH') {
+      return {
+        ok: false,
+        error: 'Current country is locked to Ghana until precise location confirms you are outside Ghana.',
+      };
+    }
+    const resolvedCountry = normalizedCountryCode ? findCountryByCode(normalizedCountryCode)?.label ?? null : null;
+    const normalizedPrimary = primary.toLowerCase();
+    const normalizedResolvedCountry = resolvedCountry?.toLowerCase() ?? '';
+    const primaryCountryAlias = findCountryByLabel(primary)?.code ?? null;
+    const primaryLooksCountry =
+      (!!resolvedCountry && normalizedPrimary === normalizedResolvedCountry) ||
+      (!!normalizedCountryCode && primaryCountryAlias === normalizedCountryCode);
+    const primaryLooksBroadRegion =
+      isBroadRegionLabel(primary) || isAdministrativeLocationLabel(primary) || primaryLooksCountry;
+    const isGhanaRegionOnly = normalizedCountryCode === 'GH' && isKnownGhanaRegionLabel(primary);
+    const city = isGhanaRegionOnly || primaryLooksBroadRegion ? null : primary;
+    const region =
+      secondary ||
+      (isGhanaRegionOnly || primaryLooksBroadRegion ? primary : primary);
     const updateData: Record<string, any> = {
-      location: isGhanaRegionOnly ? 'Ghana' : city,
-      city: isGhanaRegionOnly ? null : city,
-      region: city,
+      location: city || region || resolvedCountry || primary,
+      city,
+      region,
       location_precision: 'CITY',
       latitude: null,
       longitude: null,
@@ -94,8 +131,8 @@ export async function saveManualCityLocation(
     };
     if (normalizedCountryCode) {
       updateData.current_country_code = normalizedCountryCode;
-      if (normalizedCountryCode === 'GH') {
-        updateData.current_country = 'Ghana';
+      if (resolvedCountry) {
+        updateData.current_country = resolvedCountry;
       }
     }
 

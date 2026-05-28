@@ -69,13 +69,17 @@ function MomentsHeaderRow({
         style={[
           styles.actionPill,
           {
-            backgroundColor: isDark ? "rgba(7,30,34,0.42)" : "rgba(255,255,255,0.58)",
-            borderColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(15,61,62,0.08)",
+            backgroundColor: isEmpty
+              ? isDark ? "rgba(19,168,168,0.18)" : "rgba(19,168,168,0.12)"
+              : isDark ? "rgba(7,30,34,0.42)" : "rgba(255,255,255,0.58)",
+            borderColor: isEmpty
+              ? isDark ? "rgba(19,168,168,0.30)" : "rgba(19,168,168,0.20)"
+              : isDark ? "rgba(255,255,255,0.08)" : "rgba(15,61,62,0.08)",
           },
         ]}
       >
-        <MaterialCommunityIcons name={isEmpty ? "plus" : "send"} size={14} color={theme.tint} />
-        <Text style={[styles.actionText, { color: theme.tint }]}>{isEmpty ? "Share" : MOMENTS_CAPSULE_COPY.seeAll}</Text>
+        <MaterialCommunityIcons name={isEmpty ? "plus-circle" : "send"} size={14} color={theme.tint} />
+        <Text style={[styles.actionText, { color: theme.tint }]}>{isEmpty ? "Share yours" : MOMENTS_CAPSULE_COPY.seeAll}</Text>
       </TouchableOpacity>
     </View>
   );
@@ -149,7 +153,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    paddingHorizontal: 12,
+    minHeight: 38,
+    paddingHorizontal: 13,
     paddingVertical: 8,
     borderRadius: 999,
     borderWidth: 1,

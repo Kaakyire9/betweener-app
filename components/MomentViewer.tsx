@@ -19,6 +19,7 @@ import { useAuth } from '@/lib/auth-context';
 import { fetchMomentConversationState } from '@/lib/moments-eligibility';
 import type { Moment, MomentUser } from '@/hooks/useMoments';
 import { createSignedUrl } from '@/lib/moments';
+import { markMomentViewed } from '@/lib/moments-views';
 import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
 import type { MomentRelationshipContext } from '@/types/moment-context';
 import MomentCommentsModal from '@/components/MomentCommentsModal';
@@ -285,6 +286,7 @@ type Props = {
   relationshipContextByProfileId?: Record<string, MomentRelationshipContext>;
   preferredMediaUrlsByMomentId?: Record<string, string>;
   onPressIntent?: (user: MomentUser) => void;
+  onMomentViewed?: (momentId: string) => void;
   onClose: () => void;
 };
 
@@ -309,6 +311,7 @@ export default function MomentViewer({
   relationshipContextByProfileId,
   preferredMediaUrlsByMomentId = {},
   onPressIntent,
+  onMomentViewed,
   onClose,
 }: Props) {
   const { user } = useAuth();
@@ -339,6 +342,7 @@ export default function MomentViewer({
   const pendingInitialCommentsOpenRef = useRef(false);
   const pendingEntryHintSourceRef = useRef<'comment' | 'reaction' | null>(null);
   const pendingHighlightedReactionEmojiRef = useRef<string | null>(null);
+  const viewedMomentIdsRef = useRef<Set<string>>(new Set());
 
   const currentUser = users[activeUserIndex];
   const currentMoment = currentUser?.moments?.[activeMomentIndex];
@@ -788,6 +792,7 @@ export default function MomentViewer({
       pendingInitialCommentsOpenRef.current = false;
       pendingEntryHintSourceRef.current = null;
       pendingHighlightedReactionEmojiRef.current = null;
+      viewedMomentIdsRef.current = new Set();
       setEntryHintVisible(false);
       setHighlightedReactionEmoji(null);
       return;
@@ -886,6 +891,15 @@ export default function MomentViewer({
     if (!visible || !currentMoment) return;
     void fetchCommentCount(currentMoment.id);
   }, [currentMoment, fetchCommentCount, visible]);
+
+  useEffect(() => {
+    if (!visible || !currentMoment?.id || currentUser?.isOwn) return;
+    if (viewedMomentIdsRef.current.has(currentMoment.id)) return;
+
+    viewedMomentIdsRef.current.add(currentMoment.id);
+    onMomentViewed?.(currentMoment.id);
+    void markMomentViewed(currentMoment.id);
+  }, [currentMoment?.id, currentUser?.isOwn, onMomentViewed, visible]);
 
   useEffect(() => {
     if (!visible || !currentMoment) return;

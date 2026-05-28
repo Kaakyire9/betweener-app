@@ -2,6 +2,12 @@ import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useVerificationStatus } from '@/hooks/use-verification-status';
 import { useAuth } from '@/lib/auth-context';
+import {
+  findCountryByCode,
+  findCountryByLabel,
+  getPrioritizedCountries,
+  type CountryOption,
+} from '@/lib/location/countries';
 import { isKnownGhanaRegionLabel, normalizeLocationValue } from '@/lib/location/location-display';
 import { isLikelyNetworkError } from '@/lib/network';
 import {
@@ -278,6 +284,12 @@ const sameStringArray = (left: unknown, right: unknown) => {
   return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
 };
 
+const toFlagEmoji = (countryCode?: string | null) => {
+  const code = String(countryCode || '').trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code)) return '';
+  return String.fromCodePoint(...code.split('').map((char) => 127397 + char.charCodeAt(0)));
+};
+
 const PROFILE_MEDIA_STAGING_FOLDER = 'betweener-profile-media';
 
 const inferMediaUploadMeta = (
@@ -378,9 +390,6 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     if (region && GHANA_REGIONS_OPTIONS.includes(region)) return true;
     return false;
   }, [profile]);
-  const languagesOptions = isGhanaProfile
-    ? GHANA_LANGUAGES_OPTIONS
-    : GLOBAL_LANGUAGES_OPTIONS;
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [videoUploading, setVideoUploading] = useState(false);
@@ -408,6 +417,9 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const [showLivingSituationPicker, setShowLivingSituationPicker] = useState(false);
   const [showPetsPicker, setShowPetsPicker] = useState(false);
   const [showLanguagesPicker, setShowLanguagesPicker] = useState(false);
+  const [countryModalVisible, setCountryModalVisible] = useState(false);
+  const [countryPickerTarget, setCountryPickerTarget] = useState<'current' | 'origin'>('current');
+  const [countrySearch, setCountrySearch] = useState('');
   
   // Original custom input states
   const [customHeight, setCustomHeight] = useState('');
@@ -451,6 +463,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       roots_note: '',
       roots_visibility: 'VISIBLE',
       religion: '',
+    current_country: '',
+    current_country_code: '',
+    origin_country: '',
+    origin_country_code: '',
     occupation: '',
     education: '',
     height: '',
@@ -476,6 +492,33 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     last_ghana_visit: '',
     future_ghana_plans: '',
   });
+  const selectedCurrentCountry = useMemo(
+    () => findCountryByCode(formData.current_country_code) ?? findCountryByLabel(formData.current_country),
+    [formData.current_country, formData.current_country_code],
+  );
+  const selectedOriginCountry = useMemo(
+    () => findCountryByCode(formData.origin_country_code) ?? findCountryByLabel(formData.origin_country),
+    [formData.origin_country, formData.origin_country_code],
+  );
+  const countryPickerData = useMemo(
+    () => getPrioritizedCountries(countrySearch),
+    [countrySearch],
+  );
+  const selectedCurrentCountryFlag = selectedCurrentCountry ? toFlagEmoji(selectedCurrentCountry.code) : '';
+  const selectedOriginCountryFlag = selectedOriginCountry ? toFlagEmoji(selectedOriginCountry.code) : '';
+  const isGhanaCountryLocked = (profile as any)?.country_lock_policy === 'ghana_locked';
+  const effectiveCountryCode = selectedCurrentCountry?.code || formData.current_country_code || (profile as any)?.current_country_code || '';
+  const effectiveCountryLabel = selectedCurrentCountry?.label || formData.current_country || (profile as any)?.current_country || '';
+  const effectiveRegion = formData.region || profile?.region || '';
+  const formIsGhanaProfile = useMemo(() => {
+    if (String(effectiveCountryCode).trim().toUpperCase() === 'GH') return true;
+    if (String(effectiveCountryLabel).trim().toLowerCase().includes('ghana')) return true;
+    if (effectiveRegion && GHANA_REGIONS_OPTIONS.includes(effectiveRegion)) return true;
+    return false;
+  }, [effectiveCountryCode, effectiveCountryLabel, effectiveRegion]);
+  const languagesOptions = formIsGhanaProfile
+    ? GHANA_LANGUAGES_OPTIONS
+    : GLOBAL_LANGUAGES_OPTIONS;
   const displayLanguages = useMemo(() => {
     const base =
       formData?.languages_spoken && formData.languages_spoken.length > 0
@@ -589,6 +632,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         roots_note: (profile as any).roots_note || '',
         roots_visibility: String((profile as any).roots_visibility || 'VISIBLE').toUpperCase(),
         religion: formatReligionLabel((profile as any).religion || ''),
+        current_country: (profile as any).current_country || '',
+        current_country_code: (profile as any).current_country_code || '',
+        origin_country: (profile as any).origin_country || '',
+        origin_country_code: (profile as any).origin_country_code || '',
         occupation: (profile as any).occupation || '',
         education: (profile as any).education || '',
         height: (profile as any).height || '',
@@ -713,6 +760,24 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       ...prev,
       [field]: value
     }));
+  };
+
+  const selectCountry = (country: CountryOption) => {
+    setFormData((prev) =>
+      countryPickerTarget === 'origin'
+        ? {
+            ...prev,
+            origin_country: country.label,
+            origin_country_code: country.code,
+          }
+        : {
+            ...prev,
+            current_country: country.label,
+            current_country_code: country.code,
+          },
+    );
+    setCountrySearch('');
+    setCountryModalVisible(false);
   };
 
   const handleRootToggle = (value: string) => {
@@ -1606,29 +1671,69 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       if (formData.age && formData.age.trim()) {
         updateData.age = parseInt(formData.age);
       }
+      const existingCountry = normalizeLocationValue((profile as any)?.current_country);
+      const existingCountryCode = normalizeLocationValue((profile as any)?.current_country_code).toUpperCase();
+      const selectedCurrentCountryOption =
+        findCountryByCode(formData.current_country_code) ?? findCountryByLabel(formData.current_country);
+      const resolvedCurrentCountry =
+        isGhanaCountryLocked
+          ? 'Ghana'
+          :
+        selectedCurrentCountryOption?.label ||
+        normalizedString(formData.current_country) ||
+        existingCountry ||
+        (isGhanaProfile || isKnownGhanaRegionLabel(formData.region) ? 'Ghana' : '');
+      const resolvedCurrentCountryCode =
+        isGhanaCountryLocked
+          ? 'GH'
+          :
+        selectedCurrentCountryOption?.code ||
+        normalizedString(formData.current_country_code).toUpperCase() ||
+        existingCountryCode ||
+        (resolvedCurrentCountry.toLowerCase() === 'ghana' ? 'GH' : '');
+      updateData.current_country = resolvedCurrentCountry || null;
+      updateData.current_country_code = resolvedCurrentCountryCode || null;
       const regionValue = formData.region ? formData.region.trim() : '';
       if (regionValue) {
-        const existingCountry = normalizeLocationValue((profile as any)?.current_country);
-        const existingCountryCode = normalizeLocationValue((profile as any)?.current_country_code).toUpperCase();
-        const inferredCountry = existingCountry || (isGhanaProfile || isKnownGhanaRegionLabel(regionValue) ? 'Ghana' : '');
-        const inferredCountryCode = existingCountryCode || (inferredCountry.toLowerCase() === 'ghana' ? 'GH' : '');
         const regionOnlyLocation = isKnownGhanaRegionLabel(regionValue);
         updateData.region = regionValue;
         updateData.city = regionOnlyLocation ? null : regionValue;
-        updateData.location = regionOnlyLocation ? inferredCountry : regionValue;
-        if (inferredCountry) {
-          updateData.current_country = inferredCountry;
-        }
-        if (inferredCountryCode) {
-          updateData.current_country_code = inferredCountryCode;
-        }
+        updateData.location = regionOnlyLocation ? (resolvedCurrentCountry || regionValue) : regionValue;
         const previousRegion = profile?.region ? profile.region.trim() : '';
-        if (regionValue !== previousRegion) {
+        const previousCountryCode = normalizeLocationValue((profile as any)?.current_country_code).toUpperCase();
+        if (regionValue !== previousRegion || resolvedCurrentCountryCode !== previousCountryCode) {
           updateData.location_precision = 'CITY';
           updateData.latitude = null;
           updateData.longitude = null;
           updateData.location_updated_at = new Date().toISOString();
         }
+      } else if (resolvedCurrentCountry) {
+        updateData.location = resolvedCurrentCountry;
+      }
+      const selectedOriginCountryOption =
+        findCountryByCode(formData.origin_country_code) ?? findCountryByLabel(formData.origin_country);
+      const explicitOriginCountry =
+        isGhanaCountryLocked
+          ? 'Ghana'
+          :
+        selectedOriginCountryOption?.label || normalizedString(formData.origin_country);
+      const explicitOriginCountryCode =
+        isGhanaCountryLocked
+          ? 'GH'
+          :
+        selectedOriginCountryOption?.code || normalizedString(formData.origin_country_code).toUpperCase();
+      if (explicitOriginCountry) {
+        updateData.origin_country = explicitOriginCountry;
+        updateData.origin_country_code = explicitOriginCountryCode || null;
+        updateData.origin_country_source = isGhanaCountryLocked ? 'residence_backfill' : 'explicit';
+      } else if (resolvedCurrentCountryCode === 'GH' || resolvedCurrentCountry.toLowerCase() === 'ghana') {
+        updateData.origin_country = 'Ghana';
+        updateData.origin_country_code = 'GH';
+        updateData.origin_country_source = 'residence_backfill';
+      } else {
+        updateData.origin_country = null;
+        updateData.origin_country_code = null;
+        updateData.origin_country_source = 'unknown';
       }
       if (formData.occupation && formData.occupation.trim()) {
         updateData.occupation = formData.occupation.trim();
@@ -1697,6 +1802,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         !sameString(updateData.roots_note, (profile as any)?.roots_note) ||
         !sameString(updateData.roots_visibility, (profile as any)?.roots_visibility || 'VISIBLE') ||
         !sameString(updateData.religion, (profile as any)?.religion) ||
+        !sameString(updateData.current_country, (profile as any)?.current_country) ||
+        !sameString(updateData.current_country_code, (profile as any)?.current_country_code) ||
+        !sameString(updateData.origin_country, (profile as any)?.origin_country) ||
+        !sameString(updateData.origin_country_code, (profile as any)?.origin_country_code) ||
+        !sameString(updateData.origin_country_source, (profile as any)?.origin_country_source || 'unknown') ||
         !sameString(updateData.occupation, (profile as any)?.occupation) ||
         !sameString(updateData.education, (profile as any)?.education) ||
         !sameString(updateData.height, (profile as any)?.height) ||
@@ -2055,10 +2165,92 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             </View>
 
             <View style={styles.inputContainer}>
-              <Text style={styles.inputLabel}>
-                {isGhanaProfile ? 'Region' : 'Location'}
+              <Text style={styles.inputLabel}>Current Country</Text>
+              <TouchableOpacity
+                style={styles.selectButton}
+                onPress={() => {
+                  if (isGhanaCountryLocked) return;
+                  setCountryPickerTarget('current');
+                  setCountryModalVisible(true);
+                }}
+                disabled={isGhanaCountryLocked}
+              >
+                <View style={styles.countrySelectValue}>
+                  <Text style={[styles.countryFlagText, !selectedCurrentCountryFlag && styles.countryFlagPlaceholder]}>
+                    {selectedCurrentCountryFlag || '--'}
+                  </Text>
+                  <View style={styles.countrySelectCopy}>
+                    <Text
+                      style={[
+                        formData.current_country
+                          ? styles.selectButtonText
+                          : styles.selectButtonPlaceholder,
+                      ]}
+                    >
+                      {formData.current_country || 'Select current country'}
+                    </Text>
+                    <Text style={styles.countryMetaText}>
+                      {selectedCurrentCountry
+                        ? `${selectedCurrentCountry.dial} • ${selectedCurrentCountry.code}`
+                        : 'Used for local matching first'}
+                    </Text>
+                  </View>
+                </View>
+                <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
+              </TouchableOpacity>
+              {isGhanaCountryLocked ? (
+                <Text style={styles.fieldHelperText}>
+                  Ghana-route accounts keep current country locked to Ghana until precise location confirms you are outside Ghana.
+                </Text>
+              ) : null}
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Origin Country (Optional)</Text>
+              <TouchableOpacity
+                style={styles.selectButton}
+                onPress={() => {
+                  if (isGhanaCountryLocked) return;
+                  setCountryPickerTarget('origin');
+                  setCountryModalVisible(true);
+                }}
+                disabled={isGhanaCountryLocked}
+              >
+                <View style={styles.countrySelectValue}>
+                  <Text style={[styles.countryFlagText, !selectedOriginCountryFlag && styles.countryFlagPlaceholder]}>
+                    {selectedOriginCountryFlag || '--'}
+                  </Text>
+                  <View style={styles.countrySelectCopy}>
+                    <Text
+                      style={[
+                        formData.origin_country
+                          ? styles.selectButtonText
+                          : styles.selectButtonPlaceholder,
+                      ]}
+                    >
+                      {formData.origin_country || 'Select origin country'}
+                    </Text>
+                    <Text style={styles.countryMetaText}>
+                      {selectedOriginCountry
+                        ? `${selectedOriginCountry.dial} • ${selectedOriginCountry.code}`
+                        : 'Used for diaspora affinity'}
+                    </Text>
+                  </View>
+                </View>
+                <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
+              </TouchableOpacity>
+              <Text style={styles.fieldHelperText}>
+                {isGhanaCountryLocked
+                  ? 'Origin stays Ghana on Ghana-route accounts unless precise location confirms you are outside Ghana.'
+                  : 'This is where your roots are from, not necessarily where you live now.'}
               </Text>
-              {isGhanaProfile ? (
+            </View>
+
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>
+                {formIsGhanaProfile ? 'Region' : 'City or Region'}
+              </Text>
+              {formIsGhanaProfile ? (
                 <>
                   <TouchableOpacity
                     style={styles.selectButton}
@@ -3033,8 +3225,81 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         currentValue={formData.height}
       />
 
+      <Modal
+        visible={countryModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setCountryModalVisible(false)}
+      >
+        <SafeAreaView style={styles.pickerContainer}>
+          <View style={styles.pickerHeader}>
+            <TouchableOpacity onPress={() => setCountryModalVisible(false)}>
+              <Text style={styles.pickerCancel}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={styles.pickerTitle}>
+              {countryPickerTarget === 'origin' ? 'Origin Country' : 'Current Country'}
+            </Text>
+            <View style={{ width: 60 }} />
+          </View>
+
+          <View style={styles.countrySearchWrap}>
+            <MaterialCommunityIcons name="magnify" size={18} color={theme.textMuted} />
+            <TextInput
+              value={countrySearch}
+              onChangeText={setCountrySearch}
+              placeholder="Search country or code"
+              placeholderTextColor={theme.textMuted}
+              autoCapitalize="words"
+              autoCorrect={false}
+              style={styles.countrySearchInput}
+            />
+          </View>
+
+          <FlatList
+            data={countryPickerData}
+            keyExtractor={(item) => item.code}
+            keyboardShouldPersistTaps="handled"
+            style={styles.pickerList}
+            renderItem={({ item }) => {
+              const selectedCode =
+                countryPickerTarget === 'origin'
+                  ? selectedOriginCountry?.code
+                  : selectedCurrentCountry?.code;
+              const isSelected = selectedCode === item.code;
+              return (
+                <TouchableOpacity
+                  style={[
+                    styles.pickerItem,
+                    isSelected && styles.pickerItemSelected,
+                  ]}
+                  onPress={() => selectCountry(item)}
+                >
+                  <View style={styles.countryPickerRow}>
+                    <Text style={styles.countryPickerFlag}>{toFlagEmoji(item.code) || '--'}</Text>
+                    <View style={styles.countryPickerCopy}>
+                      <Text
+                        style={[
+                          styles.pickerItemText,
+                          isSelected && styles.pickerItemTextSelected,
+                        ]}
+                      >
+                        {item.label}
+                      </Text>
+                      <Text style={styles.countryPickerMeta}>{`${item.dial} • ${item.code}`}</Text>
+                    </View>
+                  </View>
+                  {isSelected ? (
+                    <MaterialCommunityIcons name="check" size={20} color={theme.tint} />
+                  ) : null}
+                </TouchableOpacity>
+              );
+            }}
+          />
+        </SafeAreaView>
+      </Modal>
+
       {/* Ghana Region Picker */}
-      {isGhanaProfile && (
+      {formIsGhanaProfile && (
         <FieldPicker
           title="Select Region"
           options={GHANA_REGIONS_OPTIONS}
@@ -3925,6 +4190,75 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
     },
     selectButtonPlaceholder: {
       fontSize: responsive.font(16, { min: 15, max: 17 }),
+      color: theme.textMuted,
+    },
+    fieldHelperText: {
+      marginTop: 6,
+      fontSize: 12,
+      lineHeight: 16,
+      color: theme.textMuted,
+    },
+    countrySelectValue: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+      marginRight: 12,
+    },
+    countrySelectCopy: {
+      flex: 1,
+    },
+    countryFlagText: {
+      width: 28,
+      fontSize: responsive.font(18, { min: 17, max: 19 }),
+      marginRight: 10,
+      color: theme.text,
+    },
+    countryFlagPlaceholder: {
+      color: theme.textMuted,
+    },
+    countryMetaText: {
+      marginTop: 2,
+      fontSize: 12,
+      color: theme.textMuted,
+    },
+    countrySearchWrap: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: pageGutter,
+      paddingTop: responsive.space(12, { min: 10, max: 14 }),
+      paddingBottom: responsive.space(8, { min: 6, max: 10 }),
+    },
+    countrySearchInput: {
+      flex: 1,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      borderRadius: 14,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      minHeight: 46,
+      fontSize: 15,
+      color: theme.text,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.7 : 0.95),
+    },
+    countryPickerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flex: 1,
+      marginRight: 12,
+    },
+    countryPickerFlag: {
+      width: 28,
+      fontSize: responsive.font(18, { min: 17, max: 19 }),
+      color: theme.text,
+      marginRight: 12,
+    },
+    countryPickerCopy: {
+      flex: 1,
+    },
+    countryPickerMeta: {
+      marginTop: 2,
+      fontSize: 12,
       color: theme.textMuted,
     },
     

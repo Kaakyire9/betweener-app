@@ -8,15 +8,16 @@ import { useAuth } from '@/lib/auth-context';
 import { fetchMomentPostingEligibility, type MomentPostingEligibility } from '@/lib/moments-eligibility';
 import { deleteMomentOfflineSafe } from '@/lib/moments-offline-actions';
 import { createSignedUrl } from '@/lib/moments';
+import { fetchMyMomentViewStats } from '@/lib/moments-views';
 import { collectMomentSyncIssues } from '@/lib/offline/moment-sync-issues';
 import { reconcileMomentRowsWithOfflineMutations } from '@/lib/offline/moment-mutation-reconciler';
 import {
+  mergeOwnMomentsSnapshot,
   removeMomentFromFeedSnapshot,
   removeOwnMomentSnapshot,
   primeOfflineMomentMedia,
   readOwnMomentsSnapshot,
   resolveOfflineMomentMediaMap,
-  writeOwnMomentsSnapshot,
 } from '@/lib/offline/moments-store';
 import { getMomentOfflineMutationSnapshot, retryFailedOfflineMutations, subscribeToOfflineMutationEvents } from '@/lib/offline/mutation-queue';
 import { supabase } from '@/lib/supabase';
@@ -76,6 +77,7 @@ export default function MomentsScreen() {
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
   const [offlineMyMediaByMomentId, setOfflineMyMediaByMomentId] = useState<Record<string, string>>({});
   const [reactionCounts, setReactionCounts] = useState<Record<string, number>>({});
+  const [viewCounts, setViewCounts] = useState<Record<string, number>>({});
   const [syncStateByMomentId, setSyncStateByMomentId] = useState<Record<string, { state: 'pending' | 'failed'; label: string }>>({});
   const [postingEligibility, setPostingEligibility] = useState<MomentPostingEligibility | null>(null);
 
@@ -135,6 +137,9 @@ export default function MomentsScreen() {
       if (snapshot.reactionCounts && Object.keys(snapshot.reactionCounts).length > 0) {
         setReactionCounts((prev) => (Object.keys(prev).length === 0 ? snapshot.reactionCounts : prev));
       }
+      if (snapshot.viewCounts && Object.keys(snapshot.viewCounts).length > 0) {
+        setViewCounts((prev) => (Object.keys(prev).length === 0 ? snapshot.viewCounts ?? {} : prev));
+      }
     })();
     return () => {
       cancelled = true;
@@ -188,13 +193,17 @@ export default function MomentsScreen() {
         moments: cleaned,
         reactionCounts: counts,
       });
+      const nextViewCounts = await fetchMyMomentViewStats(reconciled.moments.map((moment) => moment.id));
       setReactionCounts(reconciled.reactionCounts);
+      if (nextViewCounts) {
+        setViewCounts(nextViewCounts);
+      }
       setSyncStateByMomentId(reconciled.syncStateByMomentId);
       setMyMoments(reconciled.moments);
-      await writeOwnMomentsSnapshot(user.id, {
+      await mergeOwnMomentsSnapshot(user.id, {
         moments: reconciled.moments,
         reactionCounts: reconciled.reactionCounts,
-        commentCounts: {},
+        ...(nextViewCounts ? { viewCounts: nextViewCounts } : {}),
       });
     } finally {
       setMyLoading(false);
@@ -271,6 +280,11 @@ export default function MomentsScreen() {
           }
           setMyMoments((prev) => prev.filter((m) => m.id !== moment.id));
           setReactionCounts((prev) => {
+            const next = { ...prev };
+            delete next[moment.id];
+            return next;
+          });
+          setViewCounts((prev) => {
             const next = { ...prev };
             delete next[moment.id];
             return next;
@@ -501,6 +515,10 @@ export default function MomentsScreen() {
                         <View style={styles.momentMetaItem}>
                           <MaterialCommunityIcons name="heart" size={13} color={theme.tint} />
                           <Text style={styles.momentMetaText}>{reactions}</Text>
+                        </View>
+                        <View style={styles.momentMetaItem}>
+                          <MaterialCommunityIcons name="eye-outline" size={13} color={theme.textMuted} />
+                          <Text style={styles.momentMetaText}>{viewCounts[moment.id] ?? 0}</Text>
                         </View>
                         {syncState ? (
                           <View

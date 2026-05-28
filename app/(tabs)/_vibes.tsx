@@ -16,9 +16,13 @@ import useVibesFeed, { applyVibesFilters, type VibesFilters } from "@/hooks/useV
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
 import { cancelIntentRequestOfflineSafe } from "@/lib/intents/offline-actions";
-import { canAccessInternalTools } from "@/lib/internal-tools";
 import { cacheOfflineVideo, getOfflineVideoUri } from "@/lib/offline/video-store";
 import { subscribeToNetworkRestored } from "@/lib/network-recovery";
+import { fetchViewedMomentIds } from "@/lib/moments-views";
+import {
+  readVibesMomentContextSnapshot,
+  writeVibesMomentContextSnapshot,
+} from "@/lib/offline/vibes-store";
 import { showOpenSettingsPrompt } from "@/lib/permission-prompts";
 import { recordProfileSignal } from '@/lib/profile-signals';
 import { RELIGION_OPTIONS, formatReligionLabel, normalizeReligionForProfile } from "@/lib/profile/religion";
@@ -60,6 +64,7 @@ const VIBES_INTRO_SEEN_KEY = 'vibes_intro_seen_v1';
 const VIBES_PRACTICE_COMPLETE_KEY = 'vibes_practice_complete_v1';
 const VIBES_MOMENTS_COLLAPSED_KEY = 'vibes:momentsCollapsed';
 const VIBES_LOCATION_PROMPT_DISMISSED_KEY = 'vibes:locationPromptDismissed:v1';
+const VIBES_VIEWED_MOMENT_IDS_KEY_PREFIX = 'vibes:viewedMomentIds:v1:';
 
 const clearPremiumVibesFilters = (filters: VibesFilters): VibesFilters => ({
   ...filters,
@@ -271,7 +276,8 @@ export default function ExploreScreen() {
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const layoutMetrics = useVibesResponsiveMetrics();
   const momentsCapsuleMetrics = useMomentsCapsuleMetrics();
-  const { profile, user, refreshProfile } = useAuth();
+  const { profile, user, refreshProfile, authRecoveryPending, usingPersistedSessionFallback } = useAuth();
+  const showingRecoveredSnapshot = authRecoveryPending || usingPersistedSessionFallback;
   const { profileId: resolvedProfileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
   const { hasAccess } = usePremiumState();
   const { access: signalAccess, refresh: refreshSignalAccess } = useSignalAccess(Boolean(resolvedProfileId));
@@ -287,6 +293,10 @@ export default function ExploreScreen() {
     currentUserId: user?.id,
     currentUserProfile: profile,
   });
+  const viewedMomentIdsStorageKey = useMemo(
+    () => (user?.id ? `${VIBES_VIEWED_MOMENT_IDS_KEY_PREFIX}${user.id}` : null),
+    [user?.id],
+  );
   const momentBoostIds = useMemo(
     () => new Set(momentUsers.filter((u) => u.moments.length > 0).map((u) => String(u.userId))),
     [momentUsers],
@@ -318,9 +328,11 @@ export default function ExploreScreen() {
     refreshRemaining: _refreshRemaining,
   } = useVibesFeed({
     userId: resolvedProfileId,
+    snapshotOwnerIds: [resolvedProfileId, profile?.id, user?.id, (profile as any)?.user_id],
     segment: vibesSegment,
     activeWindowMinutes,
     distanceUnit,
+    liveFetchEnabled: !showingRecoveredSnapshot,
     momentUserIds: momentBoostIds,
     viewerInterests,
     viewerGender: (profile as any)?.gender ?? null,
@@ -335,6 +347,7 @@ export default function ExploreScreen() {
   const [momentStartUserId, setMomentStartUserId] = useState<string | null>(null);
   const [allMomentsVisible, setAllMomentsVisible] = useState(false);
   const [momentsCollapsed, setMomentsCollapsed] = useState(true);
+  const [viewedMomentIds, setViewedMomentIds] = useState<Set<string>>(new Set());
   const [locationPromptDismissed, setLocationPromptDismissed] = useState(false);
   const [momentPriorityProfileIds, setMomentPriorityProfileIds] = useState<Set<string>>(new Set());
   const [momentRelationshipContextByProfileId, setMomentRelationshipContextByProfileId] = useState<Record<string, MomentRelationshipContext>>({});
@@ -396,6 +409,10 @@ export default function ExploreScreen() {
   );
 
   useEffect(() => {
+    if (showingRecoveredSnapshot) {
+      setOfflineNotice(null);
+      return;
+    }
     if (!matchesError) {
       setOfflineNotice(null);
       return;
@@ -427,7 +444,7 @@ export default function ExploreScreen() {
       return;
     }
     setOfflineNotice(null);
-  }, [matchList.length, matchesError]);
+  }, [matchList.length, matchesError, showingRecoveredSnapshot]);
 
   const resolvedDistanceUnit = useMemo(
     () => (distanceUnit === 'auto' ? resolveAutoUnit() : distanceUnit),
@@ -490,7 +507,6 @@ export default function ExploreScreen() {
     () => (profile?.id ? `${VIBES_PRACTICE_COMPLETE_KEY}:${profile.id}` : user?.id ? `${VIBES_PRACTICE_COMPLETE_KEY}:auth:${user.id}` : null),
     [profile?.id, user?.id],
   );
-
   const scrollVibesToTop = useCallback(() => {
     requestAnimationFrame(() => {
       try {
@@ -733,6 +749,7 @@ export default function ExploreScreen() {
   const stackRef = useRef<ExploreStackHandle | null>(null);
   const vibesActionHistoryRef = useRef<VibesActionHistoryEntry[]>([]);
   const seenVibesCardKeysRef = useRef<Set<string>>(new Set());
+  const activeCardDwellRef = useRef<{ profileId: string; startedAt: number } | null>(null);
   const buttonScale = useRef(new Animated.Value(1)).current;
   const intentBadgePulse = useRef(new Animated.Value(0)).current;
   const superlikePulse = useRef(new Animated.Value(0)).current;
@@ -786,9 +803,27 @@ export default function ExploreScreen() {
     [profile?.id, vibesSegment],
   );
 
+  const getActiveCardDwellMs = useCallback((targetProfileId?: string | null) => {
+    const activeCard = activeCardDwellRef.current;
+    if (!activeCard || !targetProfileId || activeCard.profileId !== String(targetProfileId)) {
+      return null;
+    }
+    return Math.max(0, Date.now() - activeCard.startedAt);
+  }, []);
+
   useEffect(() => {
     const current = matchList[currentIndex];
-    if (!current?.id || !profile?.id || showPracticeWalkthrough) return;
+    if (!current?.id) {
+      activeCardDwellRef.current = null;
+      return;
+    }
+
+    activeCardDwellRef.current = {
+      profileId: String(current.id),
+      startedAt: Date.now(),
+    };
+
+    if (!profile?.id || showPracticeWalkthrough) return;
 
     const key = `${vibesSegment}:${String(current.id)}`;
     if (seenVibesCardKeysRef.current.has(key)) return;
@@ -895,6 +930,20 @@ export default function ExploreScreen() {
   const shouldShowFloatingMoments = Boolean(user?.id && !showPracticeWalkthrough && momentUsersWithContent.length > 0);
 
   useEffect(() => {
+    if (!viewedMomentIdsStorageKey) return;
+    const activeMomentIds = new Set(
+      momentUsers.flatMap((entry) => entry.moments.map((moment) => String(moment.id))).filter(Boolean),
+    );
+    setViewedMomentIds((prev) => {
+      const nextIds = Array.from(prev).filter((id) => activeMomentIds.has(id));
+      if (nextIds.length === prev.size) return prev;
+      const next = new Set(nextIds);
+      AsyncStorage.setItem(viewedMomentIdsStorageKey, JSON.stringify(nextIds)).catch(() => {});
+      return next;
+    });
+  }, [momentUsers, viewedMomentIdsStorageKey]);
+
+  useEffect(() => {
     if (shouldShowFloatingMoments) {
       setRenderFloatingMoments(true);
       floatingMomentsOpacity.stopAnimation();
@@ -988,11 +1037,86 @@ export default function ExploreScreen() {
 
   useEffect(() => {
     let cancelled = false;
+    if (!viewedMomentIdsStorageKey) {
+      setViewedMomentIds(new Set());
+      return;
+    }
+    AsyncStorage.getItem(viewedMomentIdsStorageKey)
+      .then((raw) => {
+        if (cancelled) return;
+        if (!raw) {
+          setViewedMomentIds(new Set());
+          return;
+        }
+        try {
+          const parsed = JSON.parse(raw);
+          const ids = Array.isArray(parsed) ? parsed.map((value) => String(value)).filter(Boolean) : [];
+          setViewedMomentIds(new Set(ids));
+        } catch {
+          setViewedMomentIds(new Set());
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setViewedMomentIds(new Set());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [viewedMomentIdsStorageKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!user?.id) return;
+
+    const visibleMomentIds = Array.from(
+      new Set(
+        momentUsersWithContent.flatMap((entry) => entry.moments.map((moment) => String(moment.id))).filter(Boolean),
+      ),
+    );
+
+    if (visibleMomentIds.length === 0) return;
+
+    const syncViewedMoments = async () => {
+      const remoteViewedIds = await fetchViewedMomentIds(visibleMomentIds);
+      if (cancelled || remoteViewedIds.size === 0) return;
+
+      setViewedMomentIds((prev) => {
+        let changed = false;
+        const next = new Set(prev);
+        remoteViewedIds.forEach((momentId) => {
+          if (!next.has(momentId)) {
+            next.add(momentId);
+            changed = true;
+          }
+        });
+        if (!changed) return prev;
+        if (viewedMomentIdsStorageKey) {
+          AsyncStorage.setItem(viewedMomentIdsStorageKey, JSON.stringify(Array.from(next))).catch(() => {});
+        }
+        return next;
+      });
+    };
+
+    void syncViewedMoments();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [momentUsersWithContent, user?.id, viewedMomentIdsStorageKey]);
+
+  useEffect(() => {
+    let cancelled = false;
     const loadMomentPriorityProfiles = async () => {
       if (!profile?.id) {
         setMomentPriorityProfileIds(new Set());
         setMomentRelationshipContextByProfileId({});
         return;
+      }
+
+      const cachedSnapshot = await readVibesMomentContextSnapshot(profile.id);
+      if (!cancelled && cachedSnapshot) {
+        setMomentPriorityProfileIds(new Set((cachedSnapshot.priorityProfileIds || []).map(String)));
+        setMomentRelationshipContextByProfileId(cachedSnapshot.contextByProfileId || {});
       }
 
       const positiveSwipeActions = ['LIKE', 'SUPERLIKE'];
@@ -1033,6 +1157,9 @@ export default function ExploreScreen() {
       }
       if (intentError) {
         console.log('[vibes] moment priority intent fetch error', intentError);
+      }
+      if (swipeError && intentError) {
+        return;
       }
 
       ((swipeRows as { swiper_id: string; target_id: string; action: string; created_at: string | null }[] | null) ?? []).forEach((row) => {
@@ -1132,6 +1259,10 @@ export default function ExploreScreen() {
           }
         });
         setMomentRelationshipContextByProfileId(nextContext);
+        void writeVibesMomentContextSnapshot(profile.id, {
+          priorityProfileIds: Array.from(next),
+          contextByProfileId: nextContext,
+        });
       }
     };
 
@@ -1141,27 +1272,33 @@ export default function ExploreScreen() {
     };
   }, [profile?.id]);
 
-  const openMomentViewer = (userId: string) => {
+  const openMomentViewer = useCallback((userId: string) => {
     setMomentStartUserId(userId);
     setMomentViewerVisible(true);
-  };
+  }, []);
 
   const openIntentSheet = useCallback(() => {
     const target = matchList[currentIndex];
     if (!target) return;
-    recordVibesEvent(String(target.id), 'intent_opened', { position: currentIndex });
+    recordVibesEvent(String(target.id), 'intent_opened', {
+      position: currentIndex,
+      dwellMs: getActiveCardDwellMs(String(target.id)),
+    });
     setIntentTarget({
       id: String(target.id),
       name: (target as any).name || (target as any).full_name,
       deckIndex: currentIndex,
     });
     setIntentSheetVisible(true);
-  }, [currentIndex, matchList, recordVibesEvent]);
+  }, [currentIndex, getActiveCardDwellMs, matchList, recordVibesEvent]);
 
   const openSignalSheet = useCallback(() => {
     const target = matchList[currentIndex];
     if (!target) return;
-    recordVibesEvent(String(target.id), 'signal_opened', { position: currentIndex });
+    recordVibesEvent(String(target.id), 'signal_opened', {
+      position: currentIndex,
+      dwellMs: getActiveCardDwellMs(String(target.id)),
+    });
     setSignalTarget({
       id: String(target.id),
       name: (target as any).name || (target as any).full_name,
@@ -1169,7 +1306,7 @@ export default function ExploreScreen() {
       match: target,
     });
     setSignalSheetVisible(true);
-  }, [currentIndex, matchList, recordVibesEvent]);
+  }, [currentIndex, getActiveCardDwellMs, matchList, recordVibesEvent]);
 
   const pushVibesAction = useCallback((entry: VibesActionHistoryEntry) => {
     vibesActionHistoryRef.current = [...vibesActionHistoryRef.current, entry].slice(-24);
@@ -1186,11 +1323,12 @@ export default function ExploreScreen() {
       pushVibesAction({ kind: 'swipe', id: String(id), action, index });
       recordVibesEvent(String(id), action === 'dislike' ? 'pass' : action === 'superlike' ? 'signal_sent' : 'like', {
         position: index,
+        dwellMs: getActiveCardDwellMs(String(id)),
         metadata: { swipe_action: action },
       });
       recordSwipe(id, action, index);
     },
-    [currentIndex, pushVibesAction, recordSwipe, recordVibesEvent],
+    [currentIndex, getActiveCardDwellMs, pushVibesAction, recordSwipe, recordVibesEvent],
   );
 
   const cancelDirectIntentRequest = useCallback(async (entry: Extract<VibesActionHistoryEntry, { kind: 'intent' }>) => {
@@ -1293,6 +1431,7 @@ export default function ExploreScreen() {
 
   const hasPreciseCoords = profile?.latitude != null && profile?.longitude != null;
   const hasCityOnly = !!profile?.location && profile?.location_precision === 'CITY';
+  const isGhanaCountryLocked = profile?.country_lock_policy === 'ghana_locked';
   const needsLocationPrompt = !hasPreciseCoords && !hasCityOnly;
   const shouldShowLocationPrompt =
     needsLocationPrompt && (activeTab === 'nearby' || !locationPromptDismissed);
@@ -1308,8 +1447,8 @@ export default function ExploreScreen() {
     setManualLocation(profile?.location || "");
   }, [profile?.location]);
   useEffect(() => {
-    setManualCountryCode(profileCountryCode || "");
-  }, [profileCountryCode]);
+    setManualCountryCode(isGhanaCountryLocked ? 'GH' : profileCountryCode || "");
+  }, [isGhanaCountryLocked, profileCountryCode]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1374,16 +1513,16 @@ export default function ExploreScreen() {
   const openManualLocationModal = useCallback(() => {
     setLocationError(null);
     setManualLocation(profile?.location || "");
-    setManualCountryCode(profileCountryCode || manualCountryCode || "");
+    setManualCountryCode(isGhanaCountryLocked ? 'GH' : profileCountryCode || manualCountryCode || "");
     setManualLocationModalVisible(true);
-  }, [manualCountryCode, profile?.location, profileCountryCode]);
+  }, [isGhanaCountryLocked, manualCountryCode, profile?.location, profileCountryCode]);
 
   const openManualLocationModalFromFilters = useCallback(() => {
     setLocationError(null);
     setManualLocation(profile?.location || "");
-    setManualCountryCode(profileCountryCode || manualCountryCode || "");
+    setManualCountryCode(isGhanaCountryLocked ? 'GH' : profileCountryCode || manualCountryCode || "");
     setFiltersPanel('location');
-  }, [manualCountryCode, profile?.location, profileCountryCode]);
+  }, [isGhanaCountryLocked, manualCountryCode, profile?.location, profileCountryCode]);
 
   const handleSaveManualLocation = async () => {
     if (!profile?.id) return;
@@ -1764,10 +1903,18 @@ export default function ExploreScreen() {
     return n;
   }, [appliedFilters]);
 
-  // Reset index if data changes
+  // Reset only when the tab changes. For ordinary feed refreshes, preserve the
+  // user's position and only clamp when the list shrinks past the current card.
   useEffect(() => {
     setCurrentIndex(0);
-  }, [matchList.length, activeTab]);
+  }, [activeTab]);
+
+  useEffect(() => {
+    setCurrentIndex((prev) => {
+      if (matchList.length <= 0) return 0;
+      return Math.min(prev, Math.max(0, matchList.length - 1));
+    });
+  }, [matchList.length]);
 
   // Prefetch optional fields for the next N cards to improve perceived speed
   useEffect(() => {
@@ -1775,12 +1922,12 @@ export default function ExploreScreen() {
       Boolean(appliedFilters?.hasVideoOnly) || (appliedFilters?.minSharedInterests || 0) > 0;
     const N = wantsMoreDetails ? 10 : 2;
     let mounted = true;
-    (async () => {
-      try {
-        for (let i = 0; i <= N; i++) {
-          const idx = currentIndex + i;
-          const m = matchList[idx];
-          if (!m) break;
+      (async () => {
+        try {
+          for (let i = 1; i <= N; i++) {
+            const idx = currentIndex + i;
+            const m = matchList[idx];
+            if (!m) break;
           // skip if it already has the optional fields
           const hasVideo = !!((m as any).profileVideo);
           const hasInterests = Array.isArray((m as any).interests) && (m as any).interests.length > 0;
@@ -1791,9 +1938,9 @@ export default function ExploreScreen() {
           if (!hasVideo || !hasInterests || !hasCountryCode || !hasUsefulCity) {
             prefetchInFlightRef.current.add(id);
             try {
-              // call fetchProfileDetails to merge optional fields into matches
-              await fetchProfileDetails?.(m.id);
-            } finally {
+                // Keep enrichment off the visible card to avoid mid-gesture rewrites.
+                await fetchProfileDetails?.(m.id);
+              } finally {
               prefetchInFlightRef.current.delete(id);
               prefetchedDetailsRef.current.add(id);
             }
@@ -1963,7 +2110,10 @@ export default function ExploreScreen() {
           targetProfileId: id,
           openedDelta: 1,
         });
-        recordVibesEvent(id, 'profile_opened', { position: currentIndex });
+        recordVibesEvent(id, 'profile_opened', {
+          position: currentIndex,
+          dwellMs: getActiveCardDwellMs(id),
+        });
       }
       // fetch optional fields on demand and merge into matches
       const updated = await fetchProfileDetails?.(id);
@@ -2250,12 +2400,13 @@ export default function ExploreScreen() {
                 },
               ]}
             >
-              <FloatingMomentsCapsule
-                users={momentStripUsers}
-                relationshipContextByProfileId={momentRelationshipContextByProfileId}
-                onPressMyMoment={handlePressMyMoment}
-                onPressUserMoment={handlePressUserMoment}
-                onPressSeeAll={handleMomentsPress}
+                <FloatingMomentsCapsule
+                  users={momentStripUsers}
+                  relationshipContextByProfileId={momentRelationshipContextByProfileId}
+                  viewedMomentIds={viewedMomentIds}
+                  onPressMyMoment={handlePressMyMoment}
+                  onPressUserMoment={handlePressUserMoment}
+                  onPressSeeAll={handleMomentsPress}
                 onPressPostMoment={handlePressMyMoment}
                 theme={theme}
                 isDark={isDark}
@@ -2264,26 +2415,16 @@ export default function ExploreScreen() {
             </Animated.View>
           ) : null}
           {!showPracticeWalkthrough && offlineNotice ? (
-            <View>
-              <Notice
-                title="Couldn't load profiles"
-                message={offlineNotice}
-                actionLabel="Retry"
-                onAction={() => {
-                  setOfflineNotice(null);
-                  handleRefreshVibes();
-                }}
-                icon="cloud-alert"
-              />
-              {canAccessInternalTools() ? (
-                <TouchableOpacity
-                  style={{ alignSelf: 'flex-start', marginTop: 8, paddingHorizontal: 4, paddingVertical: 4 }}
-                  onPress={() => router.push('/diagnostics')}
-                >
-                  <Text style={{ color: '#0b6b69', fontWeight: '700' }}>Open Diagnostics</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
+            <Notice
+              title="Couldn't load profiles"
+              message={offlineNotice}
+              actionLabel="Retry"
+              onAction={() => {
+                setOfflineNotice(null);
+                handleRefreshVibes();
+              }}
+              icon="cloud-alert"
+            />
           ) : null}
 
           {/* CARD STACK */}
@@ -2316,12 +2457,12 @@ export default function ExploreScreen() {
                 onComplete={completePractice}
                 onGestureLockChange={setPracticeGestureLocked}
               />
-            ) : loadingMatches ? (
+            ) : loadingMatches && matchList.length === 0 ? (
               <ExploreStackSkeleton />
             ) : offlineNotice && matchList.length === 0 ? (
               // If we failed to load, don't show the "no more profiles" empty state.
-              // The blocking Notice above already provides Retry.
-              <View />
+              // The retry Notice above already provides recovery.
+              <ExploreStackSkeleton />
             ) : !exhausted ? (
               <ExploreStack
                 ref={stackRef}
@@ -2343,7 +2484,10 @@ export default function ExploreScreen() {
                         targetProfileId: id,
                         introVideoStarted: true,
                       });
-                      recordVibesEvent(id, 'intro_played', { position: currentIndex });
+                      recordVibesEvent(id, 'intro_played', {
+                        position: currentIndex,
+                        dwellMs: getActiveCardDwellMs(id),
+                      });
                     }
                       const updated = await fetchProfileDetails?.(id);
                       const videoSource = (updated && ((updated as any).profileVideoPath || (updated as any).profileVideo))
@@ -2455,14 +2599,23 @@ export default function ExploreScreen() {
 
                         <View style={styles.filterFieldGroup}>
                           <Text style={styles.modalLabel}>Country</Text>
+                          {isGhanaCountryLocked ? (
+                            <Text style={styles.filterHint}>
+                              Ghana-route accounts keep country locked to Ghana until precise location confirms you are outside Ghana.
+                            </Text>
+                          ) : null}
                           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.countryChips}>
                             {COUNTRY_OPTIONS.map((c) => {
                               const active = manualCountryCode === c.code;
+                              const disabled = isGhanaCountryLocked && c.code !== 'GH';
                               return (
                                 <TouchableOpacity
                                   key={c.code}
-                                  style={[styles.countryChip, active && styles.countryChipActive]}
-                                  onPress={() => setManualCountryCode(c.code)}
+                                  style={[styles.countryChip, active && styles.countryChipActive, disabled && { opacity: 0.45 }]}
+                                  onPress={() => {
+                                    if (disabled) return;
+                                    setManualCountryCode(c.code);
+                                  }}
                                   activeOpacity={0.85}
                                 >
                                   <Text style={[styles.countryChipText, active && styles.countryChipTextActive]}>{c.label}</Text>
@@ -3035,14 +3188,23 @@ export default function ExploreScreen() {
                 <Text style={styles.modalSubtitle}>City-only keeps your location private (no GPS required).</Text>
 
                 <Text style={styles.modalLabel}>Country</Text>
+                {isGhanaCountryLocked ? (
+                  <Text style={styles.filterHint}>
+                    Ghana-route accounts keep country locked to Ghana until precise location confirms you are outside Ghana.
+                  </Text>
+                ) : null}
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.countryChips}>
                   {COUNTRY_OPTIONS.map((c) => {
                     const active = manualCountryCode === c.code;
+                    const disabled = isGhanaCountryLocked && c.code !== 'GH';
                     return (
                       <TouchableOpacity
                         key={c.code}
-                        style={[styles.countryChip, active && styles.countryChipActive]}
-                        onPress={() => setManualCountryCode(c.code)}
+                        style={[styles.countryChip, active && styles.countryChipActive, disabled && { opacity: 0.45 }]}
+                        onPress={() => {
+                          if (disabled) return;
+                          setManualCountryCode(c.code);
+                        }}
                         activeOpacity={0.85}
                       >
                         <Text style={[styles.countryChipText, active && styles.countryChipTextActive]}>{c.label}</Text>
@@ -3103,6 +3265,19 @@ export default function ExploreScreen() {
             startUserId={momentStartUserId}
             relationshipContextByProfileId={momentRelationshipContextByProfileId}
             onPressIntent={handleMomentIntent}
+            onMomentViewed={(momentId) => {
+              const normalizedMomentId = String(momentId || '').trim();
+              if (!normalizedMomentId) return;
+              setViewedMomentIds((prev) => {
+                if (prev.has(normalizedMomentId)) return prev;
+                const next = new Set(prev);
+                next.add(normalizedMomentId);
+                if (viewedMomentIdsStorageKey) {
+                  AsyncStorage.setItem(viewedMomentIdsStorageKey, JSON.stringify(Array.from(next))).catch(() => {});
+                }
+                return next;
+              });
+            }}
             onClose={() => {
               setMomentViewerVisible(false);
               setMomentStartUserId(null);

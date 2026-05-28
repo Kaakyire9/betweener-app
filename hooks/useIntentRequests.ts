@@ -132,39 +132,84 @@ const applyIntentQueueOverlay = (
   return next.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
 };
 
-export const useIntentRequests = (userId?: string | null) => {
+export const useIntentRequests = (
+  userId?: string | null,
+  options?: { liveFetchEnabled?: boolean; snapshotOwnerIds?: Array<string | null | undefined> },
+) => {
   const [items, setItems] = useState<IntentRequest[]>([]);
   const [loading, setLoading] = useState(false);
+  const liveFetchEnabled = options?.liveFetchEnabled !== false;
+  const snapshotOwnerIdsSignature = JSON.stringify(
+    [userId, ...(options?.snapshotOwnerIds ?? [])]
+      .map((value) => (typeof value === 'string' ? value.trim() : ''))
+      .filter(Boolean),
+  );
+  const snapshotOwnerIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (JSON.parse(snapshotOwnerIdsSignature) as string[])
+            .map((value) => String(value).trim())
+            .filter(Boolean),
+        ),
+      ),
+    [snapshotOwnerIdsSignature],
+  );
+
+  const persistSnapshot = useCallback(
+    async (next: IntentRequest[]) => {
+      if (snapshotOwnerIds.length === 0) return;
+      await Promise.all(
+        snapshotOwnerIds.map((ownerId) =>
+          writeIntentRequestsSnapshot(ownerId, next).catch(() => undefined),
+        ),
+      );
+    },
+    [snapshotOwnerIds],
+  );
+
+  useEffect(() => {
+    if (!liveFetchEnabled) {
+      setLoading(false);
+    }
+  }, [liveFetchEnabled]);
 
   const reconcileOfflineQueue = useCallback(async (source?: IntentRequest[]) => {
     if (!userId) return;
     const snapshot = await getIntentOfflineMutationSnapshot();
     setItems((prev) => {
       const next = applyIntentQueueOverlay(source ?? prev, userId, snapshot.pending, snapshot.failed);
-      void writeIntentRequestsSnapshot(userId, next);
+      void persistSnapshot(next);
       return next;
     });
-  }, [userId]);
+  }, [persistSnapshot, userId]);
 
   // Cached-first: hydrate last known list quickly, then refresh in background.
   useEffect(() => {
-    if (!userId) return;
+    if (snapshotOwnerIds.length === 0) return;
     let cancelled = false;
     (async () => {
-      const cached =
-        (await readIntentRequestsSnapshot<IntentRequest[]>(userId)) ??
-        (await migrateLegacyIntentRequestsSnapshot<IntentRequest[]>(userId));
-      if (cancelled || !cached || !Array.isArray(cached)) return;
-      setItems((prev) => (prev.length === 0 ? cached : prev));
-      void reconcileOfflineQueue(cached);
+      for (const ownerId of snapshotOwnerIds) {
+        const cached =
+          (await readIntentRequestsSnapshot<IntentRequest[]>(ownerId)) ??
+          (await migrateLegacyIntentRequestsSnapshot<IntentRequest[]>(ownerId));
+        if (cancelled || !cached || !Array.isArray(cached)) continue;
+        setItems((prev) => (prev.length === 0 ? cached : prev));
+        void reconcileOfflineQueue(cached);
+        return;
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [userId]);
+  }, [reconcileOfflineQueue, snapshotOwnerIds, userId]);
 
   const refresh = useCallback(async () => {
     if (!userId) {
+      setLoading(false);
+      return;
+    }
+    if (!liveFetchEnabled) {
       setLoading(false);
       return;
     }
@@ -185,16 +230,19 @@ export const useIntentRequests = (userId?: string | null) => {
       if (error) return;
       const next = (data || []) as IntentRequest[];
       setItems(next);
-      void writeIntentRequestsSnapshot(userId, next);
+      void persistSnapshot(next);
       void reconcileOfflineQueue(next);
     } finally {
       setLoading(false);
     }
-  }, [reconcileOfflineQueue, userId]);
+  }, [liveFetchEnabled, persistSnapshot, reconcileOfflineQueue, userId]);
 
   useEffect(() => {
-    void refresh();
+    if (liveFetchEnabled) {
+      void refresh();
+    }
     if (!userId) return;
+    if (!liveFetchEnabled) return;
 
     const unsubscribeQueue = subscribeToOfflineMutationEvents((event) => {
       if (
@@ -234,7 +282,7 @@ export const useIntentRequests = (userId?: string | null) => {
       supabase.removeChannel(incomingChannel);
       supabase.removeChannel(outgoingChannel);
     };
-  }, [reconcileOfflineQueue, refresh, userId]);
+  }, [liveFetchEnabled, reconcileOfflineQueue, refresh, userId]);
 
   const incoming = useMemo(() => items.filter((item) => item.recipient_id === userId), [items, userId]);
   const sent = useMemo(() => items.filter((item) => item.actor_id === userId), [items, userId]);
@@ -251,11 +299,11 @@ export const useIntentRequests = (userId?: string | null) => {
           patch === null
             ? prev.filter((item) => item.id !== requestId)
             : prev.map((item) => (item.id === requestId ? { ...item, ...patch } : item));
-        void writeIntentRequestsSnapshot(userId, next);
+        void persistSnapshot(next);
         return next;
       });
     },
-    [userId],
+    [persistSnapshot, userId],
   );
 
   const addLocalIntent = useCallback(
@@ -264,11 +312,11 @@ export const useIntentRequests = (userId?: string | null) => {
       setItems((prev) => {
         const next = [request, ...prev.filter((item) => item.id !== request.id)]
           .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
-        void writeIntentRequestsSnapshot(userId, next);
+        void persistSnapshot(next);
         return next;
       });
     },
-    [userId],
+    [persistSnapshot, userId],
   );
 
   return {

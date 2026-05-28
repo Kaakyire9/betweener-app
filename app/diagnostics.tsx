@@ -144,6 +144,14 @@ export default function DiagnosticsScreen() {
         </View>
 
         <View style={styles.card}>
+          <Text style={styles.h2}>Chat Storage</Text>
+          <Text style={styles.small}>Inspect SQLite counts, pending outbox rows, sync state, and MMKV boot hints.</Text>
+          <TouchableOpacity style={styles.button} onPress={() => router.push('/chat-storage-diagnostics')}>
+            <Text style={styles.buttonText}>Open Chat Storage Diagnostics</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.card}>
           <Text style={styles.h2}>Push (Expo)</Text>
           <TouchableOpacity style={styles.button} onPress={runPushCheck}>
             <Text style={styles.buttonText}>Check / Register Push</Text>

@@ -16,6 +16,33 @@ export type NotificationRouteInput = {
   data?: Record<string, unknown> | null;
 };
 
+type PendingNotificationRouteListener = () => void;
+
+let pendingNotificationRouteVersion = 0;
+const pendingNotificationRouteListeners = new Set<PendingNotificationRouteListener>();
+
+function emitPendingNotificationRouteChange() {
+  pendingNotificationRouteVersion += 1;
+  pendingNotificationRouteListeners.forEach((listener) => {
+    try {
+      listener();
+    } catch {
+      // Notification route listeners are best-effort only.
+    }
+  });
+}
+
+export function subscribePendingNotificationRouteChanges(listener: PendingNotificationRouteListener) {
+  pendingNotificationRouteListeners.add(listener);
+  return () => {
+    pendingNotificationRouteListeners.delete(listener);
+  };
+}
+
+export function getPendingNotificationRouteVersion() {
+  return pendingNotificationRouteVersion;
+}
+
 const DEFAULT_NOTIFICATION_ACTION_IDENTIFIERS = new Set([
   "expo.notifications.actions.DEFAULT",
   "expo.modules.notifications.actions.DEFAULT",
@@ -66,45 +93,48 @@ export function buildNotificationRoute(
     return null;
   }
 
+  const buildChatRoute = (fallbackId: unknown, extras?: Record<string, string>) => {
+    const profileId =
+      typeof data?.profile_id === "string" && data.profile_id
+        ? String(data.profile_id)
+        : typeof data?.reactor_id === "string" && data.reactor_id
+          ? String(data.reactor_id)
+          : "";
+    const peerUserId =
+      typeof data?.user_id === "string" && data.user_id ? String(data.user_id) : "";
+    const routeId = fallbackId ? String(fallbackId) : peerUserId || profileId;
+    if (!routeId) return null;
+    return {
+      pathname: "/chat/[id]",
+      params: {
+        id: routeId,
+        ...(peerUserId ? { peerUserId } : {}),
+        ...(profileId ? { peerProfileId: profileId } : {}),
+        ...(data?.name ? { userName: String(data.name) } : {}),
+        ...(data?.avatar_url ? { userAvatar: String(data.avatar_url) } : {}),
+        ...(extras ?? {}),
+      },
+    } satisfies Omit<DeferredNotificationRoute, "createdAt">;
+  };
+
   if (pushType === "message" || pushType === "message_reaction") {
     const chatId = data?.profile_id || data?.reactor_id || data?.user_id;
     if (chatId) {
-      return {
-        pathname: "/chat/[id]",
-        params: {
-          id: String(chatId),
-          userName: data?.name ? String(data.name) : "",
-          userAvatar: data?.avatar_url ? String(data.avatar_url) : "",
-        },
-      };
+      return buildChatRoute(chatId);
     }
   }
 
   if (pushType === "match") {
     const chatId = data?.profile_id || data?.user_id;
     if (chatId) {
-      return {
-        pathname: "/chat/[id]",
-        params: {
-          id: String(chatId),
-          userName: data?.name ? String(data.name) : "",
-          userAvatar: data?.avatar_url ? String(data.avatar_url) : "",
-        },
-      };
+      return buildChatRoute(chatId);
     }
   }
 
   if (pushType === "system_message" && data?.event_type === "request_accepted") {
     const chatId = data?.profile_id || data?.user_id;
     if (chatId) {
-      return {
-        pathname: "/chat/[id]",
-        params: {
-          id: String(chatId),
-          userName: data?.name ? String(data.name) : "",
-          userAvatar: data?.avatar_url ? String(data.avatar_url) : "",
-        },
-      };
+      return buildChatRoute(chatId);
     }
   }
 
@@ -119,15 +149,9 @@ export function buildNotificationRoute(
   ) {
     const chatId = data?.profile_id || data?.user_id;
     if (chatId) {
-      return {
-        pathname: "/chat/[id]",
-        params: {
-          id: String(chatId),
-          userName: data?.name ? String(data.name) : "",
-          userAvatar: data?.avatar_url ? String(data.avatar_url) : "",
-          datePlanId: data?.date_plan_id ? String(data.date_plan_id) : "",
-        },
-      };
+      return buildChatRoute(chatId, {
+        datePlanId: data?.date_plan_id ? String(data.date_plan_id) : "",
+      });
     }
   }
 
@@ -220,6 +244,7 @@ export async function persistPendingNotificationRoute(
       createdAt: Date.now(),
     } satisfies DeferredNotificationRoute)
   );
+  emitPendingNotificationRouteChange();
 }
 
 export async function peekPendingNotificationRoute() {
@@ -239,6 +264,7 @@ export async function peekPendingNotificationRoute() {
       Date.now() - parsed.createdAt > PENDING_NOTIFICATION_ROUTE_MAX_AGE_MS
     ) {
       await AsyncStorage.removeItem(PENDING_NOTIFICATION_ROUTE_KEY);
+      emitPendingNotificationRouteChange();
       return null;
     }
     return {
@@ -255,6 +281,7 @@ export async function consumePendingNotificationRoute() {
     const next = await peekPendingNotificationRoute();
     if (!next) return null;
     await AsyncStorage.removeItem(PENDING_NOTIFICATION_ROUTE_KEY);
+    emitPendingNotificationRouteChange();
     return next;
   } catch {
     return null;
@@ -264,6 +291,7 @@ export async function consumePendingNotificationRoute() {
 export async function clearPendingNotificationRoute() {
   try {
     await AsyncStorage.removeItem(PENDING_NOTIFICATION_ROUTE_KEY);
+    emitPendingNotificationRouteChange();
   } catch {
     // best effort only
   }

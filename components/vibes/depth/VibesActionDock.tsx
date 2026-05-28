@@ -144,7 +144,7 @@ function VibesActionDock({
           styles.dock,
           {
             width: metrics.dockWidth,
-            minHeight: metrics.dockHeight,
+            minHeight: metrics.dockHeight - 2,
             borderRadius: metrics.dockHeight / 2,
           },
         ]}
@@ -152,8 +152,8 @@ function VibesActionDock({
           styles.dockContent,
           {
             borderRadius: metrics.dockHeight / 2,
-            paddingHorizontal: metrics.isCompactWidth ? 7 : 10,
-            paddingVertical: metrics.isCompactHeight ? 3 : 4,
+            paddingHorizontal: metrics.isCompactWidth ? 8 : 11,
+            paddingVertical: metrics.isCompactHeight ? 2 : 3,
           },
         ]}
       >
@@ -218,7 +218,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 6,
+    gap: 8,
   },
   dockReflection: {
     position: "absolute",

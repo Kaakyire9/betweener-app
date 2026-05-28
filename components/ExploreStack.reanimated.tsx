@@ -2,7 +2,7 @@ import type { Match } from "@/types/match";
 import type { VibesLayoutMetrics } from "@/components/vibes/VibesResponsiveLayout";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
-import { forwardRef, useEffect, useImperativeHandle } from "react";
+import { forwardRef, memo, useEffect, useImperativeHandle } from "react";
 import { StyleSheet, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -34,6 +34,129 @@ type Props = {
   onIntentSwipeUp?: () => void;
   onGestureLockChange?: (locked: boolean) => void;
 };
+
+const ActiveCardView = memo(function ActiveCardView({
+  match,
+  zIndex,
+  pan,
+  cardFrameStyle,
+  activeStyle,
+  overlayContainerStyle,
+  superlikeGlowStyle,
+  superlikeIconStyle,
+  rightGlowStyle,
+  rightIconStyle,
+  leftGlowStyle,
+  leftIconStyle,
+  intentGlowStyle,
+  intentIconStyle,
+  onProfileTap,
+  onPlayPress,
+  previewingId,
+  layoutMetrics,
+}: {
+  match: Match;
+  zIndex: number;
+  pan: any;
+  cardFrameStyle: { height: number; borderRadius: number };
+  activeStyle: any;
+  overlayContainerStyle: any;
+  superlikeGlowStyle: any;
+  superlikeIconStyle: any;
+  rightGlowStyle: any;
+  rightIconStyle: any;
+  leftGlowStyle: any;
+  leftIconStyle: any;
+  intentGlowStyle: any;
+  intentIconStyle: any;
+  onProfileTap: (id: string) => void;
+  onPlayPress?: (id: string) => void;
+  previewingId?: string;
+  layoutMetrics: VibesLayoutMetrics;
+}) {
+  return (
+    <View style={[styles.cardContainer, cardFrameStyle, { zIndex }]}>
+      <GestureDetector gesture={pan}>
+        <Animated.View style={{ flex: 1 }} pointerEvents="box-none">
+          <Animated.View style={[styles.card, cardFrameStyle, activeStyle]}>
+            <ExploreCard
+              match={match}
+              onPress={() => onProfileTap(match.id)}
+              onPlayPress={() => onPlayPress?.(match.id)}
+              isPreviewing={previewingId === match.id}
+              layoutMetrics={layoutMetrics}
+            />
+          </Animated.View>
+
+          <Animated.View pointerEvents="none" style={[styles.feedbackContainer, overlayContainerStyle]}>
+            <Animated.View style={superlikeGlowStyle} />
+            <Animated.View style={superlikeIconStyle}>
+              <MaterialCommunityIcons name="star" size={88} color="#FBBF24" style={{ textShadowColor: 'rgba(59,130,246,0.36)', textShadowOffset: { width: 0, height: 6 }, textShadowRadius: 18 }} />
+            </Animated.View>
+            <Animated.View style={rightGlowStyle} />
+            <Animated.View style={rightIconStyle}>
+              <MaterialCommunityIcons name="heart" size={64} color="#10B981" />
+            </Animated.View>
+            <Animated.View style={leftGlowStyle} />
+            <Animated.View style={leftIconStyle}>
+              <MaterialCommunityIcons name="close" size={64} color="#EF4444" />
+            </Animated.View>
+            <Animated.View style={intentGlowStyle} />
+            <Animated.View style={intentIconStyle}>
+              <IntentMark size={58} color="#A7FFF8" strokeWidth={2.15} />
+            </Animated.View>
+          </Animated.View>
+        </Animated.View>
+      </GestureDetector>
+    </View>
+  );
+});
+
+const StackedCardView = memo(function StackedCardView({
+  match,
+  index,
+  currentIndex,
+  zIndex,
+  cardFrameStyle,
+  onProfileTap,
+  onPlayPress,
+  previewingId,
+  layoutMetrics,
+}: {
+  match: Match;
+  index: number;
+  currentIndex: number;
+  zIndex: number;
+  cardFrameStyle: { height: number; borderRadius: number };
+  onProfileTap: (id: string) => void;
+  onPlayPress?: (id: string) => void;
+  previewingId?: string;
+  layoutMetrics: VibesLayoutMetrics;
+}) {
+  const stackedStyle = useAnimatedStyle(() => {
+    const diff = index - currentIndex;
+    if (diff <= 0) return { transform: [{ translateY: 0 }, { scale: 1 }], opacity: 1 } as any;
+    const ty = diff * 12;
+    const s = 1 - Math.min(diff * 0.04, 0.12);
+    const op = 1 - Math.min(diff * 0.08, 0.6);
+    return {
+      transform: [{ translateY: withTiming(ty, { duration: 300 }) }, { scale: withTiming(s, { duration: 300 }) }],
+      opacity: withTiming(op, { duration: 300 }),
+    } as any;
+  }, [currentIndex, index]);
+
+  return (
+    <Animated.View style={[styles.card, cardFrameStyle, stackedStyle, { zIndex }]}>
+      <ExploreCard
+        match={match}
+        onPress={() => onProfileTap(match.id)}
+        onPlayPress={() => onPlayPress?.(match.id)}
+        isPreviewing={previewingId === match.id}
+        layoutMetrics={layoutMetrics}
+      />
+    </Animated.View>
+  );
+});
 
 const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
   ({
@@ -353,73 +476,6 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
       opacity: interpolate(intentProgress.value, [0, 0.28, 1], [0, 0.85, 1], Extrapolate.CLAMP),
     } as any));
 
-    // ActiveCard child stabilizes hooks ordering when list changes
-    function ActiveCard({ m, zIndex }: { m: Match; zIndex: number }) {
-      return (
-        <View style={[styles.cardContainer, cardFrameStyle, { zIndex }]}> 
-          <GestureDetector gesture={pan}>
-            <Animated.View style={{ flex: 1 }} pointerEvents="box-none">
-              <Animated.View style={[styles.card, cardFrameStyle, activeStyle]}>
-                <ExploreCard
-                  match={m}
-                  onPress={() => onProfileTap(m.id)}
-                  onPlayPress={() => onPlayPress?.(m.id)}
-                  isPreviewing={previewingId === m.id}
-                  layoutMetrics={layoutMetrics}
-                />
-              </Animated.View>
-
-              <Animated.View pointerEvents="none" style={[styles.feedbackContainer, overlayContainerStyle]}>
-                <Animated.View style={superlikeGlowStyle} />
-                <Animated.View style={superlikeIconStyle}>
-                  <MaterialCommunityIcons name="star" size={88} color="#FBBF24" style={{ textShadowColor: 'rgba(59,130,246,0.36)', textShadowOffset: { width: 0, height: 6 }, textShadowRadius: 18 }} />
-                </Animated.View>
-                <Animated.View style={rightGlowStyle} />
-                <Animated.View style={rightIconStyle}>
-                  <MaterialCommunityIcons name="heart" size={64} color="#10B981" />
-                </Animated.View>
-                <Animated.View style={leftGlowStyle} />
-                <Animated.View style={leftIconStyle}>
-                  <MaterialCommunityIcons name="close" size={64} color="#EF4444" />
-                </Animated.View>
-                <Animated.View style={intentGlowStyle} />
-                <Animated.View style={intentIconStyle}>
-                  <IntentMark size={58} color="#A7FFF8" strokeWidth={2.15} />
-                </Animated.View>
-              </Animated.View>
-            </Animated.View>
-          </GestureDetector>
-        </View>
-      );
-    }
-
-    // stacked (non-active) card renderer
-    function StackedCard({ m, index, zIndex }: { m: Match; index: number; zIndex: number }) {
-      const st = useAnimatedStyle(() => {
-        const diff = index - currentIndex;
-        if (diff <= 0) return { transform: [{ translateY: 0 }, { scale: 1 }], opacity: 1 } as any;
-        const ty = diff * 12;
-        const s = 1 - Math.min(diff * 0.04, 0.12);
-        const op = 1 - Math.min(diff * 0.08, 0.6);
-        return {
-          transform: [{ translateY: withTiming(ty, { duration: 300 }) }, { scale: withTiming(s, { duration: 300 }) }],
-          opacity: withTiming(op, { duration: 300 }),
-        } as any;
-      }, [currentIndex, index]);
-
-      return (
-        <Animated.View key={m.id} style={[styles.card, cardFrameStyle, st, { zIndex }]}>
-          <ExploreCard
-            match={m}
-            onPress={() => onProfileTap(m.id)}
-            onPlayPress={() => onPlayPress?.(m.id)}
-            isPreviewing={previewingId === m.id}
-            layoutMetrics={layoutMetrics}
-          />
-        </Animated.View>
-      );
-    }
-
     // UI
     return (
       <View style={{ flex: 1, alignSelf: "stretch" }}>
@@ -428,9 +484,46 @@ const ExploreStackReanimated = forwardRef<ExploreStackHandle, Props>(
           const isActive = i === currentIndex;
           const zIndex = list.length - i;
 
-          if (isActive) return <ActiveCard key={m.id} m={m} zIndex={zIndex} />;
+          if (isActive) {
+            return (
+              <ActiveCardView
+                key={m.id}
+                match={m}
+                zIndex={zIndex}
+                pan={pan}
+                cardFrameStyle={cardFrameStyle}
+                activeStyle={activeStyle}
+                overlayContainerStyle={overlayContainerStyle}
+                superlikeGlowStyle={superlikeGlowStyle}
+                superlikeIconStyle={superlikeIconStyle}
+                rightGlowStyle={rightGlowStyle}
+                rightIconStyle={rightIconStyle}
+                leftGlowStyle={leftGlowStyle}
+                leftIconStyle={leftIconStyle}
+                intentGlowStyle={intentGlowStyle}
+                intentIconStyle={intentIconStyle}
+                onProfileTap={onProfileTap}
+                onPlayPress={onPlayPress}
+                previewingId={previewingId}
+                layoutMetrics={layoutMetrics}
+              />
+            );
+          }
 
-          return <StackedCard key={m.id} m={m} index={i} zIndex={zIndex} />;
+          return (
+            <StackedCardView
+              key={m.id}
+              match={m}
+              index={i}
+              currentIndex={currentIndex}
+              zIndex={zIndex}
+              cardFrameStyle={cardFrameStyle}
+              onProfileTap={onProfileTap}
+              onPlayPress={onPlayPress}
+              previewingId={previewingId}
+              layoutMetrics={layoutMetrics}
+            />
+          );
         })}
       </View>
     );

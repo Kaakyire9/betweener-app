@@ -72,6 +72,34 @@ const acknowledgePushDelivered = async (
   return { acked: true, error: null }
 }
 
+const getUserBadgeCount = async (
+  service: ReturnType<typeof createClient>,
+  userId: string,
+): Promise<number> => {
+  const unreadMessages = await service
+    .from('messages')
+    .select('sender_id')
+    .eq('receiver_id', userId)
+    .eq('is_read', false)
+    .limit(500)
+
+  const unreadChatSenders = new Set<string>()
+  if (!unreadMessages.error && Array.isArray(unreadMessages.data)) {
+    unreadMessages.data.forEach((row) => {
+      if (typeof row?.sender_id === 'string') unreadChatSenders.add(row.sender_id)
+    })
+  }
+
+  const pendingIntents = await service
+    .from('intent_requests')
+    .select('id', { count: 'exact', head: true })
+    .eq('recipient_id', userId)
+    .eq('status', 'pending')
+    .gt('expires_at', new Date().toISOString())
+
+  return Math.max(0, unreadChatSenders.size + (pendingIntents.count ?? 0))
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -197,6 +225,13 @@ serve(async (req) => {
     const messageIdForDeliveryAck = getMessageIdForDeliveryAck(data)
     const deliveryAckOnly = Boolean((data as any).delivery_ack_only)
     const richImageUrl = getRichImageUrl(data)
+    const badge = await getUserBadgeCount(service, effectiveUserId).catch((error) => {
+      console.log('push-notifications badge count error', {
+        effective_user_id: effectiveUserId,
+        error: String((error as any)?.message || error || 'badge_count_error'),
+      })
+      return null
+    })
     if (richImageUrl && !(data as any).image) {
       // Make the URL available to the iOS Notification Service Extension.
       ;(data as any).image = richImageUrl
@@ -211,6 +246,9 @@ serve(async (req) => {
         // Make chat-style notifications feel consistent on Android.
         channelId: type === 'message' || type === 'message_reaction' ? 'messages' : 'default',
         data,
+      }
+      if (typeof badge === 'number') {
+        msg.badge = badge
       }
 
       // Rich push: image preview + better UX on Android.

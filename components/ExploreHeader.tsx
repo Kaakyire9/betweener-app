@@ -139,13 +139,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, compact: bool
   return StyleSheet.create({
     header: {
       paddingHorizontal: compact ? 16 : 20,
-      paddingTop: compact ? 8 : 13,
-      paddingBottom: compact ? 6 : 9,
+      paddingTop: compact ? 10 : 16,
+      paddingBottom: compact ? 10 : 13,
       backgroundColor: "transparent",
       borderBottomColor: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,128,128,0.06)",
       borderBottomWidth: StyleSheet.hairlineWidth,
     },
-    topRow: { marginBottom: compact ? 6 : 9, flexDirection: 'row', alignItems: 'flex-start' },
+    topRow: { marginBottom: compact ? 10 : 14, flexDirection: 'row', alignItems: 'flex-start' },
     titleCluster: { flex: 1, paddingRight: compact ? 10 : 14 },
     rightRail: {
       borderRadius: 18,
@@ -156,11 +156,17 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, compact: bool
       borderRadius: 18,
     },
     rightRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    title: { fontSize: compact ? 30 : 36, color: isDark ? VIBES_DEPTH_COLORS.cream : "#173C3B", fontFamily: 'PlayfairDisplay_700Bold', letterSpacing: 0 },
+    title: {
+      fontSize: compact ? 32 : 38,
+      color: isDark ? VIBES_DEPTH_COLORS.cream : "#173C3B",
+      fontFamily: 'PlayfairDisplay_700Bold',
+      letterSpacing: -0.6,
+      lineHeight: compact ? 35 : 42,
+    },
     subtitleRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      marginTop: compact ? 4 : 6,
+      marginTop: compact ? 5 : 7,
     },
     subtitleDot: {
       width: 8,
@@ -173,7 +179,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, compact: bool
       shadowRadius: 8,
       shadowOffset: { width: 0, height: 0 },
     },
-    subtitle: { color: isDark ? "rgba(244,248,248,0.72)" : "rgba(31,42,42,0.66)", fontFamily: 'Manrope_600SemiBold', flexShrink: 1, fontSize: compact ? 13 : 14 },
+    subtitle: {
+      color: isDark ? "rgba(244,248,248,0.74)" : "rgba(31,42,42,0.66)",
+      fontFamily: 'Manrope_600SemiBold',
+      flexShrink: 1,
+      fontSize: compact ? 13 : 14,
+      letterSpacing: 0.1,
+    },
     filterButton: {
       alignItems: 'center',
       justifyContent: 'center',
@@ -211,7 +223,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, compact: bool
     },
     tabContainer: {
       borderRadius: 22,
-      marginTop: 2,
+      marginTop: 4,
     },
     tabContainerSurface: {
       flexDirection: "row",

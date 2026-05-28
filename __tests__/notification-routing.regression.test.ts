@@ -23,6 +23,7 @@ test("message tap maps to chat route", () => {
     pathname: "/chat/[id]",
     params: {
       id: "user-123",
+      peerProfileId: "user-123",
       userName: "Akosua",
       userAvatar: "https://example.com/a.jpg",
     },
@@ -45,6 +46,7 @@ test("expo modules default action also maps to chat route", () => {
     pathname: "/chat/[id]",
     params: {
       id: "user-456",
+      peerProfileId: "user-456",
       userName: "Kojo",
       userAvatar: "https://example.com/k.jpg",
     },

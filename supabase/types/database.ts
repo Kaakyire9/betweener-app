@@ -1974,6 +1974,7 @@ export type Database = {
           audio_duration: number | null
           audio_path: string | null
           audio_waveform: Json | null
+          client_message_id: string | null
           created_at: string
           deleted_at: string | null
           deleted_by: string | null
@@ -2010,6 +2011,7 @@ export type Database = {
           audio_duration?: number | null
           audio_path?: string | null
           audio_waveform?: Json | null
+          client_message_id?: string | null
           created_at?: string
           deleted_at?: string | null
           deleted_by?: string | null
@@ -2046,6 +2048,7 @@ export type Database = {
           audio_duration?: number | null
           audio_path?: string | null
           audio_waveform?: Json | null
+          client_message_id?: string | null
           created_at?: string
           deleted_at?: string | null
           deleted_by?: string | null
@@ -2116,6 +2119,35 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "moment_comments_moment_id_fkey"
+            columns: ["moment_id"]
+            isOneToOne: false
+            referencedRelation: "moments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      moment_views: {
+        Row: {
+          id: string
+          moment_id: string
+          viewed_at: string
+          viewer_user_id: string
+        }
+        Insert: {
+          id?: string
+          moment_id: string
+          viewed_at?: string
+          viewer_user_id: string
+        }
+        Update: {
+          id?: string
+          moment_id?: string
+          viewed_at?: string
+          viewer_user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "moment_views_moment_id_fkey"
             columns: ["moment_id"]
             isOneToOne: false
             referencedRelation: "moments"
@@ -2818,10 +2850,14 @@ export type Database = {
           avatar_url: string | null
           bio: string | null
           city: string | null
+          country_lock_policy: string
           created_at: string
           created_via_provider: string | null
           current_country: string | null
           current_country_code: string | null
+          origin_country: string | null
+          origin_country_code: string | null
+          origin_country_source: string
           deleted_at: string | null
           discoverable_in_vibes: boolean
           drinking: string | null
@@ -2906,10 +2942,14 @@ export type Database = {
           avatar_url?: string | null
           bio?: string | null
           city?: string | null
+          country_lock_policy?: string
           created_at?: string
           created_via_provider?: string | null
           current_country?: string | null
           current_country_code?: string | null
+          origin_country?: string | null
+          origin_country_code?: string | null
+          origin_country_source?: string
           deleted_at?: string | null
           discoverable_in_vibes?: boolean
           drinking?: string | null
@@ -2994,10 +3034,14 @@ export type Database = {
           avatar_url?: string | null
           bio?: string | null
           city?: string | null
+          country_lock_policy?: string
           created_at?: string
           created_via_provider?: string | null
           current_country?: string | null
           current_country_code?: string | null
+          origin_country?: string | null
+          origin_country_code?: string | null
+          origin_country_source?: string
           deleted_at?: string | null
           discoverable_in_vibes?: boolean
           drinking?: string | null
@@ -4345,6 +4389,54 @@ export type Database = {
         }[]
       }
       can_view_moment: { Args: { p_moment_id: string }; Returns: boolean }
+      rpc_get_my_moment_view_stats: {
+        Args: { p_moment_ids?: string[] | null }
+        Returns: {
+          moment_id: string
+          unique_viewers: number
+        }[]
+      }
+      rpc_get_my_moment_recent_viewers: {
+        Args: { p_limit?: number | null; p_moment_id: string }
+        Returns: {
+          avatar_url: string | null
+          current_country_code: string | null
+          full_name: string | null
+          is_match: boolean
+          is_repeat_viewer: boolean
+          profile_id: string | null
+          viewed_at: string
+          viewed_moment_count: number
+          viewer_user_id: string
+        }[]
+      }
+      rpc_get_my_moment_viewer_segments: {
+        Args: { p_days?: number | null }
+        Returns: {
+          abroad_viewers: number
+          first_time_viewers: number
+          ghana_viewers: number
+          matched_viewers: number
+          non_match_viewers: number
+          repeat_viewers: number
+          total_viewers: number
+        }[]
+      }
+      rpc_get_my_moment_view_time_insights: {
+        Args: { p_days?: number | null; p_utc_offset_minutes?: number | null }
+        Returns: {
+          local_hour: number
+          view_count: number
+          weekday_bucket: number
+        }[]
+      }
+      rpc_get_viewed_moment_ids: {
+        Args: { p_moment_ids: string[] }
+        Returns: {
+          moment_id: string
+        }[]
+      }
+      rpc_mark_moment_view: { Args: { p_moment_id: string }; Returns: boolean }
       clean_expired_distance_cache: { Args: never; Returns: number }
       cleanup_phone_verifications_orphans: { Args: never; Returns: undefined }
       decrement_superlike: { Args: { p_profile_id: string }; Returns: number }

@@ -215,6 +215,29 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
   const [profilesById, setProfilesById] = useState<Record<string, MomentProfile>>({});
   const [offlineMediaByMomentId, setOfflineMediaByMomentId] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+  const currentUserProfileId = currentUserProfile?.id ? String(currentUserProfile.id) : null;
+  const currentUserProfileName = currentUserProfile?.full_name ?? null;
+  const currentUserProfileAvatarUrl = currentUserProfile?.avatar_url ?? null;
+  const currentUserProfilePhotos = useMemo(
+    () =>
+      Array.isArray(currentUserProfile?.photos)
+        ? currentUserProfile.photos.filter((photo): photo is string => typeof photo === 'string')
+        : [],
+    [currentUserProfile?.photos],
+  );
+  const currentUserProfilePhotosSignature = useMemo(
+    () => currentUserProfilePhotos.join('|'),
+    [currentUserProfilePhotos],
+  );
+  const currentUserProfileSnapshot = useMemo(
+    () => ({
+      id: currentUserProfileId,
+      full_name: currentUserProfileName,
+      avatar_url: currentUserProfileAvatarUrl,
+      photos: currentUserProfilePhotos,
+    }),
+    [currentUserProfileAvatarUrl, currentUserProfileId, currentUserProfileName, currentUserProfilePhotosSignature],
+  );
 
   // Offline-store first: hydrate last known feed quickly, then refresh in background.
   useEffect(() => {
@@ -293,14 +316,14 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
       await writeMomentsFeedSnapshot(currentUserId, { moments: reconciled.moments, profilesById: nextProfiles });
       await primeInteractedMomentSnapshots({
         currentUserId,
-        currentUserProfile,
+        currentUserProfile: currentUserProfileSnapshot,
         moments: reconciled.moments,
         profilesById: nextProfiles,
       });
     } finally {
       setLoading(false);
     }
-  }, [currentUserId, currentUserProfile]);
+  }, [currentUserId, currentUserProfileSnapshot]);
 
   useEffect(() => {
     void refresh();
@@ -373,9 +396,9 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
       const ownMoments = momentsByUser[currentUserId] || [];
       list.push({
         userId: currentUserId,
-        profileId: currentUserProfile?.id ? String(currentUserProfile.id) : null,
-        name: currentUserProfile?.full_name || 'You',
-        avatarUrl: resolveMomentAvatarUrl(currentUserProfile),
+        profileId: currentUserProfileSnapshot.id,
+        name: currentUserProfileSnapshot.full_name || 'You',
+        avatarUrl: resolveMomentAvatarUrl(currentUserProfileSnapshot),
         moments: ownMoments,
         latestMoment: ownMoments[0],
         isOwn: true,
@@ -404,7 +427,7 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
       });
 
     return [...list, ...others];
-  }, [currentUserId, currentUserProfile?.avatar_url, currentUserProfile?.full_name, currentUserProfile?.id, momentsByUser, profilesById]);
+  }, [currentUserId, currentUserProfileSnapshot, momentsByUser, profilesById]);
 
   return {
     moments,

@@ -15,6 +15,7 @@ import { useResponsiveMetrics } from '@/lib/responsive';
 import { buildLocationDisplay } from '@/lib/location/location-display';
 import { isLikelyNetworkError } from '@/lib/network';
 import { getPresenceDisplay } from '@/lib/presence';
+import { fetchUserPresence } from '@/lib/user-presence';
 import {
   enqueueProfileNoteCreateMutation,
   enqueueProfileImageReactionSyncMutation,
@@ -731,17 +732,21 @@ export default function ProfileViewPremiumV2Screen() {
     let cancelled = false;
     const fetchPresence = async () => {
       try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('online,last_active')
-          .eq('id', resolvedProfile.id)
-          .maybeSingle();
+        const targetUserId =
+          typeof (resolvedProfile as any)?.userId === 'string' && (resolvedProfile as any).userId.length > 0
+            ? (resolvedProfile as any).userId
+            : typeof (resolvedProfile as any)?.user_id === 'string' && (resolvedProfile as any).user_id.length > 0
+              ? (resolvedProfile as any).user_id
+              : null;
+        if (!targetUserId) return;
+        const { data, error } = await fetchUserPresence(targetUserId);
         if (cancelled) return;
         if (error || !data) return;
-        const presence = getPresenceDisplay(data.last_active ?? null);
+        const presenceRow = data as { last_active?: string | null } | null;
+        const presence = getPresenceDisplay(presenceRow?.last_active ?? null);
         setPresenceState({
           online: presence.online,
-          last_active: data.last_active ?? null,
+          last_active: presenceRow?.last_active ?? null,
         });
       } catch {
         // ignore presence fetch errors

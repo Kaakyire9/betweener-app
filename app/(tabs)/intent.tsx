@@ -710,8 +710,9 @@ function SegmentedToggle({
 }
 
 export default function IntentScreen() {
-  const { user, profile } = useAuth();
+  const { user, profile, authRecoveryPending, usingPersistedSessionFallback } = useAuth();
   const { profileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
+  const showingRecoveredSnapshot = authRecoveryPending || usingPersistedSessionFallback;
   const params = useLocalSearchParams<{
     type?: string;
     requestId?: string;
@@ -726,7 +727,11 @@ export default function IntentScreen() {
   const reduceMotion = useReduceMotion();
 
   const currentProfileId = profileId;
-  const { incoming, sent, loading, refresh, updateLocalIntent } = useIntentRequests(currentProfileId);
+  const { incoming, sent, loading, refresh, updateLocalIntent } = useIntentRequests(currentProfileId, {
+    liveFetchEnabled: !showingRecoveredSnapshot,
+    snapshotOwnerIds: [currentProfileId, profile?.id, user?.id, (profile as any)?.user_id],
+  });
+  const effectiveLoading = showingRecoveredSnapshot ? false : loading;
   const [direction, setDirection] = useState<Direction>('incoming');
   const [filter, setFilter] = useState<Filter>('action');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
@@ -1438,17 +1443,17 @@ export default function IntentScreen() {
   );
 
   const visibleSignalsForDirection = direction === 'incoming' ? visibleReceivedSignals : visibleSentSignals;
-  const showEmpty = !loading && sortedFiltered.length === 0 && visibleSignalsForDirection.length === 0;
+  const showEmpty = !effectiveLoading && sortedFiltered.length === 0 && visibleSignalsForDirection.length === 0;
   const [loadingStuck, setLoadingStuck] = useState(false);
 
   useEffect(() => {
-    if (!loading) {
+    if (!effectiveLoading) {
       setLoadingStuck(false);
       return;
     }
     const t = setTimeout(() => setLoadingStuck(true), 9000);
     return () => clearTimeout(t);
-  }, [loading]);
+  }, [effectiveLoading]);
 
   useEffect(() => {
     if (!showEmpty || reduceMotion) {
@@ -1464,7 +1469,7 @@ export default function IntentScreen() {
   }, [emptyBreath, reduceMotion, showEmpty]);
 
   useEffect(() => {
-    if (!currentProfileId || loading || suggestedLoadedRef.current) return;
+    if (!currentProfileId || effectiveLoading || suggestedLoadedRef.current || showingRecoveredSnapshot) return;
     let cancelled = false;
     const loadSuggested = async () => {
       setSuggestedLoading(true);
@@ -1498,7 +1503,7 @@ export default function IntentScreen() {
     return () => {
       cancelled = true;
     };
-  }, [currentProfileId, loading, suggestedRetryKey]);
+  }, [currentProfileId, effectiveLoading, showingRecoveredSnapshot, suggestedRetryKey]);
 
   // Cached-first: show last suggested moves immediately, then refresh in background.
   useEffect(() => {
@@ -1521,11 +1526,23 @@ export default function IntentScreen() {
     };
   }, [currentProfileId]);
 
-  const openChat = useCallback((peerId?: string | null, name?: string, avatar?: string | null, prefill?: string | null) => {
+  const openChat = useCallback((
+    peerId?: string | null,
+    name?: string,
+    avatar?: string | null,
+    prefill?: string | null,
+    peerUserId?: string | null,
+  ) => {
     if (!peerId) return;
     router.push({
       pathname: '/chat/[id]',
-      params: { id: peerId, userName: name ?? '', userAvatar: avatar ?? '', prefill: prefill ?? '' },
+      params: {
+        id: peerId,
+        peerUserId: peerUserId ?? '',
+        userName: name ?? '',
+        userAvatar: avatar ?? '',
+        prefill: prefill ?? '',
+      },
     });
   }, []);
 
@@ -2432,7 +2449,7 @@ export default function IntentScreen() {
                 <AnimatedPressable
                   reduceMotion={reduceMotion}
                   onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-                  onPress={() => openChat(peerId, name, peer?.avatar_url, quickReply)}
+                  onPress={() => openChat(peerId, name, peer?.avatar_url, quickReply, peer?.user_id)}
                   style={[styles.ghostButton, styles.actionWide]}
                 >
                   <Text style={styles.ghostText}>Quick reply</Text>
@@ -2512,7 +2529,7 @@ export default function IntentScreen() {
                 <AnimatedPressable
                   reduceMotion={reduceMotion}
                   onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-                  onPress={() => openChat(peerId, name, peer?.avatar_url, autoClosedByMatch ? quickReply : null)}
+                  onPress={() => openChat(peerId, name, peer?.avatar_url, autoClosedByMatch ? quickReply : null, peer?.user_id)}
                   style={[styles.primaryButton, styles.actionWide]}
                 >
                   <Text style={styles.primaryText}>
@@ -3509,7 +3526,7 @@ export default function IntentScreen() {
             ) : null
           }
           ListEmptyComponent={
-            loading ? (
+            effectiveLoading ? (
               <View style={styles.skeletonWrap}>
                 <View style={styles.skeletonCard} />
                 <View style={styles.skeletonCard} />
@@ -3795,7 +3812,7 @@ export default function IntentScreen() {
             location: peerProfile?.city || peerProfile?.region || peerProfile?.location || null,
           });
           setCelebrationMatch(null);
-          openChat(peerId, peerName, peerAvatar, reply);
+          openChat(peerId, peerName, peerAvatar, reply, match?.user_id ?? peerProfile?.user_id);
         }}
       />
 

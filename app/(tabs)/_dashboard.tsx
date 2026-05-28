@@ -3,6 +3,7 @@ import { usePremiumState } from "@/hooks/use-premium-state";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/lib/auth-context";
 import { getPresenceDisplay } from "@/lib/presence";
+import { fetchUserPresence, overlayPresence } from "@/lib/user-presence";
 import { getSafeRemoteImageUri } from "@/lib/profile/display-name";
 import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -103,8 +104,13 @@ export default function DashboardScreen() {
     // Grab freshest profile, then keep it in sync via realtime.
     const fetchLatest = async () => {
       try {
-        const { data } = await supabase.from('profiles').select('*').eq('user_id', user.id).single();
-        if (data) setLiveProfile(data);
+        const [{ data }, presenceResult] = await Promise.all([
+          supabase.from('profiles').select('*').eq('user_id', user.id).single(),
+          fetchUserPresence(user.id),
+        ]);
+        if (data) {
+          setLiveProfile(overlayPresence(data as any, (presenceResult.data as any) ?? null));
+        }
       } catch {
         // ignore
       }
@@ -112,12 +118,14 @@ export default function DashboardScreen() {
     void fetchLatest();
 
     const channel = supabase
-      .channel(`profiles:dashboard:${user.id}`)
+      .channel(`user_presence:dashboard:${user.id}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'profiles', filter: `user_id=eq.${user.id}` },
+        { event: '*', schema: 'public', table: 'user_presence', filter: `user_id=eq.${user.id}` },
         (payload: any) => {
-          if (payload?.new) setLiveProfile(payload.new);
+          if (payload?.new) {
+            setLiveProfile((prev: any) => (prev ? overlayPresence(prev, payload.new) : prev));
+          }
         },
       )
       .subscribe();

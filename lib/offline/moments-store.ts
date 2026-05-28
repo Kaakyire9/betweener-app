@@ -39,6 +39,38 @@ export type OwnMomentsSnapshot = {
   moments: MomentSnapshotRow[];
   reactionCounts: Record<string, number>;
   commentCounts: Record<string, number>;
+  viewCounts?: Record<string, number>;
+  viewTimeInsights?: MomentViewTimeInsightSnapshotRow[];
+  viewerSegments?: MomentViewerSegmentsSnapshot | null;
+  recentViewersByMomentId?: Record<string, MomentRecentViewerSnapshotRow[]>;
+};
+
+export type MomentViewTimeInsightSnapshotRow = {
+  localHour: number;
+  weekdayBucket: number;
+  viewCount: number;
+};
+
+export type MomentViewerSegmentsSnapshot = {
+  totalViewers: number;
+  matchedViewers: number;
+  nonMatchViewers: number;
+  ghanaViewers: number;
+  abroadViewers: number;
+  repeatViewers: number;
+  firstTimeViewers: number;
+};
+
+export type MomentRecentViewerSnapshotRow = {
+  viewerUserId: string;
+  viewedAt: string;
+  profileId: string | null;
+  fullName: string | null;
+  avatarUrl: string | null;
+  currentCountryCode: string | null;
+  isMatch: boolean;
+  viewedMomentCount: number;
+  isRepeatViewer: boolean;
 };
 
 export type MomentCommentSnapshotRow = {
@@ -103,6 +135,16 @@ const buildMomentDetailSnapshotKeys = (userId: string, momentId: string) => [
   buildMomentReactorsSnapshotKey(userId, momentId),
 ];
 
+const createEmptyOwnMomentsSnapshot = (): OwnMomentsSnapshot => ({
+  moments: [],
+  reactionCounts: {},
+  commentCounts: {},
+  viewCounts: {},
+  viewTimeInsights: [],
+  viewerSegments: null,
+  recentViewersByMomentId: {},
+});
+
 const sanitizeFileName = (fileName: string) =>
   fileName
     .replace(/[^\w.\-]+/g, '-')
@@ -135,6 +177,66 @@ const pruneFeedSnapshot = (snapshot: MomentsFeedSnapshot): MomentsFeedSnapshot =
   moments: snapshot.moments.filter(isActiveMomentRow),
 });
 
+const pruneViewTimeInsights = (
+  rows?: MomentViewTimeInsightSnapshotRow[],
+): MomentViewTimeInsightSnapshotRow[] =>
+  Array.isArray(rows)
+    ? rows
+        .filter(
+          (row) =>
+            Number.isFinite(row?.localHour) &&
+            Number.isFinite(row?.weekdayBucket) &&
+            Number.isFinite(row?.viewCount),
+        )
+        .map((row) => ({
+          localHour: Number(row.localHour),
+          weekdayBucket: Number(row.weekdayBucket),
+          viewCount: Number(row.viewCount),
+        }))
+    : [];
+
+const pruneViewerSegments = (
+  viewerSegments?: MomentViewerSegmentsSnapshot | null,
+): MomentViewerSegmentsSnapshot | null => {
+  if (!viewerSegments) return null;
+  return {
+    totalViewers: Number(viewerSegments.totalViewers || 0),
+    matchedViewers: Number(viewerSegments.matchedViewers || 0),
+    nonMatchViewers: Number(viewerSegments.nonMatchViewers || 0),
+    ghanaViewers: Number(viewerSegments.ghanaViewers || 0),
+    abroadViewers: Number(viewerSegments.abroadViewers || 0),
+    repeatViewers: Number(viewerSegments.repeatViewers || 0),
+    firstTimeViewers: Number(viewerSegments.firstTimeViewers || 0),
+  };
+};
+
+const pruneRecentViewersByMomentId = (
+  momentIds: Set<string>,
+  recentViewersByMomentId?: Record<string, MomentRecentViewerSnapshotRow[]>,
+) =>
+  Object.entries(recentViewersByMomentId ?? {}).reduce<
+    Record<string, MomentRecentViewerSnapshotRow[]>
+  >((acc, [momentId, viewers]) => {
+    if (!momentIds.has(momentId) || !Array.isArray(viewers)) {
+      return acc;
+    }
+    acc[momentId] = viewers
+      .filter((viewer) => viewer?.viewerUserId && viewer?.viewedAt)
+      .map((viewer) => ({
+        viewerUserId: String(viewer.viewerUserId),
+        viewedAt: String(viewer.viewedAt),
+        profileId: viewer.profileId ? String(viewer.profileId) : null,
+        fullName: viewer.fullName ?? null,
+        avatarUrl: viewer.avatarUrl ?? null,
+        currentCountryCode: viewer.currentCountryCode ?? null,
+        isMatch: Boolean(viewer.isMatch),
+        viewedMomentCount: Number(viewer.viewedMomentCount || 0),
+        isRepeatViewer: Boolean(viewer.isRepeatViewer),
+      }))
+      .sort((a, b) => new Date(b.viewedAt).getTime() - new Date(a.viewedAt).getTime());
+    return acc;
+  }, {});
+
 const pruneOwnSnapshot = (snapshot: OwnMomentsSnapshot): OwnMomentsSnapshot => {
   const moments = snapshot.moments.filter(isActiveMomentRow);
   const momentIds = new Set(moments.map((moment) => moment.id));
@@ -142,6 +244,13 @@ const pruneOwnSnapshot = (snapshot: OwnMomentsSnapshot): OwnMomentsSnapshot => {
     moments,
     reactionCounts: pruneCounts(momentIds, snapshot.reactionCounts),
     commentCounts: pruneCounts(momentIds, snapshot.commentCounts),
+    viewCounts: pruneCounts(momentIds, snapshot.viewCounts),
+    viewTimeInsights: pruneViewTimeInsights(snapshot.viewTimeInsights),
+    viewerSegments: pruneViewerSegments(snapshot.viewerSegments),
+    recentViewersByMomentId: pruneRecentViewersByMomentId(
+      momentIds,
+      snapshot.recentViewersByMomentId,
+    ),
   };
 };
 
@@ -214,7 +323,10 @@ export async function readOwnMomentsSnapshot(userId: string): Promise<OwnMoments
   if (
     pruned.moments.length !== snapshot.moments.length ||
     Object.keys(pruned.reactionCounts).length !== Object.keys(snapshot.reactionCounts ?? {}).length ||
-    Object.keys(pruned.commentCounts).length !== Object.keys(snapshot.commentCounts ?? {}).length
+    Object.keys(pruned.commentCounts).length !== Object.keys(snapshot.commentCounts ?? {}).length ||
+    Object.keys(pruned.viewCounts ?? {}).length !== Object.keys(snapshot.viewCounts ?? {}).length ||
+    Object.keys(pruned.recentViewersByMomentId ?? {}).length !==
+      Object.keys(snapshot.recentViewersByMomentId ?? {}).length
   ) {
     await writeOwnMomentsSnapshot(userId, pruned);
     await removeMomentDetailSnapshots(userId, removedMomentIds);
@@ -229,6 +341,51 @@ export async function writeOwnMomentsSnapshot(
   await writeOfflineEnvelope(buildOwnMomentsSnapshotKey(userId), pruneOwnSnapshot(snapshot), {
     kind: 'moments-own-snapshot',
     staleAfterMs: MOMENTS_SNAPSHOT_MAX_AGE_MS,
+  });
+}
+
+export async function mergeOwnMomentsSnapshot(
+  userId: string,
+  patch: Partial<OwnMomentsSnapshot>,
+): Promise<OwnMomentsSnapshot> {
+  const current = (await readOwnMomentsSnapshot(userId)) ?? createEmptyOwnMomentsSnapshot();
+  const next: OwnMomentsSnapshot = {
+    ...current,
+    ...patch,
+    moments: patch.moments ?? current.moments,
+    reactionCounts: patch.reactionCounts ?? current.reactionCounts,
+    commentCounts: patch.commentCounts ?? current.commentCounts,
+    viewCounts: patch.viewCounts ?? current.viewCounts ?? {},
+    viewTimeInsights: patch.viewTimeInsights ?? current.viewTimeInsights ?? [],
+    viewerSegments:
+      patch.viewerSegments === undefined ? current.viewerSegments ?? null : patch.viewerSegments,
+    recentViewersByMomentId:
+      patch.recentViewersByMomentId ?? current.recentViewersByMomentId ?? {},
+  };
+  await writeOwnMomentsSnapshot(userId, next);
+  return next;
+}
+
+export async function readOwnMomentRecentViewersSnapshot(
+  userId: string,
+  momentId: string,
+): Promise<MomentRecentViewerSnapshotRow[]> {
+  const snapshot = await readOwnMomentsSnapshot(userId);
+  return snapshot?.recentViewersByMomentId?.[momentId] ?? [];
+}
+
+export async function writeOwnMomentRecentViewersSnapshot(
+  userId: string,
+  momentId: string,
+  viewers: MomentRecentViewerSnapshotRow[],
+): Promise<OwnMomentsSnapshot> {
+  const current = (await readOwnMomentsSnapshot(userId)) ?? createEmptyOwnMomentsSnapshot();
+  const nextRecentViewersByMomentId = {
+    ...(current.recentViewersByMomentId ?? {}),
+    [momentId]: viewers,
+  };
+  return mergeOwnMomentsSnapshot(userId, {
+    recentViewersByMomentId: nextRecentViewersByMomentId,
   });
 }
 
@@ -509,11 +666,7 @@ export async function appendOwnMomentSnapshot(
   userId: string,
   input: CreateOwnMomentSnapshotInput,
 ): Promise<OwnMomentsSnapshot> {
-  const current = (await readOwnMomentsSnapshot(userId)) ?? {
-    moments: [],
-    reactionCounts: {},
-    commentCounts: {},
-  };
+  const current = (await readOwnMomentsSnapshot(userId)) ?? createEmptyOwnMomentsSnapshot();
   const nextMoment = buildSnapshotMoment(input);
   const next: OwnMomentsSnapshot = {
     moments: [nextMoment, ...current.moments.filter((moment) => moment.id !== nextMoment.id)],
@@ -525,6 +678,16 @@ export async function appendOwnMomentSnapshot(
       ...current.commentCounts,
       [nextMoment.id]: current.commentCounts[nextMoment.id] ?? 0,
     },
+    viewCounts: {
+      ...(current.viewCounts ?? {}),
+      [nextMoment.id]: current.viewCounts?.[nextMoment.id] ?? 0,
+    },
+    viewTimeInsights: current.viewTimeInsights ?? [],
+    viewerSegments: current.viewerSegments ?? null,
+    recentViewersByMomentId: {
+      ...(current.recentViewersByMomentId ?? {}),
+      [nextMoment.id]: current.recentViewersByMomentId?.[nextMoment.id] ?? [],
+    },
   };
   await writeOwnMomentsSnapshot(userId, next);
   return next;
@@ -535,31 +698,41 @@ export async function replaceOwnMomentSnapshot(
   previousMomentId: string,
   input: CreateOwnMomentSnapshotInput,
 ): Promise<OwnMomentsSnapshot> {
-  const current = (await readOwnMomentsSnapshot(userId)) ?? {
-    moments: [],
-    reactionCounts: {},
-    commentCounts: {},
-  };
+  const current = (await readOwnMomentsSnapshot(userId)) ?? createEmptyOwnMomentsSnapshot();
   const nextMoment = buildSnapshotMoment(input);
   const existingIndex = current.moments.findIndex((moment) => moment.id === previousMomentId);
   const existingCountsReaction =
     current.reactionCounts[previousMomentId] ?? current.reactionCounts[nextMoment.id] ?? 0;
   const existingCountsComment =
     current.commentCounts[previousMomentId] ?? current.commentCounts[nextMoment.id] ?? 0;
+  const existingCountsView =
+    current.viewCounts?.[previousMomentId] ?? current.viewCounts?.[nextMoment.id] ?? 0;
   const nextMoments =
     existingIndex >= 0
       ? current.moments.map((moment, index) => (index === existingIndex ? nextMoment : moment))
       : [nextMoment, ...current.moments.filter((moment) => moment.id !== nextMoment.id)];
   const reactionCounts = { ...current.reactionCounts };
   const commentCounts = { ...current.commentCounts };
+  const viewCounts = { ...(current.viewCounts ?? {}) };
+  const recentViewersByMomentId = { ...(current.recentViewersByMomentId ?? {}) };
   delete reactionCounts[previousMomentId];
   delete commentCounts[previousMomentId];
+  delete viewCounts[previousMomentId];
+  const previousRecentViewers =
+    recentViewersByMomentId[previousMomentId] ?? recentViewersByMomentId[nextMoment.id] ?? [];
+  delete recentViewersByMomentId[previousMomentId];
   reactionCounts[nextMoment.id] = existingCountsReaction;
   commentCounts[nextMoment.id] = existingCountsComment;
+  viewCounts[nextMoment.id] = existingCountsView;
+  recentViewersByMomentId[nextMoment.id] = previousRecentViewers;
   const next: OwnMomentsSnapshot = {
     moments: nextMoments,
     reactionCounts,
     commentCounts,
+    viewCounts,
+    viewTimeInsights: current.viewTimeInsights ?? [],
+    viewerSegments: current.viewerSegments ?? null,
+    recentViewersByMomentId,
   };
   await writeOwnMomentsSnapshot(userId, next);
   return next;
@@ -570,12 +743,20 @@ export async function removeOwnMomentSnapshot(userId: string, momentId: string):
   if (!current) return null;
   const reactionCounts = { ...current.reactionCounts };
   const commentCounts = { ...current.commentCounts };
+  const viewCounts = { ...(current.viewCounts ?? {}) };
+  const recentViewersByMomentId = { ...(current.recentViewersByMomentId ?? {}) };
   delete reactionCounts[momentId];
   delete commentCounts[momentId];
+  delete viewCounts[momentId];
+  delete recentViewersByMomentId[momentId];
   const next: OwnMomentsSnapshot = {
     moments: current.moments.filter((moment) => moment.id !== momentId),
     reactionCounts,
     commentCounts,
+    viewCounts,
+    viewTimeInsights: current.viewTimeInsights ?? [],
+    viewerSegments: current.viewerSegments ?? null,
+    recentViewersByMomentId,
   };
   await writeOwnMomentsSnapshot(userId, next);
   await removeMomentDetailSnapshots(userId, [momentId]);

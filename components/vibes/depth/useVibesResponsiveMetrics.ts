@@ -48,6 +48,11 @@ export function deriveVibesDepthMetrics({
   const centerButtonSize = compactHeight || compactWidth ? 52 : tallHeight ? 62 : 58;
   const dockHeight = compactHeight || compactWidth ? 58 : tallHeight ? 64 : 64;
   const dockWidth = clamp(base.cardWidth - (compactWidth ? 50 : tallHeight ? 56 : 42), 270, 372);
+  const dockBottom = Math.max(
+    platform === "android" ? -6 : 0,
+    insets.bottom + (platform === "android" ? -8 : tallHeight ? -16 : -18),
+  );
+  const stackBottomReserve = dockHeight + Math.max(dockBottom, 0) + (compactHeight ? 22 : tallHeight ? 28 : 24);
   const bottomNavReserve = Math.max(
     insets.bottom + RESPONSIVE_RESERVES.compactBottomTabBar,
     platform === "android" ? 82 : 86
@@ -63,7 +68,8 @@ export function deriveVibesDepthMetrics({
     cardBottomContentHeight: Math.max(132, base.cardHeight * (compactHeight ? 0.34 : 0.38)),
     dockHeight,
     dockWidth,
-    dockBottom: Math.max(platform === "android" ? 3 : 4, insets.bottom + (platform === "android" ? 0 : tallHeight ? 0 : 2)),
+    stackBottomReserve,
+    dockBottom,
     buttonSize,
     centerButtonSize,
     tabHeight: compactHeight || compactWidth ? 48 : 54,

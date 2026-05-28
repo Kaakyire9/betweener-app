@@ -53,8 +53,11 @@ function MomentAvatarBubble({
     onPress();
   };
 
+  const hasSeenLiveMoment = isLive && !isOwn && !hasUnseenMoment;
   const ringColors = hasUnseenMoment
-    ? ["#13A8A8", "#8B5CFF", "#F4E8D0"]
+    ? ["#f59e0b", "#f43f5e", "#22d3ee"]
+    : hasSeenLiveMoment
+      ? ["rgba(72,229,220,0.98)", "rgba(244,232,208,0.92)"]
     : isOwn
       ? ["rgba(244,232,208,0.95)", "rgba(19,168,168,0.72)"]
       : ["rgba(244,232,208,0.74)", "rgba(19,168,168,0.42)"];
@@ -94,6 +97,8 @@ function MomentAvatarBubble({
           end={[1, 1]}
           style={[
             styles.ring,
+            hasUnseenMoment ? styles.ringUnseen : null,
+            hasSeenLiveMoment ? styles.ringSeenLive : null,
             {
               width: ringSize,
               height: ringSize,
@@ -101,7 +106,7 @@ function MomentAvatarBubble({
               padding: Math.max(2, Math.round((ringSize - avatarSize) / 2)),
             },
           ]}
-        >
+          >
           <OfflineImage
             uri={safeAvatarUrl}
             style={[
@@ -116,7 +121,6 @@ function MomentAvatarBubble({
             contentFit="cover"
             fallback={avatarFallback}
           />
-          {isLive ? <View style={[styles.liveDot, { backgroundColor: theme.tint }]} /> : null}
           {isOwn && !isLive ? (
             <View style={[styles.addDot, { backgroundColor: theme.tint }]}>
               <MaterialCommunityIcons name="plus" size={8} color="#F4E8D0" />
@@ -155,6 +159,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  ringUnseen: {
+    shadowColor: '#f3c784',
+    shadowOpacity: 0.32,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 5,
+  },
+  ringSeenLive: {
+    shadowColor: '#39d6cf',
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
   avatar: {
     borderWidth: 2,
   },
@@ -166,16 +184,6 @@ const styles = StyleSheet.create({
   initials: {
     fontSize: 14,
     fontFamily: "Manrope_800ExtraBold",
-  },
-  liveDot: {
-    position: "absolute",
-    right: 5,
-    bottom: 5,
-    width: 9,
-    height: 9,
-    borderRadius: 4.5,
-    borderWidth: 1.5,
-    borderColor: "#F4E8D0",
   },
   addDot: {
     position: "absolute",
