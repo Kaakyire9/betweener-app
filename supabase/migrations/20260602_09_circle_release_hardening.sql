@@ -163,14 +163,14 @@ begin
                   and upper(candidate.current_country_code) = upper(viewer.current_country_code) then 18 else 0 end
         + case when nullif(btrim(coalesce(candidate.city, '')), '') is not null
                   and lower(candidate.city) = lower(viewer.city) then 12 else 0 end
-        + case when coalesce(candidate.interests, '{}') && coalesce(viewer.interests, '{}') then 20 else 0 end
+        + case when interest_overlap.has_shared_interests then 20 else 0 end
         + case when nullif(btrim(coalesce(candidate.relationship_intent, '')), '') is not null
                   and candidate.relationship_intent = viewer.relationship_intent then 14 else 0 end
       )::integer as score,
       concat_ws(
         ' - ',
         'Shared Circle',
-        case when coalesce(candidate.interests, '{}') && coalesce(viewer.interests, '{}') then 'Shared interests' end,
+        case when interest_overlap.has_shared_interests then 'Shared interests' end,
         case when nullif(btrim(coalesce(candidate.current_country_code, '')), '') is not null
                   and upper(candidate.current_country_code) = upper(viewer.current_country_code) then 'Location context' end,
         case when nullif(btrim(coalesce(candidate.relationship_intent, '')), '') is not null
@@ -190,6 +190,16 @@ begin
      and coalesce(candidate.matchmaking_mode, false) = false
      and candidate.user_id is not null
     join public.circles circle_row on circle_row.id = member.circle_id
+    left join lateral (
+      select exists (
+        select 1
+        from public.profile_interests candidate_interest
+        join public.profile_interests viewer_interest
+          on viewer_interest.interest_id = candidate_interest.interest_id
+        where candidate_interest.profile_id = candidate.id
+          and viewer_interest.profile_id = viewer.id
+      ) as has_shared_interests
+    ) interest_overlap on true
     where not exists (
       select 1
       from public.blocks block_row
