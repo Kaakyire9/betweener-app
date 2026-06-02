@@ -1,5 +1,5 @@
 import { isDistanceLabel, parseDistanceKmFromLabel } from '@/lib/profile/distance';
-import { getPresenceDisplay } from '@/lib/presence';
+import { getAuthoritativePresenceDisplay } from '@/lib/presence';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
 import { supabase } from '@/lib/supabase';
 import { fetchUserPresence, overlayPresence } from '@/lib/user-presence';
@@ -119,7 +119,10 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
         ? parseDistanceKmFromLabel(fallbackDistanceLabel)
         : undefined;
 
-  const presence = getPresenceDisplay(profileWithPresence.last_active ?? null);
+  const presence = getAuthoritativePresenceDisplay(
+    profileWithPresence.online,
+    profileWithPresence.last_active ?? null,
+  );
 
   const mapped: UserProfile = {
     id: profileWithPresence.id,

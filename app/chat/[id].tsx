@@ -61,6 +61,10 @@ import {
 } from "@/lib/chat/thread-behavior";
 import { ChatOutboxService } from "@/lib/chat/outbox/chat-outbox-service";
 import {
+  THREAD_ACTIVITY_LEASE_MS,
+  isPeerThreadActivityLeaseFresh,
+} from "@/lib/chat/thread-activity";
+import {
   startThreadPresenceSession,
   subscribeThreadAncillaryRealtime,
   subscribeThreadMessageRealtime,
@@ -73,16 +77,14 @@ import { computeConversationSignalLabel, computeFirstReplyHours, computeInterest
 import { Motion } from "@/lib/motion";
 import { isLikelyNetworkError } from "@/lib/network";
 import {
-  ONLINE_WINDOW_MS,
-  getPresenceDisplay,
+  getAuthoritativePresenceDisplay,
+  getChatThreadPresenceKind,
 } from "@/lib/presence";
 import { cacheOfflineImage, getOfflineImageUri, rememberOfflineImageUri } from "@/lib/offline/image-store";
 import {
-  buildChatConversationListStoreKey,
   buildChatPeerStoreKey,
   buildChatThreadStoreKey,
   migrateLegacyChatThreadSnapshot,
-  patchChatConversationPresenceSnapshot,
   peekOfflineSnapshot,
   readOfflineSnapshot,
   subscribeOfflineSnapshot,
@@ -299,15 +301,6 @@ const getAttachmentUploadErrorMessage = (error: unknown) => {
 // Message type definition
 type BetweenerVenueRow = Database["public"]["Tables"]["betweener_venues"]["Row"];
 type DatePlanRow = Database["public"]["Tables"]["date_plans"]["Row"];
-type CachedConversationPresenceRow = {
-  id: string;
-  matchedUser?: {
-    isOnline?: boolean;
-    lastSeen?: string;
-    typingExpiresAt?: string | null;
-  };
-};
-
 type CachedMessageType = Omit<
   MessageType,
   "timestamp" | "readAt" | "deletedAt" | "editedAt" | "replyTo" | "location" | "dateInvite"
@@ -3323,6 +3316,15 @@ const MessageRowItem = memo(
             quickReactions={QUICK_REACTIONS}
             styles={styles}
             theme={theme}
+            isDark={isDark}
+            timeLabel={metaLabel}
+            imageSize={imageSize}
+            cachedImageUrl={cachedImageUrl}
+            cachedVideoUrl={cachedVideoUrl}
+            isPlaying={isPlaying}
+            onToggleVoice={onToggleVoice}
+            onStopLiveShare={onStopLiveShare}
+            formatRemainingTime={formatRemainingTime}
             onAddReaction={onAddReaction}
             onCloseReactions={onCloseReactions}
             onReply={onReply}
@@ -3431,7 +3433,10 @@ export default function ConversationScreen() {
     typeof lastSeenParam === 'string' ? new Date(lastSeenParam) : null;
   const initialOnline =
     params.isOnline === 'true' &&
-    getPresenceDisplay(initialLastSeen && Number.isFinite(initialLastSeen.getTime()) ? initialLastSeen.toISOString() : null).online;
+    getAuthoritativePresenceDisplay(
+      true,
+      initialLastSeen && Number.isFinite(initialLastSeen.getTime()) ? initialLastSeen.toISOString() : null,
+    ).online;
 
   const { momentUsers } = useMoments({
     currentUserId: user?.id,
@@ -3754,54 +3759,36 @@ export default function ConversationScreen() {
   const showLocationLoading = locationLoading && !currentCoords && !locationError;
   const audioRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const peerTypingClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const RECENT_LAST_SEEN_WINDOW_MS = 2 * 60 * 1000;
-
-  const coercePresenceDate = useCallback((value?: string | Date | null) => {
-    if (!value) return new Date();
-    if (value instanceof Date) {
-      return Number.isFinite(value.getTime()) ? value : new Date();
-    }
-    const parsed = new Date(value);
-    return Number.isFinite(parsed.getTime()) ? parsed : new Date();
+  const peerThreadActiveLeaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const peerThreadLastActivityAtRef = useRef(0);
+  const clearPeerThreadActiveLeaseTimer = useCallback(() => {
+    if (!peerThreadActiveLeaseTimerRef.current) return;
+    clearTimeout(peerThreadActiveLeaseTimerRef.current);
+    peerThreadActiveLeaseTimerRef.current = null;
   }, []);
-
-  const markPeerRecentlyActive = useCallback((value?: string | Date | null) => {
-    setPeerLastSeen(coercePresenceDate(value));
-  }, [coercePresenceDate]);
-
-  const markPeerThreadInactive = useCallback((value?: string | Date | null) => {
-    const inactiveAt = coercePresenceDate(value);
+  const markPeerThreadInactive = useCallback(() => {
+    clearPeerThreadActiveLeaseTimer();
+    peerThreadLastActivityAtRef.current = 0;
+    peerThreadActiveRef.current = false;
     setPeerThreadActive(false);
-    setPeerLastSeen(inactiveAt);
     setNowTick(Date.now());
-  }, [coercePresenceDate]);
-
-  const refreshPeerOnlineWindow = useCallback((value?: string | Date | null) => {
-    const activityAt = coercePresenceDate(value);
-    setPeerLastSeen(activityAt);
-    setNowTick(Date.now());
-  }, [coercePresenceDate]);
-
-  const setPeerOnlineFromLastActive = useCallback((value?: string | Date | null) => {
-    if (!value) {
-      setPeerOnline(false);
-      return;
-    }
-    const lastActive = value instanceof Date ? value : new Date(value);
-    if (!Number.isFinite(lastActive.getTime())) {
-      setPeerOnline(false);
-      return;
-    }
-
-    setPeerLastSeen(lastActive);
-    const presence = getPresenceDisplay(lastActive.toISOString());
-    if (!presence.online) {
-      setPeerOnline(false);
-      return;
-    }
-
-    setPeerOnline(true);
-  }, []);
+  }, [clearPeerThreadActiveLeaseTimer]);
+  const markPeerThreadActive = useCallback(() => {
+    const activityAt = Date.now();
+    peerThreadLastActivityAtRef.current = activityAt;
+    peerThreadActiveRef.current = true;
+    setPeerThreadActive(true);
+    setNowTick(activityAt);
+    clearPeerThreadActiveLeaseTimer();
+    peerThreadActiveLeaseTimerRef.current = setTimeout(() => {
+      peerThreadActiveLeaseTimerRef.current = null;
+      if (isPeerThreadActivityLeaseFresh(peerThreadLastActivityAtRef.current)) return;
+      peerThreadLastActivityAtRef.current = 0;
+      peerThreadActiveRef.current = false;
+      setPeerThreadActive(false);
+      setNowTick(Date.now());
+    }, THREAD_ACTIVITY_LEASE_MS + 50);
+  }, [clearPeerThreadActiveLeaseTimer]);
 
   const setPeerTypingUntil = useCallback((typingUntilValue?: string | null) => {
     if (peerTypingClearTimerRef.current) {
@@ -3840,27 +3827,15 @@ export default function ConversationScreen() {
     if (!row) return;
     const incomingLastActive = row.last_active ? new Date(row.last_active) : null;
     const currentLastSeen = peerLastSeenRef.current;
-    if (
-      incomingLastActive &&
-      currentLastSeen &&
-      Number.isFinite(incomingLastActive.getTime()) &&
-      incomingLastActive.getTime() < currentLastSeen.getTime()
-    ) {
-      return;
-    }
     if (incomingLastActive && Number.isFinite(incomingLastActive.getTime())) {
-      setPeerLastSeen(incomingLastActive);
+      if (!currentLastSeen || incomingLastActive.getTime() >= currentLastSeen.getTime()) {
+        peerLastSeenRef.current = incomingLastActive;
+        setPeerLastSeen(incomingLastActive);
+      }
     }
-    if (row.online === false) {
-      setPeerOnline(false);
-      return;
-    }
-    if (row.online === true) {
-      setPeerOnlineFromLastActive(row.last_active ?? new Date().toISOString());
-      return;
-    }
-    setPeerOnlineFromLastActive(row.last_active ?? null);
-  }, [setPeerOnlineFromLastActive]);
+    setPeerOnline(row.online === true);
+    setNowTick(Date.now());
+  }, []);
 
   const applyBackendTypingState = useCallback((row?: {
     user_id?: string;
@@ -3871,10 +3846,9 @@ export default function ConversationScreen() {
     if (!row || row.user_id !== resolvedPeerAuthUserId || row.peer_user_id !== user?.id) return;
     const isPeerTyping = setPeerTypingUntil(row.typing_until ?? null);
     if (isPeerTyping) {
-      setPeerThreadActive(true);
-      refreshPeerOnlineWindow(row.updated_at ?? row.typing_until ?? null);
+      markPeerThreadActive();
     }
-  }, [refreshPeerOnlineWindow, resolvedPeerAuthUserId, setPeerTypingUntil, user?.id]);
+  }, [markPeerThreadActive, resolvedPeerAuthUserId, setPeerTypingUntil, user?.id]);
 
   const refreshPeerStatus = useCallback(async () => {
     if (!resolvedPeerAuthUserId || !user?.id) return;
@@ -3914,7 +3888,7 @@ export default function ConversationScreen() {
       setNetworkReady(nextReady);
       if (!nextReady) {
         setPeerOnline(false);
-        setPeerThreadActive(false);
+        markPeerThreadInactive();
         setIsTyping(false);
       }
     });
@@ -3922,47 +3896,7 @@ export default function ConversationScreen() {
       cancelled = true;
       unsubscribe();
     };
-  }, []);
-
-  useEffect(() => {
-    if (!user?.id || !conversationId) return;
-    let cancelled = false;
-    const conversationListCacheKey = buildChatConversationListStoreKey(user.id);
-    (async () => {
-      const cached = await readOfflineSnapshot<CachedConversationPresenceRow[]>(conversationListCacheKey);
-      if (cancelled || !Array.isArray(cached)) return;
-      const entry = cached.find((item) => item?.id === conversationId);
-      if (!entry?.matchedUser) return;
-      const hasCachedTyping =
-        Boolean(
-          entry.matchedUser.typingExpiresAt &&
-            new Date(entry.matchedUser.typingExpiresAt).getTime() > Date.now(),
-        );
-      const cachedLastSeen =
-        typeof entry.matchedUser.lastSeen === 'string' ? entry.matchedUser.lastSeen : null;
-      if (cachedLastSeen) {
-        setPeerOnlineFromLastActive(cachedLastSeen);
-      }
-      setPeerThreadActive(hasCachedTyping);
-      setPeerTypingUntil(hasCachedTyping ? entry.matchedUser.typingExpiresAt ?? null : null);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [conversationId, setPeerOnlineFromLastActive, setPeerTypingUntil, user?.id]);
-
-  useEffect(() => {
-    if (!user?.id || !activePeerMessageUserId) return;
-    void patchChatConversationPresenceSnapshot(user.id, conversationId, {
-      isOnline: peerOnline,
-      lastSeen: peerLastSeen ? peerLastSeen.toISOString() : null,
-      typingExpiresAt: isTyping ? new Date(Date.now() + 2000).toISOString() : null,
-    });
-  }, [conversationId, isTyping, peerLastSeen, peerOnline, user?.id]);
-
-  useEffect(() => {
-    peerOnlineRef.current = peerOnline;
-  }, [peerOnline]);
+  }, [markPeerThreadInactive]);
 
   useEffect(() => {
     peerLastSeenRef.current = peerLastSeen;
@@ -4515,7 +4449,6 @@ export default function ConversationScreen() {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const threadPresenceSessionRef = useRef<ReturnType<typeof startThreadPresenceSession> | null>(null);
   const threadSyncCoordinatorRef = useRef<ReturnType<typeof startThreadSyncCoordinator> | null>(null);
-  const peerOnlineRef = useRef(false);
   const lastTypingStatePersistAtRef = useRef(0);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shouldAutoScrollRef = useRef(true);
@@ -4706,8 +4639,17 @@ const resolveQueuedVideoUri = async (
   const downloaded = await cacheOfflineVideo(url, url);
   return downloaded || url;
 };
-  const recentLastSeen =
-    peerLastSeen && nowTick - peerLastSeen.getTime() <= RECENT_LAST_SEEN_WINDOW_MS;
+  const peerPresenceDisplay = getAuthoritativePresenceDisplay(
+    peerOnline,
+    peerLastSeen?.toISOString() ?? null,
+    nowTick,
+  );
+  const peerThreadPresenceKind = getChatThreadPresenceKind(
+    peerOnline,
+    peerLastSeen?.toISOString() ?? null,
+    peerThreadActive,
+    nowTick,
+  );
   const headerStatusLabel = peerHasLeftBetweener
     ? 'No longer on Betweener'
     : isChatBlocked
@@ -4716,13 +4658,13 @@ const resolveQueuedVideoUri = async (
         : 'Messaging unavailable'
       : isTyping
         ? 'Typing...'
-      : peerThreadActive
-        ? 'Active now'
-      : peerOnline || recentLastSeen
-          ? 'Recently active'
+      : peerThreadPresenceKind === 'active_now'
+          ? 'Active now'
+      : peerThreadPresenceKind === 'recently_active'
+        ? 'Recently active'
           : peerLastSeen
             ? `Last seen ${formatLastSeen(peerLastSeen)}`
-            : 'Last seen recently';
+            : 'Last seen unavailable';
   const needsRouteIdentityResolution = routeRequiresProfileResolution && !peerResolved;
   const showThreadBootstrapLoader = false;
   const showThreadBootstrapPlaceholder =
@@ -5333,10 +5275,10 @@ const resolveQueuedVideoUri = async (
       locationViewerMessage.location.expiresAt.getTime() > nowTick,
   );
   useEffect(() => {
-    if (!peerLastSeen || peerOnline || peerThreadActive) return;
+    if (!peerLastSeen) return;
     const interval = setInterval(() => setNowTick(Date.now()), 30000);
     return () => clearInterval(interval);
-  }, [peerLastSeen, peerOnline, peerThreadActive]);
+  }, [peerLastSeen]);
 
   useEffect(() => {
     if (!shouldTickLocationViewer) return;
@@ -7482,7 +7424,7 @@ const resolveQueuedVideoUri = async (
   const scheduleOutgoingReceiptStateSync = useCallback(
     (messageId: string, attempt = 0) => {
       if (pendingReceiptSyncTimersRef.current[messageId]) return;
-      if (attempt === 0 && peerOnline) {
+      if (attempt === 0 && peerPresenceDisplay.online) {
         hintOutgoingDelivered(messageId);
       }
       pendingReceiptSyncTimersRef.current[messageId] = setTimeout(() => {
@@ -7494,7 +7436,7 @@ const resolveQueuedVideoUri = async (
         });
       }, attempt === 0 ? 500 : Math.min(2800, 900 + attempt * 450));
     },
-    [hintOutgoingDelivered, peerOnline, syncOutgoingReceiptState]
+    [hintOutgoingDelivered, peerPresenceDisplay.online, syncOutgoingReceiptState]
   );
 
   const markOutgoingMessagesDelivered = useCallback(() => {
@@ -7804,7 +7746,6 @@ const resolveQueuedVideoUri = async (
       onStatus: handleRealtimeStatus,
       onInboxInsert: (row) => {
         setIsTyping(false);
-        markPeerRecentlyActive(row.created_at);
         const incomingMessage = mapRowToMessage(row as MessageRow);
         void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
           chatMessageToLocalRow(user.id, activePeerMessageUserId, incomingMessage),
@@ -7829,7 +7770,6 @@ const resolveQueuedVideoUri = async (
       onInboxUpdate: (row) => {
         if (hiddenMessageIdsRef.current.has(row.id)) return;
         setIsTyping(false);
-        markPeerRecentlyActive(row.created_at);
         const previous = messagesRef.current.find((msg) => msg.id === row.id);
         const nextMessage = mergeOfflineMediaIntoMessage(mapRowToMessage(row as MessageRow), previous);
         void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
@@ -7959,7 +7899,6 @@ const resolveQueuedVideoUri = async (
     conversationId,
     fetchMessages,
     linkReplies,
-    markPeerRecentlyActive,
     mapRowToMessage,
     mapSystemRowToMessage,
     reconcileDeliveredFallback,
@@ -7979,11 +7918,9 @@ const resolveQueuedVideoUri = async (
     if (row.user_id !== resolvedPeerAuthUserId || row.peer_user_id !== user.id) return;
     const isPeerTyping = setPeerTypingUntil(row.typing_until ?? null);
     if (isPeerTyping) {
-      refreshPeerOnlineWindow(row.updated_at ?? row.typing_until ?? null);
-    } else {
-      markPeerRecentlyActive(row.updated_at ?? row.typing_until ?? null);
+      markPeerThreadActive();
     }
-  }, [markPeerRecentlyActive, refreshPeerOnlineWindow, resolvedPeerAuthUserId, setPeerTypingUntil, user?.id]);
+  }, [markPeerThreadActive, resolvedPeerAuthUserId, setPeerTypingUntil, user?.id]);
 
   useEffect(() => {
     if (!user?.id || !conversationId || !resolvedPeerAuthUserId) return;
@@ -8045,68 +7982,72 @@ const resolveQueuedVideoUri = async (
     };
   }, [applyPeerTypingStateRow, applyReactionUpdate, conversationId, resolvedPeerAuthUserId, user?.id]);
 
-  useEffect(() => {
-    if (!user?.id || !resolvedPeerAuthUserId) return;
-    const session = startThreadPresenceSession({
-      currentUserId: user.id,
-      peerUserId: resolvedPeerAuthUserId,
-      persistTypingState,
-      onPeerPresenceSync: ({ hasPeer, peerTyping }) => {
-        if (!hasPeer && peerThreadActiveRef.current) {
+  useFocusEffect(
+    useCallback(() => {
+      if (!user?.id || !resolvedPeerAuthUserId) return;
+      const session = startThreadPresenceSession({
+        currentUserId: user.id,
+        peerUserId: resolvedPeerAuthUserId,
+        persistTypingState,
+        onPeerPresenceSync: ({ hasPeer, peerTyping }) => {
+          if (hasPeer) {
+            markPeerThreadActive();
+          } else {
+            void refreshPeerStatus();
+          }
+          if (peerTyping) {
+            setPeerTypingUntil(new Date(Date.now() + 5000).toISOString());
+          }
+        },
+        onPeerJoin: () => {
+          markPeerThreadActive();
+        },
+        onPeerLeave: () => {
           markPeerThreadInactive();
           void refreshPeerStatus();
-          return;
-        }
-        setPeerThreadActive(hasPeer);
-        if (hasPeer) {
-          refreshPeerOnlineWindow();
-        }
-        if (peerTyping) {
-          setPeerTypingUntil(new Date(Date.now() + 5000).toISOString());
-        }
-      },
-      onPeerJoin: () => {
-        setPeerThreadActive(true);
-        refreshPeerOnlineWindow();
-      },
-      onPeerLeave: () => {
-        markPeerThreadInactive();
-        void refreshPeerStatus();
-      },
-      onPeerOpenedThread: ({ openedAt }) => {
-        setPeerThreadActive(true);
-        refreshPeerOnlineWindow(openedAt ?? undefined);
-        markOutgoingMessagesDelivered();
-      },
-      onPeerTypingBroadcast: ({ typing, at }) => {
-        if (typing) {
-          setPeerThreadActive(true);
-          setPeerTypingUntil(new Date(Date.now() + 5000).toISOString());
-          refreshPeerOnlineWindow(at ?? undefined);
+        },
+        onPeerOpenedThread: () => {
+          markPeerThreadActive();
           markOutgoingMessagesDelivered();
-          return;
-        }
-        void refreshPeerStatus();
-      },
-      onAppActive: () => {
-        void refreshPeerStatus();
-      },
-    });
-    threadPresenceSessionRef.current = session;
+        },
+        onPeerTypingBroadcast: ({ typing }) => {
+          if (typing) {
+            markPeerThreadActive();
+            setPeerTypingUntil(new Date(Date.now() + 5000).toISOString());
+            markOutgoingMessagesDelivered();
+            return;
+          }
+          void refreshPeerStatus();
+        },
+        onAppActive: () => {
+          void refreshPeerStatus();
+        },
+      });
+      threadPresenceSessionRef.current = session;
 
-    return () => {
-      threadPresenceSessionRef.current = null;
-      session.stop();
-      setPeerThreadActive(false);
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
-      if (peerTypingClearTimerRef.current) {
-        clearTimeout(peerTypingClearTimerRef.current);
-        peerTypingClearTimerRef.current = null;
-      }
-    };
-  }, [markOutgoingMessagesDelivered, markPeerThreadInactive, persistTypingState, refreshPeerOnlineWindow, refreshPeerStatus, resolvedPeerAuthUserId, setPeerTypingUntil, user?.id]);
+      return () => {
+        threadPresenceSessionRef.current = null;
+        session.stop();
+        markPeerThreadInactive();
+        if (typingTimeoutRef.current) {
+          clearTimeout(typingTimeoutRef.current);
+        }
+        if (peerTypingClearTimerRef.current) {
+          clearTimeout(peerTypingClearTimerRef.current);
+          peerTypingClearTimerRef.current = null;
+        }
+      };
+    }, [
+      markOutgoingMessagesDelivered,
+      markPeerThreadActive,
+      markPeerThreadInactive,
+      persistTypingState,
+      refreshPeerStatus,
+      resolvedPeerAuthUserId,
+      setPeerTypingUntil,
+      user?.id,
+    ]),
+  );
 
   const markAsRead = useCallback(
     async (messageId: string) => {
@@ -8533,6 +8474,11 @@ const resolveQueuedVideoUri = async (
     const row = Array.isArray(data) ? data[0] : data;
     if (!row) return;
     const mapped = mapRowToMessage(row as MessageRow);
+    if (activePeerMessageUserId) {
+      void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
+        chatMessageToLocalRow(user.id, activePeerMessageUserId, mapped),
+      ]).catch((localError) => console.log('[chat] edited message local persist error', localError));
+    }
     setMessages((prev) =>
       reconcileEditedMessage({
         items: prev,
@@ -8541,7 +8487,7 @@ const resolveQueuedVideoUri = async (
         editedAt: mapped.editedAt ?? optimisticEditedAt,
       })
     );
-  }, [editingMessage, fetchMessages, inputText, mapRowToMessage, updateTyping, user?.id]);
+  }, [activePeerMessageUserId, editingMessage, fetchMessages, inputText, mapRowToMessage, updateTyping, user?.id]);
 
   const sendMessage = async () => {
     if (editingMessage) {
@@ -10647,7 +10593,7 @@ const resolveQueuedVideoUri = async (
                 </View>
               </View>
             )}
-            {!isChatBlocked && networkReady && peerOnline && (
+            {!isChatBlocked && networkReady && peerPresenceDisplay.online && (
               <View style={styles.onlineIndicator} />
             )}
           </View>
@@ -15479,15 +15425,62 @@ const createStyles = (
     },
 
     // Quick Reactions
-    quickReactionsContainer: {
-      position: 'absolute',
-      top: -50,
-      backgroundColor: theme.background,
-      borderRadius: 25,
-      paddingHorizontal: 8,
-      paddingVertical: 8,
+    quickReactionOverlay: {
+      flex: 1,
+      justifyContent: 'center',
+      paddingHorizontal: 16,
+      paddingTop: 76,
+      paddingBottom: 24,
+      backgroundColor: withAlpha(Colors.dark.background, isDark ? 0.32 : 0.22),
+    },
+    quickReactionBackdropBlur: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: withAlpha(Colors.dark.background, isDark ? 0.7 : 0.58),
+    },
+    quickReactionBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    quickReactionOverlayScroller: {
+      width: '82%',
+      maxWidth: 320,
+      maxHeight: '100%',
+    },
+    quickReactionOverlayContent: {
+      flexGrow: 1,
+      justifyContent: 'center',
+      gap: 8,
+      paddingBottom: 8,
+    },
+    quickReactionOverlayContentLeft: {
+      alignSelf: 'flex-start',
+    },
+    quickReactionOverlayContentRight: {
+      alignSelf: 'flex-end',
+    },
+    quickReactionFocusText: {
+      flexShrink: 1,
+      fontSize: 15,
+      lineHeight: 21,
+      fontFamily: 'Manrope_500Medium',
+      color: theme.text,
+    },
+    quickReactionFocusTextMy: {
+      color: Colors.light.background,
+    },
+    quickReactionFocusMediaRow: {
+      minWidth: 180,
       flexDirection: 'row',
-      gap: 4,
+      alignItems: 'center',
+      gap: 10,
+    },
+    quickReactionsContainer: {
+      alignSelf: 'flex-start',
+      backgroundColor: theme.background,
+      borderRadius: 24,
+      paddingHorizontal: 7,
+      paddingVertical: 7,
+      flexDirection: 'row',
+      gap: 2,
       shadowColor: Colors.dark.background,
       shadowOffset: { width: 0, height: 4 },
       shadowOpacity: 0.15,
@@ -15497,17 +15490,36 @@ const createStyles = (
       borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.12),
     },
     quickReactionsLeft: {
-      left: 36,
+      alignSelf: 'flex-start',
     },
     quickReactionsRight: {
-      right: 4,
+      alignSelf: 'flex-end',
+    },
+    quickReactionPreviewLeft: {
+      alignSelf: 'flex-start',
+    },
+    quickReactionPreviewRight: {
+      alignSelf: 'flex-end',
+    },
+    quickReactionActionRowLeft: {
+      alignSelf: 'flex-start',
+    },
+    quickReactionActionRowRight: {
+      alignSelf: 'flex-end',
     },
     messageActionRow: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 6,
-      rowGap: 6,
-      marginTop: 6,
+      width: 220,
+      maxWidth: '76%',
+      borderRadius: 14,
+      overflow: 'hidden',
+      backgroundColor: theme.background,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
+      shadowColor: Colors.dark.background,
+      shadowOffset: { width: 0, height: 5 },
+      shadowOpacity: 0.14,
+      shadowRadius: 12,
+      elevation: 7,
     },
     messageActionRowLeft: {
       alignSelf: 'flex-start',
@@ -15520,21 +15532,21 @@ const createStyles = (
     messageActionPill: {
       flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 999,
-      backgroundColor: theme.backgroundSubtle,
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
-      gap: 6,
+      justifyContent: 'space-between',
+      minHeight: 46,
+      paddingHorizontal: 14,
+      paddingVertical: 11,
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.82 : 0.94),
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: withAlpha(theme.text, isDark ? 0.2 : 0.1),
     },
     messageActionPillDanger: {
       backgroundColor: withAlpha(theme.danger, 0.12),
       borderColor: withAlpha(theme.danger, 0.3),
     },
     messageActionPillLabel: {
-      fontSize: 12,
-      fontFamily: 'Manrope_600SemiBold',
+      fontSize: 15,
+      fontFamily: 'Manrope_500Medium',
       color: theme.text,
     },
     messageActionPillLabelDanger: {

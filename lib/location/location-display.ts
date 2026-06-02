@@ -1,4 +1,4 @@
-import { findCountryByCode, findCountryByLabel, getCountryCodeByName } from '@/lib/location/countries';
+import { findCountryByCode, findCountryByLabel, getCountryCodeByName } from './countries.ts';
 
 export const BROAD_REGION_LABELS = new Set([
   'africa',

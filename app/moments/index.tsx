@@ -48,6 +48,9 @@ export default function MomentsScreen() {
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const { profile, user } = useAuth();
   const params = useLocalSearchParams();
+  const sourceParam = typeof params.source === 'string' ? params.source : null;
+  const sourceCircleId = typeof params.circleId === 'string' ? params.circleId : null;
+  const sourceCircleName = typeof params.circleName === 'string' ? params.circleName : null;
   const startUserIdParam = typeof params.startUserId === 'string' ? params.startUserId : null;
   const startMomentIdParam = typeof params.startMomentId === 'string' ? params.startMomentId : null;
   const openCommentsParam =
@@ -397,11 +400,32 @@ export default function MomentsScreen() {
   };
 
   const emptyMyMoments = !myLoading && myMoments.length === 0;
+  const openCreateMoment = useCallback(() => {
+    if (sourceParam === 'circles' && sourceCircleId) {
+      router.push({
+        pathname: '/moments/create',
+        params: {
+          source: 'circles',
+          circleId: sourceCircleId,
+          circleName: sourceCircleName ?? '',
+        },
+      });
+      return;
+    }
+    router.push('/moments/create');
+  }, [sourceCircleId, sourceCircleName, sourceParam]);
+  const handleBack = useCallback(() => {
+    if (sourceParam === 'circles' && sourceCircleId) {
+      router.replace({ pathname: '/circles/[id]', params: { id: sourceCircleId } });
+      return;
+    }
+    router.back();
+  }, [sourceCircleId, sourceParam]);
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} accessibilityLabel="Back">
+        <TouchableOpacity onPress={handleBack} accessibilityLabel="Back">
           <MaterialCommunityIcons name="chevron-left" size={28} color={theme.text} />
         </TouchableOpacity>
         <Text style={styles.title}>Moments</Text>
@@ -409,6 +433,17 @@ export default function MomentsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        {sourceParam === 'circles' && sourceCircleId ? (
+          <View style={styles.sourceContextCard}>
+            <View style={styles.sourceContextIconWrap}>
+              <MaterialCommunityIcons name="account-group-outline" size={18} color={theme.tint} />
+            </View>
+            <View style={styles.sourceContextCopy}>
+              <Text style={styles.sourceContextTitle}>Inside {sourceCircleName || 'your Circle'}</Text>
+              <Text style={styles.sourceContextBody}>Fresh Moments here help Circle members read your energy before the next introduction or Gathering.</Text>
+            </View>
+          </View>
+        ) : null}
         {postingEligibility?.nudgeTitle ? (
           <View style={styles.nudgeCard}>
             <View style={styles.nudgeIconWrap}>
@@ -422,7 +457,7 @@ export default function MomentsScreen() {
         ) : null}
 
         <View style={styles.actionsRow}>
-          <TouchableOpacity style={styles.primaryButton} onPress={() => router.push('/moments/create')}>
+          <TouchableOpacity style={styles.primaryButton} onPress={openCreateMoment}>
             <MaterialCommunityIcons name="plus-circle" size={18} color={Colors.light.background} />
             <Text style={styles.primaryButtonText}>Post a Moment</Text>
           </TouchableOpacity>
@@ -433,7 +468,7 @@ export default function MomentsScreen() {
             users={momentUsersWithContent}
             isLoading={loading}
             onPressUser={openViewer}
-            onPressCreate={() => router.push('/moments/create')}
+            onPressCreate={openCreateMoment}
             onPressOwn={handleOwnPress}
           />
         ) : (
@@ -547,7 +582,7 @@ export default function MomentsScreen() {
               );
             })}
 
-            <TouchableOpacity style={styles.addButton} onPress={() => router.push('/moments/create')}>
+            <TouchableOpacity style={styles.addButton} onPress={openCreateMoment}>
               <MaterialCommunityIcons name="plus-circle" size={20} color={Colors.light.background} />
               <Text style={styles.addButtonText}>Add Moment</Text>
             </TouchableOpacity>
@@ -602,6 +637,40 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     content: {
       paddingHorizontal: 16,
       paddingBottom: 24,
+    },
+    sourceContextCard: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 12,
+      marginBottom: 12,
+      padding: 14,
+      borderRadius: 18,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.08 : 0.06),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
+    },
+    sourceContextIconWrap: {
+      width: 36,
+      height: 36,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.background, isDark ? 0.2 : 0.7),
+    },
+    sourceContextCopy: {
+      flex: 1,
+    },
+    sourceContextTitle: {
+      color: theme.text,
+      fontSize: 14,
+      fontFamily: 'Archivo_700Bold',
+      marginBottom: 4,
+    },
+    sourceContextBody: {
+      color: theme.textMuted,
+      fontSize: 12,
+      lineHeight: 18,
+      fontFamily: 'Manrope_600SemiBold',
     },
     nudgeCard: {
       flexDirection: 'row',

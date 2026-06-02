@@ -4,7 +4,8 @@ import { buildUserScopedRealtimeTopic } from "@/lib/presence";
 import { supabase } from "@/lib/supabase";
 import { useFocusEffect } from "expo-router";
 import { AppState } from "react-native";
-import { useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { UserPresenceRow } from "@/lib/user-presence";
 
 export type ChatListMessageRealtimeRow = {
   id: string;
@@ -17,6 +18,7 @@ export type ChatListMessageRealtimeRow = {
   delivered_at?: string | null;
   deleted_for_all?: boolean | null;
   deleted_at?: string | null;
+  edited_at?: string | null;
   message_type?: string | null;
   is_view_once?: boolean | null;
 };
@@ -51,6 +53,8 @@ type UseChatListSyncArgs = {
   onMessageSenderUpdate: (row: ChatListMessageRealtimeRow) => void;
   onReactionChange: (row: ChatListReactionRow) => void | Promise<void>;
   onChatPrefChange: (row: ChatListChatPrefRow) => void;
+  onPresenceChange: (row: UserPresenceRow) => void;
+  visiblePeerUserIds: string[];
 };
 
 export const useChatListSync = ({
@@ -64,18 +68,37 @@ export const useChatListSync = ({
   onMessageSenderUpdate,
   onReactionChange,
   onChatPrefChange,
+  onPresenceChange,
+  visiblePeerUserIds,
 }: UseChatListSyncArgs) => {
-  useFocusEffect(refreshConversationsOnFocus);
+  const [isFocused, setIsFocused] = useState(false);
+  const [appState, setAppState] = useState(AppState.currentState);
+  const realtimeActive = isFocused && appState === 'active';
+  const visiblePeerUserIdsKey = Array.from(new Set(visiblePeerUserIds.filter(Boolean))).slice(0, 60).sort().join(':');
+  const visiblePeerUserIdSet = useMemo(
+    () => new Set(visiblePeerUserIdsKey ? visiblePeerUserIdsKey.split(':') : []),
+    [visiblePeerUserIdsKey],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      setIsFocused(true);
+      refreshConversationsOnFocus();
+      return () => setIsFocused(false);
+    }, [refreshConversationsOnFocus]),
+  );
 
   useEffect(() => {
     return subscribeToNetworkRestored(() => {
+      if (!realtimeActive) return;
       void fetchConversations();
     });
-  }, [fetchConversations]);
+  }, [fetchConversations, realtimeActive]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state !== 'active') return;
+      setAppState(state);
+      if (state !== 'active' || !isFocused) return;
       refreshConversationsOnFocus();
       void fetchNewMatches();
     });
@@ -83,10 +106,10 @@ export const useChatListSync = ({
     return () => {
       subscription.remove();
     };
-  }, [fetchNewMatches, refreshConversationsOnFocus]);
+  }, [fetchNewMatches, isFocused, refreshConversationsOnFocus]);
 
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || !realtimeActive) return;
     const channel = supabase.channel(buildUserScopedRealtimeTopic('typing:chatlist', userId));
 
     channel
@@ -99,10 +122,10 @@ export const useChatListSync = ({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [setPeerTypingState, userId]);
+  }, [realtimeActive, setPeerTypingState, userId]);
 
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || !realtimeActive) return;
 
     const applyTypingRow = (row?: ChatListTypingStateRow | null) => {
       if (!row?.user_id || row.peer_user_id !== userId) return;
@@ -150,10 +173,10 @@ export const useChatListSync = ({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [setPeerTypingState, userId]);
+  }, [realtimeActive, setPeerTypingState, userId]);
 
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || !realtimeActive) return;
     const channel = supabase.channel(`messages:chatlist:${userId}`);
 
     channel
@@ -215,29 +238,48 @@ export const useChatListSync = ({
     onMessageInsert,
     onMessageReceiverUpdate,
     onMessageSenderUpdate,
+    realtimeActive,
     userId,
   ]);
 
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || !realtimeActive) return;
     const channel = supabase.channel(`message_reactions:chatlist:${userId}`);
 
     channel
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_reactions' }, (payload) =>
-        void onReactionChange((payload.new || payload.old) as ChatListReactionRow),
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'message_reactions' },
+        (payload) => {
+          const row = (payload.new || payload.old) as ChatListReactionRow;
+          void onReactionChange(row);
+        },
       )
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'message_reactions' }, (payload) =>
-        void onReactionChange((payload.new || payload.old) as ChatListReactionRow),
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'message_reactions' },
+        (payload) => {
+          const row = (payload.new || payload.old) as ChatListReactionRow;
+          void onReactionChange(row);
+        },
       )
-      .subscribe();
+      .on(
+        'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'message_reactions' },
+        (payload) => {
+          const row = (payload.old || payload.new) as ChatListReactionRow;
+          void onReactionChange(row);
+        },
+      );
+    channel.subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [onReactionChange, userId]);
+  }, [onReactionChange, realtimeActive, userId]);
 
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || !realtimeActive) return;
     const channel = supabase
       .channel(`chat_prefs:${userId}`)
       .on(
@@ -255,5 +297,27 @@ export const useChatListSync = ({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [onChatPrefChange, userId]);
+  }, [onChatPrefChange, realtimeActive, userId]);
+
+  useEffect(() => {
+    if (!userId || !realtimeActive || visiblePeerUserIdSet.size === 0) return;
+    const channel = supabase.channel(`user_presence:chatlist:${userId}`);
+    visiblePeerUserIdSet.forEach((peerUserId) => {
+      channel.on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'user_presence', filter: `user_id=eq.${peerUserId}` },
+        (payload) => {
+          const row = (payload.new || payload.old) as UserPresenceRow;
+          if (row?.user_id) {
+            onPresenceChange(row);
+          }
+        },
+      );
+    });
+    channel.subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [onPresenceChange, realtimeActive, userId, visiblePeerUserIdSet]);
 };

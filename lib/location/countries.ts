@@ -1,4 +1,4 @@
-import countryData from '@/data/countries.json';
+import countryData from '../../data/countries.json' with { type: 'json' };
 
 export type CountryOption = {
   label: string;

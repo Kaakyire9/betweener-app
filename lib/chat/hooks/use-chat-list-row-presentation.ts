@@ -2,7 +2,8 @@ import { useMemo } from "react";
 
 import { getChatMessagePreviewText } from "@/lib/message-preview";
 import { getProfilePlaceholderPalette } from "@/lib/profile-placeholders";
-import { getPresenceDisplay } from "@/lib/presence";
+import { getAuthoritativePresenceDisplay } from "@/lib/presence";
+import { resolveChatListPreview } from "@/lib/chat/chat-list-preview";
 
 type MessageType = 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location';
 type LocalStatus = 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
@@ -21,10 +22,17 @@ export type ChatConversationRowItem = {
   unreadCount: number;
   peerHasLeft: boolean;
   blockStatus?: 'blocked_by_me' | 'blocked_me' | null;
+  latestActivity?: {
+    kind: 'edit' | 'reaction';
+    messageId: string;
+    preview: string;
+    createdAt: Date;
+  } | null;
   matchedUser: {
     id: string;
     name: string;
     avatar_url: string;
+    isOnline: boolean;
     lastSeen: Date;
   };
   lastMessage: {
@@ -36,6 +44,7 @@ export type ChatConversationRowItem = {
     isViewOnce?: boolean;
     isRead: boolean;
     deliveredAt: Date | null;
+    editedAt?: Date | null;
     localStatus?: LocalStatus;
     reactionPreview?: {
       emoji: string;
@@ -152,7 +161,11 @@ export const useChatListRowPresentation = ({
     const isUnread = item.unreadCount > 0;
     const hasActiveMoment = activeMomentPeerUserIds.has(String(item.id));
     const isMyLastMessage = item.lastMessage.senderId === (userId || '');
-    const peerPresence = getPresenceDisplay(item.matchedUser.lastSeen?.toISOString?.() ?? null, presenceNow);
+    const peerPresence = getAuthoritativePresenceDisplay(
+      item.matchedUser.isOnline,
+      item.matchedUser.lastSeen?.toISOString?.() ?? null,
+      presenceNow,
+    );
     const isOnline = !isBlocked && peerPresence.online;
     const receiptIcon = isMyLastMessage ? getConversationReceiptIconState(item.lastMessage, theme, isDark) : null;
     const reactionPreview = getLastMessageReactionPreview(item.lastMessage, item.matchedUser.name, userId || '');
@@ -160,7 +173,24 @@ export const useChatListRowPresentation = ({
       !isBlocked &&
       !isLeftBetweener &&
       Boolean(typingExpiresAtByPeer[item.id] && typingExpiresAtByPeer[item.id] > Date.now());
-    const previewText = isTyping ? 'Typing...' : reactionPreview ?? getLastMessagePreview(item.lastMessage);
+    const messagePreview = getLastMessagePreview(item.lastMessage);
+    const { previewText: lastMessagePreviewText, visibleReactionPreview } = resolveChatListPreview({
+      messagePreview,
+      editedAt: item.lastMessage.editedAt,
+      reactionPreview:
+        reactionPreview && item.lastMessage.reactionPreview
+          ? {
+              text: reactionPreview,
+              createdAt: item.lastMessage.reactionPreview.createdAt,
+            }
+          : null,
+      isTyping,
+    });
+    const latestActivityPreview =
+      item.latestActivity && item.latestActivity.createdAt.getTime() > item.lastMessage.timestamp.getTime()
+        ? item.latestActivity.preview
+        : null;
+    const previewText = isTyping ? 'Typing...' : latestActivityPreview ?? lastMessagePreviewText;
     const avatarUri = item.matchedUser.avatar_url || null;
     const shouldUseFallbackAvatar = !avatarUri || failedAvatarUris[item.id] === avatarUri;
     const avatarPalette = getProfilePlaceholderPalette(item.matchedUser.id || item.matchedUser.name);
@@ -173,7 +203,7 @@ export const useChatListRowPresentation = ({
       isMyLastMessage,
       isOnline,
       receiptIcon,
-      reactionPreview,
+      reactionPreview: latestActivityPreview ? null : visibleReactionPreview,
       isTyping,
       previewText,
       avatarUri,

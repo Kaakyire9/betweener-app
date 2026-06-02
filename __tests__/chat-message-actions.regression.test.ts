@@ -11,6 +11,7 @@ import {
   removePinnedMessageId,
   restoreMessageReactions,
 } from '../lib/chat/message-actions.ts';
+import { resolveChatListPreview } from '../lib/chat/chat-list-preview.ts';
 
 const baseMessage = {
   id: 'msg-1',
@@ -142,4 +143,34 @@ test('addPinnedMessageId and removePinnedMessageId manage unique pin ids', () =>
 
   const removed = removePinnedMessageId(['a', 'b', 'c'], 'b');
   assert.deepEqual(removed, ['a', 'c']);
+});
+
+test('chat list preview shows an edit when it is newer than the latest reaction', () => {
+  const preview = resolveChatListPreview({
+    messagePreview: 'Updated text',
+    editedAt: new Date('2026-06-01T10:01:00.000Z'),
+    reactionPreview: {
+      text: 'Jennifer reacted heart to message',
+      createdAt: new Date('2026-06-01T10:00:00.000Z'),
+    },
+    isTyping: false,
+  });
+
+  assert.equal(preview.previewText, 'Edited: Updated text');
+  assert.equal(preview.visibleReactionPreview, null);
+});
+
+test('chat list preview shows a reaction when it is newer than the latest edit', () => {
+  const preview = resolveChatListPreview({
+    messagePreview: 'Updated text',
+    editedAt: new Date('2026-06-01T10:00:00.000Z'),
+    reactionPreview: {
+      text: 'Jennifer reacted heart to message',
+      createdAt: new Date('2026-06-01T10:01:00.000Z'),
+    },
+    isTyping: false,
+  });
+
+  assert.equal(preview.previewText, 'Jennifer reacted heart to message');
+  assert.equal(preview.visibleReactionPreview, 'Jennifer reacted heart to message');
 });

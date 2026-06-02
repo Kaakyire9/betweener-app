@@ -1,5 +1,5 @@
 export const CHAT_DB_NAME = 'betweener_chat.db';
-export const CHAT_SCHEMA_VERSION = 1;
+export const CHAT_SCHEMA_VERSION = 4;
 
 export type ChatThreadLocalStatus = 'active' | 'hidden' | 'deleted';
 export type ChatThreadType = 'direct';
@@ -29,11 +29,22 @@ export type ChatThreadRow = {
   peer_avatar_url: string | null;
   peer_verified: number;
   peer_presence_status: string | null;
+  peer_last_active: string | null;
   title: string | null;
   thread_type: ChatThreadType;
   last_message_id: string | null;
   last_message_preview: string | null;
   last_message_sender_id: string | null;
+  last_message_status: ChatMessageStatus | null;
+  last_message_edited_at: string | null;
+  last_message_reaction_emoji: string | null;
+  last_message_reaction_user_id: string | null;
+  last_message_reaction_created_at: string | null;
+  last_message_reaction_target_type: ChatMessageType | null;
+  last_activity_kind: 'edit' | 'reaction' | null;
+  last_activity_message_id: string | null;
+  last_activity_preview: string | null;
+  last_activity_at: string | null;
   last_message_at: string | null;
   unread_count: number;
   is_muted: number;
@@ -112,11 +123,22 @@ create table if not exists chat_threads (
   peer_avatar_url text null,
   peer_verified integer not null default 0,
   peer_presence_status text null,
+  peer_last_active text null,
   title text null,
   thread_type text not null default 'direct',
   last_message_id text null,
   last_message_preview text null,
   last_message_sender_id text null,
+  last_message_status text null,
+  last_message_edited_at text null,
+  last_message_reaction_emoji text null,
+  last_message_reaction_user_id text null,
+  last_message_reaction_created_at text null,
+  last_message_reaction_target_type text null,
+  last_activity_kind text null,
+  last_activity_message_id text null,
+  last_activity_preview text null,
+  last_activity_at text null,
   last_message_at text null,
   unread_count integer not null default 0,
   is_muted integer not null default 0,

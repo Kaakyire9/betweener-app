@@ -89,6 +89,45 @@ test("verification outcome maps to profile verification state", () => {
   });
 });
 
+test("circle Love Seat tap maps to Circle detail", () => {
+  const route = buildNotificationRoute({
+    actionIdentifier: "expo.notifications.actions.DEFAULT",
+    requestIdentifier: "love-seat-1",
+    data: {
+      type: "circle_love_seat",
+      event_type: "invitation",
+      circle_id: "circle-123",
+      love_seat_id: "seat-123",
+    },
+  });
+
+  assert.deepEqual(route, {
+    pathname: "/circles/[id]",
+    params: {
+      id: "circle-123",
+    },
+  });
+});
+
+test("Circle invitation tap maps to Circle detail", () => {
+  const route = buildNotificationRoute({
+    actionIdentifier: "expo.notifications.actions.DEFAULT",
+    requestIdentifier: "circle-invite-1",
+    data: {
+      type: "circle_invitation",
+      circle_id: "circle-456",
+      invitation_id: "invitation-456",
+    },
+  });
+
+  assert.deepEqual(route, {
+    pathname: "/circles/[id]",
+    params: {
+      id: "circle-456",
+    },
+  });
+});
+
 test("custom deep route passthrough is preserved", () => {
   const route = buildNotificationRoute({
     actionIdentifier: "expo.notifications.actions.DEFAULT",

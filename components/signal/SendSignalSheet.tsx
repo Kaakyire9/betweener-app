@@ -228,7 +228,7 @@ export default function SendSignalSheet({
                     <SignalIcon size={34} color={theme.tint} accentColor="#8B5CFF" active />
                   </View>
                   <Text style={styles.successTitle}>Signal sent</Text>
-                  <Text style={styles.successBody}>They'll see what stood out for 48 hours.</Text>
+                  <Text style={styles.successBody}>They&apos;ll see what stood out for 48 hours.</Text>
                   <View style={styles.successPill}>
                     <MaterialCommunityIcons name="timer-sand" size={13} color={theme.tint} />
                     <Text style={styles.successPillText}>

@@ -87,17 +87,35 @@ const cachedConversationToThread = (ownerUserId: string, cached: any): ChatThrea
   return {
     id: String(cached.id),
     owner_user_id: ownerUserId,
-    peer_user_id: String(matchedUser.id || cached.id),
-    peer_profile_id: null,
+    peer_user_id: String(matchedUser.userId || cached.id),
+    peer_profile_id: matchedUser.profileId ? String(matchedUser.profileId) : null,
     peer_name: typeof matchedUser.name === 'string' ? matchedUser.name : null,
     peer_avatar_url: typeof matchedUser.avatar_url === 'string' ? matchedUser.avatar_url : null,
     peer_verified: 0,
     peer_presence_status: matchedUser.isOnline ? 'online' : null,
+    peer_last_active: matchedUser.lastSeen ? toIso(matchedUser.lastSeen, localUpdatedAt) : null,
     title: null,
     thread_type: 'direct',
     last_message_id: lastMessage.id ? String(lastMessage.id) : null,
     last_message_preview: getMessagePreview(lastMessage),
     last_message_sender_id: lastMessage.senderId ? String(lastMessage.senderId) : null,
+    last_message_status: lastMessage.id ? normalizeMessageStatus(lastMessage.status) : null,
+    last_message_edited_at: lastMessage.editedAt ? toIso(lastMessage.editedAt) : null,
+    last_message_reaction_emoji:
+      typeof lastMessage.reactionPreview?.emoji === 'string' ? lastMessage.reactionPreview.emoji : null,
+    last_message_reaction_user_id:
+      typeof lastMessage.reactionPreview?.userId === 'string' ? lastMessage.reactionPreview.userId : null,
+    last_message_reaction_created_at: lastMessage.reactionPreview?.createdAt
+      ? toIso(lastMessage.reactionPreview.createdAt)
+      : null,
+    last_message_reaction_target_type:
+      typeof lastMessage.reactionPreview?.targetType === 'string'
+        ? normalizeMessageType(lastMessage.reactionPreview.targetType)
+        : null,
+    last_activity_kind: null,
+    last_activity_message_id: null,
+    last_activity_preview: null,
+    last_activity_at: null,
     last_message_at: lastMessage.timestamp ? toIso(lastMessage.timestamp, localUpdatedAt) : null,
     unread_count: Number(cached.unreadCount) || 0,
     is_muted: toInt(cached.isMuted),

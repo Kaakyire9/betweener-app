@@ -14,6 +14,10 @@ type RemoteConversationSummaryRow = {
   last_message_type?: string | null;
   last_message_is_view_once?: boolean | null;
   last_message_deleted_for_all?: boolean | null;
+  last_activity_kind?: 'edit' | 'reaction' | null;
+  last_activity_message_id?: string | null;
+  last_activity_preview?: string | null;
+  last_activity_at?: string | null;
   unread_count: number;
 };
 
@@ -21,6 +25,7 @@ export type RemoteChatListMessageRow = {
   id: string;
   text: string;
   created_at: string;
+  edited_at?: string | null;
   sender_id: string;
   receiver_id: string;
   is_read: boolean;
@@ -33,7 +38,7 @@ export type RemoteChatListMessageRow = {
 export const fetchRemoteChatListMessageMeta = async (messageId: string) => {
   return supabase
     .from('messages')
-    .select('id,sender_id,receiver_id,message_type')
+    .select('id,sender_id,receiver_id,message_type,edited_at,text,is_view_once')
     .eq('id', messageId)
     .maybeSingle();
 };
@@ -43,6 +48,25 @@ type RemoteChatListReactionPreview = {
   userId: string;
   createdAt: Date;
   targetType?: string;
+};
+
+const getRemoteActivityTarget = (messageType?: string | null) => {
+  switch (messageType) {
+    case 'image':
+      return 'photo';
+    case 'video':
+      return 'video';
+    case 'voice':
+      return 'voice note';
+    case 'document':
+      return 'document';
+    case 'location':
+      return 'location';
+    case 'mood_sticker':
+      return 'sticker';
+    default:
+      return 'message';
+  }
 };
 
 const mergePresenceIntoProfileRows = <TRow extends { user_id?: string | null; online?: boolean | null; last_active?: string | null }>(
@@ -71,7 +95,7 @@ type FetchRemoteChatListNewMatchesArgs<TNewMatch> = {
   currentProfileId: string;
   userId: string;
   messagedPeerUserIds: Set<string>;
-  readHasCachedThreadMessages: (peerUserId: string) => Promise<boolean>;
+  hasLocalThreadMessages: (peerUserId: string) => Promise<boolean>;
   buildMatch: (args: {
     profileRow: any;
     lastSeen: Date;
@@ -83,7 +107,7 @@ export const fetchRemoteChatListNewMatches = async <TNewMatch>({
   currentProfileId,
   userId,
   messagedPeerUserIds,
-  readHasCachedThreadMessages,
+  hasLocalThreadMessages,
   buildMatch,
   getMatchProfileId,
 }: FetchRemoteChatListNewMatchesArgs<TNewMatch>): Promise<TNewMatch[]> => {
@@ -114,7 +138,7 @@ export const fetchRemoteChatListNewMatches = async <TNewMatch>({
   const { data: peerProfiles, error: peerProfilesError } = await supabase
     .from('profiles')
     .select('id,user_id,full_name,avatar_url,age,location,city,region,account_state,deleted_at,online,last_active,updated_at')
-    .in('id', otherProfileIds.slice(0, 24));
+    .in('id', otherProfileIds);
 
   if (peerProfilesError || !peerProfiles) {
     throw peerProfilesError ?? new Error('Failed to fetch peer profiles for new matches');
@@ -130,7 +154,7 @@ export const fetchRemoteChatListNewMatches = async <TNewMatch>({
     mergedPeerProfiles.map(async (profileRow) => {
       const peerUserId = typeof profileRow?.user_id === 'string' ? profileRow.user_id : null;
       if (!peerUserId || !userId) return;
-      if (await readHasCachedThreadMessages(peerUserId)) {
+      if (await hasLocalThreadMessages(peerUserId)) {
         cachedMessagedPeerUserIds.add(peerUserId);
       }
     }),
@@ -167,7 +191,16 @@ type FetchRemoteChatListConversationsArgs<TConversation, TFallbackPreview, TCurr
   ) => Promise<TConversation[]>;
   buildConversation: (args: {
     otherUserId: string;
-    entry?: { last: RemoteChatListMessageRow; unread: number };
+    entry?: {
+      last: RemoteChatListMessageRow;
+      unread: number;
+      activity?: {
+        kind: 'edit' | 'reaction';
+        messageId: string;
+        preview: string;
+        createdAt: string;
+      } | null;
+    };
     fallbackPreview?: TFallbackPreview;
     profileRow: any;
     currentConversation?: TCurrentConversation;
@@ -213,7 +246,16 @@ export const fetchRemoteChatListConversations = async <
       return new Date(value).getTime() > new Date(latest).getTime() ? value : latest;
     }, null) ?? new Date().toISOString();
 
-  const convoMap = new Map<string, { last: RemoteChatListMessageRow; unread: number }>();
+  const convoMap = new Map<string, {
+    last: RemoteChatListMessageRow;
+    unread: number;
+    activity?: {
+      kind: 'edit' | 'reaction';
+      messageId: string;
+      preview: string;
+      createdAt: string;
+    } | null;
+  }>();
   summaryRows.forEach((row) => {
     convoMap.set(row.other_user_id, {
       last: {
@@ -229,8 +271,34 @@ export const fetchRemoteChatListConversations = async <
         is_view_once: row.last_message_is_view_once ?? false,
       },
       unread: Math.max(0, Number(row.unread_count) || 0),
+      activity:
+        row.last_activity_kind &&
+        row.last_activity_message_id &&
+        row.last_activity_preview &&
+        row.last_activity_at
+          ? {
+              kind: row.last_activity_kind,
+              messageId: row.last_activity_message_id,
+              preview: row.last_activity_preview,
+              createdAt: row.last_activity_at,
+            }
+          : null,
     });
   });
+  const setActivityIfNewest = (
+    otherUserId: string,
+    activity: { kind: 'edit' | 'reaction'; messageId: string; preview: string; createdAt: string },
+  ) => {
+    const entry = convoMap.get(otherUserId);
+    if (!entry) return;
+    if (
+      entry.activity?.createdAt &&
+      new Date(entry.activity.createdAt).getTime() > new Date(activity.createdAt).getTime()
+    ) {
+      return;
+    }
+    entry.activity = activity;
+  };
 
   const otherUserIds = summaryRows.map((row) => row.other_user_id);
   const messageIds = summaryRows.map((row) => row.last_message_id).filter(Boolean);
@@ -242,6 +310,28 @@ export const fetchRemoteChatListConversations = async <
     const messageTypeById = new Map(
       summaryRows.map((row) => [row.last_message_id, row.last_message_type ?? 'text'] as const),
     );
+    const { data: messageMetaData, error: messageMetaError } = await supabase
+      .from('messages')
+      .select('id,edited_at')
+      .in('id', messageIds);
+    if (messageMetaError) {
+      console.log('[chat] message edit metadata fetch error', messageMetaError);
+    } else {
+      (messageMetaData || []).forEach((row: { id: string; edited_at?: string | null }) => {
+        const otherId = conversationIdByMessageId.get(row.id);
+        const entry = otherId ? convoMap.get(otherId) : null;
+        if (!entry || entry.last.id !== row.id) return;
+        entry.last.edited_at = row.edited_at ?? null;
+        if (row.edited_at) {
+          setActivityIfNewest(otherId, {
+            kind: 'edit',
+            messageId: row.id,
+            preview: `Edited: ${entry.last.text || getRemoteActivityTarget(entry.last.message_type)}`,
+            createdAt: row.edited_at,
+          });
+        }
+      });
+    }
     const { data: reactionsData, error: reactionsError } = await supabase
       .from('message_reactions')
       .select('message_id,user_id,emoji,created_at')
@@ -262,6 +352,12 @@ export const fetchRemoteChatListConversations = async <
           userId: row.user_id,
           createdAt,
           targetType: messageId ? messageTypeById.get(messageId) ?? undefined : undefined,
+        });
+        setActivityIfNewest(otherId, {
+          kind: 'reaction',
+          messageId,
+          preview: `${row.user_id === userId ? 'You' : 'Someone'} reacted ${row.emoji} to ${getRemoteActivityTarget(messageTypeById.get(messageId))}`,
+          createdAt: row.created_at ?? new Date().toISOString(),
         });
       });
     }
@@ -304,7 +400,7 @@ export const fetchRemoteChatListConversations = async <
         const { data: acceptedPeerProfiles, error: acceptedPeerProfilesError } = await supabase
           .from('profiles')
           .select('id,user_id,full_name,avatar_url,age,online,last_active,updated_at,account_state,deleted_at')
-          .in('id', acceptedOtherProfileIds.slice(0, 24));
+          .in('id', acceptedOtherProfileIds);
 
         if (acceptedPeerProfilesError) {
           console.log('[chat] accepted match peer profiles fetch error', acceptedPeerProfilesError);

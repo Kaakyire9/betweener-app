@@ -23,22 +23,30 @@ export const useChatThreads = ({
     }
 
     let cancelled = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    let loadVersion = 0;
 
     const load = async () => {
+      const version = ++loadVersion;
       const nextRows = await ChatRepository.getThreads(ownerUserId, { includeArchived, limit });
-      if (cancelled) return;
+      if (cancelled || version !== loadVersion) return;
       setRows(nextRows);
       setHasLoadedLocal(true);
     };
 
     const unsubscribe = ChatRepository.observeThreads(ownerUserId, () => {
-      void load();
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        void load();
+      }, 40);
     });
 
     void load();
 
     return () => {
       cancelled = true;
+      if (refreshTimer) clearTimeout(refreshTimer);
       unsubscribe();
     };
   }, [includeArchived, limit, ownerUserId]);

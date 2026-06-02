@@ -1,7 +1,7 @@
 import * as FileSystem from "expo-file-system/legacy";
 import * as Haptics from "expo-haptics";
 import { useCallback, useMemo, useState } from "react";
-import { Alert } from "react-native";
+import { Alert, Keyboard } from "react-native";
 import { encodeBase64 } from "tweetnacl-util";
 
 import type { MessageType } from "@/components/chat/types";
@@ -319,6 +319,7 @@ export const useChatThreadMessageUi = ({
   const handleLongPress = useCallback((messageId: string) => {
     const target = renderedMessages.find((msg) => msg.id === messageId);
     if (!target) return;
+    Keyboard.dismiss();
     setShowReactions((prev) => (prev === messageId ? null : messageId));
     Haptics.selectionAsync().catch(() => {});
   }, [renderedMessages, setShowReactions]);

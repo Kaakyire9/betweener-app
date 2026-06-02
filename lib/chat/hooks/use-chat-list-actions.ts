@@ -1,4 +1,3 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Alert } from "react-native";
 import { useCallback } from "react";
 
@@ -40,7 +39,6 @@ type UseChatListActionsArgs<TConversation extends ChatListActionConversation> = 
   userId?: string | null;
   conversations: TConversation[];
   setConversations: React.Dispatch<React.SetStateAction<TConversation[]>>;
-  chatPrefsStorageKey: string;
   quickReportReasons: readonly QuickReportReason[];
   savePeerVisibilityPref: (peerUserId: string, next: { archived: boolean; hidden: boolean }) => Promise<{ error?: unknown }>;
   setPeerPinState: (peerUserId: string, pinned: boolean, muted: boolean) => Promise<void>;
@@ -50,7 +48,6 @@ export const useChatListActions = <TConversation extends ChatListActionConversat
   userId,
   conversations,
   setConversations,
-  chatPrefsStorageKey,
   quickReportReasons,
   savePeerVisibilityPref,
   setPeerPinState,
@@ -111,21 +108,14 @@ export const useChatListActions = <TConversation extends ChatListActionConversat
         prev.map((item) => (item.id === conversation.id ? { ...item, isMuted: nextMuted } : item)),
       );
 
-      try {
-        const raw = await AsyncStorage.getItem(chatPrefsStorageKey);
-        const parsed = raw ? JSON.parse(raw) : {};
-        const current = parsed?.[conversation.id] ?? {};
-        parsed[conversation.id] = {
-          ...current,
-          muted: nextMuted,
-        };
-        await AsyncStorage.setItem(chatPrefsStorageKey, JSON.stringify(parsed));
-      } catch {}
+      if (userId) {
+        void ChatRepository.updateThreadPreferences(userId, peerUserId, { muted: nextMuted });
+      }
 
       await setPeerPinState(peerUserId, conversation.isPinned, nextMuted);
       void haptics.tap();
     },
-    [chatPrefsStorageKey, getConversationPeerUserId, setConversations, setPeerPinState],
+    [getConversationPeerUserId, setConversations, setPeerPinState, userId],
   );
 
   const blockConversationUser = useCallback(
@@ -310,6 +300,12 @@ export const useChatListActions = <TConversation extends ChatListActionConversat
             : item,
         ),
       );
+      if (userId) {
+        void ChatRepository.updateThreadPreferences(userId, peerUserId, {
+          archived: nextArchived,
+          pinned: nextArchived ? false : conversation.isPinned,
+        });
+      }
 
       if (nextArchived && conversation.isPinned) {
         void setPeerPinState(peerUserId, false, conversation.isMuted);
@@ -328,13 +324,19 @@ export const useChatListActions = <TConversation extends ChatListActionConversat
               : item,
           ),
         );
+        if (userId) {
+          void ChatRepository.updateThreadPreferences(userId, peerUserId, {
+            archived: conversation.isArchived,
+            pinned: conversation.isPinned,
+          });
+        }
         Alert.alert('Archive chat', 'Unable to update this chat right now.');
         return;
       }
 
       void haptics.tap();
     },
-    [getConversationPeerUserId, savePeerVisibilityPref, setConversations, setPeerPinState],
+    [getConversationPeerUserId, savePeerVisibilityPref, setConversations, setPeerPinState, userId],
   );
 
   const handleRemoveConversation = useCallback(
@@ -388,19 +390,8 @@ export const useChatListActions = <TConversation extends ChatListActionConversat
         ),
       );
       void (async () => {
-        try {
-          const raw = await AsyncStorage.getItem(chatPrefsStorageKey);
-          const parsed = raw ? JSON.parse(raw) : {};
-          const localCurrent = parsed?.[conversationId] ?? {};
-          parsed[conversationId] = {
-            ...localCurrent,
-            pinned: !localCurrent?.pinned,
-          };
-          await AsyncStorage.setItem(chatPrefsStorageKey, JSON.stringify(parsed));
-        } catch {
-          // Ignore persistence errors.
-        }
         if (!userId) return;
+        await ChatRepository.updateThreadPreferences(userId, peerUserId, { pinned: nextPinned });
         const { error } = await upsertChatPref(userId, peerUserId, {
           pinned: nextPinned,
           muted: nextMuted,
@@ -410,7 +401,7 @@ export const useChatListActions = <TConversation extends ChatListActionConversat
         }
       })();
     },
-    [chatPrefsStorageKey, conversations, getConversationPeerUserId, setConversations, userId],
+    [conversations, getConversationPeerUserId, setConversations, userId],
   );
 
   return {

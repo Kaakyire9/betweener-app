@@ -8,6 +8,7 @@ import { useIntentRequests } from '@/hooks/useIntentRequests';
 import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
 import { ChatRepository } from '@/lib/chat/local/chat-db';
+import { useCircleInvitationCount } from '@/lib/circles/use-circle-invitation-count';
 import { type ResponsiveMetrics, useResponsiveMetrics } from '@/lib/responsive';
 import { Tabs } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -26,6 +27,7 @@ export default function TabLayout() {
   const { badgeCount } = useIntentRequests(profileId, {
     snapshotOwnerIds: [profileId, user?.id],
   });
+  const { count: circleInvitationCount } = useCircleInvitationCount(profileId);
 
   const [unreadChats, setUnreadChats] = useState(0);
 
@@ -65,8 +67,8 @@ export default function TabLayout() {
   }, [user?.id]);
 
   useEffect(() => {
-    void setAppIconBadgeCount(unreadChats + badgeCount);
-  }, [badgeCount, unreadChats]);
+    void setAppIconBadgeCount(unreadChats + badgeCount + circleInvitationCount);
+  }, [badgeCount, circleInvitationCount, unreadChats]);
 
   // Badge component for tab notifications
   const TabBadge = ({ count }: { count: number }) => {
@@ -121,15 +123,22 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
-          name="explore"
+          name="circles"
           options={{
             title: 'Circles',
             tabBarIcon: ({ color }) => (
               <View style={{ position: 'relative' }}>
                 <Users size={responsive.compactWidth ? 24 : 26} color={color} />
                 {/* <IconSymbol size={28} name="magnifyingglass" color={color} /> */}
+                <TabBadge count={circleInvitationCount} />
               </View>
             ),
+          }}
+        />
+        <Tabs.Screen
+          name="explore"
+          options={{
+            href: null,
           }}
         />
         <Tabs.Screen

@@ -2484,7 +2484,7 @@ export default function IntentScreen() {
                     onPress={() => router.push({ pathname: '/profile-view', params: { profileId: String(peerId) } })}
                     style={[styles.profileButton, styles.actionWide]}
                   >
-                    <Text style={styles.profileText}>Preview profile</Text>
+                    <Text style={styles.profileText}>View profile</Text>
                   </AnimatedPressable>
                 ) : null}
               </>
@@ -2543,7 +2543,7 @@ export default function IntentScreen() {
                     onPress={() => router.push({ pathname: '/profile-view', params: { profileId: String(peerId) } })}
                     style={[styles.profileButton, styles.actionWide]}
                   >
-                    <Text style={styles.profileText}>Preview profile</Text>
+                    <Text style={styles.profileText}>View profile</Text>
                   </AnimatedPressable>
                 ) : null}
               </>
@@ -2566,7 +2566,7 @@ export default function IntentScreen() {
                     onPress={() => router.push({ pathname: '/profile-view', params: { profileId: String(peerId) } })}
                     style={[styles.profileButton, styles.actionWide]}
                   >
-                    <Text style={styles.profileText}>Preview profile</Text>
+                    <Text style={styles.profileText}>View profile</Text>
                   </AnimatedPressable>
                 ) : null}
               </>
@@ -3722,7 +3722,7 @@ export default function IntentScreen() {
               <Text style={styles.decisionReceiptTitle}>{decisionReason}</Text>
               {decisionMessage ? (
                 <Text style={styles.decisionReceiptNote} numberOfLines={3}>
-                  "{decisionMessage}"
+                  &quot;{decisionMessage}&quot;
                 </Text>
               ) : (
                 <Text style={styles.decisionReceiptMuted}>A quick decision keeps the connection clear.</Text>

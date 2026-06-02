@@ -33,21 +33,17 @@ import { haptics } from "@/lib/haptics";
 import { isLikelyNetworkError } from "@/lib/network";
 import {
   buildChatConversationListStoreKey,
-  buildChatThreadStoreKey,
-  readOfflineSnapshot,
-  writeOfflineSnapshot,
 } from "@/lib/offline/chat-store";
 import { getSafeRemoteImageUri, getUserFacingDisplayName } from "@/lib/profile/display-name";
 import { getProfileInitials, getProfilePlaceholderPalette } from "@/lib/profile-placeholders";
-import { getPresenceDisplay } from "@/lib/presence";
+import { getAuthoritativePresenceDisplay } from "@/lib/presence";
 import { getChatMessagePreviewText } from "@/lib/message-preview";
 import { getSupabaseNetEvents, supabase } from "@/lib/supabase";
 import { captureMessage } from "@/lib/telemetry/sentry";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image as ExpoImage } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -86,6 +82,12 @@ type ConversationType = {
     typingExpiresAt?: Date | null;
   };
   blockStatus?: 'blocked_by_me' | 'blocked_me' | null;
+  latestActivity?: {
+    kind: 'edit' | 'reaction';
+    messageId: string;
+    preview: string;
+    createdAt: Date;
+  } | null;
   lastMessage: {
     id: string;
     text: string;
@@ -95,6 +97,7 @@ type ConversationType = {
     isViewOnce?: boolean;
     isRead: boolean;
     deliveredAt: Date | null;
+    editedAt?: Date | null;
     localStatus?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
     reactionPreview?: {
       emoji: string;
@@ -110,6 +113,37 @@ type ConversationType = {
 };
 
 type MessageRow = ChatListMessageRealtimeRow;
+
+const getListRowPreviewText = (row?: Pick<MessageRow, 'deleted_for_all' | 'text' | 'message_type' | 'is_view_once'> | null) => {
+  if (!row) return '';
+  if (row.deleted_for_all) return 'Message deleted';
+  return (
+    getChatMessagePreviewText({
+      text: row.text,
+      messageType: row.message_type,
+      isViewOnce: Boolean(row.is_view_once),
+    }) || row.text || ''
+  );
+};
+
+const getListReactionTarget = (messageType?: string | null) => {
+  switch (messageType) {
+    case 'image':
+      return 'photo';
+    case 'video':
+      return 'video';
+    case 'voice':
+      return 'voice note';
+    case 'document':
+      return 'document';
+    case 'location':
+      return 'location';
+    case 'mood_sticker':
+      return 'sticker';
+    default:
+      return 'message';
+  }
+};
 
 const messageRowToLocalChatMessage = (ownerUserId: string, row: MessageRow): ChatMessageRow => {
   const threadId = row.sender_id === ownerUserId ? row.receiver_id : row.sender_id;
@@ -139,7 +173,7 @@ const messageRowToLocalChatMessage = (ownerUserId: string, row: MessageRow): Cha
     direction: isMine ? 'outgoing' : 'incoming',
     created_at: row.created_at,
     server_created_at: row.created_at,
-    edited_at: null,
+    edited_at: row.edited_at ?? null,
     deleted_at: row.deleted_at ?? (row.deleted_for_all ? row.created_at : null),
     reply_to_message_id: null,
     is_view_once: row.is_view_once ? 1 : 0,
@@ -177,8 +211,6 @@ type NewMatch = {
   location?: string | null;
 };
 
-const CHAT_PREFS_STORAGE_KEY = 'chat_header_prefs_v1';
-const CHAT_LIST_REFRESH_INTERVAL_MS = 20_000;
 const NEW_MATCHES_REFRESH_INTERVAL_MS = 45_000;
 const BLOCKED_AVATAR_SOURCE = require('../../assets/images/circle-logo.png');
 const QUICK_REPORT_REASONS = [
@@ -202,33 +234,6 @@ type CachedConversation = Omit<ConversationType, "matchedUser" | "lastMessage" |
   matchedAt: string;
 };
 
-const serializeConversations = (list: ConversationType[]): CachedConversation[] => {
-  return (list || []).map((c) => ({
-    ...c,
-    matchedUser: {
-      ...c.matchedUser,
-      lastSeen: c.matchedUser.lastSeen instanceof Date ? c.matchedUser.lastSeen.toISOString() : new Date().toISOString(),
-      typingExpiresAt:
-        c.matchedUser.typingExpiresAt instanceof Date ? c.matchedUser.typingExpiresAt.toISOString() : null,
-    },
-    lastMessage: {
-      ...c.lastMessage,
-      timestamp: c.lastMessage.timestamp instanceof Date ? c.lastMessage.timestamp.toISOString() : new Date().toISOString(),
-      deliveredAt: c.lastMessage.deliveredAt instanceof Date ? c.lastMessage.deliveredAt.toISOString() : null,
-      reactionPreview: c.lastMessage.reactionPreview
-        ? {
-            ...c.lastMessage.reactionPreview,
-            createdAt:
-              c.lastMessage.reactionPreview.createdAt instanceof Date
-                ? c.lastMessage.reactionPreview.createdAt.toISOString()
-                : new Date().toISOString(),
-          }
-        : undefined,
-    },
-    matchedAt: c.matchedAt instanceof Date ? c.matchedAt.toISOString() : new Date().toISOString(),
-  }));
-};
-
 const deserializeConversations = (raw: unknown): ConversationType[] => {
   if (!Array.isArray(raw)) return [];
   return (raw as any[]).map((c) => {
@@ -248,6 +253,7 @@ const deserializeConversations = (raw: unknown): ConversationType[] => {
         ...lastMessage,
         timestamp: lastMessage?.timestamp ? new Date(lastMessage.timestamp) : new Date(),
         deliveredAt: lastMessage?.deliveredAt ? new Date(lastMessage.deliveredAt) : null,
+        editedAt: lastMessage?.editedAt ? new Date(lastMessage.editedAt) : null,
         reactionPreview: reaction
           ? {
               ...reaction,
@@ -255,6 +261,12 @@ const deserializeConversations = (raw: unknown): ConversationType[] => {
             }
           : undefined,
       },
+      latestActivity: c?.latestActivity
+        ? {
+            ...c.latestActivity,
+            createdAt: c.latestActivity?.createdAt ? new Date(c.latestActivity.createdAt) : new Date(),
+          }
+        : null,
       matchedAt: c?.matchedAt ? new Date(c.matchedAt) : new Date(),
     } as ConversationType;
   });
@@ -297,6 +309,27 @@ const localThreadToConversation = (row: ChatThreadRow): ConversationType => {
       : preview === 'Location'
       ? 'location'
       : 'text';
+  const localStatus: ThreadPreviewMessage['localStatus'] =
+    row.last_message_status === 'pending'
+      ? 'queued'
+      : row.last_message_status === 'sending' ||
+        row.last_message_status === 'sent' ||
+        row.last_message_status === 'delivered' ||
+        row.last_message_status === 'read' ||
+        row.last_message_status === 'failed'
+      ? row.last_message_status
+      : undefined;
+  const reactionPreview =
+    row.last_message_reaction_emoji && row.last_message_reaction_user_id
+      ? {
+          emoji: row.last_message_reaction_emoji,
+          userId: row.last_message_reaction_user_id,
+          createdAt: coerceValidDate(row.last_message_reaction_created_at) || timestamp,
+          targetType:
+            (row.last_message_reaction_target_type as ConversationType['lastMessage']['type'] | null) ??
+            undefined,
+        }
+      : undefined;
 
   return {
     id: row.id,
@@ -310,10 +343,22 @@ const localThreadToConversation = (row: ChatThreadRow): ConversationType => {
       avatar_url: row.peer_avatar_url || '',
       age: 0,
       isOnline: row.peer_presence_status === 'online',
-      lastSeen: timestamp,
+      lastSeen: coerceValidDate(row.peer_last_active) || new Date(0),
       typingExpiresAt: null,
     },
     blockStatus: null,
+    latestActivity:
+      row.last_activity_kind &&
+      row.last_activity_message_id &&
+      row.last_activity_preview &&
+      row.last_activity_at
+        ? {
+            kind: row.last_activity_kind,
+            messageId: row.last_activity_message_id,
+            preview: row.last_activity_preview,
+            createdAt: coerceValidDate(row.last_activity_at) || timestamp,
+          }
+        : null,
     lastMessage: {
       id: row.last_message_id || '',
       text: preview,
@@ -321,11 +366,16 @@ const localThreadToConversation = (row: ChatThreadRow): ConversationType => {
       senderId: row.last_message_sender_id || '',
       type: previewType,
       isViewOnce: preview === 'View once photo' || preview === 'View once video',
-      isRead:
-        row.last_message_sender_id === row.owner_user_id
-          ? false
-          : row.unread_count === 0,
-      deliveredAt: null,
+      isRead: row.last_message_status === 'read' || (
+        row.last_message_sender_id !== row.owner_user_id && row.unread_count === 0
+      ),
+      deliveredAt:
+        row.last_message_status === 'delivered' || row.last_message_status === 'read'
+          ? timestamp
+          : null,
+      editedAt: coerceValidDate(row.last_message_edited_at),
+      localStatus,
+      reactionPreview,
     },
     unreadCount: row.unread_count,
     isMuted: row.is_muted === 1,
@@ -354,21 +404,51 @@ const conversationToLocalThread = (ownerUserId: string, conversation: Conversati
     : conversation.lastMessage.type === 'location'
     ? 'Location'
     : conversation.lastMessage.text || '';
+  const localStatus = (conversation.lastMessage as ThreadPreviewMessage).localStatus;
+  const reactionPreview = conversation.lastMessage.reactionPreview;
+  const lastMessageStatus: ChatThreadRow['last_message_status'] =
+    localStatus === 'queued'
+      ? 'pending'
+      : localStatus ??
+        (conversation.lastMessage.isRead
+          ? 'read'
+          : conversation.lastMessage.deliveredAt
+          ? 'delivered'
+          : 'sent');
 
   return {
     id: conversation.id,
     owner_user_id: ownerUserId,
-    peer_user_id: conversation.matchedUser.id || conversation.id,
+    peer_user_id: conversation.matchedUser.userId || conversation.id,
     peer_profile_id: conversation.matchedUser.profileId ?? null,
     peer_name: conversation.matchedUser.name || null,
     peer_avatar_url: conversation.matchedUser.avatar_url || null,
     peer_verified: 0,
     peer_presence_status: conversation.matchedUser.isOnline ? 'online' : null,
+    peer_last_active: conversation.matchedUser.lastSeen instanceof Date
+      ? conversation.matchedUser.lastSeen.toISOString()
+      : null,
     title: null,
     thread_type: 'direct',
     last_message_id: conversation.lastMessage.id || null,
     last_message_preview: lastMessagePreview,
     last_message_sender_id: conversation.lastMessage.senderId || null,
+    last_message_status: lastMessageStatus,
+    last_message_edited_at: conversation.lastMessage.editedAt instanceof Date
+      ? conversation.lastMessage.editedAt.toISOString()
+      : null,
+    last_message_reaction_emoji: reactionPreview?.emoji ?? null,
+    last_message_reaction_user_id: reactionPreview?.userId ?? null,
+    last_message_reaction_created_at: reactionPreview?.createdAt instanceof Date
+      ? reactionPreview.createdAt.toISOString()
+      : null,
+    last_message_reaction_target_type: reactionPreview?.targetType ?? null,
+    last_activity_kind: conversation.latestActivity?.kind ?? null,
+    last_activity_message_id: conversation.latestActivity?.messageId ?? null,
+    last_activity_preview: conversation.latestActivity?.preview ?? null,
+    last_activity_at: conversation.latestActivity?.createdAt instanceof Date
+      ? conversation.latestActivity.createdAt.toISOString()
+      : null,
     last_message_at: lastMessageAt,
     unread_count: conversation.unreadCount,
     is_muted: conversation.isMuted ? 1 : 0,
@@ -395,7 +475,18 @@ const getConversationLocalMergeKey = (conversation: ConversationType) =>
     conversation.lastMessage.type,
     conversation.lastMessage.isRead ? 'read' : 'unread',
     conversation.lastMessage.deliveredAt?.getTime() ?? 0,
+    conversation.lastMessage.editedAt?.getTime() ?? 0,
+    conversation.lastMessage.reactionPreview?.emoji ?? '',
+    conversation.lastMessage.reactionPreview?.userId ?? '',
+    conversation.lastMessage.reactionPreview?.createdAt.getTime() ?? 0,
+    conversation.lastMessage.reactionPreview?.targetType ?? '',
+    conversation.latestActivity?.kind ?? '',
+    conversation.latestActivity?.messageId ?? '',
+    conversation.latestActivity?.preview ?? '',
+    conversation.latestActivity?.createdAt.getTime() ?? 0,
     (conversation.lastMessage as ThreadPreviewMessage).localStatus ?? 'server',
+    conversation.matchedUser.isOnline ? 'online' : 'offline',
+    conversation.matchedUser.lastSeen.getTime(),
   ].join(':');
 
 const mergeLocalThreadsIntoConversations = (
@@ -417,12 +508,14 @@ const mergeLocalThreadsIntoConversations = (
     const hasUsefulLocalIdentity =
       localConversation.matchedUser.name !== 'Unknown' || Boolean(localConversation.matchedUser.avatar_url);
 
+    const isSameLastMessage = localConversation.lastMessage.id === existing.lastMessage.id;
     mergedById.set(thread.id, {
       ...existing,
       isArchived: localConversation.isArchived,
       isMuted: localConversation.isMuted,
       isPinned: localConversation.isPinned,
       unreadCount: localConversation.unreadCount,
+      latestActivity: localConversation.latestActivity,
       matchedAt: existing.matchedAt ?? localConversation.matchedAt,
       matchedUser: hasUsefulLocalIdentity
         ? {
@@ -433,25 +526,20 @@ const mergeLocalThreadsIntoConversations = (
                 : existing.matchedUser.name,
             avatar_url: localConversation.matchedUser.avatar_url || existing.matchedUser.avatar_url,
             profileId: localConversation.matchedUser.profileId ?? existing.matchedUser.profileId,
-            isOnline: existing.matchedUser.isOnline || localConversation.matchedUser.isOnline,
+            userId: localConversation.matchedUser.userId || existing.matchedUser.userId,
+            isOnline: localConversation.matchedUser.isOnline,
+            lastSeen: localConversation.matchedUser.lastSeen,
           }
         : existing.matchedUser,
       lastMessage: {
         ...existing.lastMessage,
         ...localConversation.lastMessage,
-        isRead:
-          existing.lastMessage.id === localConversation.lastMessage.id
-            ? existing.lastMessage.isRead
-            : localConversation.lastMessage.isRead,
-        deliveredAt:
-          existing.lastMessage.id === localConversation.lastMessage.id
-            ? existing.lastMessage.deliveredAt
-            : localConversation.lastMessage.deliveredAt,
-        localStatus:
-          existing.lastMessage.id === localConversation.lastMessage.id
-            ? (existing.lastMessage as ThreadPreviewMessage).localStatus
-            : (localConversation.lastMessage as ThreadPreviewMessage).localStatus,
-        reactionPreview: existing.lastMessage.reactionPreview,
+        editedAt:
+          localConversation.lastMessage.editedAt ??
+          (isSameLastMessage ? existing.lastMessage.editedAt : null),
+        reactionPreview:
+          localConversation.lastMessage.reactionPreview ??
+          (isSameLastMessage ? existing.lastMessage.reactionPreview : undefined),
       },
     });
   });
@@ -468,46 +556,6 @@ const mergeLocalThreadsIntoConversations = (
 
 type ThreadPreviewMessage = ConversationType['lastMessage'] & {
   localStatus?: 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
-};
-
-const getThreadPreviewLocalStatus = (
-  row: Pick<MessageRow, 'sender_id' | 'is_read' | 'delivered_at'>,
-  ownerUserId: string,
-): ThreadPreviewMessage['localStatus'] | undefined => {
-  if (!row?.sender_id || row.sender_id !== ownerUserId) return undefined;
-  if (row.is_read) return 'read';
-  if (row.delivered_at) return 'delivered';
-  return 'sent';
-};
-
-const readLastThreadPreviewMessage = (raw: unknown): ThreadPreviewMessage | null => {
-  if (!Array.isArray(raw) || raw.length === 0) return null;
-  const last = raw[raw.length - 1] as any;
-  if (!last || typeof last !== 'object') return null;
-  const timestamp = last?.timestamp ? new Date(last.timestamp) : new Date();
-  const status = (last?.status ?? 'sent') as 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
-  return {
-    id: String(last?.id ?? ''),
-    text: typeof last?.text === 'string' ? last.text : '',
-    timestamp,
-    senderId: typeof last?.senderId === 'string' ? last.senderId : '',
-    type: (last?.type ?? 'text') as ConversationType['lastMessage']['type'],
-    isViewOnce: Boolean(last?.isViewOnce),
-    isRead: status === 'read' || Boolean(last?.readAt),
-    deliveredAt: status === 'delivered' || status === 'read' ? timestamp : null,
-    localStatus: status,
-  };
-};
-
-const hasCachedUserThreadMessages = (raw: unknown): boolean => {
-  if (!Array.isArray(raw) || raw.length === 0) return false;
-  return raw.some((entry) => {
-    if (!entry || typeof entry !== 'object') return false;
-    const item = entry as { id?: unknown; type?: unknown };
-    const type = typeof item.type === 'string' ? item.type : '';
-    const id = String(item.id ?? '');
-    return type !== 'system' && !id.startsWith('system:');
-  });
 };
 
 const areNewMatchesEqual = (left: NewMatch[], right: NewMatch[]) => {
@@ -563,7 +611,6 @@ export default function ChatScreen() {
     [user?.id],
   );
   const conversationsRef = useRef<ConversationType[]>([]);
-  const lastConversationsFetchAtRef = useRef(0);
   const conversationsFetchInFlightRef = useRef(false);
   const newMatchesFetchInFlightRef = useRef(false);
   const lastNewMatchesFetchAtRef = useRef(0);
@@ -597,7 +644,6 @@ export default function ChatScreen() {
   const {
     initialHydratedConversations,
     mergedLocalConversations,
-    lastSyncedAtMs,
   } = useChatListLocalState({
     ownerUserId: user?.id ?? null,
     cacheKey: chatCacheKey,
@@ -609,11 +655,6 @@ export default function ChatScreen() {
     mergeLocalThreads: mergeLocalThreadsIntoConversations,
   });
   const typingClearTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-
-  useEffect(() => {
-    if (!lastSyncedAtMs || !Number.isFinite(lastSyncedAtMs) || lastSyncedAtMs <= 0) return;
-    lastConversationsFetchAtRef.current = lastSyncedAtMs;
-  }, [lastSyncedAtMs]);
 
   useEffect(() => {
     if (!initialHydratedConversations || initialHydratedConversations.length === 0) return;
@@ -637,103 +678,6 @@ export default function ChatScreen() {
   }, [newMatches.length]);
 
   useEffect(() => {
-    if (!chatCacheKey) return;
-    void writeOfflineSnapshot(chatCacheKey, serializeConversations(conversations));
-  }, [chatCacheKey, conversations]);
-
-  const conversationPreviewOverlayKey = useMemo(
-    () =>
-      conversations
-        .map(
-          (conversation) =>
-            `${conversation.id}:${conversation.lastMessage.id}:${conversation.lastMessage.timestamp.getTime()}:${(conversation.lastMessage as ThreadPreviewMessage).localStatus ?? 'server'}`,
-        )
-        .join('|'),
-    [conversations],
-  );
-
-  useEffect(() => {
-    if (!user?.id || conversations.length === 0) return;
-    let cancelled = false;
-
-    (async () => {
-      const previewEntries = await Promise.all(
-        conversations.map(async (conversation) => {
-          const threadKey = buildChatThreadStoreKey(user.id, conversation.id);
-          const cached = await readOfflineSnapshot<unknown[]>(threadKey);
-          const preview = readLastThreadPreviewMessage(cached);
-          return { conversationId: conversation.id, preview };
-        }),
-      );
-
-      if (cancelled) return;
-
-      const previewByConversationId = new Map(
-        previewEntries.map((entry) => [entry.conversationId, entry.preview] as const),
-      );
-
-      setConversations((prev) => {
-        let changed = false;
-        const next = prev.map((conversation) => {
-          const preview = previewByConversationId.get(conversation.id);
-          if (!preview) return conversation;
-
-          const shouldOverlay =
-            preview.localStatus === 'queued' ||
-            preview.localStatus === 'sending' ||
-            preview.localStatus === 'failed' ||
-            (
-              preview.id !== conversation.lastMessage.id &&
-              preview.timestamp.getTime() > conversation.lastMessage.timestamp.getTime()
-            );
-
-          if (!shouldOverlay) return conversation;
-
-          const nextDeliveredAt = preview.deliveredAt ?? conversation.lastMessage.deliveredAt;
-          const nextIsRead = conversation.lastMessage.isRead || preview.isRead;
-          const isSamePreview =
-            conversation.lastMessage.id === preview.id &&
-            conversation.lastMessage.text === preview.text &&
-            conversation.lastMessage.timestamp.getTime() === preview.timestamp.getTime() &&
-            conversation.lastMessage.senderId === preview.senderId &&
-            conversation.lastMessage.type === preview.type &&
-            conversation.lastMessage.isViewOnce === preview.isViewOnce &&
-            conversation.lastMessage.isRead === nextIsRead &&
-            (conversation.lastMessage as ThreadPreviewMessage).localStatus === preview.localStatus &&
-            (conversation.lastMessage.deliveredAt?.getTime() ?? 0) === (nextDeliveredAt?.getTime() ?? 0);
-
-          if (isSamePreview) return conversation;
-
-          const reactionPreview = conversation.lastMessage.reactionPreview;
-          changed = true;
-          return {
-            ...conversation,
-            lastMessage: {
-              ...conversation.lastMessage,
-              id: preview.id,
-              text: preview.text,
-              timestamp: preview.timestamp,
-              senderId: preview.senderId,
-              type: preview.type,
-              isViewOnce: preview.isViewOnce,
-              isRead: nextIsRead,
-              deliveredAt: nextDeliveredAt,
-              localStatus: preview.localStatus,
-              reactionPreview,
-            },
-          };
-        });
-
-        return changed ? next : prev;
-      });
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [conversationPreviewOverlayKey, conversations.length, user?.id]);
-
-  useEffect(() => {
     pruneFailedAvatarUris(conversations);
   }, [conversations, pruneFailedAvatarUris]);
 
@@ -744,29 +688,22 @@ export default function ChatScreen() {
     };
   }, []);
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
+    setPresenceNow(Date.now());
     const interval = setInterval(() => setPresenceNow(Date.now()), 30_000);
     return () => clearInterval(interval);
-  }, []);
+  }, []));
 
   const applyChatPrefs = useCallback(async (
     items: ConversationType[],
     serverPrefs: Map<string, { muted: boolean; pinned: boolean }>,
   ) => {
-    let localParsed: Record<string, { muted?: boolean; pinned?: boolean }> = {};
-    try {
-      const raw = await AsyncStorage.getItem(CHAT_PREFS_STORAGE_KEY);
-      localParsed = raw ? JSON.parse(raw) : {};
-    } catch {
-      localParsed = {};
-    }
     return items.map((item) => {
-      const local = localParsed?.[item.id] ?? {};
       const server = serverPrefs.get(item.id);
       return {
         ...item,
-        isMuted: server?.muted ?? Boolean(local.muted),
-        isPinned: server?.pinned ?? Boolean(local.pinned) ?? item.isPinned,
+        isMuted: server?.muted ?? item.isMuted,
+        isPinned: server?.pinned ?? item.isPinned,
       };
     });
   }, []);
@@ -820,11 +757,7 @@ export default function ChatScreen() {
           currentProfileId,
           userId: user.id,
           messagedPeerUserIds: messagedPeerUserIds ?? messagedPeerUserIdsRef.current ?? new Set(),
-          readHasCachedThreadMessages: async (peerUserId) => {
-            const threadKey = buildChatThreadStoreKey(user.id, peerUserId);
-            const cachedThread = await readOfflineSnapshot<unknown[]>(threadKey);
-            return hasCachedUserThreadMessages(cachedThread);
-          },
+          hasLocalThreadMessages: (peerUserId) => ChatRepository.hasThreadMessages(user.id, peerUserId),
           buildMatch: ({ profileRow, lastSeen }) => {
             const loc =
               (typeof profileRow.location === 'string' && profileRow.location) ||
@@ -837,7 +770,7 @@ export default function ChatScreen() {
               profileId: String(profileRow.id),
               name: String(profileRow.full_name || 'New match'),
               avatar_url: getSafeRemoteImageUri(profileRow.avatar_url),
-              isOnline: getPresenceDisplay(lastSeen.toISOString(), Date.now()).online,
+              isOnline: getAuthoritativePresenceDisplay(profileRow?.online, lastSeen.toISOString(), Date.now()).online,
               lastSeen,
               age: typeof profileRow.age === 'number' ? profileRow.age : null,
               location: loc,
@@ -875,10 +808,9 @@ export default function ChatScreen() {
             conversationsRef.current.map((conversation) => [conversation.id, conversation] as const),
           ),
           readCachedThreadFallback: async (peerUserId) => {
-            const threadKey = buildChatThreadStoreKey(user.id, peerUserId);
-            const cachedThread = await readOfflineSnapshot<unknown[]>(threadKey);
-            if (!hasCachedUserThreadMessages(cachedThread)) return null;
-            return readLastThreadPreviewMessage(cachedThread);
+            const localThread = await ChatRepository.getThreadById(user.id, peerUserId);
+            if (!localThread?.last_message_id) return null;
+            return localThreadToConversation(localThread).lastMessage;
           },
           applyChatPrefs,
           buildConversation: ({
@@ -895,7 +827,7 @@ export default function ChatScreen() {
             const snapshotLastSeen = currentConversation?.matchedUser.lastSeen ?? null;
             const snapshotTypingExpiresAt = currentConversation?.matchedUser.typingExpiresAt ?? null;
             const lastSeen = getProfileLastSeen(profileRow, snapshotLastSeen);
-            const presence = getPresenceDisplay(lastSeen.toISOString(), Date.now());
+            const presence = getAuthoritativePresenceDisplay(profileRow?.online, lastSeen.toISOString(), Date.now());
             const peerOnline =
               typeof profileRow?.online === 'boolean'
                 ? Boolean(profileRow.online) && presence.online
@@ -904,7 +836,7 @@ export default function ChatScreen() {
             const lastTimestamp = last?.created_at
               ? new Date(last.created_at)
               : (fallbackPreview?.timestamp ?? new Date());
-            const lastText = last ? getRowPreviewText(last) : (fallbackPreview?.text ?? '');
+            const lastText = last ? getListRowPreviewText(last) : (fallbackPreview?.text ?? '');
             const lastType = last
               ? ((last?.message_type ?? 'text') as ConversationType['lastMessage']['type'])
               : (fallbackPreview?.type ?? 'text');
@@ -938,6 +870,14 @@ export default function ChatScreen() {
                 typingExpiresAt: snapshotTypingExpiresAt,
               },
               blockStatus,
+              latestActivity: entry?.activity
+                ? {
+                    kind: entry.activity.kind,
+                    messageId: entry.activity.messageId,
+                    preview: entry.activity.preview,
+                    createdAt: new Date(entry.activity.createdAt),
+                  }
+                : null,
               lastMessage: {
                 id: last?.id || fallbackPreview?.id || '',
                 text: lastText,
@@ -949,6 +889,9 @@ export default function ChatScreen() {
                 deliveredAt: last?.delivered_at
                   ? new Date(last.delivered_at)
                   : (fallbackPreview?.deliveredAt ?? null),
+                editedAt: last?.edited_at
+                  ? new Date(last.edited_at)
+                  : (fallbackPreview?.editedAt ?? null),
                 reactionPreview: reactionPreview
                   ? {
                       ...reactionPreview,
@@ -965,41 +908,30 @@ export default function ChatScreen() {
         });
 
       if (combinedOtherUserIds.length === 0) {
-        const cached = chatCacheKey ? await readOfflineSnapshot<CachedConversation[]>(chatCacheKey) : null;
-        const hydrated = cached ? deserializeConversations(cached) : [];
+        const hydrated = conversationsRef.current;
         const shouldPreserveExisting = hadExistingConversations || hydrated.length > 0;
         if (shouldPreserveExisting) {
-          if (!hadExistingConversations && hydrated.length > 0) {
-            setConversations(hydrated);
-        }
-        setLoadError(null);
-        lastConversationsFetchAtRef.current = Date.now();
-        void ChatRepository.upsertThreads(
-          user.id,
-          hydrated.map((conversation) => conversationToLocalThread(user.id, conversation)),
-        ).catch((error) => console.log('[chat] hydrate local threads from remote summaries error', error));
-        void ChatRepository.markSyncSucceeded(user.id, 'global_threads', { cursor: syncCursor });
-        void fetchNewMatches(new Set(hydrated.map((conversation) => conversation.id)));
-        return;
+          setLoadError(null);
+          void ChatRepository.markSyncSucceeded(user.id, 'global_threads', { cursor: syncCursor });
+          void fetchNewMatches(new Set(hydrated.map((conversation) => conversation.id)));
+          return;
         }
         setConversations([]);
         setLoadError(null);
-        if (chatCacheKey) void writeOfflineSnapshot(chatCacheKey, serializeConversations([]));
-        lastConversationsFetchAtRef.current = Date.now();
         void ChatRepository.markSyncSucceeded(user.id, 'global_threads', { cursor: syncCursor });
         // Still load matches, even if there are no prior chats.
         void fetchNewMatches(new Set());
         return;
       }
-      setConversations(hydrated);
       setLoadError(null);
-      lastConversationsFetchAtRef.current = Date.now();
-      void ChatRepository.upsertThreads(
+      await ChatRepository.upsertThreads(
         user.id,
         hydrated.map((conversation) => conversationToLocalThread(user.id, conversation)),
-      ).catch((error) => console.log('[chat] persist remote chat summaries error', error));
+      );
+      // SQLite receives durable state first. Keep remote-only block metadata
+      // visible without making AsyncStorage a competing list source.
+      setConversations(hydrated);
       void ChatRepository.markSyncSucceeded(user.id, 'global_threads', { cursor: syncCursor });
-      if (chatCacheKey) void writeOfflineSnapshot(chatCacheKey, serializeConversations(hydrated));
 
       // New matches are accepted matches without any message history yet.
       void fetchNewMatches(new Set(combinedOtherUserIds));
@@ -1009,15 +941,6 @@ export default function ChatScreen() {
         message: error instanceof Error ? error.message : 'Failed to load chats',
       });
       if (isLikelyNetworkError(error)) {
-        if (!hadExistingConversations && chatCacheKey) {
-          const cached = await readOfflineSnapshot<CachedConversation[]>(chatCacheKey);
-          if (cached) {
-            const hydrated = deserializeConversations(cached);
-            if (hydrated.length > 0) {
-              setConversations(hydrated);
-            }
-          }
-        }
         setLoadError(null);
         return;
       }
@@ -1027,12 +950,9 @@ export default function ChatScreen() {
       conversationsFetchInFlightRef.current = false;
       setIsLoading(false);
     }
-  }, [applyChatPrefs, chatCacheKey, currentProfileId, fetchNewMatches, user?.id]);
+  }, [applyChatPrefs, currentProfileId, fetchNewMatches, user?.id]);
 
   const refreshConversationsOnFocus = useCallback(() => {
-    const hasVisibleRows = conversationsRef.current.length > 0;
-    const isFresh = Date.now() - lastConversationsFetchAtRef.current < CHAT_LIST_REFRESH_INTERVAL_MS;
-    if (hasVisibleRows && isFresh) return;
     void fetchConversations();
   }, [fetchConversations]);
 
@@ -1055,6 +975,30 @@ export default function ChatScreen() {
     [user?.id],
   );
 
+  const applyListActivity = useCallback(
+    (otherId: string, activity: NonNullable<ConversationType['latestActivity']>) => {
+      if (!user?.id) return;
+      void ChatRepository.updateThreadActivityPreview(user.id, otherId, {
+        kind: activity.kind,
+        messageId: activity.messageId,
+        preview: activity.preview,
+        createdAt: activity.createdAt.toISOString(),
+      }).catch((error) => console.log('[chat] list activity local persist error', error));
+      setConversations((prev) =>
+        prev.map((conversation) => {
+          if (conversation.id !== otherId) return conversation;
+          const currentActivityAt = conversation.latestActivity?.createdAt.getTime() ?? 0;
+          if (currentActivityAt > activity.createdAt.getTime()) return conversation;
+          return {
+            ...conversation,
+            latestActivity: activity,
+          };
+        }),
+      );
+    },
+    [user?.id],
+  );
+
   const handleListMessageInsert = useCallback(
     (row: MessageRow) => {
       if (!user?.id) return;
@@ -1066,46 +1010,14 @@ export default function ChatScreen() {
         messageRowToLocalChatMessage(user.id, row),
       ]).catch((error) => console.log('[chat] list realtime insert local persist error', error));
       void ChatRepository.markSyncSucceeded(user.id, 'global_threads', { cursor: row.created_at });
-      const lastText = getRowPreviewText(row);
-      const lastType = (row.message_type ?? 'text') as ConversationType['lastMessage']['type'];
-      const nextLastMessage = {
-        id: row.id,
-        text: lastText,
-        timestamp: new Date(row.created_at),
-        senderId: row.sender_id,
-        type: lastType,
-        isViewOnce: Boolean(row.is_view_once),
-        isRead: row.is_read,
-        deliveredAt: row.delivered_at ? new Date(row.delivered_at) : null,
-        localStatus: getThreadPreviewLocalStatus(row, user.id),
-        reactionPreview: undefined,
-      };
-
-      setConversations((prev) => {
-        const index = prev.findIndex((conv) => conv.id === otherId);
-        if (index === -1) {
-          void fetchConversations();
-          return prev;
-        }
-        const current = prev[index];
-        const nextUnread =
-          row.receiver_id === user.id && !row.is_read
-            ? current.unreadCount + 1
-            : current.unreadCount;
-        const updated = {
-          ...current,
-          isArchived: row.receiver_id === user.id ? false : current.isArchived,
-          lastMessage: nextLastMessage,
-          unreadCount: nextUnread,
-          matchedAt: nextLastMessage.timestamp,
-        };
-        const next = [...prev];
-        next[index] = updated;
-        if (row.receiver_id === user.id && current.isArchived) {
-          void savePeerVisibilityPref(otherId, { archived: false, hidden: false });
-        }
-        return next;
-      });
+      const existing = conversationsRef.current.find((conversation) => conversation.id === otherId);
+      if (!existing) {
+        void fetchConversations();
+      }
+      if (row.receiver_id === user.id && existing?.isArchived) {
+        void ChatRepository.updateThreadPreferences(user.id, otherId, { archived: false });
+        void savePeerVisibilityPref(otherId, { archived: false, hidden: false });
+      }
     },
     [fetchConversations, savePeerVisibilityPref, user?.id],
   );
@@ -1119,26 +1031,16 @@ export default function ChatScreen() {
         messageRowToLocalChatMessage(user.id, row),
       ]).catch((error) => console.log('[chat] list realtime receiver update local persist error', error));
       void ChatRepository.markSyncSucceeded(user.id, 'global_threads', { cursor: row.created_at });
-      setConversations((prev) =>
-        prev.map((conv) => {
-          if (conv.id !== otherId || conv.lastMessage.id !== row.id) return conv;
-          return {
-            ...conv,
-            unreadCount: row.receiver_id === user.id && !row.is_read ? conv.unreadCount : 0,
-            lastMessage: {
-              ...conv.lastMessage,
-              text: getRowPreviewText(row),
-              type: (row.message_type ?? conv.lastMessage.type) as ConversationType['lastMessage']['type'],
-              isViewOnce: Boolean(row.is_view_once),
-              isRead: row.is_read,
-              deliveredAt: row.delivered_at ? new Date(row.delivered_at) : null,
-              localStatus: getThreadPreviewLocalStatus(row, user.id),
-            },
-          };
-        }),
-      );
+      if (row.edited_at) {
+        applyListActivity(otherId, {
+          kind: 'edit',
+          messageId: row.id,
+          preview: `Edited: ${getListRowPreviewText(row)}`,
+          createdAt: new Date(row.edited_at),
+        });
+      }
     },
-    [user?.id],
+    [applyListActivity, user?.id],
   );
 
   const handleListMessageSenderUpdate = useCallback(
@@ -1150,32 +1052,22 @@ export default function ChatScreen() {
         messageRowToLocalChatMessage(user.id, row),
       ]).catch((error) => console.log('[chat] list realtime sender update local persist error', error));
       void ChatRepository.markSyncSucceeded(user.id, 'global_threads', { cursor: row.created_at });
-      setConversations((prev) =>
-        prev.map((conv) => {
-          if (conv.id !== otherId || conv.lastMessage.id !== row.id) return conv;
-          return {
-            ...conv,
-            lastMessage: {
-              ...conv.lastMessage,
-              text: getRowPreviewText(row),
-              type: (row.message_type ?? conv.lastMessage.type) as ConversationType['lastMessage']['type'],
-              isViewOnce: Boolean(row.is_view_once),
-              isRead: row.is_read,
-              deliveredAt: row.delivered_at ? new Date(row.delivered_at) : null,
-              localStatus: getThreadPreviewLocalStatus(row, user.id),
-            },
-          };
-        }),
-      );
+      if (row.edited_at) {
+        applyListActivity(otherId, {
+          kind: 'edit',
+          messageId: row.id,
+          preview: `Edited: ${getListRowPreviewText(row)}`,
+          createdAt: new Date(row.edited_at),
+        });
+      }
     },
-    [user?.id],
+    [applyListActivity, user?.id],
   );
 
   const handleListReactionChange = useCallback(
     async (row: ChatListReactionRow) => {
       if (!user?.id) return;
-      if (!row?.message_id || !row?.emoji || !row?.user_id) return;
-      const createdAt = row.created_at ? new Date(row.created_at) : new Date();
+      if (!row?.message_id) return;
       const { data: messageRow, error } = await fetchRemoteChatListMessageMeta(row.message_id);
       if (error) {
         console.log('[chat] message reaction fetch error', error);
@@ -1185,27 +1077,75 @@ export default function ChatScreen() {
       const otherId = messageRow.sender_id === user.id ? messageRow.receiver_id : messageRow.sender_id;
       if (!otherId) return;
       const targetType = (messageRow.message_type ?? 'text') as ConversationType['lastMessage']['type'];
+      const { data: reactionRows, error: reactionError } = await supabase
+        .from('message_reactions')
+        .select('message_id,user_id,emoji,created_at')
+        .eq('message_id', row.message_id)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (reactionError) {
+        console.log('[chat] latest reaction preview fetch error', reactionError);
+        return;
+      }
+      const latestReaction = reactionRows?.[0];
+      const reactionPreview =
+        latestReaction?.emoji && latestReaction?.user_id
+          ? {
+              emoji: latestReaction.emoji,
+              userId: latestReaction.user_id,
+              createdAt: latestReaction.created_at ? new Date(latestReaction.created_at) : new Date(),
+              targetType,
+            }
+          : undefined;
+      if (!reactionPreview) {
+        void fetchConversations();
+        return;
+      }
+      const peerName =
+        conversationsRef.current.find((conversation) => conversation.id === otherId)?.matchedUser.name ||
+        'Someone';
+      applyListActivity(otherId, {
+        kind: 'reaction',
+        messageId: messageRow.id,
+        preview: `${reactionPreview.userId === user.id ? 'You' : peerName} reacted ${reactionPreview.emoji} to ${getListReactionTarget(targetType)}`,
+        createdAt: reactionPreview.createdAt,
+      });
+      void ChatRepository.updateThreadReactionPreview(
+        user.id,
+        otherId,
+        messageRow.id,
+        reactionPreview
+          ? {
+              ...reactionPreview,
+              createdAt: reactionPreview.createdAt.toISOString(),
+            }
+          : null,
+      ).catch((persistError) => console.log('[chat] list reaction preview local persist error', persistError));
       setConversations((prev) =>
         prev.map((conv) => {
           if (conv.id !== otherId) return conv;
           if (conv.lastMessage.id !== messageRow.id) return conv;
-          const existing = conv.lastMessage.reactionPreview;
-          if (existing && existing.createdAt >= createdAt) return conv;
           return {
             ...conv,
             lastMessage: {
               ...conv.lastMessage,
-              reactionPreview: { emoji: row.emoji, userId: row.user_id, createdAt, targetType },
+              reactionPreview,
             },
           };
         }),
       );
     },
-    [user?.id],
+    [applyListActivity, fetchConversations, user?.id],
   );
 
   const handleListChatPrefChange = useCallback((row: ChatListChatPrefRow) => {
     if (!row?.peer_id) return;
+    if (user?.id) {
+      void ChatRepository.updateThreadPreferences(user.id, row.peer_id, {
+        muted: row.muted,
+        pinned: row.pinned,
+      });
+    }
     setConversations((prev) =>
       prev.map((conv) =>
         conv.id === row.peer_id ||
@@ -1220,7 +1160,35 @@ export default function ChatScreen() {
           : conv
       )
     );
-  }, []);
+  }, [user?.id]);
+
+  const handleListPresenceChange = useCallback(
+    (row: { user_id?: string; online?: boolean | null; last_active?: string | null }) => {
+      if (!row?.user_id) return;
+      const lastSeen = coerceValidDate(row.last_active);
+      setConversations((prev) =>
+        prev.map((conversation) =>
+          conversation.matchedUser.userId === row.user_id
+            ? {
+                ...conversation,
+                matchedUser: {
+                  ...conversation.matchedUser,
+                  isOnline: row.online === true,
+                  lastSeen: lastSeen ?? conversation.matchedUser.lastSeen,
+                },
+              }
+            : conversation,
+        ),
+      );
+      if (user?.id) {
+        void ChatRepository.updateThreadPresence(user.id, row.user_id, {
+          online: row.online,
+          lastActive: row.last_active ?? null,
+        });
+      }
+    },
+    [user?.id],
+  );
 
   useChatListSync({
     userId: user?.id ?? null,
@@ -1233,6 +1201,8 @@ export default function ChatScreen() {
     onMessageSenderUpdate: handleListMessageSenderUpdate,
     onReactionChange: handleListReactionChange,
     onChatPrefChange: handleListChatPrefChange,
+    onPresenceChange: handleListPresenceChange,
+    visiblePeerUserIds: conversations.map((conversation) => conversation.matchedUser.userId),
   });
   const {
     openConversationMoreActions,
@@ -1243,7 +1213,6 @@ export default function ChatScreen() {
     userId: user?.id ?? null,
     conversations,
     setConversations,
-    chatPrefsStorageKey: CHAT_PREFS_STORAGE_KEY,
     quickReportReasons: QUICK_REPORT_REASONS,
     savePeerVisibilityPref,
     setPeerPinState,
@@ -1269,18 +1238,6 @@ export default function ChatScreen() {
     }, 12_000);
     return () => clearTimeout(t);
   }, [conversations.length, isLoading, loadError, user?.id]);
-
-  const getRowPreviewText = (row?: MessageRow | null) => {
-    if (!row) return '';
-    if (row.deleted_for_all) return 'Message deleted';
-    return (
-      getChatMessagePreviewText({
-        text: row.text,
-        messageType: row.message_type,
-        isViewOnce: Boolean(row.is_view_once),
-      }) || ''
-    );
-  };
 
   const {
     filteredConversations,

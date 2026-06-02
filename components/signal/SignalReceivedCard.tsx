@@ -200,7 +200,7 @@ export default function SignalReceivedCard({
               <View style={styles.noteBlock}>
                 <Text style={styles.noteLabel}>{noteLabel}</Text>
                 <Text style={styles.note} numberOfLines={3}>
-                  "{signal.note}"
+                  &quot;{signal.note}&quot;
                 </Text>
               </View>
             ) : (

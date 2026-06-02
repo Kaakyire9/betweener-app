@@ -218,6 +218,15 @@ export function buildNotificationRoute(
     return { pathname: "/relationship-compass" };
   }
 
+  if ((pushType === "circle_love_seat" || pushType === "circle_invitation") && data?.circle_id) {
+    return {
+      pathname: "/circles/[id]",
+      params: {
+        id: String(data.circle_id),
+      },
+    };
+  }
+
   const route = typeof data?.route === "string" ? String(data.route) : "";
   if (route && route.startsWith("/")) {
     return { pathname: route };

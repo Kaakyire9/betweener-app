@@ -17,6 +17,7 @@ import {
   markPendingAuthFlow,
 } from "@/lib/auth-callback";
 import { setSignupIdentityHints } from "@/lib/signup-tracking";
+import { addBreadcrumb } from "@/lib/telemetry/sentry";
 
 const isAppleAuthCancelled = (error: unknown) => {
   if (!error || typeof error !== "object") return false;
@@ -50,6 +51,14 @@ export default function LoginScreen() {
   useEffect(() => {
     void supabase.auth.getSession();
   }, []);
+
+  useEffect(() => {
+    if (!showSessionExpiredNotice) return;
+    addBreadcrumb("[auth] session_expired_handoff_shown");
+    if (typeof __DEV__ !== "undefined" && __DEV__) {
+      console.log("[auth-recovery]", { event: "session_expired_handoff_shown" });
+    }
+  }, [showSessionExpiredNotice]);
 
   const getRedirectUrl = () =>
     makeRedirectUri({

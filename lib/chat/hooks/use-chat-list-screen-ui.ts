@@ -2,7 +2,7 @@ import { router } from "expo-router";
 import { Animated } from "react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { getPresenceDisplay } from "@/lib/presence";
+import { getAuthoritativePresenceDisplay } from "@/lib/presence";
 
 type ChatListConversation = {
   id: string;
@@ -11,6 +11,7 @@ type ChatListConversation = {
     userId: string;
     profileId: string | null;
     avatar_url: string;
+    isOnline: boolean;
     lastSeen: Date;
   };
 };
@@ -20,6 +21,7 @@ type ChatListNewMatch = {
   profileId: string;
   name: string;
   avatar_url: string | null;
+  isOnline: boolean;
   lastSeen: Date;
 };
 
@@ -97,7 +99,11 @@ export const useChatListScreenUi = <
   }, []);
 
   const openConversation = useCallback((conversation: TConversation) => {
-    const presence = getPresenceDisplay(conversation.matchedUser.lastSeen.toISOString(), Date.now());
+    const presence = getAuthoritativePresenceDisplay(
+      conversation.matchedUser.isOnline,
+      conversation.matchedUser.lastSeen.toISOString(),
+      Date.now(),
+    );
     const peerUserId = conversation.matchedUser.userId || conversation.id;
     const peerProfileId = conversation.matchedUser.profileId || '';
     router.push({
@@ -115,7 +121,7 @@ export const useChatListScreenUi = <
   }, []);
 
   const openNewMatch = useCallback((match: TNewMatch) => {
-    const presence = getPresenceDisplay(match.lastSeen.toISOString(), Date.now());
+    const presence = getAuthoritativePresenceDisplay(match.isOnline, match.lastSeen.toISOString(), Date.now());
     onNewMatchOpened?.(match);
     router.push({
       pathname: '/chat/[id]',

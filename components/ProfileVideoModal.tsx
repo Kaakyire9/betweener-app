@@ -12,7 +12,7 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from 'react-native-reanimated';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 
 type Props = {
   visible: boolean;
@@ -151,17 +151,18 @@ export default function ProfileVideoModal({
 
   return (
     <Modal animationType="fade" visible={visible} transparent onRequestClose={closeImmediately}>
-      <Animated.View style={[styles.backdrop, backdropStyle]}>
-        <LinearGradientSafe
-          colors={['rgba(2,5,7,0.98)', 'rgba(5,10,14,0.94)', 'rgba(6,12,18,0.98)']}
-          start={[0, 0]}
-          end={[1, 1]}
-          style={StyleSheet.absoluteFill}
-        />
-      </Animated.View>
+      <GestureHandlerRootView style={styles.container}>
+        <Animated.View style={[styles.backdrop, backdropStyle]}>
+          <LinearGradientSafe
+            colors={['rgba(2,5,7,0.98)', 'rgba(5,10,14,0.94)', 'rgba(6,12,18,0.98)']}
+            start={[0, 0]}
+            end={[1, 1]}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
 
-      <GestureDetector gesture={panGesture}>
-        <Animated.View style={[styles.container, contentStyle]}>
+        <GestureDetector gesture={panGesture}>
+          <Animated.View style={[styles.container, contentStyle]}>
           <View style={styles.videoWrapper}>
             {videoUrl ? (
               <ModalVideoPlayer uri={videoUrl} shouldPlay={visible} muted={muted} />
@@ -273,8 +274,9 @@ export default function ProfileVideoModal({
               </View>
             </View>
           </View>
-        </Animated.View>
-      </GestureDetector>
+          </Animated.View>
+        </GestureDetector>
+      </GestureHandlerRootView>
     </Modal>
   );
 }

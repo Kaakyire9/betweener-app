@@ -28,7 +28,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { VideoView, useVideoPlayer } from 'expo-video';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Video as VideoCompressor, getRealPath } from 'react-native-compressor';
 import {
     ActivityIndicator,
@@ -373,6 +373,75 @@ const InlineVideoPreview = ({ uri, shouldPlay, styles }: { uri: string; shouldPl
   return <VideoView style={styles.videoPreview} player={player} contentFit="cover" nativeControls={false} />;
 };
 
+type FieldPickerProps = {
+  title: string;
+  options: string[];
+  visible: boolean;
+  onClose: () => void;
+  onSelect: (value: string) => void;
+  currentValue: string;
+  styles: ReturnType<typeof createStyles>;
+  tintColor: string;
+};
+
+const FieldPicker = ({
+  title,
+  options,
+  visible,
+  onClose,
+  onSelect,
+  currentValue,
+  styles,
+  tintColor,
+}: FieldPickerProps) => (
+  <Modal
+    visible={visible}
+    animationType="slide"
+    presentationStyle="pageSheet"
+    onRequestClose={onClose}
+  >
+    <SafeAreaView style={styles.pickerContainer}>
+      <View style={styles.pickerHeader}>
+        <TouchableOpacity onPress={onClose}>
+          <Text style={styles.pickerCancel}>Cancel</Text>
+        </TouchableOpacity>
+        <Text style={styles.pickerTitle}>{title}</Text>
+        <View style={{ width: 60 }} />
+      </View>
+
+      <FlatList
+        data={options}
+        keyExtractor={(item) => item}
+        style={styles.pickerList}
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            style={[
+              styles.pickerItem,
+              currentValue === item && styles.pickerItemSelected,
+            ]}
+            onPress={() => {
+              onSelect(item);
+              onClose();
+            }}
+          >
+            <Text
+              style={[
+                styles.pickerItemText,
+                currentValue === item && styles.pickerItemTextSelected,
+              ]}
+            >
+              {item}
+            </Text>
+            {currentValue === item ? (
+              <MaterialCommunityIcons name="check" size={20} color={tintColor} />
+            ) : null}
+          </TouchableOpacity>
+        )}
+      />
+    </SafeAreaView>
+  </Modal>
+);
+
 export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerification }: ProfileEditModalProps) {
   const { user, profile, updateProfile, refreshProfile } = useAuth();
   const colorScheme = useColorScheme();
@@ -450,6 +519,33 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const [showInterestsPicker, setShowInterestsPicker] = useState(false);
   const [loadingInterests, setLoadingInterests] = useState(false);
   const initialSelectedInterestsRef = useRef<string[]>([]);
+
+  const closeNestedPickers = useCallback(() => {
+    setShowHeightPicker(false);
+    setShowOccupationPicker(false);
+    setShowEducationPicker(false);
+    setShowLookingForPicker(false);
+    setShowRegionPicker(false);
+    setShowReligionPicker(false);
+    setShowExercisePicker(false);
+    setShowSmokingPicker(false);
+    setShowDrinkingPicker(false);
+    setShowHasChildrenPicker(false);
+    setShowWantsChildrenPicker(false);
+    setShowPersonalityPicker(false);
+    setShowLoveLanguagePicker(false);
+    setShowLivingSituationPicker(false);
+    setShowPetsPicker(false);
+    setShowLanguagesPicker(false);
+    setShowInterestsPicker(false);
+    setCountryModalVisible(false);
+    setCountrySearch('');
+  }, []);
+
+  const closeProfileEditor = useCallback(() => {
+    closeNestedPickers();
+    onClose();
+  }, [closeNestedPickers, onClose]);
   
   // Form state
   const [formData, setFormData] = useState({
@@ -600,6 +696,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   useEffect(() => {
     if (!visible) {
       hydratedFromProfileRef.current = false;
+      closeNestedPickers();
       return;
     }
 
@@ -664,7 +761,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       // Set selected languages for multi-select
       setSelectedLanguages(filteredLanguages);
     }
-  }, [visible, profile]);
+  }, [closeNestedPickers, visible, profile]);
 
   useEffect(() => {
     if (!visible) return;
@@ -1048,62 +1145,6 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       setLoadingInterests(false);
     }
   };
-
-  const FieldPicker = ({ 
-    title, 
-    options, 
-    visible, 
-    onClose, 
-    onSelect, 
-    currentValue 
-  }: {
-    title: string;
-    options: string[];
-    visible: boolean;
-    onClose: () => void;
-    onSelect: (value: string) => void;
-    currentValue: string;
-  }) => (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet">
-      <SafeAreaView style={styles.pickerContainer}>
-        <View style={styles.pickerHeader}>
-          <TouchableOpacity onPress={onClose}>
-            <Text style={styles.pickerCancel}>Cancel</Text>
-          </TouchableOpacity>
-          <Text style={styles.pickerTitle}>{title}</Text>
-          <View style={{ width: 60 }} />
-        </View>
-        
-        <FlatList
-          data={options}
-          keyExtractor={(item) => item}
-          style={styles.pickerList}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={[
-                styles.pickerItem,
-                currentValue === item && styles.pickerItemSelected
-              ]}
-              onPress={() => {
-                onSelect(item);
-                onClose();
-              }}
-            >
-              <Text style={[
-                styles.pickerItemText,
-                currentValue === item && styles.pickerItemTextSelected
-              ]}>
-                {item}
-              </Text>
-              {currentValue === item && (
-                <MaterialCommunityIcons name="check" size={20} color={theme.tint} />
-              )}
-            </TouchableOpacity>
-          )}
-        />
-      </SafeAreaView>
-    </Modal>
-  );
 
   const pickImage = async (isAvatar: boolean = false) => {
     try {
@@ -1923,11 +1964,12 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       visible={visible}
       animationType="slide"
       presentationStyle="pageSheet"
+      onRequestClose={closeProfileEditor}
     >
       <SafeAreaView style={styles.container}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={onClose}>
+          <TouchableOpacity onPress={closeProfileEditor}>
             <Text style={styles.cancelButton}>Cancel</Text>
           </TouchableOpacity>
           <Text style={styles.title}>Edit Profile</Text>
@@ -3223,6 +3265,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('height', value);
         }}
         currentValue={formData.height}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       <Modal
@@ -3312,6 +3356,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             handleInputChange('region', value);
           }}
           currentValue={formData.region}
+          styles={styles}
+          tintColor={theme.tint}
         />
       )}
 
@@ -3323,6 +3369,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         onClose={() => setShowReligionPicker(false)}
         onSelect={(value) => handleInputChange('religion', value)}
         currentValue={formatReligionLabel(formData.religion)}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Occupation Picker */}
@@ -3338,6 +3386,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('occupation', value);
         }}
         currentValue={formData.occupation}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Education Picker */}
@@ -3353,6 +3403,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('education', value);
         }}
         currentValue={formData.education}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Looking For Picker */}
@@ -3368,6 +3420,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('looking_for', value);
         }}
         currentValue={formData.looking_for}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* HIGH PRIORITY Pickers */}
@@ -3385,6 +3439,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('exercise_frequency', value);
         }}
         currentValue={formData.exercise_frequency}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Smoking Picker */}
@@ -3400,6 +3456,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('smoking', value);
         }}
         currentValue={formData.smoking}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Drinking Picker */}
@@ -3415,6 +3473,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('drinking', value);
         }}
         currentValue={formData.drinking}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Has Children Picker */}
@@ -3430,6 +3490,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('has_children', value);
         }}
         currentValue={formData.has_children}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Wants Children Picker */}
@@ -3445,6 +3507,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('wants_children', value);
         }}
         currentValue={formData.wants_children}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Personality Type Picker */}
@@ -3460,6 +3524,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('personality_type', value);
         }}
         currentValue={formData.personality_type}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Love Language Picker */}
@@ -3475,6 +3541,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('love_language', value);
         }}
         currentValue={formData.love_language}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Living Situation Picker */}
@@ -3490,6 +3558,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('living_situation', value);
         }}
         currentValue={formData.living_situation}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Pets Picker */}
@@ -3505,10 +3575,17 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           handleInputChange('pets', value);
         }}
         currentValue={formData.pets}
+        styles={styles}
+        tintColor={theme.tint}
       />
 
       {/* Languages Multi-Select Picker */}
-      <Modal visible={showLanguagesPicker} animationType="slide" presentationStyle="pageSheet">
+      <Modal
+        visible={showLanguagesPicker}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowLanguagesPicker(false)}
+      >
         <SafeAreaView style={styles.pickerContainer}>
           <View style={styles.pickerHeader}>
             <TouchableOpacity onPress={() => setShowLanguagesPicker(false)}>
@@ -3562,7 +3639,12 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       </Modal>
 
       {/* Interests Multi-Select Picker */}
-      <Modal visible={showInterestsPicker} animationType="slide" presentationStyle="pageSheet">
+      <Modal
+        visible={showInterestsPicker}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowInterestsPicker(false)}
+      >
         <SafeAreaView style={styles.pickerContainer}>
           <View style={styles.pickerHeader}>
             <TouchableOpacity onPress={() => setShowInterestsPicker(false)}>

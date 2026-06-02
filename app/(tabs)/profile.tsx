@@ -50,7 +50,6 @@ import type { GuessMode, ProfilePromptAnswer, PromptType } from "@/types/user-pr
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as AppleAuthentication from "expo-apple-authentication";
-import * as Clipboard from "expo-clipboard";
 import { makeRedirectUri } from "expo-auth-session";
 import { router, useLocalSearchParams } from "expo-router";
 import * as Linking from "expo-linking";
@@ -648,7 +647,6 @@ export default function ProfileScreen() {
       (guessPromptMode !== 'multiple_choice' || guessPromptSanitizedOptions.length >= 2),
   );
   
-  const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [showSettingsDropdown, setShowSettingsDropdown] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showAppearanceModal, setShowAppearanceModal] = useState(false);
@@ -782,39 +780,6 @@ export default function ProfileScreen() {
   const [rewardText, setRewardText] = useState<string | null>(null);
   const [progressTrackWidth, setProgressTrackWidth] = useState(0);
   const canSeeAdminTools = canAccessAdminTools(user?.email ?? null);
-
-  const handleCopyDevSessionToken = useCallback(async () => {
-    try {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) {
-        Alert.alert('Session error', error.message);
-        return;
-      }
-
-      const accessToken = data.session?.access_token ?? null;
-      const authUserId = data.session?.user?.id ?? user?.id ?? null;
-      const profileId = profile?.id ?? null;
-
-      if (!accessToken) {
-        Alert.alert('No active session', 'No access token found for the current signed-in session.');
-        return;
-      }
-
-      const debugPayload = [
-        `ACCESS_TOKEN=${accessToken}`,
-        `AUTH_USER_ID=${authUserId ?? ''}`,
-        `PROFILE_ID=${profileId ?? ''}`,
-      ].join('\n');
-
-      await Clipboard.setStringAsync(debugPayload);
-      Alert.alert(
-        'Session copied',
-        `Copied access token, auth user id, and profile id.\n\nAuth user: ${authUserId ?? 'unknown'}\nProfile: ${profileId ?? 'unknown'}`,
-      );
-    } catch (error: any) {
-      Alert.alert('Copy failed', error?.message || 'Unable to read the current session.');
-    }
-  }, [profile?.id, user?.id]);
 
   const progressSubtitle = useMemo(() => {
     if (profileCompletion.percent >= 100) return "Profile complete";
@@ -1500,15 +1465,6 @@ export default function ProfileScreen() {
     void loadNotificationPrefs();
   }, [loadNotificationPrefs]);
 
-  // Check if returning from full preview and should enter preview mode
-  useEffect(() => {
-    if (params.returnToPreview === 'true') {
-      setIsPreviewMode(true);
-      // Clear the parameter to avoid re-triggering
-      router.replace('/(tabs)/profile');
-    }
-  }, [params.returnToPreview]);
-
   useEffect(() => {
     if (params.openVerification === 'true') {
       setIsVerificationModalVisible(true);
@@ -1607,8 +1563,6 @@ export default function ProfileScreen() {
   };
 
   const handlePromptSelect = async (promptId: string, index: number) => {
-    if (isPreviewMode) return; // Don't allow changes in preview mode
-
     const prompt = PROFILE_PROMPTS.find((p) => p.id === promptId);
     const answer = prompt?.responses?.[index];
     if (!prompt || !answer) return;
@@ -1647,7 +1601,7 @@ export default function ProfileScreen() {
   };
 
   const saveCustomPrompt = async () => {
-    if (isPreviewMode || !profile?.id) return;
+    if (!profile?.id) return;
     const title = customPromptTitle.trim();
     const answer = customPromptAnswer.trim();
     if (!title || !answer) return;
@@ -1677,7 +1631,7 @@ export default function ProfileScreen() {
   }, []);
 
   const saveGuessPrompt = async () => {
-    if (isPreviewMode || !profile?.id) return;
+    if (!profile?.id) return;
     const title = guessPromptTitle.trim();
     const answer = guessPromptAnswer.trim();
     if (!title || !answer) return;
@@ -1735,7 +1689,7 @@ export default function ProfileScreen() {
 
   const deletePrompt = useCallback(
     async (promptRowId: string) => {
-      if (isPreviewMode || !profile?.id || !promptRowId) return;
+      if (!profile?.id || !promptRowId) return;
       setDeletingPromptId(promptRowId);
       try {
         const { error } = await supabase
@@ -1752,15 +1706,14 @@ export default function ProfileScreen() {
         setDeletingPromptId(null);
       }
     },
-    [isPreviewMode, loadPromptAnswers, profile?.id],
+    [loadPromptAnswers, profile?.id],
   );
 
-  const togglePreviewMode = () => {
-    setIsPreviewMode(!isPreviewMode);
-  };
+  const handlePreviewPress = useCallback(() => {
+    openFullPreview();
+  }, []);
 
   const openPromptEditor = useCallback(() => {
-    if (isPreviewMode) return;
     setShowPromptEditor(true);
     requestAnimationFrame(() => {
       setTimeout(() => {
@@ -1770,7 +1723,7 @@ export default function ProfileScreen() {
         });
       }, 80);
     });
-  }, [isPreviewMode]);
+  }, []);
 
   const openFullPreview = () => {
     // Navigate to the full profile view screen in preview mode
@@ -2234,7 +2187,6 @@ export default function ProfileScreen() {
   }, [hasPasswordBackup, hasRecoveryBackup, normalizedLinkedRecoveryMethods.length]);
 
   const shouldShowLinkedMethodsBanner =
-    !isPreviewMode &&
     !linkedMethodsBannerDismissed &&
     !identitiesLoading &&
     !hasRecoveryBackup;
@@ -2798,10 +2750,9 @@ export default function ProfileScreen() {
   const hasPendingVerificationRequest =
     verificationStatus.hasPendingRequest || Boolean(verificationStatus.pendingRequest);
   const showPendingVerificationNudge =
-    !isPreviewMode && !verificationStatus.loading && hasPendingVerificationRequest;
+    !verificationStatus.loading && hasPendingVerificationRequest;
   const showInviteVerificationNudge =
-    !isPreviewMode
-    && !verificationStatus.loading
+    !verificationStatus.loading
     && !hasPendingVerificationRequest
     && verificationLevel === 1
     && !verificationNudgeDismissed;
@@ -2879,55 +2830,8 @@ export default function ProfileScreen() {
         .slice(0, 2),
     [promptAnswers],
   );
-  const previewFeaturedPrompt = useMemo(() => {
-    const firstPrompt = promptAnswers.find((row) => row.promptTitle?.trim() || row.answer?.trim());
-    if (!firstPrompt) return null;
-    const prompt = PROFILE_PROMPTS.find((item) => item.id === firstPrompt.promptKey);
-    const guessPrompt = isGuessPrompt(firstPrompt.promptType);
-    return {
-      id: firstPrompt.id,
-      title: firstPrompt.promptTitle || prompt?.title || 'Prompt',
-      answer: firstPrompt.answer,
-      eyebrow: guessPrompt ? 'Quick guess' : 'Featured prompt',
-      meta:
-        guessPrompt && firstPrompt.guessMode
-          ? isMultipleChoiceGuess(firstPrompt.guessMode)
-            ? '1 prompt challenge'
-            : 'One clean guess'
-          : null,
-      promptType: firstPrompt.promptType || 'standard',
-      guessMode: firstPrompt.guessMode || null,
-      guessOptions: Array.isArray(firstPrompt.guessOptions)
-        ? firstPrompt.guessOptions.filter((item): item is string => typeof item === 'string')
-        : [],
-      hintText: firstPrompt.hintText || null,
-    };
-  }, [promptAnswers]);
-  const previewFeaturedGuessOptions = useMemo(() => {
-    if (!previewFeaturedPrompt || !isGuessPrompt(previewFeaturedPrompt.promptType) || !isMultipleChoiceGuess(previewFeaturedPrompt.guessMode)) {
-      return [];
-    }
-    return sanitizeGuessOptions(previewFeaturedPrompt.guessOptions, previewFeaturedPrompt.answer).slice(0, 4);
-  }, [previewFeaturedPrompt]);
-  const previewExtraPrompts = useMemo(() => {
-    const standardPrompts = promptAnswers
-      .filter((row) => !isGuessPrompt(row.promptType) && row.answer?.trim())
-      .map((row) => {
-        const prompt = PROFILE_PROMPTS.find((item) => item.id === row.promptKey);
-        return {
-          id: row.id,
-          title: row.promptTitle || prompt?.title || 'Prompt',
-          answer: row.answer,
-          meta: null as string | null,
-        };
-      });
-    if (previewFeaturedPrompt && !isGuessPrompt(previewFeaturedPrompt.promptType)) {
-      return standardPrompts.filter((row) => row.id !== previewFeaturedPrompt.id).slice(0, 2);
-    }
-    return standardPrompts.slice(0, 2);
-  }, [previewFeaturedPrompt, promptAnswers]);
-  const featuredPrompt = isPreviewMode ? previewFeaturedPrompt : promptHighlights[0] ?? null;
-  const extraPrompts = isPreviewMode ? previewExtraPrompts : promptHighlights.slice(1);
+  const featuredPrompt = promptHighlights[0] ?? null;
+  const extraPrompts = promptHighlights.slice(1);
 
   const [showStartPicker, setShowStartPicker] = useState(false);
   const [showEndPicker, setShowEndPicker] = useState(false);
@@ -3070,56 +2974,33 @@ export default function ProfileScreen() {
       >
         <View style={styles.headerLeft}>
           <Text style={[styles.headerTitle, { color: theme.text }]}>
-            {isPreviewMode ? 'Profile Preview' : 'My Profile'}
+            My Profile
           </Text>
         </View>
         <View style={styles.headerRight}>
           <TouchableOpacity 
-            style={[styles.previewButton, isPreviewMode && styles.previewButtonActive]} 
-            onPress={togglePreviewMode}
+            style={styles.previewButton}
+            onPress={handlePreviewPress}
           >
             <MaterialCommunityIcons 
-              name={isPreviewMode ? "eye-off" : "eye"} 
+              name="eye"
               size={20} 
-              color={isPreviewMode ? '#fff' : theme.tint} 
+              color={theme.tint}
             />
-            <Text style={[styles.previewButtonText, isPreviewMode && styles.previewButtonTextActive, { color: isPreviewMode ? '#fff' : theme.tint }]}>
-              {isPreviewMode ? 'Edit' : 'Preview'}
+            <Text style={[styles.previewButtonText, { color: theme.tint }]}>
+              Full Preview
             </Text>
           </TouchableOpacity>
-          
-          {!isPreviewMode && (
-            <>
-              {__DEV__ && (
-                <>
-                  <TouchableOpacity
-                    style={styles.devButton}
-                    onPress={handleCopyDevSessionToken}
-                    accessibilityLabel="Copy current session token (dev)"
-                  >
-                    <Text style={styles.devButtonText}>TOK</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.devButton}
-                    onPress={() => router.push("/(auth)/onboarding?variant=ghana")}
-                    accessibilityLabel="Open Ghana onboarding (dev)"
-                  >
-                    <Text style={styles.devButtonText}>GH</Text>
-                  </TouchableOpacity>
-                </>
-              )}
-              <TouchableOpacity 
-                style={[styles.settingsButton, showSettingsDropdown && styles.settingsButtonActive]} 
-                onPress={toggleSettingsDropdown}
-              >
-                <MaterialCommunityIcons 
-                  name={showSettingsDropdown ? "close" : "cog"} 
-                  size={24} 
-                  color={showSettingsDropdown ? '#fff' : theme.tint} 
-                />
-              </TouchableOpacity>
-            </>
-          )}
+          <TouchableOpacity
+            style={[styles.settingsButton, showSettingsDropdown && styles.settingsButtonActive]}
+            onPress={toggleSettingsDropdown}
+          >
+            <MaterialCommunityIcons
+              name={showSettingsDropdown ? "close" : "cog"}
+              size={24}
+              color={showSettingsDropdown ? '#fff' : theme.tint}
+            />
+          </TouchableOpacity>
         </View>
       </Animated.View>
 
@@ -4528,22 +4409,6 @@ export default function ProfileScreen() {
         </View>
       </Modal>
 
-      {/* Preview Mode Banner */}
-      {isPreviewMode && (
-        <View style={[styles.previewBanner, { backgroundColor: theme.tint + '15', borderBottomColor: theme.outline }]}>
-          <MaterialCommunityIcons name="eye" size={16} color={theme.tint} />
-          <View style={styles.previewBannerContent}>
-            <Text style={styles.previewBannerText}>
-              This is how others see your profile
-            </Text>
-            <TouchableOpacity style={styles.fullPreviewButton} onPress={openFullPreview}>
-              <Text style={styles.fullPreviewButtonText}>View Full Preview</Text>
-              <MaterialCommunityIcons name="arrow-right" size={14} color={theme.tint} />
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
       <Animated.ScrollView
         ref={scrollViewRef}
         style={[styles.scrollView, { backgroundColor: theme.background }]}
@@ -4587,20 +4452,18 @@ export default function ProfileScreen() {
                 <View style={styles.heroInnerStroke} pointerEvents="none" />
                 <View style={styles.heroGrain} pointerEvents="none" />
                 <View style={styles.heroTopRow}>
-                  {!isPreviewMode && (
-                    <TouchableOpacity
-                      style={[
-                        styles.heroEditButton,
-                        {
-                          backgroundColor: isDark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.9)",
-                          borderColor: theme.outline,
-                        },
-                      ]}
-                      onPress={() => setShowEditModal(true)}
-                    >
-                      <MaterialCommunityIcons name="pencil" size={16} color={theme.text} />
-                    </TouchableOpacity>
-                  )}
+                  <TouchableOpacity
+                    style={[
+                      styles.heroEditButton,
+                      {
+                        backgroundColor: isDark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.9)",
+                        borderColor: theme.outline,
+                      },
+                    ]}
+                    onPress={() => setShowEditModal(true)}
+                  >
+                    <MaterialCommunityIcons name="pencil" size={16} color={theme.text} />
+                  </TouchableOpacity>
                 </View>
               </View>
             ) : (
@@ -4625,20 +4488,18 @@ export default function ProfileScreen() {
                   <View style={styles.heroInnerStroke} pointerEvents="none" />
                   <View style={styles.heroGrain} pointerEvents="none" />
                   <View style={styles.heroTopRow}>
-                    {!isPreviewMode && (
-                      <TouchableOpacity
-                        style={[
-                          styles.heroEditButton,
-                          {
-                            backgroundColor: isDark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.9)",
-                            borderColor: theme.outline,
-                          },
-                        ]}
-                        onPress={() => setShowEditModal(true)}
-                      >
-                        <MaterialCommunityIcons name="pencil" size={16} color={theme.text} />
-                      </TouchableOpacity>
-                    )}
+                    <TouchableOpacity
+                      style={[
+                        styles.heroEditButton,
+                        {
+                          backgroundColor: isDark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.9)",
+                          borderColor: theme.outline,
+                        },
+                      ]}
+                      onPress={() => setShowEditModal(true)}
+                    >
+                      <MaterialCommunityIcons name="pencil" size={16} color={theme.text} />
+                    </TouchableOpacity>
                   </View>
                 </View>
               ) : (
@@ -4653,20 +4514,18 @@ export default function ProfileScreen() {
                   <View style={styles.heroInnerStroke} pointerEvents="none" />
                   <View style={styles.heroGrain} pointerEvents="none" />
                   <View style={styles.heroTopRow}>
-                    {!isPreviewMode && (
-                      <TouchableOpacity
-                        style={[
-                          styles.heroEditButton,
-                          {
-                            backgroundColor: "rgba(255,255,255,0.14)",
-                            borderColor: "rgba(255,255,255,0.24)",
-                          },
-                        ]}
-                        onPress={() => setShowEditModal(true)}
-                      >
-                        <MaterialCommunityIcons name="pencil" size={16} color="#fff" />
-                      </TouchableOpacity>
-                    )}
+                    <TouchableOpacity
+                      style={[
+                        styles.heroEditButton,
+                        {
+                          backgroundColor: "rgba(255,255,255,0.14)",
+                          borderColor: "rgba(255,255,255,0.24)",
+                        },
+                      ]}
+                      onPress={() => setShowEditModal(true)}
+                    >
+                      <MaterialCommunityIcons name="pencil" size={16} color="#fff" />
+                    </TouchableOpacity>
                   </View>
                   <View style={styles.heroPlaceholderContent}>
                     <Text style={styles.heroPlaceholderEyebrow}>Premium presence starts here</Text>
@@ -4708,14 +4567,12 @@ export default function ProfileScreen() {
                 )}
               </View>
             </LinearGradient>
-            {!isPreviewMode && (
-              <TouchableOpacity
-                style={styles.editAvatarButton}
-                onPress={() => setShowEditModal(true)}
-              >
-                <MaterialCommunityIcons name="camera" size={14} color="#fff" />
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              style={styles.editAvatarButton}
+              onPress={() => setShowEditModal(true)}
+            >
+              <MaterialCommunityIcons name="camera" size={14} color="#fff" />
+            </TouchableOpacity>
           </View>
 
           <View style={styles.heroNameRow}>
@@ -4800,13 +4657,12 @@ export default function ProfileScreen() {
               onSecondaryPress={dismissVerificationNudge}
             />
           ) : null}
-          {!isPreviewMode ? (
-            <View
-              style={[
-                styles.progressCard,
-                { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-              ]}
-            >
+          <View
+            style={[
+              styles.progressCard,
+              { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+            ]}
+          >
               <View style={styles.progressTopRow}>
                 <View>
                   <Text style={[styles.progressTitle, { color: theme.text }]}>
@@ -4897,8 +4753,7 @@ export default function ProfileScreen() {
                   <MaterialCommunityIcons name="chevron-right" size={14} color={theme.textMuted} />
                 </TouchableOpacity>
               ) : null}
-            </View>
-          ) : null}
+          </View>
 
           {featuredPrompt ? (
             <View
@@ -4911,124 +4766,49 @@ export default function ProfileScreen() {
                 <Text style={[styles.featuredPromptEyebrow, { color: theme.tint }]}>
                   {featuredPrompt.eyebrow}
                 </Text>
-                {!isPreviewMode ? (
-                  <View style={styles.promptHeaderActions}>
-                    <TouchableOpacity
-                      style={[styles.promptActionButton, { borderColor: theme.outline }]}
-                      onPress={() => {
-                        setPromptComposerMode(featuredPrompt.promptType === 'guess' ? 'guess' : 'standard');
-                        openPromptEditor();
-                      }}
-                    >
-                      <MaterialCommunityIcons name="pencil" size={14} color={theme.tint} />
-                      <Text style={[styles.promptActionText, { color: theme.tint }]}>Edit</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.promptRemoveButton, { borderColor: theme.outline }]}
-                      onPress={() => void deletePrompt(featuredPrompt.id)}
-                      disabled={deletingPromptId === featuredPrompt.id}
-                    >
-                      <MaterialCommunityIcons name="trash-can-outline" size={14} color={theme.textMuted} />
-                      <Text style={[styles.promptRemoveText, { color: theme.textMuted }]}>
-                        {deletingPromptId === featuredPrompt.id ? 'Removing' : 'Remove'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : null}
+                <View style={styles.promptHeaderActions}>
+                  <TouchableOpacity
+                    style={[styles.promptActionButton, { borderColor: theme.outline }]}
+                    onPress={() => {
+                      setPromptComposerMode(featuredPrompt.promptType === 'guess' ? 'guess' : 'standard');
+                      openPromptEditor();
+                    }}
+                  >
+                    <MaterialCommunityIcons name="pencil" size={14} color={theme.tint} />
+                    <Text style={[styles.promptActionText, { color: theme.tint }]}>Edit</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.promptRemoveButton, { borderColor: theme.outline }]}
+                    onPress={() => void deletePrompt(featuredPrompt.id)}
+                    disabled={deletingPromptId === featuredPrompt.id}
+                  >
+                    <MaterialCommunityIcons name="trash-can-outline" size={14} color={theme.textMuted} />
+                    <Text style={[styles.promptRemoveText, { color: theme.textMuted }]}>
+                      {deletingPromptId === featuredPrompt.id ? 'Removing' : 'Remove'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </View>
               <Text style={[styles.featuredPromptTitle, { color: theme.text }]}>
                 {featuredPrompt.title}
               </Text>
-              {isPreviewMode && isGuessPrompt(featuredPrompt.promptType) ? (
-                <>
-                  {featuredPrompt.meta ? (
-                    <View style={styles.guessPreviewMetaRow}>
-                      <View
-                        style={[
-                          styles.guessPreviewMetaPill,
-                          { backgroundColor: theme.background, borderColor: theme.outline },
-                        ]}
-                      >
-                        <MaterialCommunityIcons
-                          name="gamepad-variant-outline"
-                          size={14}
-                          color={theme.tint}
-                        />
-                        <Text style={[styles.guessPreviewMetaText, { color: theme.textMuted }]}>
-                          {featuredPrompt.meta}
-                        </Text>
-                      </View>
-                    </View>
-                  ) : null}
-                  <Text style={[styles.guessPreviewHint, { color: theme.textMuted }]}>
-                    {previewFeaturedPrompt?.hintText?.trim()
-                      ? `Hint: ${previewFeaturedPrompt.hintText.trim()}`
-                      : 'Take one clean guess. If they get it right, the moment opens up.'}
+              <>
+                {featuredPrompt.meta ? (
+                  <Text style={[styles.promptMetaText, { color: theme.textMuted }]}>
+                    {featuredPrompt.meta}
                   </Text>
-                  {isMultipleChoiceGuess(previewFeaturedPrompt?.guessMode) ? (
-                    <View style={styles.guessPreviewOptions}>
-                      {previewFeaturedGuessOptions.length > 0 ? (
-                        previewFeaturedGuessOptions.map((option, index) => (
-                          <View
-                            key={`profile-preview-guess-${index}`}
-                            style={[
-                              styles.guessPreviewOption,
-                              { backgroundColor: theme.background, borderColor: theme.outline },
-                            ]}
-                          >
-                            <Text style={[styles.guessPreviewOptionText, { color: theme.text }]}>
-                              {option}
-                            </Text>
-                          </View>
-                        ))
-                      ) : (
-                        <View
-                          style={[
-                            styles.guessPreviewOption,
-                            { backgroundColor: theme.background, borderColor: theme.outline },
-                          ]}
-                        >
-                          <Text style={[styles.guessPreviewOptionText, { color: theme.textMuted }]}>
-                            Add a correct answer and believable wrong options
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  ) : (
-                    <View
-                      style={[
-                        styles.guessPreviewOption,
-                        { backgroundColor: theme.background, borderColor: theme.outline },
-                      ]}
-                    >
-                      <Text style={[styles.guessPreviewOptionText, { color: theme.textMuted }]}>
-                        Type your guess
-                      </Text>
-                    </View>
-                  )}
-                  <Text style={[styles.guessPreviewFooter, { color: theme.textMuted }]}>
-                    Correct answer stays hidden until they play.
-                  </Text>
-                </>
-              ) : (
-                <>
-                  {featuredPrompt.meta ? (
-                    <Text style={[styles.promptMetaText, { color: theme.textMuted }]}>
-                      {featuredPrompt.meta}
-                    </Text>
-                  ) : null}
-                  <Text
-                    style={[
-                      styles.featuredPromptAnswer,
-                      { color: isPreviewMode ? theme.textMuted : theme.text },
-                    ]}
-                  >
-                    {featuredPrompt.answer}
-                  </Text>
-                </>
-              )}
+                ) : null}
+                <Text
+                  style={[
+                    styles.featuredPromptAnswer,
+                    { color: theme.text },
+                  ]}
+                >
+                  {featuredPrompt.answer}
+                </Text>
+              </>
             </View>
-          ) : !isPreviewMode && !promptsLoading ? (
+          ) : !promptsLoading ? (
             <View
               style={[
                 styles.featuredPromptCard,
@@ -5273,15 +5053,13 @@ export default function ProfileScreen() {
 
         </View>
 
-        {/* Quick Stats - Hidden in preview mode */}
-        {!isPreviewMode && (
-          <View
-            style={[
-              styles.statsContainer,
-              styles.cardShadow,
-              { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline, borderWidth: 1, borderRadius: 18 },
-            ]}
-          >
+        <View
+          style={[
+            styles.statsContainer,
+            styles.cardShadow,
+            { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline, borderWidth: 1, borderRadius: 18 },
+          ]}
+        >
             <View style={styles.statsHighlight}>
               <LinearGradient
                 colors={[theme.tint, theme.accent, "transparent"]}
@@ -5336,8 +5114,7 @@ export default function ProfileScreen() {
             <Text style={[styles.statsHint, { color: theme.textMuted }]}>
               Tap a tile to jump in
             </Text>
-          </View>
-        )}
+        </View>
 
         {/* Photo Gallery Section */}
         <View
@@ -5352,15 +5129,13 @@ export default function ProfileScreen() {
             <Text style={[styles.sectionTitle, { color: theme.text }]}>
               Gallery
             </Text>
-            {!isPreviewMode && (
-              <TouchableOpacity 
-                style={styles.addButton}
-                onPress={() => setShowEditModal(true)}
-              >
-                <MaterialCommunityIcons name="plus" size={20} color={Colors.light.tint} />
-                <Text style={styles.addButtonText}>Add</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              style={styles.addButton}
+              onPress={() => setShowEditModal(true)}
+            >
+              <MaterialCommunityIcons name="plus" size={20} color={Colors.light.tint} />
+              <Text style={styles.addButtonText}>Add</Text>
+            </TouchableOpacity>
           </View>
           
           {hasGalleryMedia ? (
@@ -5369,7 +5144,7 @@ export default function ProfileScreen() {
               introVideoUrl={heroVideoUrl}
               introVideoThumbnail={heroVideoThumbnail || avatarImageUri}
               onOpenVideo={() => setIntroVideoOpen(true)}
-              canEdit={!isPreviewMode}
+              canEdit
               onAddPhoto={() => setShowEditModal(true)}
               onRemovePhoto={removePhoto}
             />
@@ -5388,14 +5163,12 @@ export default function ProfileScreen() {
               <Text style={[styles.emptyFeatureSubtitle, { color: theme.textMuted }]}>
                 Add a few photos or an intro video so your profile feels complete, real, and easy to trust.
               </Text>
-              {!isPreviewMode ? (
-                <TouchableOpacity
-                  style={[styles.emptyFeatureButton, { backgroundColor: theme.tint }]}
-                  onPress={() => setShowEditModal(true)}
-                >
-                  <Text style={styles.emptyFeatureButtonText}>Add media</Text>
-                </TouchableOpacity>
-              ) : null}
+              <TouchableOpacity
+                style={[styles.emptyFeatureButton, { backgroundColor: theme.tint }]}
+                onPress={() => setShowEditModal(true)}
+              >
+                <Text style={styles.emptyFeatureButtonText}>Add media</Text>
+              </TouchableOpacity>
             </View>
           )}
         </View>
@@ -5419,15 +5192,13 @@ export default function ProfileScreen() {
               <Text style={[styles.sectionTitle, { color: theme.text }]}>
                 About Me
               </Text>
-              {!isPreviewMode && (
-                <TouchableOpacity 
-                  style={[styles.editButton, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}
-                  onPress={() => setShowEditModal(true)}
-                >
-                  <MaterialCommunityIcons name="pencil" size={16} color={theme.tint} />
-                  <Text style={[styles.editButtonText, { color: theme.tint }]}>Edit</Text>
-                </TouchableOpacity>
-              )}
+              <TouchableOpacity
+                style={[styles.editButton, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}
+                onPress={() => setShowEditModal(true)}
+              >
+                <MaterialCommunityIcons name="pencil" size={16} color={theme.tint} />
+                <Text style={[styles.editButtonText, { color: theme.tint }]}>Edit</Text>
+              </TouchableOpacity>
             </View>
 
             {showAboutCard ? (
@@ -5451,7 +5222,7 @@ export default function ProfileScreen() {
           </View>
         ) : null}
 
-        {(showPromptEditor || extraPrompts.length > 0 || (!featuredPrompt && !isPreviewMode) || promptsLoading) ? (
+        {(showPromptEditor || extraPrompts.length > 0 || !featuredPrompt || promptsLoading) ? (
           <View
             style={[
               styles.section,
@@ -5465,17 +5236,15 @@ export default function ProfileScreen() {
           >
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: theme.text }]}>Prompts</Text>
-              {!isPreviewMode ? (
-                <TouchableOpacity
-                  style={[styles.editButton, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}
-                  onPress={() => setShowPromptEditor((prev) => !prev)}
-                >
-                  <MaterialCommunityIcons name="comment-quote-outline" size={16} color={theme.tint} />
-                  <Text style={[styles.editButtonText, { color: theme.tint }]}>
-                    {showPromptEditor ? 'Hide' : 'Manage'}
-                  </Text>
-                </TouchableOpacity>
-              ) : null}
+              <TouchableOpacity
+                style={[styles.editButton, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}
+                onPress={() => setShowPromptEditor((prev) => !prev)}
+              >
+                <MaterialCommunityIcons name="comment-quote-outline" size={16} color={theme.tint} />
+                <Text style={[styles.editButtonText, { color: theme.tint }]}>
+                  {showPromptEditor ? 'Hide' : 'Manage'}
+                </Text>
+              </TouchableOpacity>
             </View>
 
             {showPromptEditor ? (
@@ -5840,19 +5609,17 @@ export default function ProfileScreen() {
                       <Text style={[styles.promptHighlightTitle, { color: theme.textMuted }]}>
                         {prompt.title}
                       </Text>
-                      {!isPreviewMode ? (
-                        <TouchableOpacity
-                          style={[styles.promptRemoveIconButton, { borderColor: theme.outline }]}
-                          onPress={() => void deletePrompt(prompt.id)}
-                          disabled={deletingPromptId === prompt.id}
-                        >
-                          <MaterialCommunityIcons
-                            name="trash-can-outline"
-                            size={14}
-                            color={theme.textMuted}
-                          />
-                        </TouchableOpacity>
-                      ) : null}
+                      <TouchableOpacity
+                        style={[styles.promptRemoveIconButton, { borderColor: theme.outline }]}
+                        onPress={() => void deletePrompt(prompt.id)}
+                        disabled={deletingPromptId === prompt.id}
+                      >
+                        <MaterialCommunityIcons
+                          name="trash-can-outline"
+                          size={14}
+                          color={theme.textMuted}
+                        />
+                      </TouchableOpacity>
                     </View>
                     {prompt.meta ? (
                       <Text style={[styles.promptMetaText, { color: theme.textMuted }]}>
@@ -5897,15 +5664,13 @@ export default function ProfileScreen() {
             <Text style={[styles.sectionTitle, { color: theme.text }]}>
               Interests
             </Text>
-            {!isPreviewMode && (
-              <TouchableOpacity 
-                style={[styles.editButton, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}
-                onPress={() => setShowEditModal(true)}
-              >
-                <MaterialCommunityIcons name="pencil" size={16} color={theme.tint} />
-                <Text style={[styles.editButtonText, { color: theme.tint }]}>Edit</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              style={[styles.editButton, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}
+              onPress={() => setShowEditModal(true)}
+            >
+              <MaterialCommunityIcons name="pencil" size={16} color={theme.tint} />
+              <Text style={[styles.editButtonText, { color: theme.tint }]}>Edit</Text>
+            </TouchableOpacity>
           </View>
           
           <View style={styles.interestsContainer}>
@@ -5931,14 +5696,12 @@ export default function ProfileScreen() {
                 <Text style={[styles.emptyFeatureSubtitle, { color: theme.textMuted }]}>
                   Add a few interests so your matches can spot shared energy faster.
                 </Text>
-                {!isPreviewMode ? (
-                  <TouchableOpacity
-                    style={[styles.emptyFeatureButton, { backgroundColor: theme.tint }]}
-                    onPress={() => setShowEditModal(true)}
-                  >
-                    <Text style={styles.emptyFeatureButtonText}>Add interests</Text>
-                  </TouchableOpacity>
-                ) : null}
+                <TouchableOpacity
+                  style={[styles.emptyFeatureButton, { backgroundColor: theme.tint }]}
+                  onPress={() => setShowEditModal(true)}
+                >
+                  <Text style={styles.emptyFeatureButtonText}>Add interests</Text>
+                </TouchableOpacity>
               </View>
             )}
           </View>
@@ -5969,23 +5732,6 @@ export default function ProfileScreen() {
             </Text>
           </View>
         </View>
-
-        {/* Action Buttons - Only show in preview mode */}
-        {isPreviewMode && (
-          <View style={styles.previewActions}>
-            <TouchableOpacity style={styles.actionButton}>
-              <MaterialCommunityIcons name="close" size={24} color="#fff" />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.infoButton}>
-              <MaterialCommunityIcons name="information" size={24} color={Colors.light.tint} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.likeButton}>
-              <MaterialCommunityIcons name="heart" size={24} color="#fff" />
-            </TouchableOpacity>
-          </View>
-        )}
-
-
 
         {/* Bottom spacing */}
         <View style={{ height: 32 }} />
@@ -6156,33 +5902,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 6,
   },
-  previewButtonActive: {
-    backgroundColor: Colors.light.tint,
-    borderColor: Colors.light.tint,
-  },
   previewButtonText: {
     fontSize: 14,
     fontFamily: 'Manrope_600SemiBold',
     color: Colors.light.tint,
-  },
-  previewButtonTextActive: {
-    color: '#fff',
-  },
-  devButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: Colors.light.tint,
-    backgroundColor: 'transparent',
-  },
-  devButtonText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: Colors.light.tint,
-    letterSpacing: 0.4,
   },
   settingsButton: {
     width: 40,
@@ -6197,37 +5920,6 @@ const styles = StyleSheet.create({
   settingsButtonActive: {
     backgroundColor: Colors.light.tint,
     borderColor: Colors.light.tint,
-  },
-  
-  // Preview Banner
-  previewBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    gap: 12,
-    borderBottomWidth: 1,
-  },
-  previewBannerContent: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  previewBannerText: {
-    fontSize: 14,
-    fontFamily: 'Manrope_500Medium',
-    color: Colors.light.tint,
-  },
-  fullPreviewButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  fullPreviewButtonText: {
-    fontSize: 12,
-    fontFamily: 'Manrope_600SemiBold',
-    color: Colors.light.tint,
   },
   
   // Scroll View
@@ -7184,54 +6876,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontFamily: 'Manrope_600SemiBold',
     color: '#111827',
-  },
-  
-  // Preview Actions
-  previewActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 40,
-    paddingVertical: 24,
-    backgroundColor: '#fff',
-    gap: 24,
-    marginBottom: 8,
-  },
-  actionButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#ef4444',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#ef4444',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  infoButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#f8fafc',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#e5e7eb',
-  },
-  likeButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#10b981',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#10b981',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 8,
   },
   
   // Settings sheet

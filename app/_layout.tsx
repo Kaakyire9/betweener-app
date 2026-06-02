@@ -31,6 +31,7 @@ import {
 } from "@/lib/offline/mutation-queue";
 import { ChatOutboxService } from "@/lib/chat/outbox/chat-outbox-service";
 import { emitNetworkRestored } from "@/lib/network-recovery";
+import { isNetworkConnectionAvailable } from "@/lib/network-state";
 import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
 import { recoverSupabaseConnectivity, SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
 import { initPushNotificationUX } from "@/lib/notifications/push";
@@ -204,16 +205,11 @@ function ChatOutboxHydrator() {
   useEffect(() => {
     if (isLoading || !canAccessApp || !user?.id) return;
 
-    const isReachable = (state: {
-      isConnected: boolean | null;
-      isInternetReachable: boolean | null;
-    }) => state.isConnected !== false && state.isInternetReachable !== false;
-
     const flush = (reason: string) => {
       if (flushInFlightRef.current) return flushInFlightRef.current;
       const promise = (async () => {
         const state = await fetchNetInfo();
-        if (!isReachable(state)) return;
+        if (!isNetworkConnectionAvailable(state)) return;
         const result = await ChatOutboxService.flushPending(user.id);
         if (typeof __DEV__ !== "undefined" && __DEV__ && result.attemptedCount > 0) {
           console.log("[chat-outbox]", {
@@ -239,7 +235,7 @@ function ChatOutboxHydrator() {
     void flush("mount");
 
     const netInfoSubscription = addNetInfoListener((state) => {
-      const reachable = isReachable(state);
+      const reachable = isNetworkConnectionAvailable(state);
       const previous = lastReachableRef.current;
       lastReachableRef.current = reachable;
       if (previous === false && reachable) {
@@ -249,7 +245,7 @@ function ChatOutboxHydrator() {
       }
     });
     fetchNetInfo().then((state) => {
-      lastReachableRef.current = isReachable(state);
+      lastReachableRef.current = isNetworkConnectionAvailable(state);
     }).catch(() => undefined);
 
     const appStateSubscription = AppState.addEventListener("change", (state) => {
@@ -274,17 +270,12 @@ function NetworkRecoveryHydrator() {
   const lastReachableRef = useRef<boolean | null>(null);
 
   useEffect(() => {
-    const isReachable = (state: {
-      isConnected: boolean | null;
-      isInternetReachable: boolean | null;
-    }) => state.isConnected !== false && state.isInternetReachable !== false;
-
     const runRecovery = async (reason: string) => {
       if (recoveryInFlightRef.current) return;
       recoveryInFlightRef.current = true;
       try {
         const state = await fetchNetInfo();
-        if (!isReachable(state)) return;
+        if (!isNetworkConnectionAvailable(state)) return;
 
         await recoverSupabaseConnectivity(reason);
         await drainOfflineMutationQueue();
@@ -306,7 +297,7 @@ function NetworkRecoveryHydrator() {
       isConnected: boolean | null;
       isInternetReachable: boolean | null;
     }) => {
-      const reachable = isReachable(state);
+      const reachable = isNetworkConnectionAvailable(state);
       const previous = lastReachableRef.current;
       lastReachableRef.current = reachable;
 

@@ -13,7 +13,7 @@ import { VIBES_DEPTH_COLORS } from "@/components/vibes/depth/platformGlass";
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { buildLocationDisplay, getFirstLocationPart } from "@/lib/location/location-display";
-import { getPresenceDisplay } from "@/lib/presence";
+import { getAuthoritativePresenceDisplay } from "@/lib/presence";
 import { getProfileInitials, getProfilePlaceholderPalette, hasProfileImage } from "@/lib/profile-placeholders";
 import type { Match } from "@/types/match";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -135,7 +135,11 @@ function ExploreCard({
 
   const [presenceNow, setPresenceNow] = useState(() => Date.now());
   const lastActiveValue = match.lastActive || (match as any).last_active;
-  const presence = getPresenceDisplay(lastActiveValue, presenceNow);
+  const presence = getAuthoritativePresenceDisplay(
+    (match as any).online,
+    lastActiveValue,
+    presenceNow,
+  );
   const isOnlineNow = presence.online;
   const isActiveNow = presence.activeNow;
   const recentlyActive = presence.recentlyActive;

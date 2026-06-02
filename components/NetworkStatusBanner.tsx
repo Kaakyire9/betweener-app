@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuth } from '@/lib/auth-context';
 import { getNetworkQualitySnapshot, subscribeToNetworkQuality } from '@/lib/network-quality-monitor';
 
 type NetworkBannerState = {
@@ -42,6 +43,7 @@ const getBannerState = (state: NetInfoState): NetworkBannerState | null => {
 export default function NetworkStatusBanner() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
+  const { authStatus } = useAuth();
   const insets = useSafeAreaInsets();
   const [netInfoBanner, setNetInfoBanner] = useState<NetworkBannerState | null>(null);
   const [networkQuality, setNetworkQuality] = useState(getNetworkQualitySnapshot);
@@ -83,6 +85,17 @@ export default function NetworkStatusBanner() {
   }, [networkQuality.activeSlowRequests, networkQuality.slowUntil]);
 
   const banner = useMemo<NetworkBannerState | null>(() => {
+    if (authStatus === 'reconnecting_session' || authStatus === 'session_refreshing') {
+      return {
+        tone: 'slow',
+        title: 'Reconnecting securely...',
+        body:
+          authStatus === 'session_refreshing'
+            ? 'Refreshing your secure session in the background.'
+            : 'Keeping your space open while Betweener restores your session.',
+      };
+    }
+
     if (netInfoBanner?.tone === 'offline' || netInfoBanner?.tone === 'weak') {
       return netInfoBanner;
     }
@@ -97,7 +110,7 @@ export default function NetworkStatusBanner() {
     }
 
     return netInfoBanner;
-  }, [netInfoBanner, networkQuality.activeSlowRequests, networkQuality.slowUntil, qualityClock]);
+  }, [authStatus, netInfoBanner, networkQuality.activeSlowRequests, networkQuality.slowUntil, qualityClock]);
 
   useEffect(() => {
     if (showTimerRef.current) {
@@ -114,6 +127,8 @@ export default function NetworkStatusBanner() {
     }
 
     const signalKey = banner ? banner.tone : null;
+    const isPersistentRecoveryBanner =
+      authStatus === 'reconnecting_session' || authStatus === 'session_refreshing';
     if (!signalKey) {
       activeSignalRef.current = null;
       if (!healthyResetTimerRef.current) {
@@ -122,6 +137,14 @@ export default function NetworkStatusBanner() {
           healthyResetTimerRef.current = null;
         }, 8000);
       }
+    }
+
+    if (banner && isPersistentRecoveryBanner) {
+      setVisibleBanner(banner);
+      opacity.setValue(1);
+      translateY.setValue(0);
+      announcedSignalRef.current = signalKey;
+      return;
     }
 
     if (banner && signalKey && announcedSignalRef.current !== signalKey) {
@@ -192,7 +215,7 @@ export default function NetworkStatusBanner() {
         if (finished) setVisibleBanner(null);
       });
     }
-  }, [banner, opacity, translateY]);
+  }, [authStatus, banner, opacity, translateY]);
 
   useEffect(() => {
     return () => {

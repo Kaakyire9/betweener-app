@@ -60,7 +60,8 @@ jest.mock("@expo/vector-icons", () => {
 jest.mock("@expo/vector-icons/MaterialCommunityIcons", () => {
   const React = require("react");
   const { View } = require("react-native");
-  return ({ children, ...props }: any) => React.createElement(View, props, children);
+  const MaterialCommunityIcons = ({ children, ...props }: any) => React.createElement(View, props, children);
+  return MaterialCommunityIcons;
 });
 
 jest.mock("lucide-react-native", () => {
@@ -73,4 +74,27 @@ jest.mock("lucide-react-native", () => {
       get: () => Icon,
     }
   );
+});
+
+jest.mock("react-native-gesture-handler", () => {
+  const React = require("react");
+  const { View } = require("react-native");
+  const gesture = () => {
+    const api: any = {};
+    api.activeOffsetY = jest.fn(() => api);
+    api.failOffsetX = jest.fn(() => api);
+    api.minDistance = jest.fn(() => api);
+    api.onUpdate = jest.fn(() => api);
+    api.onEnd = jest.fn(() => api);
+    api.onFinalize = jest.fn(() => api);
+    return api;
+  };
+  const Wrapper = ({ children, ...props }: any) => React.createElement(View, props, children);
+  return {
+    State: { ACTIVE: 4 },
+    Gesture: { Pan: gesture },
+    GestureDetector: Wrapper,
+    GestureHandlerRootView: Wrapper,
+    PanGestureHandler: Wrapper,
+  };
 });

@@ -164,11 +164,22 @@ const toThreadParams = (thread: ChatThreadRow) => [
   thread.peer_avatar_url,
   thread.peer_verified,
   thread.peer_presence_status,
+  thread.peer_last_active,
   thread.title,
   thread.thread_type,
   thread.last_message_id,
   thread.last_message_preview,
   thread.last_message_sender_id,
+  thread.last_message_status,
+  thread.last_message_edited_at,
+  thread.last_message_reaction_emoji,
+  thread.last_message_reaction_user_id,
+  thread.last_message_reaction_created_at,
+  thread.last_message_reaction_target_type,
+  thread.last_activity_kind,
+  thread.last_activity_message_id,
+  thread.last_activity_preview,
+  thread.last_activity_at,
   thread.last_message_at,
   thread.unread_count,
   thread.is_muted,
@@ -261,6 +272,7 @@ type ChatThreadSummaryMessage = Pick<
   | 'message_type'
   | 'status'
   | 'is_view_once'
+  | 'edited_at'
   | 'created_at'
   | 'remote_updated_at'
   | 'local_updated_at'
@@ -284,7 +296,7 @@ const refreshThreadSummaryFromMessages = async (
 ) => {
   const latest = await db.getFirstAsync<ChatThreadSummaryMessage>(
     `
-      select id, body, sender_user_id, message_type, status, is_view_once, created_at, remote_updated_at, local_updated_at
+      select id, body, sender_user_id, message_type, status, is_view_once, edited_at, created_at, remote_updated_at, local_updated_at
       from chat_messages
       where owner_user_id = ?
         and thread_id = ?
@@ -317,6 +329,16 @@ const refreshThreadSummaryFromMessages = async (
         set last_message_id = null,
             last_message_preview = '',
             last_message_sender_id = null,
+            last_message_status = null,
+            last_message_edited_at = null,
+            last_message_reaction_emoji = null,
+            last_message_reaction_user_id = null,
+            last_message_reaction_created_at = null,
+            last_message_reaction_target_type = null,
+            last_activity_kind = null,
+            last_activity_message_id = null,
+            last_activity_preview = null,
+            last_activity_at = null,
             last_message_at = null,
             unread_count = ?,
             local_updated_at = ?
@@ -335,16 +357,53 @@ const refreshThreadSummaryFromMessages = async (
     `
       insert into chat_threads (
         id, owner_user_id, peer_user_id, peer_profile_id, peer_name, peer_avatar_url,
-        peer_verified, peer_presence_status, title, thread_type, last_message_id,
-        last_message_preview, last_message_sender_id, last_message_at, unread_count,
+        peer_verified, peer_presence_status, peer_last_active, title, thread_type, last_message_id,
+        last_message_preview, last_message_sender_id, last_message_status, last_message_edited_at,
+        last_message_reaction_emoji, last_message_reaction_user_id, last_message_reaction_created_at,
+        last_message_reaction_target_type, last_activity_kind, last_activity_message_id,
+        last_activity_preview, last_activity_at, last_message_at, unread_count,
         is_muted, is_pinned, is_archived, local_status, remote_updated_at,
         local_updated_at, created_at
       )
-      values (?, ?, ?, null, null, null, 0, null, null, 'direct', ?, ?, ?, ?, ?, 0, 0, 0, 'active', ?, ?, ?)
+      values (?, ?, ?, null, null, null, 0, null, null, null, 'direct', ?, ?, ?, ?, ?, null, null, null, null, null, null, null, null, ?, ?, 0, 0, 0, 'active', ?, ?, ?)
       on conflict(owner_user_id, id) do update set
         last_message_id = excluded.last_message_id,
         last_message_preview = excluded.last_message_preview,
         last_message_sender_id = excluded.last_message_sender_id,
+        last_message_status = excluded.last_message_status,
+        last_message_edited_at = excluded.last_message_edited_at,
+        last_message_reaction_emoji = case
+          when chat_threads.last_message_id = excluded.last_message_id then chat_threads.last_message_reaction_emoji
+          else null
+        end,
+        last_message_reaction_user_id = case
+          when chat_threads.last_message_id = excluded.last_message_id then chat_threads.last_message_reaction_user_id
+          else null
+        end,
+        last_message_reaction_created_at = case
+          when chat_threads.last_message_id = excluded.last_message_id then chat_threads.last_message_reaction_created_at
+          else null
+        end,
+        last_message_reaction_target_type = case
+          when chat_threads.last_message_id = excluded.last_message_id then chat_threads.last_message_reaction_target_type
+          else null
+        end,
+        last_activity_kind = case
+          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at) then chat_threads.last_activity_kind
+          else null
+        end,
+        last_activity_message_id = case
+          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at) then chat_threads.last_activity_message_id
+          else null
+        end,
+        last_activity_preview = case
+          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at) then chat_threads.last_activity_preview
+          else null
+        end,
+        last_activity_at = case
+          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at) then chat_threads.last_activity_at
+          else null
+        end,
         last_message_at = excluded.last_message_at,
         unread_count = excluded.unread_count,
         remote_updated_at = coalesce(excluded.remote_updated_at, chat_threads.remote_updated_at),
@@ -356,6 +415,8 @@ const refreshThreadSummaryFromMessages = async (
     latest.id,
     getThreadMessagePreview(latest),
     latest.sender_user_id,
+    latest.status,
+    latest.edited_at,
     latest.created_at,
     unread?.unread_count ?? 0,
     latest.remote_updated_at,
@@ -425,6 +486,150 @@ export const ChatRepository = {
     );
   },
 
+  async hasThreadMessages(ownerUserId: string, threadId: string): Promise<boolean> {
+    const db = await getChatDb();
+    const row = await db.getFirstAsync<{ has_messages: number }>(
+      `
+        select exists (
+          select 1
+          from chat_messages
+          where owner_user_id = ?
+            and thread_id = ?
+            and status <> 'deleted'
+        ) as has_messages
+      `,
+      ownerUserId,
+      threadId,
+    );
+    return row?.has_messages === 1;
+  },
+
+  async updateThreadPreferences(
+    ownerUserId: string,
+    threadId: string,
+    next: { muted?: boolean; pinned?: boolean; archived?: boolean },
+  ): Promise<void> {
+    const db = await getChatDb();
+    await runSerializedWrite(() => db.runAsync(
+      `
+        update chat_threads
+        set is_muted = coalesce(?, is_muted),
+            is_pinned = coalesce(?, is_pinned),
+            is_archived = coalesce(?, is_archived),
+            local_updated_at = ?
+        where owner_user_id = ?
+          and id = ?
+      `,
+      typeof next.muted === 'boolean' ? (next.muted ? 1 : 0) : null,
+      typeof next.pinned === 'boolean' ? (next.pinned ? 1 : 0) : null,
+      typeof next.archived === 'boolean' ? (next.archived ? 1 : 0) : null,
+      nowIso(),
+      ownerUserId,
+      threadId,
+    ));
+    notify(threadListeners, ownerUserId);
+  },
+
+  async updateThreadPresence(
+    ownerUserId: string,
+    threadId: string,
+    next: { online?: boolean | null; lastActive?: string | null },
+  ): Promise<void> {
+    const db = await getChatDb();
+    await runSerializedWrite(() => db.runAsync(
+      `
+        update chat_threads
+        set peer_presence_status = ?,
+            peer_last_active = coalesce(?, peer_last_active),
+            local_updated_at = ?
+        where owner_user_id = ?
+          and id = ?
+      `,
+      next.online === true ? 'online' : next.online === false ? 'offline' : null,
+      next.lastActive ?? null,
+      nowIso(),
+      ownerUserId,
+      threadId,
+    ));
+    notify(threadListeners, ownerUserId);
+  },
+
+  async updateThreadReactionPreview(
+    ownerUserId: string,
+    threadId: string,
+    messageId: string,
+    reaction: {
+      emoji: string;
+      userId: string;
+      createdAt: string;
+      targetType?: string | null;
+    } | null,
+  ): Promise<void> {
+    const db = await getChatDb();
+    await runSerializedWrite(() => db.runAsync(
+      `
+        update chat_threads
+        set last_message_reaction_emoji = ?,
+            last_message_reaction_user_id = ?,
+            last_message_reaction_created_at = ?,
+            last_message_reaction_target_type = ?,
+            local_updated_at = ?
+        where owner_user_id = ?
+          and id = ?
+          and last_message_id = ?
+      `,
+      reaction?.emoji ?? null,
+      reaction?.userId ?? null,
+      reaction?.createdAt ?? null,
+      reaction?.targetType ?? null,
+      nowIso(),
+      ownerUserId,
+      threadId,
+      messageId,
+    ));
+    notify(threadListeners, ownerUserId);
+  },
+
+  async updateThreadActivityPreview(
+    ownerUserId: string,
+    threadId: string,
+    activity: {
+      kind: 'edit' | 'reaction';
+      messageId: string;
+      preview: string;
+      createdAt: string;
+    } | null,
+  ): Promise<void> {
+    const db = await getChatDb();
+    await runSerializedWrite(() => db.runAsync(
+      `
+        update chat_threads
+        set last_activity_kind = ?,
+            last_activity_message_id = ?,
+            last_activity_preview = ?,
+            last_activity_at = ?,
+            local_updated_at = ?
+        where owner_user_id = ?
+          and id = ?
+          and (
+            ? is null
+            or last_activity_at is null
+            or datetime(?) >= datetime(last_activity_at)
+          )
+      `,
+      activity?.kind ?? null,
+      activity?.messageId ?? null,
+      activity?.preview ?? null,
+      activity?.createdAt ?? null,
+      nowIso(),
+      ownerUserId,
+      threadId,
+      activity?.createdAt ?? null,
+      activity?.createdAt ?? null,
+    ));
+    notify(threadListeners, ownerUserId);
+  },
+
   async upsertThreads(ownerUserId: string, threads: ChatThreadRow[]): Promise<void> {
     if (threads.length === 0) return;
     const db = await getChatDb();
@@ -434,12 +639,15 @@ export const ChatRepository = {
           `
             insert into chat_threads (
               id, owner_user_id, peer_user_id, peer_profile_id, peer_name, peer_avatar_url,
-              peer_verified, peer_presence_status, title, thread_type, last_message_id,
-              last_message_preview, last_message_sender_id, last_message_at, unread_count,
+              peer_verified, peer_presence_status, peer_last_active, title, thread_type, last_message_id,
+              last_message_preview, last_message_sender_id, last_message_status, last_message_edited_at,
+              last_message_reaction_emoji, last_message_reaction_user_id, last_message_reaction_created_at,
+              last_message_reaction_target_type, last_activity_kind, last_activity_message_id,
+              last_activity_preview, last_activity_at, last_message_at, unread_count,
               is_muted, is_pinned, is_archived, local_status, remote_updated_at,
               local_updated_at, created_at
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             on conflict(owner_user_id, id) do update set
               owner_user_id = excluded.owner_user_id,
               peer_user_id = excluded.peer_user_id,
@@ -448,11 +656,22 @@ export const ChatRepository = {
               peer_avatar_url = excluded.peer_avatar_url,
               peer_verified = excluded.peer_verified,
               peer_presence_status = excluded.peer_presence_status,
+              peer_last_active = excluded.peer_last_active,
               title = excluded.title,
               thread_type = excluded.thread_type,
               last_message_id = excluded.last_message_id,
               last_message_preview = excluded.last_message_preview,
               last_message_sender_id = excluded.last_message_sender_id,
+              last_message_status = excluded.last_message_status,
+              last_message_edited_at = excluded.last_message_edited_at,
+              last_message_reaction_emoji = excluded.last_message_reaction_emoji,
+              last_message_reaction_user_id = excluded.last_message_reaction_user_id,
+              last_message_reaction_created_at = excluded.last_message_reaction_created_at,
+              last_message_reaction_target_type = excluded.last_message_reaction_target_type,
+              last_activity_kind = excluded.last_activity_kind,
+              last_activity_message_id = excluded.last_activity_message_id,
+              last_activity_preview = excluded.last_activity_preview,
+              last_activity_at = excluded.last_activity_at,
               last_message_at = excluded.last_message_at,
               unread_count = excluded.unread_count,
               is_muted = excluded.is_muted,
@@ -534,7 +753,32 @@ export const ChatRepository = {
               receiver_user_id = excluded.receiver_user_id,
               body = excluded.body,
               message_type = excluded.message_type,
-              status = excluded.status,
+              status = case
+                when chat_messages.status = 'deleted' then chat_messages.status
+                when excluded.status = 'deleted' then excluded.status
+                when (
+                  case excluded.status
+                    when 'read' then 6
+                    when 'delivered' then 5
+                    when 'sent' then 4
+                    when 'sending' then 3
+                    when 'pending' then 2
+                    when 'failed' then 1
+                    else 0
+                  end
+                ) >= (
+                  case chat_messages.status
+                    when 'read' then 6
+                    when 'delivered' then 5
+                    when 'sent' then 4
+                    when 'sending' then 3
+                    when 'pending' then 2
+                    when 'failed' then 1
+                    else 0
+                  end
+                ) then excluded.status
+                else chat_messages.status
+              end,
               direction = excluded.direction,
               created_at = excluded.created_at,
               server_created_at = excluded.server_created_at,
@@ -913,6 +1157,16 @@ export const ChatRepository = {
               last_message_id = null,
               last_message_preview = '',
               last_message_sender_id = null,
+              last_message_status = null,
+              last_message_edited_at = null,
+              last_message_reaction_emoji = null,
+              last_message_reaction_user_id = null,
+              last_message_reaction_created_at = null,
+              last_message_reaction_target_type = null,
+              last_activity_kind = null,
+              last_activity_message_id = null,
+              last_activity_preview = null,
+              last_activity_at = null,
               last_message_at = null,
               unread_count = 0,
               local_updated_at = ?

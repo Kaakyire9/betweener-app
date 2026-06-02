@@ -25,7 +25,7 @@ import { appendMomentsFeedSnapshot, appendOwnMomentSnapshot } from '@/lib/offlin
 import { showOpenSettingsPrompt } from '@/lib/permission-prompts';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Image,
@@ -102,6 +102,10 @@ export default function MomentCreateScreen() {
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
   const placeholderColor = useMemo(() => withAlpha(theme.textMuted, 0.8), [theme.textMuted]);
   const { user, profile } = useAuth();
+  const params = useLocalSearchParams();
+  const sourceParam = typeof params.source === 'string' ? params.source : null;
+  const sourceCircleId = typeof params.circleId === 'string' ? params.circleId : null;
+  const sourceCircleName = typeof params.circleName === 'string' ? params.circleName : null;
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView | null>(null);
   const textStudioYRef = useRef(0);
@@ -156,6 +160,10 @@ export default function MomentCreateScreen() {
 
   const close = () => {
     haptics.tap();
+    if (sourceParam === 'circles' && sourceCircleId) {
+      router.replace({ pathname: '/circles/[id]', params: { id: sourceCircleId } });
+      return;
+    }
     router.back();
   };
 
@@ -502,6 +510,10 @@ export default function MomentCreateScreen() {
 
   const handleDoneAfterPost = () => {
     haptics.tap();
+    if (sourceParam === 'circles' && sourceCircleId) {
+      router.replace({ pathname: '/circles/[id]', params: { id: sourceCircleId } });
+      return;
+    }
     router.back();
   };
 
@@ -702,7 +714,7 @@ export default function MomentCreateScreen() {
                     <MaterialCommunityIcons name="motion-play-outline" size={14} color={theme.tint} />
                     <Text style={styles.eyebrowText}>24h signal</Text>
                   </View>
-                  <Pressable onPress={close} style={styles.closeButton}>
+                  <Pressable onPress={close} style={styles.closeButton} accessibilityLabel="Close">
                     <MaterialCommunityIcons name="close" size={18} color={theme.text} />
                   </Pressable>
                 </View>
@@ -711,6 +723,20 @@ export default function MomentCreateScreen() {
                 <Text style={styles.subtitle}>
                   Give people something felt, not just something seen.
                 </Text>
+
+                {sourceParam === 'circles' && sourceCircleId ? (
+                  <View style={styles.sourceContextCard}>
+                    <View style={styles.sourceContextIcon}>
+                      <MaterialCommunityIcons name="account-group-outline" size={16} color={theme.tint} />
+                    </View>
+                    <View style={styles.sourceContextCopy}>
+                      <Text style={styles.sourceContextTitle}>From {sourceCircleName || 'your Circle'}</Text>
+                      <Text style={styles.sourceContextBody}>
+                        Share something that gives people in this Circle a warmer sense of your energy.
+                      </Text>
+                    </View>
+                  </View>
+                ) : null}
 
                 {postingEligibility?.canPost === false ? (
                   <View style={styles.momentGateCard}>
@@ -1196,6 +1222,40 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontFamily: 'Manrope_800ExtraBold',
       textTransform: 'uppercase',
       letterSpacing: 0.8,
+    },
+    sourceContextCard: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: 12,
+      marginTop: 14,
+      padding: 14,
+      borderRadius: 18,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.2 : 0.64),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.2 : 0.12),
+    },
+    sourceContextIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.1),
+    },
+    sourceContextCopy: {
+      flex: 1,
+      gap: 3,
+    },
+    sourceContextTitle: {
+      color: theme.text,
+      fontSize: 13,
+      fontFamily: 'Archivo_700Bold',
+    },
+    sourceContextBody: {
+      color: theme.textMuted,
+      fontSize: 12,
+      lineHeight: 18,
+      fontFamily: 'Manrope_600SemiBold',
     },
     successTitle: {
       color: theme.text,

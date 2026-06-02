@@ -1,8 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
+import { createClient, processLock, type Session, type SupabaseClient } from '@supabase/supabase-js';
 import { AppState } from 'react-native';
 import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from '@react-native-community/netinfo';
+import { isLikelyNetworkError } from '@/lib/network';
+import { isNetworkConnectionAvailable } from '@/lib/network-state';
 import { addBreadcrumb, captureMessage } from '@/lib/telemetry/sentry';
+import { isSupabaseAccessTokenUsable } from '@/lib/auth/session-token';
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
@@ -515,7 +518,7 @@ const SUPABASE_ANON_KEY_FOR_CLIENT = SUPABASE_ANON_KEY || 'missing-config';
 let cachedAccessToken: string | null = null;
 
 const setCachedAccessToken = (token: string | null) => {
-  cachedAccessToken = token;
+  cachedAccessToken = isSupabaseAccessTokenUsable(token) ? token : null;
 };
 
 let supabaseAuth: any;
@@ -527,7 +530,7 @@ const syncRealtimeAuth = (token: string | null) => {
   // stop delivering in-app notification events in release builds.
   try {
     if (!supabaseData?.realtime?.setAuth) return;
-    if (token) void supabaseData.realtime.setAuth(token);
+    if (isSupabaseAccessTokenUsable(token)) void supabaseData.realtime.setAuth(token);
     else void supabaseData.realtime.setAuth();
   } catch {
     // best-effort only
@@ -536,7 +539,13 @@ const syncRealtimeAuth = (token: string | null) => {
 
 const getDataAccessToken = async (): Promise<string | null> => {
   // Fast path: reuse the last known token from auth events.
-  if (cachedAccessToken) return cachedAccessToken;
+  if (cachedAccessToken && isSupabaseAccessTokenUsable(cachedAccessToken)) {
+    return cachedAccessToken;
+  }
+  if (cachedAccessToken) {
+    setCachedAccessToken(null);
+    syncRealtimeAuth(null);
+  }
 
   // If auth isn't ready yet, fall back to null (supabase-js will use anon key).
   if (!supabaseAuth?.auth) return null;
@@ -548,11 +557,12 @@ const getDataAccessToken = async (): Promise<string | null> => {
       new Promise<{ data: { session: null } }>((resolve) => setTimeout(() => resolve({ data: { session: null } }), 1200)),
     ]);
     const token = data?.session?.access_token ?? null;
-    if (token) {
+    if (isSupabaseAccessTokenUsable(token)) {
       setCachedAccessToken(token);
       syncRealtimeAuth(token);
+      return token;
     }
-    return token;
+    return null;
   } catch {
     return null;
   }
@@ -565,6 +575,7 @@ supabaseAuth = createClient(SUPABASE_URL_FOR_CLIENT, SUPABASE_ANON_KEY_FOR_CLIEN
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,
+    lock: processLock,
   },
   global: {
     fetch: fetchWithTimeout,
@@ -676,98 +687,12 @@ const supabaseFacade = new Proxy({}, {
 // generics collapsing into `never` under moduleResolution=bundler.
 export const supabase = supabaseFacade as unknown as SupabaseClient<any>;
 
-export async function hydratePersistedSupabaseSession(
-  session: Session | null | undefined,
-  reason: string = 'persisted_snapshot',
-): Promise<boolean> {
-  if (!session?.access_token) return false;
-
-  setCachedAccessToken(session.access_token);
-  syncRealtimeAuth(session.access_token);
-
-  if (!session.refresh_token) {
-    addBreadcrumb('[supabase] hydrate_persisted_session', {
-      reason,
-      restored: false,
-      primedTokenOnly: true,
-    });
-    return false;
-  }
-
-  try {
-    const existing = await Promise.race([
-      supabaseAuth.auth.getSession(),
-      new Promise<{ data: { session: null } }>((resolve) =>
-        setTimeout(() => resolve({ data: { session: null } }), 1200),
-      ),
-    ]);
-
-    const existingSession = existing?.data?.session ?? null;
-    if (
-      existingSession?.user?.id === session.user?.id &&
-      existingSession?.refresh_token === session.refresh_token
-    ) {
-      setCachedAccessToken(existingSession.access_token ?? session.access_token);
-      syncRealtimeAuth(existingSession.access_token ?? session.access_token);
-      addBreadcrumb('[supabase] hydrate_persisted_session', {
-        reason,
-        restored: true,
-        reusedExistingSession: true,
-      });
-      return true;
-    }
-  } catch {
-    // best-effort only
-  }
-
-  try {
-    const res: any = await Promise.race([
-      supabaseAuth.auth.setSession({
-        access_token: session.access_token,
-        refresh_token: session.refresh_token,
-      }),
-      new Promise<{ error: Error; data: { session: null } }>((resolve) =>
-        setTimeout(
-          () => resolve({ error: new Error('hydrate_session_timeout'), data: { session: null } }),
-          4000,
-        ),
-      ),
-    ]);
-
-    const restoredSession = res?.data?.session ?? null;
-    if (restoredSession?.access_token) {
-      setCachedAccessToken(restoredSession.access_token);
-      syncRealtimeAuth(restoredSession.access_token);
-      addBreadcrumb('[supabase] hydrate_persisted_session', {
-        reason,
-        restored: true,
-        reusedExistingSession: false,
-      });
-      return true;
-    }
-  } catch {
-    // best-effort only
-  }
-
-  addBreadcrumb('[supabase] hydrate_persisted_session', {
-    reason,
-    restored: false,
-    primedTokenOnly: true,
-  });
-  return false;
-}
-
 // -----------------------------
 // Auth lifecycle (RN background)
 // -----------------------------
 
 let authLifecycleRefCount = 0;
 let authLifecycleCleanup: (() => void) | null = null;
-
-const isReachableNetState = (state: {
-  isConnected: boolean | null;
-  isInternetReachable: boolean | null;
-}) => state.isConnected !== false && state.isInternetReachable !== false;
 
 export const initSupabaseAuthLifecycle = () => {
   authLifecycleRefCount += 1;
@@ -809,18 +734,13 @@ export const initSupabaseAuthLifecycle = () => {
     } catch {
       // ignore
     }
-    try {
-      supabase.realtime.disconnect();
-    } catch {
-      // ignore
-    }
   };
 
   let currentAppState = AppState.currentState;
   let isReachable: boolean | null = null;
 
   const syncAutoRefresh = () => {
-    if (currentAppState === 'active' && isReachable !== false) {
+    if (currentAppState === 'active' && isReachable === true) {
       start();
       return;
     }
@@ -835,13 +755,13 @@ export const initSupabaseAuthLifecycle = () => {
   });
 
   const netInfoSubscription = addNetInfoListener((state) => {
-    isReachable = isReachableNetState(state);
+    isReachable = isNetworkConnectionAvailable(state);
     syncAutoRefresh();
   });
 
   void fetchNetInfo()
     .then((state) => {
-      isReachable = isReachableNetState(state);
+      isReachable = isNetworkConnectionAvailable(state);
       syncAutoRefresh();
     })
     .catch(() => {
@@ -851,6 +771,9 @@ export const initSupabaseAuthLifecycle = () => {
   authLifecycleCleanup = () => {
     try {
       stop();
+    } catch {}
+    try {
+      supabase.realtime.disconnect();
     } catch {}
     try {
       (sub as any)?.remove?.();
@@ -871,9 +794,24 @@ const REFRESH_TIMEOUT_MS = 8_000;
 const REFRESH_COOLDOWN_MS = 60_000;
 const EXPIRY_SOON_SECONDS = 90;
 const AUTH_FAILURE_GRACE_MS = 5 * 60_000;
+const SESSION_GET_TIMEOUT_MS = 2_500;
+const SESSION_RECOVERY_BACKOFF_MS = [450, 1100, 2200] as const;
 
 let refreshInFlight: Promise<'refreshed' | 'failed'> | null = null;
 let lastRefreshAttemptAt = 0;
+
+export type SupabaseSessionRecoveryStatus =
+  | 'ok'
+  | 'refreshed'
+  | 'failed_recoverable'
+  | 'failed_unrecoverable';
+
+export type SupabaseSessionRecoveryResult = {
+  status: SupabaseSessionRecoveryStatus;
+  reason: string;
+  attempts: number;
+  errorMessage?: string | null;
+};
 
 export const getRecentSupabaseAuthFailure = () => {
   if (!lastAuthFailureStatus || !lastAuthFailureAt) return null;
@@ -890,6 +828,66 @@ const withTimeout = async <T,>(p: Promise<T>, timeoutMs: number): Promise<T> => 
   return await Promise.race([
     p,
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs)),
+  ]);
+};
+
+const logSessionRecoveryEvent = (event: string, data?: Record<string, unknown>) => {
+  addBreadcrumb(`[auth-recovery] ${event}`, data);
+  if (typeof __DEV__ !== 'undefined' && __DEV__) {
+    console.log('[auth-recovery]', { event, ...(data ?? {}) });
+  }
+};
+
+const getAuthRecoveryErrorText = (error: unknown) => {
+  const parts = [
+    (error as any)?.message,
+    (error as any)?.name,
+    (error as any)?.code,
+    (error as any)?.status,
+    (error as any)?.error_description,
+    (error as any)?.details,
+    error,
+  ];
+
+  return parts
+    .map((part) => {
+      if (!part) return '';
+      if (typeof part === 'string') return part;
+      try {
+        return JSON.stringify(part);
+      } catch {
+        return String(part);
+      }
+    })
+    .join(' ')
+    .trim();
+};
+
+const isUnrecoverableAuthRecoveryError = (error: unknown) => {
+  const lower = getAuthRecoveryErrorText(error).toLowerCase();
+  if (!lower) return false;
+
+  return (
+    lower.includes('refresh token') ||
+    lower.includes('invalid refresh') ||
+    lower.includes('refresh_token') ||
+    lower.includes('invalid grant') ||
+    lower.includes('user not found') ||
+    lower.includes('user no longer exists') ||
+    lower.includes('token revoked') ||
+    lower.includes('revoked')
+  );
+};
+
+const getSessionWithTimeout = async () => {
+  return await Promise.race([
+    supabaseAuth.auth.getSession(),
+    new Promise<{ data: { session: null }; error: Error }>((resolve) =>
+      setTimeout(
+        () => resolve({ data: { session: null }, error: new Error('get_session_timeout') }),
+        SESSION_GET_TIMEOUT_MS,
+      ),
+    ),
   ]);
 };
 
@@ -951,21 +949,170 @@ export async function ensureFreshSession(): Promise<'ok' | 'no_session' | 'refre
 
 export async function recoverSupabaseConnectivity(
   reason: string = 'network_restored',
-): Promise<'ok' | 'no_session' | 'refreshed' | 'failed'> {
+  options?: {
+    maxRefreshAttempts?: number;
+    fallbackSession?: Session | null;
+    onStateChange?: (state: 'get_session' | 'session_refreshing') => void;
+  },
+): Promise<SupabaseSessionRecoveryResult> {
   try {
+    const networkState = await fetchNetInfo().catch(() => null);
+    if (!isNetworkConnectionAvailable(networkState)) {
+      logSessionRecoveryEvent('supabase_refresh_deferred_offline', { reason });
+      return {
+        status: 'failed_recoverable',
+        reason,
+        attempts: 0,
+        errorMessage: 'network_unavailable',
+      };
+    }
+
     // Airplane-mode recovery should not be blocked by the normal refresh cooldown.
     lastRefreshAttemptAt = 0;
 
-    const status = await ensureFreshSession();
+    const maxRefreshAttempts = Math.max(1, Math.min(options?.maxRefreshAttempts ?? 3, 3));
+    options?.onStateChange?.('get_session');
+    logSessionRecoveryEvent('supabase_get_session_attempted', { reason });
+
+    const { data, error } = await getSessionWithTimeout();
+    const session = data?.session ?? null;
+    const fallbackSession = options?.fallbackSession ?? null;
+    const sessionForRefresh = session?.refresh_token ? session : fallbackSession;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const expiresAt = typeof (session as any)?.expires_at === 'number' ? (session as any).expires_at : null;
+    const expiresSoon = typeof expiresAt === 'number' ? expiresAt - nowSec <= EXPIRY_SOON_SECONDS : false;
+    const recent401 =
+      lastAuthFailureStatus === 401 && Date.now() - lastAuthFailureAt <= AUTH_FAILURE_GRACE_MS;
 
     try {
-      const { data } = await Promise.race([
-        supabaseAuth.auth.getSession(),
-        new Promise<{ data: { session: null } }>((resolve) =>
-          setTimeout(() => resolve({ data: { session: null } }), 1500),
-        ),
-      ]);
-      const token = data?.session?.access_token ?? cachedAccessToken ?? null;
+      const token = session?.access_token ?? fallbackSession?.access_token ?? cachedAccessToken ?? null;
+      setCachedAccessToken(token);
+      syncRealtimeAuth(token);
+    } catch {
+      // best effort only
+    }
+
+    if (
+      error &&
+      isUnrecoverableAuthRecoveryError(error) &&
+      !fallbackSession?.refresh_token
+    ) {
+      const errorMessage = getAuthRecoveryErrorText(error);
+      logSessionRecoveryEvent('supabase_refresh_failed_unrecoverable', {
+        reason,
+        stage: 'get_session',
+        error: errorMessage,
+      });
+      return {
+        status: 'failed_unrecoverable',
+        reason,
+        attempts: 0,
+        errorMessage,
+      };
+    }
+
+    if (session && !expiresSoon && !recent401) {
+      try {
+        const realtime = supabaseData?.realtime;
+        realtime?.connect?.();
+      } catch {
+        // best effort only
+      }
+      logSessionRecoveryEvent('supabase_refresh_succeeded', {
+        reason,
+        mode: 'get_session',
+      });
+      addBreadcrumb('[supabase] recover_connectivity', { reason, status: 'ok' });
+      return {
+        status: 'ok',
+        reason,
+        attempts: 0,
+      };
+    }
+
+    let lastRecoverableMessage =
+      error && !isLikelyNetworkError(error) ? getAuthRecoveryErrorText(error) : null;
+
+    for (let attempt = 1; attempt <= maxRefreshAttempts; attempt += 1) {
+      options?.onStateChange?.('session_refreshing');
+      logSessionRecoveryEvent('supabase_refresh_attempted', {
+        reason,
+        attempt,
+        maxRefreshAttempts,
+      });
+
+      try {
+        const res: any = await withTimeout(
+          supabaseAuth.auth.refreshSession(sessionForRefresh ?? undefined),
+          REFRESH_TIMEOUT_MS,
+        );
+        if (res?.error) {
+          if (isUnrecoverableAuthRecoveryError(res.error)) {
+            const errorMessage = getAuthRecoveryErrorText(res.error);
+            logSessionRecoveryEvent('supabase_refresh_failed_unrecoverable', {
+              reason,
+              attempt,
+              error: errorMessage,
+            });
+            return {
+              status: 'failed_unrecoverable',
+              reason,
+              attempts: attempt,
+              errorMessage,
+            };
+          }
+          lastRecoverableMessage = getAuthRecoveryErrorText(res.error);
+        } else if (res?.data?.session) {
+          const refreshedToken = res.data.session.access_token ?? null;
+          setCachedAccessToken(refreshedToken);
+          syncRealtimeAuth(refreshedToken);
+          try {
+            const realtime = supabaseData?.realtime;
+            realtime?.connect?.();
+          } catch {
+            // best effort only
+          }
+          logSessionRecoveryEvent('supabase_refresh_succeeded', {
+            reason,
+            attempt,
+          });
+          addBreadcrumb('[supabase] recover_connectivity', { reason, status: 'refreshed', attempt });
+          return {
+            status: 'refreshed',
+            reason,
+            attempts: attempt,
+          };
+        } else {
+          lastRecoverableMessage = 'refresh_session_empty';
+        }
+      } catch (refreshError) {
+        if (isUnrecoverableAuthRecoveryError(refreshError)) {
+          const errorMessage = getAuthRecoveryErrorText(refreshError);
+          logSessionRecoveryEvent('supabase_refresh_failed_unrecoverable', {
+            reason,
+            attempt,
+            error: errorMessage,
+          });
+          return {
+            status: 'failed_unrecoverable',
+            reason,
+            attempts: attempt,
+            errorMessage,
+          };
+        }
+        lastRecoverableMessage = getAuthRecoveryErrorText(refreshError);
+      }
+
+      if (attempt < maxRefreshAttempts) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, SESSION_RECOVERY_BACKOFF_MS[attempt - 1] ?? 1200),
+        );
+      }
+    }
+
+    try {
+      const postRecovery = await getSessionWithTimeout();
+      const token = postRecovery?.data?.session?.access_token ?? cachedAccessToken ?? null;
       setCachedAccessToken(token);
       syncRealtimeAuth(token);
     } catch {
@@ -974,15 +1121,38 @@ export async function recoverSupabaseConnectivity(
 
     try {
       const realtime = supabaseData?.realtime;
-      realtime?.disconnect?.();
       realtime?.connect?.();
     } catch {
       // best effort only
     }
 
-    addBreadcrumb('[supabase] recover_connectivity', { reason, status });
-    return status;
+    logSessionRecoveryEvent('supabase_refresh_failed_recoverable', {
+      reason,
+      attempts: maxRefreshAttempts,
+      error: lastRecoverableMessage,
+    });
+    addBreadcrumb('[supabase] recover_connectivity', {
+      reason,
+      status: 'failed_recoverable',
+      attempts: maxRefreshAttempts,
+    });
+    return {
+      status: 'failed_recoverable',
+      reason,
+      attempts: maxRefreshAttempts,
+      errorMessage: lastRecoverableMessage,
+    };
   } catch {
-    return 'failed';
+    logSessionRecoveryEvent('supabase_refresh_failed_recoverable', {
+      reason,
+      attempts: 0,
+      error: 'recover_connectivity_exception',
+    });
+    return {
+      status: 'failed_recoverable',
+      reason,
+      attempts: 0,
+      errorMessage: 'recover_connectivity_exception',
+    };
   }
 }

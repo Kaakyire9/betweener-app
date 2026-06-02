@@ -14,7 +14,7 @@ import { hasFeatureAccess } from '@/lib/premium-access';
 import { useResponsiveMetrics } from '@/lib/responsive';
 import { buildLocationDisplay } from '@/lib/location/location-display';
 import { isLikelyNetworkError } from '@/lib/network';
-import { getPresenceDisplay } from '@/lib/presence';
+import { getAuthoritativePresenceDisplay } from '@/lib/presence';
 import { fetchUserPresence } from '@/lib/user-presence';
 import {
   enqueueProfileNoteCreateMutation,
@@ -26,6 +26,7 @@ import {
 import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
+import { getProfileViewReturnCircleId } from '@/lib/profile/profile-view-return';
 import { formatReligionLabel } from '@/lib/profile/religion';
 import { cacheOfflineVideo, getOfflineVideoUri } from '@/lib/offline/video-store';
 import { getProfileInitials, getProfilePlaceholderPalette } from '@/lib/profile-placeholders';
@@ -282,7 +283,10 @@ function parseFallbackProfile(rawParam?: string | string[]): UserProfile | null 
     try {
       const parsed = JSON.parse(cand || '{}');
       const photos = Array.isArray(parsed.photos) ? parsed.photos : parsed.avatar_url ? [parsed.avatar_url] : [];
-      const fallbackPresence = getPresenceDisplay(parsed.last_active || parsed.lastActive);
+      const fallbackPresence = getAuthoritativePresenceDisplay(
+        parsed.online,
+        parsed.last_active || parsed.lastActive,
+      );
       return {
         id: parsed.id || 'preview',
         userId: parsed.user_id || parsed.userId || undefined,
@@ -552,6 +556,7 @@ export default function ProfileViewPremiumV2Screen() {
   const params = useLocalSearchParams();
   const profileId = String((params as any)?.id ?? (params as any)?.profileId ?? 'preview');
   const isPreviewReplica = String((params as any)?.isPreview ?? '').toLowerCase() === 'true';
+  const returnCircleId = getProfileViewReturnCircleId(params as Record<string, string | string[] | undefined>);
 
   const fallbackProfile = useMemo(() => parseFallbackProfile((params as any)?.fallbackProfile), [params]);
   const [cachedProfile, setCachedProfile] = useState<UserProfile | null>(null);
@@ -742,8 +747,11 @@ export default function ProfileViewPremiumV2Screen() {
         const { data, error } = await fetchUserPresence(targetUserId);
         if (cancelled) return;
         if (error || !data) return;
-        const presenceRow = data as { last_active?: string | null } | null;
-        const presence = getPresenceDisplay(presenceRow?.last_active ?? null);
+        const presenceRow = data as { online?: boolean | null; last_active?: string | null } | null;
+        const presence = getAuthoritativePresenceDisplay(
+          presenceRow?.online,
+          presenceRow?.last_active ?? null,
+        );
         setPresenceState({
           online: presence.online,
           last_active: presenceRow?.last_active ?? null,
@@ -763,7 +771,10 @@ export default function ProfileViewPremiumV2Screen() {
   const presenceProfile = useMemo(() => {
     const lastActive =
       presenceState?.last_active ?? (resolvedProfile as any).last_active ?? (resolvedProfile as any).lastActive;
-    const presence = getPresenceDisplay(lastActive);
+    const presence = getAuthoritativePresenceDisplay(
+      presenceState?.online ?? (resolvedProfile as any).online,
+      lastActive,
+    );
     return {
       ...(resolvedProfile as any),
       online: presence.online,
@@ -774,7 +785,10 @@ export default function ProfileViewPremiumV2Screen() {
     } as UserProfile;
   }, [presenceState, resolvedProfile]);
   const isOnlineNow = !!(presenceProfile as any).online;
-  const profilePresence = getPresenceDisplay(presenceProfile.last_active ?? presenceProfile.lastActive);
+  const profilePresence = getAuthoritativePresenceDisplay(
+    presenceProfile.online,
+    presenceProfile.last_active ?? presenceProfile.lastActive,
+  );
   const isActiveNow = profilePresence.activeNow;
   const showPresence = profilePresence.showPresence;
   const presenceLabel = profilePresence.label;
@@ -1561,11 +1575,13 @@ export default function ProfileViewPremiumV2Screen() {
     Haptics.selectionAsync().catch(() => undefined);
   }, [hasHeroVideo, heroImageUri, showHeroVideo]);
   const handleBack = useCallback(() => {
+    if (returnCircleId) {
+      router.replace({ pathname: '/circles/[id]', params: { id: returnCircleId } });
+      return;
+    }
     router.back();
-  }, [router]);
-  const handleClose = useCallback(() => {
-    router.back();
-  }, [router]);
+  }, [returnCircleId]);
+  const handleClose = handleBack;
   const closeSafetySheet = useCallback(() => {
     setSafetySheet(null);
     setSelectedReportReason(null);
@@ -3675,7 +3691,10 @@ const StoryHeader = memo(function StoryHeader({
   const avatarUri = profile.profilePicture || '';
   const placeholderPalette = getProfilePlaceholderPalette(profile.id || profile.name);
   const profileInitials = getProfileInitials(profile.name);
-  const presence = getPresenceDisplay(profile.last_active ?? profile.lastActive);
+  const presence = getAuthoritativePresenceDisplay(
+    profile.online,
+    profile.last_active ?? profile.lastActive,
+  );
   const showPresence = presence.showPresence;
   const presenceLabel = presence.label;
   return (

@@ -1971,6 +1971,36 @@ export default function InAppToasts() {
             'Your Love Compass is ready again. Fresh curated profiles are waiting.',
           route: '/relationship-compass',
         });
+        return;
+      }
+
+      if (pushType === 'circle_love_seat' && data?.circle_id) {
+        if ((prefs && !prefs.inapp_enabled) || isQuietHours) return;
+        pushToast({
+          id: `circle-love-seat-${data?.love_seat_id ? String(data.love_seat_id) : notification.request.identifier}-${data?.event_type || 'update'}`,
+          title: notification.request.content.title || 'Circle Love Seat',
+          body: notification.request.content.body || 'There is a new Love Seat update in your Circle.',
+          kind: 'generic',
+          route: '/circles/[id]',
+          routeParams: {
+            id: String(data.circle_id),
+          },
+        });
+        return;
+      }
+
+      if (pushType === 'circle_invitation' && data?.circle_id) {
+        if ((prefs && !prefs.inapp_enabled) || isQuietHours) return;
+        pushToast({
+          id: `circle-invitation-${data?.invitation_id ? String(data.invitation_id) : notification.request.identifier}`,
+          title: notification.request.content.title || 'A Circle invited you in',
+          body: notification.request.content.body || 'Open the Circle to accept or decline your private invitation.',
+          kind: 'generic',
+          route: '/circles/[id]',
+          routeParams: {
+            id: String(data.circle_id),
+          },
+        });
       }
     });
 
