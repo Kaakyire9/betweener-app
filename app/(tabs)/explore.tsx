@@ -369,7 +369,7 @@ export default function CirclesScreen() {
 
     const { data } = await db
       .from('circle_members')
-      .select('circle_id,profile_id,circles(name),profiles(id,full_name,age,avatar_url,interests,relationship_intent,current_country,city)')
+      .select('circle_id,profile_id,circles(name),profiles(id,full_name,age,avatar_url,looking_for,current_country,city)')
       .in('circle_id', activeCircleIds)
       .eq('status', 'active')
       .neq('profile_id', currentProfileId)
@@ -384,7 +384,7 @@ export default function CirclesScreen() {
         seen.add(String(pickedProfile.id));
         const reasonParts = [
           pickedCircle?.name ? 'Shared Circle' : null,
-          pickedProfile.relationship_intent ? 'Serious intent' : null,
+          pickedProfile.looking_for ? 'Intent context' : null,
           pickedProfile.city || pickedProfile.current_country ? 'Location context' : null,
         ].filter(Boolean);
         return {
@@ -966,6 +966,21 @@ export default function CirclesScreen() {
           </View>
         </View>
 
+        {gist ? (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Relationship Gist</Text>
+              <Text style={styles.sectionHint}>Open to every member</Text>
+            </View>
+            <RelationshipGistCard
+              gist={gist}
+              availablePerspectives={availableGistPerspectives}
+              selectedPerspective={gistPerspective}
+              onSelectPerspective={setGistPerspective}
+            />
+          </View>
+        ) : null}
+
         {creatorStudioVisible ? (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
@@ -1095,17 +1110,9 @@ export default function CirclesScreen() {
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList}>
             {activePrompt ? <CircleStoryCard label="Circle Prompt" title={activePrompt.prompt} /> : null}
             {upcomingGathering ? <CircleStoryCard label="Gathering" title={upcomingGathering.title} meta={compactDate(upcomingGathering.starts_at)} /> : null}
-            {gist ? <CircleStoryCard label="Relationship Gist" title={gist.title} meta={gist.perspective ?? 'general'} /> : null}
-            {!activePrompt && !upcomingGathering && !gist ? <CircleStoryCard label="Quiet now" title="Fresh prompts and Gatherings will appear here." /> : null}
+            {!activePrompt && !upcomingGathering ? <CircleStoryCard label="Quiet now" title="Fresh prompts and Gatherings will appear here." /> : null}
           </ScrollView>
         </View>
-
-        <RelationshipGistCard
-          gist={gist}
-          availablePerspectives={availableGistPerspectives}
-          selectedPerspective={gistPerspective}
-          onSelectPerspective={setGistPerspective}
-        />
 
         <View style={styles.section}>
           <View style={styles.sectionHeader}>

@@ -370,6 +370,13 @@ export function RelationshipGistCard({
   const { palette, styles } = useCircleHomeStyles();
   if (!gist) return null;
 
+  const perspectives = availablePerspectives?.length
+    ? availablePerspectives
+    : ['general', 'christian', 'muslim', 'culture', 'safety', 'communication'];
+  const activePerspective = (availablePerspectives?.includes(selectedPerspective ?? '')
+    ? selectedPerspective
+    : gist.perspective ?? 'general')?.toLowerCase();
+
   return (
     <LinearGradient colors={palette.gistGradient} style={styles.gistPanel}>
       <Text style={styles.kicker}>Relationship Gist</Text>
@@ -377,14 +384,14 @@ export function RelationshipGistCard({
       <Text style={styles.featuredTitle}>{gist.title}</Text>
       <Text style={styles.featuredBody} numberOfLines={3}>{gist.short_body || gist.body}</Text>
       <View style={styles.gistPerspectiveRow}>
-        {['general', 'christian', 'muslim', 'culture'].map((item) => (
+        {perspectives.map((item) => (
           <Pressable
             key={item}
-            disabled={!onSelectPerspective || !availablePerspectives?.includes(item)}
+            disabled={!onSelectPerspective || (availablePerspectives ? !availablePerspectives.includes(item) : false)}
             onPress={() => onSelectPerspective?.(item)}
             style={[
               styles.gistPerspectivePill,
-              (selectedPerspective ?? gist.perspective ?? 'general').toLowerCase() === item && styles.gistPerspectivePillActive,
+              activePerspective === item && styles.gistPerspectivePillActive,
               availablePerspectives && !availablePerspectives.includes(item) && styles.gistPerspectivePillDisabled,
             ]}
           >

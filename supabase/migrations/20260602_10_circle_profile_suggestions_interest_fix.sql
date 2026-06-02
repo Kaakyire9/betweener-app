@@ -61,8 +61,8 @@ begin
         + case when nullif(btrim(coalesce(candidate.city, '')), '') is not null
                   and lower(candidate.city) = lower(viewer.city) then 12 else 0 end
         + case when interest_overlap.has_shared_interests then 20 else 0 end
-        + case when nullif(btrim(coalesce(candidate.relationship_intent, '')), '') is not null
-                  and candidate.relationship_intent = viewer.relationship_intent then 14 else 0 end
+        + case when nullif(btrim(coalesce(candidate.looking_for, '')), '') is not null
+                  and candidate.looking_for = viewer.looking_for then 14 else 0 end
       )::integer as score,
       concat_ws(
         ' - ',
@@ -70,8 +70,8 @@ begin
         case when interest_overlap.has_shared_interests then 'Shared interests' end,
         case when nullif(btrim(coalesce(candidate.current_country_code, '')), '') is not null
                   and upper(candidate.current_country_code) = upper(viewer.current_country_code) then 'Location context' end,
-        case when nullif(btrim(coalesce(candidate.relationship_intent, '')), '') is not null
-                  and candidate.relationship_intent = viewer.relationship_intent then 'Intent aligned' end
+        case when nullif(btrim(coalesce(candidate.looking_for, '')), '') is not null
+                  and candidate.looking_for = viewer.looking_for then 'Intent aligned' end
       ) as reason
     from viewer
     join viewer_circles viewer_circle on true

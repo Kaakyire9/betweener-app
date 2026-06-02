@@ -609,6 +609,165 @@ export type Database = {
         }
         Relationships: []
       }
+      chat_typing_state: {
+        Row: {
+          peer_user_id: string
+          typing_until: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          peer_user_id: string
+          typing_until?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          peer_user_id?: string
+          typing_until?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      circle_invitations: {
+        Row: {
+          circle_id: string
+          created_at: string
+          expires_at: string
+          id: string
+          invited_profile_id: string
+          inviter_profile_id: string
+          message: string | null
+          responded_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          circle_id: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          invited_profile_id: string
+          inviter_profile_id: string
+          message?: string | null
+          responded_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          circle_id?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          invited_profile_id?: string
+          inviter_profile_id?: string
+          message?: string | null
+          responded_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_invitations_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_invitations_invited_profile_id_fkey"
+            columns: ["invited_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_invitations_inviter_profile_id_fkey"
+            columns: ["inviter_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_love_seats: {
+        Row: {
+          approved_by_profile_id: string | null
+          circle_id: string
+          created_at: string
+          ends_at: string | null
+          featured_profile_id: string
+          id: string
+          nominated_by_profile_id: string | null
+          quote: string | null
+          reason: string | null
+          responded_at: string | null
+          starts_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          approved_by_profile_id?: string | null
+          circle_id: string
+          created_at?: string
+          ends_at?: string | null
+          featured_profile_id: string
+          id?: string
+          nominated_by_profile_id?: string | null
+          quote?: string | null
+          reason?: string | null
+          responded_at?: string | null
+          starts_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          approved_by_profile_id?: string | null
+          circle_id?: string
+          created_at?: string
+          ends_at?: string | null
+          featured_profile_id?: string
+          id?: string
+          nominated_by_profile_id?: string | null
+          quote?: string | null
+          reason?: string | null
+          responded_at?: string | null
+          starts_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_love_seats_approved_by_profile_id_fkey"
+            columns: ["approved_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_love_seats_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_love_seats_featured_profile_id_fkey"
+            columns: ["featured_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_love_seats_nominated_by_profile_id_fkey"
+            columns: ["nominated_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       circle_members: {
         Row: {
           circle_id: string
@@ -787,6 +946,399 @@ export type Database = {
           },
         ]
       }
+      circle_pulse_comment_reactions: {
+        Row: {
+          circle_id: string
+          comment_id: string
+          created_at: string
+          id: string
+          profile_id: string
+          pulse_item_id: string
+          reaction: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          circle_id: string
+          comment_id: string
+          created_at?: string
+          id?: string
+          profile_id: string
+          pulse_item_id: string
+          reaction?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          circle_id?: string
+          comment_id?: string
+          created_at?: string
+          id?: string
+          profile_id?: string
+          pulse_item_id?: string
+          reaction?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_pulse_comment_reactions_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_comment_reactions_comment_id_fkey"
+            columns: ["comment_id"]
+            isOneToOne: false
+            referencedRelation: "circle_pulse_comments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_comment_reactions_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_comment_reactions_pulse_item_id_fkey"
+            columns: ["pulse_item_id"]
+            isOneToOne: false
+            referencedRelation: "circle_pulse_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_pulse_comment_reports: {
+        Row: {
+          circle_id: string
+          comment_id: string
+          created_at: string
+          id: string
+          pulse_item_id: string
+          reason: string
+          reporter_profile_id: string
+          reporter_user_id: string
+          reviewed_at: string | null
+          reviewed_by_profile_id: string | null
+          status: string
+        }
+        Insert: {
+          circle_id: string
+          comment_id: string
+          created_at?: string
+          id?: string
+          pulse_item_id: string
+          reason?: string
+          reporter_profile_id: string
+          reporter_user_id: string
+          reviewed_at?: string | null
+          reviewed_by_profile_id?: string | null
+          status?: string
+        }
+        Update: {
+          circle_id?: string
+          comment_id?: string
+          created_at?: string
+          id?: string
+          pulse_item_id?: string
+          reason?: string
+          reporter_profile_id?: string
+          reporter_user_id?: string
+          reviewed_at?: string | null
+          reviewed_by_profile_id?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_pulse_comment_reports_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_comment_reports_comment_id_fkey"
+            columns: ["comment_id"]
+            isOneToOne: false
+            referencedRelation: "circle_pulse_comments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_comment_reports_pulse_item_id_fkey"
+            columns: ["pulse_item_id"]
+            isOneToOne: false
+            referencedRelation: "circle_pulse_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_comment_reports_reporter_profile_id_fkey"
+            columns: ["reporter_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_comment_reports_reviewed_by_profile_id_fkey"
+            columns: ["reviewed_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_pulse_comments: {
+        Row: {
+          body: string
+          circle_id: string
+          created_at: string
+          deleted_at: string | null
+          id: string
+          parent_comment_id: string | null
+          profile_id: string
+          pulse_item_id: string
+          reaction_count: number
+          report_count: number
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          body: string
+          circle_id: string
+          created_at?: string
+          deleted_at?: string | null
+          id?: string
+          parent_comment_id?: string | null
+          profile_id: string
+          pulse_item_id: string
+          reaction_count?: number
+          report_count?: number
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          body?: string
+          circle_id?: string
+          created_at?: string
+          deleted_at?: string | null
+          id?: string
+          parent_comment_id?: string | null
+          profile_id?: string
+          pulse_item_id?: string
+          reaction_count?: number
+          report_count?: number
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_pulse_comments_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_comments_parent_comment_id_fkey"
+            columns: ["parent_comment_id"]
+            isOneToOne: false
+            referencedRelation: "circle_pulse_comments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_comments_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_comments_pulse_item_id_fkey"
+            columns: ["pulse_item_id"]
+            isOneToOne: false
+            referencedRelation: "circle_pulse_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_pulse_items: {
+        Row: {
+          body: string | null
+          circle_id: string
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          expires_at: string | null
+          gathering_id: string | null
+          id: string
+          image_url: string | null
+          item_type: string
+          love_seat_id: string | null
+          media_type: string | null
+          media_url: string | null
+          moment_id: string | null
+          priority: number
+          prompt_id: string | null
+          starts_at: string | null
+          status: string
+          subtitle: string | null
+          title: string | null
+          updated_at: string
+        }
+        Insert: {
+          body?: string | null
+          circle_id: string
+          created_at?: string
+          created_by_profile_id?: string | null
+          created_by_user_id?: string | null
+          expires_at?: string | null
+          gathering_id?: string | null
+          id?: string
+          image_url?: string | null
+          item_type: string
+          love_seat_id?: string | null
+          media_type?: string | null
+          media_url?: string | null
+          moment_id?: string | null
+          priority?: number
+          prompt_id?: string | null
+          starts_at?: string | null
+          status?: string
+          subtitle?: string | null
+          title?: string | null
+          updated_at?: string
+        }
+        Update: {
+          body?: string | null
+          circle_id?: string
+          created_at?: string
+          created_by_profile_id?: string | null
+          created_by_user_id?: string | null
+          expires_at?: string | null
+          gathering_id?: string | null
+          id?: string
+          image_url?: string | null
+          item_type?: string
+          love_seat_id?: string | null
+          media_type?: string | null
+          media_url?: string | null
+          moment_id?: string | null
+          priority?: number
+          prompt_id?: string | null
+          starts_at?: string | null
+          status?: string
+          subtitle?: string | null
+          title?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_pulse_items_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_items_created_by_profile_id_fkey"
+            columns: ["created_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_items_gathering_id_fkey"
+            columns: ["gathering_id"]
+            isOneToOne: false
+            referencedRelation: "gatherings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_items_love_seat_id_fkey"
+            columns: ["love_seat_id"]
+            isOneToOne: false
+            referencedRelation: "circle_love_seats"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_items_moment_id_fkey"
+            columns: ["moment_id"]
+            isOneToOne: false
+            referencedRelation: "moments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_items_prompt_id_fkey"
+            columns: ["prompt_id"]
+            isOneToOne: false
+            referencedRelation: "circle_prompts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      circle_pulse_welcome_members: {
+        Row: {
+          circle_id: string
+          created_at: string
+          expires_at: string
+          id: string
+          joined_at: string
+          membership_id: string
+          profile_id: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          circle_id: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          joined_at?: string
+          membership_id: string
+          profile_id: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          circle_id?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          joined_at?: string
+          membership_id?: string
+          profile_id?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_pulse_welcome_members_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_welcome_members_membership_id_fkey"
+            columns: ["membership_id"]
+            isOneToOne: true
+            referencedRelation: "circle_members"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_welcome_members_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       circle_reports: {
         Row: {
           circle_id: string | null
@@ -861,6 +1413,76 @@ export type Database = {
           },
         ]
       }
+      circle_role_requests: {
+        Row: {
+          circle_id: string
+          created_at: string
+          id: string
+          note: string | null
+          rejection_reason: string | null
+          requested_role: string
+          requester_profile_id: string
+          requester_user_id: string | null
+          reviewed_at: string | null
+          reviewed_by_profile_id: string | null
+          reviewed_by_user_id: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          circle_id: string
+          created_at?: string
+          id?: string
+          note?: string | null
+          rejection_reason?: string | null
+          requested_role: string
+          requester_profile_id: string
+          requester_user_id?: string | null
+          reviewed_at?: string | null
+          reviewed_by_profile_id?: string | null
+          reviewed_by_user_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          circle_id?: string
+          created_at?: string
+          id?: string
+          note?: string | null
+          rejection_reason?: string | null
+          requested_role?: string
+          requester_profile_id?: string
+          requester_user_id?: string | null
+          reviewed_at?: string | null
+          reviewed_by_profile_id?: string | null
+          reviewed_by_user_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_role_requests_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_role_requests_requester_profile_id_fkey"
+            columns: ["requester_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_role_requests_reviewed_by_profile_id_fkey"
+            columns: ["reviewed_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       circle_roles: {
         Row: {
           assigned_by_admin_id: string | null
@@ -927,6 +1549,9 @@ export type Database = {
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
+          host_note: string | null
+          host_note_updated_at: string | null
+          host_note_updated_by_profile_id: string | null
           icon_url: string | null
           id: string
           image_path: string | null
@@ -972,6 +1597,9 @@ export type Database = {
           diaspora_tags?: string[]
           faith_tags?: string[]
           gathering_count?: number
+          host_note?: string | null
+          host_note_updated_at?: string | null
+          host_note_updated_by_profile_id?: string | null
           icon_url?: string | null
           id?: string
           image_path?: string | null
@@ -1017,6 +1645,9 @@ export type Database = {
           diaspora_tags?: string[]
           faith_tags?: string[]
           gathering_count?: number
+          host_note?: string | null
+          host_note_updated_at?: string | null
+          host_note_updated_by_profile_id?: string | null
           icon_url?: string | null
           id?: string
           image_path?: string | null
@@ -1046,6 +1677,13 @@ export type Database = {
           {
             foreignKeyName: "circles_created_by_profile_id_fkey"
             columns: ["created_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circles_host_note_updated_by_profile_id_fkey"
+            columns: ["host_note_updated_by_profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -1997,6 +2635,7 @@ export type Database = {
           is_view_once: boolean
           media_kind: string | null
           message_type: string
+          read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
           sender_id: string
@@ -2034,6 +2673,7 @@ export type Database = {
           is_view_once?: boolean
           media_kind?: string | null
           message_type?: string
+          read_at?: string | null
           receiver_id: string
           reply_to_message_id?: string | null
           sender_id: string
@@ -2071,6 +2711,7 @@ export type Database = {
           is_view_once?: boolean
           media_kind?: string | null
           message_type?: string
+          read_at?: string | null
           receiver_id?: string
           reply_to_message_id?: string | null
           sender_id?: string
@@ -2126,35 +2767,6 @@ export type Database = {
           },
         ]
       }
-      moment_views: {
-        Row: {
-          id: string
-          moment_id: string
-          viewed_at: string
-          viewer_user_id: string
-        }
-        Insert: {
-          id?: string
-          moment_id: string
-          viewed_at?: string
-          viewer_user_id: string
-        }
-        Update: {
-          id?: string
-          moment_id?: string
-          viewed_at?: string
-          viewer_user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "moment_views_moment_id_fkey"
-            columns: ["moment_id"]
-            isOneToOne: false
-            referencedRelation: "moments"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       moment_reactions: {
         Row: {
           created_at: string
@@ -2180,6 +2792,35 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "moment_reactions_moment_id_fkey"
+            columns: ["moment_id"]
+            isOneToOne: false
+            referencedRelation: "moments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      moment_views: {
+        Row: {
+          id: string
+          moment_id: string
+          viewed_at: string
+          viewer_user_id: string
+        }
+        Insert: {
+          id?: string
+          moment_id: string
+          viewed_at?: string
+          viewer_user_id: string
+        }
+        Update: {
+          id?: string
+          moment_id?: string
+          viewed_at?: string
+          viewer_user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "moment_views_moment_id_fkey"
             columns: ["moment_id"]
             isOneToOne: false
             referencedRelation: "moments"
@@ -2855,9 +3496,6 @@ export type Database = {
           created_via_provider: string | null
           current_country: string | null
           current_country_code: string | null
-          origin_country: string | null
-          origin_country_code: string | null
-          origin_country_source: string
           deleted_at: string | null
           discoverable_in_vibes: boolean
           drinking: string | null
@@ -2895,6 +3533,9 @@ export type Database = {
           onboarding_completed_at: string | null
           onboarding_step: number
           online: boolean
+          origin_country: string | null
+          origin_country_code: string | null
+          origin_country_source: string
           pause_reason: string | null
           paused_at: string | null
           personality_type: string | null
@@ -2947,9 +3588,6 @@ export type Database = {
           created_via_provider?: string | null
           current_country?: string | null
           current_country_code?: string | null
-          origin_country?: string | null
-          origin_country_code?: string | null
-          origin_country_source?: string
           deleted_at?: string | null
           discoverable_in_vibes?: boolean
           drinking?: string | null
@@ -2987,6 +3625,9 @@ export type Database = {
           onboarding_completed_at?: string | null
           onboarding_step?: number
           online?: boolean
+          origin_country?: string | null
+          origin_country_code?: string | null
+          origin_country_source?: string
           pause_reason?: string | null
           paused_at?: string | null
           personality_type?: string | null
@@ -3039,9 +3680,6 @@ export type Database = {
           created_via_provider?: string | null
           current_country?: string | null
           current_country_code?: string | null
-          origin_country?: string | null
-          origin_country_code?: string | null
-          origin_country_source?: string
           deleted_at?: string | null
           discoverable_in_vibes?: boolean
           drinking?: string | null
@@ -3079,6 +3717,9 @@ export type Database = {
           onboarding_completed_at?: string | null
           onboarding_step?: number
           online?: boolean
+          origin_country?: string | null
+          origin_country_code?: string | null
+          origin_country_source?: string
           pause_reason?: string | null
           paused_at?: string | null
           personality_type?: string | null
@@ -3224,10 +3865,12 @@ export type Database = {
         Row: {
           audience_tags: string[]
           body: string
+          circle_id: string | null
           city: string | null
           country_code: string | null
           created_at: string
           created_by_admin_id: string | null
+          created_by_profile_id: string | null
           culture_tags: string[]
           faith_tags: string[]
           id: string
@@ -3243,10 +3886,12 @@ export type Database = {
         Insert: {
           audience_tags?: string[]
           body: string
+          circle_id?: string | null
           city?: string | null
           country_code?: string | null
           created_at?: string
           created_by_admin_id?: string | null
+          created_by_profile_id?: string | null
           culture_tags?: string[]
           faith_tags?: string[]
           id?: string
@@ -3262,10 +3907,12 @@ export type Database = {
         Update: {
           audience_tags?: string[]
           body?: string
+          circle_id?: string | null
           city?: string | null
           country_code?: string | null
           created_at?: string
           created_by_admin_id?: string | null
+          created_by_profile_id?: string | null
           culture_tags?: string[]
           faith_tags?: string[]
           id?: string
@@ -3278,7 +3925,22 @@ export type Database = {
           title?: string
           updated_at?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "relationship_gists_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "relationship_gists_created_by_profile_id_fkey"
+            columns: ["created_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       reports: {
         Row: {
@@ -3853,6 +4515,27 @@ export type Database = {
         }
         Relationships: []
       }
+      user_presence: {
+        Row: {
+          last_active: string
+          online: boolean
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          last_active?: string
+          online?: boolean
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          last_active?: string
+          online?: boolean
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_statuses: {
         Row: {
           background_color: string | null
@@ -4388,55 +5071,16 @@ export type Database = {
           method: string
         }[]
       }
+      can_invite_to_circle: {
+        Args: { p_circle_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      can_manage_circle_pulse: {
+        Args: { p_circle_id: string; p_user_id: string }
+        Returns: boolean
+      }
+      can_post_moment: { Args: { p_user_id?: string }; Returns: boolean }
       can_view_moment: { Args: { p_moment_id: string }; Returns: boolean }
-      rpc_get_my_moment_view_stats: {
-        Args: { p_moment_ids?: string[] | null }
-        Returns: {
-          moment_id: string
-          unique_viewers: number
-        }[]
-      }
-      rpc_get_my_moment_recent_viewers: {
-        Args: { p_limit?: number | null; p_moment_id: string }
-        Returns: {
-          avatar_url: string | null
-          current_country_code: string | null
-          full_name: string | null
-          is_match: boolean
-          is_repeat_viewer: boolean
-          profile_id: string | null
-          viewed_at: string
-          viewed_moment_count: number
-          viewer_user_id: string
-        }[]
-      }
-      rpc_get_my_moment_viewer_segments: {
-        Args: { p_days?: number | null }
-        Returns: {
-          abroad_viewers: number
-          first_time_viewers: number
-          ghana_viewers: number
-          matched_viewers: number
-          non_match_viewers: number
-          repeat_viewers: number
-          total_viewers: number
-        }[]
-      }
-      rpc_get_my_moment_view_time_insights: {
-        Args: { p_days?: number | null; p_utc_offset_minutes?: number | null }
-        Returns: {
-          local_hour: number
-          view_count: number
-          weekday_bucket: number
-        }[]
-      }
-      rpc_get_viewed_moment_ids: {
-        Args: { p_moment_ids: string[] }
-        Returns: {
-          moment_id: string
-        }[]
-      }
-      rpc_mark_moment_view: { Args: { p_moment_id: string }; Returns: boolean }
       clean_expired_distance_cache: { Args: never; Returns: number }
       cleanup_phone_verifications_orphans: { Args: never; Returns: undefined }
       decrement_superlike: { Args: { p_profile_id: string }; Returns: number }
@@ -4486,6 +5130,7 @@ export type Database = {
           audio_duration: number | null
           audio_path: string | null
           audio_waveform: Json | null
+          client_message_id: string | null
           created_at: string
           deleted_at: string | null
           deleted_by: string | null
@@ -4508,6 +5153,7 @@ export type Database = {
           is_view_once: boolean
           media_kind: string | null
           message_type: string
+          read_at: string | null
           receiver_id: string
           reply_to_message_id: string | null
           sender_id: string
@@ -4806,6 +5452,42 @@ export type Database = {
           verified: boolean
         }[]
       }
+      get_vibes_recommendations_v3: {
+        Args: {
+          p_active_window_minutes?: number
+          p_limit?: number
+          p_segment?: string
+          p_user_id: string
+        }
+        Returns: {
+          age: number
+          ai_score: number
+          avatar_url: string
+          bio: string
+          city: string
+          current_country: string
+          current_country_code: string
+          distance_km: number
+          full_name: string
+          id: string
+          is_active: boolean
+          last_active: string
+          latitude: number
+          location: string
+          location_precision: string
+          longitude: number
+          online: boolean
+          personality_type: string
+          profile_video: string
+          recommendation_reasons: Json
+          region: string
+          religion: string
+          tribe: string
+          user_id: string
+          verification_level: number
+          verified: boolean
+        }[]
+      }
       get_viewed_profile_prompts: {
         Args: { p_profile_id: string; p_viewer_profile_id?: string }
         Returns: {
@@ -4911,6 +5593,10 @@ export type Database = {
       rpc_ack_verification_request: {
         Args: { p_request_id: string }
         Returns: boolean
+      }
+      rpc_acknowledge_messages_delivered: {
+        Args: { p_message_id?: string; p_peer_user_id?: string }
+        Returns: number
       }
       rpc_admin_clear_verification_refresh: {
         Args: { p_profile_id: string }
@@ -5110,6 +5796,9 @@ export type Database = {
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
+          host_note: string | null
+          host_note_updated_at: string | null
+          host_note_updated_by_profile_id: string | null
           icon_url: string | null
           id: string
           image_path: string | null
@@ -5217,10 +5906,12 @@ export type Database = {
         Returns: {
           audience_tags: string[]
           body: string
+          circle_id: string | null
           city: string | null
           country_code: string | null
           created_at: string
           created_by_admin_id: string | null
+          created_by_profile_id: string | null
           culture_tags: string[]
           faith_tags: string[]
           id: string
@@ -5394,6 +6085,9 @@ export type Database = {
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
+          host_note: string | null
+          host_note_updated_at: string | null
+          host_note_updated_by_profile_id: string | null
           icon_url: string | null
           id: string
           image_path: string | null
@@ -5478,6 +6172,14 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_archive_circle_pulse_item: {
+        Args: { p_actor_profile_id: string; p_item_id: string }
+        Returns: boolean
+      }
+      rpc_archive_owned_circle: {
+        Args: { p_actor_profile_id: string; p_circle_id: string }
+        Returns: boolean
+      }
       rpc_attend_gathering: {
         Args: {
           p_gathering_id: string
@@ -5505,6 +6207,38 @@ export type Database = {
       rpc_backfill_swipe_likes_into_intent_requests: {
         Args: { p_days?: number; p_limit?: number }
         Returns: number
+      }
+      rpc_cancel_circle_invitation: {
+        Args: { p_actor_profile_id: string; p_invitation_id: string }
+        Returns: boolean
+      }
+      rpc_cancel_circle_love_seat_nomination: {
+        Args: { p_actor_profile_id: string; p_love_seat_id: string }
+        Returns: boolean
+      }
+      rpc_cancel_circle_role_request: {
+        Args: { p_profile_id: string; p_request_id: string }
+        Returns: {
+          circle_id: string
+          created_at: string
+          id: string
+          note: string | null
+          rejection_reason: string | null
+          requested_role: string
+          requester_profile_id: string
+          requester_user_id: string | null
+          reviewed_at: string | null
+          reviewed_by_profile_id: string | null
+          reviewed_by_user_id: string | null
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circle_role_requests"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_cancel_date_plan: {
         Args: { p_plan_id: string }
@@ -5536,6 +6270,95 @@ export type Database = {
           p_visibility?: string
         }
         Returns: string
+      }
+      rpc_create_circle_prompt: {
+        Args: {
+          p_circle_id: string
+          p_expires_at?: string
+          p_prompt: string
+          p_prompt_type?: string
+          p_title: string
+        }
+        Returns: {
+          circle_id: string | null
+          created_at: string
+          created_by_admin_id: string | null
+          created_by_profile_id: string | null
+          expires_at: string | null
+          id: string
+          prompt: string
+          prompt_type: string
+          starts_at: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circle_prompts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_create_circle_pulse_comment: {
+        Args: {
+          p_body: string
+          p_parent_comment_id?: string
+          p_profile_id: string
+          p_pulse_item_id: string
+        }
+        Returns: {
+          avatar_url: string
+          body: string
+          can_remove: boolean
+          circle_id: string
+          created_at: string
+          display_name: string
+          id: string
+          is_own: boolean
+          parent_comment_id: string
+          profile_id: string
+          pulse_item_id: string
+          report_count: number
+          updated_at: string
+        }[]
+      }
+      rpc_create_circle_relationship_gist: {
+        Args: {
+          p_actor_profile_id: string
+          p_body: string
+          p_circle_id: string
+          p_perspective?: string
+          p_short_body: string
+          p_title: string
+        }
+        Returns: {
+          audience_tags: string[]
+          body: string
+          circle_id: string | null
+          city: string | null
+          country_code: string | null
+          created_at: string
+          created_by_admin_id: string | null
+          created_by_profile_id: string | null
+          culture_tags: string[]
+          faith_tags: string[]
+          id: string
+          perspective: string
+          published_at: string | null
+          relationship_intent_tags: string[]
+          scheduled_for: string | null
+          short_body: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "relationship_gists"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_create_circle_request: {
         Args: {
@@ -5576,6 +6399,9 @@ export type Database = {
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
+          host_note: string | null
+          host_note_updated_at: string | null
+          host_note_updated_by_profile_id: string | null
           icon_url: string | null
           id: string
           image_path: string | null
@@ -5687,6 +6513,27 @@ export type Database = {
         }
         Returns: string
       }
+      rpc_create_media_moment: {
+        Args: {
+          p_caption?: string
+          p_media_url: string
+          p_metadata?: Json
+          p_moment_id: string
+          p_type: string
+          p_visibility?: string
+        }
+        Returns: string
+      }
+      rpc_create_moment: {
+        Args: {
+          p_caption?: string
+          p_metadata?: Json
+          p_text_body?: string
+          p_type: string
+          p_visibility?: string
+        }
+        Returns: string
+      }
       rpc_create_moment_comment: {
         Args: { p_body: string; p_moment_id: string }
         Returns: {
@@ -5738,6 +6585,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_debug_circle_member_moments: {
+        Args: { p_circle_id: string }
+        Returns: Json
+      }
       rpc_debug_message_delivery_receipt: {
         Args: { p_message_id: string }
         Returns: Json
@@ -5758,8 +6609,24 @@ export type Database = {
           status: string
         }[]
       }
+      rpc_delete_circle_pulse_comment: {
+        Args: { p_comment_id: string; p_profile_id: string }
+        Returns: boolean
+      }
+      rpc_delete_circle_pulse_item: {
+        Args: { p_actor_profile_id: string; p_item_id: string }
+        Returns: boolean
+      }
       rpc_delete_moment_comment: {
         Args: { p_comment_id: string }
+        Returns: boolean
+      }
+      rpc_delete_owned_circle: {
+        Args: { p_actor_profile_id: string; p_circle_id: string }
+        Returns: boolean
+      }
+      rpc_end_circle_love_seat: {
+        Args: { p_actor_profile_id: string; p_love_seat_id: string }
         Returns: boolean
       }
       rpc_get_account_recovery_options: {
@@ -5770,8 +6637,198 @@ export type Database = {
         Args: { p_recovery_token: string }
         Returns: Json
       }
+      rpc_get_chat_conversation_summaries: {
+        Args: { p_limit?: number; p_offset?: number }
+        Returns: {
+          last_activity_at: string
+          last_activity_kind: string
+          last_activity_message_id: string
+          last_activity_preview: string
+          last_message_created_at: string
+          last_message_deleted_for_all: boolean
+          last_message_delivered_at: string
+          last_message_id: string
+          last_message_is_read: boolean
+          last_message_is_view_once: boolean
+          last_message_receiver_id: string
+          last_message_sender_id: string
+          last_message_text: string
+          last_message_type: string
+          other_user_id: string
+          unread_count: number
+        }[]
+      }
+      rpc_get_circle_member_moments: {
+        Args: { p_circle_id: string; p_limit?: number }
+        Returns: {
+          caption: string
+          created_at: string
+          expires_at: string
+          id: string
+          is_deleted: boolean
+          media_url: string
+          text_body: string
+          thumbnail_url: string
+          type: string
+          user_id: string
+          visibility: string
+        }[]
+      }
+      rpc_get_circle_member_moments_recovery: {
+        Args: { p_circle_id: string; p_limit?: number }
+        Returns: {
+          caption: string
+          created_at: string
+          expires_at: string
+          id: string
+          is_deleted: boolean
+          media_url: string
+          text_body: string
+          thumbnail_url: string
+          type: string
+          user_id: string
+          visibility: string
+        }[]
+      }
+      rpc_get_circle_profile_suggestions: {
+        Args: { p_limit?: number; p_profile_id: string }
+        Returns: {
+          age: number
+          avatar_url: string
+          circle_id: string
+          circle_name: string
+          full_name: string
+          profile_id: string
+          reason: string
+          score: number
+        }[]
+      }
+      rpc_get_circle_pulse_comment_reactions: {
+        Args: { p_pulse_item_id: string }
+        Returns: {
+          comment_id: string
+          my_reaction: string
+          reaction_count: number
+        }[]
+      }
+      rpc_get_circle_pulse_comments: {
+        Args: { p_limit?: number; p_pulse_item_id: string }
+        Returns: {
+          avatar_url: string
+          body: string
+          can_remove: boolean
+          circle_id: string
+          created_at: string
+          display_name: string
+          id: string
+          is_own: boolean
+          parent_comment_id: string
+          profile_id: string
+          pulse_item_id: string
+          report_count: number
+          updated_at: string
+        }[]
+      }
+      rpc_get_circle_pulse_items: {
+        Args: { p_circle_id: string; p_include_inactive?: boolean }
+        Returns: {
+          body: string
+          circle_id: string
+          comment_count: number
+          expires_at: string
+          featured_profile_age: number
+          featured_profile_avatar_url: string
+          featured_profile_badge: string
+          featured_profile_id: string
+          featured_profile_location: string
+          featured_profile_name: string
+          gathering_attendee_count: number
+          gathering_city: string
+          gathering_id: string
+          gathering_is_partner_venue: boolean
+          gathering_safe_first_date_space: boolean
+          gathering_starts_at: string
+          gathering_type: string
+          id: string
+          image_url: string
+          item_type: string
+          love_seat_id: string
+          love_seat_quote: string
+          media_type: string
+          media_url: string
+          moment_id: string
+          priority: number
+          prompt_id: string
+          source_available: boolean
+          starts_at: string
+          status: string
+          subtitle: string
+          title: string
+          welcome_profiles: Json
+        }[]
+      }
       rpc_get_disconnected_signin_providers: { Args: never; Returns: string[] }
       rpc_get_merged_account_redirect: { Args: never; Returns: Json }
+      rpc_get_my_circle_invitation_count: {
+        Args: { p_profile_id: string }
+        Returns: number
+      }
+      rpc_get_my_circle_love_seat_nominations: {
+        Args: { p_circle_id?: string; p_profile_id: string }
+        Returns: {
+          circle_id: string
+          circle_name: string
+          created_at: string
+          featured_profile_id: string
+          id: string
+          nominated_by_profile_id: string
+          nominator_name: string
+          quote: string
+          reason: string
+          status: string
+        }[]
+      }
+      rpc_get_my_moment_recent_viewers: {
+        Args: { p_limit?: number; p_moment_id: string }
+        Returns: {
+          avatar_url: string
+          current_country_code: string
+          full_name: string
+          is_match: boolean
+          is_repeat_viewer: boolean
+          profile_id: string
+          viewed_at: string
+          viewed_moment_count: number
+          viewer_user_id: string
+        }[]
+      }
+      rpc_get_my_moment_view_stats: {
+        Args: { p_moment_ids?: string[] }
+        Returns: {
+          moment_id: string
+          unique_viewers: number
+        }[]
+      }
+      rpc_get_my_moment_view_time_insights: {
+        Args: { p_days?: number; p_utc_offset_minutes?: number }
+        Returns: {
+          local_hour: number
+          view_count: number
+          weekday_bucket: number
+        }[]
+      }
+      rpc_get_my_moment_viewer_segments: {
+        Args: { p_days?: number }
+        Returns: {
+          abroad_viewers: number
+          first_time_viewers: number
+          ghana_viewers: number
+          matched_viewers: number
+          non_match_viewers: number
+          repeat_viewers: number
+          total_viewers: number
+        }[]
+      }
       rpc_get_my_premium_state: { Args: never; Returns: Json }
       rpc_get_phone_verification_status: { Args: never; Returns: Json }
       rpc_get_signal_access: { Args: never; Returns: Json }
@@ -5800,9 +6857,41 @@ export type Database = {
         }[]
       }
       rpc_get_user_taste: { Args: { p_profile_id: string }; Returns: Json }
+      rpc_get_viewed_moment_ids: {
+        Args: { p_moment_ids: string[] }
+        Returns: {
+          moment_id: string
+        }[]
+      }
       rpc_insert_request_acceptance_system_messages: {
         Args: { p_request_id: string }
         Returns: undefined
+      }
+      rpc_invite_profile_to_circle: {
+        Args: {
+          p_actor_profile_id: string
+          p_circle_id: string
+          p_invited_profile_id: string
+          p_message?: string
+        }
+        Returns: {
+          circle_id: string
+          created_at: string
+          expires_at: string
+          id: string
+          invited_profile_id: string
+          inviter_profile_id: string
+          message: string | null
+          responded_at: string | null
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circle_invitations"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_is_signin_provider_disconnected: {
         Args: { p_provider: string }
@@ -5819,6 +6908,80 @@ export type Database = {
       rpc_link_phone_verification: {
         Args: { p_signup_session_id: string }
         Returns: boolean
+      }
+      rpc_list_circle_love_seats_for_host: {
+        Args: { p_actor_profile_id: string; p_circle_id: string }
+        Returns: {
+          circle_id: string
+          created_at: string
+          featured_profile_avatar_url: string
+          featured_profile_id: string
+          featured_profile_name: string
+          id: string
+          quote: string
+          responded_at: string
+          status: string
+        }[]
+      }
+      rpc_list_circle_pulse_comment_reports: {
+        Args: { p_actor_profile_id: string; p_circle_id: string }
+        Returns: {
+          circle_id: string
+          comment_author_name: string
+          comment_body: string
+          comment_id: string
+          comment_profile_id: string
+          latest_reason: string
+          latest_report_at: string
+          pulse_item_id: string
+          pulse_item_title: string
+          pulse_item_type: string
+          report_count: number
+          status: string
+        }[]
+      }
+      rpc_list_circle_reports: {
+        Args: { p_circle_id: string; p_profile_id: string }
+        Returns: {
+          circle_id: string
+          created_at: string
+          details: string
+          gathering_id: string
+          gathering_title: string
+          id: string
+          prompt_response_id: string
+          prompt_response_text: string
+          reason: string
+          reporter_profile_id: string
+          status: string
+        }[]
+      }
+      rpc_list_my_circle_invitations: {
+        Args: { p_profile_id: string }
+        Returns: {
+          circle_id: string
+          circle_image_path: string
+          circle_image_url: string
+          circle_name: string
+          expires_at: string
+          invitation_id: string
+          inviter_name: string
+          message: string
+        }[]
+      }
+      rpc_list_sent_circle_invitations: {
+        Args: { p_actor_profile_id: string; p_circle_id: string }
+        Returns: {
+          created_at: string
+          expires_at: string
+          id: string
+          invited_profile_age: number
+          invited_profile_avatar_url: string
+          invited_profile_id: string
+          invited_profile_location: string
+          invited_profile_name: string
+          status: string
+        }[]
       }
       rpc_log_suggested_move_event: {
         Args: {
@@ -5850,9 +7013,41 @@ export type Database = {
         Args: { p_event_id: string }
         Returns: boolean
       }
+      rpc_mark_message_read: { Args: { p_message_id: string }; Returns: number }
+      rpc_mark_moment_view: { Args: { p_moment_id: string }; Returns: boolean }
       rpc_mark_signin_provider_disconnected: {
         Args: { p_provider: string }
         Returns: boolean
+      }
+      rpc_nominate_circle_love_seat: {
+        Args: {
+          p_actor_profile_id: string
+          p_circle_id: string
+          p_featured_profile_id: string
+          p_quote?: string
+          p_reason?: string
+        }
+        Returns: {
+          approved_by_profile_id: string | null
+          circle_id: string
+          created_at: string
+          ends_at: string | null
+          featured_profile_id: string
+          id: string
+          nominated_by_profile_id: string | null
+          quote: string | null
+          reason: string | null
+          responded_at: string | null
+          starts_at: string | null
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circle_love_seats"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_process_intent_request_jobs: {
         Args: { p_remind_before?: string; p_window?: string }
@@ -5867,10 +7062,12 @@ export type Database = {
         Returns: {
           audience_tags: string[]
           body: string
+          circle_id: string | null
           city: string | null
           country_code: string | null
           created_at: string
           created_by_admin_id: string | null
+          created_by_profile_id: string | null
           culture_tags: string[]
           faith_tags: string[]
           id: string
@@ -5920,6 +7117,9 @@ export type Database = {
           diaspora_tags: string[]
           faith_tags: string[]
           gathering_count: number
+          host_note: string | null
+          host_note_updated_at: string | null
+          host_note_updated_by_profile_id: string | null
           icon_url: string | null
           id: string
           image_path: string | null
@@ -6004,6 +7204,22 @@ export type Database = {
         Args: { p_circle_id: string; p_member_id: string; p_profile_id: string }
         Returns: boolean
       }
+      rpc_remove_circle_prompt_response: {
+        Args: { p_profile_id: string; p_response_id: string }
+        Returns: boolean
+      }
+      rpc_reorder_circle_pulse_items: {
+        Args: {
+          p_actor_profile_id: string
+          p_circle_id: string
+          p_item_ids: string[]
+        }
+        Returns: number
+      }
+      rpc_report_circle_pulse_comment: {
+        Args: { p_comment_id: string; p_profile_id: string; p_reason?: string }
+        Returns: boolean
+      }
       rpc_request_account_recovery: {
         Args: {
           p_contact_email?: string
@@ -6014,6 +7230,35 @@ export type Database = {
           p_previous_sign_in_method?: string
         }
         Returns: string
+      }
+      rpc_request_circle_role: {
+        Args: {
+          p_circle_id: string
+          p_note?: string
+          p_profile_id: string
+          p_requested_role: string
+        }
+        Returns: {
+          circle_id: string
+          created_at: string
+          id: string
+          note: string | null
+          rejection_reason: string | null
+          requested_role: string
+          requester_profile_id: string
+          requester_user_id: string | null
+          reviewed_at: string | null
+          reviewed_by_profile_id: string | null
+          reviewed_by_user_id: string | null
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circle_role_requests"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_request_date_plan_concierge: {
         Args: { p_note?: string; p_plan_id: string }
@@ -6026,6 +7271,38 @@ export type Database = {
       rpc_resolve_recovered_duplicate_shell: {
         Args: { p_recovery_token: string }
         Returns: Json
+      }
+      rpc_respond_circle_invitation: {
+        Args: { p_accept: boolean; p_circle_id: string; p_profile_id: string }
+        Returns: string
+      }
+      rpc_respond_circle_love_seat: {
+        Args: {
+          p_accept: boolean
+          p_love_seat_id: string
+          p_profile_id: string
+        }
+        Returns: {
+          approved_by_profile_id: string | null
+          circle_id: string
+          created_at: string
+          ends_at: string | null
+          featured_profile_id: string
+          id: string
+          nominated_by_profile_id: string | null
+          quote: string | null
+          reason: string | null
+          responded_at: string | null
+          starts_at: string | null
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circle_love_seats"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       rpc_respond_warm_introduction: {
         Args: { p_decision: string; p_intro_id: string }
@@ -6052,6 +7329,87 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      rpc_review_circle_pulse_comment_report: {
+        Args: {
+          p_action: string
+          p_actor_profile_id: string
+          p_comment_id: string
+        }
+        Returns: boolean
+      }
+      rpc_review_circle_report: {
+        Args: { p_profile_id: string; p_report_id: string; p_status: string }
+        Returns: {
+          circle_id: string | null
+          created_at: string
+          details: string | null
+          gathering_id: string | null
+          id: string
+          prompt_response_id: string | null
+          reason: string
+          reporter_profile_id: string
+          reporter_user_id: string | null
+          reviewed_at: string | null
+          reviewed_by_admin_id: string | null
+          status: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circle_reports"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_review_circle_role_request: {
+        Args: {
+          p_decision: string
+          p_profile_id: string
+          p_rejection_reason?: string
+          p_request_id: string
+        }
+        Returns: {
+          circle_id: string
+          created_at: string
+          id: string
+          note: string | null
+          rejection_reason: string | null
+          requested_role: string
+          requester_profile_id: string
+          requester_user_id: string | null
+          reviewed_at: string | null
+          reviewed_by_profile_id: string | null
+          reviewed_by_user_id: string | null
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circle_role_requests"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_search_circle_invite_candidates: {
+        Args: {
+          p_actor_profile_id: string
+          p_circle_id: string
+          p_country?: string
+          p_interest?: string
+          p_limit?: number
+          p_max_age?: number
+          p_min_age?: number
+          p_search?: string
+        }
+        Returns: {
+          age: number
+          avatar_url: string
+          country: string
+          full_name: string
+          interests: string[]
+          location: string
+          profile_id: string
+        }[]
       }
       rpc_send_date_plan:
         | {
@@ -6108,6 +7466,71 @@ export type Database = {
         }
         Returns: Json
       }
+      rpc_set_chat_typing_state: {
+        Args: {
+          p_peer_user_id: string
+          p_typing: boolean
+          p_typing_for_ms?: number
+        }
+        Returns: number
+      }
+      rpc_set_circle_host_note: {
+        Args: { p_circle_id: string; p_note?: string; p_profile_id: string }
+        Returns: {
+          active_this_week_count: number
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          archived_at: string | null
+          audience_tags: string[]
+          category: string | null
+          circle_type: string
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          culture_tags: string[]
+          description: string | null
+          diaspora_tags: string[]
+          faith_tags: string[]
+          gathering_count: number
+          host_note: string | null
+          host_note_updated_at: string | null
+          host_note_updated_by_profile_id: string | null
+          icon_url: string | null
+          id: string
+          image_path: string | null
+          image_updated_at: string | null
+          interest_tags: string[]
+          is_featured: boolean
+          is_official: boolean
+          is_partner: boolean
+          latitude: number | null
+          longitude: number | null
+          member_count: number
+          name: string
+          region: string | null
+          rejected_reason: string | null
+          report_count: number
+          requires_join_approval: boolean
+          rules: string | null
+          safety_note: string | null
+          short_description: string | null
+          slug: string | null
+          status: string
+          updated_at: string
+          visibility: string
+          visibility_scope: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       rpc_set_circle_member_role: {
         Args: {
           p_circle_id: string
@@ -6117,6 +7540,7 @@ export type Database = {
         }
         Returns: boolean
       }
+      rpc_set_user_presence: { Args: { p_online: boolean }; Returns: number }
       rpc_submit_manual_verification_request: {
         Args: {
           p_auto_verification_reason?: string
@@ -6164,6 +7588,280 @@ export type Database = {
         Args: { p_emoji?: string; p_moment_id: string }
         Returns: boolean
       }
+      rpc_toggle_circle_pulse_comment_reaction: {
+        Args: {
+          p_comment_id: string
+          p_profile_id: string
+          p_reaction?: string
+        }
+        Returns: boolean
+      }
+      rpc_update_circle_image: {
+        Args: {
+          p_actor_profile_id: string
+          p_circle_id: string
+          p_image_path: string
+        }
+        Returns: {
+          active_this_week_count: number
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          archived_at: string | null
+          audience_tags: string[]
+          category: string | null
+          circle_type: string
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          culture_tags: string[]
+          description: string | null
+          diaspora_tags: string[]
+          faith_tags: string[]
+          gathering_count: number
+          host_note: string | null
+          host_note_updated_at: string | null
+          host_note_updated_by_profile_id: string | null
+          icon_url: string | null
+          id: string
+          image_path: string | null
+          image_updated_at: string | null
+          interest_tags: string[]
+          is_featured: boolean
+          is_official: boolean
+          is_partner: boolean
+          latitude: number | null
+          longitude: number | null
+          member_count: number
+          name: string
+          region: string | null
+          rejected_reason: string | null
+          report_count: number
+          requires_join_approval: boolean
+          rules: string | null
+          safety_note: string | null
+          short_description: string | null
+          slug: string | null
+          status: string
+          updated_at: string
+          visibility: string
+          visibility_scope: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_update_circle_name: {
+        Args: {
+          p_actor_profile_id: string
+          p_circle_id: string
+          p_name: string
+        }
+        Returns: {
+          active_this_week_count: number
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          archived_at: string | null
+          audience_tags: string[]
+          category: string | null
+          circle_type: string
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          culture_tags: string[]
+          description: string | null
+          diaspora_tags: string[]
+          faith_tags: string[]
+          gathering_count: number
+          host_note: string | null
+          host_note_updated_at: string | null
+          host_note_updated_by_profile_id: string | null
+          icon_url: string | null
+          id: string
+          image_path: string | null
+          image_updated_at: string | null
+          interest_tags: string[]
+          is_featured: boolean
+          is_official: boolean
+          is_partner: boolean
+          latitude: number | null
+          longitude: number | null
+          member_count: number
+          name: string
+          region: string | null
+          rejected_reason: string | null
+          report_count: number
+          requires_join_approval: boolean
+          rules: string | null
+          safety_note: string | null
+          short_description: string | null
+          slug: string | null
+          status: string
+          updated_at: string
+          visibility: string
+          visibility_scope: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_update_circle_request: {
+        Args: {
+          p_audience_tags?: string[]
+          p_circle_id: string
+          p_circle_type?: string
+          p_city?: string
+          p_country_code?: string
+          p_country_name?: string
+          p_culture_tags?: string[]
+          p_description?: string
+          p_diaspora_tags?: string[]
+          p_faith_tags?: string[]
+          p_interest_tags?: string[]
+          p_name: string
+          p_region?: string
+          p_requires_join_approval?: boolean
+          p_rules?: string
+          p_short_description?: string
+          p_visibility_scope?: string
+        }
+        Returns: {
+          active_this_week_count: number
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          archived_at: string | null
+          audience_tags: string[]
+          category: string | null
+          circle_type: string
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          cover_image_url: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          culture_tags: string[]
+          description: string | null
+          diaspora_tags: string[]
+          faith_tags: string[]
+          gathering_count: number
+          host_note: string | null
+          host_note_updated_at: string | null
+          host_note_updated_by_profile_id: string | null
+          icon_url: string | null
+          id: string
+          image_path: string | null
+          image_updated_at: string | null
+          interest_tags: string[]
+          is_featured: boolean
+          is_official: boolean
+          is_partner: boolean
+          latitude: number | null
+          longitude: number | null
+          member_count: number
+          name: string
+          region: string | null
+          rejected_reason: string | null
+          report_count: number
+          requires_join_approval: boolean
+          rules: string | null
+          safety_note: string | null
+          short_description: string | null
+          slug: string | null
+          status: string
+          updated_at: string
+          visibility: string
+          visibility_scope: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circles"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_update_gathering_request: {
+        Args: {
+          p_address_visibility?: string
+          p_circle_id?: string
+          p_city?: string
+          p_country_code?: string
+          p_country_name?: string
+          p_description?: string
+          p_ends_at?: string
+          p_gathering_id: string
+          p_gathering_type?: string
+          p_max_attendees?: number
+          p_online_url?: string
+          p_platform?: string
+          p_region?: string
+          p_safety_note?: string
+          p_starts_at?: string
+          p_tags?: string[]
+          p_timezone?: string
+          p_title?: string
+          p_venue_address?: string
+          p_venue_name?: string
+        }
+        Returns: {
+          address_visibility: string
+          approved_at: string | null
+          approved_by_admin_id: string | null
+          attendee_count: number
+          cancelled_at: string | null
+          circle_id: string | null
+          city: string | null
+          country_code: string | null
+          country_name: string | null
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          description: string | null
+          ends_at: string | null
+          gathering_type: string
+          id: string
+          is_official: boolean
+          is_partner_venue: boolean
+          latitude: number | null
+          longitude: number | null
+          max_attendees: number | null
+          online_url: string | null
+          platform: string | null
+          poster_url: string | null
+          region: string | null
+          rejected_reason: string | null
+          safe_first_date_space: boolean
+          safety_note: string | null
+          slug: string | null
+          starts_at: string
+          status: string
+          tags: string[]
+          timezone: string | null
+          title: string
+          updated_at: string
+          venue_address: string | null
+          venue_name: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "gatherings"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       rpc_update_moment_comment: {
         Args: { p_body: string; p_comment_id: string }
         Returns: {
@@ -6177,6 +7875,56 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "moment_comments"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_upsert_circle_pulse_item: {
+        Args: {
+          p_actor_profile_id: string
+          p_body?: string
+          p_circle_id: string
+          p_expires_at?: string
+          p_gathering_id?: string
+          p_image_url?: string
+          p_item_id?: string
+          p_item_type: string
+          p_media_type?: string
+          p_media_url?: string
+          p_moment_id?: string
+          p_priority?: number
+          p_prompt_id?: string
+          p_starts_at?: string
+          p_status?: string
+          p_subtitle?: string
+          p_title?: string
+        }
+        Returns: {
+          body: string | null
+          circle_id: string
+          created_at: string
+          created_by_profile_id: string | null
+          created_by_user_id: string | null
+          expires_at: string | null
+          gathering_id: string | null
+          id: string
+          image_url: string | null
+          item_type: string
+          love_seat_id: string | null
+          media_type: string | null
+          media_url: string | null
+          moment_id: string | null
+          priority: number
+          prompt_id: string | null
+          starts_at: string | null
+          status: string
+          subtitle: string | null
+          title: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circle_pulse_items"
           isOneToOne: true
           isSetofReturn: false
         }
