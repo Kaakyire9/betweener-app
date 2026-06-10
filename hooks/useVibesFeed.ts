@@ -24,7 +24,7 @@ export type VibesFilters = {
 
 type UseVibesFeedParams = {
   userId?: string | null;
-  snapshotOwnerIds?: Array<string | null | undefined>;
+  snapshotOwnerIds?: (string | null | undefined)[];
   segment: VibesSegment;
   activeWindowMinutes?: number;
   distanceUnit?: 'auto' | 'km' | 'mi';
@@ -448,7 +448,6 @@ export default function useVibesFeed({
 
     const fetchIntentPeers = async () => {
       try {
-        const nowIso = new Date().toISOString();
         const { data, error } = await supabase
           .from('intent_requests')
           .select('actor_id,recipient_id,expires_at,status')

@@ -63,7 +63,7 @@ const getReplyPreviewLabel = (message: MessageType) => {
 export default function ChatComposer({
   styles,
   theme,
-  isDark,
+  isDark: _isDark,
   inputRef,
   inputText,
   onChangeText,

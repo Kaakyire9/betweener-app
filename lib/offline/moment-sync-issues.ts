@@ -98,7 +98,7 @@ export const describeMomentSyncIssue = (mutation: MomentMutation): Omit<MomentSy
 };
 
 export const collectMomentSyncIssues = (
-  mutations: Array<OfflineMutation | FailedOfflineMutation>,
+  mutations: (OfflineMutation | FailedOfflineMutation)[],
   momentId: string,
 ): MomentSyncIssue[] =>
   mutations

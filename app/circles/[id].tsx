@@ -6,23 +6,41 @@ import CirclePulseCommentSheet from '@/components/circles/CirclePulseCommentShee
 import CirclePulseManagerSheet from '@/components/circles/CirclePulseManagerSheet';
 import CirclePulseMediaViewer from '@/components/circles/CirclePulseMediaViewer';
 import CirclePulseModerationSheet from '@/components/circles/CirclePulseModerationSheet';
+import Notice from '@/components/ui/Notice';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
 import { getCircleScopeLabel } from '@/lib/circles/circle-display';
-import { endCircleLoveSeat } from '@/lib/circles/pulse/circle-pulse-service';
+import { endCircleLoveSeat, fetchCirclePulseDiscussionReadStates } from '@/lib/circles/pulse/circle-pulse-service';
 import { respondToCircleInvitation } from '@/lib/circles/circle-invitations';
+import { uploadImage } from '@/lib/image-upload';
+import { cacheOfflineImage, getOfflineImageUri, resolveOfflineImageUri } from '@/lib/offline/image-store';
+import { cacheOfflineVideo, getOfflineVideoUri } from '@/lib/offline/video-store';
+import {
+  readCirclePulseCommentsSnapshotState,
+  readCirclePulseDiscussionReadState,
+} from '@/lib/offline/circle-pulse-comments-store';
+import {
+  readCircleDetailSnapshotState,
+  type OfflineCircleDetailSnapshot,
+  writeCircleDetailSnapshot,
+} from '@/lib/offline/circle-detail-store';
+import { isNetworkConnectionAvailable } from '@/lib/network-state';
+import { getAuthoritativePresenceDisplay } from '@/lib/presence';
+import { fetchUsersPresence } from '@/lib/user-presence';
 import type { CirclePulseItem } from '@/lib/circles/pulse/circle-pulse-types';
 import { useCirclePulse } from '@/lib/circles/pulse/use-circle-pulse';
 import { createSignedUrl as createMomentSignedUrl } from '@/lib/moments';
 import { showOpenSettingsPrompt } from '@/lib/permission-prompts';
+import { normalizeProfilePhotoUri } from '@/lib/profile/media';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/telemetry/logger';
+import { fetch as fetchNetInfo } from '@react-native-community/netinfo';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -40,7 +58,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-type DetailTab = 'overview' | 'members' | 'prompts' | 'gatherings' | 'moments' | 'gist';
+type DetailTab = 'overview' | 'members' | 'prompts' | 'gatherings' | 'moments';
+const DETAIL_TABS: DetailTab[] = ['overview', 'members', 'prompts', 'gatherings', 'moments'];
 
 type Circle = {
   id: string;
@@ -69,7 +88,6 @@ type Circle = {
   rules?: string | null;
   safety_note?: string | null;
   member_count?: number | null;
-  active_this_week_count?: number | null;
   gathering_count?: number | null;
   archived_at?: string | null;
   host_note?: string | null;
@@ -94,6 +112,8 @@ type MemberRow = {
     location?: string | null;
     city?: string | null;
     region?: string | null;
+    online?: boolean | null;
+    last_active?: string | null;
   } | null;
 };
 
@@ -112,6 +132,7 @@ type CirclePrompt = {
   title: string;
   prompt: string;
   prompt_type?: string | null;
+  expires_at?: string | null;
 };
 
 type CirclePromptResponse = {
@@ -127,6 +148,11 @@ type Gathering = {
   id: string;
   title: string;
   description?: string | null;
+  poster_url?: string | null;
+  presentation_mode?: 'general' | 'seat_linked' | null;
+  featured_profile_id?: string | null;
+  seat_context?: 'welcome' | 'love' | null;
+  host_created_for_member?: boolean | null;
   starts_at: string;
   city?: string | null;
   country_code?: string | null;
@@ -142,15 +168,6 @@ type GatheringAttendance = {
   gathering_id: string;
   status: string;
   visible_to_others: boolean;
-};
-
-type RelationshipGist = {
-  id: string;
-  title: string;
-  short_body?: string | null;
-  body: string;
-  perspective?: string | null;
-  circle_id?: string | null;
 };
 
 type CircleMoment = {
@@ -225,6 +242,62 @@ const compactDate = (value?: string | null) => {
   });
 };
 
+const formatMomentTimestamp = (value?: string | null) => {
+  if (!value) return 'Just now';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Just now';
+  return date.toLocaleString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).replace(',', ' ·');
+};
+
+const getCompactPresenceLabel = (presence: {
+  online: boolean;
+  activeNow: boolean;
+  recentlyActive: boolean;
+  label: string;
+}) => {
+  if (presence.online) return 'Online';
+  if (presence.activeNow) return 'Active';
+  if (presence.recentlyActive) return 'Recent';
+  return presence.label;
+};
+
+const formatSnapshotAgeLabel = (savedAt?: number | null) => {
+  if (typeof savedAt !== 'number' || !Number.isFinite(savedAt)) return 'recently';
+  const diffMs = Math.max(0, Date.now() - savedAt);
+  const diffMinutes = Math.round(diffMs / 60_000);
+  if (diffMinutes < 1) return 'just now';
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.round(diffHours / 24);
+  return `${diffDays}d ago`;
+};
+
+const toDateInputValue = (value?: string | null) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const toTimeInputValue = (value?: string | null) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+};
+
 const getLeaderRoleLabel = (role?: string | null) => {
   const normalized = String(role ?? '').toLowerCase();
   if (normalized === 'leader' || normalized === 'host') return 'Host';
@@ -232,6 +305,23 @@ const getLeaderRoleLabel = (role?: string | null) => {
   if (normalized === 'admin') return 'Admin';
   if (normalized === 'matchmaker') return 'Matchmaker';
   return 'Member';
+};
+
+const hydrateMemberProfileAvatar = async (
+  profile: MemberRow['profiles'],
+  scope: string,
+  circleId: string,
+) => {
+  if (!profile?.id || !profile.avatar_url) return profile;
+  const avatarUrl = await resolveOfflineImageUri(
+    `circle-member-avatar:${circleId}:${scope}:${profile.id}:${profile.avatar_url}`,
+    profile.avatar_url,
+  );
+  if (!avatarUrl || avatarUrl === profile.avatar_url) return profile;
+  return {
+    ...profile,
+    avatar_url: avatarUrl,
+  };
 };
 
 const normalizeCircleRole = (role?: string | null) => {
@@ -273,6 +363,11 @@ const getAttendanceStatusLabel = (status?: string | null) => {
   return 'Attending';
 };
 
+const isAttendanceCounted = (status?: string | null) => {
+  const normalized = String(status ?? '').toLowerCase();
+  return normalized === 'interested' || normalized === 'attending' || normalized === 'checked_in';
+};
+
 const getRoleRequestStatusLabel = (status?: string | null) => {
   const normalized = String(status ?? '').toLowerCase();
   if (normalized === 'approved') return 'Approved';
@@ -294,10 +389,74 @@ const joinMeta = (parts: (string | number | null | undefined)[]) =>
     .filter((part): part is string | number => part !== null && part !== undefined && part !== '')
     .join(' \u00b7 ');
 
+const normalizeCopy = (value?: string | null) => String(value ?? '').trim().replace(/\s+/g, ' ');
+
+const isSameCopy = (left?: string | null, right?: string | null) =>
+  normalizeCopy(left).length > 0 && normalizeCopy(left).toLowerCase() === normalizeCopy(right).toLowerCase();
+
+const pluralize = (count: number, singular: string, plural = `${singular}s`) => (count === 1 ? singular : plural);
+
+const normalizePosterKey = (value?: string | null) => String(value ?? '').trim();
+type GatheringSeatContext = 'welcome' | 'love' | 'featured_member';
+const getGatheringSeatContextLabel = (value?: GatheringSeatContext) => {
+  if (value === 'welcome') return 'Welcome Seat';
+  if (value === 'love') return 'Love Seat';
+  return 'Featured member';
+};
+const getGatheringSeatContextCopy = (value: GatheringSeatContext | undefined, fullName: string) => {
+  const firstName = String(fullName || 'member').trim().split(/\s+/)[0] || 'member';
+  if (value === 'welcome') return `A host-created gathering to help members welcome ${firstName} in a warmer setting.`;
+  if (value === 'love') return `A Circle gathering created around ${firstName}'s Love Seat for warmer, intentional conversation.`;
+  return `A host-led gathering built around ${firstName}'s Circle context before members RSVP.`;
+};
+
+const summarizeCircleMomentDiagnostics = (diagnostics: any) => {
+  const profiles = Array.isArray(diagnostics?.profiles) ? diagnostics.profiles : [];
+  const activeCount = profiles.reduce((total: number, item: any) => total + Number(item?.active_moment_count ?? 0), 0);
+  const visibleCount = profiles.reduce((total: number, item: any) => total + Number(item?.circle_visible_moment_count ?? 0), 0);
+  const hasIdentityMismatch = profiles.some((item: any) => item?.identity_mismatch === true);
+  return {
+    profiles,
+    activeCount,
+    visibleCount,
+    hasIdentityMismatch,
+    shouldWarn: activeCount > 0 || visibleCount > 0 || hasIdentityMismatch,
+  };
+};
+
 export default function CircleDetailScreen() {
   const { profile, user } = useAuth();
+  const authProfile = profile as any;
   const params = useLocalSearchParams();
   const circleId = String(params?.id ?? '');
+  const requestedTab = typeof params?.tab === 'string' ? params.tab : Array.isArray(params?.tab) ? params.tab[0] : null;
+  const initialRequestedTab: DetailTab = requestedTab && DETAIL_TABS.includes(requestedTab as DetailTab)
+    ? (requestedTab as DetailTab)
+    : 'overview';
+  const requestedPulseItemId =
+    typeof params?.openPulseItemId === 'string'
+      ? params.openPulseItemId
+      : Array.isArray(params?.openPulseItemId)
+        ? params.openPulseItemId[0]
+        : null;
+  const requestedPulseCommentId =
+    typeof params?.openPulseCommentId === 'string'
+      ? params.openPulseCommentId
+      : Array.isArray(params?.openPulseCommentId)
+        ? params.openPulseCommentId[0]
+        : null;
+  const requestedPulseParentCommentId =
+    typeof params?.openPulseParentCommentId === 'string'
+      ? params.openPulseParentCommentId
+      : Array.isArray(params?.openPulseParentCommentId)
+        ? params.openPulseParentCommentId[0]
+        : null;
+  const requestedPulseRouteNonce =
+    typeof params?.openPulseRouteNonce === 'string'
+      ? params.openPulseRouteNonce
+      : Array.isArray(params?.openPulseRouteNonce)
+        ? params.openPulseRouteNonce[0]
+        : null;
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
@@ -305,7 +464,7 @@ export default function CircleDetailScreen() {
 
   const [resolvedProfileId, setResolvedProfileId] = useState<string | null>(profile?.id ?? null);
   const currentProfileId = resolvedProfileId;
-  const [activeTab, setActiveTab] = useState<DetailTab>('overview');
+  const [activeTab, setActiveTab] = useState<DetailTab>(initialRequestedTab);
   const [circle, setCircle] = useState<Circle | null>(null);
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [pendingMembers, setPendingMembers] = useState<MemberRow[]>([]);
@@ -314,13 +473,23 @@ export default function CircleDetailScreen() {
   const [promptResponsesByPromptId, setPromptResponsesByPromptId] = useState<Record<string, CirclePromptResponse[]>>({});
   const [gatherings, setGatherings] = useState<Gathering[]>([]);
   const [gatheringAttendance, setGatheringAttendance] = useState<Record<string, GatheringAttendance>>({});
-  const [gists, setGists] = useState<RelationshipGist[]>([]);
   const [moments, setMoments] = useState<CircleMoment[]>([]);
   const [momentSignedUrls, setMomentSignedUrls] = useState<Record<string, string>>({});
   const [momentLoadError, setMomentLoadError] = useState<string | null>(null);
   const [roleRequests, setRoleRequests] = useState<CircleRoleRequest[]>([]);
   const [moderationReports, setModerationReports] = useState<CircleReport[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [networkReady, setNetworkReady] = useState(true);
+  const [detailSnapshotInfo, setDetailSnapshotInfo] = useState<{
+    hasSnapshot: boolean;
+    savedAt: number | null;
+    isStale: boolean;
+  }>({
+    hasSnapshot: false,
+    savedAt: null,
+    isStale: false,
+  });
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [imageUploading, setImageUploading] = useState(false);
   const [editingName, setEditingName] = useState(false);
@@ -332,6 +501,7 @@ export default function CircleDetailScreen() {
   const [promptComposerTitle, setPromptComposerTitle] = useState('');
   const [promptComposerBody, setPromptComposerBody] = useState('');
   const [promptComposerType, setPromptComposerType] = useState<'host' | 'weekly' | 'daily'>('host');
+  const [editingPromptTarget, setEditingPromptTarget] = useState<CirclePrompt | null>(null);
   const [publishingPrompt, setPublishingPrompt] = useState(false);
   const [gatheringComposerOpen, setGatheringComposerOpen] = useState(false);
   const [gatheringComposerTitle, setGatheringComposerTitle] = useState('');
@@ -341,12 +511,18 @@ export default function CircleDetailScreen() {
   const [gatheringComposerCity, setGatheringComposerCity] = useState('');
   const [gatheringComposerVenue, setGatheringComposerVenue] = useState('');
   const [gatheringComposerType, setGatheringComposerType] = useState<'physical' | 'online' | 'hybrid'>('physical');
+  const [gatheringComposerPosterUrl, setGatheringComposerPosterUrl] = useState<string | null>(null);
+  const [gatheringComposerPosterPreviewUrl, setGatheringComposerPosterPreviewUrl] = useState<string | null>(null);
+  const [gatheringComposerPosterMode, setGatheringComposerPosterMode] = useState<'image' | 'member' | null>(null);
+  const [gatheringComposerPosterMemberId, setGatheringComposerPosterMemberId] = useState<string | null>(null);
+  const [editingGatheringTarget, setEditingGatheringTarget] = useState<Gathering | null>(null);
+  const [gatheringPosterUploading, setGatheringPosterUploading] = useState(false);
   const [creatingGathering, setCreatingGathering] = useState(false);
   const [manageMemberTarget, setManageMemberTarget] = useState<MemberRow | null>(null);
   const [hostNoteOpen, setHostNoteOpen] = useState(false);
   const [hostNoteValue, setHostNoteValue] = useState('');
   const [savingHostNote, setSavingHostNote] = useState(false);
-  const [gistPerspective, setGistPerspective] = useState('general');
+  const [deletingContentKey, setDeletingContentKey] = useState<string | null>(null);
   const [gatheringRsvpTarget, setGatheringRsvpTarget] = useState<Gathering | null>(null);
   const [gatheringRsvpStatus, setGatheringRsvpStatus] = useState<'interested' | 'attending'>('attending');
   const [gatheringRsvpVisible, setGatheringRsvpVisible] = useState(false);
@@ -369,10 +545,33 @@ export default function CircleDetailScreen() {
   const [intentTarget, setIntentTarget] = useState<{ id: string; name?: string | null } | null>(null);
   const [pulseManagerOpen, setPulseManagerOpen] = useState(false);
   const [pulseCommentTarget, setPulseCommentTarget] = useState<CirclePulseItem | null>(null);
+  const [pulseCommentFocusId, setPulseCommentFocusId] = useState<string | null>(null);
+  const [pulseCommentParentFocusId, setPulseCommentParentFocusId] = useState<string | null>(null);
   const [pulseMediaTarget, setPulseMediaTarget] = useState<CirclePulseItem | null>(null);
   const [pulseModerationOpen, setPulseModerationOpen] = useState(false);
   const [inviteSheetOpen, setInviteSheetOpen] = useState(false);
   const [circleOptionsOpen, setCircleOptionsOpen] = useState(false);
+  const [pulseDiscussionUnreadByItemId, setPulseDiscussionUnreadByItemId] = useState<Record<string, number>>({});
+  const [presenceNow, setPresenceNow] = useState(() => Date.now());
+  const handledPulseNotificationKeyRef = useRef<string | null>(null);
+  const pulseNotificationReloadAttemptRef = useRef<string | null>(null);
+  const activeTabRef = useRef<DetailTab>(initialRequestedTab);
+
+  useEffect(() => {
+    if (!requestedTab) return;
+    if (DETAIL_TABS.includes(requestedTab as DetailTab)) {
+      setActiveTab(requestedTab as DetailTab);
+    }
+  }, [requestedTab]);
+
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setPresenceNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -397,83 +596,129 @@ export default function CircleDetailScreen() {
     };
   }, [profile?.id, user?.id]);
 
-  const loadCircle = useCallback(async () => {
+  const applyCircleDetailSnapshot = useCallback((snapshot: OfflineCircleDetailSnapshot) => {
+    setCircle((snapshot.circle as Circle | null) ?? null);
+    setMembership((snapshot.membership as MemberRow | null) ?? null);
+    setMembers((snapshot.members as MemberRow[]) ?? []);
+    setPendingMembers((snapshot.pendingMembers as MemberRow[]) ?? []);
+    setPrompts((snapshot.prompts as CirclePrompt[]) ?? []);
+    setPromptResponsesByPromptId(
+      (snapshot.promptResponsesByPromptId as Record<string, CirclePromptResponse[]>) ?? {},
+    );
+    setGatherings((snapshot.gatherings as Gathering[]) ?? []);
+    setGatheringAttendance(
+      (snapshot.gatheringAttendance as Record<string, GatheringAttendance>) ?? {},
+    );
+    setMoments((snapshot.moments as CircleMoment[]) ?? []);
+    setMomentLoadError(snapshot.momentLoadError ?? null);
+    setRoleRequests((snapshot.roleRequests as CircleRoleRequest[]) ?? []);
+    setModerationReports((snapshot.moderationReports as CircleReport[]) ?? []);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!circleId) return () => {
+      cancelled = true;
+    };
+    void (async () => {
+      const snapshotState = await readCircleDetailSnapshotState(circleId, currentProfileId);
+      if (cancelled) return;
+      setDetailSnapshotInfo({
+        hasSnapshot: Boolean(snapshotState.data),
+        savedAt: snapshotState.savedAt,
+        isStale: snapshotState.isStale,
+      });
+      if (snapshotState.data) {
+        applyCircleDetailSnapshot(snapshotState.data);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyCircleDetailSnapshot, circleId, currentProfileId]);
+
+  const persistCircleDetailSnapshot = useCallback(async (patch?: Partial<OfflineCircleDetailSnapshot>) => {
     if (!circleId) return;
-    setLoading(true);
-    try {
-      const circlePromise = db
-        .from('circles')
-        .select('id,name,slug,description,short_description,visibility,category,created_by_profile_id,cover_image_url,icon_url,image_path,image_updated_at,circle_type,status,visibility_scope,country_code,country_name,region,city,is_official,is_partner,is_featured,requires_join_approval,rules,safety_note,member_count,active_this_week_count,gathering_count,archived_at,host_note,host_note_updated_at,host_note_updated_by_profile_id')
-        .eq('id', circleId)
-        .maybeSingle();
+    const savedAt = Date.now();
+    await writeCircleDetailSnapshot(circleId, currentProfileId, {
+      circle: ((patch && 'circle' in patch) ? patch.circle : circle) ?? null,
+      membership: ((patch && 'membership' in patch) ? patch.membership : membership) ?? null,
+      members: ((patch && 'members' in patch) ? patch.members : members) ?? [],
+      pendingMembers: ((patch && 'pendingMembers' in patch) ? patch.pendingMembers : pendingMembers) ?? [],
+      prompts: ((patch && 'prompts' in patch) ? patch.prompts : prompts) ?? [],
+      promptResponsesByPromptId: ((patch && 'promptResponsesByPromptId' in patch) ? patch.promptResponsesByPromptId : promptResponsesByPromptId) ?? {},
+      gatherings: ((patch && 'gatherings' in patch) ? patch.gatherings : gatherings) ?? [],
+      gatheringAttendance: ((patch && 'gatheringAttendance' in patch) ? patch.gatheringAttendance : gatheringAttendance) ?? {},
+      moments: ((patch && 'moments' in patch) ? patch.moments : moments) ?? [],
+      momentLoadError: ((patch && 'momentLoadError' in patch) ? patch.momentLoadError : momentLoadError) ?? null,
+      roleRequests: ((patch && 'roleRequests' in patch) ? patch.roleRequests : roleRequests) ?? [],
+      moderationReports: ((patch && 'moderationReports' in patch) ? patch.moderationReports : moderationReports) ?? [],
+    });
+    setDetailSnapshotInfo({
+      hasSnapshot: true,
+      savedAt,
+      isStale: false,
+    });
+  }, [
+    circle,
+    circleId,
+    currentProfileId,
+    gatherings,
+    gatheringAttendance,
+    members,
+    membership,
+    moderationReports,
+    momentLoadError,
+    moments,
+    pendingMembers,
+    promptResponsesByPromptId,
+    prompts,
+    roleRequests,
+  ]);
 
-      const membershipPromise = currentProfileId
-        ? db.from('circle_members').select('id,role,status,is_visible,profile_id,user_id').eq('circle_id', circleId).eq('profile_id', currentProfileId).maybeSingle()
-        : Promise.resolve({ data: null, error: null });
+  const refreshCircleCoreState = useCallback(async () => {
+    if (!circleId) {
+      setCircle(null);
+      setMembership(null);
+      return { circle: null, membership: null };
+    }
 
-      const membersPromise = db
-        .from('circle_members')
-        .select('id,role,status,is_visible,profile_id,user_id,joined_at,profiles(id,user_id,full_name,avatar_url,age,location,city,region)')
-        .eq('circle_id', circleId);
+    const circlePromise = db
+      .from('circles')
+      .select('id,name,slug,description,short_description,visibility,category,created_by_profile_id,cover_image_url,icon_url,image_path,image_updated_at,circle_type,status,visibility_scope,country_code,country_name,region,city,is_official,is_partner,is_featured,requires_join_approval,rules,safety_note,member_count,gathering_count,archived_at,host_note,host_note_updated_at,host_note_updated_by_profile_id')
+      .eq('id', circleId)
+      .maybeSingle();
 
-      const promptsPromise = db
-        .from('circle_prompts')
-        .select('id,title,prompt,prompt_type')
-        .eq('circle_id', circleId)
-        .eq('status', 'published')
-        .order('starts_at', { ascending: false, nullsFirst: false })
-        .limit(20);
+    const membershipPromise = currentProfileId
+      ? db.from('circle_members').select('id,role,status,is_visible,profile_id,user_id').eq('circle_id', circleId).eq('profile_id', currentProfileId).maybeSingle()
+      : Promise.resolve({ data: null, error: null });
 
-      const gatheringsPromise = db
-        .from('gatherings')
-        .select('id,title,description,starts_at,city,country_code,venue_name,gathering_type,address_visibility,is_partner_venue,safe_first_date_space,attendee_count')
-        .eq('circle_id', circleId)
-        .eq('status', 'approved')
-        .order('starts_at', { ascending: true })
-        .limit(20);
+    const [{ data: circleRow }, { data: myMembership }] = await Promise.all([circlePromise, membershipPromise]);
+    const nextCircle = (circleRow as Circle) || null;
+    const nextMembership = (myMembership as MemberRow) || null;
+    setCircle(nextCircle);
+    setMembership(nextMembership);
+    return { circle: nextCircle, membership: nextMembership };
+  }, [circleId, currentProfileId]);
 
-      const roleRequestsPromise = db
-        .from('circle_role_requests')
-        .select('id,circle_id,requester_profile_id,requester_user_id,requested_role,note,status,rejection_reason,created_at')
-        .eq('circle_id', circleId)
-        .order('created_at', { ascending: false })
-        .limit(20);
+  const refreshCircleMembersState = useCallback(async () => {
+    if (!circleId) {
+      setMembers([]);
+      setPendingMembers([]);
+      return {
+        activeVisibleMembers: [] as MemberRow[],
+        pendingMembers: [] as MemberRow[],
+        memberByProfileId: {} as Record<string, MemberRow>,
+      };
+    }
 
-      const gistsPromise = db
-        .from('relationship_gists')
-        .select('id,title,short_body,body,perspective,circle_id')
-        .eq('status', 'published')
-        .order('published_at', { ascending: false, nullsFirst: false })
-        .limit(24);
+    const { data: memberRows } = await db
+      .from('circle_members')
+      .select('id,role,status,is_visible,profile_id,user_id,joined_at,profiles(id,user_id,full_name,avatar_url,age,location,city,region)')
+      .eq('circle_id', circleId);
 
-      const [
-        { data: circleRow },
-        { data: myMembership },
-        { data: memberRows },
-        { data: promptRows },
-        { data: gatheringRows },
-        { data: roleRequestRows },
-        { data: gistRows },
-      ] = await Promise.all([
-        circlePromise,
-        membershipPromise,
-        membersPromise,
-        promptsPromise,
-        gatheringsPromise,
-        roleRequestsPromise,
-        gistsPromise,
-      ]);
-
-      setCircle((circleRow as Circle) || null);
-      const nextMembership = (myMembership as MemberRow) || null;
-      setMembership(nextMembership);
-      const nextPrompts = (promptRows ?? []) as CirclePrompt[];
-      setPrompts(nextPrompts);
-      const nextGatherings = (gatheringRows ?? []) as Gathering[];
-      setGatherings(nextGatherings);
-      setGists(((gistRows ?? []) as RelationshipGist[]).filter((item) => !item.circle_id || item.circle_id === circleId));
-
-      const rows: MemberRow[] = (memberRows || []).map((row: any) => ({
+    const rows: MemberRow[] = await Promise.all(
+      ((memberRows || []) as any[]).map(async (row: any) => ({
         id: String(row.id),
         role: String(row.role),
         status: String(row.status),
@@ -481,270 +726,286 @@ export default function CircleDetailScreen() {
         profile_id: String(row.profile_id),
         user_id: row.user_id || row.profiles?.user_id ? String(row.user_id || row.profiles?.user_id) : null,
         joined_at: row.joined_at ? String(row.joined_at) : null,
-        profiles: normalizeMemberProfile(row.profiles),
-      }));
-      const activeVisibleMembers = rows.filter((row) => row.status === 'active' && row.is_visible !== false);
-      const memberByProfileId = rows.reduce<Record<string, MemberRow>>((acc, row) => {
-        acc[row.profile_id] = row;
-        return acc;
-      }, {});
-      setMembers(activeVisibleMembers);
-      setPendingMembers(rows.filter((row) => row.status === 'pending'));
-      setRoleRequests(
-        ((roleRequestRows ?? []) as any[]).map((row) => ({
+        profiles: await hydrateMemberProfileAvatar(
+          normalizeMemberProfile(row.profiles),
+          'member',
+          circleId,
+        ),
+      })),
+    );
+
+    const presenceUserIds = rows
+      .map((row) => row.user_id || row.profiles?.user_id || null)
+      .filter((value): value is string => typeof value === 'string' && value.length > 0);
+    const presenceResult = await fetchUsersPresence(presenceUserIds);
+    const presenceByUserId = new Map(
+      ((presenceResult.data ?? []) as { user_id: string; online?: boolean | null; last_active?: string | null }[])
+        .map((row) => [String(row.user_id), row] as const),
+    );
+    const hydratedRows = rows.map((row) => {
+      const userId = row.user_id || row.profiles?.user_id || null;
+      const presence = userId ? presenceByUserId.get(String(userId)) : null;
+      if (!presence || !row.profiles) return row;
+      return {
+        ...row,
+        profiles: {
+          ...row.profiles,
+          online: typeof presence.online === 'boolean' ? presence.online : row.profiles.online ?? null,
+          last_active: presence.last_active ?? row.profiles.last_active ?? null,
+        },
+      };
+    });
+
+    const activeVisibleMembers = hydratedRows.filter((row) => row.status === 'active' && row.is_visible !== false);
+    const nextPendingMembers = hydratedRows.filter((row) => row.status === 'pending');
+    const memberByProfileId = hydratedRows.reduce<Record<string, MemberRow>>((acc, row) => {
+      acc[row.profile_id] = row;
+      return acc;
+    }, {});
+
+    setMembers(activeVisibleMembers);
+    setPendingMembers(nextPendingMembers);
+
+    return {
+      activeVisibleMembers,
+      pendingMembers: nextPendingMembers,
+      memberByProfileId,
+    };
+  }, [circleId]);
+
+  const refreshCirclePromptsState = useCallback(async () => {
+    if (!circleId) {
+      setPrompts([]);
+      setPromptResponsesByPromptId({});
+      return {
+        prompts: [] as CirclePrompt[],
+        promptResponsesByPromptId: {} as Record<string, CirclePromptResponse[]>,
+      };
+    }
+
+    const { data: promptRows } = await db
+      .from('circle_prompts')
+      .select('id,title,prompt,prompt_type')
+      .eq('circle_id', circleId)
+      .eq('status', 'published')
+      .order('starts_at', { ascending: false, nullsFirst: false })
+      .limit(20);
+
+    const nextPrompts = (promptRows ?? []) as CirclePrompt[];
+    setPrompts(nextPrompts);
+
+    let nextPromptResponses: Record<string, CirclePromptResponse[]> = {};
+    if (nextPrompts.length > 0) {
+      const { data: promptResponseRows } = await db
+        .from('circle_prompt_responses')
+        .select('id,prompt_id,profile_id,response,created_at,profiles(id,full_name,avatar_url,age,location,city,region)')
+        .in('prompt_id', nextPrompts.map((item) => item.id))
+        .order('created_at', { ascending: false });
+
+      const hydratedPromptResponses = await Promise.all(
+        ((promptResponseRows ?? []) as any[]).map(async (row) => ({
           id: String(row.id),
-          circle_id: String(row.circle_id),
-          requester_profile_id: String(row.requester_profile_id),
-          requester_user_id: row.requester_user_id ? String(row.requester_user_id) : null,
-          requested_role: String(row.requested_role) as CircleRoleRequestType,
-          note: row.note ?? null,
-          status: String(row.status),
-          rejection_reason: row.rejection_reason ?? null,
+          prompt_id: String(row.prompt_id),
+          profile_id: String(row.profile_id),
+          response: String(row.response),
           created_at: String(row.created_at),
-          requester: memberByProfileId[String(row.requester_profile_id)]?.profiles ?? null,
+          profiles: await hydrateMemberProfileAvatar(
+            normalizeMemberProfile(row.profiles),
+            'prompt-response',
+            circleId,
+          ),
         })),
       );
 
-      if (nextPrompts.length > 0) {
-        const { data: promptResponseRows } = await db
-          .from('circle_prompt_responses')
-          .select('id,prompt_id,profile_id,response,created_at,profiles(id,full_name,avatar_url,age,location,city,region)')
-          .in('prompt_id', nextPrompts.map((item) => item.id))
-          .order('created_at', { ascending: false });
-        const nextPromptResponses = ((promptResponseRows ?? []) as any[]).reduce<Record<string, CirclePromptResponse[]>>((acc, row) => {
-          const promptId = String(row.prompt_id);
-          const nextRow: CirclePromptResponse = {
-            id: String(row.id),
-            prompt_id: promptId,
-            profile_id: String(row.profile_id),
-            response: String(row.response),
-            created_at: String(row.created_at),
-            profiles: normalizeMemberProfile(row.profiles),
-          };
-          if (!acc[promptId]) acc[promptId] = [];
-          acc[promptId].push(nextRow);
-          return acc;
-        }, {});
-        setPromptResponsesByPromptId(nextPromptResponses);
-      } else {
-        setPromptResponsesByPromptId({});
-      }
-
-      const nextMembershipRole = normalizeCircleRole(nextMembership?.status === 'active' ? nextMembership.role : null);
-      const canLoadModerationReports = !!currentProfileId && (
-        String((circleRow as Circle | null)?.created_by_profile_id ?? '') === currentProfileId
-        || ['host', 'admin', 'moderator'].includes(nextMembershipRole)
-      );
-
-      if (canLoadModerationReports) {
-        const { data: reportRows, error: reportError } = await db.rpc('rpc_list_circle_reports', {
-          p_circle_id: circleId,
-          p_profile_id: currentProfileId,
-        });
-        if (reportError) throw reportError;
-        setModerationReports(
-          ((reportRows ?? []) as any[]).map((row) => ({
-            id: String(row.id),
-            circle_id: row.circle_id ? String(row.circle_id) : null,
-            gathering_id: row.gathering_id ? String(row.gathering_id) : null,
-            prompt_response_id: row.prompt_response_id ? String(row.prompt_response_id) : null,
-            reporter_profile_id: String(row.reporter_profile_id),
-            reason: String(row.reason),
-            details: row.details ?? null,
-            status: String(row.status),
-            created_at: String(row.created_at),
-            gathering_title: row.gathering_title ?? null,
-            prompt_response_text: row.prompt_response_text ?? null,
-          })),
-        );
-      } else {
-        setModerationReports([]);
-      }
-
-      if (currentProfileId && nextGatherings.length > 0) {
-        const { data: attendeeRows } = await db
-          .from('gathering_attendees')
-          .select('gathering_id,status,visible_to_others')
-          .eq('profile_id', currentProfileId)
-          .in('gathering_id', nextGatherings.map((item) => item.id));
-        const nextAttendance = ((attendeeRows ?? []) as any[]).reduce<Record<string, GatheringAttendance>>((acc, row) => {
-          acc[String(row.gathering_id)] = {
-            gathering_id: String(row.gathering_id),
-            status: String(row.status),
-            visible_to_others: row.visible_to_others === true,
-          };
-          return acc;
-        }, {});
-        setGatheringAttendance(nextAttendance);
-      } else {
-        setGatheringAttendance({});
-      }
-
-      const canLoadCircleMoments = String((circleRow as Circle | null)?.created_by_profile_id ?? '') === currentProfileId
-        || nextMembership?.status === 'active';
-      setMomentLoadError(null);
-      if (!canLoadCircleMoments) {
-        setMoments([]);
-      } else {
-        let { data: momentRows, error: momentError } = await db.rpc('rpc_get_circle_member_moments', {
-          p_circle_id: circleId,
-          p_limit: 18,
-        });
-        if (!momentError && (momentRows ?? []).length === 0) {
-          const recovery = await db.rpc('rpc_get_circle_member_moments_recovery', {
-            p_circle_id: circleId,
-            p_limit: 18,
-          });
-          if (!recovery.error && (recovery.data ?? []).length > 0) {
-            momentRows = recovery.data;
-          } else if (recovery.error) {
-            logger.warn('[circles] member_moments_recovery_failed', {
-              circleId,
-              error: String(recovery.error.message || recovery.error),
-            });
-          }
-        }
-        if (momentError) {
-          logger.warn('[circles] member_moments_failed', { circleId, error: String(momentError.message || momentError) });
-          setMomentLoadError(String(momentError.message || momentError));
-          setMoments([]);
-          return;
-        }
-        if ((momentRows ?? []).length === 0 && canLoadModerationReports) {
-          const { data: diagnostics, error: diagnosticError } = await db.rpc('rpc_debug_circle_member_moments', {
-            p_circle_id: circleId,
-          });
-          logger.warn('[circles] member_moments_empty', {
-            circleId,
-            diagnostics: diagnosticError ? String(diagnosticError.message || diagnosticError) : diagnostics,
-          });
-        }
-        const memberByUserId = activeVisibleMembers.reduce<Record<string, MemberRow>>((acc, row) => {
-          if (row.user_id) acc[String(row.user_id)] = row;
-          if (row.profiles?.user_id) acc[String(row.profiles.user_id)] = row;
-          return acc;
-        }, {});
-        setMoments(
-          (momentRows ?? []).map((row: any) => ({
-            id: String(row.id),
-            user_id: String(row.user_id),
-            type: String(row.type),
-            media_url: row.media_url ?? null,
-            thumbnail_url: row.thumbnail_url ?? null,
-            text_body: row.text_body ?? null,
-            caption: row.caption ?? null,
-            created_at: String(row.created_at),
-            expires_at: row.expires_at ?? null,
-            visibility: row.visibility ?? null,
-            profile: memberByUserId[String(row.user_id)]?.profiles ?? null,
-          })),
-        );
-      }
-    } finally {
-      setLoading(false);
+      nextPromptResponses = hydratedPromptResponses.reduce<Record<string, CirclePromptResponse[]>>((acc, row) => {
+        const promptId = String(row.prompt_id);
+        if (!acc[promptId]) acc[promptId] = [];
+        acc[promptId].push(row);
+        return acc;
+      }, {});
     }
+
+    setPromptResponsesByPromptId(nextPromptResponses);
+
+    return {
+      prompts: nextPrompts,
+      promptResponsesByPromptId: nextPromptResponses,
+    };
+  }, [circleId]);
+
+  const refreshCircleGatheringsState = useCallback(async () => {
+    if (!circleId) {
+      setGatherings([]);
+      setGatheringAttendance({});
+      return {
+        gatherings: [] as Gathering[],
+        gatheringAttendance: {} as Record<string, GatheringAttendance>,
+      };
+    }
+
+    const { data: gatheringRows } = await db
+      .from('gatherings')
+      .select('id,title,description,poster_url,presentation_mode,featured_profile_id,seat_context,host_created_for_member,starts_at,city,country_code,venue_name,gathering_type,address_visibility,is_partner_venue,safe_first_date_space,attendee_count')
+      .eq('circle_id', circleId)
+      .eq('status', 'approved')
+      .order('starts_at', { ascending: true })
+      .limit(20);
+
+    const nextGatherings = (gatheringRows ?? []) as Gathering[];
+    setGatherings(nextGatherings);
+
+    let nextAttendance: Record<string, GatheringAttendance> = {};
+    if (currentProfileId && nextGatherings.length > 0) {
+      const { data: attendeeRows } = await db
+        .from('gathering_attendees')
+        .select('gathering_id,status,visible_to_others')
+        .eq('profile_id', currentProfileId)
+        .in('gathering_id', nextGatherings.map((item) => item.id));
+
+      nextAttendance = ((attendeeRows ?? []) as any[]).reduce<Record<string, GatheringAttendance>>((acc, row) => {
+        acc[String(row.gathering_id)] = {
+          gathering_id: String(row.gathering_id),
+          status: String(row.status),
+          visible_to_others: row.visible_to_others === true,
+        };
+        return acc;
+      }, {});
+    }
+
+    setGatheringAttendance(nextAttendance);
+
+    return {
+      gatherings: nextGatherings,
+      gatheringAttendance: nextAttendance,
+    };
   }, [circleId, currentProfileId]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const resolveMomentUrls = async () => {
-      const unresolved = moments.filter((moment) => {
-        const source = moment.thumbnail_url || moment.media_url;
-        return source && !source.startsWith('http') && !momentSignedUrls[moment.id];
-      });
-      if (unresolved.length === 0) return;
-      const resolved: Record<string, string> = {};
-      await Promise.all(unresolved.map(async (moment) => {
-        const source = moment.thumbnail_url || moment.media_url;
-        const url = source ? await createMomentSignedUrl(source, 3600) : null;
-        if (url) resolved[moment.id] = url;
-      }));
-      if (!cancelled && Object.keys(resolved).length > 0) {
-        setMomentSignedUrls((current) => ({ ...current, ...resolved }));
-      }
-    };
-    void resolveMomentUrls();
-    return () => {
-      cancelled = true;
-    };
-  }, [momentSignedUrls, moments]);
+  const refreshCircleRoleRequestsState = useCallback(async (memberByProfileId?: Record<string, MemberRow>) => {
+    if (!circleId) {
+      setRoleRequests([]);
+      return [] as CircleRoleRequest[];
+    }
 
-  useFocusEffect(
-    useCallback(() => {
-      void loadCircle();
-    }, [loadCircle]),
-  );
+    const { data: roleRequestRows } = await db
+      .from('circle_role_requests')
+      .select('id,circle_id,requester_profile_id,requester_user_id,requested_role,note,status,rejection_reason,created_at')
+      .eq('circle_id', circleId)
+      .order('created_at', { ascending: false })
+      .limit(20);
 
-  useEffect(() => {
-    if (circle?.name) setNameValue(circle.name);
-  }, [circle?.name]);
+    const resolvedMemberByProfileId = memberByProfileId ?? [...members, ...pendingMembers].reduce<Record<string, MemberRow>>((acc, row) => {
+      acc[row.profile_id] = row;
+      return acc;
+    }, {});
 
-  useEffect(() => {
-    let cancelled = false;
-    const resolve = async () => {
-      if (circle?.cover_image_url || circle?.icon_url) {
-        setImageUrl(circle.cover_image_url || circle.icon_url || null);
-        return;
-      }
-      if (!circle?.image_path) {
-        setImageUrl(null);
-        return;
-      }
-      const { data, error } = await db.storage.from('circle-images').createSignedUrl(circle.image_path, 3600);
-      if (cancelled) return;
-      setImageUrl(error || !data?.signedUrl ? null : data.signedUrl);
-    };
-    void resolve();
-    return () => {
-      cancelled = true;
-    };
-  }, [circle?.cover_image_url, circle?.icon_url, circle?.image_path, circle?.image_updated_at]);
+    const nextRoleRequests = ((roleRequestRows ?? []) as any[]).map((row) => ({
+      id: String(row.id),
+      circle_id: String(row.circle_id),
+      requester_profile_id: String(row.requester_profile_id),
+      requester_user_id: row.requester_user_id ? String(row.requester_user_id) : null,
+      requested_role: String(row.requested_role) as CircleRoleRequestType,
+      note: row.note ?? null,
+      status: String(row.status),
+      rejection_reason: row.rejection_reason ?? null,
+      created_at: String(row.created_at),
+      requester: resolvedMemberByProfileId[String(row.requester_profile_id)]?.profiles ?? null,
+    }));
 
-  const isOwner = !!(circle?.created_by_profile_id && circle.created_by_profile_id === currentProfileId);
-  const membershipRole = normalizeCircleRole(membership?.status === 'active' ? membership.role : null);
-  const isMember = isOwner || membership?.status === 'active';
-  const circleMemberUserIds = useMemo(
-    () => new Set([
-      ...members.map((item) => String(item.user_id ?? '')).filter(Boolean),
-      ...members.map((item) => String(item.profiles?.user_id ?? '')).filter(Boolean),
-      ...(isOwner && user?.id ? [user.id] : []),
-    ]),
-    [isOwner, members, user?.id],
-  );
-  const canEditCircle = isOwner;
-  const canReviewMembers = isOwner || ['host', 'admin', 'moderator'].includes(membershipRole);
-  const canManageRoles = isOwner || ['host', 'admin'].includes(membershipRole);
-  const canRemoveMembers = isOwner || ['host', 'admin', 'moderator'].includes(membershipRole);
-  const canAssignHostRole = isOwner || membershipRole === 'admin';
-  const canModerateCircle = isOwner || ['host', 'admin', 'moderator'].includes(membershipRole);
-  const canPublishCirclePrompt = isOwner || ['host', 'admin', 'moderator', 'matchmaker'].includes(membershipRole);
-  const canHostGathering = isOwner || ['host', 'admin', 'moderator', 'matchmaker'].includes(membershipRole);
-  const canSetHostNote = isOwner || ['host', 'admin', 'moderator'].includes(membershipRole);
-  const canLeaveCircle = isMember && !isOwner && !['host', 'admin'].includes(membershipRole);
-  const requestableRoleTypes = useMemo<CircleRoleRequestType[]>(() => {
-    if (!isMember || ['host', 'admin', 'leader'].includes(membershipRole)) return [];
-    if (membershipRole === 'moderator') return ['host'];
-    return ['moderator', 'host'];
-  }, [isMember, membershipRole]);
-  const canRequestLeadershipRole = requestableRoleTypes.length > 0;
-  const canReviewRoleRequests = isOwner || ['host', 'admin'].includes(membershipRole);
-  const joinLabel = membership?.status === 'invited'
-    ? 'Review invitation'
-    : circle?.requires_join_approval || circle?.visibility === 'private'
-      ? 'Request to join'
-      : 'Join Circle';
-  const pendingModerationReports = moderationReports.filter((report) => report.status === 'pending' || report.status === 'reviewing');
-  const {
-    items: pulseItems,
-    loading: pulseLoading,
-    error: pulseError,
-    reload: reloadPulse,
-  } = useCirclePulse({ circleId, enabled: isMember });
+    setRoleRequests(nextRoleRequests);
+    return nextRoleRequests;
+  }, [circleId, members, pendingMembers]);
 
-  const refreshCircleMoments = useCallback(async () => {
-    if (!circleId || !isMember) {
+  const refreshCircleReportsState = useCallback(async (options?: {
+    circleOverride?: Circle | null;
+    membershipOverride?: MemberRow | null;
+  }) => {
+    if (!circleId) {
+      setModerationReports([]);
+      return [] as CircleReport[];
+    }
+
+    const nextCircle = options?.circleOverride ?? circle;
+    const nextMembership = options?.membershipOverride ?? membership;
+    const nextMembershipRole = normalizeCircleRole(nextMembership?.status === 'active' ? nextMembership.role : null);
+    const canLoadModerationReports = !!currentProfileId && (
+      String(nextCircle?.created_by_profile_id ?? '') === currentProfileId
+      || ['host', 'admin', 'moderator'].includes(nextMembershipRole)
+    );
+
+    if (!canLoadModerationReports) {
+      setModerationReports([]);
+      return [] as CircleReport[];
+    }
+
+    const { data: reportRows, error: reportError } = await db.rpc('rpc_list_circle_reports', {
+      p_circle_id: circleId,
+      p_profile_id: currentProfileId,
+    });
+    if (reportError) throw reportError;
+
+    const nextModerationReports = ((reportRows ?? []) as any[]).map((row) => ({
+      id: String(row.id),
+      circle_id: row.circle_id ? String(row.circle_id) : null,
+      gathering_id: row.gathering_id ? String(row.gathering_id) : null,
+      prompt_response_id: row.prompt_response_id ? String(row.prompt_response_id) : null,
+      reporter_profile_id: String(row.reporter_profile_id),
+      reason: String(row.reason),
+      details: row.details ?? null,
+      status: String(row.status),
+      created_at: String(row.created_at),
+      gathering_title: row.gathering_title ?? null,
+      prompt_response_text: row.prompt_response_text ?? null,
+    }));
+
+    setModerationReports(nextModerationReports);
+    return nextModerationReports;
+  }, [circle, circleId, currentProfileId, membership]);
+
+  const refreshCircleMembershipView = useCallback(async () => {
+    const [coreState, memberState] = await Promise.all([
+      refreshCircleCoreState(),
+      refreshCircleMembersState(),
+    ]);
+    const [nextRoleRequests, nextModerationReports] = await Promise.all([
+      refreshCircleRoleRequestsState(memberState.memberByProfileId),
+      refreshCircleReportsState({
+        circleOverride: coreState.circle,
+        membershipOverride: coreState.membership,
+      }),
+    ]);
+    await persistCircleDetailSnapshot({
+      circle: coreState.circle,
+      membership: coreState.membership,
+      members: memberState.activeVisibleMembers,
+      pendingMembers: memberState.pendingMembers,
+      roleRequests: nextRoleRequests,
+      moderationReports: nextModerationReports,
+    });
+  }, [
+    persistCircleDetailSnapshot,
+    refreshCircleCoreState,
+    refreshCircleMembersState,
+    refreshCircleReportsState,
+    refreshCircleRoleRequestsState,
+  ]);
+
+  const refreshCircleMoments = useCallback(async (options?: {
+    canLoad?: boolean;
+    memberRows?: MemberRow[];
+  }) => {
+    const canLoadMoments =
+      options?.canLoad
+      ?? Boolean(
+        (circle?.created_by_profile_id && circle.created_by_profile_id === currentProfileId)
+        || membership?.status === 'active',
+      );
+    if (!circleId || !canLoadMoments) {
       setMoments([]);
-      return;
+      setMomentLoadError(null);
+      return {
+        moments: [] as CircleMoment[],
+        momentLoadError: null as string | null,
+      };
     }
 
     setMomentLoadError(null);
@@ -771,58 +1032,690 @@ export default function CircleDetailScreen() {
 
     if (momentError) {
       logger.warn('[circles] member_moments_failed', { circleId, error: String(momentError.message || momentError) });
-      setMomentLoadError(String(momentError.message || momentError));
+      const nextMomentLoadError = String(momentError.message || momentError);
+      setMomentLoadError(nextMomentLoadError);
       setMoments([]);
-      return;
+      return {
+        moments: [] as CircleMoment[],
+        momentLoadError: nextMomentLoadError,
+      };
     }
 
-    const memberByUserId = members.reduce<Record<string, MemberRow>>((acc, row) => {
+    const sourceMembers = options?.memberRows ?? members;
+    const memberByUserId = sourceMembers.reduce<Record<string, MemberRow>>((acc, row) => {
       if (row.user_id) acc[String(row.user_id)] = row;
       if (row.profiles?.user_id) acc[String(row.profiles.user_id)] = row;
       return acc;
     }, {});
-    setMoments(
-      (momentRows ?? []).map((row: any) => ({
-        id: String(row.id),
-        user_id: String(row.user_id),
-        type: String(row.type),
-        media_url: row.media_url ?? null,
-        thumbnail_url: row.thumbnail_url ?? null,
-        text_body: row.text_body ?? null,
-        caption: row.caption ?? null,
-        created_at: String(row.created_at),
-        expires_at: row.expires_at ?? null,
-        visibility: row.visibility ?? null,
-        profile: memberByUserId[String(row.user_id)]?.profiles ?? null,
-      })),
+    const nextMoments = (momentRows ?? []).map((row: any) => ({
+      id: String(row.id),
+      user_id: String(row.user_id),
+      type: String(row.type),
+      media_url: row.media_url ?? null,
+      thumbnail_url: row.thumbnail_url ?? null,
+      text_body: row.text_body ?? null,
+      caption: row.caption ?? null,
+      created_at: String(row.created_at),
+      expires_at: row.expires_at ?? null,
+      visibility: row.visibility ?? null,
+      profile: memberByUserId[String(row.user_id)]?.profiles ?? null,
+    }));
+    setMoments(nextMoments);
+    return {
+      moments: nextMoments,
+      momentLoadError: null as string | null,
+    };
+  }, [circle?.created_by_profile_id, circleId, currentProfileId, members, membership?.status]);
+
+  const refreshCircleMomentsPersisted = useCallback(async () => {
+    const nextMomentState = await refreshCircleMoments();
+    await persistCircleDetailSnapshot({
+      moments: nextMomentState.moments,
+      momentLoadError: nextMomentState.momentLoadError,
+    });
+    return nextMomentState;
+  }, [persistCircleDetailSnapshot, refreshCircleMoments]);
+
+  const refreshCircleAccessEnvelope = useCallback(async () => {
+    const [coreState, memberState, promptState, gatheringState] = await Promise.all([
+      refreshCircleCoreState(),
+      refreshCircleMembersState(),
+      refreshCirclePromptsState(),
+      refreshCircleGatheringsState(),
+    ]);
+
+    const nextIsOwner = !!(
+      coreState.circle?.created_by_profile_id
+      && coreState.circle.created_by_profile_id === currentProfileId
     );
-  }, [circleId, isMember, members]);
+    const nextIsMember = nextIsOwner || coreState.membership?.status === 'active';
+
+    const [nextRoleRequests, nextModerationReports, nextMomentState] = await Promise.all([
+      refreshCircleRoleRequestsState(memberState.memberByProfileId),
+      refreshCircleReportsState({
+        circleOverride: coreState.circle,
+        membershipOverride: coreState.membership,
+      }),
+      refreshCircleMoments({
+        canLoad: nextIsMember,
+        memberRows: memberState.activeVisibleMembers,
+      }),
+    ]);
+
+    if (!nextIsMember) {
+      setPulseDiscussionUnreadByItemId({});
+    }
+
+    await persistCircleDetailSnapshot({
+      circle: coreState.circle,
+      membership: coreState.membership,
+      members: memberState.activeVisibleMembers,
+      pendingMembers: memberState.pendingMembers,
+      prompts: promptState.prompts,
+      promptResponsesByPromptId: promptState.promptResponsesByPromptId,
+      gatherings: gatheringState.gatherings,
+      gatheringAttendance: gatheringState.gatheringAttendance,
+      moments: nextMomentState.moments,
+      momentLoadError: nextMomentState.momentLoadError,
+      roleRequests: nextRoleRequests,
+      moderationReports: nextModerationReports,
+    });
+  }, [
+    currentProfileId,
+    persistCircleDetailSnapshot,
+    refreshCircleCoreState,
+    refreshCircleGatheringsState,
+    refreshCircleMembersState,
+    refreshCircleMoments,
+    refreshCirclePromptsState,
+    refreshCircleReportsState,
+    refreshCircleRoleRequestsState,
+  ]);
+
+  const refreshCirclePromptsStatePersisted = useCallback(async () => {
+    const promptState = await refreshCirclePromptsState();
+    await persistCircleDetailSnapshot({
+      prompts: promptState.prompts,
+      promptResponsesByPromptId: promptState.promptResponsesByPromptId,
+    });
+    return promptState;
+  }, [persistCircleDetailSnapshot, refreshCirclePromptsState]);
+
+  const patchRoleRequestState = useCallback(async (
+    nextRequest: CircleRoleRequest,
+    options?: { updatedMemberRole?: CircleManageRole | null; requesterProfileId?: string | null },
+  ) => {
+    const nextRoleRequests = roleRequests.some((item) => item.id === nextRequest.id)
+      ? roleRequests.map((item) => (item.id === nextRequest.id ? { ...item, ...nextRequest } : item))
+      : [nextRequest, ...roleRequests];
+
+    const requesterProfileId = options?.requesterProfileId ?? nextRequest.requester_profile_id ?? null;
+    const updatedMemberRole = options?.updatedMemberRole ?? null;
+
+    let nextMembers = members;
+    if (requesterProfileId && updatedMemberRole) {
+      nextMembers = members.map((item) => (
+        item.profile_id === requesterProfileId
+          ? { ...item, role: updatedMemberRole }
+          : item
+      ));
+      setMembers(nextMembers);
+    }
+
+    setRoleRequests(nextRoleRequests);
+    await persistCircleDetailSnapshot({
+      members: nextMembers,
+      roleRequests: nextRoleRequests,
+    });
+  }, [members, persistCircleDetailSnapshot, roleRequests]);
+
+  const patchModerationReportState = useCallback(async (reportId: string, status: string) => {
+    const nextReports = moderationReports.map((item) => (
+      item.id === reportId ? { ...item, status } : item
+    ));
+    setModerationReports(nextReports);
+    await persistCircleDetailSnapshot({
+      moderationReports: nextReports,
+    });
+  }, [moderationReports, persistCircleDetailSnapshot]);
+
+  const loadCircleBootstrap = useCallback(async () => {
+    if (!circleId) return;
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const netState = await fetchNetInfo().catch(() => null);
+      const canUseLiveNetwork = isNetworkConnectionAvailable(netState);
+      setNetworkReady(canUseLiveNetwork);
+
+      if (!canUseLiveNetwork) {
+        const snapshotState = await readCircleDetailSnapshotState(circleId, currentProfileId);
+        setDetailSnapshotInfo({
+          hasSnapshot: Boolean(snapshotState.data),
+          savedAt: snapshotState.savedAt,
+          isStale: snapshotState.isStale,
+        });
+        if (snapshotState.data) {
+          applyCircleDetailSnapshot(snapshotState.data);
+          return;
+        }
+        setLoadError('Circle detail needs a connection the first time it opens on this device.');
+        return;
+      }
+
+      const [coreState, memberState, promptState, gatheringState] = await Promise.all([
+        refreshCircleCoreState(),
+        refreshCircleMembersState(),
+        refreshCirclePromptsState(),
+        refreshCircleGatheringsState(),
+      ]);
+      const nextCircle = coreState.circle;
+      const nextMembership = coreState.membership;
+      const activeVisibleMembers = memberState.activeVisibleMembers;
+      const nextPendingMembers = memberState.pendingMembers;
+      const nextPrompts = promptState.prompts;
+      const nextPromptResponses = promptState.promptResponsesByPromptId;
+      const nextGatherings = gatheringState.gatherings;
+      const nextAttendance = gatheringState.gatheringAttendance;
+      const nextRoleRequests = await refreshCircleRoleRequestsState(memberState.memberByProfileId);
+      const nextModerationReports = await refreshCircleReportsState({
+        circleOverride: nextCircle,
+        membershipOverride: nextMembership,
+      });
+      await persistCircleDetailSnapshot({
+        circle: nextCircle,
+        membership: nextMembership,
+        members: activeVisibleMembers,
+        pendingMembers: nextPendingMembers,
+        prompts: nextPrompts,
+        promptResponsesByPromptId: nextPromptResponses,
+        gatherings: nextGatherings,
+        gatheringAttendance: nextAttendance,
+        roleRequests: nextRoleRequests,
+        moderationReports: nextModerationReports,
+      });
+    } catch (error) {
+      const snapshotState = await readCircleDetailSnapshotState(circleId, currentProfileId);
+      setDetailSnapshotInfo({
+        hasSnapshot: Boolean(snapshotState.data),
+        savedAt: snapshotState.savedAt,
+        isStale: snapshotState.isStale,
+      });
+      if (snapshotState.data) {
+        applyCircleDetailSnapshot(snapshotState.data);
+      }
+      setLoadError(error instanceof Error ? error.message : 'Could not load this Circle.');
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    applyCircleDetailSnapshot,
+    circleId,
+    currentProfileId,
+    persistCircleDetailSnapshot,
+    refreshCircleCoreState,
+    refreshCircleGatheringsState,
+    refreshCircleMembersState,
+    refreshCirclePromptsState,
+    refreshCircleReportsState,
+    refreshCircleRoleRequestsState,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const resolveMomentUrls = async () => {
+      const unresolved = moments.filter((moment) => {
+        const source = moment.thumbnail_url || moment.media_url;
+        return source && !momentSignedUrls[moment.id];
+      });
+      if (unresolved.length === 0) return;
+      const resolved: Record<string, string> = {};
+      await Promise.all(unresolved.map(async (moment) => {
+        const source = moment.thumbnail_url || moment.media_url;
+        const cacheKey = `circle-moment:${circleId}:${moment.id}:${moment.thumbnail_url ?? moment.media_url ?? 'none'}`;
+        const prefersImageCache = Boolean(moment.thumbnail_url) || String(moment.type).toLowerCase() !== 'video';
+        const cached =
+          prefersImageCache ? await getOfflineImageUri(cacheKey) : await getOfflineVideoUri(cacheKey);
+        if (cached) {
+          resolved[moment.id] = cached;
+          return;
+        }
+        const url = source?.startsWith('http')
+          ? source
+          : source
+            ? await createMomentSignedUrl(source, 3600)
+            : null;
+        if (!url) return;
+        if (!prefersImageCache) {
+          const offlineVideo = await cacheOfflineVideo(cacheKey, url);
+          resolved[moment.id] = offlineVideo ?? url;
+          return;
+        }
+        const offlineImage = await cacheOfflineImage(cacheKey, url);
+        resolved[moment.id] = offlineImage ?? url;
+      }));
+      if (!cancelled && Object.keys(resolved).length > 0) {
+        setMomentSignedUrls((current) => ({ ...current, ...resolved }));
+      }
+    };
+    void resolveMomentUrls();
+    return () => {
+      cancelled = true;
+    };
+  }, [circleId, momentSignedUrls, moments]);
+
+  useFocusEffect(
+    useCallback(() => {
+      void (async () => {
+        await loadCircleBootstrap();
+        if (activeTabRef.current === 'moments') {
+          await refreshCircleMomentsPersisted();
+        }
+      })();
+    }, [loadCircleBootstrap, refreshCircleMomentsPersisted]),
+  );
+
+  useEffect(() => {
+    if (circle?.name) setNameValue(circle.name);
+  }, [circle?.name]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const resolve = async () => {
+      const sourceKey = circle?.id
+        ? `circle-image:${circle.id}:${circle.image_path ?? circle.cover_image_url ?? circle.icon_url ?? 'none'}:${circle.image_updated_at ?? 'na'}`
+        : null;
+      const cachedUri = sourceKey ? await getOfflineImageUri(sourceKey) : null;
+      if (cancelled) return;
+      if (cachedUri) {
+        setImageUrl(cachedUri);
+      }
+
+      if (circle?.cover_image_url || circle?.icon_url) {
+        const remoteUrl = circle.cover_image_url || circle.icon_url || null;
+        setImageUrl((current) => current || remoteUrl);
+        if (sourceKey && remoteUrl?.startsWith('http')) {
+          const offlineUri = await cacheOfflineImage(sourceKey, remoteUrl);
+          if (!cancelled && offlineUri) {
+            setImageUrl(offlineUri);
+          }
+        }
+        return;
+      }
+      if (!circle?.image_path) {
+        if (!cachedUri) setImageUrl(null);
+        return;
+      }
+      if (!networkReady && cachedUri) return;
+      if (!networkReady) {
+        setImageUrl(null);
+        return;
+      }
+      const { data, error } = await db.storage.from('circle-images').createSignedUrl(circle.image_path, 3600);
+      if (cancelled) return;
+      const signedUrl = error || !data?.signedUrl ? null : data.signedUrl;
+      if (!signedUrl) {
+        if (!cachedUri) setImageUrl(null);
+        return;
+      }
+      setImageUrl((current) => current || signedUrl);
+      if (sourceKey) {
+        const offlineUri = await cacheOfflineImage(sourceKey, signedUrl);
+        if (!cancelled && offlineUri) {
+          setImageUrl(offlineUri);
+          return;
+        }
+      }
+      if (!cancelled) {
+        setImageUrl(signedUrl);
+      }
+    };
+    void resolve();
+    return () => {
+      cancelled = true;
+    };
+  }, [circle?.cover_image_url, circle?.icon_url, circle?.id, circle?.image_path, circle?.image_updated_at, networkReady]);
+
+  const isOwner = !!(circle?.created_by_profile_id && circle.created_by_profile_id === currentProfileId);
+  const membershipRole = normalizeCircleRole(membership?.status === 'active' ? membership.role : null);
+  const isMember = isOwner || membership?.status === 'active';
+  const circleMemberUserIds = useMemo(
+    () => new Set([
+      ...members.map((item) => String(item.user_id ?? '')).filter(Boolean),
+      ...members.map((item) => String(item.profiles?.user_id ?? '')).filter(Boolean),
+      ...(isOwner && user?.id ? [user.id] : []),
+    ]),
+    [isOwner, members, user?.id],
+  );
+  const circlePresenceUserIds = useMemo(
+    () => Array.from(new Set([
+      ...members.map((item) => String(item.user_id ?? item.profiles?.user_id ?? '')).filter(Boolean),
+      ...pendingMembers.map((item) => String(item.user_id ?? item.profiles?.user_id ?? '')).filter(Boolean),
+    ])).slice(0, 60),
+    [members, pendingMembers],
+  );
+  const circlePresenceUserIdsKey = useMemo(
+    () => circlePresenceUserIds.join('|'),
+    [circlePresenceUserIds],
+  );
+
+  useEffect(() => {
+    if (!circleId || circlePresenceUserIds.length === 0 || typeof db.channel !== 'function') return;
+
+    const applyPresenceRow = (row?: { user_id?: string | null; online?: boolean | null; last_active?: string | null } | null) => {
+      const targetUserId = String(row?.user_id ?? '').trim();
+      if (!targetUserId) return;
+      const patchCollection = (collection: MemberRow[]) => collection.map((item) => {
+        const candidateUserId = String(item.user_id ?? item.profiles?.user_id ?? '').trim();
+        if (!candidateUserId || candidateUserId !== targetUserId || !item.profiles) return item;
+        return {
+          ...item,
+          profiles: {
+            ...item.profiles,
+            online: typeof row?.online === 'boolean' ? row.online : item.profiles.online ?? null,
+            last_active: row?.last_active ?? item.profiles.last_active ?? null,
+          },
+        };
+      });
+
+      setMembers((current) => patchCollection(current));
+      setPendingMembers((current) => patchCollection(current));
+    };
+
+    const channel = db.channel(`circle-member-presence:${circleId}`);
+    circlePresenceUserIds.forEach((memberUserId) => {
+      channel.on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'user_presence', filter: `user_id=eq.${memberUserId}` },
+        (payload: any) => applyPresenceRow((payload?.new || payload?.old) as { user_id?: string | null; online?: boolean | null; last_active?: string | null } | null),
+      );
+    });
+    channel.subscribe();
+
+    return () => {
+      if (typeof db.removeChannel === 'function') void db.removeChannel(channel);
+    };
+  }, [circleId, circlePresenceUserIdsKey]);
+
+  const canEditCircle = isOwner;
+  const canReviewMembers = isOwner || ['host', 'admin', 'moderator'].includes(membershipRole);
+  const canManageRoles = isOwner || ['host', 'admin'].includes(membershipRole);
+  const canRemoveMembers = isOwner || ['host', 'admin', 'moderator'].includes(membershipRole);
+  const canAssignHostRole = isOwner || membershipRole === 'admin';
+  const canModerateCircle = isOwner || ['host', 'admin', 'moderator'].includes(membershipRole);
+  const canPublishCirclePrompt = isOwner || ['host', 'admin'].includes(membershipRole);
+  const canHostGathering = isOwner || ['host', 'admin'].includes(membershipRole);
+  const canSetHostNote = isOwner || ['host', 'admin', 'moderator'].includes(membershipRole);
+  const canLeaveCircle = isMember && !isOwner && !['host', 'admin'].includes(membershipRole);
+  const requestableRoleTypes = useMemo<CircleRoleRequestType[]>(() => {
+    if (!isMember || ['host', 'admin', 'leader'].includes(membershipRole)) return [];
+    if (membershipRole === 'moderator') return ['host'];
+    return ['moderator', 'host'];
+  }, [isMember, membershipRole]);
+  const canRequestLeadershipRole = requestableRoleTypes.length > 0;
+  const canReviewRoleRequests = isOwner || ['host', 'admin'].includes(membershipRole);
+  const joinLabel = membership?.status === 'invited'
+    ? 'Review invitation'
+    : circle?.requires_join_approval || circle?.visibility === 'private'
+      ? 'Request to join'
+      : 'Join Circle';
+  const memberCount = circle?.member_count ?? members.length;
+  const mastheadTitle = (() => {
+    const shortDescription = normalizeCopy(circle?.short_description);
+    if (!shortDescription || isSameCopy(shortDescription, circle?.name)) {
+      return 'Trusted community space for intentional connection.';
+    }
+    return shortDescription;
+  })();
+  const mastheadBody = (() => {
+    const description = normalizeCopy(circle?.description);
+    if (!description || isSameCopy(description, mastheadTitle) || isSameCopy(description, circle?.name)) {
+      return 'Belong, discover, and connect through trusted shared context.';
+    }
+    return description;
+  })();
+  const pendingModerationReports = moderationReports.filter((report) => report.status === 'pending' || report.status === 'reviewing');
+  const {
+    items: pulseItems,
+    loading: pulseLoading,
+    error: pulseError,
+    reload: reloadPulse,
+  } = useCirclePulse({ circleId, enabled: isMember });
+
+  const reloadPulseDiscussionUnreadState = useCallback(async () => {
+    if (pulseItems.length === 0) {
+      setPulseDiscussionUnreadByItemId({});
+      return;
+    }
+
+    if (currentProfileId && circleId) {
+      try {
+        const readStates = await fetchCirclePulseDiscussionReadStates(circleId, currentProfileId);
+        setPulseDiscussionUnreadByItemId(
+          Object.fromEntries(readStates.map((state) => [state.itemId, Math.max(0, state.unreadCount)])),
+        );
+        return;
+      } catch {
+        // fall through to local snapshot fallback
+      }
+    }
+
+    const entries = await Promise.all(
+      pulseItems.map(async (item) => {
+        const [snapshotState, readState] = await Promise.all([
+          readCirclePulseCommentsSnapshotState(item.id, currentProfileId),
+          readCirclePulseDiscussionReadState(item.id, currentProfileId),
+        ]);
+        const comments = snapshotState.data ?? [];
+        const lastSeenAtMs = readState.lastSeenAt ? new Date(readState.lastSeenAt).getTime() : Number.NaN;
+        const unreadCount = Number.isFinite(lastSeenAtMs)
+          ? comments.filter((comment) => {
+              if (comment.isOwn) return false;
+              const createdAtMs = new Date(comment.createdAt).getTime();
+              return Number.isFinite(createdAtMs) && createdAtMs > lastSeenAtMs;
+            }).length
+          : 0;
+        return [item.id, unreadCount] as const;
+      }),
+    );
+
+    setPulseDiscussionUnreadByItemId(Object.fromEntries(entries));
+  }, [circleId, currentProfileId, pulseItems]);
+
+  useEffect(() => {
+    void reloadPulseDiscussionUnreadState();
+  }, [reloadPulseDiscussionUnreadState]);
+
+  useEffect(() => {
+    if (!requestedPulseItemId) {
+      handledPulseNotificationKeyRef.current = null;
+      pulseNotificationReloadAttemptRef.current = null;
+      return;
+    }
+    if (!circleId || !isMember || pulseLoading) return;
+
+    const routeKey = `${circleId}:${requestedPulseItemId}:${requestedPulseCommentId ?? ''}:${requestedPulseParentCommentId ?? ''}:${requestedPulseRouteNonce ?? ''}`;
+    if (handledPulseNotificationKeyRef.current === routeKey) return;
+
+    const targetItem = pulseItems.find((item) => item.id === requestedPulseItemId) ?? null;
+    logger.debug('[circles] pulse_notification_route_received', {
+      circleId,
+      requestedPulseItemId,
+      requestedPulseCommentId,
+      requestedPulseParentCommentId,
+      requestedPulseRouteNonce,
+      pulseLoading,
+      pulseItemCount: pulseItems.length,
+      pulseItemIds: pulseItems.map((item) => item.id),
+    });
+
+    if (!targetItem) {
+      logger.warn('[circles] pulse_notification_target_missing', {
+        circleId,
+        requestedPulseItemId,
+        requestedPulseCommentId,
+        requestedPulseParentCommentId,
+        requestedPulseRouteNonce,
+        pulseLoading,
+        pulseItemCount: pulseItems.length,
+        pulseItemIds: pulseItems.map((item) => item.id),
+      });
+      if (pulseNotificationReloadAttemptRef.current !== routeKey) {
+        pulseNotificationReloadAttemptRef.current = routeKey;
+        void reloadPulse();
+      }
+      return;
+    }
+
+    handledPulseNotificationKeyRef.current = routeKey;
+    pulseNotificationReloadAttemptRef.current = null;
+    logger.info('[circles] pulse_notification_target_opened', {
+      circleId,
+      requestedPulseItemId,
+      requestedPulseCommentId,
+      requestedPulseParentCommentId,
+      requestedPulseRouteNonce,
+      targetItemType: targetItem.type,
+    });
+    setActiveTab('overview');
+    setPulseCommentTarget(targetItem);
+    setPulseCommentFocusId(requestedPulseCommentId ?? null);
+    setPulseCommentParentFocusId(requestedPulseParentCommentId ?? null);
+  }, [
+    circleId,
+    isMember,
+    pulseItems,
+    pulseLoading,
+    requestedPulseCommentId,
+    requestedPulseItemId,
+    requestedPulseParentCommentId,
+    requestedPulseRouteNonce,
+    requestedTab,
+    reloadPulse,
+  ]);
+
+  useEffect(() => {
+    if (!pulseCommentTarget) return;
+    logger.info('[circles] pulse_comment_sheet_visible', {
+      circleId,
+      itemId: pulseCommentTarget.id,
+      itemType: pulseCommentTarget.type,
+      targetCommentId: pulseCommentFocusId,
+      targetParentCommentId: pulseCommentParentFocusId,
+    });
+  }, [circleId, pulseCommentFocusId, pulseCommentParentFocusId, pulseCommentTarget]);
+  const detailNotice = !networkReady && detailSnapshotInfo.hasSnapshot
+    ? {
+        title: 'Offline mode',
+        message: detailSnapshotInfo.isStale
+          ? `Showing saved Circle details from ${formatSnapshotAgeLabel(detailSnapshotInfo.savedAt)}.`
+          : 'Showing saved Circle details from this device while the connection is offline.',
+        icon: 'wifi-off' as const,
+      }
+    : loadError && detailSnapshotInfo.hasSnapshot
+      ? {
+          title: 'Showing saved Circle',
+          message: `We could not refresh this Circle. Saved details from ${formatSnapshotAgeLabel(detailSnapshotInfo.savedAt)} are still available.`,
+          icon: 'cloud-alert' as const,
+        }
+      : loadError
+        ? {
+            title: 'Circle is unavailable',
+            message: loadError,
+            icon: 'cloud-alert' as const,
+          }
+        : null;
+
+  const handleRetryCircleDetail = useCallback(() => {
+    if (!networkReady) return;
+    void (async () => {
+      setLoadError(null);
+      if (activeTab === 'members') {
+        await refreshCircleMembershipView();
+        return;
+      }
+      if (activeTab === 'prompts') {
+        const [coreState, promptState] = await Promise.all([
+          refreshCircleCoreState(),
+          refreshCirclePromptsState(),
+        ]);
+        await persistCircleDetailSnapshot({
+          circle: coreState.circle,
+          membership: coreState.membership,
+          prompts: promptState.prompts,
+          promptResponsesByPromptId: promptState.promptResponsesByPromptId,
+        });
+        return;
+      }
+      if (activeTab === 'gatherings') {
+        const [coreState, gatheringState] = await Promise.all([
+          refreshCircleCoreState(),
+          refreshCircleGatheringsState(),
+        ]);
+        await persistCircleDetailSnapshot({
+          circle: coreState.circle,
+          membership: coreState.membership,
+          gatherings: gatheringState.gatherings,
+          gatheringAttendance: gatheringState.gatheringAttendance,
+        });
+        return;
+      }
+      if (activeTab === 'moments') {
+        const [coreState, momentState] = await Promise.all([
+          refreshCircleCoreState(),
+          refreshCircleMoments(),
+        ]);
+        await persistCircleDetailSnapshot({
+          circle: coreState.circle,
+          membership: coreState.membership,
+          moments: momentState.moments,
+          momentLoadError: momentState.momentLoadError,
+        });
+        return;
+      }
+      await loadCircleBootstrap();
+    })();
+  }, [
+    activeTab,
+    loadCircleBootstrap,
+    networkReady,
+    persistCircleDetailSnapshot,
+    refreshCircleCoreState,
+    refreshCircleGatheringsState,
+    refreshCircleMembershipView,
+    refreshCircleMoments,
+    refreshCirclePromptsState,
+  ]);
 
   useEffect(() => {
     if (activeTab !== 'moments') return;
-    void refreshCircleMoments();
-  }, [activeTab, refreshCircleMoments]);
+    void refreshCircleMomentsPersisted();
+  }, [activeTab, refreshCircleMomentsPersisted]);
 
   useEffect(() => {
     if (!circleId || !isMember || circleMemberUserIds.size === 0 || typeof db.channel !== 'function') return;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const scopedMemberIds = Array.from(circleMemberUserIds).filter(Boolean).slice(0, 60);
+    if (scopedMemberIds.length === 0) return;
     const queueRefresh = () => {
       if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => void loadCircle(), 240);
+      refreshTimer = setTimeout(() => void refreshCircleMomentsPersisted(), 240);
     };
-    const channel = db
-      .channel(`circle-moments:${circleId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'moments' }, (payload: any) => {
-        const changedUserId = String(payload?.new?.user_id ?? payload?.old?.user_id ?? '');
-        if (circleMemberUserIds.has(changedUserId)) queueRefresh();
-      })
-      .subscribe();
+    const channel = db.channel(`circle-moments:${circleId}`);
+    scopedMemberIds.forEach((memberUserId) => {
+      channel.on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'moments', filter: `user_id=eq.${memberUserId}` },
+        queueRefresh,
+      );
+    });
+    channel.subscribe();
 
     return () => {
       if (refreshTimer) clearTimeout(refreshTimer);
       if (typeof db.removeChannel === 'function') void db.removeChannel(channel);
     };
-  }, [circleId, circleMemberUserIds, isMember, loadCircle]);
+  }, [circleId, circleMemberUserIds, isMember, refreshCircleMomentsPersisted]);
 
   const handleJoin = useCallback(async () => {
     if (!currentProfileId || !circleId) return;
@@ -838,7 +1731,7 @@ export default function CircleDetailScreen() {
               void respondToCircleInvitation(circleId, currentProfileId, false)
                 .then((status) => {
                   if (status === 'expired') Alert.alert('Circle invitation', 'This invitation has expired.');
-                  return loadCircle();
+                  return refreshCircleAccessEnvelope();
                 })
                 .catch((error) => Alert.alert('Circle invitation', error instanceof Error ? error.message : 'Could not decline the invitation.'));
             },
@@ -850,7 +1743,7 @@ export default function CircleDetailScreen() {
               void respondToCircleInvitation(circleId, currentProfileId, true)
                 .then((status) => {
                   if (status === 'expired') Alert.alert('Circle invitation', 'This invitation has expired.');
-                  return loadCircle();
+                  return refreshCircleAccessEnvelope();
                 })
                 .catch((error) => Alert.alert('Circle invitation', error instanceof Error ? error.message : 'Could not accept the invitation.'));
             },
@@ -867,8 +1760,8 @@ export default function CircleDetailScreen() {
       Alert.alert('Join failed', error.message || 'Please try again.');
       return;
     }
-    await loadCircle();
-  }, [circle?.name, circleId, currentProfileId, loadCircle, membership?.status]);
+    await refreshCircleAccessEnvelope();
+  }, [circle?.name, circleId, currentProfileId, membership?.status, refreshCircleAccessEnvelope]);
 
   const handleApprove = useCallback(async (memberId: string) => {
     if (!currentProfileId || !circleId) return;
@@ -882,8 +1775,8 @@ export default function CircleDetailScreen() {
       Alert.alert('Approve failed', typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please try again.');
       return;
     }
-    await loadCircle();
-  }, [circleId, currentProfileId, loadCircle]);
+    await refreshCircleMembershipView();
+  }, [circleId, currentProfileId, refreshCircleMembershipView]);
 
   const handleSetRole = useCallback(async (memberId: string, role: CircleManageRole) => {
     if (!currentProfileId || !circleId) return;
@@ -899,8 +1792,8 @@ export default function CircleDetailScreen() {
       return;
     }
     setManageMemberTarget(null);
-    await loadCircle();
-  }, [circleId, currentProfileId, loadCircle]);
+    await refreshCircleMembershipView();
+  }, [circleId, currentProfileId, refreshCircleMembershipView]);
 
   const handleRemove = useCallback((memberId: string) => {
     if (!currentProfileId || !circleId) return;
@@ -921,11 +1814,11 @@ export default function CircleDetailScreen() {
             Alert.alert('Remove failed', typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please try again.');
             return;
           }
-          await loadCircle();
+          await refreshCircleMembershipView();
         },
       },
     ]);
-  }, [circleId, currentProfileId, loadCircle]);
+  }, [circleId, currentProfileId, refreshCircleMembershipView]);
 
   const handleLeave = useCallback(() => {
     if (!currentProfileId || !circleId || !canLeaveCircle) return;
@@ -944,11 +1837,11 @@ export default function CircleDetailScreen() {
             Alert.alert('Leave failed', typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please try again.');
             return;
           }
-          await loadCircle();
+          await refreshCircleAccessEnvelope();
         },
       },
     ]);
-  }, [canLeaveCircle, circleId, currentProfileId, loadCircle]);
+  }, [canLeaveCircle, circleId, currentProfileId, refreshCircleAccessEnvelope]);
 
   const handleArchiveCircle = useCallback(() => {
     if (!circleId || !currentProfileId || !isOwner) return;
@@ -1003,7 +1896,7 @@ export default function CircleDetailScreen() {
       Alert.alert('Circle name', 'Please enter a Circle name.');
       return;
     }
-    const { error } = await db.rpc('rpc_update_circle_name', {
+    const { data, error } = await db.rpc('rpc_update_circle_name', {
       p_circle_id: circleId,
       p_actor_profile_id: currentProfileId,
       p_name: trimmed,
@@ -1013,9 +1906,13 @@ export default function CircleDetailScreen() {
       Alert.alert('Update failed', typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please try again.');
       return;
     }
+    const nextCircle = data ? { ...(circle ?? {}), ...(data as Partial<Circle>) } as Circle : circle;
+    if (nextCircle) {
+      setCircle(nextCircle);
+      await persistCircleDetailSnapshot({ circle: nextCircle });
+    }
     setEditingName(false);
-    await loadCircle();
-  }, [circleId, currentProfileId, loadCircle, nameValue]);
+  }, [circle, circleId, currentProfileId, nameValue, persistCircleDetailSnapshot]);
 
   const handlePickImage = useCallback(async () => {
     if (!circleId || !currentProfileId || imageUploading) return;
@@ -1043,23 +1940,156 @@ export default function CircleDetailScreen() {
         upsert: true,
       });
       if (uploadError) throw uploadError;
-      const { error: updateError } = await db.rpc('rpc_update_circle_image', {
+      const { data: updatedCircle, error: updateError } = await db.rpc('rpc_update_circle_image', {
         p_circle_id: circleId,
         p_actor_profile_id: currentProfileId,
         p_image_path: filePath,
       });
       if (updateError) throw updateError;
-      await loadCircle();
+      setImageUrl(result.assets[0].uri);
+      const nextCircle = updatedCircle ? { ...(circle ?? {}), ...(updatedCircle as Partial<Circle>) } as Circle : circle;
+      if (nextCircle) {
+        setCircle(nextCircle);
+        await persistCircleDetailSnapshot({ circle: nextCircle });
+      }
     } catch (error) {
       logger.error('[circles] upload_image_failed', error, { circleId });
       Alert.alert('Upload failed', typeof __DEV__ !== 'undefined' && __DEV__ && error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setImageUploading(false);
     }
-  }, [circleId, currentProfileId, imageUploading, loadCircle]);
+  }, [circle, circleId, currentProfileId, imageUploading, persistCircleDetailSnapshot]);
+
+  const gatheringPosterCandidates = useMemo(
+    () =>
+      members
+        .map((item) => ({
+          profileId: item.profile_id,
+          fullName: item.profiles?.full_name ?? 'Circle member',
+          avatarUrl: item.profiles?.avatar_url ?? null,
+          joinedAt: item.joined_at ?? null,
+        }))
+        .filter((item) => typeof item.avatarUrl === 'string' && item.avatarUrl.trim().length > 0)
+        .slice(0, 12),
+    [members],
+  );
+  const getGatheringPosterDisplayUri = useCallback((posterUrl?: string | null) => {
+    const raw = normalizePosterKey(posterUrl);
+    if (!raw) return null;
+    return normalizeProfilePhotoUri(raw) || raw;
+  }, []);
+  const gatheringPosterMembersByUrl = useMemo(() => {
+    const loveSeatProfileIds = new Set(
+      pulseItems
+        .filter((item) => item.type === 'love_seat' && item.featuredProfileId)
+        .map((item) => item.featuredProfileId as string),
+    );
+    const next: Record<string, { profileId: string; fullName: string; avatarUrl: string; seatContext?: GatheringSeatContext }> = {};
+    for (const item of gatheringPosterCandidates) {
+      const key = normalizePosterKey(item.avatarUrl);
+      if (!key) continue;
+      next[key] = {
+        profileId: item.profileId,
+        fullName: item.fullName,
+        avatarUrl: item.avatarUrl!,
+        seatContext: loveSeatProfileIds.has(item.profileId)
+          ? 'love'
+          : isRecentCircleMember(item.joinedAt)
+            ? 'welcome'
+            : 'featured_member',
+      };
+    }
+    return next;
+  }, [gatheringPosterCandidates, pulseItems]);
+  const gatheringPosterMembersByProfileId = useMemo(() => {
+    const next: Record<string, { profileId: string; fullName: string; avatarUrl: string; seatContext?: GatheringSeatContext }> = {};
+    for (const item of Object.values(gatheringPosterMembersByUrl)) {
+      next[item.profileId] = item;
+    }
+    return next;
+  }, [gatheringPosterMembersByUrl]);
+  const getGatheringPosterMember = useCallback(
+    (posterUrl?: string | null) => {
+      const key = normalizePosterKey(posterUrl);
+      return key ? gatheringPosterMembersByUrl[key] ?? null : null;
+    },
+    [gatheringPosterMembersByUrl],
+  );
+  const getGatheringPosterMemberByProfileId = useCallback(
+    (profileId?: string | null) => {
+      const key = String(profileId ?? '').trim();
+      return key ? gatheringPosterMembersByProfileId[key] ?? null : null;
+    },
+    [gatheringPosterMembersByProfileId],
+  );
+  const getGatheringPresentationMember = useCallback(
+    (gathering?: Gathering | null) => {
+      if (!gathering) return null;
+      if (gathering.presentation_mode === 'general') return null;
+      return getGatheringPosterMemberByProfileId(gathering.featured_profile_id) ?? getGatheringPosterMember(gathering.poster_url);
+    },
+    [getGatheringPosterMember, getGatheringPosterMemberByProfileId],
+  );
+  const selectedGatheringPosterMember = useMemo(
+    () => (gatheringComposerPosterMemberId ? gatheringPosterMembersByProfileId[gatheringComposerPosterMemberId] ?? null : null)
+      ?? getGatheringPosterMember(gatheringComposerPosterUrl),
+    [gatheringComposerPosterMemberId, gatheringComposerPosterUrl, gatheringPosterMembersByProfileId, getGatheringPosterMember],
+  );
+  const selectedGatheringPosterSeatContext = useMemo(
+    () =>
+      selectedGatheringPosterMember
+        ? ((selectedGatheringPosterMember.seatContext ?? 'featured_member') as GatheringSeatContext)
+        : 'featured_member',
+    [selectedGatheringPosterMember],
+  );
+
+  const handlePickGatheringPosterImage = useCallback(async () => {
+    if (!user?.id || gatheringPosterUploading) return;
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      showOpenSettingsPrompt('Photos access', 'Turn on photo access in Settings so Betweener can upload a Gathering poster.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: 'images',
+      allowsEditing: true,
+      quality: 0.84,
+    });
+    if (result.canceled || !result.assets[0]?.uri) return;
+    try {
+      setGatheringPosterUploading(true);
+      const upload = await uploadImage({
+        userId: user.id,
+        uri: result.assets[0].uri,
+        bucket: 'profile-photos',
+        folder: `${user.id}/gathering-posters`,
+      });
+      if (upload.error || !upload.publicUrl) {
+        throw new Error(upload.error || 'Poster upload failed');
+      }
+      setGatheringComposerPosterMode('image');
+      setGatheringComposerPosterMemberId(null);
+      setGatheringComposerPosterUrl(upload.path);
+      setGatheringComposerPosterPreviewUrl(upload.previewUri ?? result.assets[0].uri);
+    } catch (error) {
+      logger.error('[circles] upload_gathering_poster_failed', error, { circleId });
+      Alert.alert('Poster upload failed', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setGatheringPosterUploading(false);
+    }
+  }, [circleId, gatheringPosterUploading, user?.id]);
+
+  const handleSelectGatheringPosterMember = useCallback((profileId: string, avatarUrl: string | null) => {
+    if (!avatarUrl) return;
+    setGatheringComposerPosterMode('member');
+    setGatheringComposerPosterMemberId(profileId);
+    setGatheringComposerPosterUrl(avatarUrl);
+    setGatheringComposerPosterPreviewUrl(avatarUrl);
+  }, []);
 
   const handleAttend = useCallback(async (gathering: Gathering, status: 'interested' | 'attending' = 'attending', visibleToOthers = false) => {
-    const { error } = await db.rpc('rpc_attend_gathering', {
+    const existingAttendance = gatheringAttendance[gathering.id];
+    const { data, error } = await db.rpc('rpc_attend_gathering', {
       p_gathering_id: gathering.id,
       p_status: status,
       p_visible_to_others: visibleToOthers,
@@ -1068,9 +2098,30 @@ export default function CircleDetailScreen() {
       Alert.alert('Attend failed', error.message || 'Please try again.');
       return;
     }
+    const nextAttendanceRow: GatheringAttendance = {
+      gathering_id: String((data as any)?.gathering_id ?? gathering.id),
+      status: String((data as any)?.status ?? status),
+      visible_to_others: (data as any)?.visible_to_others === true ? true : visibleToOthers,
+    };
+    const nextAttendance = {
+      ...gatheringAttendance,
+      [gathering.id]: nextAttendanceRow,
+    };
+    const delta =
+      Number(isAttendanceCounted(nextAttendanceRow.status)) - Number(isAttendanceCounted(existingAttendance?.status));
+    const nextGatherings = gatherings.map((item) => (
+      item.id === gathering.id
+        ? { ...item, attendee_count: Math.max(0, Number(item.attendee_count ?? 0) + delta) }
+        : item
+    ));
+    setGatheringAttendance(nextAttendance);
+    setGatherings(nextGatherings);
+    await persistCircleDetailSnapshot({
+      gatherings: nextGatherings,
+      gatheringAttendance: nextAttendance,
+    });
     Alert.alert(status === 'interested' ? 'Interest saved' : 'You are attending', status === 'interested' ? 'This Gathering is saved as interested.' : 'This Gathering is saved for you.');
-    await loadCircle();
-  }, [loadCircle]);
+  }, [gatheringAttendance, gatherings, persistCircleDetailSnapshot]);
 
   const openGatheringRsvp = useCallback((gathering: Gathering) => {
     const existing = gatheringAttendance[gathering.id];
@@ -1108,18 +2159,40 @@ export default function CircleDetailScreen() {
         Alert.alert('Update failed', error.message || 'Please try again.');
         return;
       }
-      await loadCircle();
+      const existingAttendance = gatheringAttendance[gatheringRsvpTarget.id];
+      const nextAttendance = {
+        ...gatheringAttendance,
+        [gatheringRsvpTarget.id]: {
+          gathering_id: gatheringRsvpTarget.id,
+          status: 'cancelled',
+          visible_to_others: false,
+        },
+      };
+      const delta = 0 - Number(isAttendanceCounted(existingAttendance?.status));
+      const nextGatherings = gatherings.map((item) => (
+        item.id === gatheringRsvpTarget.id
+          ? { ...item, attendee_count: Math.max(0, Number(item.attendee_count ?? 0) + delta) }
+          : item
+      ));
+      setGatheringAttendance(nextAttendance);
+      setGatherings(nextGatherings);
+      await persistCircleDetailSnapshot({
+        gatherings: nextGatherings,
+        gatheringAttendance: nextAttendance,
+      });
       setGatheringRsvpTarget(null);
       Alert.alert('RSVP removed', 'You will no longer appear as attending for this Gathering.');
     } finally {
       setSavingGatheringRsvp(false);
     }
-  }, [gatheringRsvpTarget, loadCircle, savingGatheringRsvp]);
+  }, [gatheringAttendance, gatheringRsvpTarget, gatherings, persistCircleDetailSnapshot, savingGatheringRsvp]);
 
-  const openPromptComposer = useCallback(() => {
-    setPromptComposerTitle('');
-    setPromptComposerBody('');
-    setPromptComposerType('host');
+  const openPromptComposer = useCallback((prompt?: CirclePrompt | null) => {
+    setEditingPromptTarget(prompt ?? null);
+    setPromptComposerTitle(prompt?.title ?? '');
+    setPromptComposerBody(prompt?.prompt ?? '');
+    const nextType = String(prompt?.prompt_type ?? 'host').toLowerCase();
+    setPromptComposerType(nextType === 'daily' || nextType === 'weekly' ? nextType : 'host');
     setPromptComposerOpen(true);
   }, []);
 
@@ -1155,21 +2228,25 @@ export default function CircleDetailScreen() {
     if (!circleId || !currentProfileId || savingHostNote) return;
     setSavingHostNote(true);
     try {
-      const { error } = await db.rpc('rpc_set_circle_host_note', {
+      const { data, error } = await db.rpc('rpc_set_circle_host_note', {
         p_circle_id: circleId,
         p_profile_id: currentProfileId,
         p_note: hostNoteValue,
       });
       if (error) throw error;
+      const nextCircle = data ? { ...(circle ?? {}), ...(data as Partial<Circle>) } as Circle : circle;
+      if (nextCircle) {
+        setCircle(nextCircle);
+        await persistCircleDetailSnapshot({ circle: nextCircle });
+      }
       setHostNoteOpen(false);
-      await loadCircle();
       Alert.alert('Host note updated', 'Members will now see the updated note in this Circle.');
     } catch (error) {
       Alert.alert('Host note failed', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setSavingHostNote(false);
     }
-  }, [circleId, currentProfileId, hostNoteValue, loadCircle, savingHostNote]);
+  }, [circle, circleId, currentProfileId, hostNoteValue, persistCircleDetailSnapshot, savingHostNote]);
 
   const handleSubmitCircleReport = useCallback(async () => {
     if (!currentProfileId || !user?.id || !reportTarget || !reportReason || submittingReport) return;
@@ -1205,19 +2282,19 @@ export default function CircleDetailScreen() {
     if (!currentProfileId || reviewingReportId) return;
     setReviewingReportId(reportId);
     try {
-      const { error } = await db.rpc('rpc_review_circle_report', {
+      const { data, error } = await db.rpc('rpc_review_circle_report', {
         p_report_id: reportId,
         p_profile_id: currentProfileId,
         p_status: status,
       });
       if (error) throw error;
-      await loadCircle();
+      await patchModerationReportState(reportId, String((data as any)?.status ?? status));
     } catch (error) {
       Alert.alert('Moderation update failed', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setReviewingReportId(null);
     }
-  }, [currentProfileId, loadCircle, reviewingReportId]);
+  }, [currentProfileId, patchModerationReportState, reviewingReportId]);
 
   const handleRemovePromptResponse = useCallback((responseId: string) => {
     if (!currentProfileId || removingPromptResponseId) return;
@@ -1234,7 +2311,7 @@ export default function CircleDetailScreen() {
               p_profile_id: currentProfileId,
             });
             if (error) throw error;
-            await loadCircle();
+            await refreshCirclePromptsStatePersisted();
           } catch (error) {
             Alert.alert('Remove failed', error instanceof Error ? error.message : 'Please try again.');
           } finally {
@@ -1243,7 +2320,7 @@ export default function CircleDetailScreen() {
         },
       },
     ]);
-  }, [currentProfileId, loadCircle, removingPromptResponseId]);
+  }, [currentProfileId, refreshCirclePromptsStatePersisted, removingPromptResponseId]);
 
   const openRoleRequest = useCallback((role: CircleRoleRequestType) => {
     if (!requestableRoleTypes.includes(role)) return;
@@ -1256,44 +2333,85 @@ export default function CircleDetailScreen() {
     if (!circleId || !currentProfileId || submittingRoleRequest) return;
     setSubmittingRoleRequest(true);
     try {
-      const { error } = await db.rpc('rpc_request_circle_role', {
+      const { data, error } = await db.rpc('rpc_request_circle_role', {
         p_circle_id: circleId,
         p_profile_id: currentProfileId,
         p_requested_role: roleRequestType,
         p_note: roleRequestNote.trim() || null,
       });
       if (error) throw error;
+      const nextRequest: CircleRoleRequest | null = data ? {
+        id: String((data as any).id),
+        circle_id: String((data as any).circle_id ?? circleId),
+        requester_profile_id: String((data as any).requester_profile_id ?? currentProfileId),
+        requester_user_id: (data as any).requester_user_id ? String((data as any).requester_user_id) : user?.id ?? null,
+        requested_role: String((data as any).requested_role ?? roleRequestType) as CircleRoleRequestType,
+        note: (data as any).note ?? (roleRequestNote.trim() || null),
+        status: String((data as any).status ?? 'pending'),
+        rejection_reason: (data as any).rejection_reason ?? null,
+        created_at: String((data as any).created_at ?? new Date().toISOString()),
+        requester: {
+          id: currentProfileId,
+          user_id: user?.id ?? null,
+          full_name: authProfile?.full_name ?? 'You',
+          avatar_url: authProfile?.avatar_url ?? null,
+          age: authProfile?.age ?? null,
+          location: authProfile?.location ?? null,
+          city: authProfile?.city ?? null,
+          region: authProfile?.region ?? null,
+        },
+      } : null;
+      if (nextRequest) {
+        await patchRoleRequestState(nextRequest);
+      }
       setRoleRequestOpen(false);
       setRoleRequestNote('');
-      await loadCircle();
       Alert.alert('Request submitted', `Your ${roleRequestType} request has been shared with the Circle hosts.`);
     } catch (error) {
       Alert.alert('Request failed', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setSubmittingRoleRequest(false);
     }
-  }, [circleId, currentProfileId, loadCircle, roleRequestNote, roleRequestType, submittingRoleRequest]);
+  }, [authProfile, circleId, currentProfileId, patchRoleRequestState, roleRequestNote, roleRequestType, submittingRoleRequest, user?.id]);
 
   const handleReviewRoleRequest = useCallback(async (requestId: string, decision: 'approve' | 'reject', rejectionReason?: string | null) => {
     if (!currentProfileId || reviewingRoleRequestId) return;
     setReviewingRoleRequestId(requestId);
     try {
-      const { error } = await db.rpc('rpc_review_circle_role_request', {
+      const existingRequest = roleRequests.find((item) => item.id === requestId) ?? null;
+      const { data, error } = await db.rpc('rpc_review_circle_role_request', {
         p_request_id: requestId,
         p_profile_id: currentProfileId,
         p_decision: decision,
         p_rejection_reason: rejectionReason?.trim() || null,
       });
       if (error) throw error;
+      const nextRequest: CircleRoleRequest | null = data ? {
+        id: String((data as any).id),
+        circle_id: String((data as any).circle_id ?? existingRequest?.circle_id ?? circleId),
+        requester_profile_id: String((data as any).requester_profile_id ?? existingRequest?.requester_profile_id ?? ''),
+        requester_user_id: (data as any).requester_user_id ? String((data as any).requester_user_id) : existingRequest?.requester_user_id ?? null,
+        requested_role: String((data as any).requested_role ?? existingRequest?.requested_role ?? 'moderator') as CircleRoleRequestType,
+        note: (data as any).note ?? existingRequest?.note ?? null,
+        status: String((data as any).status ?? (decision === 'approve' ? 'approved' : 'rejected')),
+        rejection_reason: (data as any).rejection_reason ?? (rejectionReason?.trim() || null),
+        created_at: String((data as any).created_at ?? existingRequest?.created_at ?? new Date().toISOString()),
+        requester: existingRequest?.requester ?? null,
+      } : null;
+      if (nextRequest) {
+        await patchRoleRequestState(nextRequest, {
+          requesterProfileId: nextRequest.requester_profile_id,
+          updatedMemberRole: decision === 'approve' ? (nextRequest.requested_role as CircleManageRole) : null,
+        });
+      }
       setRoleRequestRejectTarget(null);
       setRoleRequestRejectReason('');
-      await loadCircle();
     } catch (error) {
       Alert.alert(`${decision === 'approve' ? 'Approve' : 'Reject'} failed`, error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setReviewingRoleRequestId(null);
     }
-  }, [currentProfileId, loadCircle, reviewingRoleRequestId]);
+  }, [circleId, currentProfileId, patchRoleRequestState, reviewingRoleRequestId, roleRequests]);
 
   const openRejectRoleRequest = useCallback((request: CircleRoleRequest) => {
     setRoleRequestRejectTarget(request);
@@ -1304,20 +2422,35 @@ export default function CircleDetailScreen() {
     if (!currentProfileId || cancellingRoleRequestId) return;
     setCancellingRoleRequestId(requestId);
     try {
-      const { error } = await db.rpc('rpc_cancel_circle_role_request', {
+      const existingRequest = roleRequests.find((item) => item.id === requestId) ?? null;
+      const { data, error } = await db.rpc('rpc_cancel_circle_role_request', {
         p_request_id: requestId,
         p_profile_id: currentProfileId,
       });
       if (error) throw error;
-      await loadCircle();
+      const nextRequest: CircleRoleRequest | null = data ? {
+        id: String((data as any).id),
+        circle_id: String((data as any).circle_id ?? existingRequest?.circle_id ?? circleId),
+        requester_profile_id: String((data as any).requester_profile_id ?? existingRequest?.requester_profile_id ?? currentProfileId),
+        requester_user_id: (data as any).requester_user_id ? String((data as any).requester_user_id) : existingRequest?.requester_user_id ?? user?.id ?? null,
+        requested_role: String((data as any).requested_role ?? existingRequest?.requested_role ?? 'moderator') as CircleRoleRequestType,
+        note: (data as any).note ?? existingRequest?.note ?? null,
+        status: String((data as any).status ?? 'cancelled'),
+        rejection_reason: (data as any).rejection_reason ?? existingRequest?.rejection_reason ?? null,
+        created_at: String((data as any).created_at ?? existingRequest?.created_at ?? new Date().toISOString()),
+        requester: existingRequest?.requester ?? null,
+      } : null;
+      if (nextRequest) {
+        await patchRoleRequestState(nextRequest);
+      }
     } catch (error) {
       Alert.alert('Cancel failed', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setCancellingRoleRequestId(null);
     }
-  }, [cancellingRoleRequestId, currentProfileId, loadCircle]);
+  }, [cancellingRoleRequestId, circleId, currentProfileId, patchRoleRequestState, roleRequests, user?.id]);
 
-  const handlePublishPrompt = useCallback(async () => {
+  const handleSavePrompt = useCallback(async () => {
     if (!circleId || publishingPrompt) return;
     const title = promptComposerTitle.trim();
     const body = promptComposerBody.trim();
@@ -1331,37 +2464,114 @@ export default function CircleDetailScreen() {
     }
     setPublishingPrompt(true);
     try {
-      const { error } = await db.rpc('rpc_create_circle_prompt', {
+      const rpcName = editingPromptTarget ? 'rpc_update_circle_prompt' : 'rpc_create_circle_prompt';
+      const { data, error } = await db.rpc(rpcName, {
+        ...(editingPromptTarget ? { p_prompt_id: editingPromptTarget.id } : {}),
         p_circle_id: circleId,
         p_title: title,
         p_prompt: body,
         p_prompt_type: promptComposerType,
       });
       if (error) throw error;
+      const nextPrompt: CirclePrompt | null = data ? {
+        id: String((data as any).id),
+        title: String((data as any).title ?? title),
+        prompt: String((data as any).prompt ?? body),
+        prompt_type: (data as any).prompt_type ?? promptComposerType,
+        expires_at: (data as any).expires_at ?? null,
+      } : null;
+      if (nextPrompt) {
+        const nextPrompts = editingPromptTarget
+          ? prompts.map((item) => (item.id === nextPrompt.id ? nextPrompt : item))
+          : [nextPrompt, ...prompts];
+        setPrompts(nextPrompts);
+        await persistCircleDetailSnapshot({ prompts: nextPrompts });
+      }
       setPromptComposerOpen(false);
+      setEditingPromptTarget(null);
       setPromptComposerTitle('');
       setPromptComposerBody('');
-      await loadCircle();
-      Alert.alert('Prompt published', 'Members can answer it now.');
+      await reloadPulse();
+      Alert.alert(editingPromptTarget ? 'Prompt updated' : 'Prompt published', editingPromptTarget ? 'The Circle prompt has been refreshed.' : 'Members can answer it now.');
     } catch (error) {
-      Alert.alert('Prompt publish failed', error instanceof Error ? error.message : 'Please try again.');
+      Alert.alert(editingPromptTarget ? 'Prompt update failed' : 'Prompt publish failed', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setPublishingPrompt(false);
     }
-  }, [circleId, loadCircle, promptComposerBody, promptComposerTitle, promptComposerType, publishingPrompt]);
+  }, [circleId, editingPromptTarget, persistCircleDetailSnapshot, promptComposerBody, promptComposerTitle, promptComposerType, prompts, publishingPrompt, reloadPulse]);
 
-  const openGatheringComposer = useCallback(() => {
-    setGatheringComposerTitle('');
-    setGatheringComposerDescription('');
-    setGatheringComposerDate('');
-    setGatheringComposerTime('');
-    setGatheringComposerCity(circle?.city ?? (profile?.city ?? ''));
-    setGatheringComposerVenue('');
-    setGatheringComposerType('physical');
+  const handleDeletePrompt = useCallback((prompt: CirclePrompt) => {
+    if (!circleId || deletingContentKey) return;
+    Alert.alert(
+      'Delete prompt?',
+      'This will archive the prompt and remove it from Circle Pulse.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setDeletingContentKey(`prompt:${prompt.id}`);
+              try {
+                const { error } = await db.rpc('rpc_delete_circle_prompt', {
+                  p_prompt_id: prompt.id,
+                  p_circle_id: circleId,
+                });
+                if (error) throw error;
+                if (editingPromptTarget?.id === prompt.id) {
+                  setPromptComposerOpen(false);
+                  setEditingPromptTarget(null);
+                }
+                const nextPrompts = prompts.filter((item) => item.id !== prompt.id);
+                const nextPromptResponses = { ...promptResponsesByPromptId };
+                delete nextPromptResponses[prompt.id];
+                setPrompts(nextPrompts);
+                setPromptResponsesByPromptId(nextPromptResponses);
+                await persistCircleDetailSnapshot({
+                  prompts: nextPrompts,
+                  promptResponsesByPromptId: nextPromptResponses,
+                });
+                await reloadPulse();
+              } catch (error) {
+                Alert.alert('Prompt delete failed', error instanceof Error ? error.message : 'Please try again.');
+              } finally {
+                setDeletingContentKey(null);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  }, [circleId, deletingContentKey, editingPromptTarget?.id, persistCircleDetailSnapshot, promptResponsesByPromptId, prompts, reloadPulse]);
+
+  const openGatheringComposer = useCallback((gathering?: Gathering | null) => {
+    const posterMember = getGatheringPresentationMember(gathering);
+    setEditingGatheringTarget(gathering ?? null);
+    setGatheringComposerTitle(gathering?.title ?? '');
+    setGatheringComposerDescription(gathering?.description ?? '');
+    setGatheringComposerDate(toDateInputValue(gathering?.starts_at));
+    setGatheringComposerTime(toTimeInputValue(gathering?.starts_at));
+    setGatheringComposerCity(gathering?.city ?? circle?.city ?? (profile?.city ?? ''));
+    setGatheringComposerVenue(gathering?.venue_name ?? '');
+    const nextType = String(gathering?.gathering_type ?? 'physical').toLowerCase();
+    setGatheringComposerType(nextType === 'online' || nextType === 'hybrid' ? nextType : 'physical');
+    setGatheringComposerPosterUrl(gathering?.poster_url ?? null);
+    setGatheringComposerPosterPreviewUrl(
+      posterMember?.avatarUrl ?? getGatheringPosterDisplayUri(gathering?.poster_url) ?? null,
+    );
+    setGatheringComposerPosterMode(
+      posterMember && gathering?.presentation_mode === 'seat_linked'
+        ? 'member'
+        : gathering?.poster_url
+          ? 'image'
+          : null,
+    );
+    setGatheringComposerPosterMemberId(posterMember?.profileId ?? null);
     setGatheringComposerOpen(true);
-  }, [circle?.city, profile?.city]);
+  }, [circle?.city, getGatheringPosterDisplayUri, getGatheringPresentationMember, profile?.city]);
 
-  const handleCreateGathering = useCallback(async () => {
+  const handleSaveGathering = useCallback(async () => {
     if (!circleId || creatingGathering) return;
     const title = gatheringComposerTitle.trim();
     const description = gatheringComposerDescription.trim();
@@ -1384,12 +2594,22 @@ export default function CircleDetailScreen() {
       Alert.alert('Start time', 'Use a future date and time.');
       return;
     }
+    const presentationMode = gatheringComposerPosterMode === 'member' && gatheringComposerPosterMemberId ? 'seat_linked' : 'general';
+    const featuredProfileId = presentationMode === 'seat_linked' ? gatheringComposerPosterMemberId : null;
+    const seatContext = presentationMode === 'seat_linked'
+      ? selectedGatheringPosterSeatContext === 'featured_member'
+        ? null
+        : selectedGatheringPosterSeatContext
+      : null;
     setCreatingGathering(true);
     try {
-      const { error } = await db.rpc('rpc_create_gathering_request', {
+      const rpcName = editingGatheringTarget ? 'rpc_update_gathering_request' : 'rpc_create_gathering_request';
+      const { data, error } = await db.rpc(rpcName, {
+        ...(editingGatheringTarget ? { p_gathering_id: editingGatheringTarget.id } : {}),
         p_circle_id: circleId,
         p_title: title,
         p_description: description,
+        p_poster_url: gatheringComposerPosterUrl,
         p_gathering_type: gatheringComposerType,
         p_country_code: (profile as any)?.current_country_code ?? null,
         p_country_name: (profile as any)?.current_country ?? null,
@@ -1400,18 +2620,68 @@ export default function CircleDetailScreen() {
         p_starts_at: startsAt.toISOString(),
         p_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         p_tags: [],
+        p_presentation_mode: presentationMode,
+        p_featured_profile_id: featuredProfileId,
+        p_seat_context: seatContext,
+        p_host_created_for_member: presentationMode === 'seat_linked',
       });
       if (error) throw error;
+      const savedGathering = data
+        ? ({
+            id: String((data as any).id),
+            title: String((data as any).title ?? title),
+            description: (data as any).description ?? description,
+            poster_url: (data as any).poster_url ?? gatheringComposerPosterUrl,
+            presentation_mode: (data as any).presentation_mode ?? presentationMode,
+            featured_profile_id: (data as any).featured_profile_id ?? featuredProfileId,
+            seat_context: (data as any).seat_context ?? seatContext,
+            host_created_for_member: (data as any).host_created_for_member ?? (presentationMode === 'seat_linked'),
+            starts_at: String((data as any).starts_at ?? startsAt.toISOString()),
+            city: (data as any).city ?? (gatheringComposerCity.trim() || circle?.city || ((profile as any)?.city ?? null)),
+            country_code: (data as any).country_code ?? ((profile as any)?.current_country_code ?? null),
+            venue_name: (data as any).venue_name ?? (gatheringComposerVenue.trim() || null),
+            gathering_type: (data as any).gathering_type ?? gatheringComposerType,
+            address_visibility: (data as any).address_visibility ?? (gatheringComposerType === 'online' ? 'hidden' : 'attendees_only'),
+            is_partner_venue: (data as any).is_partner_venue ?? null,
+            safe_first_date_space: (data as any).safe_first_date_space ?? null,
+            attendee_count: (data as any).attendee_count ?? editingGatheringTarget?.attendee_count ?? 0,
+          } satisfies Gathering)
+        : null;
       setGatheringComposerOpen(false);
+      setEditingGatheringTarget(null);
       setGatheringComposerTitle('');
       setGatheringComposerDescription('');
       setGatheringComposerDate('');
       setGatheringComposerTime('');
       setGatheringComposerVenue('');
-      await loadCircle();
-      Alert.alert('Gathering submitted', 'We will notify you once it is approved.');
+      setGatheringComposerPosterUrl(null);
+      setGatheringComposerPosterPreviewUrl(null);
+      setGatheringComposerPosterMode(null);
+      setGatheringComposerPosterMemberId(null);
+      if (savedGathering) {
+        const isApproved = String((data as any)?.status ?? '').toLowerCase() === 'approved';
+        const nextGatherings = isApproved
+          ? (() => {
+              const next = editingGatheringTarget
+                ? gatherings.map((item) => (item.id === savedGathering.id ? savedGathering : item))
+                : [savedGathering, ...gatherings];
+              return [...next].sort((left, right) => new Date(left.starts_at).getTime() - new Date(right.starts_at).getTime());
+            })()
+          : gatherings.filter((item) => item.id !== savedGathering.id);
+        setGatherings(nextGatherings);
+        await persistCircleDetailSnapshot({ gatherings: nextGatherings });
+      }
+      await reloadPulse();
+      Alert.alert(
+        editingGatheringTarget ? 'Gathering updated' : 'Gathering submitted',
+        editingGatheringTarget ? 'The gathering details and poster have been updated.' : 'We will notify you once it is approved.',
+      );
     } catch (error) {
-      Alert.alert('Gathering request failed', error instanceof Error ? error.message : 'Please try again.');
+      const message =
+        typeof error === 'object' && error && 'message' in error
+          ? String((error as { message?: unknown }).message || 'Please try again.')
+          : 'Please try again.';
+      Alert.alert(editingGatheringTarget ? 'Gathering update failed' : 'Gathering request failed', message);
     } finally {
       setCreatingGathering(false);
     }
@@ -1419,16 +2689,65 @@ export default function CircleDetailScreen() {
     circle?.city,
     circleId,
     creatingGathering,
+    editingGatheringTarget,
     gatheringComposerCity,
     gatheringComposerDate,
     gatheringComposerDescription,
+    gatheringComposerPosterUrl,
+    gatheringComposerPosterPreviewUrl,
     gatheringComposerTime,
     gatheringComposerTitle,
     gatheringComposerType,
     gatheringComposerVenue,
-    loadCircle,
+    gatherings,
+    persistCircleDetailSnapshot,
     profile,
+    reloadPulse,
   ]);
+
+  const handleDeleteGathering = useCallback((gathering: Gathering) => {
+    if (deletingContentKey) return;
+    Alert.alert(
+      'Delete Gathering?',
+      'This will archive the Gathering and remove it from Circle Pulse.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setDeletingContentKey(`gathering:${gathering.id}`);
+              try {
+                const { error } = await db.rpc('rpc_delete_gathering_request', {
+                  p_gathering_id: gathering.id,
+                });
+                if (error) throw error;
+                if (editingGatheringTarget?.id === gathering.id) {
+                  setGatheringComposerOpen(false);
+                  setEditingGatheringTarget(null);
+                }
+                const nextGatherings = gatherings.filter((item) => item.id !== gathering.id);
+                const nextAttendance = { ...gatheringAttendance };
+                delete nextAttendance[gathering.id];
+                setGatherings(nextGatherings);
+                setGatheringAttendance(nextAttendance);
+                await persistCircleDetailSnapshot({
+                  gatherings: nextGatherings,
+                  gatheringAttendance: nextAttendance,
+                });
+                await reloadPulse();
+              } catch (error) {
+                Alert.alert('Gathering delete failed', error instanceof Error ? error.message : 'Please try again.');
+              } finally {
+                setDeletingContentKey(null);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  }, [deletingContentKey, editingGatheringTarget?.id, gatheringAttendance, gatherings, persistCircleDetailSnapshot, reloadPulse]);
 
   const openPromptAnswer = useCallback((prompt: CirclePrompt) => {
     setPromptTarget(prompt);
@@ -1443,7 +2762,7 @@ export default function CircleDetailScreen() {
       Alert.alert('Circle Prompt', 'Add your answer first.');
       return;
     }
-    const { error } = await db.rpc('rpc_answer_circle_prompt', {
+    const { data, error } = await db.rpc('rpc_answer_circle_prompt', {
       p_prompt_id: promptTarget.id,
       p_response: body,
     });
@@ -1451,11 +2770,41 @@ export default function CircleDetailScreen() {
       Alert.alert('Circle Prompt', error.message || 'Please try again.');
       return;
     }
+    const nextResponse: CirclePromptResponse | null = data ? {
+      id: String((data as any).id),
+      prompt_id: String((data as any).prompt_id ?? promptTarget.id),
+      profile_id: String((data as any).profile_id ?? currentProfileId ?? ''),
+      response: String((data as any).response ?? body),
+      created_at: String((data as any).created_at ?? new Date().toISOString()),
+      profiles: currentProfileId
+        ? {
+            id: currentProfileId,
+            user_id: user?.id ?? null,
+            full_name: authProfile?.full_name ?? 'You',
+            avatar_url: authProfile?.avatar_url ?? null,
+            age: authProfile?.age ?? null,
+            location: authProfile?.location ?? null,
+            city: authProfile?.city ?? null,
+            region: authProfile?.region ?? null,
+          }
+        : null,
+    } : null;
+    if (nextResponse) {
+      const existing = promptResponsesByPromptId[promptTarget.id] ?? [];
+      const nextPromptResponses = {
+        ...promptResponsesByPromptId,
+        [promptTarget.id]: [nextResponse, ...existing],
+      };
+      setPromptResponsesByPromptId(nextPromptResponses);
+      await persistCircleDetailSnapshot({
+        promptResponsesByPromptId: nextPromptResponses,
+      });
+    }
     setPromptAnswerOpen(false);
     setPromptTarget(null);
     setPromptAnswer('');
     Alert.alert('Answer shared', 'Your answer has been shared with the Circle.');
-  }, [promptAnswer, promptTarget?.id]);
+  }, [authProfile, currentProfileId, persistCircleDetailSnapshot, promptAnswer, promptResponsesByPromptId, promptTarget, user?.id]);
 
   const openProfile = useCallback((profileId?: string | null) => {
     if (!profileId) return;
@@ -1475,13 +2824,6 @@ export default function CircleDetailScreen() {
     setIntentSheetOpen(true);
   }, [currentProfileId]);
 
-  const availableGistPerspectives = [...new Set(gists.map((item) => String(item.perspective ?? 'general').toLowerCase()))];
-  const gist = gists.find((item) => item.circle_id === circleId && String(item.perspective ?? 'general').toLowerCase() === gistPerspective)
-    ?? gists.find((item) => !item.circle_id && String(item.perspective ?? 'general').toLowerCase() === gistPerspective)
-    ?? gists.find((item) => item.circle_id === circleId && item.perspective === 'general')
-    ?? gists.find((item) => item.perspective === 'general')
-    ?? gists[0]
-    ?? null;
   const leadershipMembers = useMemo(
     () =>
       members
@@ -1603,6 +2945,20 @@ export default function CircleDetailScreen() {
     });
   }, [circle?.name, circleId]);
 
+  const openPulseMomentViewerByIds = useCallback((userId: string, momentId: string) => {
+    router.push({
+      pathname: '/moments',
+      params: {
+        startUserId: userId,
+        startMomentId: momentId,
+        source: 'circles',
+        entry: 'circles',
+        circleId,
+        circleName: circle?.name ?? '',
+      },
+    });
+  }, [circle?.name, circleId]);
+
   const openPulsePrompt = useCallback((promptId: string) => {
     const prompt = prompts.find((item) => item.id === promptId);
     if (prompt) openPromptAnswer(prompt);
@@ -1619,12 +2975,20 @@ export default function CircleDetailScreen() {
       openPulseMomentViewer(moment);
       return;
     }
+    if (item.momentId && item.featuredProfileId) {
+      const member = members.find((candidate) => candidate.profile_id === item.featuredProfileId);
+      const fallbackUserId = member?.user_id ?? member?.profiles?.user_id ?? null;
+      if (fallbackUserId) {
+        openPulseMomentViewerByIds(String(fallbackUserId), item.momentId);
+        return;
+      }
+    }
     if (item.mediaUrl || item.imageUrl) {
       setPulseMediaTarget(item);
       return;
     }
     Alert.alert('Circle media', 'This spotlight is not available in the media viewer yet.');
-  }, [moments, openPulseMomentViewer]);
+  }, [members, moments, openPulseMomentViewer, openPulseMomentViewerByIds]);
 
   const handleEndLoveSeat = useCallback((item: CirclePulseItem) => {
     if (!item.loveSeatId || !currentProfileId) return;
@@ -1662,9 +3026,7 @@ export default function CircleDetailScreen() {
       Alert.alert('Moment feed check', String(error.message || error));
       return;
     }
-    const profiles = Array.isArray(data?.profiles) ? data.profiles : [];
-    const activeCount = profiles.reduce((total: number, item: any) => total + Number(item.active_moment_count ?? 0), 0);
-    const visibleCount = profiles.reduce((total: number, item: any) => total + Number(item.circle_visible_moment_count ?? 0), 0);
+    const { activeCount, visibleCount } = summarizeCircleMomentDiagnostics(data);
     logger.warn('[circles] member_moments_manual_check', { circleId, diagnostics: data });
     Alert.alert(
       'Moment feed check',
@@ -1675,9 +3037,9 @@ export default function CircleDetailScreen() {
           : `${visibleCount} eligible Moment row${visibleCount === 1 ? '' : 's'} found. Apply the latest Circle migration, then refresh this screen.`,
     );
     if (visibleCount > 0) {
-      void refreshCircleMoments();
+      void refreshCircleMomentsPersisted();
     }
-  }, [circleId, refreshCircleMoments]);
+  }, [circleId, refreshCircleMomentsPersisted]);
 
   const getMemberManagementOptions = useCallback((item: MemberRow) => {
     if (item.profile_id === currentProfileId) {
@@ -1717,8 +3079,10 @@ export default function CircleDetailScreen() {
     const manageOptions = getMemberManagementOptions(item);
     const isSelf = item.profile_id === currentProfileId;
     const isNewMember = item.role === 'member' && isRecentCircleMember(item.joined_at);
+    const presence = getAuthoritativePresenceDisplay(member.online, member.last_active, presenceNow);
     return (
       <View style={styles.memberCard}>
+        <View style={styles.memberCardGlow} />
         <TouchableOpacity accessibilityLabel={`View ${member.full_name || 'member'} profile`} onPress={() => openProfile(member.id)}>
           {member.avatar_url ? (
             <Image source={{ uri: member.avatar_url }} style={styles.avatar} />
@@ -1729,14 +3093,44 @@ export default function CircleDetailScreen() {
           )}
         </TouchableOpacity>
         <View style={styles.memberContent}>
-          <Text style={styles.memberName}>
-            {member.full_name ?? 'Member'}{member.age ? `, ${member.age}` : ''}
-          </Text>
-          <Text style={styles.memberMeta}>{member.city || member.region || member.location || 'Location hidden'}</Text>
-          <View style={styles.memberBadges}>
-            {isNewMember ? (
-              <View style={styles.memberPillNew}>
-                <Text style={styles.memberPillNewText}>New</Text>
+          <View style={styles.memberHeaderRow}>
+            <View style={styles.memberHeaderCopy}>
+              <View style={styles.memberTitleRow}>
+                <Text style={styles.memberName} numberOfLines={1}>
+                  {member.full_name ?? 'Member'}{member.age ? `, ${member.age}` : ''}
+                </Text>
+                {isNewMember ? (
+                  <View style={styles.memberPillNewInline}>
+                    <Text style={styles.memberPillNewText}>New</Text>
+                  </View>
+                ) : null}
+              </View>
+              <Text style={styles.memberMeta}>{member.city || member.region || member.location || 'Location hidden'}</Text>
+            </View>
+          </View>
+          <View style={styles.memberBadgeRow}>
+            {presence.showPresence ? (
+              <View
+                style={[
+                  styles.presenceBadge,
+                  presence.online
+                    ? styles.presenceBadgeOnline
+                    : presence.activeNow
+                      ? styles.presenceBadgeActive
+                      : styles.presenceBadgeRecent,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.presenceDot,
+                    presence.online
+                      ? styles.presenceDotOnline
+                      : presence.activeNow
+                        ? styles.presenceDotActive
+                        : styles.presenceDotRecent,
+                  ]}
+                />
+                <Text style={styles.presenceText}>{getCompactPresenceLabel(presence)}</Text>
               </View>
             ) : null}
             {item.role !== 'member' ? (
@@ -1775,8 +3169,10 @@ export default function CircleDetailScreen() {
     if (!member) return null;
     const isSelf = item.profile_id === currentProfileId;
     const manageOptions = getMemberManagementOptions(item);
+    const presence = getAuthoritativePresenceDisplay(member.online, member.last_active, presenceNow);
     return (
       <View key={item.id} style={[styles.leadCard, expanded && styles.leadCardExpanded]}>
+        <View style={styles.memberCardGlow} />
         <View style={styles.leadTopRow}>
           <View style={styles.leadIdentity}>
             <TouchableOpacity accessibilityLabel={`View ${member.full_name || 'leader'} profile`} onPress={() => openProfile(member.id)}>
@@ -1789,10 +3185,36 @@ export default function CircleDetailScreen() {
               )}
             </TouchableOpacity>
             <View style={styles.leadCopy}>
-              <Text style={styles.memberName}>
-                {member.full_name ?? 'Circle leader'}{member.age ? `, ${member.age}` : ''}
-              </Text>
+              <View style={styles.memberTitleRow}>
+                <Text style={styles.memberName} numberOfLines={1}>
+                  {member.full_name ?? 'Circle leader'}{member.age ? `, ${member.age}` : ''}
+                </Text>
+              </View>
               <Text style={styles.memberMeta}>{joinMeta([getLeaderRoleLabel(item.role), member.city || member.region || member.location])}</Text>
+              {presence.showPresence ? (
+                <View
+                  style={[
+                    styles.presenceBadge,
+                    presence.online
+                      ? styles.presenceBadgeOnline
+                      : presence.activeNow
+                        ? styles.presenceBadgeActive
+                        : styles.presenceBadgeRecent,
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.presenceDot,
+                      presence.online
+                        ? styles.presenceDotOnline
+                        : presence.activeNow
+                          ? styles.presenceDotActive
+                          : styles.presenceDotRecent,
+                    ]}
+                  />
+                  <Text style={styles.presenceText}>{getCompactPresenceLabel(presence)}</Text>
+                </View>
+              ) : null}
             </View>
           </View>
           <Text style={styles.featureMetaPill}>{getLeaderRoleLabel(item.role)}</Text>
@@ -1828,6 +3250,7 @@ export default function CircleDetailScreen() {
     const isTextMoment = String(moment.type).toLowerCase() === 'text';
     return (
       <TouchableOpacity key={moment.id} activeOpacity={0.9} style={styles.momentCard} onPress={() => openMomentThread(moment)}>
+        <View style={styles.momentCardGlow} />
         {isTextMoment ? (
           <LinearGradient colors={['rgba(19,168,168,0.18)', 'rgba(7,30,34,0.96)']} style={styles.momentTextPanel}>
             <Text style={styles.momentTextPreview} numberOfLines={4}>{getMomentPreview(moment)}</Text>
@@ -1840,9 +3263,14 @@ export default function CircleDetailScreen() {
           </LinearGradient>
         )}
         <View style={styles.momentCopy}>
-          <View style={styles.featureCardTop}>
-            <Text style={styles.kicker}>{getMomentKindLabel(moment.type)}</Text>
-            <Text style={styles.featureMetaPill}>{compactDate(moment.created_at)}</Text>
+          <View style={styles.momentHeaderRow}>
+            <View style={styles.momentKindPill}>
+              <Text style={styles.kicker}>{getMomentKindLabel(moment.type)}</Text>
+            </View>
+            <View style={styles.momentTimePill}>
+              <MaterialCommunityIcons name="clock-time-four-outline" size={13} color={theme.textMuted} />
+              <Text style={styles.momentTimeText}>{formatMomentTimestamp(moment.created_at)}</Text>
+            </View>
           </View>
           <Text style={styles.momentTitle} numberOfLines={1}>{profileRow?.full_name ?? 'Circle member'}</Text>
           <Text style={styles.momentMeta} numberOfLines={1}>
@@ -1988,8 +3416,20 @@ export default function CircleDetailScreen() {
           </TouchableOpacity>
         </View>
 
+        {detailNotice ? (
+          <Notice
+            title={detailNotice.title}
+            message={detailNotice.message}
+            actionLabel={networkReady ? 'Retry' : undefined}
+            onAction={networkReady ? handleRetryCircleDetail : undefined}
+            icon={detailNotice.icon}
+          />
+        ) : null}
+
         <CirclePulseBoard
           items={pulseItems}
+          discussionUnreadByItemId={pulseDiscussionUnreadByItemId}
+          gatheringPosterMembersByUrl={gatheringPosterMembersByUrl}
           loading={pulseLoading}
           error={pulseError}
           isMember={isMember}
@@ -2000,7 +3440,11 @@ export default function CircleDetailScreen() {
           onAnswerPrompt={openPulsePrompt}
           onOpenGathering={openPulseGathering}
           onOpenMedia={openPulseMedia}
-          onOpenComments={setPulseCommentTarget}
+          onOpenComments={(target) => {
+            setPulseCommentFocusId(null);
+            setPulseCommentParentFocusId(null);
+            setPulseCommentTarget(target);
+          }}
           viewerProfileId={currentProfileId}
           onOpenFeaturedProfile={openProfile}
           onSendSignal={openIntentSheet}
@@ -2008,33 +3452,55 @@ export default function CircleDetailScreen() {
         />
 
         <View style={styles.trustSection}>
+          <View style={styles.badgeRow}>
+            <Text style={styles.trustBadge}>
+              {circle?.is_official ? 'Official Circle' : circle?.is_partner ? 'Partner Circle' : 'Community Circle'}
+            </Text>
+            <Text style={styles.trustBadge}>{getCircleScopeLabel(circle)}</Text>
+            <Text style={styles.trustBadge}>{circle?.member_count ?? members.length} inside</Text>
+          </View>
           <View style={styles.trustHeader}>
             <View style={styles.trustCopy}>
-              <Text style={styles.heroTitle}>Trusted community space for intentional connection.</Text>
-              <Text style={styles.heroSubcopy}>
-                {circle?.short_description || circle?.description || 'Belong, discover, and connect through trusted shared context.'}
-              </Text>
+              <Text style={styles.heroTitle}>{mastheadTitle}</Text>
+              <Text style={styles.heroSubcopy}>{mastheadBody}</Text>
             </View>
+          </View>
+          <View style={styles.statsRow}>
+            <View style={[styles.statCard, styles.statCardHalf]}>
+              <View style={[styles.statIcon, styles.statIconMembers]}><MaterialCommunityIcons name="account-group-outline" size={18} color={theme.tint} /></View>
+              <View style={styles.statCopy}>
+                <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.86}>{memberCount}</Text>
+                <Text style={styles.statLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.82}>{pluralize(memberCount, 'Member')}</Text>
+              </View>
+            </View>
+            <View style={[styles.statCard, styles.statCardHalf]}>
+              <View style={[styles.statIcon, styles.statIconPrompts]}><MaterialCommunityIcons name="message-text-outline" size={18} color={theme.accent} /></View>
+              <View style={styles.statCopy}>
+                <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.86}>{prompts.length}</Text>
+                <Text style={styles.statLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.82}>{pluralize(prompts.length, 'Prompt')}</Text>
+              </View>
+            </View>
+            <View style={[styles.statCard, styles.statCardHalf]}>
+              <View style={[styles.statIcon, styles.statIconGatherings]}><MaterialCommunityIcons name="calendar-check-outline" size={18} color={theme.secondary} /></View>
+              <View style={styles.statCopy}>
+                <Text style={styles.statValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.86}>{gatherings.length}</Text>
+                <Text style={styles.statLabel} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.82}>{pluralize(gatherings.length, 'Gathering')}</Text>
+              </View>
+            </View>
+          </View>
+          <View style={styles.trustActionRow}>
             {isMember ? (
               <TouchableOpacity accessibilityLabel="Invite to Circle" style={styles.inviteButton} onPress={handleInvite}>
                 <MaterialCommunityIcons name="account-plus-outline" size={16} color={theme.tint} />
                 <Text style={styles.inviteText}>Invite</Text>
               </TouchableOpacity>
             ) : null}
-          </View>
-          <View style={styles.statsRow}>
-            <View style={styles.statCard}>
-              <View style={[styles.statIcon, styles.statIconMembers]}><MaterialCommunityIcons name="account-group-outline" size={18} color={theme.tint} /></View>
-              <View><Text style={styles.statValue}>{circle?.member_count ?? members.length}</Text><Text style={styles.statLabel}>Members</Text></View>
-            </View>
-            <View style={styles.statCard}>
-              <View style={[styles.statIcon, styles.statIconPrompts]}><MaterialCommunityIcons name="message-text-outline" size={18} color={theme.accent} /></View>
-              <View><Text style={styles.statValue}>{prompts.length}</Text><Text style={styles.statLabel}>Prompts</Text></View>
-            </View>
-            <View style={styles.statCard}>
-              <View style={[styles.statIcon, styles.statIconGatherings]}><MaterialCommunityIcons name="calendar-check-outline" size={18} color={theme.secondary} /></View>
-              <View><Text style={styles.statValue}>{gatherings.length}</Text><Text style={styles.statLabel}>Gatherings</Text></View>
-            </View>
+            {canEditCircle ? (
+              <TouchableOpacity style={styles.coverButton} onPress={handlePickImage}>
+                <MaterialCommunityIcons name={imageUploading ? 'cloud-upload-outline' : 'image-edit-outline'} size={16} color={theme.text} />
+                <Text style={styles.coverButtonText}>{imageUploading ? 'Uploading cover' : 'Update cover'}</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         </View>
 
@@ -2053,37 +3519,23 @@ export default function CircleDetailScreen() {
           </View>
         ) : null}
 
-        {canReviewMembers && pendingMembers.length > 0 ? (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Pending requests</Text>
-            {pendingMembers.map((row) => (
-              <View key={row.id} style={styles.pendingCard}>
-                <Text style={styles.memberName}>{row.profiles?.full_name ?? 'Member'}</Text>
-                <View style={styles.inlineActions}>
-                  <TouchableOpacity style={styles.secondaryButton} onPress={() => handleApprove(row.profile_id)}>
-                    <Text style={styles.secondaryText}>Approve</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.ghostButton} onPress={() => handleRemove(row.profile_id)}>
-                    <Text style={styles.ghostText}>Decline</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))}
-          </View>
-        ) : null}
-
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabRow}>
           {[
             ['overview', 'Overview'],
-            ['members', `Members (${members.length})`],
-            ['prompts', `Prompts (${prompts.length})`],
-            ['gatherings', `Gatherings (${gatherings.length})`],
-            ['moments', `Moments (${moments.length})`],
-            ['gist', 'Gist'],
+            ['members', 'Members'],
+            ['prompts', 'Prompts'],
+            ['gatherings', 'Gatherings'],
+            ['moments', 'Moments'],
           ].map(([key, label]) => {
             const active = activeTab === key;
             return (
-              <Pressable key={key} style={[styles.tabButton, active && styles.tabButtonActive]} onPress={() => setActiveTab(key as DetailTab)}>
+              <Pressable
+                key={key}
+                accessibilityRole="button"
+                accessibilityLabel={`Open ${label} tab`}
+                style={[styles.tabButton, active && styles.tabButtonActive]}
+                onPress={() => setActiveTab(key as DetailTab)}
+              >
                 <Text style={[styles.tabText, active && styles.tabTextActive]}>{label}</Text>
               </Pressable>
             );
@@ -2092,6 +3544,29 @@ export default function CircleDetailScreen() {
 
         {activeTab === 'overview' ? (
           <View style={styles.section}>
+            {canReviewMembers && pendingMembers.length > 0 ? (
+              <View style={styles.infoCard}>
+                <View style={styles.featureCardTop}>
+                  <Text style={styles.sectionTitle}>Pending requests</Text>
+                  <Text style={styles.featureMetaPill}>{pendingMembers.length} waiting</Text>
+                </View>
+                <View style={styles.requestStack}>
+                  {pendingMembers.map((row) => (
+                    <View key={row.id} style={styles.pendingCard}>
+                      <Text style={styles.memberName}>{row.profiles?.full_name ?? 'Member'}</Text>
+                      <View style={styles.inlineActions}>
+                        <TouchableOpacity style={styles.secondaryButton} onPress={() => handleApprove(row.profile_id)}>
+                          <Text style={styles.secondaryText}>Approve</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.ghostButton} onPress={() => handleRemove(row.profile_id)}>
+                          <Text style={styles.ghostText}>Decline</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            ) : null}
             {canRequestLeadershipRole || myRoleRequests.length > 0 ? (
               <View style={styles.infoCard}>
                 <View style={styles.featureCardTop}>
@@ -2307,7 +3782,14 @@ export default function CircleDetailScreen() {
 
         {activeTab === 'prompts' ? (
           <View style={styles.section}>
-            <Text style={styles.sectionLead}>Questions that help members reveal values, intent, and emotional clarity.</Text>
+            <View style={styles.featureCardTop}>
+              <Text style={styles.sectionLead}>Questions that help members reveal values, intent, and emotional clarity.</Text>
+              {canPublishCirclePrompt ? (
+                <TouchableOpacity style={styles.secondaryButton} onPress={() => void openPromptComposer()}>
+                  <Text style={styles.secondaryText}>New prompt</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
             {canModerateCircle && moderationReports.length > 0 ? (
               <View style={styles.infoCard}>
                 <View style={styles.featureCardTop}>
@@ -2331,7 +3813,7 @@ export default function CircleDetailScreen() {
                 <Text style={styles.emptyHint}>Hosts can publish thoughtful prompts here when the Circle needs a spark.</Text>
                 {canPublishCirclePrompt ? (
                   <View style={styles.inlineActions}>
-                    <TouchableOpacity style={styles.primaryButton} onPress={openPromptComposer}>
+                    <TouchableOpacity style={styles.primaryButton} onPress={() => void openPromptComposer()}>
                       <Text style={styles.primaryText}>Create prompt</Text>
                     </TouchableOpacity>
                   </View>
@@ -2348,6 +3830,22 @@ export default function CircleDetailScreen() {
                 </View>
                 <Text style={styles.featureTitle}>{prompt.title}</Text>
                 <Text style={styles.featureBody}>{prompt.prompt}</Text>
+                {canPublishCirclePrompt ? (
+                  <View style={styles.manageRow}>
+                    <TouchableOpacity style={styles.manageButton} onPress={() => openPromptComposer(prompt)}>
+                      <MaterialCommunityIcons name="pencil-outline" size={14} color={theme.text} />
+                      <Text style={styles.manageButtonText}>Edit</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.manageButton}
+                      disabled={deletingContentKey === `prompt:${prompt.id}`}
+                      onPress={() => handleDeletePrompt(prompt)}
+                    >
+                      <MaterialCommunityIcons name="trash-can-outline" size={14} color={theme.danger} />
+                      <Text style={styles.manageDangerText}>{deletingContentKey === `prompt:${prompt.id}` ? 'Deleting' : 'Delete'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
                 <View style={styles.featureActionRow}>
                   <Text style={styles.featureHint}>Better answers improve shared context for picks and intros.</Text>
                   <TouchableOpacity style={styles.primaryButton} onPress={() => openPromptAnswer(prompt)}>
@@ -2371,7 +3869,14 @@ export default function CircleDetailScreen() {
 
         {activeTab === 'gatherings' ? (
           <View style={styles.section}>
-            <Text style={styles.sectionLead}>Curated ways to meet beyond chat, with stronger trust and better context.</Text>
+            <View style={styles.featureCardTop}>
+              <Text style={styles.sectionLead}>Curated ways to meet beyond chat, with stronger trust and better context.</Text>
+              {canHostGathering ? (
+                <TouchableOpacity style={styles.secondaryButton} onPress={() => void openGatheringComposer()}>
+                  <Text style={styles.secondaryText}>New Gathering</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
             {gatherings.length === 0 ? (
               <View style={styles.emptyCard}>
                 <View style={styles.emptyIcon}>
@@ -2381,42 +3886,88 @@ export default function CircleDetailScreen() {
                 <Text style={styles.emptyHint}>When hosts schedule trusted events, they will appear here with safety context and RSVP actions.</Text>
                 {canHostGathering ? (
                   <View style={styles.inlineActions}>
-                    <TouchableOpacity style={styles.primaryButton} onPress={openGatheringComposer}>
+                    <TouchableOpacity style={styles.primaryButton} onPress={() => void openGatheringComposer()}>
                       <Text style={styles.primaryText}>Host Gathering</Text>
                     </TouchableOpacity>
                   </View>
                 ) : null}
               </View>
             ) : null}
-            {gatherings.map((gathering) => (
-              <LinearGradient key={gathering.id} colors={['rgba(139,92,255,0.14)', 'rgba(7,30,34,0.94)']} style={styles.featureCard}>
-                <View style={styles.featureCardTop}>
-                  <Text style={styles.kicker}>{gathering.gathering_type ?? 'Gathering'}</Text>
-                  <Text style={styles.featureMetaPill}>{gathering.attendee_count ?? 0} attending</Text>
-                </View>
-                <Text style={styles.featureTitle}>{gathering.title}</Text>
-                <Text style={styles.featureBody}>{joinMeta([compactDate(gathering.starts_at), gathering.city, gathering.venue_name])}</Text>
-                <View style={styles.badgeRow}>
-                  <Text style={styles.trustBadge}>{getGatheringPrivacyLabel(gathering)}</Text>
-                  {gathering.is_partner_venue ? <Text style={styles.trustBadge}>Partner venue</Text> : null}
-                  {gathering.safe_first_date_space ? <Text style={styles.trustBadge}>Safe first-date space</Text> : null}
-                  {getGatheringAttendance(gathering.id)?.status ? (
-                    <Text style={styles.trustBadge}>Your RSVP: {getAttendanceStatusLabel(getGatheringAttendance(gathering.id)?.status)}</Text>
+            {gatherings.map((gathering) => {
+              const posterMember = getGatheringPresentationMember(gathering);
+              return (
+                <LinearGradient key={gathering.id} colors={['rgba(139,92,255,0.14)', 'rgba(7,30,34,0.94)']} style={styles.featureCard}>
+                  {posterMember ? (
+                    <LinearGradient colors={['rgba(19,168,168,0.26)', 'rgba(7,30,34,0.96)']} style={styles.gatheringMemberPosterShell}>
+                      <View style={styles.memberPosterPreviewTop}>
+                        <Text style={styles.memberPosterPreviewKicker}>Host-led invitation</Text>
+                        <Text style={styles.memberPosterPreviewPill}>{getGatheringSeatContextLabel(posterMember.seatContext)}</Text>
+                      </View>
+                      <View style={styles.memberPosterPreviewBody}>
+                        <Image source={{ uri: posterMember.avatarUrl }} style={styles.memberPosterPreviewAvatar} />
+                        <View style={styles.memberPosterPreviewCopy}>
+                          <Text style={styles.memberPosterPreviewName} numberOfLines={1}>{posterMember.fullName}</Text>
+                          <Text style={styles.memberPosterPreviewMeta} numberOfLines={2}>
+                            {joinMeta([gathering.title, compactDate(gathering.starts_at)])}
+                          </Text>
+                          <Text style={styles.memberPosterPreviewSupport} numberOfLines={2}>{getGatheringSeatContextCopy(posterMember.seatContext, posterMember.fullName)}</Text>
+                        </View>
+                      </View>
+                    </LinearGradient>
+                ) : gathering.poster_url ? (
+                  <View style={styles.gatheringPosterShell}>
+                    <Image source={{ uri: getGatheringPosterDisplayUri(gathering.poster_url) || gathering.poster_url }} style={styles.gatheringPosterImage} />
+                      <LinearGradient colors={['rgba(7,30,34,0.08)', 'rgba(7,30,34,0.78)']} style={styles.gatheringPosterOverlay} />
+                      <View style={styles.gatheringPosterBadge}>
+                        <MaterialCommunityIcons name="image-filter-hdr" size={14} color="#F4E8D0" />
+                        <Text style={styles.gatheringPosterBadgeText}>Event poster</Text>
+                      </View>
+                    </View>
                   ) : null}
-                </View>
-                <View style={styles.featureActionRow}>
-                  <Text style={styles.featureHint}>Attend with clearer expectations and safer discovery.</Text>
-                  <View style={styles.inlineActions}>
-                    <TouchableOpacity style={styles.primaryButton} onPress={() => openGatheringRsvp(gathering)}>
-                      <Text style={styles.primaryText}>{getGatheringAttendance(gathering.id) ? 'Manage RSVP' : 'RSVP'}</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.ghostButton} onPress={() => openReportSheet({ type: 'gathering', id: gathering.id, title: gathering.title })}>
-                      <Text style={styles.ghostText}>Report</Text>
-                    </TouchableOpacity>
+                  <View style={styles.featureCardTop}>
+                    <Text style={styles.kicker}>{gathering.gathering_type ?? 'Gathering'}</Text>
+                    <Text style={styles.featureMetaPill}>{gathering.attendee_count === 1 ? '1 attending' : `${gathering.attendee_count ?? 0} attending`}</Text>
                   </View>
-                </View>
-              </LinearGradient>
-            ))}
+                  <Text style={styles.featureTitle}>{gathering.title}</Text>
+                  <Text style={styles.featureBody}>{joinMeta([compactDate(gathering.starts_at), gathering.city, gathering.venue_name])}</Text>
+                  <View style={styles.badgeRow}>
+                    <Text style={styles.trustBadge}>{getGatheringPrivacyLabel(gathering)}</Text>
+                    {gathering.is_partner_venue ? <Text style={styles.trustBadge}>Partner venue</Text> : null}
+                    {gathering.safe_first_date_space ? <Text style={styles.trustBadge}>Safe first-date space</Text> : null}
+                    {getGatheringAttendance(gathering.id)?.status ? (
+                      <Text style={styles.trustBadge}>Your RSVP: {getAttendanceStatusLabel(getGatheringAttendance(gathering.id)?.status)}</Text>
+                    ) : null}
+                  </View>
+                  {canHostGathering ? (
+                    <View style={styles.manageRow}>
+                      <TouchableOpacity style={styles.manageButton} onPress={() => openGatheringComposer(gathering)}>
+                        <MaterialCommunityIcons name="pencil-outline" size={14} color={theme.text} />
+                        <Text style={styles.manageButtonText}>Edit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.manageButton}
+                        disabled={deletingContentKey === `gathering:${gathering.id}`}
+                        onPress={() => handleDeleteGathering(gathering)}
+                      >
+                        <MaterialCommunityIcons name="trash-can-outline" size={14} color={theme.danger} />
+                        <Text style={styles.manageDangerText}>{deletingContentKey === `gathering:${gathering.id}` ? 'Deleting' : 'Delete'}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                  <View style={styles.featureActionRow}>
+                    <Text style={styles.featureHint}>Attend with clearer expectations and safer discovery.</Text>
+                    <View style={styles.inlineActions}>
+                      <TouchableOpacity style={styles.primaryButton} onPress={() => openGatheringRsvp(gathering)}>
+                        <Text style={styles.primaryText}>{getGatheringAttendance(gathering.id) ? 'Manage RSVP' : 'RSVP'}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.ghostButton} onPress={() => openReportSheet({ type: 'gathering', id: gathering.id, title: gathering.title })}>
+                        <Text style={styles.ghostText}>Report</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </LinearGradient>
+              );
+            })}
           </View>
         ) : null}
 
@@ -2439,7 +3990,7 @@ export default function CircleDetailScreen() {
                     <Text style={styles.primaryText}>Add Moment</Text>
                   </TouchableOpacity>
                   {momentLoadError ? (
-                    <TouchableOpacity style={styles.ghostButton} onPress={() => void loadCircle()}>
+                    <TouchableOpacity style={styles.ghostButton} onPress={() => void refreshCircleMomentsPersisted()}>
                       <Text style={styles.ghostText}>Refresh</Text>
                     </TouchableOpacity>
                   ) : null}
@@ -2453,45 +4004,6 @@ export default function CircleDetailScreen() {
             ) : (
               <View style={styles.momentList}>
                 {moments.map(renderMoment)}
-              </View>
-            )}
-          </View>
-        ) : null}
-
-        {activeTab === 'gist' ? (
-          <View style={styles.section}>
-            <Text style={styles.sectionLead}>Editorial guidance that helps this Circle stay intentional, not just active.</Text>
-            {availableGistPerspectives.length > 1 ? (
-              <View style={styles.roleSummaryRow}>
-                {availableGistPerspectives.map((item) => (
-                  <Pressable
-                    key={item}
-                    style={[styles.roleSummaryPill, gistPerspective === item && styles.roleSummaryPillAccent]}
-                    onPress={() => setGistPerspective(item)}
-                  >
-                    <Text style={gistPerspective === item ? styles.roleSummaryTextAccent : styles.roleSummaryText}>
-                      {item === 'general' ? 'General' : item[0].toUpperCase() + item.slice(1)}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            ) : null}
-            {gist ? (
-              <LinearGradient colors={['rgba(244,232,208,0.08)', 'rgba(7,30,34,0.96)']} style={styles.featureCard}>
-                <View style={styles.featureCardTop}>
-                  <Text style={styles.kicker}>Relationship Gist</Text>
-                  <Text style={styles.featureMetaPill}>{gist.perspective ?? 'general'}</Text>
-                </View>
-                <Text style={styles.featureTitle}>{gist.title}</Text>
-                <Text style={styles.featureBody}>{gist.short_body || gist.body}</Text>
-              </LinearGradient>
-            ) : (
-              <View style={styles.emptyCard}>
-                <View style={styles.emptyIcon}>
-                  <MaterialCommunityIcons name="lightbulb-on-outline" size={24} color={theme.tint} />
-                </View>
-                <Text style={styles.emptyTitle}>No Relationship Gist yet</Text>
-                <Text style={styles.emptyHint}>When Betweener publishes guidance shaped for this Circle, it will appear here.</Text>
               </View>
             )}
           </View>
@@ -2871,16 +4383,26 @@ export default function CircleDetailScreen() {
         </Pressable>
       </Modal>
 
-      <Modal visible={promptComposerOpen} transparent animationType="fade" onRequestClose={() => setPromptComposerOpen(false)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setPromptComposerOpen(false)}>
+      <Modal visible={promptComposerOpen} transparent animationType="fade" onRequestClose={() => {
+        setPromptComposerOpen(false);
+        setEditingPromptTarget(null);
+      }}>
+        <Pressable style={styles.modalBackdrop} onPress={() => {
+          setPromptComposerOpen(false);
+          setEditingPromptTarget(null);
+        }}>
           <KeyboardAvoidingView
             style={styles.modalKeyboardWrap}
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           >
             <Pressable style={styles.modalCard} onPress={() => undefined}>
               <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                <Text style={styles.modalTitle}>Create Circle Prompt</Text>
-                <Text style={styles.modalBody}>Publish a prompt that helps members reveal values, intent, and emotional clarity.</Text>
+                <Text style={styles.modalTitle}>{editingPromptTarget ? 'Edit Circle Prompt' : 'Create Circle Prompt'}</Text>
+                <Text style={styles.modalBody}>
+                  {editingPromptTarget
+                    ? 'Tighten the wording so this prompt keeps producing thoughtful answers.'
+                    : 'Publish a prompt that helps members reveal values, intent, and emotional clarity.'}
+                </Text>
                 <TextInput
                   value={promptComposerTitle}
                   onChangeText={setPromptComposerTitle}
@@ -2905,11 +4427,16 @@ export default function CircleDetailScreen() {
                   ))}
                 </View>
                 <View style={styles.inlineActions}>
-                  <TouchableOpacity style={styles.ghostButton} onPress={() => setPromptComposerOpen(false)}>
+                  <TouchableOpacity style={styles.ghostButton} onPress={() => {
+                    setPromptComposerOpen(false);
+                    setEditingPromptTarget(null);
+                  }}>
                     <Text style={styles.ghostText}>Cancel</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.primaryButton} disabled={publishingPrompt} onPress={handlePublishPrompt}>
-                    <Text style={styles.primaryText}>{publishingPrompt ? 'Publishing' : 'Publish prompt'}</Text>
+                  <TouchableOpacity style={styles.primaryButton} disabled={publishingPrompt} onPress={handleSavePrompt}>
+                    <Text style={styles.primaryText}>
+                      {publishingPrompt ? (editingPromptTarget ? 'Saving' : 'Publishing') : editingPromptTarget ? 'Save prompt' : 'Publish prompt'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </ScrollView>
@@ -2918,16 +4445,26 @@ export default function CircleDetailScreen() {
         </Pressable>
       </Modal>
 
-      <Modal visible={gatheringComposerOpen} transparent animationType="fade" onRequestClose={() => setGatheringComposerOpen(false)}>
-        <Pressable style={styles.modalBackdrop} onPress={() => setGatheringComposerOpen(false)}>
+      <Modal visible={gatheringComposerOpen} transparent animationType="fade" onRequestClose={() => {
+        setGatheringComposerOpen(false);
+        setEditingGatheringTarget(null);
+      }}>
+        <Pressable style={styles.modalBackdrop} onPress={() => {
+          setGatheringComposerOpen(false);
+          setEditingGatheringTarget(null);
+        }}>
           <KeyboardAvoidingView
             style={styles.modalKeyboardWrap}
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           >
             <Pressable style={styles.modalCard} onPress={() => undefined}>
               <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-                <Text style={styles.modalTitle}>Host Gathering</Text>
-                <Text style={styles.modalBody}>Propose a trusted Gathering directly from this Circle.</Text>
+                <Text style={styles.modalTitle}>{editingGatheringTarget ? 'Edit Gathering' : 'Host Gathering'}</Text>
+                <Text style={styles.modalBody}>
+                  {editingGatheringTarget
+                    ? 'Refine the event details, timing, or poster without leaving this Circle.'
+                    : 'Propose a trusted Gathering directly from this Circle.'}
+                </Text>
                 <TextInput
                   value={gatheringComposerTitle}
                   onChangeText={setGatheringComposerTitle}
@@ -2950,6 +4487,77 @@ export default function CircleDetailScreen() {
                     </Pressable>
                   ))}
                 </View>
+                <View style={styles.posterComposerCard}>
+                  <View style={styles.featureCardTop}>
+                    <Text style={styles.inputLabel}>Gathering poster</Text>
+                    <Text style={styles.featureMetaPill}>{gatheringComposerPosterMode === 'member' ? getGatheringSeatContextLabel(selectedGatheringPosterSeatContext) : gatheringComposerPosterMode === 'image' ? 'Photo poster' : 'Optional'}</Text>
+                  </View>
+                  {gatheringComposerPosterPreviewUrl ? (
+                    gatheringComposerPosterMode === 'member' && selectedGatheringPosterMember?.avatarUrl ? (
+                      <LinearGradient colors={['rgba(19,168,168,0.24)', 'rgba(7,30,34,0.96)']} style={styles.memberPosterPreview}>
+                        <View style={styles.memberPosterPreviewTop}>
+                          <Text style={styles.memberPosterPreviewKicker}>Host-led invitation</Text>
+                          <Text style={styles.memberPosterPreviewPill}>{getGatheringSeatContextLabel(selectedGatheringPosterSeatContext)}</Text>
+                        </View>
+                        <View style={styles.memberPosterPreviewBody}>
+                          <Image source={{ uri: selectedGatheringPosterMember.avatarUrl }} style={styles.memberPosterPreviewAvatar} />
+                          <View style={styles.memberPosterPreviewCopy}>
+                            <Text style={styles.memberPosterPreviewName} numberOfLines={1}>{selectedGatheringPosterMember.fullName}</Text>
+                            <Text style={styles.memberPosterPreviewMeta} numberOfLines={2}>
+                              {gatheringComposerTitle.trim() || 'Gathering poster preview'}
+                            </Text>
+                            <Text style={styles.memberPosterPreviewSupport} numberOfLines={2}>{getGatheringSeatContextCopy(selectedGatheringPosterSeatContext, selectedGatheringPosterMember.fullName)}</Text>
+                          </View>
+                        </View>
+                      </LinearGradient>
+                    ) : (
+                      <Image source={{ uri: gatheringComposerPosterPreviewUrl }} style={styles.gatheringPosterPreview} />
+                    )
+                  ) : (
+                    <View style={styles.gatheringPosterPreviewFallback}>
+                      <MaterialCommunityIcons name="image-outline" size={24} color={theme.textMuted} />
+                      <Text style={styles.emptySupport}>Add a visual so this Gathering reads like an event, not just a text block.</Text>
+                    </View>
+                  )}
+                  <View style={styles.inlineActions}>
+                    <TouchableOpacity style={styles.secondaryButton} disabled={gatheringPosterUploading} onPress={() => void handlePickGatheringPosterImage()}>
+                      <Text style={styles.secondaryText}>{gatheringPosterUploading ? 'Uploading image' : 'Upload image'}</Text>
+                    </TouchableOpacity>
+                    {gatheringComposerPosterUrl ? (
+                      <TouchableOpacity
+                        style={styles.ghostButton}
+                        onPress={() => {
+                          setGatheringComposerPosterUrl(null);
+                          setGatheringComposerPosterPreviewUrl(null);
+                          setGatheringComposerPosterMode(null);
+                          setGatheringComposerPosterMemberId(null);
+                        }}
+                      >
+                        <Text style={styles.ghostText}>Clear</Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                  {gatheringPosterCandidates.length > 0 ? (
+                    <View style={styles.posterMemberSection}>
+                      <Text style={styles.emptySupport}>Or use a member avatar for a more social host-led invitation.</Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.posterMemberRail}>
+                        {gatheringPosterCandidates.map((candidate) => {
+                          const active = gatheringComposerPosterMemberId === candidate.profileId;
+                          return (
+                            <Pressable
+                              key={candidate.profileId}
+                              style={[styles.posterMemberCard, active && styles.posterMemberCardActive]}
+                              onPress={() => handleSelectGatheringPosterMember(candidate.profileId, candidate.avatarUrl)}
+                            >
+                              <Image source={{ uri: candidate.avatarUrl! }} style={styles.posterMemberAvatar} />
+                              <Text style={styles.posterMemberName} numberOfLines={1}>{candidate.fullName}</Text>
+                            </Pressable>
+                          );
+                        })}
+                      </ScrollView>
+                    </View>
+                  ) : null}
+                </View>
                 <View style={styles.rowInputs}>
                   <TextInput value={gatheringComposerDate} onChangeText={setGatheringComposerDate} placeholder="YYYY-MM-DD" placeholderTextColor={theme.textMuted} style={[styles.inlineInput, styles.rowInput]} />
                   <TextInput value={gatheringComposerTime} onChangeText={setGatheringComposerTime} placeholder="HH:MM" placeholderTextColor={theme.textMuted} style={[styles.inlineInput, styles.rowInput]} />
@@ -2959,11 +4567,22 @@ export default function CircleDetailScreen() {
                   <TextInput value={gatheringComposerVenue} onChangeText={setGatheringComposerVenue} placeholder="Venue name" placeholderTextColor={theme.textMuted} style={styles.inlineInput} />
                 ) : null}
                 <View style={styles.inlineActions}>
-                  <TouchableOpacity style={styles.ghostButton} onPress={() => setGatheringComposerOpen(false)}>
+                  <TouchableOpacity style={styles.ghostButton} onPress={() => {
+                    setGatheringComposerOpen(false);
+                    setEditingGatheringTarget(null);
+                  }}>
                     <Text style={styles.ghostText}>Cancel</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={styles.primaryButton} disabled={creatingGathering} onPress={handleCreateGathering}>
-                    <Text style={styles.primaryText}>{creatingGathering ? 'Submitting' : 'Submit Gathering'}</Text>
+                  <TouchableOpacity style={styles.primaryButton} disabled={creatingGathering || gatheringPosterUploading} onPress={handleSaveGathering}>
+                    <Text style={styles.primaryText}>
+                      {creatingGathering
+                        ? (editingGatheringTarget ? 'Saving' : 'Submitting')
+                        : gatheringPosterUploading
+                          ? 'Preparing poster'
+                          : editingGatheringTarget
+                            ? 'Save Gathering'
+                            : 'Submit Gathering'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </ScrollView>
@@ -3005,15 +4624,32 @@ export default function CircleDetailScreen() {
         item={pulseCommentTarget}
         actorProfileId={currentProfileId}
         actorDisplayName={profile?.full_name}
-        onClose={() => setPulseCommentTarget(null)}
+        targetCommentId={pulseCommentFocusId}
+        targetParentCommentId={pulseCommentParentFocusId}
+        onClose={() => {
+          setPulseCommentTarget(null);
+          setPulseCommentFocusId(null);
+          setPulseCommentParentFocusId(null);
+          if (requestedPulseItemId || requestedPulseCommentId || requestedPulseParentCommentId || requestedPulseRouteNonce) {
+            const nextParams: Record<string, string> = { id: circleId };
+            if (requestedTab && ['overview', 'members', 'prompts', 'gatherings', 'moments'].includes(requestedTab)) {
+              nextParams.tab = requestedTab;
+            }
+            router.replace({ pathname: '/circles/[id]', params: nextParams });
+          }
+          void reloadPulseDiscussionUnreadState();
+        }}
         onOpenProfile={openProfile}
-        onCommentsChanged={reloadPulse}
       />
       <CirclePulseMediaViewer
         visible={!!pulseMediaTarget}
         item={pulseMediaTarget}
         onClose={() => setPulseMediaTarget(null)}
-        onOpenComments={setPulseCommentTarget}
+        onOpenComments={(target) => {
+          setPulseCommentFocusId(null);
+          setPulseCommentParentFocusId(null);
+          setPulseCommentTarget(target);
+        }}
       />
       <CirclePulseModerationSheet
         visible={pulseModerationOpen}
@@ -3083,24 +4719,35 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     headerCopy: { flex: 1 },
     headerTitle: { fontSize: 24, color: theme.text, fontFamily: 'PlayfairDisplay_700Bold' },
     headerSubtitle: { marginTop: 3, fontSize: 12, color: theme.textMuted },
-    trustSection: { gap: 15, paddingHorizontal: 4, paddingVertical: 2 },
-    trustHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    trustSection: {
+      gap: 14,
+      padding: 18,
+      borderRadius: 24,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.78 : 0.96),
+    },
+    trustHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
     trustCopy: { flex: 1, gap: 5 },
-    badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
     trustBadge: {
       alignSelf: 'flex-start',
       overflow: 'hidden',
       borderRadius: 999,
-      paddingHorizontal: 9,
+      paddingHorizontal: 10,
       paddingVertical: 5,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
       color: theme.tint,
-      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.1),
-      fontSize: 11,
-      fontWeight: '800',
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
+      fontSize: 9,
+      fontWeight: '700',
+      letterSpacing: 0.55,
       textTransform: 'capitalize',
     },
-    heroTitle: { color: theme.text, fontSize: 20, lineHeight: 25, fontFamily: 'PlayfairDisplay_700Bold' },
-    heroSubcopy: { color: theme.textMuted, fontSize: 13, lineHeight: 20 },
+    heroTitle: { color: theme.text, fontSize: 25, lineHeight: 31, fontFamily: 'PlayfairDisplay_700Bold' },
+    heroSubcopy: { color: theme.textMuted, fontSize: 13, lineHeight: 21 },
+    trustActionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
     inviteButton: {
       minHeight: 42,
       flexDirection: 'row',
@@ -3114,26 +4761,125 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.1),
     },
     inviteText: { color: theme.text, fontSize: 12, fontWeight: '900' },
-    statsRow: { flexDirection: 'row', gap: 8 },
-    statCard: {
-      flex: 1,
-      minHeight: 72,
+    coverButton: {
+      minHeight: 42,
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
-      borderRadius: 15,
+      justifyContent: 'center',
+      gap: 7,
+      paddingHorizontal: 14,
+      borderRadius: 21,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
+      backgroundColor: withAlpha(theme.background, isDark ? 0.42 : 0.8),
+    },
+    coverButtonText: { color: theme.text, fontSize: 12, fontWeight: '800' },
+    statsRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', alignItems: 'stretch' },
+    statCard: {
+      minHeight: 60,
+      minWidth: 0,
+      flexDirection: 'column',
+      alignItems: 'flex-start',
+      justifyContent: 'center',
+      gap: 6,
+      borderRadius: 18,
       paddingHorizontal: 10,
-      paddingVertical: 9,
+      paddingVertical: 10,
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.42 : 0.76),
+      backgroundColor: withAlpha(theme.background, isDark ? 0.28 : 0.74),
     },
-    statIcon: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+    statCardHalf: {
+      width: 96,
+      flexBasis: 96,
+      flexGrow: 0,
+    },
+    statIcon: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
     statIconMembers: { backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.1) },
     statIconPrompts: { backgroundColor: withAlpha(theme.accent, isDark ? 0.2 : 0.12) },
     statIconGatherings: { backgroundColor: withAlpha(theme.secondary, isDark ? 0.18 : 0.12) },
-    statValue: { color: theme.text, fontSize: 18, lineHeight: 20, fontFamily: 'PlayfairDisplay_700Bold' },
-    statLabel: { marginTop: 2, color: theme.textMuted, fontSize: 11, fontWeight: '700' },
+    statCopy: { flex: 1, minWidth: 0 },
+    statValue: { color: theme.text, fontSize: 17, lineHeight: 19, fontFamily: 'PlayfairDisplay_700Bold' },
+    statLabel: { marginTop: 1, color: theme.textMuted, fontSize: 8, lineHeight: 11, fontWeight: '700', letterSpacing: 0.3 },
+    posterComposerCard: {
+      padding: 14,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.72 : 0.9),
+      gap: 10,
+    },
+    gatheringPosterPreview: {
+      width: '100%',
+      height: 158,
+      borderRadius: 18,
+      backgroundColor: theme.backgroundSubtle,
+    },
+    memberPosterPreview: {
+      width: '100%',
+      minHeight: 158,
+      borderRadius: 18,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, 0.24),
+      gap: 12,
+    },
+    memberPosterPreviewTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+    memberPosterPreviewKicker: { color: theme.tint, fontSize: 11, fontWeight: '900', letterSpacing: 1, textTransform: 'uppercase' },
+    memberPosterPreviewPill: {
+      color: theme.text,
+      fontSize: 10,
+      fontWeight: '800',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+      overflow: 'hidden',
+      backgroundColor: withAlpha(theme.background, isDark ? 0.34 : 0.72),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.1),
+    },
+    memberPosterPreviewBody: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
+    memberPosterPreviewAvatar: {
+      width: 72,
+      height: 72,
+      borderRadius: 36,
+      borderWidth: 2,
+      borderColor: withAlpha(theme.text, 0.92),
+      backgroundColor: theme.backgroundSubtle,
+    },
+    memberPosterPreviewCopy: { flex: 1, gap: 4 },
+    memberPosterPreviewName: { color: theme.text, fontSize: 18, lineHeight: 22, fontFamily: 'PlayfairDisplay_700Bold' },
+    memberPosterPreviewMeta: { color: theme.text, fontSize: 12, lineHeight: 18, fontWeight: '700' },
+    memberPosterPreviewSupport: { color: theme.textMuted, fontSize: 11, lineHeight: 16 },
+    gatheringPosterPreviewFallback: {
+      minHeight: 132,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: theme.outline,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.28 : 0.72),
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 18,
+      gap: 10,
+    },
+    posterMemberSection: { gap: 8 },
+    posterMemberRail: { gap: 10, paddingRight: 6 },
+    posterMemberCard: {
+      width: 82,
+      padding: 8,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+      backgroundColor: withAlpha(theme.background, isDark ? 0.3 : 0.76),
+      gap: 8,
+      alignItems: 'center',
+    },
+    posterMemberCardActive: {
+      borderColor: withAlpha(theme.tint, 0.4),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.1),
+    },
+    posterMemberAvatar: { width: 52, height: 52, borderRadius: 26, backgroundColor: theme.backgroundSubtle },
+    posterMemberName: { color: theme.text, fontSize: 11, fontWeight: '700', textAlign: 'center' },
     editNameCard: {
       padding: 12,
       borderRadius: 16,
@@ -3169,21 +4915,17 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       gap: 10,
     },
     tabRow: {
-      gap: 4,
-      padding: 5,
+      gap: 6,
+      paddingVertical: 2,
       paddingRight: 18,
-      borderRadius: 23,
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.5 : 0.84),
     },
     tabButton: {
-      paddingHorizontal: 14,
-      paddingVertical: 9,
+      paddingHorizontal: 16,
+      paddingVertical: 10,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: 'transparent',
-      backgroundColor: 'transparent',
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.46 : 0.84),
     },
     tabButtonActive: { backgroundColor: theme.tint, borderColor: theme.tint },
     tabText: { color: theme.textMuted, fontSize: 12, fontWeight: '800' },
@@ -3196,6 +4938,39 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       gap: 10,
       overflow: 'hidden',
     },
+    gatheringPosterShell: {
+      height: 154,
+      marginBottom: 4,
+      borderRadius: 18,
+      overflow: 'hidden',
+      backgroundColor: theme.backgroundSubtle,
+    },
+    gatheringMemberPosterShell: {
+      minHeight: 154,
+      marginBottom: 4,
+      borderRadius: 18,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, 0.24),
+      gap: 12,
+    },
+    gatheringPosterImage: { width: '100%', height: '100%' },
+    gatheringPosterOverlay: { ...StyleSheet.absoluteFillObject },
+    gatheringPosterBadge: {
+      position: 'absolute',
+      left: 12,
+      bottom: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: 'rgba(7,30,34,0.72)',
+      borderWidth: 1,
+      borderColor: 'rgba(244,232,208,0.16)',
+    },
+    gatheringPosterBadgeText: { color: '#F4E8D0', fontSize: 11, fontWeight: '800' },
     featureCardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
     featureMetaPill: {
       paddingHorizontal: 10,
@@ -3214,6 +4989,21 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     featureBody: { color: theme.textMuted, fontSize: 13, lineHeight: 20 },
     featureHint: { color: withAlpha(theme.textMuted, 0.92), fontSize: 12, lineHeight: 18, flex: 1 },
     featureActionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+    manageRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+    manageButton: {
+      minHeight: 36,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingHorizontal: 12,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
+      backgroundColor: withAlpha(theme.background, isDark ? 0.28 : 0.66),
+    },
+    manageButtonText: { color: theme.text, fontSize: 12, fontWeight: '800' },
+    manageDangerText: { color: theme.danger, fontSize: 12, fontWeight: '800' },
     infoCard: {
       padding: 15,
       borderRadius: 20,
@@ -3256,6 +5046,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
       backgroundColor: withAlpha(theme.background, isDark ? 0.3 : 0.7),
       gap: 10,
+      overflow: 'hidden',
     },
     leadCardExpanded: { width: '100%' },
     leadTopRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 },
@@ -3308,11 +5099,21 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       padding: 14,
       borderRadius: 20,
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.88 : 0.96),
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.09),
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.9 : 0.98),
       flexDirection: 'row',
       alignItems: 'flex-start',
       gap: 12,
+      overflow: 'hidden',
+    },
+    memberCardGlow: {
+      position: 'absolute',
+      right: -18,
+      top: -12,
+      width: 92,
+      height: 92,
+      borderRadius: 46,
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
     },
     avatar: { width: 46, height: 46, borderRadius: 23, backgroundColor: theme.backgroundSubtle },
     avatarFallback: {
@@ -3325,10 +5126,13 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderWidth: 1,
       borderColor: theme.outline,
     },
-    memberContent: { flex: 1, gap: 4 },
-    memberName: { fontSize: 14, fontWeight: '800', color: theme.text },
+    memberContent: { flex: 1, gap: 7 },
+    memberHeaderRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 },
+    memberHeaderCopy: { flex: 1, minWidth: 0, gap: 3 },
+    memberTitleRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
+    memberName: { fontSize: 14, fontWeight: '800', color: theme.text, flexShrink: 1 },
     memberMeta: { fontSize: 12, color: theme.textMuted },
-    memberBadges: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingTop: 2 },
+    memberBadgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' },
     memberPill: {
       paddingHorizontal: 10,
       paddingVertical: 5,
@@ -3346,6 +5150,14 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderWidth: 1,
       borderColor: withAlpha(theme.secondary, isDark ? 0.34 : 0.28),
     },
+    memberPillNewInline: {
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+      backgroundColor: withAlpha(theme.secondary, isDark ? 0.18 : 0.12),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.secondary, isDark ? 0.34 : 0.28),
+    },
     memberPillNewText: { color: theme.secondary, fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 0.8 },
     memberPillMuted: {
       paddingHorizontal: 10,
@@ -3356,6 +5168,37 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderColor: withAlpha(theme.textMuted, isDark ? 0.16 : 0.12),
     },
     memberPillMutedText: { color: theme.textMuted, fontSize: 11, fontWeight: '800' },
+    presenceBadge: {
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 999,
+      borderWidth: 1,
+    },
+    presenceBadgeOnline: {
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.16 : 0.1),
+      borderColor: withAlpha(theme.tint, isDark ? 0.32 : 0.24),
+    },
+    presenceBadgeActive: {
+      backgroundColor: withAlpha(theme.secondary, isDark ? 0.16 : 0.1),
+      borderColor: withAlpha(theme.secondary, isDark ? 0.32 : 0.24),
+    },
+    presenceBadgeRecent: {
+      backgroundColor: withAlpha(theme.accent, isDark ? 0.16 : 0.1),
+      borderColor: withAlpha(theme.accent, isDark ? 0.32 : 0.24),
+    },
+    presenceDot: {
+      width: 7,
+      height: 7,
+      borderRadius: 3.5,
+    },
+    presenceDotOnline: { backgroundColor: theme.tint },
+    presenceDotActive: { backgroundColor: theme.secondary },
+    presenceDotRecent: { backgroundColor: theme.accent },
+    presenceText: { color: theme.text, fontSize: 10, fontWeight: '800' },
     inlineActions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, paddingTop: 4 },
     primaryButton: { paddingHorizontal: 13, paddingVertical: 8, borderRadius: 999, backgroundColor: theme.tint },
     primaryText: { color: Colors.light.background, fontWeight: '800', fontSize: 12 },
@@ -3406,15 +5249,51 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderRadius: 20,
       overflow: 'hidden',
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.88 : 0.96),
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.9 : 0.98),
+      shadowColor: '#000',
+      shadowOpacity: isDark ? 0.16 : 0.08,
+      shadowRadius: 16,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 3,
     },
-    momentPreview: { width: '100%', height: 142, backgroundColor: theme.backgroundSubtle },
-    momentFallback: { width: '100%', height: 142, alignItems: 'center', justifyContent: 'center' },
-    momentTextPanel: { width: '100%', minHeight: 142, padding: 16, justifyContent: 'flex-end' },
+    momentCardGlow: {
+      position: 'absolute',
+      right: -24,
+      top: 116,
+      width: 110,
+      height: 110,
+      borderRadius: 55,
+      backgroundColor: withAlpha(theme.accent, isDark ? 0.14 : 0.08),
+      zIndex: 0,
+    },
+    momentPreview: { width: '100%', height: 156, backgroundColor: theme.backgroundSubtle },
+    momentFallback: { width: '100%', height: 156, alignItems: 'center', justifyContent: 'center' },
+    momentTextPanel: { width: '100%', minHeight: 156, padding: 18, justifyContent: 'flex-end' },
     momentTextPreview: { color: '#F4E8D0', fontSize: 18, lineHeight: 24, fontFamily: 'PlayfairDisplay_700Bold' },
-    momentCopy: { padding: 14, gap: 6 },
-    momentTitle: { color: theme.text, fontSize: 15, fontWeight: '800' },
+    momentCopy: { padding: 16, gap: 8 },
+    momentHeaderRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+    momentKindPill: {
+      paddingHorizontal: 11,
+      paddingVertical: 7,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.tint, isDark ? 0.24 : 0.2),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.12 : 0.08),
+    },
+    momentTimePill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 10,
+      paddingVertical: 7,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.16 : 0.12),
+      backgroundColor: withAlpha(theme.background, isDark ? 0.4 : 0.76),
+    },
+    momentTimeText: { color: theme.textMuted, fontSize: 11, fontWeight: '800' },
+    momentTitle: { color: theme.text, fontSize: 16, fontWeight: '800' },
     momentMeta: { color: theme.textMuted, fontSize: 11, fontWeight: '700', textTransform: 'capitalize' },
     modalBackdrop: { flex: 1, justifyContent: 'center', padding: 20, backgroundColor: 'rgba(0,0,0,0.56)' },
     modalKeyboardWrap: { width: '100%', justifyContent: 'center' },

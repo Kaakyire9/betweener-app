@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useEvent } from 'expo';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import LinearGradientSafe from '@/components/NativeWrappers/LinearGradientSafe';
+import { useScopedScreenAwake } from '@/hooks/use-scoped-screen-awake';
 import { useResponsiveMetrics } from '@/lib/responsive';
 import Animated, {
   interpolate,
@@ -39,9 +41,18 @@ const ModalVideoPlayer = ({
   const player = useVideoPlayer(uri, (p) => {
     p.loop = true;
     p.muted = muted;
+    p.keepScreenOnWhilePlaying = false;
     if (shouldPlay) {
       try { p.play(); } catch {}
     }
+  });
+  const { isPlaying } = useEvent(player as any, 'playingChange', { isPlaying: shouldPlay && player.playing });
+  const { status } = useEvent(player as any, 'statusChange', { status: player.status });
+
+  useScopedScreenAwake({
+    enabled: shouldPlay && isPlaying && status === 'readyToPlay',
+    reason: 'video_playback',
+    instanceId: `profile-video:${uri}`,
   });
 
   useEffect(() => {

@@ -6,7 +6,7 @@ const PROFILE_SNAPSHOT_VERSION = 1;
 const buildViewedProfileSnapshotStoreKey = (profileId: string) =>
   `offline:profile:viewed:v${PROFILE_SNAPSHOT_VERSION}:${profileId}`;
 
-const pickLastNonEmptyString = (...values: Array<string | undefined | null>) => {
+const pickLastNonEmptyString = (...values: (string | undefined | null)[]) => {
   for (let index = values.length - 1; index >= 0; index -= 1) {
     const value = values[index];
     if (typeof value === 'string' && value.trim().length > 0) {
@@ -16,7 +16,7 @@ const pickLastNonEmptyString = (...values: Array<string | undefined | null>) => 
   return undefined;
 };
 
-const pickLastNonEmptyArray = <T>(...values: Array<T[] | undefined | null>) => {
+const pickLastNonEmptyArray = <T>(...values: (T[] | undefined | null)[]) => {
   for (let index = values.length - 1; index >= 0; index -= 1) {
     const value = values[index];
     if (Array.isArray(value) && value.length > 0) {
@@ -27,7 +27,7 @@ const pickLastNonEmptyArray = <T>(...values: Array<T[] | undefined | null>) => {
 };
 
 export function mergeViewedProfileSnapshots(
-  ...profiles: Array<UserProfile | null | undefined>
+  ...profiles: (UserProfile | null | undefined)[]
 ): UserProfile | null {
   const sources = profiles.filter(Boolean) as UserProfile[];
   if (!sources.length) return null;

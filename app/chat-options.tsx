@@ -4,6 +4,7 @@ import {
   queueChatOptionsAction,
   type ChatOptionsAction,
 } from '@/lib/chat-options-bus';
+import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
 import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
 import { Colors } from '@/constants/theme';
@@ -279,6 +280,17 @@ export default function ChatOptionsScreen() {
 
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: theme.background }]}>
+      <LinearGradient
+        pointerEvents="none"
+        colors={
+          isDark
+            ? ['rgba(64,219,226,0.08)', 'rgba(139,92,255,0.06)', 'rgba(15,26,26,1)']
+            : ['rgba(64,219,226,0.08)', 'rgba(139,92,255,0.05)', theme.background]
+        }
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
       <View style={[styles.header, { borderBottomColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(10,20,20,0.08)' }]}>
         <View style={styles.headerCopy}>
           <Text style={[styles.title, { color: theme.text }]}>Chat options</Text>
@@ -311,89 +323,95 @@ export default function ChatOptionsScreen() {
             transform: [{ translateY: summaryTranslateY }],
           }}
         >
-          <LinearGradient
-            colors={
-              isDark
-                ? ['rgba(64,219,226,0.16)', 'rgba(64,219,226,0.06)', 'rgba(0,0,0,0)']
-                : ['rgba(64,219,226,0.12)', 'rgba(64,219,226,0.04)', 'rgba(255,255,255,0.2)']
-            }
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
+          <BlurViewSafe
+            intensity={34}
+            tint={isDark ? 'dark' : 'light'}
             style={[
               styles.summaryCard,
               { borderColor: isDark ? 'rgba(64,219,226,0.24)' : 'rgba(64,219,226,0.16)' },
             ]}
           >
-          <View style={styles.summaryHeaderRow}>
-            <View
-              style={[
-                styles.summaryStatusDot,
-                {
-                  backgroundColor: peerHasLeftBetweener
-                    ? '#f97316'
-                    : headerStatusLabel === 'Active now'
-                      ? '#34d399'
-                      : isChatMuted
-                        ? '#f59e0b'
-                        : '#40dbe2',
-                },
-              ]}
+            <LinearGradient
+              pointerEvents="none"
+              colors={
+                isDark
+                  ? ['rgba(64,219,226,0.16)', 'rgba(64,219,226,0.06)', 'rgba(0,0,0,0)']
+                  : ['rgba(64,219,226,0.12)', 'rgba(64,219,226,0.04)', 'rgba(255,255,255,0.2)']
+              }
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
             />
-            <Text style={[styles.summaryStatusLabel, { color: theme.text }]}>{headerStatusLabel}</Text>
-          </View>
-          <Text style={[styles.summaryTitle, { color: theme.text }]}>
-            {canPlanDate ? 'This connection is date-ready.' : 'Build a little more momentum first.'}
-          </Text>
-          <Text style={[styles.summaryBody, { color: theme.textMuted }]}>
-            {canPlanDate
-              ? 'Search messages, browse shared moments, or turn the energy into a real plan.'
-              : datePlanUnlockReason}
-          </Text>
-          <View style={styles.summaryPills}>
-            {conversationSignal ? (
+            <View style={styles.summaryHeaderRow}>
               <View
                 style={[
-                  styles.summaryPill,
+                  styles.summaryStatusDot,
                   {
-                    backgroundColor: isDark ? 'rgba(64,219,226,0.16)' : 'rgba(64,219,226,0.09)',
-                    borderColor: isDark ? 'rgba(64,219,226,0.28)' : 'rgba(64,219,226,0.16)',
+                    backgroundColor: peerHasLeftBetweener
+                      ? '#f97316'
+                      : headerStatusLabel === 'Active now'
+                        ? '#34d399'
+                        : isChatMuted
+                          ? '#f59e0b'
+                          : '#40dbe2',
                   },
                 ]}
-              >
-                <MaterialCommunityIcons name="cards-heart-outline" size={14} color={theme.tint} />
-                <Text style={[styles.summaryPillText, { color: theme.text }]}>{conversationSignal}</Text>
-              </View>
-            ) : null}
-            {isChatMuted ? (
-              <View
-                style={[
-                  styles.summaryPill,
-                  {
-                    backgroundColor: isDark ? 'rgba(245,158,11,0.16)' : 'rgba(245,158,11,0.08)',
-                    borderColor: isDark ? 'rgba(245,158,11,0.24)' : 'rgba(245,158,11,0.16)',
-                  },
-                ]}
-              >
-                <MaterialCommunityIcons name="volume-off" size={14} color="#f59e0b" />
-                <Text style={[styles.summaryPillText, { color: theme.text }]}>Muted</Text>
-              </View>
-            ) : null}
-            {isChatPinned ? (
-              <View
-                style={[
-                  styles.summaryPill,
-                  {
-                    backgroundColor: isDark ? 'rgba(96,165,250,0.16)' : 'rgba(96,165,250,0.08)',
-                    borderColor: isDark ? 'rgba(96,165,250,0.24)' : 'rgba(96,165,250,0.16)',
-                  },
-                ]}
-              >
-                <MaterialCommunityIcons name="pin-outline" size={14} color="#60a5fa" />
-                <Text style={[styles.summaryPillText, { color: theme.text }]}>Pinned</Text>
-              </View>
-            ) : null}
-          </View>
-          </LinearGradient>
+              />
+              <Text style={[styles.summaryStatusLabel, { color: theme.text }]}>{headerStatusLabel}</Text>
+            </View>
+            <Text style={[styles.summaryTitle, { color: theme.text }]}>
+              {canPlanDate ? 'This connection is date-ready.' : 'Build a little more momentum first.'}
+            </Text>
+            <Text style={[styles.summaryBody, { color: theme.textMuted }]}>
+              {canPlanDate
+                ? 'Search messages, browse shared moments, or turn the energy into a real plan.'
+                : datePlanUnlockReason}
+            </Text>
+            <View style={styles.summaryPills}>
+              {conversationSignal ? (
+                <View
+                  style={[
+                    styles.summaryPill,
+                    {
+                      backgroundColor: isDark ? 'rgba(64,219,226,0.16)' : 'rgba(64,219,226,0.09)',
+                      borderColor: isDark ? 'rgba(64,219,226,0.28)' : 'rgba(64,219,226,0.16)',
+                    },
+                  ]}
+                >
+                  <MaterialCommunityIcons name="cards-heart-outline" size={14} color={theme.tint} />
+                  <Text style={[styles.summaryPillText, { color: theme.text }]}>{conversationSignal}</Text>
+                </View>
+              ) : null}
+              {isChatMuted ? (
+                <View
+                  style={[
+                    styles.summaryPill,
+                    {
+                      backgroundColor: isDark ? 'rgba(245,158,11,0.16)' : 'rgba(245,158,11,0.08)',
+                      borderColor: isDark ? 'rgba(245,158,11,0.24)' : 'rgba(245,158,11,0.16)',
+                    },
+                  ]}
+                >
+                  <MaterialCommunityIcons name="volume-off" size={14} color="#f59e0b" />
+                  <Text style={[styles.summaryPillText, { color: theme.text }]}>Muted</Text>
+                </View>
+              ) : null}
+              {isChatPinned ? (
+                <View
+                  style={[
+                    styles.summaryPill,
+                    {
+                      backgroundColor: isDark ? 'rgba(96,165,250,0.16)' : 'rgba(96,165,250,0.08)',
+                      borderColor: isDark ? 'rgba(96,165,250,0.24)' : 'rgba(96,165,250,0.16)',
+                    },
+                  ]}
+                >
+                  <MaterialCommunityIcons name="pin-outline" size={14} color="#60a5fa" />
+                  <Text style={[styles.summaryPillText, { color: theme.text }]}>Pinned</Text>
+                </View>
+              ) : null}
+            </View>
+          </BlurViewSafe>
         </Animated.View>
         {sections.map((section, sectionIndex) => (
           <Animated.View
@@ -417,23 +435,25 @@ export default function ChatOptionsScreen() {
                     pressed && styles.actionPressablePressed,
                   ]}
                 >
-                  <View
+                  <BlurViewSafe
+                    intensity={28}
+                    tint={isDark ? 'dark' : 'light'}
                     style={[
                       styles.actionButton,
                       item.destructive
                         ? {
-                            backgroundColor: isDark ? 'rgba(239,68,68,0.11)' : 'rgba(239,68,68,0.07)',
+                            backgroundColor: isDark ? 'rgba(239,68,68,0.11)' : 'rgba(255,255,255,0.3)',
                             borderColor: isDark ? 'rgba(239,68,68,0.28)' : 'rgba(239,68,68,0.18)',
                           }
                         : {
                             backgroundColor:
                               item.key === 'suggest-date' && canPlanDate
                                 ? isDark
-                                  ? 'rgba(64,219,226,0.2)'
-                                  : 'rgba(64,219,226,0.12)'
+                                  ? 'rgba(64,219,226,0.18)'
+                                  : 'rgba(255,255,255,0.34)'
                                 : isDark
-                                  ? 'rgba(64,219,226,0.14)'
-                                  : 'rgba(64,219,226,0.08)',
+                                  ? 'rgba(255,255,255,0.05)'
+                                  : 'rgba(255,255,255,0.28)',
                             borderColor:
                               item.key === 'suggest-date' && canPlanDate
                                 ? isDark
@@ -512,7 +532,7 @@ export default function ChatOptionsScreen() {
                         />
                       </View>
                     </View>
-                  </View>
+                  </BlurViewSafe>
                 </Pressable>
               ))}
             </View>

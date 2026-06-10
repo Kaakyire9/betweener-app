@@ -55,6 +55,7 @@ type NotificationPrefs = {
   messages: boolean;
   message_reactions: boolean;
   reactions: boolean;
+  circle_discussions: boolean;
   likes: boolean;
   superlikes: boolean;
   matches: boolean;
@@ -489,7 +490,7 @@ export default function InAppToasts() {
       const { data, error } = await supabase
         .from('notification_prefs')
         .select(
-          'inapp_enabled,preview_text,messages,message_reactions,reactions,likes,superlikes,matches,moments,notes,gifts,boosts,verification,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
+          'inapp_enabled,preview_text,messages,message_reactions,reactions,circle_discussions,likes,superlikes,matches,moments,notes,gifts,boosts,verification,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
         )
         .eq('user_id', user.id)
         .maybeSingle();
@@ -506,6 +507,7 @@ export default function InAppToasts() {
           messages: Boolean(data.messages),
           message_reactions: Boolean(data.message_reactions),
           reactions: Boolean(data.reactions),
+          circle_discussions: (data as any)?.circle_discussions !== false,
           likes: Boolean(data.likes),
           superlikes: Boolean(data.superlikes),
           matches: Boolean(data.matches),
@@ -546,6 +548,7 @@ export default function InAppToasts() {
             messages: Boolean(row.messages),
             message_reactions: Boolean(row.message_reactions),
             reactions: Boolean(row.reactions),
+            circle_discussions: row.circle_discussions !== false,
             likes: Boolean(row.likes),
             superlikes: Boolean(row.superlikes),
             matches: Boolean(row.matches),
@@ -1393,7 +1396,17 @@ export default function InAppToasts() {
     (toast: ToastItem) => {
       if (toast.route) {
         if (toast.routeParams) {
-          router.push({ pathname: toast.route as any, params: toast.routeParams });
+          const target = { pathname: toast.route as any, params: toast.routeParams };
+          const hasTargetedPulseParams = Boolean(
+            toast.routeParams.openPulseItemId ||
+            toast.routeParams.openPulseCommentId ||
+            toast.routeParams.openPulseParentCommentId,
+          );
+          if (hasTargetedPulseParams) {
+            router.replace(target);
+          } else {
+            router.push(target);
+          }
         } else {
           router.push(toast.route as any);
         }
@@ -1970,6 +1983,43 @@ export default function InAppToasts() {
             notification.request.content.body ||
             'Your Love Compass is ready again. Fresh curated profiles are waiting.',
           route: '/relationship-compass',
+        });
+        return;
+      }
+
+      if (pushType === 'circle_pulse_discussion' && data?.circle_id && data?.pulse_item_id) {
+        if (!canInAppNotify('circle_discussions')) return;
+        pushToast({
+          id: `circle-pulse-discussion-${data?.comment_id ? String(data.comment_id) : notification.request.identifier}-${data?.event_type ? String(data.event_type) : 'activity'}`,
+          title: notification.request.content.title || 'Circle discussion',
+          body: notification.request.content.body || 'There is new activity in a Circle discussion.',
+          kind: 'generic',
+          route: '/circles/[id]',
+          routeParams: {
+            id: String(data.circle_id),
+            openPulseItemId: String(data.pulse_item_id),
+            ...(data?.comment_id ? { openPulseCommentId: String(data.comment_id) } : {}),
+            ...(data?.parent_comment_id ? { openPulseParentCommentId: String(data.parent_comment_id) } : {}),
+            openPulseRouteNonce: notification.request.identifier,
+          },
+        });
+        return;
+      }
+
+      if (pushType === 'circle_pulse_reaction' && data?.circle_id && data?.pulse_item_id) {
+        if (!canInAppNotify('reactions')) return;
+        pushToast({
+          id: `circle-pulse-reaction-${data?.comment_id ? String(data.comment_id) : notification.request.identifier}-${data?.reaction ? String(data.reaction) : 'reaction'}`,
+          title: notification.request.content.title || 'Circle reaction',
+          body: notification.request.content.body || 'Someone reacted in a Circle discussion.',
+          kind: 'generic',
+          route: '/circles/[id]',
+          routeParams: {
+            id: String(data.circle_id),
+            openPulseItemId: String(data.pulse_item_id),
+            ...(data?.comment_id ? { openPulseCommentId: String(data.comment_id) } : {}),
+            openPulseRouteNonce: notification.request.identifier,
+          },
         });
         return;
       }

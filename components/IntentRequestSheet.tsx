@@ -1,4 +1,5 @@
 import { Colors } from '@/constants/theme';
+import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
 import { createIntentRequestOfflineSafe } from '@/lib/intents/offline-actions';
@@ -193,7 +194,12 @@ export default function IntentRequestSheet({
           style={{ width: '100%', justifyContent: 'flex-end' }}
         >
           <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-            <View style={styles.sheet}>
+            <BlurViewSafe
+              intensity={40}
+              tint={isDark ? 'dark' : 'light'}
+              style={styles.sheet}
+            >
+              <View style={styles.handle} />
               <ScrollView
                 keyboardShouldPersistTaps="handled"
                 keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
@@ -306,7 +312,7 @@ export default function IntentRequestSheet({
                 <Text style={styles.submitText}>{submitting ? 'Sending...' : 'Send request'}</Text>
               </TouchableOpacity>
               </ScrollView>
-            </View>
+            </BlurViewSafe>
           </TouchableWithoutFeedback>
         </KeyboardAvoidingView>
       </View>
@@ -316,18 +322,32 @@ export default function IntentRequestSheet({
 
 const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: ResponsiveMetrics) =>
   StyleSheet.create({
-    backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+    backdrop: {
+      flex: 1,
+      backgroundColor: isDark ? 'rgba(4, 10, 11, 0.58)' : 'rgba(31, 42, 42, 0.34)',
+      justifyContent: 'flex-end',
+    },
     backdropPress: { flex: 1 },
     sheet: {
-      backgroundColor: theme.background,
-      borderTopLeftRadius: 20,
-      borderTopRightRadius: 20,
+      backgroundColor: isDark ? 'rgba(7, 30, 34, 0.82)' : 'rgba(255, 249, 243, 0.88)',
+      borderTopLeftRadius: 26,
+      borderTopRightRadius: 26,
       maxHeight: Math.round(responsive.usableHeight * (responsive.compactHeight ? 0.82 : 0.74)),
       paddingHorizontal: responsive.compactWidth ? 14 : 16,
       paddingTop: responsive.compactHeight ? 10 : 12,
       paddingBottom: Math.max(responsive.insets.bottom + 8, Platform.OS === 'android' ? 10 : 16),
       borderWidth: 1,
-      borderColor: theme.outline,
+      borderColor: isDark ? 'rgba(155, 124, 200, 0.34)' : 'rgba(125, 91, 166, 0.2)',
+      borderBottomWidth: 0,
+      overflow: 'hidden',
+    },
+    handle: {
+      alignSelf: 'center',
+      width: 40,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: isDark ? 'rgba(156, 179, 174, 0.4)' : 'rgba(95, 112, 108, 0.28)',
+      marginBottom: 10,
     },
     sheetContent: {
       paddingBottom: Platform.OS === 'android' ? 10 : 8,
@@ -342,8 +362,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f8fafc',
+      borderColor: isDark ? 'rgba(232, 240, 237, 0.1)' : 'rgba(95, 112, 108, 0.12)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.38)',
     },
     options: { marginTop: 14, gap: 10 },
     optionRow: {
@@ -353,12 +373,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       padding: 12,
       borderRadius: 14,
       borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: theme.backgroundSubtle,
+      borderColor: isDark ? 'rgba(232, 240, 237, 0.08)' : 'rgba(95, 112, 108, 0.1)',
+      backgroundColor: isDark ? 'rgba(21, 34, 34, 0.54)' : 'rgba(255, 255, 255, 0.32)',
     },
     optionRowActive: {
       borderColor: theme.tint,
-      backgroundColor: isDark ? 'rgba(17, 24, 39, 0.7)' : 'rgba(236, 253, 245, 0.7)',
+      backgroundColor: isDark ? 'rgba(0, 160, 160, 0.14)' : 'rgba(0, 128, 128, 0.1)',
     },
     optionIcon: {
       width: 32,
@@ -367,8 +387,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: theme.background,
+      borderColor: isDark ? 'rgba(232, 240, 237, 0.08)' : 'rgba(95, 112, 108, 0.1)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.42)',
     },
     optionIconActive: { borderColor: theme.tint },
     optionInfo: { flex: 1 },
@@ -391,26 +411,31 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       paddingVertical: 6,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : theme.backgroundSubtle,
+      borderColor: isDark ? 'rgba(232, 240, 237, 0.08)' : 'rgba(95, 112, 108, 0.1)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.3)',
     },
     suggestedActionText: { color: theme.tint, fontWeight: '700', fontSize: 12 },
     input: {
       borderWidth: 1,
-      borderColor: theme.outline,
-      borderRadius: 12,
+      borderColor: isDark ? 'rgba(232, 240, 237, 0.08)' : 'rgba(95, 112, 108, 0.1)',
+      borderRadius: 14,
       paddingHorizontal: 12,
       paddingVertical: 10,
       minHeight: 40,
       color: theme.text,
-      backgroundColor: theme.backgroundSubtle,
+      backgroundColor: isDark ? 'rgba(21, 34, 34, 0.58)' : 'rgba(255, 255, 255, 0.32)',
     },
     submitButton: {
       marginTop: 16,
       paddingVertical: 12,
-      borderRadius: 14,
+      borderRadius: 16,
       backgroundColor: theme.tint,
       alignItems: 'center',
+      shadowColor: theme.tint,
+      shadowOpacity: isDark ? 0.26 : 0.18,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 6,
     },
     submitButtonDisabled: { opacity: 0.6 },
     submitText: { color: Colors.light.background, fontWeight: '700' },

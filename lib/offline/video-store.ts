@@ -93,11 +93,11 @@ const pruneVideoCacheMap = async (map: VideoCacheMap): Promise<VideoCacheMap> =>
     }),
   );
 
-  const validEntries = entries.filter(Boolean) as Array<{
+  const validEntries = entries.filter(Boolean) as {
     key: string;
     entry: VideoCacheEntry & { savedAt: number };
     size: number;
-  }>;
+  }[];
   validEntries.sort((a, b) => (b.entry.savedAt ?? 0) - (a.entry.savedAt ?? 0));
 
   const kept: VideoCacheMap = {};

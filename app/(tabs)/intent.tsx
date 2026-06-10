@@ -28,6 +28,7 @@ import { getProfileInitials, getProfilePlaceholderPalette } from '@/lib/profile-
 import { supabase } from '@/lib/supabase';
 import { getViewedProfileTrustChips } from '@/lib/viewed-profile-premium';
 import MatchModal from '@/components/MatchModal';
+import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
 import AnimatedPressable from '@/components/motion/AnimatedPressable';
 import SignalIcon from '@/components/icons/SignalIcon';
 import OfflineImage from '@/components/media/OfflineImage';
@@ -3819,7 +3820,8 @@ export default function IntentScreen() {
       <Modal visible={typePickerOpen} transparent animationType="fade" onRequestClose={() => setTypePickerOpen(false)}>
         <View style={styles.pickerBackdrop}>
           <Pressable style={styles.pickerBackdropPress} onPress={() => setTypePickerOpen(false)} />
-          <View style={styles.pickerSheet}>
+          <BlurViewSafe intensity={28} tint={isDark ? 'dark' : 'light'} style={styles.pickerSheet}>
+            <View style={styles.pickerHandle} />
             <View style={styles.pickerHeader}>
               <Text style={styles.pickerTitle}>Filters</Text>
               <TouchableOpacity style={styles.pickerClose} onPress={() => setTypePickerOpen(false)} activeOpacity={0.85}>
@@ -3903,7 +3905,7 @@ export default function IntentScreen() {
                 <Text style={styles.pickerApplyText}>Done</Text>
               </TouchableOpacity>
             </View>
-          </View>
+          </BlurViewSafe>
         </View>
       </Modal>
     </SafeAreaView>
@@ -5274,14 +5276,28 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     pickerBackdropPress: { flex: 1 },
     pickerSheet: {
       maxHeight: '84%',
-      backgroundColor: theme.background,
+      backgroundColor: isDark ? 'rgba(8,18,28,0.82)' : 'rgba(248,251,252,0.84)',
       borderTopLeftRadius: 20,
       borderTopRightRadius: 20,
       paddingHorizontal: 16,
       paddingTop: 14,
       paddingBottom: 18,
       borderWidth: 1,
-      borderColor: theme.outline,
+      borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,61,62,0.10)',
+      overflow: 'hidden',
+      shadowColor: theme.tint,
+      shadowOpacity: isDark ? 0.16 : 0.08,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 8,
+    },
+    pickerHandle: {
+      alignSelf: 'center',
+      width: 42,
+      height: 5,
+      borderRadius: 999,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(15,23,42,0.14)',
+      marginBottom: 12,
     },
     pickerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
     pickerTitle: { fontSize: 16, fontWeight: '800', color: theme.text },
@@ -5302,8 +5318,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f8fafc',
+      borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,61,62,0.10)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.54)',
     },
     pickerRow: {
       flexDirection: 'row',
@@ -5312,20 +5328,20 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       padding: 12,
       borderRadius: 14,
       borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: theme.backgroundSubtle,
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,61,62,0.08)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.60)',
       marginTop: 10,
     },
-    pickerRowActive: { borderColor: theme.tint, backgroundColor: isDark ? 'rgba(15,26,26,0.65)' : 'rgba(236, 253, 245, 0.7)' },
+    pickerRowActive: { borderColor: theme.tint, backgroundColor: isDark ? 'rgba(15,26,26,0.72)' : 'rgba(236, 253, 245, 0.82)' },
     pickerIcon: {
       width: 34,
       height: 34,
       borderRadius: 17,
       borderWidth: 1,
-      borderColor: theme.outline,
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,61,62,0.08)',
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: theme.background,
+      backgroundColor: isDark ? 'rgba(8,18,28,0.58)' : 'rgba(255,255,255,0.72)',
     },
     pickerIconActive: { borderColor: theme.tint, backgroundColor: theme.tint },
     pickerRowText: { fontSize: 14, fontWeight: '700', color: theme.text },
@@ -5336,8 +5352,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       minHeight: 44,
       borderRadius: 14,
       borderWidth: 1,
-      borderColor: theme.outline,
-      backgroundColor: theme.backgroundSubtle,
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,61,62,0.08)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.60)',
       alignItems: 'center',
       justifyContent: 'center',
     },

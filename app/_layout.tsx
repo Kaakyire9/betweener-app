@@ -3,8 +3,7 @@ import * as Linking from "expo-linking";
 import { Slot, usePathname, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Animated, AppState, Easing, StyleSheet, Text, View } from "react-native";
-import { InteractionManager } from "react-native";
+import { Animated, AppState, Easing, InteractionManager, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Notifications from "expo-notifications";
@@ -23,6 +22,7 @@ import IntentResponseReminder from "@/components/IntentResponseReminder";
 import NetworkStatusBanner from "@/components/NetworkStatusBanner";
 import OfflineSyncHistoryHydrator from "@/components/OfflineSyncHistoryHydrator";
 import OfflineSyncStatusPill from "@/components/OfflineSyncStatusPill";
+import ScreenAwakeSafetyGuard from "@/components/system/ScreenAwakeSafetyGuard";
 import ChatDeliveryReceiptAcknowledger from "@/components/ChatDeliveryReceiptAcknowledger";
 import {
   drainOfflineMutationQueue,
@@ -33,6 +33,7 @@ import { ChatOutboxService } from "@/lib/chat/outbox/chat-outbox-service";
 import { emitNetworkRestored } from "@/lib/network-recovery";
 import { isNetworkConnectionAvailable } from "@/lib/network-state";
 import { captureException, initSentry, wrapWithSentry } from "@/lib/telemetry/sentry";
+import { logger } from "@/lib/telemetry/logger";
 import { recoverSupabaseConnectivity, SUPABASE_IS_CONFIGURED } from "@/lib/supabase";
 import { initPushNotificationUX } from "@/lib/notifications/push";
 import {
@@ -119,8 +120,13 @@ function PendingNotificationRouteHydrator() {
         target.params?.id &&
         typeof currentPath === "string" &&
         currentPath.endsWith(`/${target.params.id}`);
+      const hasTargetedPulseParams = Boolean(
+        target.params?.openPulseItemId ||
+        target.params?.openPulseCommentId ||
+        target.params?.openPulseParentCommentId
+      );
 
-      if (samePath || sameId) {
+      if ((samePath || sameId) && !hasTargetedPulseParams) {
         debugNotificationHydrator("clear_already_at_target", {
           pathname: currentPath,
           target,
@@ -464,10 +470,33 @@ function RootLayout() {
             return;
           }
 
+          if (
+            typeof target.params?.openPulseItemId === "string" ||
+            typeof target.params?.openPulseCommentId === "string" ||
+            typeof target.params?.openPulseParentCommentId === "string"
+          ) {
+            logger.info("[notifications] pulse_discussion_target_built", {
+              pathname: target.pathname,
+              params: target.params,
+              responseKey,
+              deferNavigation: options?.deferNavigation === true,
+            });
+          }
+
           lastHandledNotificationKeyRef.current = responseKey;
 
           if (options?.deferNavigation) {
             await persistPendingNotificationRoute(target);
+            return;
+          }
+
+          const hasTargetedPulseParams = Boolean(
+            target.params?.openPulseItemId ||
+            target.params?.openPulseCommentId ||
+            target.params?.openPulseParentCommentId
+          );
+          if (hasTargetedPulseParams) {
+            router.replace(target as any);
             return;
           }
 
@@ -751,6 +780,7 @@ function RootLayout() {
           <ChatOutboxHydrator />
           <OfflineSyncHistoryHydrator />
           <NetworkRecoveryHydrator />
+          <ScreenAwakeSafetyGuard />
           <ChatDeliveryReceiptAcknowledger />
           <PendingNotificationRouteHydrator />
           <Slot />

@@ -44,7 +44,6 @@ import {
   markIncomingMessageRead,
   markOutgoingMessageDelivered,
   reconcileMessageWithServer,
-  removeMessageById,
   replaceMessageById,
   setMessageStatus,
 } from "@/lib/chat/message-state";
@@ -106,6 +105,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from "@react-native-community/netinfo";
 import DateTimePicker, { type DateTimePickerEvent } from "@react-native-community/datetimepicker";
 import { FlashList, type FlashListRef } from "@shopify/flash-list";
+import { useEvent } from "expo";
 import * as Calendar from "expo-calendar";
 import {
   AudioPlayer,
@@ -126,7 +126,7 @@ import * as ImageManipulator from "expo-image-manipulator";
 import * as ImagePicker from "expo-image-picker";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Location from "expo-location";
-import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { VideoView, useVideoPlayer } from "expo-video";
 import type { ComponentProps, ReactNode } from "react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -156,6 +156,7 @@ import MapView, { Marker, PROVIDER_GOOGLE, Region } from "react-native-maps";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import RNSvg, { Path } from "react-native-svg";
 import { WebView } from "react-native-webview";
+import { useScopedScreenAwake } from "@/hooks/use-scoped-screen-awake";
 
 const ATTACHMENT_SHEET_MIN_HEIGHT = 300;
 const ATTACHMENT_SHEET_MAX_HEIGHT = 420;
@@ -170,7 +171,6 @@ const GOOGLE_MAPS_WEB_API_KEY =
   process.env.EXPO_PUBLIC_GOOGLE_MAPS_WEB_API_KEY || GOOGLE_MAPS_NATIVE_API_KEY;
 const GOOGLE_MAPS_MAP_ID = process.env.EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID;
 const LOCATION_PREVIEW_HEIGHT = 164;
-const UUID_VALUE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const LIVE_LOCATION_PRESETS = [15, 60, 480] as const;
 const FALLBACK_BETWEENER_DATE_PICKS = [
   {
@@ -2335,6 +2335,15 @@ type VideoViewerProps = {
   const player = useVideoPlayer(url, (p) => {
     p.loop = false;
     p.muted = false;
+    p.keepScreenOnWhilePlaying = false;
+  });
+  const { isPlaying } = useEvent(player as any, 'playingChange', { isPlaying: visible && player.playing });
+  const { status } = useEvent(player as any, 'statusChange', { status: player.status });
+
+  useScopedScreenAwake({
+    enabled: visible && isPlaying && status === 'readyToPlay',
+    reason: 'video_playback',
+    instanceId: `chat-video-viewer:${url}`,
   });
 
   useEffect(() => {
@@ -4539,7 +4548,6 @@ export default function ConversationScreen() {
   const {
     isChatMuted,
     isChatPinned,
-    chatPrefsLoaded,
     blockStatus,
     setBlockStatus,
     chatPrefsStateRef,
@@ -6126,62 +6134,6 @@ const resolveQueuedVideoUri = async (
     return { keypair, recipientPublicKey };
   }, [conversationId, ensureOwnKeypair, fetchPeerPublicKey, user?.id]);
 
-  const sendAttachmentText = useCallback(async (text: string) => {
-    if (isChatBlocked) {
-      Alert.alert('Messaging unavailable', isBlockedByMe ? 'Unblock to send messages.' : 'You can\'t message this user.');
-      return;
-    }
-    if (!text.trim() || !user?.id || !activePeerMessageUserId) return;
-    const tempId = `temp-attachment-${Date.now()}`;
-    const clientMessageId = tempId;
-    const optimistic: MessageType = {
-      id: tempId,
-      clientMessageId,
-      text,
-      senderId: user.id,
-      timestamp: new Date(),
-      type: 'text',
-      reactions: [],
-      status: 'sending',
-      replyToId: replyingTo?.id ?? null,
-      replyTo: replyingTo || undefined,
-    };
-    setMessages((prev) => [
-      ...prev,
-      optimistic,
-    ]);
-    await persistLocalTextOutboxState({
-      ownerUserId: user.id,
-      threadId: activePeerMessageUserId,
-      message: optimistic,
-      outboxStatus: 'sending',
-    }).catch((persistError) => console.log('[chat] persist attachment text outbox error', persistError));
-    setReplyingTo(null);
-    setViewOnceMode(false);
-    setEditingMessage(null);
-
-    if (!networkReady) {
-      const queuedMessage: MessageType = { ...optimistic, status: 'queued' };
-      void persistLocalTextOutboxState({
-        ownerUserId: user.id,
-        threadId: activePeerMessageUserId,
-        message: queuedMessage,
-        outboxStatus: 'queued',
-      }).catch((persistError) => console.log('[chat] persist queued attachment text outbox error', persistError));
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === tempId ? { ...msg, status: 'queued' as const } : msg
-        )
-      );
-      return;
-    }
-    await flushLocalTextOutbox(user.id).catch((error) => {
-      if (!isLikelyNetworkError(error)) {
-        console.log('[chat] flush attachment text outbox error', error);
-      }
-    });
-  }, [activePeerMessageUserId, isBlockedByMe, isChatBlocked, networkReady, replyingTo, user?.id]);
-
   const sendImageAttachment = useCallback(async ({
     imageUrl,
     isViewOnce = false,
@@ -7094,7 +7046,7 @@ const resolveQueuedVideoUri = async (
       currentMessageCount: messagesRef.current.length,
       hasCacheKey: Boolean(chatThreadCacheKey),
     });
-    const { data, error, isIncrementalFetch, syncCursor, threadSyncCursor } = await fetchRemoteThreadMessages({
+    const { data, error, isIncrementalFetch, threadSyncCursor } = await fetchRemoteThreadMessages({
       currentUserId: user.id,
       peerUserId: activePeerMessageUserId,
       pageSize: PAGE_SIZE,
@@ -8345,11 +8297,9 @@ const resolveQueuedVideoUri = async (
     pinnedSheetVisible,
     pinnedBannerExpanded,
     setPinnedBannerExpanded,
-    openPinnedSheet,
     closePinnedSheet,
     trimmedChatSearchQuery,
     searchResults,
-    matchMessageIds,
     matchMessageIdSet,
     mediaItems,
     linkItems,
@@ -9682,14 +9632,6 @@ const resolveQueuedVideoUri = async (
     }
   }, [ensureInitialScrollToBottom, getDistanceToBottom, maybeScrollToEnd, renderedMessages.length, threadBootstrapSettled, updateJumpToBottomVisibility]);
 
-  const handleScrollToIndexFailed = useCallback(({ index, averageItemLength }: any) => {
-    const offset = Math.max(0, averageItemLength * index);
-    flatListRef.current?.scrollToOffset({ offset, animated: true });
-    setTimeout(() => {
-      flatListRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.5 });
-    }, 250);
-  }, []);
-
   const clearFocus = useCallback(() => {
     if (focusTimerRef.current) {
       clearTimeout(focusTimerRef.current);
@@ -9829,8 +9771,8 @@ const resolveQueuedVideoUri = async (
       viewableItems,
       changed,
     }: {
-      viewableItems: Array<{ item?: MessageType | null }>;
-      changed?: Array<{ item?: MessageType | null; isViewable: boolean }>;
+      viewableItems: { item?: MessageType | null }[];
+      changed?: { item?: MessageType | null; isViewable: boolean }[];
     }) => {
       if (!isScreenFocusedRef.current || AppState.currentState !== 'active') return;
       changed?.forEach(({ item, isViewable }) => {
@@ -12577,6 +12519,13 @@ const resolveQueuedVideoUri = async (
               },
             ]}
           >
+            <BlurView
+              pointerEvents="none"
+              intensity={40}
+              tint={isDark ? "dark" : "light"}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={styles.attachmentHandle} />
             <View style={styles.imagePickerHeader}>
               <Text style={styles.imagePickerTitle}>Share</Text>
               <TouchableOpacity
@@ -17352,11 +17301,11 @@ const createStyles = (
 
     // Attachment Sheet
     attachmentSheet: {
-      backgroundColor: theme.background,
-      borderTopLeftRadius: 22,
-      borderTopRightRadius: 22,
+      backgroundColor: isDark ? 'rgba(7,30,34,0.84)' : 'rgba(255,249,243,0.9)',
+      borderTopLeftRadius: 26,
+      borderTopRightRadius: 26,
       borderTopWidth: 1,
-      borderTopColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
+      borderTopColor: isDark ? 'rgba(139,92,255,0.24)' : 'rgba(15,61,62,0.08)',
       paddingHorizontal: 16,
       paddingTop: 12,
       paddingBottom: Math.max(bottomInset + 12, 24),
@@ -17372,6 +17321,15 @@ const createStyles = (
       shadowOpacity: 0.12,
       shadowRadius: 12,
       elevation: 12,
+      overflow: 'hidden',
+    },
+    attachmentHandle: {
+      alignSelf: 'center',
+      width: 40,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.24)' : 'rgba(15,61,62,0.16)',
+      marginBottom: 6,
     },
     attachmentSheetScroll: {
       flexGrow: 0,
@@ -17391,10 +17349,12 @@ const createStyles = (
       color: theme.text,
     },
     imagePickerClose: {
-      width: 28,
-      height: 28,
-      borderRadius: 14,
-      backgroundColor: theme.backgroundSubtle,
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.34)',
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,61,62,0.08)',
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -17406,12 +17366,12 @@ const createStyles = (
       paddingHorizontal: 10,
       borderRadius: 12,
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.1),
-      backgroundColor: withAlpha(theme.tint, isDark ? 0.08 : 0.06),
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.28)',
     },
     viewOnceAttachmentRowActive: {
       borderColor: withAlpha(theme.tint, 0.4),
-      backgroundColor: withAlpha(theme.tint, isDark ? 0.18 : 0.12),
+      backgroundColor: isDark ? withAlpha(theme.tint, 0.18) : 'rgba(232,249,246,0.7)',
     },
     viewOnceAttachmentLeft: {
       flexDirection: 'row',
@@ -17422,7 +17382,7 @@ const createStyles = (
       width: 32,
       height: 32,
       borderRadius: 16,
-      backgroundColor: theme.backgroundSubtle,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.38)',
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -17443,7 +17403,7 @@ const createStyles = (
       width: 32,
       height: 32,
       borderRadius: 16,
-      backgroundColor: theme.backgroundSubtle,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.38)',
       alignItems: 'center',
       justifyContent: 'center',
     },
@@ -17463,7 +17423,7 @@ const createStyles = (
       borderRadius: 14,
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
-      backgroundColor: theme.backgroundSubtle,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.32)',
     },
     imagePickerIcon: {
       width: 36,

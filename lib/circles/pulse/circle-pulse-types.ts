@@ -1,6 +1,8 @@
 export type CirclePulseItemType = 'prompt' | 'gathering' | 'welcome' | 'love_seat' | 'media' | 'host_note';
 
 export type CirclePulseItemStatus = 'draft' | 'active' | 'expired' | 'archived';
+export type CircleGatheringPresentationMode = 'general' | 'seat_linked';
+export type CircleGatheringSeatContext = 'welcome' | 'love' | null;
 
 export type CirclePulseItem = {
   id: string;
@@ -29,9 +31,14 @@ export type CirclePulseItem = {
   startsAt: string | null;
   expiresAt: string | null;
   commentCount: number;
+  discussionCta: string | null;
+  discussionSummary: string | null;
   gatheringStartsAt: string | null;
   gatheringCity: string | null;
   gatheringType: string | null;
+  gatheringPresentationMode: CircleGatheringPresentationMode | null;
+  gatheringSeatContext: CircleGatheringSeatContext;
+  gatheringHostCreatedForMember: boolean;
   gatheringIsPartnerVenue: boolean;
   gatheringSafeFirstDateSpace: boolean;
   gatheringAttendeeCount: number;
@@ -94,14 +101,33 @@ export type CirclePulseComment = {
   parentCommentId: string | null;
   createdAt: string;
   updatedAt: string;
+  editedAt: string | null;
   isOwn: boolean;
   canRemove: boolean;
+  canEdit: boolean;
+  canPin: boolean;
+  pinnedAt: string | null;
   reportCount: number;
   reactionCount: number;
+  replyPreviewProfileId: string | null;
+  replyPreviewDisplayName: string | null;
+  replyPreviewBody: string | null;
+  reactionSummary: CirclePulseCommentReactionSummary[];
   myReaction: CirclePulseCommentReaction | null;
 };
 
-export type CirclePulseCommentReaction = 'heart' | 'sparkle' | 'support';
+export type CirclePulseCommentReaction =
+  | 'heart'
+  | 'laugh'
+  | 'love'
+  | 'thumbs_up'
+  | 'fire'
+  | 'clap';
+
+export type CirclePulseCommentReactionSummary = {
+  reaction: CirclePulseCommentReaction;
+  count: number;
+};
 
 export type CircleLoveSeatCandidate = {
   profileId: string;
@@ -152,3 +178,10 @@ export type CirclePulseCommentReport = {
 };
 
 export type CirclePulseCommentReportAction = 'reviewing' | 'dismiss' | 'remove';
+
+export type CirclePulseDiscussionReadState = {
+  itemId: string;
+  lastSeenCommentId: string | null;
+  lastSeenAt: string | null;
+  unreadCount: number;
+};

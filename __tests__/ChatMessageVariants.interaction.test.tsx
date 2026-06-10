@@ -1,6 +1,5 @@
 // @ts-nocheck
 import React from "react";
-import { Animated } from "react-native";
 import { fireEvent, render } from "@testing-library/react-native";
 
 import ChatMessageBubblePressable from "@/components/chat/ChatMessageBubblePressable";

@@ -818,7 +818,7 @@ export async function removeMomentFromFeedSnapshot(
 }
 
 export async function resolveOfflineMomentMediaMap(
-  moments: Array<Pick<MomentSnapshotRow, 'id' | 'type' | 'media_url'>>,
+  moments: Pick<MomentSnapshotRow, 'id' | 'type' | 'media_url'>[],
 ): Promise<Record<string, string>> {
   const entries = await Promise.all(
     moments.map(async (moment) => {
@@ -840,7 +840,7 @@ export async function resolveOfflineMomentMediaMap(
 }
 
 export async function primeOfflineMomentMedia(
-  moments: Array<Pick<MomentSnapshotRow, 'id' | 'type' | 'media_url'>>,
+  moments: Pick<MomentSnapshotRow, 'id' | 'type' | 'media_url'>[],
   remoteByMomentId?: Record<string, string>,
 ): Promise<Record<string, string>> {
   const entries = await Promise.all(

@@ -55,6 +55,7 @@ type UseChatListSyncArgs = {
   onChatPrefChange: (row: ChatListChatPrefRow) => void;
   onPresenceChange: (row: UserPresenceRow) => void;
   visiblePeerUserIds: string[];
+  visibleLastMessageIds: string[];
 };
 
 export const useChatListSync = ({
@@ -70,14 +71,20 @@ export const useChatListSync = ({
   onChatPrefChange,
   onPresenceChange,
   visiblePeerUserIds,
+  visibleLastMessageIds,
 }: UseChatListSyncArgs) => {
   const [isFocused, setIsFocused] = useState(false);
   const [appState, setAppState] = useState(AppState.currentState);
   const realtimeActive = isFocused && appState === 'active';
   const visiblePeerUserIdsKey = Array.from(new Set(visiblePeerUserIds.filter(Boolean))).slice(0, 60).sort().join(':');
+  const visibleLastMessageIdsKey = Array.from(new Set(visibleLastMessageIds.filter(Boolean))).slice(0, 60).sort().join(':');
   const visiblePeerUserIdSet = useMemo(
     () => new Set(visiblePeerUserIdsKey ? visiblePeerUserIdsKey.split(':') : []),
     [visiblePeerUserIdsKey],
+  );
+  const visibleLastMessageIdSet = useMemo(
+    () => new Set(visibleLastMessageIdsKey ? visibleLastMessageIdsKey.split(':') : []),
+    [visibleLastMessageIdsKey],
   );
 
   useFocusEffect(
@@ -221,10 +228,6 @@ export const useChatListSync = ({
         (payload) => onMessageSenderUpdate(payload.new as ChatListMessageRealtimeRow),
       )
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          void fetchConversations();
-          return;
-        }
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
           void fetchConversations();
         }
@@ -243,40 +246,42 @@ export const useChatListSync = ({
   ]);
 
   useEffect(() => {
-    if (!userId || !realtimeActive) return;
+    if (!userId || !realtimeActive || visibleLastMessageIdSet.size === 0) return;
     const channel = supabase.channel(`message_reactions:chatlist:${userId}`);
 
-    channel
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'message_reactions' },
-        (payload) => {
-          const row = (payload.new || payload.old) as ChatListReactionRow;
-          void onReactionChange(row);
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'message_reactions' },
-        (payload) => {
-          const row = (payload.new || payload.old) as ChatListReactionRow;
-          void onReactionChange(row);
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: 'DELETE', schema: 'public', table: 'message_reactions' },
-        (payload) => {
-          const row = (payload.old || payload.new) as ChatListReactionRow;
-          void onReactionChange(row);
-        },
-      );
+    visibleLastMessageIdSet.forEach((messageId) => {
+      channel
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'message_reactions', filter: `message_id=eq.${messageId}` },
+          (payload) => {
+            const row = (payload.new || payload.old) as ChatListReactionRow;
+            void onReactionChange(row);
+          },
+        )
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'message_reactions', filter: `message_id=eq.${messageId}` },
+          (payload) => {
+            const row = (payload.new || payload.old) as ChatListReactionRow;
+            void onReactionChange(row);
+          },
+        )
+        .on(
+          'postgres_changes',
+          { event: 'DELETE', schema: 'public', table: 'message_reactions', filter: `message_id=eq.${messageId}` },
+          (payload) => {
+            const row = (payload.old || payload.new) as ChatListReactionRow;
+            void onReactionChange(row);
+          },
+        );
+    });
     channel.subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [onReactionChange, realtimeActive, userId]);
+  }, [onReactionChange, realtimeActive, userId, visibleLastMessageIdSet]);
 
   useEffect(() => {
     if (!userId || !realtimeActive) return;

@@ -25,7 +25,7 @@ type ChatListNewMatch = {
   lastSeen: Date;
 };
 
-type UseChatListScreenUiArgs<TConversation extends ChatListConversation, TNewMatch extends ChatListNewMatch> = {
+type UseChatListScreenUiArgs<TNewMatch extends ChatListNewMatch> = {
   onNewMatchOpened?: (match: TNewMatch) => void;
 };
 
@@ -34,7 +34,7 @@ export const useChatListScreenUi = <
   TNewMatch extends ChatListNewMatch,
 >({
   onNewMatchOpened,
-}: UseChatListScreenUiArgs<TConversation, TNewMatch> = {}) => {
+}: UseChatListScreenUiArgs<TNewMatch> = {}) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | 'unread' | 'pinned' | 'archived'>('all');

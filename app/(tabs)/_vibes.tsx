@@ -23,6 +23,12 @@ import {
   readVibesMomentContextSnapshot,
   writeVibesMomentContextSnapshot,
 } from "@/lib/offline/vibes-store";
+import {
+  getDefaultVibesPracticeSnapshot,
+  readVibesPracticeSnapshot,
+  writeVibesPracticeSnapshot,
+  type VibesPracticeStep,
+} from "@/lib/offline/vibes-practice-store";
 import { showOpenSettingsPrompt } from "@/lib/permission-prompts";
 import { recordProfileSignal } from '@/lib/profile-signals';
 import { RELIGION_OPTIONS, formatReligionLabel, normalizeReligionForProfile } from "@/lib/profile/religion";
@@ -33,6 +39,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
 
+import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
 import IntentRequestSheet from "@/components/IntentRequestSheet";
 import SendSignalSheet from "@/components/signal/SendSignalSheet";
@@ -46,7 +53,7 @@ import VibesAllMomentsModal from "@/components/vibes/VibesAllMomentsModal";
 import FloatingMomentsCapsule from "@/components/vibes/moments/FloatingMomentsCapsule";
 import MomentsHeaderRow from "@/components/vibes/moments/MomentsHeaderRow";
 import useMomentsCapsuleMetrics from "@/components/vibes/moments/useMomentsCapsuleMetrics";
-import VibesPracticeWalkthrough from "@/components/vibes/VibesPracticeWalkthrough";
+import VibesPracticeWalkthrough, { type PracticeStep } from "@/components/vibes/VibesPracticeWalkthrough";
 import DepthBackground from "@/components/vibes/depth/DepthBackground";
 import VibesActionDock from "@/components/vibes/depth/VibesActionDock";
 import useVibesResponsiveMetrics from "@/components/vibes/depth/useVibesResponsiveMetrics";
@@ -65,6 +72,7 @@ const VIBES_PRACTICE_COMPLETE_KEY = 'vibes_practice_complete_v1';
 const VIBES_MOMENTS_COLLAPSED_KEY = 'vibes:momentsCollapsed';
 const VIBES_LOCATION_PROMPT_DISMISSED_KEY = 'vibes:locationPromptDismissed:v1';
 const VIBES_VIEWED_MOMENT_IDS_KEY_PREFIX = 'vibes:viewedMomentIds:v1:';
+const VIBES_PRACTICE_VERSION = 1;
 
 const clearPremiumVibesFilters = (filters: VibesFilters): VibesFilters => ({
   ...filters,
@@ -391,8 +399,8 @@ export default function ExploreScreen() {
         ]);
         if (cancelled || signalsResult.error || requestsResult.error) return;
         const rows = [
-          ...(((signalsResult.data as Array<{ expires_at: string }> | null) ?? []).filter(Boolean)),
-          ...(((requestsResult.data as Array<{ expires_at: string }> | null) ?? []).filter(Boolean)),
+          ...(((signalsResult.data as { expires_at: string }[] | null) ?? []).filter(Boolean)),
+          ...(((requestsResult.data as { expires_at: string }[] | null) ?? []).filter(Boolean)),
         ];
         const endingSoon = rows.filter((item) => {
           const ts = Date.parse(item.expires_at);
@@ -470,6 +478,7 @@ export default function ExploreScreen() {
   const [practiceLoaded, setPracticeLoaded] = useState(false);
   const [practiceComplete, setPracticeComplete] = useState(true);
   const [practiceReplayVisible, setPracticeReplayVisible] = useState(false);
+  const [practiceStep, setPracticeStep] = useState<VibesPracticeStep>('intro');
   const [practiceGestureLocked, setPracticeGestureLocked] = useState(false);
   const [deckGestureLocked, setDeckGestureLocked] = useState(false);
   const showPracticeWalkthrough = practiceLoaded && (!practiceComplete || practiceReplayVisible);
@@ -503,7 +512,25 @@ export default function ExploreScreen() {
     () => (profile?.id ? `${VIBES_INTRO_SEEN_KEY}:${profile.id}` : user?.id ? `${VIBES_INTRO_SEEN_KEY}:auth:${user.id}` : null),
     [profile?.id, user?.id],
   );
-  const practiceStorageKey = useMemo(
+  const practiceProfileId = useMemo(
+    () => resolvedProfileId ?? profile?.id ?? null,
+    [profile?.id, resolvedProfileId],
+  );
+  const practiceSnapshotOwnerId = useMemo(
+    () => practiceProfileId ?? user?.id ?? null,
+    [practiceProfileId, user?.id],
+  );
+  const backendPracticeCompletedVersion = useMemo(
+    () => Number((profile as any)?.vibes_practice_completed_version ?? 0),
+    [profile],
+  );
+  const backendPracticeCompletedAt = useMemo(
+    () => (typeof (profile as any)?.vibes_practice_completed_at === 'string'
+      ? String((profile as any)?.vibes_practice_completed_at)
+      : null),
+    [profile],
+  );
+  const legacyPracticeStorageKey = useMemo(
     () => (profile?.id ? `${VIBES_PRACTICE_COMPLETE_KEY}:${profile.id}` : user?.id ? `${VIBES_PRACTICE_COMPLETE_KEY}:auth:${user.id}` : null),
     [profile?.id, user?.id],
   );
@@ -515,29 +542,68 @@ export default function ExploreScreen() {
     });
   }, []);
 
+  const syncPracticeCompletionToBackend = useCallback(async (completedAtIso: string) => {
+    if (!practiceProfileId) return false;
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          vibes_practice_completed_at: completedAtIso,
+          vibes_practice_completed_version: VIBES_PRACTICE_VERSION,
+        } as any)
+        .eq('id', practiceProfileId);
+      return !error;
+    } catch {
+      return false;
+    }
+  }, [practiceProfileId]);
+
   const completePractice = useCallback(async () => {
     if (practiceReplayVisible) {
       setPracticeReplayVisible(false);
+      setPracticeStep('intro');
       setPracticeGestureLocked(false);
       setDeckGestureLocked(false);
       scrollVibesToTop();
       return;
     }
+    const completedAtIso = new Date().toISOString();
     setPracticeComplete(true);
+    setPracticeStep('intentPrompt');
     setPracticeGestureLocked(false);
     setDeckGestureLocked(false);
     scrollVibesToTop();
     try {
-      if (practiceStorageKey) await AsyncStorage.setItem(practiceStorageKey, '1');
+      if (legacyPracticeStorageKey) await AsyncStorage.setItem(legacyPracticeStorageKey, '1');
       if (introStorageKey) await AsyncStorage.setItem(introStorageKey, '1');
     } catch {}
-  }, [introStorageKey, practiceReplayVisible, practiceStorageKey, scrollVibesToTop]);
+    if (practiceSnapshotOwnerId) {
+      await writeVibesPracticeSnapshot(practiceSnapshotOwnerId, {
+        completedAt: completedAtIso,
+        completedVersion: VIBES_PRACTICE_VERSION,
+        completionSyncPending: Boolean(practiceProfileId),
+        currentStep: 'intro',
+        updatedAt: completedAtIso,
+      });
+    }
+    const synced = await syncPracticeCompletionToBackend(completedAtIso);
+    if (synced && practiceSnapshotOwnerId) {
+      await writeVibesPracticeSnapshot(practiceSnapshotOwnerId, {
+        completedAt: completedAtIso,
+        completedVersion: VIBES_PRACTICE_VERSION,
+        completionSyncPending: false,
+        currentStep: 'intro',
+        updatedAt: completedAtIso,
+      });
+    }
+  }, [introStorageKey, legacyPracticeStorageKey, practiceProfileId, practiceReplayVisible, practiceSnapshotOwnerId, scrollVibesToTop, syncPracticeCompletionToBackend]);
 
   useEffect(() => {
     let cancelled = false;
     setPracticeLoaded(false);
 
-    if (!practiceStorageKey) {
+    if (!practiceSnapshotOwnerId) {
+      setPracticeStep('intro');
       setPracticeComplete(true);
       setPracticeLoaded(true);
       return () => {
@@ -547,11 +613,70 @@ export default function ExploreScreen() {
 
     (async () => {
       try {
-        const completed = await AsyncStorage.getItem(practiceStorageKey);
+        const localSnapshot = (await readVibesPracticeSnapshot(practiceSnapshotOwnerId)) ?? getDefaultVibesPracticeSnapshot();
+        const legacyPracticeComplete = legacyPracticeStorageKey
+          ? (await AsyncStorage.getItem(legacyPracticeStorageKey)) === '1'
+          : false;
+        let resolvedBackendCompletedVersion = backendPracticeCompletedVersion;
+        let resolvedBackendCompletedAt = backendPracticeCompletedAt;
+
+        if (practiceProfileId) {
+          const { data, error } = await supabase
+            .from('profiles')
+            .select('vibes_practice_completed_version,vibes_practice_completed_at')
+            .eq('id', practiceProfileId)
+            .maybeSingle();
+          if (!error && data) {
+            resolvedBackendCompletedVersion = Number((data as any)?.vibes_practice_completed_version ?? 0);
+            resolvedBackendCompletedAt = typeof (data as any)?.vibes_practice_completed_at === 'string'
+              ? String((data as any)?.vibes_practice_completed_at)
+              : resolvedBackendCompletedAt;
+          }
+        }
+
+        const localCompleted =
+          localSnapshot.completedVersion >= VIBES_PRACTICE_VERSION || legacyPracticeComplete;
+
+        if (
+          practiceProfileId &&
+          localCompleted &&
+          resolvedBackendCompletedVersion < VIBES_PRACTICE_VERSION
+        ) {
+          const localCompletedAtIso = localSnapshot.completedAt ?? new Date().toISOString();
+          const synced = await syncPracticeCompletionToBackend(localCompletedAtIso);
+          if (synced) {
+            resolvedBackendCompletedVersion = VIBES_PRACTICE_VERSION;
+            resolvedBackendCompletedAt = localCompletedAtIso;
+          }
+        }
         if (cancelled) return;
-        setPracticeComplete(completed === '1');
+
+        const effectiveCompleted =
+          resolvedBackendCompletedVersion >= VIBES_PRACTICE_VERSION ||
+          localCompleted;
+        const effectiveStep = effectiveCompleted ? 'intro' : localSnapshot.currentStep;
+
+        setPracticeComplete(effectiveCompleted);
+        setPracticeStep(effectiveStep);
+
+        const needsSnapshotRefresh =
+          effectiveCompleted !== (localSnapshot.completedVersion >= VIBES_PRACTICE_VERSION) ||
+          localSnapshot.currentStep !== effectiveStep ||
+          localSnapshot.completionSyncPending;
+
+        if (needsSnapshotRefresh) {
+          await writeVibesPracticeSnapshot(practiceSnapshotOwnerId, {
+            completedAt: effectiveCompleted ? (resolvedBackendCompletedAt ?? localSnapshot.completedAt ?? new Date().toISOString()) : null,
+            completedVersion: effectiveCompleted ? VIBES_PRACTICE_VERSION : 0,
+            completionSyncPending: effectiveCompleted ? false : localSnapshot.completionSyncPending,
+            currentStep: effectiveStep,
+            updatedAt: new Date().toISOString(),
+          });
+        }
       } catch {
-        if (!cancelled) setPracticeComplete(false);
+        if (!cancelled) {
+          setPracticeStep('intro');
+        }
       } finally {
         if (!cancelled) setPracticeLoaded(true);
       }
@@ -560,7 +685,14 @@ export default function ExploreScreen() {
     return () => {
       cancelled = true;
     };
-  }, [practiceStorageKey]);
+  }, [
+    backendPracticeCompletedAt,
+    backendPracticeCompletedVersion,
+    legacyPracticeStorageKey,
+    practiceProfileId,
+    practiceSnapshotOwnerId,
+    syncPracticeCompletionToBackend,
+  ]);
 
   useEffect(() => {
     if (!filtersStorageKey) return;
@@ -752,17 +884,10 @@ export default function ExploreScreen() {
   const activeCardDwellRef = useRef<{ profileId: string; startedAt: number } | null>(null);
   const buttonScale = useRef(new Animated.Value(1)).current;
   const intentBadgePulse = useRef(new Animated.Value(0)).current;
-  const superlikePulse = useRef(new Animated.Value(0)).current;
   const floatingMomentsOpacity = useRef(new Animated.Value(0)).current;
   const floatingMomentsTranslateY = useRef(new Animated.Value(-10)).current;
   const floatingMomentsScale = useRef(new Animated.Value(0.985)).current;
-  const [superlikesLeft, setSuperlikesLeft] = useState<number>(3);
   const [renderFloatingMoments, setRenderFloatingMoments] = useState(false);
-  const particles = useRef([
-    new Animated.Value(0),
-    new Animated.Value(0),
-    new Animated.Value(0),
-  ]).current;
   const fallbackEntranceTranslate = useRef(new Animated.Value(12)).current;
   const fallbackEntranceOpacity = useRef(new Animated.Value(0)).current;
 
@@ -923,7 +1048,6 @@ export default function ExploreScreen() {
   }, [myMomentUser, otherMomentUsers, prioritizedMomentUsers]);
   const hasMyActiveMoment = (myMomentUser?.moments?.length ?? 0) > 0;
   const hasOtherActiveMoments = prioritizedMomentUsers.length + otherMomentUsers.length > 0;
-  const hasOnlyMyActiveMoment = hasMyActiveMoment && !hasOtherActiveMoments;
   const showMomentsEmptyState = !hasOtherActiveMoments && !hasMyActiveMoment;
   const momentUsersWithContent = useMemo(() => momentUsers.filter((u) => u.moments.length > 0), [momentUsers]);
   const hasCompactMomentRail = momentUsersWithContent.length > 0 && momentUsersWithContent.length <= 3;
@@ -1395,12 +1519,8 @@ export default function ExploreScreen() {
     } else if (last?.kind === 'swipe') {
       setCurrentIndex(Math.max(0, last.index));
     }
-    if (last?.kind === 'swipe' && last.action === 'superlike') {
-      setSuperlikesLeft((count) => count + 1);
-      void refreshProfile?.();
-    }
     try { Haptics.selectionAsync(); } catch {}
-  }, [cancelDirectIntentRequest, cancelSignal, popVibesAction, recordVibesEvent, refreshProfile, undoLastSwipe]);
+  }, [cancelDirectIntentRequest, cancelSignal, popVibesAction, recordVibesEvent, undoLastSwipe]);
 
   const handlePressMyMoment = useCallback(() => {
     if (hasMyActiveMoment) {
@@ -1436,12 +1556,6 @@ export default function ExploreScreen() {
   const shouldShowLocationPrompt =
     needsLocationPrompt && (activeTab === 'nearby' || !locationPromptDismissed);
   const showCompactLocationPrompt = shouldShowLocationPrompt && activeTab !== 'nearby';
-
-  useEffect(() => {
-    if (typeof profile?.superlikes_left === 'number') {
-      setSuperlikesLeft(Math.max(0, profile.superlikes_left));
-    }
-  }, [profile?.superlikes_left]);
 
   useEffect(() => {
     setManualLocation(profile?.location || "");
@@ -1962,7 +2076,27 @@ export default function ExploreScreen() {
     }
   }, [practiceGestureLocked, showPracticeWalkthrough]);
 
+  const handlePracticeStepChange = useCallback(async (nextStep: PracticeStep) => {
+    setPracticeStep(nextStep);
+    if (practiceReplayVisible || practiceComplete || !practiceSnapshotOwnerId) return;
+    const existingSnapshot = (await readVibesPracticeSnapshot(practiceSnapshotOwnerId)) ?? getDefaultVibesPracticeSnapshot();
+    await writeVibesPracticeSnapshot(practiceSnapshotOwnerId, {
+      ...existingSnapshot,
+      currentStep: nextStep,
+      updatedAt: new Date().toISOString(),
+    });
+  }, [practiceComplete, practiceReplayVisible, practiceSnapshotOwnerId]);
+
+  const closePracticeReplay = useCallback(() => {
+    setPracticeReplayVisible(false);
+    setPracticeStep('intro');
+    setPracticeGestureLocked(false);
+    setDeckGestureLocked(false);
+    scrollVibesToTop();
+  }, [scrollVibesToTop]);
+
   const openPracticeReplay = useCallback(() => {
+    setPracticeStep('intro');
     setPracticeReplayVisible(true);
     setPracticeGestureLocked(false);
     setDeckGestureLocked(false);
@@ -1972,6 +2106,16 @@ export default function ExploreScreen() {
     floatingMomentsScale.setValue(0.985);
     scrollVibesToTop();
   }, [floatingMomentsOpacity, floatingMomentsScale, floatingMomentsTranslateY, scrollVibesToTop]);
+
+  const handleVibesHeaderTabChange = useCallback((id: string) => {
+    if (showPracticeWalkthrough) return;
+    setActiveTab(id as any);
+  }, [showPracticeWalkthrough]);
+
+  const handleOpenVibesFilters = useCallback(() => {
+    if (showPracticeWalkthrough) return;
+    setFiltersVisible(true);
+  }, [showPracticeWalkthrough]);
 
   useEffect(() => {
     vibesActionHistoryRef.current = [];
@@ -2160,66 +2304,6 @@ export default function ExploreScreen() {
     }
   };
 
-  const onSuperlike = () => {
-    if (superlikesLeft <= 0) {
-      try { Haptics.selectionAsync(); } catch {}
-      Alert.alert('Signals', 'You have no Signals left. Upgrade to send more.');
-      return;
-    }
-
-    // decrement count in DB (best effort) and locally
-    (async () => {
-      if (profile?.id) {
-        try {
-          const { data, error } = await supabase.rpc('decrement_superlike', { p_profile_id: profile.id });
-          if (!error && typeof data === 'number') {
-            setSuperlikesLeft(Math.max(0, data));
-          } else if (error && String(error.message || '').includes('NO_SUPERLIKES')) {
-            setSuperlikesLeft(0);
-            Alert.alert('Signals', 'You have no Signals left. Upgrade to send more.');
-            return;
-          } else {
-            setSuperlikesLeft((s) => Math.max(0, s - 1));
-          }
-        } catch (_e) {
-          setSuperlikesLeft((s) => Math.max(0, s - 1));
-        }
-      } else {
-        setSuperlikesLeft((s) => Math.max(0, s - 1));
-      }
-    })();
-
-    // premium pulse + small confetti burst
-    Animated.parallel([
-      Animated.sequence([
-        Animated.timing(superlikePulse, { toValue: 1, duration: 160, useNativeDriver: true }),
-        Animated.timing(superlikePulse, { toValue: 0, duration: 420, useNativeDriver: true }),
-      ]),
-      Animated.stagger(40, particles.map((p) => Animated.sequence([
-        Animated.timing(p, { toValue: 1, duration: 260, useNativeDriver: true }),
-        Animated.timing(p, { toValue: 0, duration: 260, useNativeDriver: true }),
-      ]))),
-    ]).start();
-
-    try {
-      stackRef.current?.performSwipe("superlike");
-    } catch {
-      const cm = matchList[currentIndex];
-      if (cm) recordVibesSwipe(cm.id, "superlike", currentIndex);
-      if (currentIndex < matchList.length - 1) setCurrentIndex(currentIndex + 1);
-    }
-
-    try {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    } catch {}
-  };
-
-  const renderSuperlikeBadge = () => (
-    <View style={[styles.superlikeBadgeInline, superlikesLeft <= 0 && styles.superlikeBadgeInlineDisabled]}>
-      <Text style={styles.superlikeBadgeInlineText}>{superlikesLeft} left</Text>
-    </View>
-  );
-
   const renderSignalBadge = () => (
     <View style={[styles.superlikeBadgeInline, signalAccess.remaining <= 0 && styles.superlikeBadgeInlineDisabled]}>
       <Text style={styles.superlikeBadgeInlineText}>
@@ -2242,13 +2326,13 @@ export default function ExploreScreen() {
             { id: "active", label: "Active Now", icon: "circle" },
           ]}
           activeTab={activeTab}
-          setActiveTab={(id) => setActiveTab(id as any)}
+          setActiveTab={handleVibesHeaderTabChange}
           currentIndex={currentIndex}
           total={matchList.length}
           smartCount={smartCount}
-          onPressFilter={() => setFiltersVisible(true)}
+          onPressFilter={showPracticeWalkthrough ? undefined : handleOpenVibesFilters}
           filterCount={appliedFilterCount}
-          rightAccessory={(
+          rightAccessory={!showPracticeWalkthrough ? (
             <>
               {intentQueueBadge ? (
                 <TouchableOpacity
@@ -2297,12 +2381,12 @@ export default function ExploreScreen() {
                 <MaterialCommunityIcons name="star-four-points" size={16} color={theme.tint} />
               </TouchableOpacity>
             </>
-          )}
+          ) : null}
         />
 
         <Animated.ScrollView
           ref={scrollViewRef}
-          scrollEnabled={!practiceGestureLocked && !deckGestureLocked}
+          scrollEnabled={!showPracticeWalkthrough && !practiceGestureLocked && !deckGestureLocked}
           onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
           scrollEventThrottle={16}
           showsVerticalScrollIndicator={false}
@@ -2456,6 +2540,10 @@ export default function ExploreScreen() {
                 metrics={layoutMetrics}
                 onComplete={completePractice}
                 onGestureLockChange={setPracticeGestureLocked}
+                initialStep={practiceStep}
+                onStepChange={handlePracticeStepChange}
+                allowClose={practiceReplayVisible}
+                onClose={closePracticeReplay}
               />
             ) : loadingMatches && matchList.length === 0 ? (
               <ExploreStackSkeleton />
@@ -2567,7 +2655,12 @@ export default function ExploreScreen() {
             style={{ flex: 1 }}
           >
             <View style={[styles.modalBackdrop, { paddingTop: Math.max(insets.top + 12, 16) }]}>
-              <View style={[styles.modalCard, { paddingBottom: Math.max(insets.bottom + 16, 20), marginTop: 8 }]}>
+              <BlurViewSafe
+                intensity={34}
+                tint={isDark ? 'dark' : 'light'}
+                style={[styles.modalCard, { paddingBottom: Math.max(insets.bottom + 16, 20), marginTop: 8 }]}
+              >
+                <View style={styles.modalHandle} />
                 <View style={styles.modalTitleRow}>
                   <View style={styles.modalTitleCopy}>
                     <Text style={styles.modalEyebrow}>BETWEENER VIBES</Text>
@@ -3141,7 +3234,7 @@ export default function ExploreScreen() {
                     </>
                   )}
                 </ScrollView>
-              </View>
+              </BlurViewSafe>
             </View>
           </KeyboardAvoidingView>
         </Modal>
@@ -4109,7 +4202,7 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       justifyContent: 'flex-end',
     },
     modalCard: {
-      backgroundColor: surface,
+      backgroundColor: isDark ? 'rgba(8,18,28,0.82)' : 'rgba(252,247,241,0.84)',
       borderTopLeftRadius: 24,
       borderTopRightRadius: 24,
       paddingHorizontal: 18,
@@ -4117,7 +4210,21 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       paddingBottom: 20,
       maxHeight: '88%',
       borderWidth: 1,
-      borderColor: cardBorder,
+      borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(214,178,132,0.24)',
+      overflow: 'hidden',
+      shadowColor,
+      shadowOpacity: isDark ? 0.22 : 0.10,
+      shadowRadius: 20,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 10,
+    },
+    modalHandle: {
+      alignSelf: 'center',
+      width: 44,
+      height: 5,
+      borderRadius: 999,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(15,23,42,0.14)',
+      marginBottom: 14,
     },
     modalTitleRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
     modalTitleCopy: { flex: 1, gap: 4 },
@@ -4128,8 +4235,8 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       paddingVertical: 6,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: outline,
-      backgroundColor: chipBg,
+      borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(214,178,132,0.18)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.48)',
     },
     modalResetText: { fontSize: 12, fontWeight: '800', color: theme.text },
     modalSubtitle: { fontSize: 13, lineHeight: 19, color: theme.textMuted, marginTop: 10, marginBottom: 16 },
@@ -4207,8 +4314,8 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       paddingHorizontal: 14,
       paddingVertical: 14,
       borderWidth: 1,
-      borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(214,178,132,0.16)',
-      backgroundColor: isDark ? 'rgba(255,255,255,0.035)' : '#fffaf6',
+      borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(214,178,132,0.16)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.055)' : 'rgba(255,250,246,0.68)',
       shadowColor,
       shadowOpacity: isDark ? 0.12 : 0.06,
       shadowRadius: 12,
@@ -4224,8 +4331,8 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       paddingVertical: 8,
       borderRadius: 999,
       borderWidth: 1,
-      borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(214,178,132,0.18)',
-      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#fff',
+      borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(214,178,132,0.18)',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.76)',
     },
     activeFilterChipText: { fontSize: 12, fontWeight: '700', color: theme.text },
     activeFiltersSummaryTitle: { fontSize: 18, lineHeight: 22, fontWeight: '800', color: theme.text, marginTop: 4 },
@@ -4233,13 +4340,13 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     activeFiltersEmpty: { fontSize: 12.5, lineHeight: 18, color: theme.textMuted, marginTop: 6 },
     modalInput: {
       borderWidth: 1,
-      borderColor: outline,
+      borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(214,178,132,0.20)',
       borderRadius: 12,
       paddingHorizontal: 12,
       paddingVertical: 10,
       fontSize: 15,
       color: theme.text,
-      backgroundColor: isDark ? '#0b1220' : '#fff',
+      backgroundColor: isDark ? 'rgba(8,18,28,0.68)' : 'rgba(255,255,255,0.74)',
     },
     modalLabel: { fontSize: 13, fontWeight: '700', color: theme.text, marginTop: 14, marginBottom: 8 },
     countryChips: { paddingBottom: 2 },
@@ -4261,8 +4368,8 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       paddingVertical: 14,
       borderRadius: 18,
       borderWidth: 1,
-      borderColor: isDark ? 'rgba(17,197,198,0.14)' : 'rgba(214,178,132,0.18)',
-      backgroundColor: isDark ? 'rgba(12,27,34,0.56)' : '#fffaf5',
+      borderColor: isDark ? 'rgba(17,197,198,0.16)' : 'rgba(214,178,132,0.18)',
+      backgroundColor: isDark ? 'rgba(12,27,34,0.62)' : 'rgba(255,250,245,0.74)',
     },
     modalPreviewEyebrow: { fontSize: 10.5, fontWeight: '800', letterSpacing: 1.1, color: theme.tint, textTransform: 'uppercase', textAlign: 'center' },
     modalPreviewTitle: { fontSize: 18, lineHeight: 22, fontWeight: '800', color: theme.text, textAlign: 'center', marginTop: 4 },
@@ -4275,7 +4382,7 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       paddingVertical: 14,
       borderWidth: 1,
       borderColor: cardBorder,
-      backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#fff',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.72)',
       gap: 12,
       shadowColor,
       shadowOpacity: isDark ? 0.1 : 0.05,
@@ -4285,15 +4392,15 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     },
     filterSectionCardPremium: {
       borderColor: isDark ? 'rgba(17,197,198,0.15)' : 'rgba(214,178,132,0.22)',
-      backgroundColor: isDark ? 'rgba(18,36,43,0.34)' : '#fffaf5',
+      backgroundColor: isDark ? 'rgba(18,36,43,0.40)' : 'rgba(255,250,245,0.76)',
     },
     filterSectionCardMixed: {
       borderColor: isDark ? 'rgba(243,199,132,0.16)' : 'rgba(229,190,138,0.26)',
-      backgroundColor: isDark ? 'rgba(52,44,28,0.30)' : '#fffaf2',
+      backgroundColor: isDark ? 'rgba(52,44,28,0.36)' : 'rgba(255,250,242,0.76)',
     },
     filterSectionCardFree: {
       borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.05)',
-      backgroundColor: isDark ? 'rgba(255,255,255,0.025)' : '#fffefd',
+      backgroundColor: isDark ? 'rgba(255,255,255,0.045)' : 'rgba(255,254,253,0.74)',
     },
     filterSectionHeader: { gap: 3 },
     filterSectionTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
@@ -4430,7 +4537,7 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
     expandAdvancedMetaText: { fontSize: 12.5, fontWeight: '700', color: theme.textMuted },
     filterInputsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 8 },
     filterInputWrapper: { flex: 1 },
-    filterInput: { borderWidth: 1, borderColor: outline, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontWeight: '700', color: theme.text, backgroundColor: isDark ? '#0b1220' : '#fff', marginTop: 4 },
+    filterInput: { borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(214,178,132,0.20)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontWeight: '700', color: theme.text, backgroundColor: isDark ? 'rgba(8,18,28,0.68)' : 'rgba(255,255,255,0.74)', marginTop: 4 },
     ageTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
     ageRangePill: {
       paddingHorizontal: 12,

@@ -14,6 +14,11 @@ type RemoteConversationSummaryRow = {
   last_message_type?: string | null;
   last_message_is_view_once?: boolean | null;
   last_message_deleted_for_all?: boolean | null;
+  last_message_edited_at?: string | null;
+  last_message_reaction_emoji?: string | null;
+  last_message_reaction_user_id?: string | null;
+  last_message_reaction_created_at?: string | null;
+  last_message_reaction_target_type?: string | null;
   last_activity_kind?: 'edit' | 'reaction' | null;
   last_activity_message_id?: string | null;
   last_activity_preview?: string | null;
@@ -48,25 +53,6 @@ type RemoteChatListReactionPreview = {
   userId: string;
   createdAt: Date;
   targetType?: string;
-};
-
-const getRemoteActivityTarget = (messageType?: string | null) => {
-  switch (messageType) {
-    case 'image':
-      return 'photo';
-    case 'video':
-      return 'video';
-    case 'voice':
-      return 'voice note';
-    case 'document':
-      return 'document';
-    case 'location':
-      return 'location';
-    case 'mood_sticker':
-      return 'sticker';
-    default:
-      return 'message';
-  }
 };
 
 const mergePresenceIntoProfileRows = <TRow extends { user_id?: string | null; online?: boolean | null; last_active?: string | null }>(
@@ -256,7 +242,19 @@ export const fetchRemoteChatListConversations = async <
       createdAt: string;
     } | null;
   }>();
+  const reactionPreviewByUser = new Map<string, RemoteChatListReactionPreview>();
   summaryRows.forEach((row) => {
+    const reactionPreview =
+      row.last_message_reaction_emoji &&
+      row.last_message_reaction_user_id &&
+      row.last_message_reaction_created_at
+        ? {
+            emoji: row.last_message_reaction_emoji,
+            userId: row.last_message_reaction_user_id,
+            createdAt: new Date(row.last_message_reaction_created_at),
+            targetType: row.last_message_reaction_target_type ?? undefined,
+          }
+        : undefined;
     convoMap.set(row.other_user_id, {
       last: {
         id: row.last_message_id,
@@ -269,6 +267,7 @@ export const fetchRemoteChatListConversations = async <
         deleted_for_all: row.last_message_deleted_for_all ?? false,
         message_type: row.last_message_type ?? 'text',
         is_view_once: row.last_message_is_view_once ?? false,
+        edited_at: row.last_message_edited_at ?? null,
       },
       unread: Math.max(0, Number(row.unread_count) || 0),
       activity:
@@ -284,84 +283,12 @@ export const fetchRemoteChatListConversations = async <
             }
           : null,
     });
-  });
-  const setActivityIfNewest = (
-    otherUserId: string,
-    activity: { kind: 'edit' | 'reaction'; messageId: string; preview: string; createdAt: string },
-  ) => {
-    const entry = convoMap.get(otherUserId);
-    if (!entry) return;
-    if (
-      entry.activity?.createdAt &&
-      new Date(entry.activity.createdAt).getTime() > new Date(activity.createdAt).getTime()
-    ) {
-      return;
+    if (reactionPreview) {
+      reactionPreviewByUser.set(row.other_user_id, reactionPreview);
     }
-    entry.activity = activity;
-  };
+  });
 
   const otherUserIds = summaryRows.map((row) => row.other_user_id);
-  const messageIds = summaryRows.map((row) => row.last_message_id).filter(Boolean);
-  const reactionPreviewByUser = new Map<string, RemoteChatListReactionPreview>();
-  if (messageIds.length > 0) {
-    const conversationIdByMessageId = new Map(
-      summaryRows.map((row) => [row.last_message_id, row.other_user_id] as const),
-    );
-    const messageTypeById = new Map(
-      summaryRows.map((row) => [row.last_message_id, row.last_message_type ?? 'text'] as const),
-    );
-    const { data: messageMetaData, error: messageMetaError } = await supabase
-      .from('messages')
-      .select('id,edited_at')
-      .in('id', messageIds);
-    if (messageMetaError) {
-      console.log('[chat] message edit metadata fetch error', messageMetaError);
-    } else {
-      (messageMetaData || []).forEach((row: { id: string; edited_at?: string | null }) => {
-        const otherId = conversationIdByMessageId.get(row.id);
-        const entry = otherId ? convoMap.get(otherId) : null;
-        if (!entry || entry.last.id !== row.id) return;
-        entry.last.edited_at = row.edited_at ?? null;
-        if (row.edited_at) {
-          setActivityIfNewest(otherId, {
-            kind: 'edit',
-            messageId: row.id,
-            preview: `Edited: ${entry.last.text || getRemoteActivityTarget(entry.last.message_type)}`,
-            createdAt: row.edited_at,
-          });
-        }
-      });
-    }
-    const { data: reactionsData, error: reactionsError } = await supabase
-      .from('message_reactions')
-      .select('message_id,user_id,emoji,created_at')
-      .in('message_id', messageIds)
-      .order('created_at', { ascending: false });
-    if (reactionsError) {
-      console.log('[chat] message reactions fetch error', reactionsError);
-    } else {
-      (reactionsData || []).forEach((row: any) => {
-        const messageId = typeof row?.message_id === 'string' ? row.message_id : null;
-        const otherId = messageId ? conversationIdByMessageId.get(messageId) : null;
-        if (!otherId || !row?.emoji || !row?.user_id) return;
-        const createdAt = row.created_at ? new Date(row.created_at) : new Date();
-        const existing = reactionPreviewByUser.get(otherId);
-        if (existing && existing.createdAt >= createdAt) return;
-        reactionPreviewByUser.set(otherId, {
-          emoji: row.emoji,
-          userId: row.user_id,
-          createdAt,
-          targetType: messageId ? messageTypeById.get(messageId) ?? undefined : undefined,
-        });
-        setActivityIfNewest(otherId, {
-          kind: 'reaction',
-          messageId,
-          preview: `${row.user_id === userId ? 'You' : 'Someone'} reacted ${row.emoji} to ${getRemoteActivityTarget(messageTypeById.get(messageId))}`,
-          createdAt: row.created_at ?? new Date().toISOString(),
-        });
-      });
-    }
-  }
 
   const fallbackPreviewByUser = new Map<string, TFallbackPreview>();
   const fallbackMatchedAtByUser = new Map<string, Date>();

@@ -50,7 +50,21 @@ type CreatorGathering = {
   created_at?: string | null;
 };
 
+type CreatorGist = {
+  id: string;
+  circle_id?: string | null;
+  title: string;
+  short_body?: string | null;
+  body?: string | null;
+  perspective?: string | null;
+  status?: string | null;
+  published_at?: string | null;
+  updated_at?: string | null;
+  created_at?: string | null;
+};
+
 const db = supabase as any;
+const GIST_PERSPECTIVES = ['general', 'christian', 'muslim', 'culture', 'safety', 'communication'] as const;
 
 const compactDate = (value?: string | null) => {
   if (!value) return 'Soon';
@@ -69,6 +83,10 @@ const creatorStatusLabel = (status?: string | null) => {
       return 'Needs changes';
     case 'draft':
       return 'Draft';
+    case 'published':
+      return 'Published';
+    case 'archived':
+      return 'Archived';
     case 'cancelled':
       return 'Cancelled';
     case 'completed':
@@ -89,15 +107,19 @@ export default function CircleCreatorManageScreen() {
   const currentProfileId = resolvedProfileId;
   const [creatorCircles, setCreatorCircles] = useState<CreatorCircle[]>([]);
   const [creatorGatherings, setCreatorGatherings] = useState<CreatorGathering[]>([]);
+  const [creatorGists, setCreatorGists] = useState<CreatorGist[]>([]);
   const [premiumState, setPremiumState] = useState<CircleAccessEntitlements | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [gatheringOpen, setGatheringOpen] = useState(false);
+  const [gistEditorOpen, setGistEditorOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [creatingGathering, setCreatingGathering] = useState(false);
+  const [savingGist, setSavingGist] = useState(false);
   const [editingCircleId, setEditingCircleId] = useState<string | null>(null);
   const [editingGatheringId, setEditingGatheringId] = useState<string | null>(null);
+  const [editingGistId, setEditingGistId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
   const [newPurpose, setNewPurpose] = useState('');
   const [newCity, setNewCity] = useState(profile?.city ?? '');
@@ -110,6 +132,10 @@ export default function CircleCreatorManageScreen() {
   const [newGatheringVenue, setNewGatheringVenue] = useState('');
   const [newGatheringType, setNewGatheringType] = useState<'physical' | 'online' | 'hybrid'>('physical');
   const [newGatheringCircleId, setNewGatheringCircleId] = useState<string | null>(null);
+  const [gistTitleDraft, setGistTitleDraft] = useState('');
+  const [gistShortBodyDraft, setGistShortBodyDraft] = useState('');
+  const [gistBodyDraft, setGistBodyDraft] = useState('');
+  const [gistPerspectiveDraft, setGistPerspectiveDraft] = useState<(typeof GIST_PERSPECTIVES)[number]>('general');
 
   useEffect(() => {
     let cancelled = false;
@@ -155,7 +181,7 @@ export default function CircleCreatorManageScreen() {
     if (!currentProfileId) return;
     setLoading(true);
     try {
-      const [{ data: circles }, { data: gatherings }] = await Promise.all([
+      const [{ data: circles }, { data: gatherings }, gistResponse] = await Promise.all([
         db
           .from('circles')
           .select('id,name,description,short_description,city,country_name,status,rejected_reason,visibility_scope,circle_type,created_at')
@@ -170,16 +196,22 @@ export default function CircleCreatorManageScreen() {
           .in('status', ['draft', 'pending_review', 'approved', 'rejected', 'cancelled', 'completed'])
           .order('created_at', { ascending: false })
           .limit(20),
+        isAdmin
+          ? db.rpc('rpc_admin_get_relationship_gists')
+          : Promise.resolve({ data: [], error: null }),
       ]);
+
+      if (gistResponse?.error) throw gistResponse.error;
 
       setCreatorCircles((circles ?? []) as CreatorCircle[]);
       setCreatorGatherings((gatherings ?? []) as CreatorGathering[]);
+      setCreatorGists((gistResponse?.data ?? []) as CreatorGist[]);
     } catch (error) {
       Alert.alert('Creator studio', error instanceof Error ? error.message : 'Could not load your submissions.');
     } finally {
       setLoading(false);
     }
-  }, [currentProfileId]);
+  }, [currentProfileId, isAdmin]);
 
   useEffect(() => {
     void loadCreatorData();
@@ -196,10 +228,20 @@ export default function CircleCreatorManageScreen() {
     is_internal_admin: isAdmin,
   });
   const approvedCreatorCircles = creatorCircles.filter((circle) => circle.status === 'approved');
+  const circleNameById = useMemo(
+    () => creatorCircles.reduce<Record<string, string>>((acc, circle) => {
+      acc[circle.id] = circle.name;
+      return acc;
+    }, {}),
+    [creatorCircles],
+  );
+  const pendingReviewCount = creatorCircles.filter((circle) => circle.status === 'pending_review').length
+    + creatorGatherings.filter((gathering) => gathering.status === 'pending_review').length;
+  const approvedGatheringCount = creatorGatherings.filter((gathering) => gathering.status === 'approved').length;
 
-  const openCircle = useCallback((circleId?: string | null) => {
+  const openCircle = useCallback((circleId?: string | null, tab?: 'overview' | 'members' | 'prompts' | 'gatherings' | 'moments' | 'gist') => {
     if (!circleId) return;
-    router.push({ pathname: '/circles/[id]', params: { id: String(circleId) } });
+    router.push({ pathname: '/circles/[id]', params: { id: String(circleId), ...(tab ? { tab } : {}) } });
   }, []);
 
   const openCreateCircle = useCallback(() => {
@@ -262,6 +304,42 @@ export default function CircleCreatorManageScreen() {
     }
     setGatheringOpen(true);
   }, [profile?.city]);
+
+  const openGatheringSubmission = useCallback((gathering: CreatorGathering, mode: 'open' | 'edit' = 'open') => {
+    if (gathering.circle_id) {
+      openCircle(gathering.circle_id, 'gatherings');
+      return;
+    }
+    if (mode === 'edit' || !gathering.circle_id) {
+      prefillGatheringRequest(gathering);
+    }
+  }, [openCircle, prefillGatheringRequest]);
+
+  const resetGistEditor = useCallback(() => {
+    setEditingGistId(null);
+    setGistTitleDraft('');
+    setGistShortBodyDraft('');
+    setGistBodyDraft('');
+    setGistPerspectiveDraft('general');
+  }, []);
+
+  const openCreateGist = useCallback(() => {
+    resetGistEditor();
+    setGistEditorOpen(true);
+  }, [resetGistEditor]);
+
+  const openEditGist = useCallback((gist: CreatorGist) => {
+    setEditingGistId(gist.id);
+    setGistTitleDraft(gist.title ?? '');
+    setGistShortBodyDraft(gist.short_body ?? '');
+    setGistBodyDraft(gist.body ?? '');
+    setGistPerspectiveDraft(
+      GIST_PERSPECTIVES.includes(String(gist.perspective ?? '').toLowerCase() as (typeof GIST_PERSPECTIVES)[number])
+        ? (String(gist.perspective ?? '').toLowerCase() as (typeof GIST_PERSPECTIVES)[number])
+        : 'general',
+    );
+    setGistEditorOpen(true);
+  }, []);
 
   const handleSubmitCircle = useCallback(async () => {
     Keyboard.dismiss();
@@ -385,6 +463,93 @@ export default function CircleCreatorManageScreen() {
     profile,
   ]);
 
+  const handleSaveGist = useCallback(async (status: 'draft' | 'published') => {
+    Keyboard.dismiss();
+    const title = gistTitleDraft.trim();
+    const shortBody = gistShortBodyDraft.trim();
+    const body = gistBodyDraft.trim();
+    if (!currentProfileId) {
+      Alert.alert('Relationship Gist', 'Your profile is still loading. Try again in a moment.');
+      return;
+    }
+    if (!title || title.length < 3) {
+      Alert.alert('Relationship Gist', 'Add a clear gist title.');
+      return;
+    }
+    if (!body || body.length < 20) {
+      Alert.alert('Relationship Gist', 'Add fuller guidance before saving.');
+      return;
+    }
+    if (savingGist) return;
+    setSavingGist(true);
+    try {
+      const { error } = await db.rpc('rpc_upsert_relationship_gist_editorial', {
+        p_gist_id: editingGistId,
+        p_actor_profile_id: currentProfileId,
+        p_title: title,
+        p_short_body: shortBody || null,
+        p_body: body,
+        p_perspective: gistPerspectiveDraft,
+        p_status: status,
+      });
+      if (error) throw error;
+      setGistEditorOpen(false);
+      resetGistEditor();
+      await loadCreatorData();
+      Alert.alert(
+        status === 'published' ? 'Gist published' : 'Draft saved',
+        status === 'published'
+          ? 'This Relationship Gist is now live for everyone on Betweener.'
+          : 'Your editorial draft was saved.',
+      );
+    } catch (error) {
+      Alert.alert('Relationship Gist', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setSavingGist(false);
+    }
+  }, [
+    currentProfileId,
+    editingGistId,
+    gistBodyDraft,
+    gistPerspectiveDraft,
+    gistShortBodyDraft,
+    gistTitleDraft,
+    loadCreatorData,
+    resetGistEditor,
+    savingGist,
+  ]);
+
+  const handleDeleteGist = useCallback(() => {
+    if (!editingGistId || !currentProfileId || savingGist) return;
+    Alert.alert('Delete Gist', 'This will remove the Gist from the live editorial flow.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            setSavingGist(true);
+            try {
+              const { error } = await db.rpc('rpc_archive_relationship_gist_editorial', {
+                p_gist_id: editingGistId,
+                p_actor_profile_id: currentProfileId,
+              });
+              if (error) throw error;
+              setGistEditorOpen(false);
+              resetGistEditor();
+              await loadCreatorData();
+              Alert.alert('Gist deleted', 'The editorial entry has been removed.');
+            } catch (error) {
+              Alert.alert('Delete failed', error instanceof Error ? error.message : 'Please try again.');
+            } finally {
+              setSavingGist(false);
+            }
+          })();
+        },
+      },
+    ]);
+  }, [currentProfileId, editingGistId, loadCreatorData, resetGistEditor, savingGist]);
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
@@ -394,7 +559,9 @@ export default function CircleCreatorManageScreen() {
           </TouchableOpacity>
           <View style={styles.headerCopy}>
             <Text style={styles.headerTitle}>Creator Studio</Text>
-            <Text style={styles.headerSubtitle}>Manage your Circle and Gathering submissions.</Text>
+            <Text style={styles.headerSubtitle}>
+              {isAdmin ? 'Manage Circle requests, Gathering requests, and global Relationship Gist editorial.' : 'Manage your Circle and Gathering submissions.'}
+            </Text>
           </View>
           <TouchableOpacity style={styles.refreshButton} onPress={() => void loadCreatorData()}>
             <MaterialCommunityIcons name="refresh" size={18} color={theme.text} />
@@ -405,8 +572,28 @@ export default function CircleCreatorManageScreen() {
           <Text style={styles.heroKicker}>Trusted creation</Text>
           <Text style={styles.heroTitle}>Request, review, and refine the spaces you want Betweener to stand behind.</Text>
           <Text style={styles.heroBody}>
-            Keep public community creation curated. Use this studio to track review states and resubmit with stronger details when needed.
+            {isAdmin
+              ? 'Keep public creation curated. Review community submissions and publish only the Relationship Gists strong enough for every member on Betweener.'
+              : 'Keep public community creation curated. Use this studio to track review states and resubmit with stronger details when needed.'}
           </Text>
+          <View style={styles.snapshotRow}>
+            <View style={styles.snapshotCard}>
+              <Text style={styles.snapshotValue}>{approvedCreatorCircles.length}</Text>
+              <Text style={styles.snapshotLabel}>Live Circles</Text>
+            </View>
+            <View style={styles.snapshotCard}>
+              <Text style={styles.snapshotValue}>{approvedGatheringCount}</Text>
+              <Text style={styles.snapshotLabel}>Live Gatherings</Text>
+            </View>
+            <View style={styles.snapshotCard}>
+              <Text style={styles.snapshotValue}>{isAdmin ? creatorGists.filter((gist) => gist.status === 'published').length : creatorGists.length}</Text>
+              <Text style={styles.snapshotLabel}>{isAdmin ? 'Live Gists' : 'Published Gists'}</Text>
+            </View>
+            <View style={styles.snapshotCard}>
+              <Text style={styles.snapshotValue}>{pendingReviewCount}</Text>
+              <Text style={styles.snapshotLabel}>In Review</Text>
+            </View>
+          </View>
           <View style={styles.heroActions}>
             <TouchableOpacity style={styles.primaryButton} onPress={openCreateCircle}>
               <Text style={styles.primaryText}>Request Circle</Text>
@@ -414,6 +601,11 @@ export default function CircleCreatorManageScreen() {
             <TouchableOpacity style={styles.secondaryButton} onPress={openCreateGathering}>
               <Text style={styles.secondaryText}>Request Gathering</Text>
             </TouchableOpacity>
+            {isAdmin ? (
+              <TouchableOpacity style={styles.secondaryButton} onPress={openCreateGist}>
+                <Text style={styles.secondaryText}>Write Gist</Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
         </View>
 
@@ -436,13 +628,18 @@ export default function CircleCreatorManageScreen() {
               {circle.rejected_reason ? <Text style={styles.warningText}>Reason: {circle.rejected_reason}</Text> : null}
               <View style={styles.cardActions}>
                 {circle.status === 'approved' ? (
-                  <TouchableOpacity style={styles.secondaryButton} onPress={() => openCircle(circle.id)}>
-                    <Text style={styles.secondaryText}>Open</Text>
+                  <TouchableOpacity style={styles.secondaryButton} onPress={() => openCircle(circle.id, 'overview')}>
+                    <Text style={styles.secondaryText}>Open Circle</Text>
                   </TouchableOpacity>
                 ) : null}
-                {circle.status === 'rejected' ? (
-                  <TouchableOpacity style={styles.primaryButton} onPress={() => prefillCircleRequest(circle)}>
-                    <Text style={styles.primaryText}>Edit and resubmit</Text>
+                {['draft', 'pending_review', 'rejected'].includes(String(circle.status ?? '')) ? (
+                  <TouchableOpacity
+                    style={circle.status === 'rejected' ? styles.primaryButton : styles.secondaryButton}
+                    onPress={() => prefillCircleRequest(circle)}
+                  >
+                    <Text style={circle.status === 'rejected' ? styles.primaryText : styles.secondaryText}>
+                      {circle.status === 'rejected' ? 'Edit and resubmit' : 'Open request'}
+                    </Text>
                   </TouchableOpacity>
                 ) : null}
               </View>
@@ -470,12 +667,27 @@ export default function CircleCreatorManageScreen() {
               <Text style={styles.cardMeta}>
                 {[compactDate(gathering.starts_at), gathering.city, gathering.venue_name].filter(Boolean).join(' · ')}
               </Text>
+              {gathering.circle_id ? (
+                <Text style={styles.linkedMeta}>Linked Circle: {circleNameById[gathering.circle_id] ?? 'Circle event'}</Text>
+              ) : null}
               <Text style={styles.cardBody}>{gathering.description || 'Awaiting curation details.'}</Text>
               {gathering.rejected_reason ? <Text style={styles.warningText}>Reason: {gathering.rejected_reason}</Text> : null}
               <View style={styles.cardActions}>
-                {gathering.status === 'rejected' ? (
-                  <TouchableOpacity style={styles.primaryButton} onPress={() => prefillGatheringRequest(gathering)}>
-                    <Text style={styles.primaryText}>Edit and resubmit</Text>
+                <TouchableOpacity style={styles.secondaryButton} onPress={() => openGatheringSubmission(gathering, 'open')}>
+                  <Text style={styles.secondaryText}>{gathering.circle_id ? 'Open Circle' : 'Open request'}</Text>
+                </TouchableOpacity>
+                {['draft', 'pending_review', 'approved', 'rejected'].includes(String(gathering.status ?? '')) ? (
+                  <TouchableOpacity
+                    style={gathering.status === 'rejected' ? styles.primaryButton : styles.secondaryButton}
+                    onPress={() => openGatheringSubmission(gathering, 'edit')}
+                  >
+                    <Text style={gathering.status === 'rejected' ? styles.primaryText : styles.secondaryText}>
+                      {gathering.circle_id
+                        ? 'Edit in Circle'
+                        : gathering.status === 'rejected'
+                          ? 'Edit and resubmit'
+                          : 'Edit'}
+                    </Text>
                   </TouchableOpacity>
                 ) : null}
               </View>
@@ -487,7 +699,150 @@ export default function CircleCreatorManageScreen() {
             </View>
           )}
         </View>
+        {isAdmin ? (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Relationship Gist editorial</Text>
+            <Text style={styles.sectionHint}>{loading ? 'Refreshing' : `${creatorGists.length} items`}</Text>
+          </View>
+          {creatorGists.length ? creatorGists.map((gist) => (
+            <View key={`editorial:${gist.id}`} style={styles.card}>
+              <View style={styles.cardTop}>
+                <Text style={styles.cardType}>Relationship Gist</Text>
+                <Text style={styles.statusPill}>{creatorStatusLabel(gist.status)}</Text>
+              </View>
+              <Text style={styles.cardTitle}>{gist.title}</Text>
+              <Text style={styles.linkedMeta}>
+                {String(gist.perspective ?? 'general').replace(/^\w/, (match) => match.toUpperCase())}
+              </Text>
+              <Text style={styles.cardMeta}>
+                {[gist.status === 'published' ? compactDate(gist.published_at) : null, compactDate(gist.updated_at || gist.created_at)].filter(Boolean).join(' · ')}
+              </Text>
+              <Text style={styles.cardBody}>{gist.short_body || gist.body || 'No summary yet.'}</Text>
+              <View style={styles.cardActions}>
+                <TouchableOpacity style={styles.primaryButton} onPress={() => openEditGist(gist)}>
+                  <Text style={styles.primaryText}>{gist.status === 'draft' ? 'Open draft' : 'Open editor'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )) : (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>No editorial Gists yet</Text>
+              <Text style={styles.emptyBody}>Draft relationship guidance here, then publish only when it is strong enough for everyone on Betweener.</Text>
+            </View>
+          )}
+        </View>
+        ) : null}
+
+
+        {false ? (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Relationship Gist editorial</Text>
+            <Text style={styles.sectionHint}>{loading ? 'Refreshing' : `${creatorGists.length} items`}</Text>
+          </View>
+          {creatorGists.length ? creatorGists.map((gist) => (
+            <View key={gist.id} style={styles.card}>
+              <View style={styles.cardTop}>
+                <Text style={styles.cardType}>Relationship Gist</Text>
+                <Text style={styles.statusPill}>{creatorStatusLabel(gist.status)}</Text>
+              </View>
+              <Text style={styles.cardTitle}>{gist.title}</Text>
+              <Text style={styles.cardMeta}>
+                {[gist.circle_id ? circleNameById[gist.circle_id] ?? 'Circle' : null, compactDate(gist.updated_at || gist.created_at)].filter(Boolean).join(' Â· ')}
+              </Text>
+              <Text style={styles.cardBody}>{gist.short_body || gist.body || 'No summary yet.'}</Text>
+              <View style={styles.cardActions}>
+                {gist.circle_id ? (
+                  <TouchableOpacity style={styles.primaryButton} onPress={() => openCircle(gist.circle_id, 'gist')}>
+                    <Text style={styles.primaryText}>Edit in Circle</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            </View>
+          )) : (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyTitle}>No Circle-specific gists yet</Text>
+              <Text style={styles.emptyBody}>Publish Circle guidance from the Circle detail screen, then track it here like the rest of your signature content.</Text>
+            </View>
+          )}
+        </View>
+        ) : null}
       </ScrollView>
+
+      <Modal visible={gistEditorOpen} transparent animationType="fade" onRequestClose={() => { setGistEditorOpen(false); resetGistEditor(); }}>
+        <Pressable style={styles.modalBackdrop} onPress={() => { setGistEditorOpen(false); resetGistEditor(); }}>
+          <KeyboardAvoidingView
+            style={styles.modalKeyboardWrap}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <Pressable style={styles.modalCard} onPress={() => undefined}>
+              <ScrollView
+                style={styles.modalScroll}
+                contentContainerStyle={styles.modalScrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                <Text style={styles.modalTitle}>{editingGistId ? 'Edit Relationship Gist' : 'Write Relationship Gist'}</Text>
+                <Text style={styles.modalBody}>Global editorial guidance for everyone on Betweener. Save drafts here, publish only when the piece is ready.</Text>
+                <TextInput
+                  value={gistTitleDraft}
+                  onChangeText={setGistTitleDraft}
+                  placeholder="Gist title"
+                  placeholderTextColor={theme.textMuted}
+                  style={styles.input}
+                  returnKeyType="next"
+                />
+                <TextInput
+                  value={gistShortBodyDraft}
+                  onChangeText={setGistShortBodyDraft}
+                  placeholder="Short summary for the preview card"
+                  placeholderTextColor={theme.textMuted}
+                  style={styles.input}
+                  returnKeyType="next"
+                />
+                <TextInput
+                  value={gistBodyDraft}
+                  onChangeText={setGistBodyDraft}
+                  placeholder="Full relationship guidance"
+                  placeholderTextColor={theme.textMuted}
+                  multiline
+                  style={[styles.input, styles.multiline, styles.gistBodyInput]}
+                />
+                <View style={styles.visibilityRow}>
+                  {GIST_PERSPECTIVES.map((item) => (
+                    <Pressable
+                      key={item}
+                      style={[styles.visibilityPill, gistPerspectiveDraft === item && styles.visibilityPillActive]}
+                      onPress={() => setGistPerspectiveDraft(item)}
+                    >
+                      <Text style={[styles.visibilityText, gistPerspectiveDraft === item && styles.visibilityTextActive]}>
+                        {item === 'general' ? 'General' : item[0].toUpperCase() + item.slice(1)}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <View style={styles.modalActions}>
+                  {editingGistId ? (
+                    <TouchableOpacity style={styles.secondaryButton} disabled={savingGist} onPress={handleDeleteGist}>
+                      <Text style={styles.secondaryText}>{savingGist ? 'Working...' : 'Delete'}</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  <TouchableOpacity style={styles.secondaryButton} onPress={() => { setGistEditorOpen(false); resetGistEditor(); }}>
+                    <Text style={styles.secondaryText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.secondaryButton} disabled={savingGist} onPress={() => void handleSaveGist('draft')}>
+                    <Text style={styles.secondaryText}>{savingGist ? 'Saving...' : 'Save draft'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.primaryButton} disabled={savingGist} onPress={() => void handleSaveGist('published')}>
+                    <Text style={styles.primaryText}>{savingGist ? 'Publishing...' : 'Publish live'}</Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            </Pressable>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
 
       <Modal visible={createOpen} transparent animationType="fade" onRequestClose={() => { setCreateOpen(false); setEditingCircleId(null); }}>
         <Pressable style={styles.modalBackdrop} onPress={() => { setCreateOpen(false); setEditingCircleId(null); }}>
@@ -628,6 +983,20 @@ const createStyles = (_theme: typeof Colors.light, _isDark: boolean) =>
     heroKicker: { color: '#13A8A8', fontSize: 11, fontWeight: '900', letterSpacing: 1.5, textTransform: 'uppercase' },
     heroTitle: { color: '#F4E8D0', fontSize: 22, lineHeight: 28, fontFamily: 'PlayfairDisplay_700Bold' },
     heroBody: { color: 'rgba(244,232,208,0.74)', fontSize: 13, lineHeight: 19 },
+    snapshotRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+    snapshotCard: {
+      minWidth: 132,
+      flexGrow: 1,
+      paddingHorizontal: 12,
+      paddingVertical: 11,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: 'rgba(244,232,208,0.1)',
+      backgroundColor: 'rgba(255,255,255,0.03)',
+      gap: 3,
+    },
+    snapshotValue: { color: '#F4E8D0', fontSize: 20, fontFamily: 'PlayfairDisplay_700Bold' },
+    snapshotLabel: { color: 'rgba(244,232,208,0.64)', fontSize: 11, fontWeight: '700' },
     heroActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
     section: { gap: 12 },
     sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 },
@@ -657,6 +1026,7 @@ const createStyles = (_theme: typeof Colors.light, _isDark: boolean) =>
     },
     cardTitle: { color: '#F4E8D0', fontSize: 16, fontWeight: '800' },
     cardMeta: { color: 'rgba(244,232,208,0.62)', fontSize: 12 },
+    linkedMeta: { color: '#13A8A8', fontSize: 11, fontWeight: '700' },
     cardBody: { color: 'rgba(244,232,208,0.76)', fontSize: 13, lineHeight: 19 },
     warningText: { color: '#F6B885', fontSize: 11, lineHeight: 16, fontWeight: '700' },
     cardActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
@@ -710,6 +1080,7 @@ const createStyles = (_theme: typeof Colors.light, _isDark: boolean) =>
       gap: 12,
     },
     modalTitle: { color: '#F4E8D0', fontSize: 20, fontFamily: 'PlayfairDisplay_700Bold' },
+    modalBody: { color: 'rgba(244,232,208,0.72)', fontSize: 13, lineHeight: 19 },
     input: {
       borderRadius: 14,
       borderWidth: 1,
@@ -721,6 +1092,7 @@ const createStyles = (_theme: typeof Colors.light, _isDark: boolean) =>
       fontSize: 13,
     },
     multiline: { minHeight: 92, textAlignVertical: 'top' },
+    gistBodyInput: { minHeight: 148 },
     rowInputs: { flexDirection: 'row', gap: 10 },
     rowInput: { flex: 1 },
     visibilityRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },

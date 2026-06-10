@@ -227,6 +227,20 @@ export function buildNotificationRoute(
     };
   }
 
+  if ((pushType === "circle_pulse_discussion" || pushType === "circle_pulse_reaction") && data?.circle_id) {
+    const pulseRouteNonce = getNotificationResponseKey(input) || String(Date.now());
+    return {
+      pathname: "/circles/[id]",
+      params: {
+        id: String(data.circle_id),
+        ...(data?.pulse_item_id ? { openPulseItemId: String(data.pulse_item_id) } : {}),
+        ...(data?.comment_id ? { openPulseCommentId: String(data.comment_id) } : {}),
+        ...(data?.parent_comment_id ? { openPulseParentCommentId: String(data.parent_comment_id) } : {}),
+        openPulseRouteNonce: pulseRouteNonce,
+      },
+    };
+  }
+
   const route = typeof data?.route === "string" ? String(data.route) : "";
   if (route && route.startsWith("/")) {
     return { pathname: route };

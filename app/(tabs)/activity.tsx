@@ -10,7 +10,7 @@ import { supabase } from "@/lib/supabase";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { Match } from "@/types/match";
@@ -65,6 +65,8 @@ export default function ActivityScreen() {
   const [hiddenPeerUserIds, setHiddenPeerUserIds] = useState<Record<string, true>>({});
   const [matchModalVisible, setMatchModalVisible] = useState(false);
   const [matchCandidate, setMatchCandidate] = useState<Match | null>(null);
+  const fetchedActorIdsRef = useRef<Record<string, true>>({});
+  const hiddenPeerVisibilityRef = useRef<Record<string, boolean>>({});
 
   const actorIds = useMemo(
     () =>
@@ -80,17 +82,18 @@ export default function ActivityScreen() {
 
   useEffect(() => {
     if (actorIds.length === 0) {
-      setActorMap({});
       return;
     }
 
     let cancelled = false;
+    const missingActorIds = actorIds.filter((id) => !actorMap[id] && !fetchedActorIdsRef.current[id]);
+    if (missingActorIds.length === 0) return;
 
-      const fetchActors = async () => {
+    const fetchActors = async () => {
       const { data } = await supabase
         .from("profiles")
         .select("id,user_id,full_name,avatar_url,age,bio,account_state,deleted_at")
-        .in("id", actorIds);
+        .in("id", missingActorIds);
 
       if (cancelled) return;
 
@@ -99,8 +102,12 @@ export default function ActivityScreen() {
         if (!row?.id) return;
         map[row.id] = row;
       });
+      missingActorIds.forEach((id) => {
+        fetchedActorIdsRef.current[id] = true;
+      });
 
-      setActorMap(map);
+      if (Object.keys(map).length === 0) return;
+      setActorMap((prev) => ({ ...prev, ...map }));
     };
 
     void fetchActors();
@@ -108,7 +115,7 @@ export default function ActivityScreen() {
     return () => {
       cancelled = true;
     };
-  }, [actorIds]);
+  }, [actorIds, actorMap]);
 
   useEffect(() => {
     let cancelled = false;
@@ -119,19 +126,30 @@ export default function ActivityScreen() {
           .filter((value): value is string => Boolean(value)),
       ),
     );
+    const syncHiddenPeerStateFromCache = () => {
+      const next: Record<string, true> = {};
+      peerUserIds.forEach((peerUserId) => {
+        if (hiddenPeerVisibilityRef.current[peerUserId]) {
+          next[peerUserId] = true;
+        }
+      });
+      setHiddenPeerUserIds(next);
+    };
 
     const loadHiddenPeers = async () => {
       if (!user?.id || peerUserIds.length === 0) {
         setHiddenPeerUserIds({});
         return;
       }
-      const prefs = await fetchPeerVisibilityPrefs(user.id, peerUserIds);
+      syncHiddenPeerStateFromCache();
+      const missingPeerUserIds = peerUserIds.filter((peerUserId) => !(peerUserId in hiddenPeerVisibilityRef.current));
+      if (missingPeerUserIds.length === 0) return;
+      const prefs = await fetchPeerVisibilityPrefs(user.id, missingPeerUserIds);
       if (cancelled) return;
-      const next: Record<string, true> = {};
       Object.entries(prefs).forEach(([peerUserId, pref]) => {
-        if (pref.hidden) next[peerUserId] = true;
+        hiddenPeerVisibilityRef.current[peerUserId] = Boolean(pref.hidden);
       });
-      setHiddenPeerUserIds(next);
+      syncHiddenPeerStateFromCache();
     };
 
     void loadHiddenPeers();

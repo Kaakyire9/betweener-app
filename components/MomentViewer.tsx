@@ -258,6 +258,7 @@ const MomentVideo = ({ uri, shouldPlay }: { uri: string; shouldPlay: boolean }) 
   const player = useVideoPlayer(uri, (p) => {
     p.loop = true;
     p.muted = false;
+    p.keepScreenOnWhilePlaying = false;
     if (shouldPlay) {
       try { p.play(); } catch {}
     }
@@ -343,6 +344,8 @@ export default function MomentViewer({
   const pendingEntryHintSourceRef = useRef<'comment' | 'reaction' | null>(null);
   const pendingHighlightedReactionEmojiRef = useRef<string | null>(null);
   const viewedMomentIdsRef = useRef<Set<string>>(new Set());
+  const reactorsProfilesCacheRef = useRef<Record<string, { id: string | null; full_name: string | null; avatar_url: string | null }>>({});
+  const commentCountRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const currentUser = users[activeUserIndex];
   const currentMoment = currentUser?.moments?.[activeMomentIndex];
@@ -460,22 +463,29 @@ export default function MomentViewer({
       if (user?.id) {
         const userIds = Array.from(new Set(data.map((row: any) => row.user_id))).filter(Boolean);
         const profilesByUserId: Record<string, { id: string | null; full_name: string | null; avatar_url: string | null }> = {};
-        if (userIds.length > 0) {
+        const missingUserIds = userIds.filter((userId) => !reactorsProfilesCacheRef.current[userId]);
+        userIds.forEach((userId) => {
+          const cachedProfile = reactorsProfilesCacheRef.current[userId];
+          if (cachedProfile) profilesByUserId[userId] = cachedProfile;
+        });
+        if (missingUserIds.length > 0) {
           const { data: profileRows } = await supabase
             .from('profiles')
             .select('id,user_id,full_name,avatar_url')
-            .in('user_id', userIds);
+            .in('user_id', missingUserIds);
           (profileRows || []).forEach((profileRow: any) => {
             if (!profileRow?.user_id) return;
-            profilesByUserId[profileRow.user_id] = {
+            const normalizedProfile = {
               id: profileRow.id ?? null,
               full_name: profileRow.full_name ?? null,
               avatar_url: profileRow.avatar_url ?? null,
             };
+            profilesByUserId[profileRow.user_id] = normalizedProfile;
+            reactorsProfilesCacheRef.current[profileRow.user_id] = normalizedProfile;
           });
         }
         await writeMomentReactorsSnapshot(user.id, momentId, {
-          reactions: data as Array<{ id: string; emoji: string; user_id: string; created_at: string }>,
+          reactions: data as { id: string; emoji: string; user_id: string; created_at: string }[],
           profilesByUserId,
         });
       }
@@ -909,11 +919,16 @@ export default function MomentViewer({
         'postgres_changes',
         { event: '*', schema: 'public', table: 'moment_comments', filter: `moment_id=eq.${currentMoment.id}` },
         () => {
-          void fetchCommentCount(currentMoment.id);
+          if (commentCountRefreshTimeoutRef.current) clearTimeout(commentCountRefreshTimeoutRef.current);
+          commentCountRefreshTimeoutRef.current = setTimeout(() => {
+            commentCountRefreshTimeoutRef.current = null;
+            void fetchCommentCount(currentMoment.id);
+          }, 220);
         },
       )
       .subscribe();
     return () => {
+      if (commentCountRefreshTimeoutRef.current) clearTimeout(commentCountRefreshTimeoutRef.current);
       supabase.removeChannel(channel);
     };
   }, [currentMoment, fetchCommentCount, visible]);

@@ -9,7 +9,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { Image } from "expo-image";
 import { router } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -97,6 +97,8 @@ export default function ActivityHistoryScreen() {
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [filter, setFilter] = useState<ActivityFilter>("all");
   const [loading, setLoading] = useState(true);
+  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [trackedMessageIdsKey, setTrackedMessageIdsKey] = useState("");
 
   useEffect(() => {
     if (!profileId || !userId) {
@@ -116,7 +118,6 @@ export default function ActivityHistoryScreen() {
           matchesRes,
           profileReactionsRes,
           messagesRes,
-          messageReactionsRes,
         ] = await Promise.all([
           supabase
             .from("profile_notes")
@@ -156,11 +157,6 @@ export default function ActivityHistoryScreen() {
             .eq("receiver_id", profileId)
             .order("created_at", { ascending: false })
             .limit(20),
-          supabase
-            .from("message_reactions")
-            .select("id,message_id,user_id,emoji,created_at")
-            .order("created_at", { ascending: false })
-            .limit(20),
         ]);
 
         if (cancelled) return;
@@ -171,21 +167,25 @@ export default function ActivityHistoryScreen() {
         const matches = (matchesRes.data || []) as any[];
         const profileReactions = (profileReactionsRes.data || []) as any[];
         const messages = (messagesRes.data || []) as any[];
-        const messageReactions = (messageReactionsRes.data || []) as any[];
 
         const messageIds = Array.from(
-          new Set(messageReactions.map((row) => row?.message_id).filter(Boolean)),
+          new Set(messages.map((row) => row?.id).filter(Boolean)),
         );
+        const nextTrackedMessageIdsKey = [...messageIds].sort().join(":");
+        setTrackedMessageIdsKey((prev) => (prev === nextTrackedMessageIdsKey ? prev : nextTrackedMessageIdsKey));
 
-        const { data: reactionMessages } = messageIds.length
+        const { data: messageReactionsData } = messageIds.length
           ? await supabase
-              .from("messages")
-              .select("id,sender_id,receiver_id")
-              .in("id", messageIds)
+              .from("message_reactions")
+              .select("id,message_id,user_id,emoji,created_at")
+              .in("message_id", messageIds)
+              .order("created_at", { ascending: false })
+              .limit(60)
           : { data: [] };
+        const messageReactions = (messageReactionsData || []) as any[];
 
         const messageById = new Map<string, any>();
-        (reactionMessages || []).forEach((row: any) => {
+        messages.forEach((row: any) => {
           if (row?.id) messageById.set(row.id, row);
         });
 
@@ -360,50 +360,69 @@ export default function ActivityHistoryScreen() {
 
     void fetchActivity();
 
+    const scheduleFetchActivity = () => {
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+      refreshTimeoutRef.current = setTimeout(() => {
+        refreshTimeoutRef.current = null;
+        void fetchActivity();
+      }, 300);
+    };
+
     const channel = supabase
       .channel(`activity:${profileId}`)
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "profile_notes", filter: `profile_id=eq.${profileId}` },
-        () => void fetchActivity(),
+        scheduleFetchActivity,
       )
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "profile_gifts", filter: `profile_id=eq.${profileId}` },
-        () => void fetchActivity(),
+        scheduleFetchActivity,
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "swipes", filter: `target_id=eq.${profileId}` },
-        () => void fetchActivity(),
+        scheduleFetchActivity,
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "matches" },
-        () => void fetchActivity(),
+        { event: "*", schema: "public", table: "matches", filter: `user1_id=eq.${profileId}` },
+        scheduleFetchActivity,
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "matches", filter: `user2_id=eq.${profileId}` },
+        scheduleFetchActivity,
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "messages", filter: `receiver_id=eq.${profileId}` },
-        () => void fetchActivity(),
+        scheduleFetchActivity,
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "profile_image_reactions", filter: `profile_id=eq.${profileId}` },
-        () => void fetchActivity(),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "message_reactions" },
-        () => void fetchActivity(),
-      )
+        scheduleFetchActivity,
+      );
+    if (trackedMessageIdsKey) {
+      trackedMessageIdsKey.split(":").forEach((messageId) => {
+        channel.on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "message_reactions", filter: `message_id=eq.${messageId}` },
+          scheduleFetchActivity,
+        );
+      });
+    }
+    channel
       .subscribe();
 
     return () => {
       cancelled = true;
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
       supabase.removeChannel(channel);
     };
-  }, [profileId, userId]);
+  }, [profileId, trackedMessageIdsKey, userId]);
 
   const filteredItems = useMemo(() => {
     if (filter === "all") return items;

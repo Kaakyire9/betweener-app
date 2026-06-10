@@ -1,4 +1,5 @@
 import ProfileVideoModal from '@/components/ProfileVideoModal';
+import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
 import OfflineImage from '@/components/media/OfflineImage';
 import PremiumUpsellModal from '@/components/premium/PremiumUpsellModal';
 import { VerificationBadge } from '@/components/VerificationBadge';
@@ -26,7 +27,7 @@ import {
 import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
-import { getProfileViewReturnCircleId } from '@/lib/profile/profile-view-return';
+import { getProfileViewReturnCircleId, shouldReturnToCirclesHome } from '@/lib/profile/profile-view-return';
 import { formatReligionLabel } from '@/lib/profile/religion';
 import { cacheOfflineVideo, getOfflineVideoUri } from '@/lib/offline/video-store';
 import { getProfileInitials, getProfilePlaceholderPalette } from '@/lib/profile-placeholders';
@@ -557,6 +558,7 @@ export default function ProfileViewPremiumV2Screen() {
   const profileId = String((params as any)?.id ?? (params as any)?.profileId ?? 'preview');
   const isPreviewReplica = String((params as any)?.isPreview ?? '').toLowerCase() === 'true';
   const returnCircleId = getProfileViewReturnCircleId(params as Record<string, string | string[] | undefined>);
+  const returnToCirclesHome = shouldReturnToCirclesHome(params as Record<string, string | string[] | undefined>);
 
   const fallbackProfile = useMemo(() => parseFallbackProfile((params as any)?.fallbackProfile), [params]);
   const [cachedProfile, setCachedProfile] = useState<UserProfile | null>(null);
@@ -734,16 +736,16 @@ export default function ProfileViewPremiumV2Screen() {
       setPresenceState(null);
       return;
     }
+    const targetUserId =
+      typeof (resolvedProfile as any)?.userId === 'string' && (resolvedProfile as any).userId.length > 0
+        ? (resolvedProfile as any).userId
+        : typeof (resolvedProfile as any)?.user_id === 'string' && (resolvedProfile as any).user_id.length > 0
+          ? (resolvedProfile as any).user_id
+          : null;
+    if (!targetUserId) return;
     let cancelled = false;
     const fetchPresence = async () => {
       try {
-        const targetUserId =
-          typeof (resolvedProfile as any)?.userId === 'string' && (resolvedProfile as any).userId.length > 0
-            ? (resolvedProfile as any).userId
-            : typeof (resolvedProfile as any)?.user_id === 'string' && (resolvedProfile as any).user_id.length > 0
-              ? (resolvedProfile as any).user_id
-              : null;
-        if (!targetUserId) return;
         const { data, error } = await fetchUserPresence(targetUserId);
         if (cancelled) return;
         if (error || !data) return;
@@ -761,12 +763,34 @@ export default function ProfileViewPremiumV2Screen() {
       }
     };
     void fetchPresence();
-    const intervalId = setInterval(fetchPresence, 15000);
+
+    const channel = supabase
+      .channel(`user_presence:profile-view:${targetUserId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'user_presence', filter: `user_id=eq.${targetUserId}` },
+        (payload) => {
+          const presenceRow = (payload.new || payload.old) as
+            | { online?: boolean | null; last_active?: string | null }
+            | null;
+          if (!presenceRow || cancelled) return;
+          const presence = getAuthoritativePresenceDisplay(
+            presenceRow.online,
+            presenceRow.last_active ?? null,
+          );
+          setPresenceState({
+            online: presence.online,
+            last_active: presenceRow.last_active ?? null,
+          });
+        },
+      )
+      .subscribe();
+
     return () => {
       cancelled = true;
-      clearInterval(intervalId);
+      supabase.removeChannel(channel);
     };
-  }, [resolvedProfile.id]);
+  }, [resolvedProfile.id, (resolvedProfile as any)?.userId, (resolvedProfile as any)?.user_id]);
 
   const presenceProfile = useMemo(() => {
     const lastActive =
@@ -1236,6 +1260,88 @@ export default function ProfileViewPremiumV2Screen() {
     setImageReactions(mine);
   }, [currentUserId, resolvedProfile.id]);
 
+  const handleProfileImageReactionRealtime = useCallback(
+    (payload: any) => {
+      const nextRow = (payload.new || null) as
+        | { image_url?: string | null; emoji?: string | null; reactor_user_id?: string | null }
+        | null;
+      const prevRow = (payload.old || null) as
+        | { image_url?: string | null; emoji?: string | null; reactor_user_id?: string | null }
+        | null;
+
+      const applyCountDelta = (
+        row: { image_url?: string | null; emoji?: string | null } | null,
+        delta: 1 | -1,
+      ) => {
+        if (!row?.image_url || !row.emoji) return false;
+        let needsRefresh = false;
+        setReactionCounts((prev) => {
+          const current = prev[row.image_url!] ?? { count: 0, topEmoji: null };
+          const nextCount = Math.max(0, current.count + delta);
+          if (nextCount <= 0) {
+            if (!(row.image_url! in prev)) return prev;
+            const next = { ...prev };
+            delete next[row.image_url!];
+            return next;
+          }
+          if (delta < 0 && current.topEmoji === row.emoji) {
+            needsRefresh = true;
+          }
+          return {
+            ...prev,
+            [row.image_url!]: {
+              count: nextCount,
+              topEmoji: delta > 0 ? row.emoji : current.topEmoji,
+            },
+          };
+        });
+        return needsRefresh;
+      };
+
+      const applyMineDelta = (
+        row: { image_url?: string | null; emoji?: string | null; reactor_user_id?: string | null } | null,
+        mode: "set" | "delete",
+      ) => {
+        if (!currentUserId || row?.reactor_user_id !== currentUserId || !row.image_url) return;
+        setImageReactions((prev) => {
+          const next = { ...prev };
+          if (mode === "set" && row.emoji) {
+            next[row.image_url!] = row.emoji;
+          } else {
+            delete next[row.image_url!];
+          }
+          return next;
+        });
+      };
+
+      let needsRefresh = false;
+      switch (payload.eventType) {
+        case "INSERT":
+          needsRefresh = applyCountDelta(nextRow, 1);
+          applyMineDelta(nextRow, "set");
+          break;
+        case "UPDATE":
+          needsRefresh = applyCountDelta(prevRow, -1) || needsRefresh;
+          needsRefresh = applyCountDelta(nextRow, 1) || needsRefresh;
+          applyMineDelta(prevRow, "delete");
+          applyMineDelta(nextRow, "set");
+          break;
+        case "DELETE":
+          needsRefresh = applyCountDelta(prevRow, -1) || needsRefresh;
+          applyMineDelta(prevRow, "delete");
+          break;
+        default:
+          needsRefresh = true;
+          break;
+      }
+
+      if (needsRefresh) {
+        void loadImageReactions();
+      }
+    },
+    [currentUserId, loadImageReactions],
+  );
+
   useEffect(() => {
     if (!resolvedProfile.id) return;
     void loadImageReactions();
@@ -1244,15 +1350,13 @@ export default function ProfileViewPremiumV2Screen() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'profile_image_reactions', filter: `profile_id=eq.${resolvedProfile.id}` },
-        () => {
-          void loadImageReactions();
-        },
+        handleProfileImageReactionRealtime,
       )
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [loadImageReactions, resolvedProfile.id]);
+  }, [handleProfileImageReactionRealtime, loadImageReactions, resolvedProfile.id]);
 
   useEffect(() => {
     // Reset any pinned hero image when switching profiles.
@@ -1579,8 +1683,12 @@ export default function ProfileViewPremiumV2Screen() {
       router.replace({ pathname: '/circles/[id]', params: { id: returnCircleId } });
       return;
     }
+    if (returnToCirclesHome) {
+      router.replace('/(tabs)/circles');
+      return;
+    }
     router.back();
-  }, [returnCircleId]);
+  }, [returnCircleId, returnToCirclesHome]);
   const handleClose = handleBack;
   const closeSafetySheet = useCallback(() => {
     setSafetySheet(null);
@@ -2607,13 +2715,18 @@ export default function ProfileViewPremiumV2Screen() {
               ]}
               pointerEvents="box-none"
             >
-              <Pressable
-                style={[
-                  stylesStatic.guessSheetCard,
-                  { backgroundColor: theme.background, borderColor: theme.outline },
-                ]}
-                onPress={() => undefined}
-              >
+              <Pressable style={stylesStatic.guessSheetCardWrap} onPress={() => undefined}>
+                <BlurViewSafe
+                  intensity={30}
+                  tint={isDark ? 'dark' : 'light'}
+                  style={[
+                    stylesStatic.guessSheetCard,
+                    {
+                      backgroundColor: isDark ? 'rgba(8,18,28,0.82)' : 'rgba(248,251,252,0.84)',
+                      borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,61,62,0.10)',
+                    },
+                  ]}
+                >
                 <View style={stylesStatic.giftHandle} />
                 <View style={stylesStatic.guessSheetHeaderRow}>
                   <View style={stylesStatic.guessSheetHeaderText}>
@@ -2783,6 +2896,7 @@ export default function ProfileViewPremiumV2Screen() {
                     </Text>
                   </View>
                 ) : null}
+                </BlurViewSafe>
               </Pressable>
             </View>
           </View>
@@ -2797,12 +2911,14 @@ export default function ProfileViewPremiumV2Screen() {
       >
         <Pressable style={stylesStatic.safetySheetBackdrop} onPress={closeSafetySheet} />
         <View style={stylesStatic.safetySheetWrap} pointerEvents="box-none">
-          <View
+          <BlurViewSafe
+            intensity={30}
+            tint={isDark ? 'dark' : 'light'}
             style={[
               stylesStatic.safetySheetCard,
               {
-                backgroundColor: theme.background,
-                borderColor: theme.outline,
+                backgroundColor: isDark ? 'rgba(8,18,28,0.82)' : 'rgba(248,251,252,0.84)',
+                borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,61,62,0.10)',
                 paddingBottom: Math.max(16, insets.bottom + 6),
               },
             ]}
@@ -2941,7 +3057,7 @@ export default function ProfileViewPremiumV2Screen() {
                 </Pressable>
               </>
             ) : null}
-          </View>
+          </BlurViewSafe>
         </View>
       </Modal>
 
@@ -3803,6 +3919,7 @@ const HeroVideoSurface = memo(function HeroVideoSurface({
   const player = useVideoPlayer(uri, (p) => {
     p.loop = true;
     p.muted = muted;
+    p.keepScreenOnWhilePlaying = false;
     if (shouldPlay) {
       try {
         p.play();
@@ -4311,47 +4428,54 @@ function FloatingActions({
               closeNote();
             }}
           >
-            <Pressable
-              style={[
-                stylesStatic.giftSheet,
-                { backgroundColor: theme.background, marginBottom: 0 },
-              ]}
-              onPress={() => undefined}
-            >
-            <View style={stylesStatic.giftHandle} />
-            <Text style={[stylesStatic.giftTitle, { color: theme.text }]}>Send a Note</Text>
-            <Text style={[stylesStatic.giftSubtitle, { color: theme.textMuted }]}>
-              Keep it short and personal.
-            </Text>
-            <View style={[stylesStatic.noteInputWrap, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle }]}>
-              <TextInput
-                value={noteText}
-                onChangeText={setNoteText}
-                placeholder="Write a short opener..."
-                placeholderTextColor={theme.textMuted}
-                multiline
-                maxLength={280}
-                autoFocus
-                textAlignVertical="top"
-                style={[stylesStatic.noteInput, { color: theme.text }]}
-              />
-            </View>
-            <Text style={[stylesStatic.noteCounter, { color: theme.textMuted }]}>{noteLength}/280</Text>
-            <Pressable
-              onPress={sendNote}
-              disabled={!noteLength || noteSending}
-              style={[
-                stylesStatic.giftSendButton,
-                {
-                  backgroundColor: noteLength ? theme.tint : theme.outline,
-                  opacity: noteLength ? 1 : 0.6,
-                },
-              ]}
-            >
-              <Text style={[stylesStatic.giftSendText, { color: Colors.light.background }]}>
-                {noteSending ? 'Sending...' : 'Send Note'}
-              </Text>
-            </Pressable>
+            <Pressable style={stylesStatic.giftSheetWrap} onPress={() => undefined}>
+              <BlurViewSafe
+                intensity={30}
+                tint={isDark ? 'dark' : 'light'}
+                style={[
+                  stylesStatic.giftSheet,
+                  {
+                    backgroundColor: isDark ? 'rgba(8,18,28,0.82)' : 'rgba(248,251,252,0.84)',
+                    borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,61,62,0.10)',
+                    marginBottom: 0,
+                  },
+                ]}
+              >
+                <View style={stylesStatic.giftHandle} />
+                <Text style={[stylesStatic.giftTitle, { color: theme.text }]}>Send a Note</Text>
+                <Text style={[stylesStatic.giftSubtitle, { color: theme.textMuted }]}>
+                  Keep it short and personal.
+                </Text>
+                <View style={[stylesStatic.noteInputWrap, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle }]}>
+                  <TextInput
+                    value={noteText}
+                    onChangeText={setNoteText}
+                    placeholder="Write a short opener..."
+                    placeholderTextColor={theme.textMuted}
+                    multiline
+                    maxLength={280}
+                    autoFocus
+                    textAlignVertical="top"
+                    style={[stylesStatic.noteInput, { color: theme.text }]}
+                  />
+                </View>
+                <Text style={[stylesStatic.noteCounter, { color: theme.textMuted }]}>{noteLength}/280</Text>
+                <Pressable
+                  onPress={sendNote}
+                  disabled={!noteLength || noteSending}
+                  style={[
+                    stylesStatic.giftSendButton,
+                    {
+                      backgroundColor: noteLength ? theme.tint : theme.outline,
+                      opacity: noteLength ? 1 : 0.6,
+                    },
+                  ]}
+                >
+                  <Text style={[stylesStatic.giftSendText, { color: Colors.light.background }]}>
+                    {noteSending ? 'Sending...' : 'Send Note'}
+                  </Text>
+                </Pressable>
+              </BlurViewSafe>
             </Pressable>
           </Pressable>
         </KeyboardAvoidingView>
@@ -4363,7 +4487,17 @@ function FloatingActions({
         onRequestClose={closeGift}
       >
         <Pressable style={stylesStatic.giftBackdrop} onPress={closeGift} />
-        <View style={[stylesStatic.giftSheet, { backgroundColor: theme.background }]}>
+        <BlurViewSafe
+          intensity={30}
+          tint={isDark ? 'dark' : 'light'}
+          style={[
+            stylesStatic.giftSheet,
+            {
+              backgroundColor: isDark ? 'rgba(8,18,28,0.82)' : 'rgba(248,251,252,0.84)',
+              borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,61,62,0.10)',
+            },
+          ]}
+        >
           <View style={stylesStatic.giftHandle} />
           <Text style={[stylesStatic.giftTitle, { color: theme.text }]}>Send a Gift</Text>
           <Text style={[stylesStatic.giftSubtitle, { color: theme.textMuted }]}>
@@ -4421,7 +4555,7 @@ function FloatingActions({
               {giftSending ? 'Sending...' : 'Send Gift'}
             </Text>
           </Pressable>
-        </View>
+        </BlurViewSafe>
       </Modal>
     </>
   );
@@ -5000,6 +5134,12 @@ const stylesStatic = StyleSheet.create({
     borderTopRightRadius: 24,
     paddingHorizontal: 16,
     paddingTop: 10,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -10 },
+    shadowOpacity: 0.16,
+    shadowRadius: 18,
+    elevation: 10,
   },
   safetySheetHandle: {
     alignSelf: 'center',
@@ -5277,12 +5417,17 @@ const stylesStatic = StyleSheet.create({
   guessSheetWrap: {
     paddingHorizontal: 14,
   },
+  guessSheetCardWrap: {
+    borderRadius: 24,
+    overflow: 'hidden',
+  },
   guessSheetCard: {
     borderWidth: 1,
     borderRadius: 24,
     paddingHorizontal: 16,
     paddingTop: 10,
     paddingBottom: 16,
+    overflow: 'hidden',
   },
   guessSheetHeaderRow: {
     marginTop: 4,
@@ -5781,6 +5926,7 @@ const stylesStatic = StyleSheet.create({
     right: 16,
     bottom: 18,
     borderRadius: 20,
+    borderWidth: 1,
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 18,
@@ -5789,6 +5935,15 @@ const stylesStatic = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 18,
     elevation: 12,
+    overflow: 'hidden',
+  },
+  giftSheetWrap: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 18,
+    borderRadius: 20,
+    overflow: 'hidden',
   },
   giftHandle: {
     alignSelf: 'center',

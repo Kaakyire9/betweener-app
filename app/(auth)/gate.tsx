@@ -19,9 +19,21 @@ const EXPLICIT_SIGN_OUT_KEY = "auth_explicit_sign_out_v1";
 const SESSION_CHECK_TIMEOUT_MS = 4_000;
 const GATE_PROFILE_TIMEOUT_MS = 6_000;
 const GATE_RETRY_DELAY_MS = 2_500;
+const GATE_STORAGE_HELPER_TIMEOUT_MS = 1_200;
 // Disable auth-bootstrap while stabilizing core auth/phone verification routing.
 // It can be re-enabled once the function is proven reliable in production.
 const ENABLE_AUTH_BOOTSTRAP = false;
+
+const withTimeout = async <T,>(promise: Promise<T>, fallback: T, timeoutMs: number) => {
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => setTimeout(() => resolve(fallback), timeoutMs)),
+    ]);
+  } catch {
+    return fallback;
+  }
+};
 
 export default function AuthGateScreen() {
   const router = useRouter();
@@ -38,10 +50,18 @@ export default function AuthGateScreen() {
   } = authContext;
   const routedRef = useRef(false);
   const runInFlightRef = useRef(false);
+  const runTokenRef = useRef(0);
   const lastUserIdRef = useRef<string | null>(null);
   const [statusText, setStatusText] = useState("Opening Betweener");
   const [gateRetryTick, setGateRetryTick] = useState(0);
   const activeRef = useRef(true);
+
+  useEffect(() => {
+    activeRef.current = true;
+    return () => {
+      activeRef.current = false;
+    };
+  }, []);
 
   const waitForStoredSession = async (timeoutMs = SESSION_CHECK_TIMEOUT_MS) => {
     try {
@@ -58,6 +78,16 @@ export default function AuthGateScreen() {
     } catch {
       return { session: null, timedOut: true };
     }
+  };
+
+  const getPendingNotificationRouteWithTimeout = async () =>
+    withTimeout(peekPendingNotificationRoute(), null, GATE_STORAGE_HELPER_TIMEOUT_MS);
+
+  const getFreshPendingAuthProviderWithTimeout = async () =>
+    withTimeout(getFreshPendingAuthProvider(), null, GATE_STORAGE_HELPER_TIMEOUT_MS);
+
+  const clearPendingAuthProviderWithoutBlocking = () => {
+    void withTimeout(clearPendingAuthProvider(), undefined, GATE_STORAGE_HELPER_TIMEOUT_MS);
   };
 
   const fetchGateProfileSnapshot = async (userId: string) => {
@@ -279,16 +309,16 @@ export default function AuthGateScreen() {
   };
 
   useEffect(() => {
-    activeRef.current = true;
     if (routedRef.current) return;
     if (isLoading) {
       runInFlightRef.current = false;
       return;
     }
-    if (runInFlightRef.current && lastUserIdRef.current === user?.id) return;
     runInFlightRef.current = true;
     lastUserIdRef.current = user?.id ?? null;
-    let active = true;
+    const runToken = ++runTokenRef.current;
+    const isCurrentRun = () =>
+      activeRef.current && !routedRef.current && runTokenRef.current === runToken;
     const checkMergedRedirect = async (nextUserId: string | null | undefined) => {
       if (!nextUserId) return false;
 
@@ -316,7 +346,7 @@ export default function AuthGateScreen() {
         // best effort only
       }
 
-      if (!active || routedRef.current) return true;
+      if (!isCurrentRun()) return true;
 
       routedRef.current = true;
       router.replace({
@@ -334,7 +364,7 @@ export default function AuthGateScreen() {
 
     const hardFallbackTimer = setTimeout(() => {
       void (async () => {
-        if (!active || routedRef.current) return;
+        if (!isCurrentRun()) return;
 
         if (typeof __DEV__ !== "undefined" && __DEV__) {
           console.log("[auth-gate] hard fallback fired");
@@ -450,7 +480,7 @@ export default function AuthGateScreen() {
           );
         }
         if (bestCompleted || canResumeKnownGoodAppSurface) {
-          const pendingNotificationRoute = await peekPendingNotificationRoute();
+          const pendingNotificationRoute = await getPendingNotificationRouteWithTimeout();
           if (pendingNotificationRoute) {
             if (typeof __DEV__ !== "undefined" && __DEV__) {
               console.log("[auth-gate] hard fallback route", pendingNotificationRoute);
@@ -472,7 +502,7 @@ export default function AuthGateScreen() {
           target: string | { pathname: string; params?: Record<string, string> },
           smooth = false
         ) => {
-          if (!active || routedRef.current) return;
+          if (!isCurrentRun()) return;
           routedRef.current = true;
           if (smooth) setStatusText("Opening your space");
           if (typeof __DEV__ !== "undefined" && __DEV__) {
@@ -688,7 +718,7 @@ export default function AuthGateScreen() {
           return;
         }
 
-        const pendingAuthProvider = await getFreshPendingAuthProvider();
+        const pendingAuthProvider = await getFreshPendingAuthProviderWithTimeout();
         const currentProvider =
           String(
             pendingAuthProvider?.provider ??
@@ -739,7 +769,7 @@ export default function AuthGateScreen() {
         }
 
         if (!verified && !hadStableAppAccess) {
-          await clearPendingAuthProvider();
+          clearPendingAuthProviderWithoutBlocking();
           guardRoute({
             pathname: "/(auth)/verify-phone",
             params: {
@@ -751,7 +781,7 @@ export default function AuthGateScreen() {
         }
 
         if (!profileSnapshot && hadStableAppAccess) {
-          const pendingNotificationRoute = await peekPendingNotificationRoute();
+          const pendingNotificationRoute = await getPendingNotificationRouteWithTimeout();
           if (pendingNotificationRoute) {
             guardRoute(pendingNotificationRoute, true);
             return;
@@ -766,13 +796,22 @@ export default function AuthGateScreen() {
         }
 
         if (!profileCompleted && !hadStableAppAccess) {
-          await clearPendingAuthProvider();
+          clearPendingAuthProviderWithoutBlocking();
           guardRoute("/(auth)/onboarding", true);
           return;
         }
 
-        await clearPendingAuthProvider();
-        const pendingNotificationRoute = await peekPendingNotificationRoute();
+        clearPendingAuthProviderWithoutBlocking();
+        const pendingNotificationRoute = await getPendingNotificationRouteWithTimeout();
+        if (typeof __DEV__ !== "undefined" && __DEV__) {
+          console.log("[auth-gate] final route decision", {
+            pendingNotificationRoute,
+            profileCompleted,
+            hadStableAppAccess,
+            verified,
+            profileId: profileSnapshot?.id ?? null,
+          });
+        }
         if (pendingNotificationRoute) {
           if (typeof __DEV__ !== "undefined" && __DEV__) {
             console.log("[auth-gate] pending notification route", pendingNotificationRoute);
@@ -782,18 +821,18 @@ export default function AuthGateScreen() {
         }
         guardRoute("/(tabs)/vibes", true);
       } catch (_error) {
-        if (active && !routedRef.current) {
+        if (isCurrentRun()) {
           holdForConnectionRetry();
         }
       } finally {
-        runInFlightRef.current = false;
+        if (runTokenRef.current === runToken) {
+          runInFlightRef.current = false;
+        }
       }
     };
 
     void run();
     return () => {
-      active = false;
-      activeRef.current = false;
       clearTimeout(hardFallbackTimer);
     };
   }, [gateRetryTick, isLoading, user?.id, profile?.profile_completed, router]);

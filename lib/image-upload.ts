@@ -1,4 +1,6 @@
 import { supabase } from '@/lib/supabase';
+import * as FileSystem from 'expo-file-system/legacy';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 
 export interface UploadImageOptions {
   userId: string;
@@ -13,8 +15,30 @@ export interface UploadImageOptions {
 export interface UploadResult {
   publicUrl: string;
   path: string;
+  previewUri?: string;
   error?: string;
 }
+
+const MIME_BY_EXTENSION: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  heif: 'image/heif',
+};
+
+const readFileAsUint8Array = async (uri: string) => {
+  const base64 = await FileSystem.readAsStringAsync(uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  const byteCharacters = atob(base64);
+  const byteNumbers = new Array(byteCharacters.length);
+  for (let i = 0; i < byteCharacters.length; i += 1) {
+    byteNumbers[i] = byteCharacters.charCodeAt(i);
+  }
+  return new Uint8Array(byteNumbers);
+};
 
 /**
  * Upload an image to Supabase storage
@@ -24,33 +48,52 @@ export async function uploadImage({
   uri,
   bucket = 'profile-photos',
   folder,
-  compress: _compress = true,
+  compress = true,
   maxWidth: _maxWidth = 1080,
   maxHeight: _maxHeight = 1080,
 }: UploadImageOptions): Promise<UploadResult> {
   try {
-    // Get file extension from URI
-    const fileExtension = uri.split('.').pop()?.toLowerCase() || 'jpg';
+    let uploadUri = uri;
+    const normalizedUri = uri.split('?')[0] || uri;
+    const shouldNormalizeToJpeg =
+      normalizedUri.startsWith('file://') ||
+      normalizedUri.startsWith('content://') ||
+      normalizedUri.startsWith('ph://') ||
+      normalizedUri.startsWith('assets-library://');
+
+    if (shouldNormalizeToJpeg) {
+      const manipulateResult = await manipulateAsync(
+        uri,
+        [],
+        {
+          compress: compress ? 0.88 : 1,
+          format: SaveFormat.JPEG,
+        },
+      );
+      uploadUri = manipulateResult.uri;
+    }
+
+    const uploadNormalizedUri = uploadUri.split('?')[0] || uploadUri;
+    const uploadFileExtension = shouldNormalizeToJpeg
+      ? 'jpeg'
+      : uploadNormalizedUri.split('.').pop()?.toLowerCase() || 'jpg';
+    const normalizedExtension = uploadFileExtension === 'jpg' ? 'jpeg' : uploadFileExtension;
+    const fallbackMimeType =
+      MIME_BY_EXTENSION[uploadFileExtension] || MIME_BY_EXTENSION[normalizedExtension] || 'image/jpeg';
     const timestamp = Date.now();
-    const fileName = `${timestamp}.${fileExtension}`;
+    const fileName = `${timestamp}.${normalizedExtension}`;
     
     // Determine the full path
     const folderPath = folder || userId;
     const filePath = `${folderPath}/${fileName}`;
 
-    // For React Native, we need to use the file URI directly
-    // Create a file object that Supabase can handle
-    const file = {
-      uri,
-      type: `image/${fileExtension}`,
-      name: fileName,
-    };
+    const bytes = await readFileAsUint8Array(uploadUri);
+    const contentType = fallbackMimeType;
 
-    // Upload to Supabase Storage using the file object
     const { error } = await supabase.storage
       .from(bucket)
-      .upload(filePath, file as any, {
-        contentType: `image/${fileExtension}`,
+      .upload(filePath, bytes, {
+        contentType,
         upsert: false, // Don't overwrite existing files
       });
 
@@ -71,6 +114,7 @@ export async function uploadImage({
     return {
       publicUrl,
       path: filePath,
+      previewUri: uploadUri,
     };
   } catch (error) {
     console.error('Upload image error:', error);

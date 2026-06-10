@@ -34,8 +34,6 @@ import { formatReligionLabel } from "@/lib/profile/religion";
 import { getProfileInitials, getProfilePlaceholderPalette, hasProfileImage } from "@/lib/profile-placeholders";
 import {
   DEFAULT_GUESS_REVEAL_POLICY,
-  isGuessPrompt,
-  isMultipleChoiceGuess,
   normalizeGuessText,
   sanitizeGuessOptions,
   shuffleOptions,
@@ -57,7 +55,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Animated,
-  Image,
   Modal,
   Platform,
   RefreshControl,
@@ -117,6 +114,7 @@ const HeroVideo = ({ uri }: { uri: string }) => {
   const player = useVideoPlayer(uri, (p) => {
     p.loop = true;
     p.muted = true;
+    p.keepScreenOnWhilePlaying = false;
     try {
       p.play();
     } catch {}
@@ -175,7 +173,7 @@ const normalizeMeProfileStatsSnapshot = (
     : null,
 });
 
-const mergeUniqueMediaUris = (...groups: Array<string[] | null | undefined>) =>
+const mergeUniqueMediaUris = (...groups: (string[] | null | undefined)[]) =>
   Array.from(
     new Set(
       groups
@@ -2793,8 +2791,6 @@ export default function ProfileScreen() {
     }
   }, [verificationNudgeDismissedKey]);
   const presence = getPresenceDisplay((profile as any)?.last_active ?? (profile as any)?.lastActive);
-  const isOnlineNow = presence.online;
-  const isActiveNow = presence.activeNow;
   const showPresence = presence.showPresence;
   const presenceLabel = presence.label;
   const aboutMeText = rawBio || 'Add a few lines about you.';

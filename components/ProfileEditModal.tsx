@@ -1,4 +1,5 @@
 import { Colors } from '@/constants/theme';
+import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useVerificationStatus } from '@/hooks/use-verification-status';
 import { useAuth } from '@/lib/auth-context';
@@ -357,6 +358,7 @@ const InlineVideoPreview = ({ uri, shouldPlay, styles }: { uri: string; shouldPl
   const player = useVideoPlayer(uri, (p) => {
     p.loop = true;
     p.muted = true;
+    p.keepScreenOnWhilePlaying = false;
     if (shouldPlay) {
       try { p.play(); } catch {}
     }
@@ -1967,45 +1969,46 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       onRequestClose={closeProfileEditor}
     >
       <SafeAreaView style={styles.container}>
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={closeProfileEditor}>
-            <Text style={styles.cancelButton}>Cancel</Text>
-          </TouchableOpacity>
-          <Text style={styles.title}>Edit Profile</Text>
-          <TouchableOpacity onPress={handleSave} disabled={loading}>
-            {loading ? (
-              <ActivityIndicator size="small" color={theme.tint} />
-            ) : (
-              <Text style={styles.saveButton}>Save</Text>
-            )}
-          </TouchableOpacity>
-        </View>
+        <BlurViewSafe intensity={34} tint={isDark ? 'dark' : 'light'} style={styles.shell}>
+          {/* Header */}
+          <View style={styles.header}>
+            <TouchableOpacity onPress={closeProfileEditor}>
+              <Text style={styles.cancelButton}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={styles.title}>Edit Profile</Text>
+            <TouchableOpacity onPress={handleSave} disabled={loading}>
+              {loading ? (
+                <ActivityIndicator size="small" color={theme.tint} />
+              ) : (
+                <Text style={styles.saveButton}>Save</Text>
+              )}
+            </TouchableOpacity>
+          </View>
 
-        {statusMessage && (
-          <View
-            style={[
-              styles.statusBanner,
-              statusTone === 'error' ? styles.statusBannerError : styles.statusBannerSuccess,
-            ]}
-          >
-            <MaterialCommunityIcons
-              name={statusTone === 'error' ? 'alert-circle' : 'check-circle'}
-              size={18}
-              color={statusTone === 'error' ? theme.danger : theme.tint}
-            />
-            <Text
+          {statusMessage && (
+            <View
               style={[
-                styles.statusBannerText,
-                statusTone === 'error' ? styles.statusBannerTextError : styles.statusBannerTextSuccess,
+                styles.statusBanner,
+                statusTone === 'error' ? styles.statusBannerError : styles.statusBannerSuccess,
               ]}
             >
-              {statusMessage}
-            </Text>
-          </View>
-        )}
+              <MaterialCommunityIcons
+                name={statusTone === 'error' ? 'alert-circle' : 'check-circle'}
+                size={18}
+                color={statusTone === 'error' ? theme.danger : theme.tint}
+              />
+              <Text
+                style={[
+                  styles.statusBannerText,
+                  statusTone === 'error' ? styles.statusBannerTextError : styles.statusBannerTextSuccess,
+                ]}
+              >
+                {statusMessage}
+              </Text>
+            </View>
+          )}
 
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+          <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
           {/* Avatar Section */}
           <View style={styles.section}>
             <View style={styles.sectionTitleRow}>
@@ -3230,26 +3233,27 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
             </View>
           </View>
 
-          <View style={{ height: 50 }} />
-        </ScrollView>
+            <View style={{ height: 50 }} />
+          </ScrollView>
 
-        {/* Upload Progress */}
-        {(uploading || videoUploading) && (
-          <View style={styles.uploadingOverlay}>
-            <View style={styles.uploadingContainer}>
-              <ActivityIndicator size="large" color={theme.tint} />
-              <Text style={styles.uploadingText}>
-                {videoUploading
-                  ? `${videoUploadStage || 'Uploading video...'}${
-                      typeof videoUploadProgress === 'number'
-                        ? ` ${Math.round(videoUploadProgress * 100)}%`
-                        : ''
-                    }`
-                  : 'Uploading photo...'}
-              </Text>
+          {/* Upload Progress */}
+          {(uploading || videoUploading) && (
+            <View style={styles.uploadingOverlay}>
+              <View style={styles.uploadingContainer}>
+                <ActivityIndicator size="large" color={theme.tint} />
+                <Text style={styles.uploadingText}>
+                  {videoUploading
+                    ? `${videoUploadStage || 'Uploading video...'}${
+                        typeof videoUploadProgress === 'number'
+                          ? ` ${Math.round(videoUploadProgress * 100)}%`
+                          : ''
+                      }`
+                    : 'Uploading photo...'}
+                </Text>
+              </View>
             </View>
-          </View>
-        )}
+          )}
+        </BlurViewSafe>
       </SafeAreaView>
 
       {/* Height Picker */}
@@ -3718,7 +3722,11 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
   return StyleSheet.create({
     container: {
       flex: 1,
-      backgroundColor: theme.background,
+      backgroundColor: isDark ? 'rgba(7,30,34,0.96)' : 'rgba(244,236,226,0.96)',
+    },
+    shell: {
+      flex: 1,
+      backgroundColor: isDark ? 'rgba(7,30,34,0.82)' : 'rgba(255,249,243,0.88)',
     },
     header: {
       flexDirection: 'row',
@@ -3726,7 +3734,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       justifyContent: 'space-between',
       paddingHorizontal: pageGutter,
       paddingVertical: headerPaddingY,
-      backgroundColor: theme.background,
+      backgroundColor: withAlpha(theme.background, isDark ? 0.52 : 0.64),
       borderBottomWidth: 1,
       borderBottomColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
     },
@@ -3750,7 +3758,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       paddingTop: 6,
     },
     section: {
-      backgroundColor: theme.backgroundSubtle,
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.72 : 0.84),
       paddingHorizontal: sectionPadding,
       paddingVertical: sectionPadding,
       marginBottom: responsive.space(12, { min: 10, max: 14 }),
@@ -3765,7 +3773,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
       elevation: 3,
     },
     verificationCard: {
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.92 : 0.98),
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.76 : 0.88),
       paddingHorizontal: sectionPadding,
       paddingVertical: sectionPadding,
       marginBottom: responsive.space(12, { min: 10, max: 14 }),

@@ -16,19 +16,40 @@ import {
   type CircleDiscoveryScope,
   sortCirclesByRelevance,
 } from '@/lib/circles/circle-localization';
-import { readCache, writeCache } from '@/lib/persisted-cache';
+import {
+  buildCirclesHubSnapshotStoreKey,
+  type CirclesHubSnapshot,
+  migrateLegacyCirclesHubSnapshot,
+  readCirclesHubSnapshotState,
+  writeCirclesHubSnapshot,
+} from '@/lib/offline/circles-store';
+import { resolveOfflineImageUri } from '@/lib/offline/image-store';
+import { isNetworkConnectionAvailable } from '@/lib/network-state';
+import {
+  clampRelationshipGistProgress,
+  getDefaultRelationshipGistLocalState,
+  type RelationshipGistLocalStateMap,
+  readRelationshipGistLocalState,
+  writeRelationshipGistLocalState,
+} from '@/lib/relationship-gists/local-state';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/telemetry/logger';
+import { fetch as fetchNetInfo } from '@react-native-community/netinfo';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Calendar from 'expo-calendar';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Animated,
+  Dimensions,
+  type GestureResponderEvent,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
+  Share,
   ScrollView,
   StyleSheet,
   Text,
@@ -96,10 +117,22 @@ type Gathering = {
   circle_id?: string | null;
   title: string;
   description?: string | null;
+  poster_url?: string | null;
   starts_at: string;
   city?: string | null;
   country_code?: string | null;
   gathering_type?: string | null;
+  presentation_mode?: 'general' | 'seat_linked' | null;
+  featured_profile_id?: string | null;
+  featured_profile?: {
+    id: string;
+    full_name?: string | null;
+    avatar_url?: string | null;
+    city?: string | null;
+    region?: string | null;
+  } | null;
+  seat_context?: 'welcome' | 'love' | null;
+  host_created_for_member?: boolean | null;
   status?: string | null;
   venue_name?: string | null;
   is_partner_venue?: boolean | null;
@@ -142,19 +175,12 @@ type CircleMemberPreview = {
   avatar_url?: string | null;
 };
 
-type CirclesCache = {
-  myCircles: CircleMembership[];
-  discoverCircles: CircleV2[];
-  creatorCircles: CircleV2[];
-  creatorGatherings: Gathering[];
-  prompts: CirclePrompt[];
-  gatherings: Gathering[];
-  gists: RelationshipGist[];
-  warmIntros: WarmIntro[];
-  picks: CirclePick[];
-  imageUrls: Record<string, string>;
-  memberPreviewsByCircleId: Record<string, CircleMemberPreview[]>;
+type GistLensMenuAnchor = {
+  left: number;
+  top: number;
 };
+
+type GistLensPickerContext = 'preview' | 'reader' | null;
 
 const db = supabase as any;
 
@@ -165,9 +191,104 @@ const SCOPES: { key: CircleDiscoveryScope; label: string; icon: keyof typeof Mat
   { key: 'global', label: 'Global', icon: 'web' },
 ];
 
+const GIST_PERSPECTIVES = ['general', 'christian', 'muslim', 'culture', 'safety', 'communication'] as const;
+
+const getPreferredGistPerspective = (religion?: string | null) => {
+  const normalized = String(religion ?? '').trim().toUpperCase();
+  if (normalized === 'CHRISTIAN') return 'christian';
+  if (normalized === 'MUSLIM') return 'muslim';
+  return 'general';
+};
+
+const getEligibleGistPerspectiveOrder = (religion?: string | null) => {
+  const preferred = getPreferredGistPerspective(religion);
+  if (preferred === 'christian') return ['christian', 'general', 'culture', 'safety'] as const;
+  if (preferred === 'muslim') return ['muslim', 'general', 'culture', 'safety'] as const;
+  return ['general', 'culture', 'safety', 'communication'] as const;
+};
+
+const buildVisibleGistPerspectives = (
+  available: string[],
+  religion?: string | null,
+) => {
+  const eligible = getEligibleGistPerspectiveOrder(religion);
+  const eligibleAvailable = eligible.filter((item) => available.includes(item));
+  if (eligibleAvailable.length) return eligibleAvailable;
+  if (available.includes('general')) return ['general'];
+  return available.slice(0, 1);
+};
+
+const buildGistSelectionOrder = (
+  selectedPerspective: string,
+  religion?: string | null,
+) => {
+  const eligible = getEligibleGistPerspectiveOrder(religion);
+  return Array.from(new Set([selectedPerspective, ...eligible, 'general', 'culture', 'safety', 'communication']));
+};
+
+const getGistPerspectiveLabel = (value?: string | null) => {
+  const normalized = String(value ?? 'general').toLowerCase();
+  return normalized === 'general' ? 'General' : normalized[0].toUpperCase() + normalized.slice(1);
+};
+
+const getGistPerspectiveIcon = (value?: string | null): keyof typeof MaterialCommunityIcons.glyphMap => {
+  switch (String(value ?? 'general').toLowerCase()) {
+    case 'christian':
+      return 'cross';
+    case 'muslim':
+      return 'star-crescent';
+    case 'culture':
+      return 'flower-pollen-outline';
+    case 'safety':
+      return 'shield-check-outline';
+    case 'communication':
+      return 'message-text-outline';
+    default:
+      return 'earth';
+  }
+};
+
+const getGistLensSupport = (value?: string | null) => {
+  switch (String(value ?? 'general').toLowerCase()) {
+    case 'christian':
+      return 'Read this through a Christian lens that values clarity, character, and consistency.';
+    case 'muslim':
+      return 'Read this through a Muslim lens that values intention, adab, and emotional steadiness.';
+    case 'culture':
+      return 'Read this through a cultural lens that respects family context, timing, and shared norms.';
+    case 'safety':
+      return 'Read this through a safety lens that centers boundaries, pacing, and emotional protection.';
+    case 'communication':
+      return 'Read this through a communication lens that favors directness, listening, and consistency.';
+    default:
+      return 'Read this as broad relationship guidance designed to protect clarity before attachment deepens.';
+  }
+};
+
 const normalizeCircle = (input: CircleV2 | CircleV2[] | null | undefined): CircleV2 | null => {
   if (!input) return null;
   return Array.isArray(input) ? (input[0] ?? null) : input;
+};
+
+const isBinaryOppositeGenderMatch = (viewerGender: unknown, candidateGender: unknown) => {
+  const normalizedViewerGender = typeof viewerGender === 'string' ? viewerGender.toUpperCase() : null;
+  const normalizedCandidateGender = typeof candidateGender === 'string' ? candidateGender.toUpperCase() : null;
+  if (
+    normalizedViewerGender !== 'MALE'
+    && normalizedViewerGender !== 'FEMALE'
+  ) {
+    return true;
+  }
+  if (
+    normalizedCandidateGender !== 'MALE'
+    && normalizedCandidateGender !== 'FEMALE'
+  ) {
+    return true;
+  }
+  return (
+    (normalizedViewerGender === 'MALE' && normalizedCandidateGender === 'FEMALE')
+    || (normalizedViewerGender === 'FEMALE' && normalizedCandidateGender === 'MALE')
+  );
 };
 
 const compactDate = (value?: string | null) => {
@@ -177,30 +298,87 @@ const compactDate = (value?: string | null) => {
   return date.toLocaleDateString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 };
 
-const creatorStatusLabel = (status?: string | null) => {
-  switch (String(status ?? '')) {
-    case 'pending_review':
-      return 'Pending review';
-    case 'approved':
-      return 'Approved';
-    case 'rejected':
-      return 'Needs changes';
-    case 'draft':
-      return 'Draft';
-    case 'cancelled':
-      return 'Cancelled';
-    case 'completed':
-      return 'Completed';
-    default:
-      return 'In progress';
-  }
+const formatSnapshotAgeLabel = (savedAt?: number | null) => {
+  if (typeof savedAt !== 'number' || !Number.isFinite(savedAt)) return 'recently';
+  const diffMs = Math.max(0, Date.now() - savedAt);
+  const diffMinutes = Math.round(diffMs / 60_000);
+  if (diffMinutes < 1) return 'just now';
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.round(diffHours / 24);
+  return `${diffDays}d ago`;
 };
+
+const getGistReadTimeLabel = (gist?: Pick<RelationshipGist, 'short_body' | 'body'> | null) => {
+  const text = `${gist?.short_body ?? ''} ${gist?.body ?? ''}`.trim();
+  if (!text) return '1 min read';
+  const words = text.split(/\s+/).filter(Boolean).length;
+  return `${Math.max(1, Math.ceil(words / 180))} min read`;
+};
+
+const normalizeCopy = (value?: string | null) => String(value ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+const splitGistParagraphs = (value?: string | null) =>
+  String(value ?? '')
+    .split(/\n\s*\n/)
+    .map((part) => part.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+const buildGistReaderSections = (gist: RelationshipGist | null, perspective: string) => {
+  const lead = gist?.short_body?.trim() || gist?.body?.trim() || 'No guidance yet.';
+  const paragraphs = splitGistParagraphs(gist?.body);
+  const remainingParagraphs = paragraphs.length > 1 && normalizeCopy(paragraphs[0]) === normalizeCopy(gist?.short_body)
+    ? paragraphs.slice(1)
+    : paragraphs.length === 1 && normalizeCopy(paragraphs[0]) === normalizeCopy(lead)
+      ? []
+      : paragraphs;
+  const sectionTitles = ['What matters first', 'What to notice early', 'What this protects', 'What to carry forward'];
+  const sections = remainingParagraphs.map((paragraph, index) => {
+    const headingMatch = paragraph.match(/^([^:]{3,56}):\s+(.+)$/s);
+    if (headingMatch) {
+      return {
+        id: `${index}:${headingMatch[1]}`,
+        title: headingMatch[1].trim(),
+        body: headingMatch[2].trim(),
+      };
+    }
+    return {
+      id: `${index}:${paragraph.slice(0, 18)}`,
+      title: sectionTitles[index] ?? `Guidance ${index + 1}`,
+      body: paragraph,
+    };
+  });
+  const takeaway = sections.length ? sections[sections.length - 1].body : lead;
+  return {
+    lead,
+    sections,
+    takeaway,
+    framing: getGistLensSupport(perspective),
+  };
+};
+
+const getGistProgressLabel = (
+  state?: { progress?: number | null; lastOpenedAt?: number | null } | null,
+) => {
+  if (!state?.lastOpenedAt) return null;
+  const value = clampRelationshipGistProgress(Number(state.progress ?? 0));
+  if (value >= 0.995) return 'Completed';
+  if (value <= 0.01) return 'Just opened';
+  return `${Math.max(1, Math.round(value * 100))}% read`;
+};
+
+const GIST_LENS_DROPDOWN_WIDTH = 236;
+const GIST_LENS_DROPDOWN_ITEM_HEIGHT = 52;
+const GIST_LENS_DROPDOWN_PADDING = 24;
+const CIRCLE_SECTION_PREVIEW_LIMIT = 8;
 
 export default function CirclesScreen() {
   const { profile, user } = useAuth();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
+  const circlePalette = useMemo(() => getCirclePulsePalette(isDark ? 'dark' : 'light'), [isDark]);
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
 
   const [resolvedProfileId, setResolvedProfileId] = useState<string | null>(profile?.id ?? null);
@@ -214,12 +392,27 @@ export default function CirclesScreen() {
   const [gatherings, setGatherings] = useState<Gathering[]>([]);
   const [gists, setGists] = useState<RelationshipGist[]>([]);
   const [gistPerspective, setGistPerspective] = useState('general');
+  const [gistPerspectiveTouched, setGistPerspectiveTouched] = useState(false);
   const [warmIntros, setWarmIntros] = useState<WarmIntro[]>([]);
   const [picks, setPicks] = useState<CirclePick[]>([]);
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({});
   const [memberPreviewsByCircleId, setMemberPreviewsByCircleId] = useState<Record<string, CircleMemberPreview[]>>({});
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [networkReady, setNetworkReady] = useState(true);
+  const [showAllJoinedCircles, setShowAllJoinedCircles] = useState(false);
+  const [showAllDiscoverCircles, setShowAllDiscoverCircles] = useState(false);
+  const [circlesSnapshotInfo, setCirclesSnapshotInfo] = useState<{
+    hasSnapshot: boolean;
+    savedAt: number | null;
+    isStale: boolean;
+  }>({
+    hasSnapshot: false,
+    savedAt: null,
+    isStale: false,
+  });
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
+  const [commandOpen, setCommandOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [gatheringOpen, setGatheringOpen] = useState(false);
   const [paywallOpen, setPaywallOpen] = useState(false);
@@ -241,12 +434,28 @@ export default function CirclesScreen() {
   const [newGatheringCircleId, setNewGatheringCircleId] = useState<string | null>(null);
   const [promptAnswerOpen, setPromptAnswerOpen] = useState(false);
   const [promptAnswer, setPromptAnswer] = useState('');
+  const [discoveryQuery, setDiscoveryQuery] = useState('');
+  const [gistComposerOpen, setGistComposerOpen] = useState(false);
+  const [gistReaderOpen, setGistReaderOpen] = useState(false);
+  const [gistLensPickerOpen, setGistLensPickerOpen] = useState(false);
+  const [gistLensMenuAnchor, setGistLensMenuAnchor] = useState<GistLensMenuAnchor | null>(null);
+  const [gistLensPickerContext, setGistLensPickerContext] = useState<GistLensPickerContext>(null);
+  const [gistLocalState, setGistLocalState] = useState<RelationshipGistLocalStateMap>({});
+  const [gistTitleDraft, setGistTitleDraft] = useState('');
+  const [gistShortBodyDraft, setGistShortBodyDraft] = useState('');
+  const [gistBodyDraft, setGistBodyDraft] = useState('');
+  const [gistPerspectiveDraft, setGistPerspectiveDraft] = useState<(typeof GIST_PERSPECTIVES)[number]>('general');
+  const [creatingGist, setCreatingGist] = useState(false);
 
-  const circlesCacheKey = useMemo(
-    () => (currentProfileId ? `cache:circles:v2:${currentProfileId}:${scope}` : null),
+  const circlesSnapshotKey = useMemo(
+    () => (currentProfileId ? buildCirclesHubSnapshotStoreKey(currentProfileId, scope) : null),
     [currentProfileId, scope],
   );
-  const cacheLoadedRef = useRef<string | null>(null);
+  const snapshotLoadedRef = useRef<string | null>(null);
+  const gistReaderAnim = useRef(new Animated.Value(1)).current;
+  const gistLocalStateRef = useRef<RelationshipGistLocalStateMap>({});
+  const gistReaderProgressRef = useRef(0);
+  const gistReaderProgressSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     let cancelled = false;
     if (profile?.id) {
@@ -287,31 +496,73 @@ export default function CirclesScreen() {
     };
   }, [user?.id]);
 
+  const applyCirclesSnapshot = useCallback((
+    snapshot: CirclesHubSnapshot,
+    options?: { preserveExisting?: boolean },
+  ) => {
+    const preserveExisting = options?.preserveExisting === true;
+    setMyCircles((prev) => (preserveExisting && prev.length ? prev : (snapshot.myCircles as CircleMembership[]) ?? []));
+    setDiscoverCircles((prev) => (
+      preserveExisting && prev.length ? prev : (snapshot.discoverCircles as CircleV2[]) ?? []
+    ));
+    setCreatorCircles((prev) => (
+      preserveExisting && prev.length ? prev : (snapshot.creatorCircles as CircleV2[]) ?? []
+    ));
+    setCreatorGatherings((prev) => (
+      preserveExisting && prev.length ? prev : (snapshot.creatorGatherings as Gathering[]) ?? []
+    ));
+    setPrompts((prev) => (preserveExisting && prev.length ? prev : (snapshot.prompts as CirclePrompt[]) ?? []));
+    setGatherings((prev) => (preserveExisting && prev.length ? prev : (snapshot.gatherings as Gathering[]) ?? []));
+    setGists((prev) => (preserveExisting && prev.length ? prev : (snapshot.gists as RelationshipGist[]) ?? []));
+    setWarmIntros((prev) => (preserveExisting && prev.length ? prev : (snapshot.warmIntros as WarmIntro[]) ?? []));
+    setPicks((prev) => (preserveExisting && prev.length ? prev : (snapshot.picks as CirclePick[]) ?? []));
+    setImageUrls((prev) => (
+      preserveExisting && Object.keys(prev).length ? prev : snapshot.imageUrls ?? {}
+    ));
+    setMemberPreviewsByCircleId((prev) => (
+      preserveExisting && Object.keys(prev).length ? prev : (snapshot.memberPreviewsByCircleId as Record<string, CircleMemberPreview[]>) ?? {}
+    ));
+  }, []);
+
   useEffect(() => {
-    if (!circlesCacheKey || cacheLoadedRef.current === circlesCacheKey) return;
-    cacheLoadedRef.current = circlesCacheKey;
+    if (!currentProfileId || !circlesSnapshotKey || snapshotLoadedRef.current === circlesSnapshotKey) return;
+    snapshotLoadedRef.current = circlesSnapshotKey;
     let cancelled = false;
     void (async () => {
-      const cached = await readCache<CirclesCache>(circlesCacheKey, 15 * 60_000);
-      if (cancelled || !cached) return;
-      setMyCircles((prev) => (prev.length ? prev : cached.myCircles ?? []));
-      setDiscoverCircles((prev) => (prev.length ? prev : cached.discoverCircles ?? []));
-      setCreatorCircles((prev) => (prev.length ? prev : cached.creatorCircles ?? []));
-      setCreatorGatherings((prev) => (prev.length ? prev : cached.creatorGatherings ?? []));
-      setPrompts((prev) => (prev.length ? prev : cached.prompts ?? []));
-      setGatherings((prev) => (prev.length ? prev : cached.gatherings ?? []));
-      setGists((prev) => (prev.length ? prev : cached.gists ?? []));
-      setWarmIntros((prev) => (prev.length ? prev : cached.warmIntros ?? []));
-      setPicks((prev) => (prev.length ? prev : cached.picks ?? []));
-      setImageUrls((prev) => (Object.keys(prev).length ? prev : cached.imageUrls ?? {}));
-      setMemberPreviewsByCircleId((prev) => (
-        Object.keys(prev).length ? prev : cached.memberPreviewsByCircleId ?? {}
-      ));
+      const offlineState =
+        (await migrateLegacyCirclesHubSnapshot(currentProfileId, scope)) ??
+        (await readCirclesHubSnapshotState(currentProfileId, scope));
+      if (cancelled) return;
+      setCirclesSnapshotInfo({
+        hasSnapshot: Boolean(offlineState.data),
+        savedAt: offlineState.savedAt,
+        isStale: offlineState.isStale,
+      });
+      if (!offlineState.data) return;
+      applyCirclesSnapshot(offlineState.data, { preserveExisting: true });
     })();
     return () => {
       cancelled = true;
     };
-  }, [circlesCacheKey]);
+  }, [applyCirclesSnapshot, circlesSnapshotKey, currentProfileId, scope]);
+
+  useEffect(() => {
+    gistLocalStateRef.current = gistLocalState;
+  }, [gistLocalState]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const stored = await readRelationshipGistLocalState(user?.id ?? null);
+      if (!cancelled) {
+        gistLocalStateRef.current = stored;
+        setGistLocalState(stored);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
 
   const canSubmitCircle = canCreateCircle(premiumState, {
     id: currentProfileId,
@@ -354,7 +605,7 @@ export default function CirclesScreen() {
       p_limit: 8,
     });
     if (!suggestionError) {
-      return (suggestionRows ?? []).slice(0, 3).map((row: any) => ({
+      const basePicks = ((suggestionRows ?? []) as any[]).slice(0, 3).map((row: any) => ({
         profile_id: String(row.profile_id),
         full_name: row.full_name,
         age: typeof row.age === 'number' ? row.age : null,
@@ -362,6 +613,10 @@ export default function CirclesScreen() {
         circleName: row.circle_name ?? 'Shared Circle',
         reason: row.reason || 'Shared Circle',
       })) as CirclePick[];
+      return await Promise.all(basePicks.map(async (pick) => ({
+        ...pick,
+        avatar_url: await resolveOfflineImageUri(`circle-pick:${pick.profile_id}:${pick.avatar_url ?? 'none'}`, pick.avatar_url),
+      })));
     }
     logger.warn('[circles] profile_suggestions_rpc_failed', {
       error: String(suggestionError.message || suggestionError),
@@ -369,18 +624,19 @@ export default function CirclesScreen() {
 
     const { data } = await db
       .from('circle_members')
-      .select('circle_id,profile_id,circles(name),profiles(id,full_name,age,avatar_url,looking_for,current_country,city)')
+      .select('circle_id,profile_id,circles(name),profiles(id,full_name,age,avatar_url,looking_for,current_country,city,gender)')
       .in('circle_id', activeCircleIds)
       .eq('status', 'active')
       .neq('profile_id', currentProfileId)
       .limit(24);
 
     const seen = new Set<string>();
-    return (data ?? [])
+    const basePicks = (data ?? [])
       .map((row: any) => {
         const pickedProfile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
         const pickedCircle = normalizeCircle(row.circles);
         if (!pickedProfile?.id || seen.has(String(pickedProfile.id))) return null;
+        if (!isBinaryOppositeGenderMatch(profile?.gender, pickedProfile.gender)) return null;
         seen.add(String(pickedProfile.id));
         const reasonParts = [
           pickedCircle?.name ? 'Shared Circle' : null,
@@ -398,7 +654,11 @@ export default function CirclesScreen() {
       })
       .filter(Boolean)
       .slice(0, 3) as CirclePick[];
-  }, [currentProfileId]);
+    return await Promise.all(basePicks.map(async (pick) => ({
+      ...pick,
+      avatar_url: await resolveOfflineImageUri(`circle-pick:${pick.profile_id}:${pick.avatar_url ?? 'none'}`, pick.avatar_url),
+    })));
+  }, [currentProfileId, profile?.gender]);
 
   const loadCircleMemberPreviews = useCallback(async (circleIds: string[]) => {
     const visibleCircleIds = [...new Set(circleIds.filter(Boolean))];
@@ -413,12 +673,12 @@ export default function CirclesScreen() {
       .order('joined_at', { ascending: false })
       .limit(Math.max(18, visibleCircleIds.length * 6));
 
-    return (data ?? []).reduce((acc: Record<string, CircleMemberPreview[]>, row: any) => {
+    const previews = (data ?? []).reduce((acc: Record<string, CircleMemberPreview[]>, row: any) => {
       const circleId = String(row.circle_id);
       const pickedProfile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
       if (!pickedProfile?.id || !pickedProfile.avatar_url) return acc;
       const existing = acc[circleId] ?? [];
-      if (existing.length >= 3 || existing.some((item) => item.profile_id === String(pickedProfile.id))) return acc;
+      if (existing.length >= 12 || existing.some((item) => item.profile_id === String(pickedProfile.id))) return acc;
       acc[circleId] = [
         ...existing,
         {
@@ -429,6 +689,21 @@ export default function CirclesScreen() {
       ];
       return acc;
     }, {} as Record<string, CircleMemberPreview[]>);
+    const hydratedEntries = await Promise.all(
+      (Object.entries(previews) as [string, CircleMemberPreview[]][]).map(async ([circleId, members]) => ([
+        circleId,
+        await Promise.all(
+          members.map(async (member) => ({
+            ...member,
+            avatar_url: await resolveOfflineImageUri(
+              `circle-member-preview:${circleId}:${member.profile_id}:${member.avatar_url ?? 'none'}`,
+              member.avatar_url,
+            ),
+          })),
+        ),
+      ] as const)),
+    );
+    return Object.fromEntries(hydratedEntries) as Record<string, CircleMemberPreview[]>;
   }, []);
 
   const loadCircles = useCallback(async () => {
@@ -437,6 +712,27 @@ export default function CirclesScreen() {
     setLoadError(null);
 
     try {
+      const netState = await fetchNetInfo().catch(() => null);
+      const canUseLiveNetwork = isNetworkConnectionAvailable(netState);
+      setNetworkReady(canUseLiveNetwork);
+
+      if (!canUseLiveNetwork) {
+        const offlineState =
+          (await migrateLegacyCirclesHubSnapshot(currentProfileId, scope)) ??
+          (await readCirclesHubSnapshotState(currentProfileId, scope));
+        setCirclesSnapshotInfo({
+          hasSnapshot: Boolean(offlineState.data),
+          savedAt: offlineState.savedAt,
+          isStale: offlineState.isStale,
+        });
+        if (offlineState.data) {
+          applyCirclesSnapshot(offlineState.data);
+          return;
+        }
+        setLoadError('Circles need a connection the first time they load on this device.');
+        return;
+      }
+
       const membershipsPromise = db
         .from('circle_members')
         .select('id,circle_id,role,status,circles(id,name,slug,description,short_description,visibility,category,created_by_profile_id,cover_image_url,icon_url,image_path,image_updated_at,circle_type,status,visibility_scope,country_code,country_name,region,city,diaspora_tags,culture_tags,faith_tags,interest_tags,audience_tags,is_official,is_partner,is_featured,requires_join_approval,member_count,active_this_week_count,gathering_count,archived_at)')
@@ -468,7 +764,7 @@ export default function CirclesScreen() {
 
       const gatheringsPromise = db
         .from('gatherings')
-        .select('id,circle_id,title,starts_at,city,country_code,gathering_type,is_partner_venue,safe_first_date_space,attendee_count')
+        .select('id,circle_id,title,description,poster_url,starts_at,city,country_code,gathering_type,presentation_mode,featured_profile_id,featured_profile:profiles!gatherings_featured_profile_id_fkey(id,full_name,avatar_url,city,region),seat_context,host_created_for_member,is_partner_venue,safe_first_date_space,attendee_count,venue_name')
         .eq('status', 'approved')
         .gte('starts_at', new Date().toISOString())
         .order('starts_at', { ascending: true })
@@ -566,28 +862,42 @@ export default function CirclesScreen() {
       setPicks(nextPicks);
       setImageUrls(nextImages);
       setMemberPreviewsByCircleId(nextMemberPreviews);
+      setCirclesSnapshotInfo({
+        hasSnapshot: true,
+        savedAt: Date.now(),
+        isStale: false,
+      });
 
-      if (circlesCacheKey) {
-        void writeCache(circlesCacheKey, {
-          myCircles: memberships,
-          discoverCircles: sortedDiscover,
-          creatorCircles: (creatorCircleRows ?? []) as CircleV2[],
-          creatorGatherings: (creatorGatheringRows ?? []) as Gathering[],
-          prompts: (promptRows ?? []) as CirclePrompt[],
-          gatherings: (gatheringRows ?? []) as Gathering[],
-          gists: globalGists,
-          warmIntros: (warmIntroRows ?? []) as WarmIntro[],
-          picks: nextPicks,
-          imageUrls: nextImages,
-          memberPreviewsByCircleId: nextMemberPreviews,
-        });
-      }
+      void writeCirclesHubSnapshot(currentProfileId, scope, {
+        myCircles: memberships,
+        discoverCircles: sortedDiscover,
+        creatorCircles: (creatorCircleRows ?? []) as CircleV2[],
+        creatorGatherings: (creatorGatheringRows ?? []) as Gathering[],
+        prompts: (promptRows ?? []) as CirclePrompt[],
+        gatherings: (gatheringRows ?? []) as Gathering[],
+        gists: globalGists,
+        warmIntros: (warmIntroRows ?? []) as WarmIntro[],
+        picks: nextPicks,
+        imageUrls: nextImages,
+        memberPreviewsByCircleId: nextMemberPreviews,
+      });
     } catch (error) {
+      const offlineState =
+        (await migrateLegacyCirclesHubSnapshot(currentProfileId, scope)) ??
+        (await readCirclesHubSnapshotState(currentProfileId, scope));
+      setCirclesSnapshotInfo({
+        hasSnapshot: Boolean(offlineState.data),
+        savedAt: offlineState.savedAt,
+        isStale: offlineState.isStale,
+      });
+      if (offlineState.data) {
+        applyCirclesSnapshot(offlineState.data);
+      }
       setLoadError(error instanceof Error ? error.message : 'Could not load Circles.');
     } finally {
       setLoading(false);
     }
-  }, [circlesCacheKey, currentProfileId, loadCircleMemberPreviews, loadCirclePicks, profile, refreshImageUrls, scope]);
+  }, [applyCirclesSnapshot, currentProfileId, loadCircleMemberPreviews, loadCirclePicks, profile, refreshImageUrls, scope]);
 
   useFocusEffect(
     useCallback(() => {
@@ -679,17 +989,6 @@ export default function CirclesScreen() {
     }
   }, [creating, isAdmin, loadCircles, newCity, newName, newPurpose, newScope, profile]);
 
-  const prefillCircleRequest = useCallback((circle: CircleV2) => {
-    setNewName(circle.name ?? '');
-    setNewPurpose(circle.description ?? circle.short_description ?? '');
-    setNewCity(circle.city ?? (profile?.city ?? ''));
-    const nextScope = ['country', 'local', 'diaspora', 'global', 'invite_only'].includes(String(circle.visibility_scope ?? ''))
-      ? (circle.visibility_scope as 'country' | 'local' | 'diaspora' | 'global' | 'invite_only')
-      : 'country';
-    setNewScope(nextScope);
-    setCreateOpen(true);
-  }, [profile?.city]);
-
   const handleSubmitGathering = useCallback(async () => {
     Keyboard.dismiss();
     const title = newGatheringTitle.trim();
@@ -768,26 +1067,6 @@ export default function CirclesScreen() {
     profile,
   ]);
 
-  const prefillGatheringRequest = useCallback((gathering: Gathering) => {
-    setNewGatheringTitle(gathering.title ?? '');
-    setNewGatheringDescription(gathering.description ?? '');
-    setNewGatheringCity(gathering.city ?? (profile?.city ?? ''));
-    setNewGatheringVenue(gathering.venue_name ?? '');
-    const type = ['physical', 'online', 'hybrid'].includes(String(gathering.gathering_type ?? ''))
-      ? (gathering.gathering_type as 'physical' | 'online' | 'hybrid')
-      : 'physical';
-    setNewGatheringType(type);
-    setNewGatheringCircleId(gathering.circle_id ?? null);
-    if (gathering.starts_at) {
-      const parsed = new Date(gathering.starts_at);
-      if (!Number.isNaN(parsed.getTime())) {
-        setNewGatheringDate(parsed.toISOString().slice(0, 10));
-        setNewGatheringTime(parsed.toTimeString().slice(0, 5));
-      }
-    }
-    setGatheringOpen(true);
-  }, [profile?.city]);
-
   const handleJoin = useCallback(async (circle: CircleV2) => {
     if (!currentProfileId) return;
     try {
@@ -817,6 +1096,42 @@ export default function CirclesScreen() {
       Alert.alert('Attend failed', error instanceof Error ? error.message : 'Please try again.');
     }
   }, [loadCircles]);
+
+  const handleAddGatheringToCalendar = useCallback(async (gathering?: Gathering | null) => {
+    if (!gathering) return;
+    if (Platform.OS === 'web') {
+      Alert.alert('Add to Calendar', 'Calendar saving is available in the iOS and Android app.');
+      return;
+    }
+
+    try {
+      const startDate = new Date(gathering.starts_at);
+      if (Number.isNaN(startDate.getTime())) {
+        Alert.alert('Add to Calendar', 'This Gathering does not have a valid start time yet.');
+        return;
+      }
+
+      const endDate = new Date(startDate);
+      endDate.setHours(endDate.getHours() + 2);
+
+      const noteParts = [
+        gathering.description?.trim() || null,
+        gathering.safe_first_date_space ? 'Safe first-date space' : null,
+        gathering.is_partner_venue ? 'Hosted at a partner venue' : null,
+      ].filter(Boolean);
+
+      await Calendar.createEventInCalendarAsync({
+        title: gathering.title,
+        startDate,
+        endDate,
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        location: [gathering.venue_name, gathering.city].filter(Boolean).join(', ') || undefined,
+        notes: noteParts.length ? noteParts.join('\n\n') : undefined,
+      });
+    } catch (error: any) {
+      Alert.alert('Add to Calendar', error?.message || 'Unable to open your calendar right now.');
+    }
+  }, []);
 
   const handleWarmIntroDecision = useCallback(async (intro: WarmIntro | null | undefined, decision: 'accept' | 'decline') => {
     if (!intro?.id) return;
@@ -858,31 +1173,388 @@ export default function CirclesScreen() {
 
   const upcomingGathering = gatherings[0] ?? null;
   const warmIntro = warmIntros[0] ?? null;
-  const availableGistPerspectives = [...new Set(gists.map((item) => String(item.perspective ?? 'general').toLowerCase()))];
-  const gist = gists.find((item) => String(item.perspective ?? 'general').toLowerCase() === gistPerspective)
-    ?? gists.find((item) => item.perspective === 'general')
+  const preferredGistPerspective = getPreferredGistPerspective((profile as any)?.religion);
+  const allAvailableGistPerspectives = [...new Set(gists.map((item) => String(item.perspective ?? 'general').toLowerCase()))];
+  const availableGistPerspectives = buildVisibleGistPerspectives(allAvailableGistPerspectives, (profile as any)?.religion);
+  const gistSelectionOrder = buildGistSelectionOrder(gistPerspective, (profile as any)?.religion);
+  const gist = gistSelectionOrder
+    .map((perspective) => gists.find((item) => String(item.perspective ?? 'general').toLowerCase() === perspective))
+    .find(Boolean)
     ?? gists[0]
     ?? null;
   const joinedCircles = myCircles
     .filter((membership) => membership.status === 'active')
     .map((membership) => membership.circles)
     .filter(Boolean) as CircleV2[];
+  const visibleJoinedCircles = showAllJoinedCircles
+    ? joinedCircles
+    : joinedCircles.slice(0, CIRCLE_SECTION_PREVIEW_LIMIT);
+  const hasCirclesHubContent =
+    myCircles.length > 0 ||
+    discoverCircles.length > 0 ||
+    creatorCircles.length > 0 ||
+    creatorGatherings.length > 0 ||
+    prompts.length > 0 ||
+    gatherings.length > 0 ||
+    gists.length > 0 ||
+    warmIntros.length > 0 ||
+    picks.length > 0;
   const approvedCreatorCircles = creatorCircles.filter((circle) => circle.status === 'approved');
   const creatorStudioVisible = canSubmitCircle || canSubmitGathering || creatorCircles.length > 0 || creatorGatherings.length > 0;
   const scopeLabel = SCOPES.find((item) => item.key === scope)?.label ?? 'My country';
-  const discoverySnapshot = loading
+  const filteredDiscoverCircles = useMemo(() => {
+    const query = discoveryQuery.trim().toLowerCase();
+    if (!query) return discoverCircles;
+    return discoverCircles.filter((circle) => {
+      const haystack = [
+        circle.name,
+        circle.short_description,
+        circle.description,
+        circle.category,
+        circle.country_name,
+        circle.city,
+        ...(circle.audience_tags ?? []),
+        ...(circle.culture_tags ?? []),
+        ...(circle.faith_tags ?? []),
+        ...(circle.interest_tags ?? []),
+        ...(circle.diaspora_tags ?? []),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [discoverCircles, discoveryQuery]);
+  const discoverySnapshotLegacy = loading
     ? 'Refreshing circles, prompts, and gatherings for your community.'
     : `${discoverCircles.length} circles to explore · ${joinedCircles.length} joined · ${picks.length} Circle Picks`;
+
+  const creatorQueueCount = creatorCircles.length + creatorGatherings.length;
+  void discoverySnapshotLegacy;
+  const circlesHubNotice = !networkReady && circlesSnapshotInfo.hasSnapshot
+    ? {
+        title: 'Offline mode',
+        message: circlesSnapshotInfo.isStale
+          ? `Showing saved Circles from ${formatSnapshotAgeLabel(circlesSnapshotInfo.savedAt)}. Some activity may be out of date.`
+          : 'Showing your saved Circles from this device while the connection is offline.',
+        icon: 'wifi-off' as const,
+      }
+    : loadError && hasCirclesHubContent
+      ? {
+          title: 'Showing saved Circles',
+          message: circlesSnapshotInfo.hasSnapshot
+            ? `We could not refresh the hub. Saved data from ${formatSnapshotAgeLabel(circlesSnapshotInfo.savedAt)} is still available.`
+            : 'We could not fully refresh the hub right now.',
+          icon: 'cloud-alert' as const,
+        }
+      : circlesSnapshotInfo.hasSnapshot && circlesSnapshotInfo.isStale && !loading
+        ? {
+            title: 'Saved snapshot',
+            message: `Circles last synced ${formatSnapshotAgeLabel(circlesSnapshotInfo.savedAt)}. Pull back here online to refresh live activity.`,
+            icon: 'history' as const,
+          }
+        : null;
+  const discoverySnapshot = loading
+    ? 'Refreshing circles, prompts, and gatherings for your community.'
+    : discoveryQuery.trim()
+      ? `${filteredDiscoverCircles.length} matches for "${discoveryQuery.trim()}" · ${joinedCircles.length} joined`
+      : `${discoverCircles.length} circles to explore · ${joinedCircles.length} joined · ${picks.length} Circle Picks`;
+  const visibleDiscoverCircles = showAllDiscoverCircles
+    ? filteredDiscoverCircles
+    : filteredDiscoverCircles.slice(0, CIRCLE_SECTION_PREVIEW_LIMIT);
+
+  useEffect(() => {
+    setShowAllDiscoverCircles(false);
+  }, [discoveryQuery, scope]);
+
+  useEffect(() => {
+    setShowAllJoinedCircles(false);
+  }, [scope]);
+
+  const joinedCircleSignals = useMemo(() => {
+    const promptCircleId = activePrompt?.circle_id ?? null;
+    const gatheringCircleId = upcomingGathering?.circle_id ?? null;
+    const introCircleId = warmIntro?.circle_id ?? null;
+
+    return joinedCircles
+      .map((circle) => {
+        const activeCount = Math.max(0, Number(circle.active_this_week_count ?? 0));
+        const gatheringCount = Math.max(0, Number(circle.gathering_count ?? 0));
+        const hasPrompt = promptCircleId === circle.id;
+        const hasGathering = gatheringCircleId === circle.id;
+        const hasWarmIntro = introCircleId === circle.id;
+        const score = (activeCount * 3) + (gatheringCount * 2) + (hasPrompt ? 5 : 0) + (hasGathering ? 7 : 0) + (hasWarmIntro ? 9 : 0);
+
+        let eyebrow = 'Active';
+        let summary = activeCount > 0 ? `${activeCount} active this week` : 'Warm context waiting';
+
+        if (hasWarmIntro) {
+          eyebrow = 'Warm intro';
+          summary = 'A host-curated introduction is waiting on you.';
+        } else if (hasGathering) {
+          eyebrow = 'Gathering';
+          summary = upcomingGathering?.title?.trim() || 'A gathering is coming up in this Circle.';
+        } else if (hasPrompt) {
+          eyebrow = 'Prompt live';
+          summary = activePrompt?.title?.trim() || 'A fresh prompt is pulling people back in.';
+        } else if (gatheringCount > 0) {
+          eyebrow = 'Plans';
+          summary = `${gatheringCount} gathering${gatheringCount === 1 ? '' : 's'} in motion.`;
+        }
+
+        return { circle, score, eyebrow, summary };
+      })
+      .sort((left, right) => right.score - left.score || (right.circle.member_count ?? 0) - (left.circle.member_count ?? 0));
+  }, [
+    activePrompt?.circle_id,
+    activePrompt?.title,
+    joinedCircles,
+    upcomingGathering?.circle_id,
+    upcomingGathering?.title,
+    warmIntro?.circle_id,
+  ]);
+  const liveCircleSignals = useMemo(
+    () => joinedCircleSignals.filter((item) => item.score > 0).slice(0, 3),
+    [joinedCircleSignals],
+  );
+  const heroLeadSignal = liveCircleSignals[0] ?? null;
+  const heroAttentionCount = Number(Boolean(warmIntro)) + Number(Boolean(upcomingGathering)) + Number(Boolean(activePrompt));
+  const heroTitle = joinedCircles.length === 0
+    ? 'Start with a Circle that fits your values.'
+    : heroLeadSignal
+      ? `${heroLeadSignal.circle.name} feels warm right now.`
+      : 'Your Circle map is set. Now make it warmer.';
+  const heroBody = joinedCircles.length === 0
+    ? 'Join or request a Circle so prompts, gatherings, and introductions stop feeling like a cold start.'
+    : heroLeadSignal
+      ? `${heroLeadSignal.summary} Re-enter where context is already forming instead of starting from zero.`
+      : 'Your joined Circles are quiet right now. Switch scope, browse new spaces, or request a more values-led room.';
+  const gistReadTimeLabel = getGistReadTimeLabel(gist);
+  const gistLensLabel = gistPerspective === 'general' ? 'General lens' : `${gistPerspective[0].toUpperCase()}${gistPerspective.slice(1)} lens`;
+  const gistReaderContent = useMemo(() => buildGistReaderSections(gist, gistPerspective), [gist, gistPerspective]);
+  const currentGistLocalState = gist
+    ? gistLocalState[gist.id] ?? getDefaultRelationshipGistLocalState(gistPerspective)
+    : null;
+  const gistProgressLabel = getGistProgressLabel(currentGistLocalState);
+
+  const handleSelectGistPerspective = useCallback((perspective: string) => {
+    if (!availableGistPerspectives.includes(perspective)) return;
+    setGistPerspectiveTouched(true);
+    setGistPerspective(perspective);
+    setGistLensPickerOpen(false);
+    setGistLensMenuAnchor(null);
+    setGistLensPickerContext(null);
+  }, [availableGistPerspectives]);
+
+  const handleOpenPreviewGistLensPicker = useCallback((event: GestureResponderEvent) => {
+    if (availableGistPerspectives.length <= 1) return;
+    const { width: windowWidth, height: windowHeight } = Dimensions.get('window');
+    const estimatedHeight = (availableGistPerspectives.length * GIST_LENS_DROPDOWN_ITEM_HEIGHT) + GIST_LENS_DROPDOWN_PADDING;
+    const triggerLeft = event.nativeEvent.pageX - event.nativeEvent.locationX;
+    const triggerTop = event.nativeEvent.pageY - event.nativeEvent.locationY;
+    const left = Math.min(
+      Math.max(16, triggerLeft),
+      Math.max(16, windowWidth - GIST_LENS_DROPDOWN_WIDTH - 16),
+    );
+    const top = Math.min(
+      Math.max(92, triggerTop + 46),
+      Math.max(92, windowHeight - estimatedHeight - 24),
+    );
+
+    setGistLensMenuAnchor({ left, top });
+    setGistLensPickerContext('preview');
+    setGistLensPickerOpen(true);
+  }, [availableGistPerspectives.length]);
+
+  const handleOpenReaderGistLensPicker = useCallback(() => {
+    if (availableGistPerspectives.length <= 1) return;
+    setGistLensPickerContext((current) => (current === 'reader' ? null : 'reader'));
+    setGistLensPickerOpen(false);
+    setGistLensMenuAnchor(null);
+  }, [availableGistPerspectives.length]);
+
+  const persistGistLocalEntry = useCallback(async (
+    gistId: string,
+    patch: Partial<ReturnType<typeof getDefaultRelationshipGistLocalState>>,
+  ) => {
+    const previous = gistLocalStateRef.current[gistId] ?? getDefaultRelationshipGistLocalState(gistPerspective);
+    const nextEntry = {
+      ...previous,
+      ...patch,
+      progress: clampRelationshipGistProgress(
+        typeof patch.progress === 'number' ? patch.progress : previous.progress,
+      ),
+    };
+    const nextState = {
+      ...gistLocalStateRef.current,
+      [gistId]: nextEntry,
+    };
+    gistLocalStateRef.current = nextState;
+    setGistLocalState(nextState);
+    await writeRelationshipGistLocalState(user?.id ?? null, nextState);
+  }, [gistPerspective, user?.id]);
+
+  const flushGistReaderProgress = useCallback(async () => {
+    if (!gist?.id) return;
+    const progress = gistReaderProgressRef.current;
+    await persistGistLocalEntry(gist.id, {
+      progress,
+      lastReadAt: Date.now(),
+      lastPerspective: gistPerspective,
+    });
+  }, [gist?.id, gistPerspective, persistGistLocalEntry]);
+
+  const queuePersistGistReaderProgress = useCallback((progress: number) => {
+    if (!gist?.id) return;
+    gistReaderProgressRef.current = progress;
+    if (gistReaderProgressSaveTimeoutRef.current) {
+      clearTimeout(gistReaderProgressSaveTimeoutRef.current);
+    }
+    gistReaderProgressSaveTimeoutRef.current = setTimeout(() => {
+      void flushGistReaderProgress();
+    }, 800);
+  }, [flushGistReaderProgress, gist?.id]);
+
+  const handleToggleSaveGist = useCallback(() => {
+    if (!gist?.id) return;
+    void persistGistLocalEntry(gist.id, {
+      saved: !(currentGistLocalState?.saved === true),
+      lastPerspective: gistPerspective,
+    });
+  }, [currentGistLocalState?.saved, gist?.id, gistPerspective, persistGistLocalEntry]);
+
+  const handleShareGist = useCallback(async () => {
+    if (!gist) return;
+    const message = [
+      gist.title?.trim() || 'Relationship Gist',
+      gistReaderContent.lead,
+      gistReaderContent.takeaway && gistReaderContent.takeaway !== gistReaderContent.lead
+        ? gistReaderContent.takeaway
+        : null,
+      'Shared from Betweener.',
+    ].filter(Boolean).join('\n\n');
+    try {
+      await Share.share({ message });
+    } catch (error) {
+      logger.warn('[circles] gist_share_failed', {
+        gistId: gist.id,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [gist, gistReaderContent.lead, gistReaderContent.takeaway]);
+
+  const handleSubmitGist = useCallback(async () => {
+    const title = gistTitleDraft.trim();
+    const shortBody = gistShortBodyDraft.trim();
+    const body = gistBodyDraft.trim();
+    if (!currentProfileId) {
+      Alert.alert('Share Gist', 'Your profile is still loading. Try again in a moment.');
+      return;
+    }
+    if (!title || title.length < 3) {
+      Alert.alert('Share Gist', 'Add a clear gist title.');
+      return;
+    }
+    if (!body || body.length < 20) {
+      Alert.alert('Share Gist', 'Add a fuller relationship note before publishing.');
+      return;
+    }
+    if (creatingGist) return;
+    setCreatingGist(true);
+    try {
+      const { error } = await db.rpc('rpc_create_circle_relationship_gist', {
+        p_circle_id: null,
+        p_actor_profile_id: currentProfileId,
+        p_title: title,
+        p_short_body: shortBody,
+        p_body: body,
+        p_perspective: gistPerspectiveDraft,
+      });
+      if (error) throw error;
+      setGistComposerOpen(false);
+      setGistTitleDraft('');
+      setGistShortBodyDraft('');
+      setGistBodyDraft('');
+      setGistPerspectiveDraft('general');
+      await loadCircles();
+      Alert.alert(
+        'Gist published',
+        'Your Betweener Relationship Gist is now live.',
+      );
+    } catch (error) {
+      Alert.alert('Share Gist', error instanceof Error ? error.message : 'Please try again.');
+    } finally {
+      setCreatingGist(false);
+    }
+  }, [
+    creatingGist,
+    currentProfileId,
+    gistBodyDraft,
+    gistPerspectiveDraft,
+    gistShortBodyDraft,
+    gistTitleDraft,
+    loadCircles,
+  ]);
+
+  useEffect(() => {
+    if (!availableGistPerspectives.length) return;
+    if (availableGistPerspectives.includes(gistPerspective)) return;
+    setGistPerspective(availableGistPerspectives[0]);
+    setGistPerspectiveTouched(false);
+  }, [availableGistPerspectives, gistPerspective]);
+
+  useEffect(() => {
+    if (gistPerspectiveTouched) return;
+    if (availableGistPerspectives.includes(preferredGistPerspective)) {
+      setGistPerspective((prev) => (prev === preferredGistPerspective ? prev : preferredGistPerspective));
+      return;
+    }
+    if (availableGistPerspectives.includes('general')) {
+      setGistPerspective((prev) => (prev === 'general' ? prev : 'general'));
+    }
+  }, [availableGistPerspectives, gistPerspectiveTouched, preferredGistPerspective]);
+
+  useEffect(() => {
+    if (!gistReaderOpen) return;
+    if (gist?.id) {
+      void persistGistLocalEntry(gist.id, {
+        lastOpenedAt: Date.now(),
+        lastPerspective: gistPerspective,
+      });
+    }
+    gistReaderProgressRef.current = currentGistLocalState?.progress ?? 0;
+    gistReaderAnim.setValue(0);
+    Animated.spring(gistReaderAnim, {
+      toValue: 1,
+      damping: 18,
+      stiffness: 180,
+      mass: 0.9,
+      useNativeDriver: true,
+    }).start();
+  }, [currentGistLocalState?.progress, gist?.id, gistPerspective, gistReaderAnim, gistReaderOpen, persistGistLocalEntry]);
+
+  useEffect(() => () => {
+    if (gistReaderProgressSaveTimeoutRef.current) {
+      clearTimeout(gistReaderProgressSaveTimeoutRef.current);
+    }
+  }, []);
 
   const joinedCirclesSection = (
     <View style={styles.section}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Your Circles</Text>
-        <Text style={styles.sectionHint}>{joinedCircles.length ? `${joinedCircles.length} joined` : 'Find your people'}</Text>
+        <View style={styles.sectionHeaderMeta}>
+          <Text style={styles.sectionHint}>{joinedCircles.length ? `${joinedCircles.length} joined` : 'Find your people'}</Text>
+          {joinedCircles.length > CIRCLE_SECTION_PREVIEW_LIMIT ? (
+            <TouchableOpacity onPress={() => setShowAllJoinedCircles((value) => !value)}>
+              <Text style={styles.sectionLink}>{showAllJoinedCircles ? 'Show less' : 'See all'}</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
       </View>
       {joinedCircles.length ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList}>
-          {joinedCircles.map((circle) => (
+          {visibleJoinedCircles.map((circle) => (
             <CircleHeroCard
               key={`joined:${circle.id}`}
               circle={circle}
@@ -925,13 +1597,92 @@ export default function CirclesScreen() {
             <TouchableOpacity style={styles.headerAction} onPress={() => void loadCircles()}>
               <MaterialCommunityIcons name="refresh" size={18} color={theme.text} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.headerActionPrimary} onPress={handleCreatePress}>
-              <MaterialCommunityIcons name="plus" size={18} color={theme.backgroundSubtle} />
+            <TouchableOpacity style={styles.headerAction} onPress={() => setActionsMenuOpen(true)}>
+              <MaterialCommunityIcons name="dots-horizontal" size={20} color={theme.text} />
             </TouchableOpacity>
           </View>
         </View>
 
-        {joinedCirclesSection}
+        {false ? <View style={styles.heroStage}>
+          <View style={styles.heroCommandDeck}>
+            <View style={styles.heroCommandHeader}>
+              <View style={styles.heroCommandCopy}>
+                <Text style={styles.heroCommandEyebrow}>Circle Command</Text>
+                <Text style={styles.heroCommandTitle}>{heroTitle}</Text>
+                <Text style={styles.heroCommandBody}>{heroBody}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.headerAction}
+                onPress={() => {
+                  if (heroLeadSignal) {
+                    openCircle(heroLeadSignal.circle.id);
+                    return;
+                  }
+                  if (!joinedCircles.length) {
+                    handleCreatePress();
+                    return;
+                  }
+                  setScope('near_me');
+                }}
+              >
+                <MaterialCommunityIcons
+                  name={heroLeadSignal ? 'arrow-top-right' : !joinedCircles.length ? 'plus' : 'compass-outline'}
+                  size={18}
+                  color={theme.text}
+                />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.heroStatsRow}>
+              <View style={styles.heroStatCard}>
+                <Text style={styles.heroStatValue}>{joinedCircles.length}</Text>
+                <Text style={styles.heroStatLabel}>Joined</Text>
+              </View>
+              <View style={styles.heroStatCard}>
+                <Text style={styles.heroStatValue}>{liveCircleSignals.length}</Text>
+                <Text style={styles.heroStatLabel}>Warm Now</Text>
+              </View>
+              <View style={styles.heroStatCard}>
+                <Text style={styles.heroStatValue}>{heroAttentionCount}</Text>
+                <Text style={styles.heroStatLabel}>Needs You</Text>
+              </View>
+            </View>
+
+            {liveCircleSignals.length ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.heroSignalRail}>
+                {liveCircleSignals.map((signal) => (
+                  <Pressable key={signal.circle.id} style={styles.heroSignalCard} onPress={() => openCircle(signal.circle.id)}>
+                    <Text style={styles.heroSignalEyebrow}>{signal.eyebrow}</Text>
+                    <Text style={styles.heroSignalTitle} numberOfLines={1}>{signal.circle.name}</Text>
+                    <Text style={styles.heroSignalBody} numberOfLines={2}>{signal.summary}</Text>
+                    <View style={styles.heroSignalMetaRow}>
+                      <Text style={styles.heroSignalMeta} numberOfLines={1}>
+                        {[signal.circle.member_count ? `${signal.circle.member_count} inside` : null, signal.circle.city ?? signal.circle.country_name ?? null].filter(Boolean).join(' · ')}
+                      </Text>
+                      <MaterialCommunityIcons name="arrow-top-right" size={14} color={circlePalette.tealStrong} />
+                    </View>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            ) : null}
+
+            <View style={styles.heroActionRow}>
+              {heroLeadSignal ? (
+                <TouchableOpacity style={styles.primaryButton} onPress={() => openCircle(heroLeadSignal.circle.id)}>
+                  <Text style={styles.primaryButtonText}>Open warmest Circle</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity style={styles.secondaryButton} onPress={() => setScope(joinedCircles.length ? 'near_me' : 'my_country')}>
+                <Text style={styles.secondaryButtonText}>{joinedCircles.length ? 'Browse nearby' : 'Browse local'}</Text>
+              </TouchableOpacity>
+              {!joinedCircles.length ? (
+                <TouchableOpacity style={styles.secondaryButton} onPress={handleCreatePress}>
+                  <Text style={styles.secondaryButtonText}>Request a Circle</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
+        </View> : null}
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.scopeRow}>
           {SCOPES.map((item) => {
@@ -949,6 +1700,45 @@ export default function CirclesScreen() {
           })}
         </ScrollView>
 
+        {gist ? (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Relationship Gist</Text>
+              <Text style={styles.sectionHint}>Open to every member</Text>
+            </View>
+            <RelationshipGistCard
+              gist={gist}
+              availablePerspectives={availableGistPerspectives}
+              selectedPerspective={gistPerspective}
+              onSelectPerspective={handleSelectGistPerspective}
+              onOpenPerspectivePicker={handleOpenPreviewGistLensPicker}
+              onOpenReader={() => setGistReaderOpen(true)}
+              saved={currentGistLocalState?.saved === true}
+              progressLabel={gistProgressLabel}
+              onToggleSaved={handleToggleSaveGist}
+            />
+          </View>
+        ) : null}
+
+        <FeaturedSlotCard
+          warmIntro={warmIntro}
+          upcomingGathering={upcomingGathering}
+          gatheringMemberPreviews={upcomingGathering?.circle_id ? memberPreviewsByCircleId[upcomingGathering.circle_id] : undefined}
+          activePrompt={activePrompt}
+          compactDate={compactDate}
+          onAcceptIntro={() => void handleWarmIntroDecision(warmIntro, 'accept')}
+          onDeclineIntro={() => void handleWarmIntroDecision(warmIntro, 'decline')}
+          onAttend={() => void handleAttend(upcomingGathering)}
+          onAddToCalendar={() => void handleAddGatheringToCalendar(upcomingGathering)}
+          onOpenGathering={() => openCircle(upcomingGathering?.circle_id)}
+          onOpenFeaturedProfile={() => {
+            const profileId = upcomingGathering?.featured_profile?.id ?? upcomingGathering?.featured_profile_id;
+            if (!profileId) return;
+            router.push({ pathname: '/profile-view', params: { profileId, source: 'circles_home' } });
+          }}
+          onAnswerPrompt={() => setPromptAnswerOpen(true)}
+        />
+
         <View style={styles.discoveryBanner}>
           <View style={styles.discoveryBannerHeader}>
             <Text style={styles.discoveryKicker}>Curated discovery</Text>
@@ -961,103 +1751,47 @@ export default function CirclesScreen() {
           <Text style={styles.discoveryBody}>{discoverySnapshot}</Text>
           <View style={styles.discoverySearchShell}>
             <MaterialCommunityIcons name="magnify" size={16} color={theme.textMuted} />
-            <Text style={styles.discoverySearchText}>Search circles, prompts, gatherings</Text>
-            <MaterialCommunityIcons name="tune-variant" size={16} color={theme.textMuted} />
+            <TextInput
+              value={discoveryQuery}
+              onChangeText={setDiscoveryQuery}
+              placeholder="Search circles, prompts, gatherings"
+              placeholderTextColor={theme.textMuted}
+              style={styles.discoverySearchInput}
+              returnKeyType="search"
+            />
+            {discoveryQuery.trim() ? (
+              <TouchableOpacity onPress={() => setDiscoveryQuery('')}>
+                <MaterialCommunityIcons name="close-circle" size={18} color={theme.textMuted} />
+              </TouchableOpacity>
+            ) : (
+              <MaterialCommunityIcons name="tune-variant" size={16} color={theme.textMuted} />
+            )}
           </View>
         </View>
 
-        {gist ? (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Relationship Gist</Text>
-              <Text style={styles.sectionHint}>Open to every member</Text>
-            </View>
-            <RelationshipGistCard
-              gist={gist}
-              availablePerspectives={availableGistPerspectives}
-              selectedPerspective={gistPerspective}
-              onSelectPerspective={setGistPerspective}
-            />
-          </View>
+        {circlesHubNotice ? (
+          <Notice
+            title={circlesHubNotice.title}
+            message={circlesHubNotice.message}
+            actionLabel={networkReady ? 'Retry' : undefined}
+            onAction={networkReady ? () => void loadCircles() : undefined}
+            icon={circlesHubNotice.icon}
+          />
         ) : null}
 
-        {creatorStudioVisible ? (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Creator studio</Text>
-              <TouchableOpacity onPress={() => router.push('/circles/manage')}>
-                <Text style={styles.manageLink}>
-                  {creatorCircles.length + creatorGatherings.length
-                    ? `Manage ${creatorCircles.length + creatorGatherings.length}`
-                    : 'Open studio'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.creatorStudioCard}>
-              <Text style={styles.creatorStudioTitle}>Build trusted spaces with approval, not noise.</Text>
-              <Text style={styles.creatorStudioBody}>
-                Request new Circles, propose Gatherings, and keep track of pending or rejected submissions in one place.
-              </Text>
-              <View style={styles.emptyActions}>
-                <TouchableOpacity style={styles.primaryButton} onPress={handleCreatePress}>
-                  <Text style={styles.primaryButtonText}>Request Circle</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.secondaryButton} onPress={handleCreateGatheringPress}>
-                  <Text style={styles.secondaryButtonText}>Request Gathering</Text>
-                </TouchableOpacity>
-              </View>
-              {creatorCircles.length || creatorGatherings.length ? (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList}>
-                  {creatorCircles.map((circle) => (
-                    <View key={`creator-circle:${circle.id}`} style={styles.creatorCard}>
-                      <View style={styles.creatorCardTop}>
-                        <Text style={styles.creatorCardType}>Circle</Text>
-                        <Text style={styles.creatorStatusPill}>{creatorStatusLabel(circle.status)}</Text>
-                      </View>
-                      <Text style={styles.creatorCardTitle} numberOfLines={1}>{circle.name}</Text>
-                      <Text style={styles.creatorCardMeta} numberOfLines={2}>
-                        {circle.short_description || circle.description || 'Awaiting curation details.'}
-                      </Text>
-                      {circle.rejected_reason ? <Text style={styles.creatorCardWarning}>Reason: {circle.rejected_reason}</Text> : null}
-                      <View style={styles.creatorCardActions}>
-                        {circle.status === 'approved' ? (
-                          <TouchableOpacity style={styles.secondaryButton} onPress={() => openCircle(circle.id)}>
-                            <Text style={styles.secondaryButtonText}>Open</Text>
-                          </TouchableOpacity>
-                        ) : null}
-                        {circle.status === 'rejected' ? (
-                          <TouchableOpacity style={styles.secondaryButton} onPress={() => prefillCircleRequest(circle)}>
-                            <Text style={styles.secondaryButtonText}>Use details again</Text>
-                          </TouchableOpacity>
-                        ) : null}
-                      </View>
-                    </View>
-                  ))}
-                  {creatorGatherings.map((gathering) => (
-                    <View key={`creator-gathering:${gathering.id}`} style={styles.creatorCard}>
-                      <View style={styles.creatorCardTop}>
-                        <Text style={styles.creatorCardType}>Gathering</Text>
-                        <Text style={styles.creatorStatusPill}>{creatorStatusLabel(gathering.status)}</Text>
-                      </View>
-                      <Text style={styles.creatorCardTitle} numberOfLines={1}>{gathering.title}</Text>
-                      <Text style={styles.creatorCardMeta} numberOfLines={2}>
-                        {[compactDate(gathering.starts_at), gathering.city, gathering.venue_name].filter(Boolean).join(' · ')}
-                      </Text>
-                      {gathering.rejected_reason ? <Text style={styles.creatorCardWarning}>Reason: {gathering.rejected_reason}</Text> : null}
-                      <View style={styles.creatorCardActions}>
-                        {gathering.status === 'rejected' ? (
-                          <TouchableOpacity style={styles.secondaryButton} onPress={() => prefillGatheringRequest(gathering)}>
-                            <Text style={styles.secondaryButtonText}>Use details again</Text>
-                          </TouchableOpacity>
-                        ) : null}
-                      </View>
-                    </View>
-                  ))}
-                </ScrollView>
-              ) : null}
-            </View>
+        {joinedCirclesSection}
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Today in your Circles</Text>
+            <Text style={styles.sectionHint}>What deserves attention first</Text>
           </View>
-        ) : null}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList}>
+            {activePrompt ? <CircleStoryCard label="Circle Prompt" title={activePrompt.prompt} /> : null}
+            {upcomingGathering ? <CircleStoryCard label="Gathering" title={upcomingGathering.title} meta={compactDate(upcomingGathering.starts_at)} /> : null}
+            {!activePrompt && !upcomingGathering ? <CircleStoryCard label="Quiet now" title="Fresh prompts and Gatherings will appear here." /> : null}
+          </ScrollView>
+        </View>
 
         {loadError && joinedCircles.length === 0 && discoverCircles.length === 0 ? (
           <Notice
@@ -1082,7 +1816,9 @@ export default function CirclesScreen() {
                 <CirclePickCard
                   key={item.profile_id}
                   pick={item}
-                  onOpenProfile={() => router.push({ pathname: '/profile-view', params: { profileId: item.profile_id } })}
+                  onOpenProfile={() =>
+                    router.push({ pathname: '/profile-view', params: { profileId: item.profile_id, source: 'circles_home' } })
+                  }
                 />
               ))}
             </ScrollView>
@@ -1094,66 +1830,542 @@ export default function CirclesScreen() {
           )}
         </View>
 
-        <FeaturedSlotCard
-          warmIntro={warmIntro}
-          upcomingGathering={upcomingGathering}
-          activePrompt={activePrompt}
-          compactDate={compactDate}
-          onAcceptIntro={() => void handleWarmIntroDecision(warmIntro, 'accept')}
-          onDeclineIntro={() => void handleWarmIntroDecision(warmIntro, 'decline')}
-          onAttend={() => void handleAttend(upcomingGathering)}
-          onAnswerPrompt={() => setPromptAnswerOpen(true)}
-        />
-
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Today in your Circles</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList}>
-            {activePrompt ? <CircleStoryCard label="Circle Prompt" title={activePrompt.prompt} /> : null}
-            {upcomingGathering ? <CircleStoryCard label="Gathering" title={upcomingGathering.title} meta={compactDate(upcomingGathering.starts_at)} /> : null}
-            {!activePrompt && !upcomingGathering ? <CircleStoryCard label="Quiet now" title="Fresh prompts and Gatherings will appear here." /> : null}
-          </ScrollView>
-        </View>
-
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Discover more Circles</Text>
-            <Text style={styles.sectionHint}>{loading ? 'Refreshing' : `${discoverCircles.length} spaces`}</Text>
+            <Text style={styles.sectionTitle}>{discoveryQuery.trim() ? 'Discovery results' : 'Discover more Circles'}</Text>
+            <View style={styles.sectionHeaderMeta}>
+              <Text style={styles.sectionHint}>{loading ? 'Refreshing' : `${filteredDiscoverCircles.length} spaces`}</Text>
+              {filteredDiscoverCircles.length > CIRCLE_SECTION_PREVIEW_LIMIT ? (
+                <TouchableOpacity onPress={() => setShowAllDiscoverCircles((value) => !value)}>
+                  <Text style={styles.sectionLink}>{showAllDiscoverCircles ? 'Show less' : 'See all'}</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
           </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList}>
-            {discoverCircles.slice(0, 8).map((circle) => (
-              <CircleHeroCard
-                key={`discover:${circle.id}`}
-                circle={circle}
-                imageUrl={imageUrls[circle.id]}
-                memberPreviews={memberPreviewsByCircleId[circle.id]}
-                mode="discover"
-                onOpen={() => openCircle(circle.id)}
-                onJoin={() => void handleJoin(circle)}
-              />
-            ))}
-            {discoverCircles.length === 0 ? (
-              <View style={styles.emptyPanel}>
-                <View style={styles.emptyBadge}>
-                  <MaterialCommunityIcons name="earth" size={18} color={theme.tint} />
-                </View>
-                <Text style={styles.emptyTitle}>No local Circles yet</Text>
-                <Text style={styles.emptyBody}>Switch scope or request a values-led Circle for your community.</Text>
-                <View style={styles.emptyActions}>
-                  {scope !== 'global' ? (
-                    <TouchableOpacity style={styles.secondaryButton} onPress={() => setScope('global')}>
-                      <Text style={styles.secondaryButtonText}>Explore global</Text>
-                    </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity style={styles.secondaryButton} onPress={() => void loadCircles()}>
-                      <Text style={styles.secondaryButtonText}>Refresh</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
+          {filteredDiscoverCircles.length ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.horizontalList}>
+              {visibleDiscoverCircles.map((circle) => (
+                <CircleHeroCard
+                  key={`discover:${circle.id}`}
+                  circle={circle}
+                  imageUrl={imageUrls[circle.id]}
+                  memberPreviews={memberPreviewsByCircleId[circle.id]}
+                  mode="discover"
+                  onOpen={() => openCircle(circle.id)}
+                  onJoin={() => void handleJoin(circle)}
+                />
+              ))}
+            </ScrollView>
+          ) : (
+            <View style={styles.emptyPanel}>
+              <View style={styles.emptyBadge}>
+                <MaterialCommunityIcons name="earth" size={18} color={theme.tint} />
               </View>
-            ) : null}
-          </ScrollView>
+              <Text style={styles.emptyTitle}>{discoveryQuery.trim() ? 'No matching Circles' : 'No local Circles yet'}</Text>
+              <Text style={styles.emptyBody}>
+                {discoveryQuery.trim()
+                  ? 'Try a broader term or switch discovery scope.'
+                  : 'Switch scope or request a values-led Circle for your community.'}
+              </Text>
+              <View style={styles.emptyActions}>
+                {discoveryQuery.trim() ? (
+                  <TouchableOpacity style={styles.secondaryButton} onPress={() => setDiscoveryQuery('')}>
+                    <Text style={styles.secondaryButtonText}>Clear search</Text>
+                  </TouchableOpacity>
+                ) : scope !== 'global' ? (
+                  <TouchableOpacity style={styles.secondaryButton} onPress={() => setScope('global')}>
+                    <Text style={styles.secondaryButtonText}>Explore global</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity style={styles.secondaryButton} onPress={() => void loadCircles()}>
+                    <Text style={styles.secondaryButtonText}>Refresh</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          )}
         </View>
       </ScrollView>
+
+      <Modal visible={gistReaderOpen} animationType="slide" onRequestClose={() => {
+        void flushGistReaderProgress();
+        setGistLensPickerContext(null);
+        setGistReaderOpen(false);
+      }}>
+        <SafeAreaView style={styles.readerScreen}>
+          <View style={styles.readerTopRow}>
+            <View style={styles.readerTopCopy}>
+              <Text style={styles.readerKicker}>Relationship Gist</Text>
+              <Text style={styles.readerTitle}>{gist?.title ?? 'Reader'}</Text>
+            </View>
+            <View style={styles.readerTopActions}>
+              <TouchableOpacity style={styles.readerActionButton} onPress={handleToggleSaveGist}>
+                <MaterialCommunityIcons
+                  name={currentGistLocalState?.saved ? 'bookmark' : 'bookmark-outline'}
+                  size={17}
+                  color={theme.text}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.readerActionButton} onPress={() => void handleShareGist()}>
+                <MaterialCommunityIcons name="share-variant-outline" size={17} color={theme.text} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.readerCloseButton} onPress={() => {
+                void flushGistReaderProgress();
+                setGistLensPickerContext(null);
+                setGistReaderOpen(false);
+              }}>
+                <MaterialCommunityIcons name="close" size={18} color={theme.text} />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          <Animated.ScrollView
+            style={[
+              styles.readerScroll,
+              {
+                opacity: gistReaderAnim,
+                transform: [
+                  {
+                    translateY: gistReaderAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [24, 0],
+                    }),
+                  },
+                ],
+              },
+            ]}
+            contentContainerStyle={styles.readerScrollContent}
+            showsVerticalScrollIndicator={false}
+            scrollEventThrottle={16}
+            onScroll={({ nativeEvent }) => {
+              const contentHeight = nativeEvent.contentSize.height;
+              const viewportHeight = nativeEvent.layoutMeasurement.height;
+              const maxOffset = Math.max(1, contentHeight - viewportHeight);
+              const progress = clampRelationshipGistProgress(nativeEvent.contentOffset.y / maxOffset);
+              queuePersistGistReaderProgress(progress);
+            }}
+          >
+            <View style={styles.readerHeroCard}>
+              <View style={styles.readerHeroGlow} />
+              <View style={styles.readerLensRow}>
+                <View style={styles.readerLensPill}>
+                  <MaterialCommunityIcons name="tune-variant" size={14} color={theme.tint} />
+                  <Text style={styles.readerLensPillText}>{gistLensLabel}</Text>
+                </View>
+                {availableGistPerspectives.length > 1 ? (
+                  <TouchableOpacity style={styles.readerLensAction} onPress={handleOpenReaderGistLensPicker}>
+                    <Text style={styles.readerLensActionText}>Change lens</Text>
+                    <MaterialCommunityIcons name="chevron-down" size={15} color={theme.tint} />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+              {gistLensPickerContext === 'reader' && availableGistPerspectives.length > 1 ? (
+                <View style={styles.readerLensDropdownOverlay}>
+                  <View style={styles.readerLensDropdown}>
+                  {availableGistPerspectives.map((item) => {
+                    const active = gistPerspective === item;
+                    return (
+                      <TouchableOpacity
+                        key={`reader-lens:${item}`}
+                        style={[styles.readerLensDropdownItem, active && styles.readerLensDropdownItemActive]}
+                        onPress={() => handleSelectGistPerspective(item)}
+                      >
+                        <View style={styles.readerLensDropdownLead}>
+                          <MaterialCommunityIcons
+                            name={getGistPerspectiveIcon(item)}
+                            size={18}
+                            color={active ? theme.tint : theme.textMuted}
+                          />
+                        </View>
+                        <Text style={[styles.readerLensDropdownTitle, active && styles.readerLensDropdownTitleActive]}>
+                          {getGistPerspectiveLabel(item)}
+                        </Text>
+                        {active ? <MaterialCommunityIcons name="check" size={17} color={theme.tint} /> : null}
+                      </TouchableOpacity>
+                    );
+                  })}
+                  </View>
+                </View>
+              ) : null}
+              <Text style={styles.readerPerspectiveLabel}>
+                {gistPerspective === 'general' ? 'General' : `${gistPerspective[0].toUpperCase()}${gistPerspective.slice(1)} lens`}
+              </Text>
+              <Text style={styles.readerLeadText}>{gistReaderContent.lead}</Text>
+              <Text style={styles.readerSubtitle}>Editorial guidance from Betweener, shaped through the lens you choose.</Text>
+            </View>
+            <View style={styles.readerFramingCard}>
+              <Text style={styles.readerSectionKicker}>Read this when</Text>
+              <Text style={styles.readerFramingText}>{gistReaderContent.framing}</Text>
+            </View>
+            {gistReaderContent.sections.length ? (
+              <View style={styles.readerSectionStack}>
+                {gistReaderContent.sections.map((section, index) => (
+                  <View key={section.id} style={styles.readerSectionCard}>
+                    <Text style={styles.readerSectionIndex}>{String(index + 1).padStart(2, '0')}</Text>
+                    <Text style={styles.readerSectionTitle}>{section.title}</Text>
+                    <Text style={styles.readerSectionBody}>{section.body}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+            <View style={styles.readerTakeawayCard}>
+              <Text style={styles.readerSectionKicker}>Carry this with you</Text>
+              <Text style={styles.readerTakeawayText}>{gistReaderContent.takeaway}</Text>
+            </View>
+            <View style={styles.readerMetaRow}>
+              <View style={styles.readerMetaPill}>
+                <MaterialCommunityIcons name="book-open-page-variant-outline" size={14} color={theme.tint} />
+                <Text style={styles.readerMetaText}>{gistReadTimeLabel}</Text>
+              </View>
+              <View style={styles.readerMetaPill}>
+                <MaterialCommunityIcons name="progress-clock" size={14} color={theme.tint} />
+                <Text style={styles.readerMetaText}>{gistProgressLabel}</Text>
+              </View>
+              <View style={styles.readerMetaPill}>
+                <MaterialCommunityIcons name="earth" size={14} color={theme.tint} />
+                <Text style={styles.readerMetaText}>Open to every Betweener member</Text>
+              </View>
+              <View style={styles.readerMetaPill}>
+                <MaterialCommunityIcons name="tune-variant" size={14} color={theme.tint} />
+                <Text style={styles.readerMetaText}>{gistLensLabel}</Text>
+              </View>
+            </View>
+          </Animated.ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      <Modal
+        visible={gistLensPickerOpen && gistLensPickerContext === 'preview'}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setGistLensPickerOpen(false);
+          setGistLensMenuAnchor(null);
+          setGistLensPickerContext(null);
+        }}
+      >
+        <Pressable
+          style={styles.lensPickerBackdrop}
+          onPress={() => {
+            setGistLensPickerOpen(false);
+            setGistLensMenuAnchor(null);
+            setGistLensPickerContext(null);
+          }}
+        >
+          <Pressable
+            style={[
+              styles.lensPickerDropdown,
+              gistLensMenuAnchor ? { left: gistLensMenuAnchor.left, top: gistLensMenuAnchor.top } : styles.lensPickerDropdownFallback,
+            ]}
+            onPress={() => undefined}
+          >
+            <View style={styles.lensPickerDropdownHeader}>
+              <View style={styles.readerLensPill}>
+                <MaterialCommunityIcons name="tune-variant" size={14} color={theme.tint} />
+                <Text style={styles.readerLensPillText}>{gistLensLabel}</Text>
+              </View>
+            </View>
+            <View style={styles.lensPickerList}>
+              {availableGistPerspectives.map((item) => {
+                const active = gistPerspective === item;
+                return (
+                  <TouchableOpacity
+                    key={`lens:${item}`}
+                    style={[styles.lensPickerItem, active && styles.lensPickerItemActive]}
+                    onPress={() => handleSelectGistPerspective(item)}
+                  >
+                    <View style={styles.lensPickerItemLead}>
+                      <MaterialCommunityIcons
+                        name={getGistPerspectiveIcon(item)}
+                        size={18}
+                        color={active ? theme.tint : theme.textMuted}
+                      />
+                    </View>
+                    <View style={styles.lensPickerItemCopy}>
+                      <Text style={[styles.lensPickerItemTitle, active && styles.lensPickerItemTitleActive]}>
+                        {getGistPerspectiveLabel(item)}
+                      </Text>
+                    </View>
+                    {active ? <MaterialCommunityIcons name="check" size={18} color={theme.tint} /> : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal
+        visible={actionsMenuOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setActionsMenuOpen(false)}
+      >
+        <Pressable style={styles.actionsMenuBackdrop} onPress={() => setActionsMenuOpen(false)}>
+          <Pressable style={styles.actionsMenuCard} onPress={() => undefined}>
+            {creatorStudioVisible ? (
+              <TouchableOpacity
+                style={styles.actionsMenuItem}
+                onPress={() => {
+                  setActionsMenuOpen(false);
+                  router.push('/circles/manage');
+                }}
+              >
+                <View style={styles.actionsMenuItemCopy}>
+                  <Text style={styles.actionsMenuItemTitle}>Creator studio</Text>
+                  <Text style={styles.actionsMenuItemBody}>
+                    {creatorQueueCount ? `Manage ${creatorQueueCount} submissions` : 'Open your operator tools'}
+                  </Text>
+                </View>
+                <MaterialCommunityIcons name="chevron-right" size={18} color={theme.textMuted} />
+              </TouchableOpacity>
+            ) : null}
+
+            <TouchableOpacity
+              style={styles.actionsMenuItem}
+              onPress={() => {
+                setActionsMenuOpen(false);
+                setCommandOpen(true);
+              }}
+            >
+              <View style={styles.actionsMenuItemCopy}>
+                <Text style={styles.actionsMenuItemTitle}>Circle Command</Text>
+                <Text style={styles.actionsMenuItemBody}>
+                  {heroLeadSignal ? heroLeadSignal.summary : 'See which Circle deserves your attention first.'}
+                </Text>
+              </View>
+              <MaterialCommunityIcons name="radar" size={18} color={theme.textMuted} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.actionsMenuItem}
+              onPress={() => {
+                setActionsMenuOpen(false);
+                handleCreatePress();
+              }}
+            >
+              <View style={styles.actionsMenuItemCopy}>
+                <Text style={styles.actionsMenuItemTitle}>Request Circle</Text>
+                <Text style={styles.actionsMenuItemBody}>Propose a new trusted space.</Text>
+              </View>
+              <MaterialCommunityIcons name="plus-circle-outline" size={18} color={theme.textMuted} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.actionsMenuItem}
+              onPress={() => {
+                setActionsMenuOpen(false);
+                handleCreateGatheringPress();
+              }}
+            >
+              <View style={styles.actionsMenuItemCopy}>
+                <Text style={styles.actionsMenuItemTitle}>Request Gathering</Text>
+                <Text style={styles.actionsMenuItemBody}>Propose an event for your Circle.</Text>
+              </View>
+              <MaterialCommunityIcons name="calendar-plus" size={18} color={theme.textMuted} />
+            </TouchableOpacity>
+
+            {isAdmin ? (
+              <TouchableOpacity
+                style={styles.actionsMenuItem}
+                onPress={() => {
+                  setActionsMenuOpen(false);
+                  router.push('/circles/manage');
+                }}
+              >
+                <View style={styles.actionsMenuItemCopy}>
+                  <Text style={styles.actionsMenuItemTitle}>Editorial studio</Text>
+                  <Text style={styles.actionsMenuItemBody}>Manage global Relationship Gists in Creator Studio.</Text>
+                </View>
+                <MaterialCommunityIcons name="chevron-right" size={18} color={theme.textMuted} />
+              </TouchableOpacity>
+            ) : null}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={commandOpen} transparent animationType="fade" onRequestClose={() => setCommandOpen(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setCommandOpen(false)}>
+          <Pressable style={styles.modalCard} onPress={() => undefined}>
+            <ScrollView
+              style={styles.modalScroll}
+              contentContainerStyle={styles.modalScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <View style={styles.heroCommandDeck}>
+                <View style={styles.heroCommandHeader}>
+                  <View style={styles.heroCommandCopy}>
+                    <Text style={styles.heroCommandEyebrow}>Circle Command</Text>
+                    <Text style={styles.heroCommandTitle}>{heroTitle}</Text>
+                    <Text style={styles.heroCommandBody}>{heroBody}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.headerAction}
+                    onPress={() => {
+                      setCommandOpen(false);
+                      if (heroLeadSignal) {
+                        openCircle(heroLeadSignal.circle.id);
+                        return;
+                      }
+                      if (!joinedCircles.length) {
+                        handleCreatePress();
+                        return;
+                      }
+                      setScope('near_me');
+                    }}
+                  >
+                    <MaterialCommunityIcons
+                      name={heroLeadSignal ? 'arrow-top-right' : !joinedCircles.length ? 'plus' : 'compass-outline'}
+                      size={18}
+                      color={theme.text}
+                    />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.heroStatsRow}>
+                  <View style={styles.heroStatCard}>
+                    <Text style={styles.heroStatValue}>{joinedCircles.length}</Text>
+                    <Text style={styles.heroStatLabel}>Joined</Text>
+                  </View>
+                  <View style={styles.heroStatCard}>
+                    <Text style={styles.heroStatValue}>{liveCircleSignals.length}</Text>
+                    <Text style={styles.heroStatLabel}>Warm Now</Text>
+                  </View>
+                  <View style={styles.heroStatCard}>
+                    <Text style={styles.heroStatValue}>{heroAttentionCount}</Text>
+                    <Text style={styles.heroStatLabel}>Needs You</Text>
+                  </View>
+                </View>
+
+                {liveCircleSignals.length ? (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.heroSignalRail}>
+                    {liveCircleSignals.map((signal) => (
+                      <Pressable
+                        key={signal.circle.id}
+                        style={styles.heroSignalCard}
+                        onPress={() => {
+                          setCommandOpen(false);
+                          openCircle(signal.circle.id);
+                        }}
+                      >
+                        <Text style={styles.heroSignalEyebrow}>{signal.eyebrow}</Text>
+                        <Text style={styles.heroSignalTitle} numberOfLines={1}>{signal.circle.name}</Text>
+                        <Text style={styles.heroSignalBody} numberOfLines={2}>{signal.summary}</Text>
+                        <View style={styles.heroSignalMetaRow}>
+                          <Text style={styles.heroSignalMeta} numberOfLines={1}>
+                            {[signal.circle.member_count ? `${signal.circle.member_count} inside` : null, signal.circle.city ?? signal.circle.country_name ?? null].filter(Boolean).join(' · ')}
+                          </Text>
+                          <MaterialCommunityIcons name="arrow-top-right" size={14} color={circlePalette.tealStrong} />
+                        </View>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                ) : null}
+
+                <View style={styles.heroActionRow}>
+                  {heroLeadSignal ? (
+                    <TouchableOpacity
+                      style={styles.primaryButton}
+                      onPress={() => {
+                        setCommandOpen(false);
+                        openCircle(heroLeadSignal.circle.id);
+                      }}
+                    >
+                      <Text style={styles.primaryButtonText}>Open warmest Circle</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  <TouchableOpacity
+                    style={styles.secondaryButton}
+                    onPress={() => {
+                      setCommandOpen(false);
+                      setScope(joinedCircles.length ? 'near_me' : 'my_country');
+                    }}
+                  >
+                    <Text style={styles.secondaryButtonText}>{joinedCircles.length ? 'Browse nearby' : 'Browse local'}</Text>
+                  </TouchableOpacity>
+                  {!joinedCircles.length ? (
+                    <TouchableOpacity
+                      style={styles.secondaryButton}
+                      onPress={() => {
+                        setCommandOpen(false);
+                        handleCreatePress();
+                      }}
+                    >
+                      <Text style={styles.secondaryButtonText}>Request a Circle</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              </View>
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={gistComposerOpen} transparent animationType="fade" onRequestClose={() => setGistComposerOpen(false)}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setGistComposerOpen(false)}>
+          <KeyboardAvoidingView
+            style={styles.modalKeyboardWrap}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          >
+            <Pressable style={styles.modalCard} onPress={() => undefined}>
+              <ScrollView
+                style={styles.modalScroll}
+                contentContainerStyle={styles.modalScrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                <Text style={styles.modalTitle}>Publish Gist</Text>
+                <Text style={styles.modalBody}>Publish editorial relationship guidance for every member on Betweener.</Text>
+                <TextInput
+                  value={gistTitleDraft}
+                  onChangeText={setGistTitleDraft}
+                  placeholder="Gist title"
+                  placeholderTextColor={theme.textMuted}
+                  style={styles.input}
+                  returnKeyType="next"
+                />
+                <TextInput
+                  value={gistShortBodyDraft}
+                  onChangeText={setGistShortBodyDraft}
+                  placeholder="Short summary for the card"
+                  placeholderTextColor={theme.textMuted}
+                  style={styles.input}
+                  returnKeyType="next"
+                />
+                <TextInput
+                  value={gistBodyDraft}
+                  onChangeText={setGistBodyDraft}
+                  placeholder="Full relationship guidance"
+                  placeholderTextColor={theme.textMuted}
+                  multiline
+                  style={[styles.input, styles.multiline, styles.gistBodyInput]}
+                />
+                <View style={styles.visibilityRow}>
+                  {GIST_PERSPECTIVES.map((item) => (
+                    <Pressable
+                      key={item}
+                      style={[styles.visibilityPill, gistPerspectiveDraft === item && styles.visibilityPillActive]}
+                      onPress={() => setGistPerspectiveDraft(item)}
+                    >
+                      <Text style={[styles.visibilityText, gistPerspectiveDraft === item && styles.visibilityTextActive]}>
+                        {item === 'general' ? 'General' : item[0].toUpperCase() + item.slice(1)}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <View style={styles.modalActions}>
+                  <TouchableOpacity style={styles.secondaryButton} onPress={() => setGistComposerOpen(false)}>
+                    <Text style={styles.secondaryButtonText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.primaryButton} disabled={creatingGist} onPress={handleSubmitGist}>
+                    <Text style={styles.primaryButtonText}>{creatingGist ? 'Publishing...' : 'Publish Gist'}</Text>
+                  </TouchableOpacity>
+                </View>
+              </ScrollView>
+            </Pressable>
+          </KeyboardAvoidingView>
+        </Pressable>
+      </Modal>
 
       <Modal visible={paywallOpen} transparent animationType="fade" onRequestClose={() => setPaywallOpen(false)}>
         <Pressable style={styles.modalBackdrop} onPress={() => setPaywallOpen(false)}>
@@ -1383,7 +2595,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
   const palette = getCirclePulsePalette(isDark ? 'dark' : 'light');
   return StyleSheet.create({
     container: { flex: 1, backgroundColor: palette.surface },
-    content: { paddingHorizontal: 18, paddingTop: 14, paddingBottom: 28, gap: 22 },
+    content: { paddingHorizontal: 18, paddingTop: 14, paddingBottom: 34, gap: 24 },
     header: { flexDirection: 'row', alignItems: 'center', gap: 12 },
     headerTitle: { fontSize: 40, color: palette.text, fontFamily: 'PlayfairDisplay_700Bold' },
     headerSubtitle: { marginTop: 4, fontSize: 13, color: palette.textSoft },
@@ -1411,6 +2623,62 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       shadowOffset: { width: 0, height: 8 },
       elevation: 8,
     },
+    heroStage: { gap: 14 },
+    heroCommandDeck: {
+      padding: 16,
+      borderRadius: 24,
+      borderWidth: 1,
+      borderColor: palette.outlineSoft,
+      backgroundColor: palette.surfaceStrong,
+      gap: 14,
+    },
+    heroCommandHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
+    heroCommandCopy: { flex: 1, gap: 6 },
+    heroCommandEyebrow: {
+      color: palette.tealStrong,
+      fontSize: 11,
+      fontWeight: '900',
+      letterSpacing: 1.7,
+      textTransform: 'uppercase',
+    },
+    heroCommandTitle: { color: palette.text, fontSize: 20, lineHeight: 25, fontFamily: 'PlayfairDisplay_700Bold' },
+    heroCommandBody: { color: palette.textSoft, fontSize: 12, lineHeight: 18 },
+    heroStatsRow: { flexDirection: 'row', gap: 10 },
+    heroStatCard: {
+      flex: 1,
+      paddingHorizontal: 12,
+      paddingVertical: 12,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: palette.outlineSoft,
+      backgroundColor: palette.surfaceMuted,
+      gap: 4,
+    },
+    heroStatValue: { color: palette.text, fontSize: 20, fontWeight: '900' },
+    heroStatLabel: { color: palette.textMuted, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1 },
+    heroSignalRail: { gap: 10, paddingRight: 8 },
+    heroSignalCard: {
+      width: 214,
+      paddingHorizontal: 14,
+      paddingVertical: 13,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: palette.outlineSoft,
+      backgroundColor: palette.surfaceMuted,
+      gap: 6,
+    },
+    heroSignalEyebrow: {
+      color: palette.tealStrong,
+      fontSize: 10.5,
+      fontWeight: '900',
+      letterSpacing: 1.2,
+      textTransform: 'uppercase',
+    },
+    heroSignalTitle: { color: palette.text, fontSize: 15, fontWeight: '800' },
+    heroSignalBody: { color: palette.textSoft, fontSize: 12, lineHeight: 17 },
+    heroSignalMetaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 2 },
+    heroSignalMeta: { flex: 1, color: palette.textMuted, fontSize: 11, fontWeight: '700' },
+    heroActionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
     scopeRow: { gap: 8, paddingRight: 18 },
     scopePill: {
       flexDirection: 'row',
@@ -1427,12 +2695,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
     scopeText: { color: palette.textSoft, fontSize: 12, fontWeight: '700' },
     scopeTextActive: { color: palette.tealInk },
     discoveryBanner: {
-      padding: 16,
+      padding: 18,
       borderRadius: 24,
       borderWidth: 1,
       borderColor: palette.outlineSoft,
       backgroundColor: palette.surfaceStrong,
-      gap: 10,
+      gap: 12,
     },
     discoveryBannerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
     discoveryKicker: {
@@ -1454,7 +2722,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       borderColor: palette.tealBorder,
     },
     discoveryScopeText: { color: palette.teal, fontSize: 11, fontWeight: '800' },
-    discoveryTitle: { color: palette.text, fontSize: 19, lineHeight: 24, fontFamily: 'PlayfairDisplay_700Bold' },
+    discoveryTitle: { color: palette.text, fontSize: 22, lineHeight: 28, fontFamily: 'PlayfairDisplay_700Bold' },
     discoveryBody: { color: palette.textSoft, fontSize: 12, lineHeight: 18 },
     discoverySearchShell: {
       flexDirection: 'row',
@@ -1469,18 +2737,29 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       backgroundColor: palette.surfaceMuted,
     },
     discoverySearchText: { flex: 1, color: palette.textMuted, fontSize: 12, fontWeight: '600' },
-    section: { gap: 12 },
+    discoverySearchInput: {
+      flex: 1,
+      color: palette.text,
+      fontSize: 12,
+      fontWeight: '600',
+      paddingVertical: 0,
+    },
+    section: { gap: 13 },
     sectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
     sectionTitle: { color: palette.text, fontSize: 17, fontWeight: '800' },
     sectionHint: { color: palette.textMuted, fontSize: 12, fontWeight: '600' },
     manageLink: { color: palette.teal, fontSize: 12, fontWeight: '800' },
     creatorStudioCard: {
-      gap: 8,
+      gap: 10,
+      padding: 16,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: palette.outlineSoft,
+      backgroundColor: palette.surfaceStrong,
     },
-    creatorStudioTitle: { display: 'none' },
-    creatorStudioBody: { display: 'none' },
+    creatorStudioTitle: { color: palette.text, fontSize: 17, fontWeight: '800' },
+    creatorStudioBody: { color: palette.textSoft, fontSize: 12, lineHeight: 18 },
     creatorCard: {
-      display: 'none',
       width: 244,
       padding: 14,
       borderRadius: 20,
@@ -1514,6 +2793,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
     creatorCardWarning: { color: '#F6B885', fontSize: 11, lineHeight: 16, fontWeight: '700' },
     creatorCardActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, minHeight: 32 },
     horizontalList: { gap: 12, paddingRight: 18 },
+    sectionHeaderMeta: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    sectionLink: { color: palette.tealStrong, fontSize: 11, fontWeight: '800' },
     circleCard: {
       width: 260,
       minHeight: 248,
@@ -1826,6 +3107,280 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       borderColor: palette.outline,
     },
     secondaryButtonText: { color: palette.text, fontSize: 12, fontWeight: '800' },
+    actionsMenuBackdrop: {
+      flex: 1,
+      backgroundColor: palette.overlay,
+      alignItems: 'flex-end',
+      paddingTop: 88,
+      paddingHorizontal: 18,
+    },
+    actionsMenuCard: {
+      width: 280,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: palette.outlineSoft,
+      backgroundColor: palette.surfaceStrong,
+      overflow: 'hidden',
+    },
+    actionsMenuItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 15,
+      borderBottomWidth: 1,
+      borderBottomColor: palette.outlineSoft,
+    },
+    actionsMenuItemCopy: { flex: 1, gap: 3 },
+    actionsMenuItemTitle: { color: palette.text, fontSize: 14, fontWeight: '800' },
+    actionsMenuItemBody: { color: palette.textSoft, fontSize: 11, lineHeight: 16 },
+    readerScreen: {
+      flex: 1,
+      backgroundColor: palette.surface,
+      paddingHorizontal: 18,
+      paddingTop: 10,
+      paddingBottom: 22,
+      gap: 16,
+    },
+    readerTopRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
+    readerTopCopy: { flex: 1, gap: 6 },
+    readerTopActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    readerKicker: {
+      color: palette.tealStrong,
+      fontSize: 11,
+      fontWeight: '900',
+      letterSpacing: 1.7,
+      textTransform: 'uppercase',
+    },
+    readerTitle: { color: palette.text, fontSize: 30, lineHeight: 36, fontFamily: 'PlayfairDisplay_700Bold' },
+    readerSubtitle: { color: palette.textSoft, fontSize: 14, lineHeight: 21 },
+    readerActionButton: {
+      width: 42,
+      height: 42,
+      borderRadius: 21,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: palette.surfaceStrong,
+      borderWidth: 1,
+      borderColor: palette.outlineSoft,
+    },
+    readerCloseButton: {
+      width: 42,
+      height: 42,
+      borderRadius: 21,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: palette.surfaceStrong,
+      borderWidth: 1,
+      borderColor: palette.outlineSoft,
+    },
+    readerLensRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+    readerLensPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 7,
+      paddingHorizontal: 13,
+      paddingVertical: 8,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: palette.outlineSoft,
+      backgroundColor: palette.surfaceMuted,
+    },
+    readerLensPillText: { color: palette.text, fontSize: 12, fontWeight: '800' },
+    readerLensAction: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
+      backgroundColor: palette.surfaceStrong,
+      borderWidth: 1,
+      borderColor: palette.outlineSoft,
+    },
+    readerLensActionText: { color: palette.tealStrong, fontSize: 12, fontWeight: '800' },
+    readerLensDropdownOverlay: {
+      position: 'absolute',
+      top: 64,
+      right: 20,
+      zIndex: 8,
+      alignItems: 'flex-end',
+    },
+    readerLensDropdown: {
+      width: 224,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: palette.outlineSoft,
+      backgroundColor: palette.surfaceStrong,
+      overflow: 'hidden',
+      shadowColor: '#000',
+      shadowOpacity: 0.18,
+      shadowRadius: 16,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 8,
+    },
+    readerLensDropdownItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingHorizontal: 14,
+      paddingVertical: 13,
+      borderBottomWidth: 1,
+      borderBottomColor: palette.outlineSoft,
+      backgroundColor: 'transparent',
+    },
+    readerLensDropdownItemActive: {
+      backgroundColor: palette.tealSoft,
+    },
+    readerLensDropdownLead: {
+      width: 22,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    readerLensDropdownTitle: {
+      flex: 1,
+      color: palette.text,
+      fontSize: 14,
+      fontWeight: '800',
+    },
+    readerLensDropdownTitleActive: { color: palette.teal },
+    readerScroll: { flex: 1 },
+    readerScrollContent: { gap: 18, paddingBottom: 40, paddingTop: 4 },
+    readerHeroCard: {
+      overflow: 'hidden',
+      padding: 20,
+      borderRadius: 28,
+      borderWidth: 1,
+      borderColor: palette.purpleBorder,
+      backgroundColor: palette.surfaceStrong,
+      gap: 14,
+    },
+    readerHeroGlow: {
+      position: 'absolute',
+      top: -30,
+      right: -12,
+      width: 180,
+      height: 180,
+      borderRadius: 90,
+      backgroundColor: 'rgba(123,97,255,0.14)',
+    },
+    readerPerspectiveLabel: {
+      alignSelf: 'flex-start',
+      color: palette.tealStrong,
+      fontSize: 10,
+      fontWeight: '900',
+      letterSpacing: 1.5,
+      textTransform: 'uppercase',
+    },
+    readerLeadText: { color: palette.text, fontSize: 25, lineHeight: 35, fontFamily: 'PlayfairDisplay_700Bold' },
+    readerBody: { color: palette.textSoft, fontSize: 17, lineHeight: 31 },
+    readerFramingCard: {
+      padding: 18,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: palette.outlineSoft,
+      backgroundColor: palette.surfaceStrong,
+      gap: 8,
+    },
+    readerFramingText: { color: palette.textSoft, fontSize: 14, lineHeight: 22 },
+    readerSectionStack: { gap: 14 },
+    readerSectionCard: {
+      padding: 18,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: palette.outlineSoft,
+      backgroundColor: palette.surfaceStrong,
+      gap: 8,
+    },
+    readerSectionKicker: {
+      color: palette.tealStrong,
+      fontSize: 10,
+      fontWeight: '900',
+      letterSpacing: 1.4,
+      textTransform: 'uppercase',
+    },
+    readerSectionIndex: {
+      color: palette.textMuted,
+      fontSize: 10,
+      fontWeight: '900',
+      letterSpacing: 1.5,
+      textTransform: 'uppercase',
+    },
+    readerSectionTitle: { color: palette.text, fontSize: 20, lineHeight: 26, fontFamily: 'PlayfairDisplay_700Bold' },
+    readerSectionBody: { color: palette.textSoft, fontSize: 15, lineHeight: 25 },
+    readerTakeawayCard: {
+      padding: 18,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: palette.tealBorder,
+      backgroundColor: palette.tealSoft,
+      gap: 8,
+    },
+    readerTakeawayText: { color: palette.text, fontSize: 16, lineHeight: 26, fontWeight: '700' },
+    readerMetaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+    readerMetaPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      borderRadius: 999,
+      backgroundColor: palette.surfaceStrong,
+      borderWidth: 1,
+      borderColor: palette.outlineSoft,
+    },
+    readerMetaText: { color: palette.textSoft, fontSize: 12, fontWeight: '700' },
+    lensPickerBackdrop: {
+      flex: 1,
+      backgroundColor: 'rgba(3, 14, 16, 0.06)',
+    },
+    lensPickerDropdown: {
+      position: 'absolute',
+      width: 236,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: palette.outlineSoft,
+      backgroundColor: palette.surfaceStrong,
+      overflow: 'hidden',
+      padding: 12,
+      gap: 8,
+      shadowColor: '#000',
+      shadowOpacity: 0.24,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 10 },
+      elevation: 10,
+    },
+    lensPickerDropdownFallback: {
+      top: 108,
+      right: 16,
+    },
+    lensPickerDropdownHeader: {
+      paddingBottom: 4,
+      borderBottomWidth: 1,
+      borderBottomColor: palette.outlineSoft,
+    },
+    lensPickerList: { gap: 4 },
+    lensPickerItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 13,
+      borderRadius: 16,
+      backgroundColor: 'transparent',
+    },
+    lensPickerItemActive: {
+      backgroundColor: palette.tealSoft,
+    },
+    lensPickerItemLead: {
+      width: 22,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    lensPickerItemCopy: { flex: 1 },
+    lensPickerItemTitle: { color: palette.text, fontSize: 14, fontWeight: '800' },
+    lensPickerItemTitleActive: { color: palette.teal },
     modalBackdrop: {
       flex: 1,
       justifyContent: 'center',
@@ -1863,6 +3418,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) => {
       fontSize: 13,
     },
     multiline: { minHeight: 92, textAlignVertical: 'top' },
+    gistBodyInput: { minHeight: 132 },
     rowInputs: { flexDirection: 'row', gap: 10 },
     rowInput: { flex: 1 },
     visibilityRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },

@@ -63,7 +63,7 @@ export default function MomentsScreen() {
       : null;
   const highlightCommentIdParam = typeof params.commentId === 'string' ? params.commentId : null;
   const highlightReactionEmojiParam = typeof params.reactionEmoji === 'string' ? params.reactionEmoji : null;
-  const { momentUsers, loading, refresh, offlineMediaByMomentId } = useMoments({
+  const { momentUsers, loading, offlineMediaByMomentId } = useMoments({
     currentUserId: user?.id,
     currentUserProfile: profile,
   });
@@ -340,7 +340,6 @@ export default function MomentsScreen() {
   };
 
   const openMomentActions = (moment: Moment) => {
-    const syncState = syncStateByMomentId[moment.id] ?? null;
     const open = async () => {
       const snapshot = await getMomentOfflineMutationSnapshot();
       const issues = collectMomentSyncIssues([...snapshot.failed, ...snapshot.pending], moment.id);

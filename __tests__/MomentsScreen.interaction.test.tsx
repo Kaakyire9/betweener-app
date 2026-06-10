@@ -1,6 +1,5 @@
 // @ts-nocheck
 import React from 'react';
-import { View } from 'react-native';
 import { fireEvent, render } from '@testing-library/react-native';
 
 let mockParams: Record<string, any> = {};
@@ -100,7 +99,7 @@ jest.mock('expo-image', () => {
   };
 });
 
-import MomentsScreen from '@/app/moments/index';
+const MomentsScreen = require('@/app/moments/index').default;
 
 describe('Moments screen circle context', () => {
   beforeEach(() => {

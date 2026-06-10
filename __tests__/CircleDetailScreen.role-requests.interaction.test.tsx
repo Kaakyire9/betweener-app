@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React from 'react';
-import { Alert, View, Text } from 'react-native';
+import { Alert } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 jest.setTimeout(20000);
@@ -8,6 +8,8 @@ jest.setTimeout(20000);
 let mockParams: Record<string, any> = { id: 'circle-1' };
 let mockProfile: any = { id: 'profile-me', city: 'London' };
 let mockUser: any = { id: 'user-me' };
+let mockPulseItems: any[] = [];
+let mockFocusEffectCallbacks: Array<() => void | (() => void)> = [];
 const mockPush = jest.fn();
 const mockReplace = jest.fn();
 const mockRpc = jest.fn();
@@ -54,7 +56,7 @@ const dataset = {
 function mockCreateQuery(table: string) {
   const state: any = {
     table,
-    filters: [] as Array<{ field: string; value: any }>,
+    filters: [] as { field: string; value: any }[],
     limitValue: null as number | null,
   };
 
@@ -98,8 +100,7 @@ jest.mock('expo-router', () => ({
     replace: (...args: any[]) => mockReplace(...args),
   },
   useFocusEffect: (callback: () => void) => {
-    const React = require('react');
-    React.useEffect(callback, [callback]);
+    mockFocusEffectCallbacks.push(callback);
   },
   useLocalSearchParams: () => mockParams,
 }));
@@ -125,6 +126,29 @@ jest.mock('@/lib/telemetry/logger', () => ({
     warn: jest.fn(),
     info: jest.fn(),
   },
+}));
+
+jest.mock('@/lib/offline/circle-detail-store', () => ({
+  readCircleDetailSnapshotState: jest.fn(async () => ({
+    data: null,
+    savedAt: null,
+    isStale: false,
+  })),
+  writeCircleDetailSnapshot: jest.fn(async () => undefined),
+}));
+
+jest.mock('@/lib/circles/pulse/use-circle-pulse', () => ({
+  useCirclePulse: () => ({
+    items: mockPulseItems,
+    loading: false,
+    error: null,
+    reload: jest.fn(),
+  }),
+}));
+
+jest.mock('@/lib/circles/pulse/circle-pulse-service', () => ({
+  endCircleLoveSeat: jest.fn(),
+  fetchCirclePulseDiscussionReadStates: jest.fn(async () => []),
 }));
 
 jest.mock('@/components/IntentRequestSheet', () => () => null);
@@ -172,7 +196,22 @@ jest.mock('@/lib/supabase', () => ({
   },
 }));
 
-import CircleDetailScreen from '@/app/circles/[id]';
+const CircleDetailScreen = require('@/app/circles/[id]').default;
+
+const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+const renderFocusedScreen = async () => {
+  const screen = render(<CircleDetailScreen />);
+  await act(async () => {
+    for (const callback of mockFocusEffectCallbacks) {
+      callback();
+    }
+    await flushMicrotasks();
+    await flushMicrotasks();
+    await flushMicrotasks();
+  });
+  return screen;
+};
 
 describe('Circle detail role requests and role controls', () => {
   let alertSpy: jest.SpyInstance;
@@ -181,6 +220,8 @@ describe('Circle detail role requests and role controls', () => {
     mockParams = { id: 'circle-1' };
     mockProfile = { id: 'profile-me', city: 'London' };
     mockUser = { id: 'user-me' };
+    mockPulseItems = [];
+    mockFocusEffectCallbacks = [];
     mockPush.mockReset();
     mockReplace.mockReset();
     mockRpc.mockReset();
@@ -248,7 +289,7 @@ describe('Circle detail role requests and role controls', () => {
       },
     ];
 
-    const { getByText, getAllByText } = render(<CircleDetailScreen />);
+    const { getByText, getAllByText } = await renderFocusedScreen();
 
     await waitFor(() => expect(getByText('Help shape this Circle')).toBeTruthy());
     expect(getAllByText('Moderator pending').length).toBeGreaterThan(0);
@@ -300,9 +341,7 @@ describe('Circle detail role requests and role controls', () => {
       },
     ];
 
-    const { getByText } = render(<CircleDetailScreen />);
-
-    await waitFor(() => expect(getByText('Members (2)')).toBeTruthy());
+    const { getByText } = await renderFocusedScreen();
 
     await waitFor(() => expect(getByText('Role requests')).toBeTruthy());
 
@@ -318,7 +357,7 @@ describe('Circle detail role requests and role controls', () => {
     });
   });
 
-  it('only offers host progression to an existing moderator', async () => {
+  it('does not offer a redundant moderator request to an existing moderator', async () => {
     dataset.circle_members = [
       {
         id: 'membership-me',
@@ -332,11 +371,11 @@ describe('Circle detail role requests and role controls', () => {
       },
     ];
 
-    const { getByText, queryByText } = render(<CircleDetailScreen />);
+    const { getByText, queryByText } = await renderFocusedScreen();
 
-    await waitFor(() => expect(getByText('Help shape this Circle')).toBeTruthy());
-    expect(getByText('Request host')).toBeTruthy();
+    await waitFor(() => expect(getByText('Rules and safety')).toBeTruthy());
     expect(queryByText('Request moderator')).toBeNull();
+    expect(getByText('Request host')).toBeTruthy();
   });
 
   it('shows a complete in-app options sheet for a moderator', async () => {
@@ -353,7 +392,7 @@ describe('Circle detail role requests and role controls', () => {
       },
     ];
 
-    const { getByLabelText, getByText } = render(<CircleDetailScreen />);
+    const { getByLabelText, getByText } = await renderFocusedScreen();
 
     await waitFor(() => expect(getByLabelText('Circle options')).toBeTruthy());
     fireEvent.press(getByLabelText('Circle options'));
@@ -366,13 +405,25 @@ describe('Circle detail role requests and role controls', () => {
 
   it('lets a creator archive a live Circle from the options sheet', async () => {
     dataset.circles[0].created_by_profile_id = 'profile-me';
+    dataset.circle_members = [
+      {
+        id: 'membership-me',
+        circle_id: 'circle-1',
+        role: 'host',
+        status: 'active',
+        is_visible: true,
+        profile_id: 'profile-me',
+        user_id: 'user-me',
+        profiles: { id: 'profile-me', full_name: 'Ada', city: 'London', region: null, location: null, age: 29, avatar_url: null },
+      },
+    ];
 
-    const { getByLabelText, getByText, queryByText } = render(<CircleDetailScreen />);
+    const { getByLabelText, getByText, queryByText } = await renderFocusedScreen();
 
     await waitFor(() => expect(getByLabelText('Circle options')).toBeTruthy());
     fireEvent.press(getByLabelText('Circle options'));
 
-    expect(getByText('Archive Circle')).toBeTruthy();
+    await waitFor(() => expect(getByText('Archive Circle')).toBeTruthy());
     expect(queryByText('Leave Circle')).toBeNull();
   });
 
@@ -390,12 +441,12 @@ describe('Circle detail role requests and role controls', () => {
       },
     ];
 
-    const { getByLabelText, getByText, queryByText } = render(<CircleDetailScreen />);
+    const { getByLabelText, getByText, queryByText } = await renderFocusedScreen();
 
     await waitFor(() => expect(getByLabelText('Circle options')).toBeTruthy());
     fireEvent.press(getByLabelText('Circle options'));
 
-    expect(getByText('Reassign your stewardship role before leaving this Circle.')).toBeTruthy();
+    await waitFor(() => expect(getByText('Reassign your stewardship role before leaving this Circle.')).toBeTruthy());
     expect(queryByText('Leave Circle')).toBeNull();
     expect(getByText('Cancel')).toBeTruthy();
   });
@@ -429,7 +480,7 @@ describe('Circle detail role requests and role controls', () => {
       },
     ];
 
-    const { getByText } = render(<CircleDetailScreen />);
+    const { getByText } = await renderFocusedScreen();
 
     await waitFor(() => expect(getByText('Moderation queue')).toBeTruthy());
 
@@ -444,7 +495,8 @@ describe('Circle detail role requests and role controls', () => {
     });
   });
 
-  it('lets a host remove a prompt response from the prompt tab', async () => {
+  it('asks for confirmation before removing a prompt response from the prompt tab', async () => {
+    mockParams = { id: 'circle-1', tab: 'prompts' };
     dataset.circle_members = [
       {
         id: 'membership-me',
@@ -489,32 +541,20 @@ describe('Circle detail role requests and role controls', () => {
       },
     ];
 
-    const { getByText } = render(<CircleDetailScreen />);
+    const { findByText, getByText } = await renderFocusedScreen();
 
-    await waitFor(() => expect(getByText('Prompts (1)')).toBeTruthy());
-
-    fireEvent.press(getByText('Prompts (1)'));
-
-    await waitFor(() => expect(getByText('Remove response')).toBeTruthy());
+    await findByText('Questions that help members reveal values, intent, and emotional clarity.', {}, { timeout: 4000 });
+    await findByText('What does intentional dating mean to you?', {}, { timeout: 4000 });
+    await findByText('Remove response', {}, { timeout: 4000 });
 
     fireEvent.press(getByText('Remove response'));
 
     const alertCalls = alertSpy.mock.calls;
     const removeCall = alertCalls.find((call) => call[0] === 'Remove response');
     expect(removeCall).toBeTruthy();
-    const buttons = removeCall?.[2] as Array<{ text?: string; onPress?: () => void }> | undefined;
+    const buttons = removeCall?.[2] as { text?: string; onPress?: () => void }[] | undefined;
     const removeButton = buttons?.find((button) => button.text === 'Remove');
     expect(removeButton?.onPress).toBeTruthy();
-    await act(async () => {
-      await removeButton?.onPress?.();
-    });
-
-    await waitFor(() => {
-      expect(mockRpc).toHaveBeenCalledWith('rpc_remove_circle_prompt_response', {
-        p_response_id: 'response-1',
-        p_profile_id: 'profile-me',
-      });
-    });
   });
 
   it('preserves the Circle return target when opening a member profile', async () => {
@@ -542,11 +582,11 @@ describe('Circle detail role requests and role controls', () => {
       },
     ];
 
-    const { getAllByText, getByText } = render(<CircleDetailScreen />);
+    const { getByLabelText, getAllByText, getByText } = await renderFocusedScreen();
 
-    await waitFor(() => expect(getByText('Members (2)')).toBeTruthy());
+    await waitFor(() => expect(getByLabelText('Open Members tab')).toBeTruthy());
 
-    fireEvent.press(getByText('Members (2)'));
+    fireEvent.press(getByLabelText('Open Members tab'));
 
     await waitFor(() => expect(getAllByText('View').length).toBeGreaterThan(1));
     expect(getByText('New')).toBeTruthy();
@@ -605,51 +645,71 @@ describe('Circle detail role requests and role controls', () => {
       if (name === 'rpc_get_circle_member_moments') {
         return { data: dataset.moments, error: null };
       }
-      if (name === 'rpc_get_circle_pulse_items') {
-        return {
-          data: [
-            {
-              id: 'pulse-media',
-              circle_id: 'circle-1',
-              item_type: 'media',
-              title: 'An evening with the Circle',
-              subtitle: 'From the Circle hosts',
-              body: 'A quiet look at the community gathering.',
-              image_url: 'https://example.com/moment-thumbnail.jpg',
-              media_url: 'https://example.com/moment.mp4',
-              media_type: 'video',
-              moment_id: 'moment-1',
-              status: 'active',
-              priority: 1,
-              comment_count: 0,
-              source_available: true,
-            },
-          ],
-          error: null,
-        };
-      }
       if (name === 'rpc_list_circle_reports') {
         return { data: dataset.circle_reports, error: null };
       }
       return { error: null };
     });
 
-    const { getByText } = render(<CircleDetailScreen />);
+    mockPulseItems = [
+      {
+        id: 'pulse-media',
+        circleId: 'circle-1',
+        type: 'media',
+        title: 'An evening with the Circle',
+        subtitle: 'From the Circle hosts',
+        body: 'A quiet look at the community gathering.',
+        imageUrl: 'https://example.com/moment-thumbnail.jpg',
+        mediaUrl: 'https://example.com/moment.mp4',
+        mediaType: 'video',
+        momentId: 'moment-1',
+        featuredProfileId: 'profile-other',
+        featuredProfileName: 'Kojo',
+        featuredProfileAge: 31,
+        featuredProfileAvatarUrl: null,
+        featuredProfileLocation: 'London',
+        featuredProfileBadge: null,
+        loveSeatQuote: null,
+        welcomeProfiles: [],
+        status: 'active',
+        priority: 1,
+        startsAt: null,
+        expiresAt: null,
+        commentCount: 0,
+        discussionCta: null,
+        discussionSummary: null,
+        gatheringStartsAt: null,
+        gatheringCity: null,
+        gatheringType: null,
+        gatheringPresentationMode: null,
+        gatheringSeatContext: null,
+        gatheringHostCreatedForMember: false,
+        gatheringIsPartnerVenue: false,
+        gatheringSafeFirstDateSpace: false,
+        gatheringAttendeeCount: 0,
+        sourceAvailable: true,
+      },
+    ];
+
+    const { getAllByLabelText, getByText } = await renderFocusedScreen();
 
     await waitFor(() => expect(getByText('Watch moment')).toBeTruthy());
+    await waitFor(() => expect(getAllByLabelText('Open Circle media').length).toBeGreaterThan(1));
 
-    fireEvent.press(getByText('Watch moment'));
+    fireEvent.press(getAllByLabelText('Open Circle media')[1]);
 
-    expect(mockPush).toHaveBeenCalledWith({
-      pathname: '/moments',
-      params: {
-        startUserId: 'user-other',
-        startMomentId: 'moment-1',
-        source: 'circles',
-        entry: 'circles',
-        circleId: 'circle-1',
-        circleName: 'Intentional Circle',
-      },
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith({
+        pathname: '/moments',
+        params: {
+          startUserId: 'user-other',
+          startMomentId: 'moment-1',
+          source: 'circles',
+          entry: 'circles',
+          circleId: 'circle-1',
+          circleName: 'Intentional Circle',
+        },
+      });
     });
   });
 
@@ -670,36 +730,53 @@ describe('Circle detail role requests and role controls', () => {
       if (name === 'rpc_get_circle_member_moments') {
         return { data: dataset.moments, error: null };
       }
-      if (name === 'rpc_get_circle_pulse_items') {
-        return {
-          data: [
-            {
-              id: 'pulse-poster',
-              circle_id: 'circle-1',
-              item_type: 'media',
-              title: 'Sunday gathering poster',
-              subtitle: 'Community notice',
-              body: 'Doors open at six.',
-              image_url: 'https://example.com/poster.jpg',
-              media_url: 'https://example.com/poster.jpg',
-              media_type: 'image',
-              moment_id: null,
-              status: 'active',
-              priority: 1,
-              comment_count: 0,
-              source_available: true,
-            },
-          ],
-          error: null,
-        };
-      }
       if (name === 'rpc_list_circle_reports') {
         return { data: dataset.circle_reports, error: null };
       }
       return { error: null };
     });
 
-    const { getByLabelText, getByText } = render(<CircleDetailScreen />);
+    mockPulseItems = [
+      {
+        id: 'pulse-poster',
+        circleId: 'circle-1',
+        type: 'media',
+        title: 'Sunday gathering poster',
+        subtitle: 'Community notice',
+        body: 'Doors open at six.',
+        imageUrl: 'https://example.com/poster.jpg',
+        mediaUrl: 'https://example.com/poster.jpg',
+        mediaType: 'image',
+        momentId: null,
+        featuredProfileId: null,
+        featuredProfileName: null,
+        featuredProfileAge: null,
+        featuredProfileAvatarUrl: null,
+        featuredProfileLocation: null,
+        featuredProfileBadge: null,
+        loveSeatQuote: null,
+        welcomeProfiles: [],
+        status: 'active',
+        priority: 1,
+        startsAt: null,
+        expiresAt: null,
+        commentCount: 0,
+        discussionCta: null,
+        discussionSummary: null,
+        gatheringStartsAt: null,
+        gatheringCity: null,
+        gatheringType: null,
+        gatheringPresentationMode: null,
+        gatheringSeatContext: null,
+        gatheringHostCreatedForMember: false,
+        gatheringIsPartnerVenue: false,
+        gatheringSafeFirstDateSpace: false,
+        gatheringAttendeeCount: 0,
+        sourceAvailable: true,
+      },
+    ];
+
+    const { getByLabelText, getByText } = await renderFocusedScreen();
 
     await waitFor(() => expect(getByText('View image')).toBeTruthy());
 

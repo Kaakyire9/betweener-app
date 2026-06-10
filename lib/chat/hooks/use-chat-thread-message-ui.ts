@@ -5,7 +5,6 @@ import { Alert, Keyboard } from "react-native";
 import { encodeBase64 } from "tweetnacl-util";
 
 import type { MessageType } from "@/components/chat/types";
-import { ChatThreadActionsService } from "@/lib/chat/chat-thread-actions-service";
 import { ChatThreadRemoteService } from "@/lib/chat/chat-thread-remote-service";
 import { decryptMediaBytes, getOrCreateDeviceKeypair } from "@/lib/e2ee";
 import { supabase } from "@/lib/supabase";

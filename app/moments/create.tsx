@@ -69,10 +69,10 @@ type PostedMomentPreview = {
   sourceLabel?: string;
 };
 
-const TEXT_STYLE_TOGGLES: Array<{
+const TEXT_STYLE_TOGGLES: {
   key: 'bold' | 'italic' | 'underline' | 'strike';
   label: string;
-}> = [
+}[] = [
   { key: 'bold', label: 'B' },
   { key: 'italic', label: 'I' },
   { key: 'underline', label: 'U' },

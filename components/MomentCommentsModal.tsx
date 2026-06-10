@@ -143,6 +143,8 @@ export default function MomentCommentsModal({
   const [activeHighlightCommentId, setActiveHighlightCommentId] = useState<string | null>(null);
   const scrollViewRef = useRef<ScrollView | null>(null);
   const commentLayoutsRef = useRef<Record<string, number>>({});
+  const profilesRef = useRef<Record<string, ProfileMini>>({});
+  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const styles = useMemo(() => createStyles(theme), [theme]);
   const highlightedComment = useMemo(
     () => comments.find((comment) => comment.id === activeHighlightCommentId) ?? null,
@@ -189,6 +191,7 @@ export default function MomentCommentsModal({
           hadCachedComments = cached.comments.length > 0;
           setComments(cached.comments);
           setProfiles(cached.profilesByUserId as Record<string, ProfileMini>);
+          profilesRef.current = cached.profilesByUserId as Record<string, ProfileMini>;
           nextComments = cached.comments as CommentRow[];
           Object.assign(nextProfiles, cached.profilesByUserId as Record<string, ProfileMini>);
         }
@@ -211,15 +214,22 @@ export default function MomentCommentsModal({
         Object.keys(nextProfiles).forEach((key) => delete nextProfiles[key]);
 
         const userIds = Array.from(new Set(nextComments.map((c) => c.user_id)));
-        if (userIds.length > 0) {
-          const { data: profileRows } = await supabase.from('profiles').select('id, user_id, full_name, avatar_url').in('user_id', userIds);
+        const missingUserIds = userIds.filter((userId) => !profilesRef.current[userId]);
+        userIds.forEach((userId) => {
+          const cachedProfile = profilesRef.current[userId];
+          if (cachedProfile) nextProfiles[userId] = cachedProfile;
+        });
+        if (missingUserIds.length > 0) {
+          const { data: profileRows } = await supabase.from('profiles').select('id, user_id, full_name, avatar_url').in('user_id', missingUserIds);
           (profileRows || []).forEach((p: any) => {
             if (!p.user_id) return;
-            nextProfiles[p.user_id] = {
+            const normalizedProfile = {
               id: p.id,
               full_name: p.full_name ?? null,
               avatar_url: p.avatar_url ?? null,
             };
+            nextProfiles[p.user_id] = normalizedProfile;
+            profilesRef.current[p.user_id] = normalizedProfile;
           });
         }
       }
@@ -296,6 +306,7 @@ export default function MomentCommentsModal({
 
       setComments(nextComments);
       setProfiles(nextProfiles);
+      profilesRef.current = nextProfiles;
       setCommentSyncStateById(nextCommentSyncStateById);
       if (user?.id) {
         await writeMomentCommentsSnapshot(user.id, momentId, {
@@ -341,18 +352,24 @@ export default function MomentCommentsModal({
 
   useEffect(() => {
     if (!visible || !momentId) return;
+    const scheduleFetchComments = () => {
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+      refreshTimeoutRef.current = setTimeout(() => {
+        refreshTimeoutRef.current = null;
+        void fetchComments();
+      }, 250);
+    };
     const channel = supabase
       .channel(`moment-comments-${momentId}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'moment_comments', filter: `moment_id=eq.${momentId}` },
-        () => {
-          void fetchComments();
-        },
+        scheduleFetchComments,
       )
       .subscribe();
 
     return () => {
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
       supabase.removeChannel(channel);
     };
   }, [fetchComments, momentId, visible]);

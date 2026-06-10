@@ -1,4 +1,5 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { useEvent } from 'expo';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { VideoView, useVideoPlayer } from 'expo-video';
@@ -6,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Modal, Pressable, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { GestureHandlerRootView, PanGestureHandler, State } from 'react-native-gesture-handler';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useScopedScreenAwake } from '@/hooks/use-scoped-screen-awake';
 import type { CirclePulseItem } from '@/lib/circles/pulse/circle-pulse-types';
 import { useCirclePulsePalette, type CirclePulsePalette } from '@/lib/circles/pulse/circle-pulse-theme';
 
@@ -16,11 +18,20 @@ type Props = {
   onOpenComments: (item: CirclePulseItem) => void;
 };
 
-function EditorialVideo({ uri, muted }: { uri: string; muted: boolean }) {
+function EditorialVideo({ uri, muted, instanceId }: { uri: string; muted: boolean; instanceId: string }) {
   const player = useVideoPlayer(uri, (instance) => {
     instance.loop = true;
     instance.muted = muted;
+    instance.keepScreenOnWhilePlaying = false;
     try { instance.play(); } catch {}
+  });
+  const { isPlaying } = useEvent(player as any, 'playingChange', { isPlaying: player.playing });
+  const { status } = useEvent(player as any, 'statusChange', { status: player.status });
+
+  useScopedScreenAwake({
+    enabled: isPlaying && status === 'readyToPlay',
+    reason: 'video_playback',
+    instanceId,
   });
 
   useEffect(() => {
@@ -85,7 +96,7 @@ export default function CirclePulseMediaViewer({ visible, item, onClose, onOpenC
           >
             <Animated.View accessibilityLabel="Dismiss Circle video" style={[styles.videoChrome, { transform: [{ translateY: dragY }] }]}>
           {mediaUrl ? (
-            <EditorialVideo uri={mediaUrl} muted={muted} />
+            <EditorialVideo uri={mediaUrl} muted={muted} instanceId={`circle-pulse-media:${item?.id ?? mediaUrl}`} />
           ) : (
             <View style={styles.emptyVideo}>
               <MaterialCommunityIcons name="video-off-outline" size={34} color="rgba(255,255,255,0.74)" />

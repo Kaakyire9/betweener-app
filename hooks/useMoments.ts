@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   readMomentsFeedSnapshot,
   resolveOfflineMomentMediaMap,
@@ -112,21 +112,21 @@ async function primeInteractedMomentSnapshots(params: {
       .order('created_at', { ascending: false }),
   ]);
 
-  const reactions = (reactionsRes.data || []) as Array<{
+  const reactions = (reactionsRes.data || []) as {
     id: string;
     moment_id: string;
     emoji: string;
     user_id: string;
     created_at: string;
-  }>;
-  const comments = (commentsRes.data || []) as Array<{
+  }[];
+  const comments = (commentsRes.data || []) as {
     id: string;
     moment_id: string;
     user_id: string;
     body: string;
     created_at: string;
     is_deleted: boolean;
-  }>;
+  }[];
 
   const interactionUserIds = Array.from(
     new Set([
@@ -215,6 +215,8 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
   const [profilesById, setProfilesById] = useState<Record<string, MomentProfile>>({});
   const [offlineMediaByMomentId, setOfflineMediaByMomentId] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+  const profilesByIdRef = useRef<Record<string, MomentProfile>>({});
+  const lastPrimedVisibleMomentIdsKeyRef = useRef<string | null>(null);
   const currentUserProfileId = currentUserProfile?.id ? String(currentUserProfile.id) : null;
   const currentUserProfileName = currentUserProfile?.full_name ?? null;
   const currentUserProfileAvatarUrl = currentUserProfile?.avatar_url ?? null;
@@ -250,6 +252,7 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
         setMoments((prev) => (prev.length === 0 ? (cached.moments as Moment[]) : prev));
       }
       if (cached.profilesById && Object.keys(cached.profilesById).length > 0) {
+        profilesByIdRef.current = cached.profilesById;
         setProfilesById((prev) => (Object.keys(prev).length === 0 ? cached.profilesById : prev));
       }
     })();
@@ -280,46 +283,63 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
         moments: cleaned,
       });
       setMoments(reconciled.moments);
+      const visibleMomentIdsKey = reconciled.moments.map((moment) => moment.id).join('|');
 
       const userIds = Array.from(new Set(reconciled.moments.map((m) => m.user_id))).filter(
         (id) => id && id !== currentUserId,
       );
       if (userIds.length === 0) {
+        profilesByIdRef.current = {};
         setProfilesById({});
         setMoments(reconciled.moments);
         await writeMomentsFeedSnapshot(currentUserId, { moments: reconciled.moments, profilesById: {} });
+        lastPrimedVisibleMomentIdsKeyRef.current = visibleMomentIdsKey;
         return;
       }
 
-      const { data: profiles, error: profilesErr } = await supabase
-        .from('profiles')
-        .select('id, user_id, full_name, avatar_url, photos')
-        .in('user_id', userIds);
-
-      if (profilesErr) {
-        console.log('[useMoments] profiles fetch error', profilesErr);
-        return;
-      }
-
+      const existingProfiles = profilesByIdRef.current;
+      const missingUserIds = userIds.filter((id) => !existingProfiles[id]);
       const nextProfiles: Record<string, MomentProfile> = {};
-      (profiles || []).forEach((p: any) => {
-        if (!p.user_id) return;
-        nextProfiles[p.user_id] = {
-          id: p.id,
-          full_name: p.full_name ?? null,
-          avatar_url: resolveMomentAvatarUrl(p),
-          photos: Array.isArray(p.photos) ? p.photos : null,
-        };
+      userIds.forEach((userId) => {
+        const existing = existingProfiles[userId];
+        if (existing) nextProfiles[userId] = existing;
       });
+
+      if (missingUserIds.length > 0) {
+        const { data: profiles, error: profilesErr } = await supabase
+          .from('profiles')
+          .select('id, user_id, full_name, avatar_url, photos')
+          .in('user_id', missingUserIds);
+
+        if (profilesErr) {
+          console.log('[useMoments] profiles fetch error', profilesErr);
+          return;
+        }
+
+        (profiles || []).forEach((p: any) => {
+          if (!p.user_id) return;
+          nextProfiles[p.user_id] = {
+            id: p.id,
+            full_name: p.full_name ?? null,
+            avatar_url: resolveMomentAvatarUrl(p),
+            photos: Array.isArray(p.photos) ? p.photos : null,
+          };
+        });
+      }
+
+      profilesByIdRef.current = nextProfiles;
       setProfilesById(nextProfiles);
       setMoments(reconciled.moments);
       await writeMomentsFeedSnapshot(currentUserId, { moments: reconciled.moments, profilesById: nextProfiles });
-      await primeInteractedMomentSnapshots({
-        currentUserId,
-        currentUserProfile: currentUserProfileSnapshot,
-        moments: reconciled.moments,
-        profilesById: nextProfiles,
-      });
+      if (lastPrimedVisibleMomentIdsKeyRef.current !== visibleMomentIdsKey) {
+        lastPrimedVisibleMomentIdsKeyRef.current = visibleMomentIdsKey;
+        await primeInteractedMomentSnapshots({
+          currentUserId,
+          currentUserProfile: currentUserProfileSnapshot,
+          moments: reconciled.moments,
+          profilesById: nextProfiles,
+        });
+      }
     } finally {
       setLoading(false);
     }
@@ -329,23 +349,52 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
     void refresh();
   }, [refresh]);
 
+  const scopedMomentUserIds = useMemo(() => {
+    const orderedUserIds: string[] = [];
+    const seen = new Set<string>();
+    if (currentUserId) {
+      seen.add(currentUserId);
+      orderedUserIds.push(currentUserId);
+    }
+    for (const moment of moments) {
+      const userId = typeof moment?.user_id === 'string' ? moment.user_id : '';
+      if (!userId || seen.has(userId)) continue;
+      seen.add(userId);
+      orderedUserIds.push(userId);
+      if (orderedUserIds.length >= 40) break;
+    }
+    return orderedUserIds;
+  }, [currentUserId, moments]);
+
   useEffect(() => {
     if (!currentUserId) return;
-    const channel = supabase
-      .channel('moments-updates')
-      .on(
+    let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = () => {
+      if (refreshTimeout) clearTimeout(refreshTimeout);
+      refreshTimeout = setTimeout(() => {
+        refreshTimeout = null;
+        void refresh();
+      }, 350);
+    };
+
+    const subscribedUserIds = scopedMomentUserIds.length > 0 ? scopedMomentUserIds : [currentUserId];
+    const channel = supabase.channel(`moments-updates:${currentUserId}:${subscribedUserIds.length}`);
+
+    subscribedUserIds.forEach((userId) => {
+      channel.on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'moments' },
-        () => {
-          void refresh();
-        },
-      )
-      .subscribe();
+        { event: '*', schema: 'public', table: 'moments', filter: `user_id=eq.${userId}` },
+        scheduleRefresh,
+      );
+    });
+
+    channel.subscribe();
 
     return () => {
+      if (refreshTimeout) clearTimeout(refreshTimeout);
       supabase.removeChannel(channel);
     };
-  }, [currentUserId, refresh]);
+  }, [currentUserId, refresh, scopedMomentUserIds]);
 
   useEffect(() => {
     if (!currentUserId) return;

@@ -492,7 +492,6 @@ export default function Onboarding() {
         origin_country: "Ghana",
         origin_country_code: "GH",
         origin_country_source: "explicit",
-        country_lock_policy: "ghana_locked",
         years_in_diaspora: 0,
         profile_completed: true,
         identity_status: "active",

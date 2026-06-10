@@ -134,7 +134,7 @@ const applyIntentQueueOverlay = (
 
 export const useIntentRequests = (
   userId?: string | null,
-  options?: { liveFetchEnabled?: boolean; snapshotOwnerIds?: Array<string | null | undefined> },
+  options?: { liveFetchEnabled?: boolean; snapshotOwnerIds?: (string | null | undefined)[] },
 ) => {
   const [items, setItems] = useState<IntentRequest[]>([]);
   const [loading, setLoading] = useState(false);

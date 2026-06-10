@@ -22,7 +22,7 @@ export default function OfflineSyncStatusPill() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const insets = useSafeAreaInsets();
-  const { pendingCount, failedCount, readyCount, loading } = useOfflineSyncStatus();
+  const { failedCount, loading } = useOfflineSyncStatus();
 
   const copy = useMemo(() => {
     if (loading) return null;

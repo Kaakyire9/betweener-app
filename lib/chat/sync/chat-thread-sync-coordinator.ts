@@ -71,11 +71,6 @@ export const startThreadSyncCoordinator = ({
     })();
   };
 
-  const interval = setInterval(() => {
-    if (stopped) return;
-    void fetchMessages();
-  }, 30_000);
-
   const appStateSubscription = AppState.addEventListener('change', (state) => {
     if (stopped || state !== 'active') return;
     void refreshPeerStatus();
@@ -103,7 +98,6 @@ export const startThreadSyncCoordinator = ({
     flushIfNeeded,
     stop: () => {
       stopped = true;
-      clearInterval(interval);
       appStateSubscription.remove();
     },
   };

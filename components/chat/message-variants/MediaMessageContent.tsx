@@ -30,7 +30,7 @@ const MediaMessageContent = memo(
     cachedVideoUrl,
     timeLabel,
     styles,
-    theme,
+    theme: _theme,
     isDark,
     receiptPulseStyle,
   }: MediaMessageContentProps) => {

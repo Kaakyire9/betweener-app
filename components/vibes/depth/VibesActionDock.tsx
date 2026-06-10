@@ -10,7 +10,7 @@ import { CircleOff, RotateCcw } from "lucide-react-native";
 import * as Haptics from "expo-haptics";
 import React, { memo } from "react";
 import { Animated as RNAnimated, Platform, StyleSheet, TouchableOpacity, View } from "react-native";
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from "react-native-reanimated";
+import Animated, { useAnimatedStyle, useSharedValue, withRepeat, withSequence, withTiming } from "react-native-reanimated";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { vibesMotion } from "./motionPresets";
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
@@ -26,6 +26,8 @@ type VibesActionDockProps = {
   onLike: () => void;
   superlikeBadge?: React.ReactNode;
   disabledPremium?: boolean;
+  hiddenActions?: ActionKey[];
+  highlightedAction?: ActionKey | null;
   entranceStyle?: any;
 };
 
@@ -37,6 +39,7 @@ function DockButton({
   onPress,
   children,
   isDark,
+  highlighted,
 }: {
   actionKey: ActionKey;
   size: number;
@@ -45,11 +48,32 @@ function DockButton({
   onPress: () => void;
   children: React.ReactNode;
   isDark: boolean;
+  highlighted?: boolean;
 }) {
   const scale = useSharedValue(1);
+  const highlightPulse = useSharedValue(highlighted ? 1 : 0);
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
   }));
+  const highlightStyle = useAnimatedStyle(() => ({
+    opacity: highlighted ? 0.5 + highlightPulse.value * 0.4 : 0,
+    transform: [{ scale: 0.96 + highlightPulse.value * 0.08 }],
+  }));
+
+  React.useEffect(() => {
+    if (!highlighted) {
+      highlightPulse.value = 0;
+      return;
+    }
+    highlightPulse.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 760 }),
+        withTiming(0, { duration: 760 }),
+      ),
+      -1,
+      false,
+    );
+  }, [highlightPulse, highlighted]);
 
   const handlePress = () => {
     scale.value = withTiming(0.94, vibesMotion.pressIn, () => {
@@ -63,6 +87,36 @@ function DockButton({
 
   return (
     <Animated.View style={[animatedStyle, primary ? styles.primaryLift : null]}>
+      {highlighted ? (
+        <>
+          <Animated.View style={[styles.highlightLayer, highlightStyle]} pointerEvents="none">
+            <GlowOrb
+              color={accent === "purple" ? "rgba(139,92,255,0.24)" : accent === "cream" ? "rgba(244,232,208,0.20)" : "rgba(19,168,168,0.24)"}
+              size={size + 30}
+              opacity={0.32}
+              top={-15}
+              left={-15}
+            />
+            <View
+              style={[
+                styles.highlightRing,
+                {
+                  width: size + 10,
+                  height: size + 10,
+                  borderRadius: (size + 10) / 2,
+                  top: -5,
+                  left: -5,
+                },
+                accent === "purple"
+                  ? styles.highlightRingPurple
+                  : accent === "cream"
+                    ? styles.highlightRingCream
+                    : styles.highlightRingTeal,
+              ]}
+            />
+          </Animated.View>
+        </>
+      ) : null}
       {primary ? <GlowOrb color="rgba(19,168,168,0.18)" size={size + 34} opacity={0.22} top={-17} left={-17} /> : null}
       <TouchableOpacity
         accessibilityRole="button"
@@ -121,12 +175,16 @@ function VibesActionDock({
   onPremium,
   onLike,
   superlikeBadge,
+  hiddenActions,
+  highlightedAction,
   entranceStyle,
 }: VibesActionDockProps) {
   const secondarySize = metrics.buttonSize;
   const centerSize = metrics.centerButtonSize;
   const colorScheme = useColorScheme();
   const isDark = (colorScheme ?? "light") === "dark";
+  const hiddenActionSet = React.useMemo(() => new Set(hiddenActions ?? []), [hiddenActions]);
+  const showAction = React.useCallback((actionKey: ActionKey) => !hiddenActionSet.has(actionKey), [hiddenActionSet]);
 
   return (
     <RNAnimated.View style={[styles.wrap, entranceStyle]}>
@@ -176,24 +234,34 @@ function VibesActionDock({
         <RimLight position="top" color="rgba(244,232,208,0.9)" opacity={0.12} radius={metrics.dockHeight / 2} thickness={1} />
         <RimLight position="bottom" color={VIBES_DEPTH_COLORS.teal} opacity={0.1} radius={metrics.dockHeight / 2} thickness={1} />
         <View style={styles.row}>
-          <DockButton actionKey="pass" size={secondarySize} onPress={onPass} isDark={isDark}>
-            <CircleOff size={Math.round(secondarySize * 0.43)} color={isDark ? "rgba(244,232,208,0.88)" : "#173C3B"} strokeWidth={2.2} />
-          </DockButton>
-          <DockButton actionKey="undo" size={Math.max(44, secondarySize - 4)} onPress={onUndo} isDark={isDark}>
-            <RotateCcw size={Math.round(secondarySize * 0.36)} color={VIBES_DEPTH_COLORS.teal} strokeWidth={2.25} />
-          </DockButton>
-          <DockButton actionKey="intent" size={centerSize} primary accent="teal" onPress={onIntent} isDark={isDark}>
-            <IntentMark size={Math.round(centerSize * 0.50)} color={isDark ? "#DDFBFA" : "#0F3D3E"} strokeWidth={2.2} />
-          </DockButton>
-          <View style={styles.superlikeWrap}>
-            {superlikeBadge}
-            <DockButton actionKey="premium" size={secondarySize} accent="purple" onPress={onPremium} isDark={isDark}>
-              <SignalIcon size={Math.round(secondarySize * 0.58)} color="#fff" accentColor="#F4E8D0" active strokeWidth={2.15} />
+          {showAction("pass") ? (
+            <DockButton actionKey="pass" size={secondarySize} onPress={onPass} isDark={isDark} highlighted={highlightedAction === "pass"}>
+              <CircleOff size={Math.round(secondarySize * 0.43)} color={isDark ? "rgba(244,232,208,0.88)" : "#173C3B"} strokeWidth={2.2} />
             </DockButton>
-          </View>
-          <DockButton actionKey="like" size={secondarySize} accent="cream" onPress={onLike} isDark={isDark}>
-            <MaterialCommunityIcons name="heart-outline" size={Math.round(secondarySize * 0.43)} color={isDark ? VIBES_DEPTH_COLORS.cream : "#7A5B3A"} />
-          </DockButton>
+          ) : null}
+          {showAction("undo") ? (
+            <DockButton actionKey="undo" size={Math.max(44, secondarySize - 4)} onPress={onUndo} isDark={isDark} highlighted={highlightedAction === "undo"}>
+              <RotateCcw size={Math.round(secondarySize * 0.36)} color={VIBES_DEPTH_COLORS.teal} strokeWidth={2.25} />
+            </DockButton>
+          ) : null}
+          {showAction("intent") ? (
+            <DockButton actionKey="intent" size={centerSize} primary accent="teal" onPress={onIntent} isDark={isDark} highlighted={highlightedAction === "intent"}>
+              <IntentMark size={Math.round(centerSize * 0.50)} color={isDark ? "#DDFBFA" : "#0F3D3E"} strokeWidth={2.2} />
+            </DockButton>
+          ) : null}
+          {showAction("premium") ? (
+            <View style={styles.superlikeWrap}>
+              {superlikeBadge}
+              <DockButton actionKey="premium" size={secondarySize} accent="purple" onPress={onPremium} isDark={isDark} highlighted={highlightedAction === "premium"}>
+                <SignalIcon size={Math.round(secondarySize * 0.58)} color="#fff" accentColor="#F4E8D0" active strokeWidth={2.15} />
+              </DockButton>
+            </View>
+          ) : null}
+          {showAction("like") ? (
+            <DockButton actionKey="like" size={secondarySize} accent="cream" onPress={onLike} isDark={isDark} highlighted={highlightedAction === "like"}>
+              <MaterialCommunityIcons name="heart-outline" size={Math.round(secondarySize * 0.43)} color={isDark ? VIBES_DEPTH_COLORS.cream : "#7A5B3A"} />
+            </DockButton>
+          ) : null}
         </View>
       </GlassSurface>
     </RNAnimated.View>
@@ -277,6 +345,26 @@ const styles = StyleSheet.create({
   },
   tealButton: {
     borderColor: "rgba(19,168,168,0.38)",
+  },
+  highlightLayer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  highlightRing: {
+    position: "absolute",
+    borderWidth: 1.5,
+  },
+  highlightRingTeal: {
+    borderColor: "rgba(19,168,168,0.74)",
+  },
+  highlightRingPurple: {
+    borderColor: "rgba(168,132,255,0.78)",
+  },
+  highlightRingCream: {
+    borderColor: "rgba(244,232,208,0.74)",
   },
   superlikeWrap: {
     position: "relative",

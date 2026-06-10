@@ -83,7 +83,7 @@ export const DEFAULT_MOMENT_TEXT_STYLE: MomentTextStyle = {
   strike: false,
 };
 
-export const MOMENT_TEXT_FONT_OPTIONS: Array<{ id: MomentTextFontId; label: string }> = [
+export const MOMENT_TEXT_FONT_OPTIONS: { id: MomentTextFontId; label: string }[] = [
   { id: 'sans', label: 'Sans' },
   { id: 'serif', label: 'Serif' },
   { id: 'mono', label: 'Mono' },

@@ -2,6 +2,7 @@ import { Colors } from "@/constants/theme";
 import { usePremiumState } from "@/hooks/use-premium-state";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/lib/auth-context";
+import { ChatRepository } from "@/lib/chat/local/chat-repository";
 import { getPresenceDisplay } from "@/lib/presence";
 import { fetchUserPresence, overlayPresence } from "@/lib/user-presence";
 import { getSafeRemoteImageUri } from "@/lib/profile/display-name";
@@ -11,7 +12,7 @@ import { BlurView } from "expo-blur";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -87,6 +88,9 @@ export default function DashboardScreen() {
   } = usePremiumState();
   const [greeting, setGreeting] = useState(() => getGreeting(new Date()));
   const [liveProfile, setLiveProfile] = useState<any | null>(profile ?? null);
+  const dashboardProfileCacheRef = useRef<Record<string, { id: string; full_name?: string | null; avatar_url?: string | null; account_state?: string | null; deleted_at?: string | null }>>({});
+  const matchesRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recentActivityRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setLiveProfile(profile ?? null);
@@ -256,86 +260,65 @@ export default function DashboardScreen() {
       const weekStartIso = startOfLocalDayIso(6);
 
       try {
-        const { count, error } = await supabase
-          .from('swipes')
-          .select('id', { count: 'exact', head: true })
-          .eq('target_id', myProfileId)
-          .in('action', ['LIKE', 'SUPERLIKE'])
-          .gte('created_at', weekStartIso);
+        const [likesResult, messageTimestamps, profileViewsResult] = await Promise.all([
+          supabase
+            .from('swipes')
+            .select('id', { count: 'exact', head: true })
+            .eq('target_id', myProfileId)
+            .in('action', ['LIKE', 'SUPERLIKE'])
+            .gte('created_at', weekStartIso),
+          ChatRepository.getRecentMessageActivityTimestamps(user.id, {
+            sinceIso: startOfLocalDayIso(60),
+            limit: 2000,
+          }),
+          supabase
+            .from('profile_views')
+            .select('id', { count: 'exact', head: true })
+            .eq('viewed_profile_id', myProfileId)
+            .gte('created_at', weekStartIso),
+        ]);
 
-        if (!cancelled) setLikesReceived(!error && typeof count === 'number' ? count : 0);
-      } catch {
-        if (!cancelled) setLikesReceived(0);
-      }
+        if (cancelled) return;
 
-      try {
-        const { data: msgs, error } = await supabase
-          .from('messages')
-          .select('created_at')
-          .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-          .gte('created_at', startOfLocalDayIso(60))
-          .order('created_at', { ascending: false })
-          .limit(2000);
+        setLikesReceived(!likesResult.error && typeof likesResult.count === 'number' ? likesResult.count : 0);
+        setProfileViews(!profileViewsResult.error && typeof profileViewsResult.count === 'number' ? profileViewsResult.count : 0);
 
-        if (!cancelled) {
-          if (error || !msgs) {
-            setConversationStreak(0);
-          } else {
-            const daySet = new Set<string>();
-            for (const row of msgs as any[]) {
-              const createdAt = row?.created_at;
-              if (typeof createdAt !== 'string') continue;
-              const d = new Date(createdAt);
-              if (Number.isNaN(d.getTime())) continue;
-              daySet.add(toLocalYmd(d));
-            }
-
-            const cursor = new Date();
-            cursor.setHours(0, 0, 0, 0);
-            let streak = 0;
-            while (daySet.has(toLocalYmd(cursor))) {
-              streak += 1;
-              cursor.setDate(cursor.getDate() - 1);
-            }
-
-            setConversationStreak(streak);
-          }
+        const daySet = new Set<string>();
+        for (const createdAt of messageTimestamps) {
+          const d = new Date(createdAt);
+          if (Number.isNaN(d.getTime())) continue;
+          daySet.add(toLocalYmd(d));
         }
-      } catch {
-        if (!cancelled) setConversationStreak(0);
-      }
 
-      // Best-effort: only works if you have a profile views table.
-      try {
-        const { count, error } = await supabase
-          .from('profile_views')
-          .select('id', { count: 'exact', head: true })
-          .eq('viewed_profile_id', myProfileId)
-          .gte('created_at', weekStartIso);
+        const cursor = new Date();
+        cursor.setHours(0, 0, 0, 0);
+        let streak = 0;
+        while (daySet.has(toLocalYmd(cursor))) {
+          streak += 1;
+          cursor.setDate(cursor.getDate() - 1);
+        }
 
-        if (!cancelled) setProfileViews(!error && typeof count === 'number' ? count : 0);
+        setConversationStreak(streak);
       } catch {
-        if (!cancelled) setProfileViews(0);
+        if (!cancelled) {
+          setLikesReceived(0);
+          setConversationStreak(0);
+          setProfileViews(0);
+        }
       }
     };
 
     void refreshWeekInNumbers();
+
+    const unsubscribeThreads = ChatRepository.observeThreads(user.id, () => {
+      void refreshWeekInNumbers();
+    });
 
     const channel = supabase
       .channel(`weekstats:${user.id}:${myProfileId}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'swipes', filter: `target_id=eq.${myProfileId}` },
-        () => void refreshWeekInNumbers(),
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'messages', filter: `receiver_id=eq.${user.id}` },
-        () => void refreshWeekInNumbers(),
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'messages', filter: `sender_id=eq.${user.id}` },
         () => void refreshWeekInNumbers(),
       )
       .on(
@@ -347,6 +330,7 @@ export default function DashboardScreen() {
 
     return () => {
       cancelled = true;
+      unsubscribeThreads();
       supabase.removeChannel(channel);
     };
   }, [user?.id, myProfileId]);
@@ -404,25 +388,28 @@ export default function DashboardScreen() {
           return;
         }
 
-        const { data: profilesData, error: profilesError } = await supabase
-          .from('profiles')
-          .select('id,full_name,avatar_url,account_state,deleted_at')
-          .in('id', otherProfileIds);
+        const missingProfileIds = otherProfileIds.filter((id) => !dashboardProfileCacheRef.current[id]);
+        if (missingProfileIds.length > 0) {
+          const { data: profilesData, error: profilesError } = await supabase
+            .from('profiles')
+            .select('id,full_name,avatar_url,account_state,deleted_at')
+            .in('id', missingProfileIds);
 
-        if (cancelled) return;
-        if (profilesError || !profilesData) {
-          setMatchesTodayPeople([]);
-          return;
+          if (cancelled) return;
+          if (profilesError) {
+            setMatchesTodayPeople([]);
+            return;
+          }
+          (profilesData as any[] | null | undefined)?.forEach((profile) => {
+            if (profile?.id) {
+              dashboardProfileCacheRef.current[String(profile.id)] = profile;
+            }
+          });
         }
-
-        const profileById = new Map<string, any>();
-        (profilesData as any[]).forEach((p) => {
-          if (p?.id) profileById.set(p.id, p);
-        });
 
         const list: DashboardPerson[] = otherProfileIds
           .map((pid) => {
-            const p = profileById.get(pid);
+            const p = dashboardProfileCacheRef.current[pid];
             const hasLeft = Boolean(p?.deleted_at) || String(p?.account_state || '').toLowerCase() === 'deleted';
             if (hasLeft) return null as DashboardPerson | null;
               return {
@@ -452,17 +439,30 @@ export default function DashboardScreen() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'matches', filter: `user1_id=eq.${myProfileId}` },
-        () => void fetchMatchesToday(),
+        () => {
+          if (matchesRefreshTimeoutRef.current) clearTimeout(matchesRefreshTimeoutRef.current);
+          matchesRefreshTimeoutRef.current = setTimeout(() => {
+            matchesRefreshTimeoutRef.current = null;
+            void fetchMatchesToday();
+          }, 250);
+        },
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'matches', filter: `user2_id=eq.${myProfileId}` },
-        () => void fetchMatchesToday(),
+        () => {
+          if (matchesRefreshTimeoutRef.current) clearTimeout(matchesRefreshTimeoutRef.current);
+          matchesRefreshTimeoutRef.current = setTimeout(() => {
+            matchesRefreshTimeoutRef.current = null;
+            void fetchMatchesToday();
+          }, 250);
+        },
       )
       .subscribe();
 
     return () => {
       cancelled = true;
+      if (matchesRefreshTimeoutRef.current) clearTimeout(matchesRefreshTimeoutRef.current);
       supabase.removeChannel(channel);
     };
   }, [myProfileId, startOfTodayIso]);
@@ -501,102 +501,26 @@ export default function DashboardScreen() {
 
     let cancelled = false;
 
-    const getMessagePreview = (message: any) => {
-      const type = message?.message_type ?? 'text';
-      if (message?.is_view_once && (type === 'image' || type === 'video')) {
-        return type === 'video' ? 'View once video' : 'View once photo';
-      }
-      switch (type) {
-        case 'voice':
-          return 'Voice message';
-        case 'image':
-          return 'Photo';
-        case 'video':
-          return 'Video';
-        case 'document':
-          return 'Document';
-        case 'location':
-          return 'Location';
-        case 'mood_sticker':
-          return 'Sticker';
-        default:
-          return typeof message?.text === 'string' ? message.text : '';
-      }
-    };
-
     const fetchRecentPeople = async () => {
       try {
-        const { data: messages, error } = await supabase
-          .from('messages')
-          .select('id,text,created_at,sender_id,receiver_id,is_read,message_type,is_view_once')
-          .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
-          .order('created_at', { ascending: false })
-          .limit(200);
-
-        if (cancelled) return;
-        if (error || !messages) {
-          setRecentPeople([]);
-          return;
-        }
-
-        const rows = messages as any[];
-        const convoMap = new Map<string, { lastText: string; lastAt: string; unread: number }>();
-
-        for (const msg of rows) {
-          const otherId = msg.sender_id === user.id ? msg.receiver_id : msg.sender_id;
-          if (!otherId) continue;
-
-          if (!convoMap.has(otherId)) {
-            convoMap.set(otherId, {
-              lastText: getMessagePreview(msg),
-              lastAt: typeof msg.created_at === 'string' ? msg.created_at : '',
-              unread: 0,
-            });
-          }
-
-          if (msg.receiver_id === user.id && !msg.is_read) {
-            const entry = convoMap.get(otherId);
-            if (entry) entry.unread += 1;
-          }
-        }
-
-        const otherUserIds = Array.from(convoMap.keys());
-        if (otherUserIds.length === 0) {
-          setRecentPeople([]);
-          return;
-        }
-
-        const { data: profilesData, error: profilesError } = await supabase
-          .from('profiles')
-          .select('id,user_id,full_name,avatar_url')
-          .in('user_id', otherUserIds);
-
-        if (cancelled) return;
-        if (profilesError || !profilesData) {
-          setRecentPeople([]);
-          return;
-        }
-
-        const profileByUserId = new Map<string, any>();
-        (profilesData as any[]).forEach((p) => {
-          if (p?.user_id) profileByUserId.set(p.user_id, p);
+        const threads = await ChatRepository.getThreads(user.id, {
+          includeArchived: false,
+          limit: 10,
         });
 
-        const list: DashboardPerson[] = otherUserIds
-          .map((otherId) => {
-            const p = profileByUserId.get(otherId);
-            const meta = convoMap.get(otherId);
-              return {
-                userId: otherId,
-                profileId: typeof p?.id === 'string' ? p.id : undefined,
-                name: (p?.full_name || '').trim() || 'Match',
-                avatarUrl: getSafeRemoteImageUri(p?.avatar_url),
-                unread: meta?.unread ?? 0,
-                lastMessage: (meta?.lastText || '').trim(),
-                lastMessageAt: meta?.lastAt,
-            };
-          })
-          .slice(0, 10);
+        if (cancelled) return;
+
+        const list: DashboardPerson[] = threads
+          .filter((thread) => typeof thread.peer_user_id === 'string' && thread.peer_user_id.trim().length > 0)
+          .map((thread) => ({
+            userId: String(thread.peer_user_id),
+            profileId: typeof thread.peer_profile_id === 'string' ? thread.peer_profile_id : undefined,
+            name: (thread.peer_name || '').trim() || 'Match',
+            avatarUrl: getSafeRemoteImageUri(thread.peer_avatar_url),
+            unread: Number(thread.unread_count ?? 0),
+            lastMessage: (thread.last_activity_preview || thread.last_message_preview || '').trim(),
+            lastMessageAt: thread.last_activity_at || thread.last_message_at || undefined,
+          }));
 
         setRecentPeople(list);
       } catch {
@@ -606,23 +530,13 @@ export default function DashboardScreen() {
 
     void fetchRecentPeople();
 
-    const channel = supabase
-      .channel(`messages:dashboard:${user.id}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'messages', filter: `receiver_id=eq.${user.id}` },
-        () => void fetchRecentPeople(),
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'messages', filter: `sender_id=eq.${user.id}` },
-        () => void fetchRecentPeople(),
-      )
-      .subscribe();
+    const unsubscribeThreads = ChatRepository.observeThreads(user.id, () => {
+      void fetchRecentPeople();
+    });
 
     return () => {
       cancelled = true;
-      supabase.removeChannel(channel);
+      unsubscribeThreads();
     };
   }, [user?.id]);
 
@@ -654,20 +568,20 @@ export default function DashboardScreen() {
           ),
         );
 
-        const profileById = new Map<string, any>();
-        if (senderIds.length) {
+        const missingSenderIds = senderIds.filter((id) => !dashboardProfileCacheRef.current[id]);
+        if (missingSenderIds.length) {
           const { data: profilesData } = await supabase
             .from('profiles')
             .select('id,full_name,avatar_url')
-            .in('id', senderIds);
+            .in('id', missingSenderIds);
           (profilesData || []).forEach((p: any) => {
-            if (p?.id) profileById.set(p.id, p);
+            if (p?.id) dashboardProfileCacheRef.current[String(p.id)] = p;
           });
         }
 
         const items: DashboardActivityItem[] = rows
           .map((row) => {
-            const profile = profileById.get(row.actor_id);
+            const profile = row.actor_id ? dashboardProfileCacheRef.current[String(row.actor_id)] : undefined;
               return {
                 id: String(row.id),
                 type: String(row.type || ''),
@@ -704,12 +618,19 @@ export default function DashboardScreen() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'inbox_items', filter: `user_id=eq.${user.id}` },
-        () => void fetchRecentActivity(),
+        () => {
+          if (recentActivityRefreshTimeoutRef.current) clearTimeout(recentActivityRefreshTimeoutRef.current);
+          recentActivityRefreshTimeoutRef.current = setTimeout(() => {
+            recentActivityRefreshTimeoutRef.current = null;
+            void fetchRecentActivity();
+          }, 250);
+        },
       )
       .subscribe();
 
     return () => {
       cancelled = true;
+      if (recentActivityRefreshTimeoutRef.current) clearTimeout(recentActivityRefreshTimeoutRef.current);
       supabase.removeChannel(channel);
     };
   }, [user?.id]);

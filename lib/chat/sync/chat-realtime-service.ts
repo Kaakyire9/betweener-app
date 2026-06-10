@@ -157,6 +157,7 @@ export const subscribeThreadAncillaryRealtime = ({
         event: 'INSERT',
         schema: 'public',
         table: 'message_reactions',
+        filter: `user_id=eq.${currentUserId}`,
       },
       (payload) => onReactionInsert(payload.new as RemoteReactionRow),
     )
@@ -166,6 +167,7 @@ export const subscribeThreadAncillaryRealtime = ({
         event: 'UPDATE',
         schema: 'public',
         table: 'message_reactions',
+        filter: `user_id=eq.${currentUserId}`,
       },
       (payload) => onReactionUpdate(payload.new as RemoteReactionRow),
     )
@@ -175,6 +177,37 @@ export const subscribeThreadAncillaryRealtime = ({
         event: 'DELETE',
         schema: 'public',
         table: 'message_reactions',
+        filter: `user_id=eq.${currentUserId}`,
+      },
+      (payload) => onReactionDelete(payload.old as RemoteReactionRow),
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'message_reactions',
+        filter: `user_id=eq.${peerUserId}`,
+      },
+      (payload) => onReactionInsert(payload.new as RemoteReactionRow),
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'message_reactions',
+        filter: `user_id=eq.${peerUserId}`,
+      },
+      (payload) => onReactionUpdate(payload.new as RemoteReactionRow),
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'DELETE',
+        schema: 'public',
+        table: 'message_reactions',
+        filter: `user_id=eq.${peerUserId}`,
       },
       (payload) => onReactionDelete(payload.old as RemoteReactionRow),
     )
@@ -188,6 +221,17 @@ export const subscribeThreadAncillaryRealtime = ({
         event: 'INSERT',
         schema: 'public',
         table: 'message_views',
+        filter: `viewer_id=eq.${currentUserId}`,
+      },
+      (payload) => onMessageViewInsert(payload.new as RemoteMessageViewRow),
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'message_views',
+        filter: `viewer_id=eq.${peerUserId}`,
       },
       (payload) => onMessageViewInsert(payload.new as RemoteMessageViewRow),
     )

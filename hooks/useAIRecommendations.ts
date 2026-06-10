@@ -224,7 +224,6 @@ export default function useAIRecommendations(
   const [swipeHistory, setSwipeHistory] = useState<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }[]>([]);
   const swipeHistoryRef = useRef<{ id: string; action: 'like' | 'dislike' | 'superlike'; index: number; match: Match }[]>([]);
   const mountedRef = useRef(true);
-  const presencePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mode = opts?.mode ?? 'forYou';
   const activeWindowMinutes = opts?.activeWindowMinutes ?? ACTIVE_WINDOW_MINUTES;
   const liveFetchEnabled = opts?.liveFetchEnabled !== false;
@@ -357,26 +356,52 @@ export default function useAIRecommendations(
   }, [resolvedDistanceUnit]);
 
   const presenceIdsKey = useMemo(
-    () => matches.map((m) => String(m.id)).join(','),
+    () => Array.from(new Set(matches.map((m) => String(m.id)).filter(Boolean))).slice(0, 60).join(','),
     [matches]
   );
 
   useEffect(() => {
     if (!presenceIdsKey) return;
-    if (presencePollRef.current) {
-      clearInterval(presencePollRef.current);
-      presencePollRef.current = null;
-    }
     const ids = presenceIdsKey.split(',').filter(Boolean);
     void refreshPresence(ids);
-    presencePollRef.current = setInterval(() => {
-      void refreshPresence(ids);
-    }, 15_000);
+    const channel = supabase.channel(`profiles-presence:vibes:${presenceIdsKey}`);
+    ids.forEach((id) => {
+      channel.on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${id}` },
+        (payload) => {
+          const row = payload.new as { id?: string; online?: boolean | null; last_active?: string | null } | null;
+          if (!row?.id) return;
+          setMatches((prev) => {
+            let changed = false;
+            const next = prev.map((match) => {
+              if (String(match.id) !== String(row.id)) return match;
+              const lastActive = row.last_active ?? match.lastActive ?? null;
+              const online = isOnlineFromLastActive(lastActive);
+              const nextIsActive = isActiveNowFromLastActive(row.online, lastActive);
+              if (
+                online === (match as any).online &&
+                lastActive === match.lastActive &&
+                nextIsActive === match.isActiveNow
+              ) {
+                return match;
+              }
+              changed = true;
+              return {
+                ...match,
+                online,
+                lastActive,
+                isActiveNow: nextIsActive,
+              } as Match;
+            });
+            return changed ? next : prev;
+          });
+        },
+      );
+    });
+    channel.subscribe();
     return () => {
-      if (presencePollRef.current) {
-        clearInterval(presencePollRef.current);
-        presencePollRef.current = null;
-      }
+      supabase.removeChannel(channel);
     };
   }, [presenceIdsKey, refreshPresence]);
 
@@ -592,7 +617,13 @@ export default function useAIRecommendations(
         const row = payload?.new;
         if (!row) return;
         if (row.user1_id !== userId && row.user2_id !== userId) return;
-        if (payload?.eventType === 'UPDATE' && payload?.old?.status === 'ACCEPTED') return;
+        const nextStatus = String(row.status || '').toUpperCase();
+        const previousStatus = String(payload?.old?.status || '').toUpperCase();
+        if (nextStatus !== 'ACCEPTED') {
+          if (payload?.eventType === 'UPDATE' && previousStatus === 'ACCEPTED') return;
+          return;
+        }
+        if (payload?.eventType === 'UPDATE' && previousStatus === 'ACCEPTED') return;
         const otherId = row.user1_id === userId ? row.user2_id : row.user1_id;
         const nowTs = Date.now();
         if (lastMatchToastRef.current.id === String(otherId) && (nowTs - lastMatchToastRef.current.ts) < 5000) {
@@ -700,13 +731,31 @@ export default function useAIRecommendations(
     };
 
     const channel = supabase
-      .channel('matches-realtime')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'matches', filter: 'status=eq.ACCEPTED' }, handleMatchChange)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'matches', filter: 'status=eq.ACCEPTED' }, handleMatchChange);
+      .channel(`matches-realtime:${userId}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'matches', filter: `user1_id=eq.${userId}` },
+        handleMatchChange,
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'matches', filter: `user2_id=eq.${userId}` },
+        handleMatchChange,
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'matches', filter: `user1_id=eq.${userId}` },
+        handleMatchChange,
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'matches', filter: `user2_id=eq.${userId}` },
+        handleMatchChange,
+      );
 
     try { channel.subscribe(); } catch {}
     return () => {
-      try { channel.unsubscribe(); } catch {}
+      try { supabase.removeChannel(channel); } catch {}
     };
   }, [userId, mode]);
 

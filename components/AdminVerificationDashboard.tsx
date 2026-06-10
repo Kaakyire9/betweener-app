@@ -266,6 +266,7 @@ function VerificationAssetPreview({
   const player = useVideoPlayer(isVideo && uri ? uri : null, (instance) => {
     instance.loop = loop;
     instance.muted = muted;
+    instance.keepScreenOnWhilePlaying = false;
     if (autoPlay) {
       try { instance.play(); } catch {}
     }

@@ -9,6 +9,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useEvent } from 'expo';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import RNSvg, { Circle, Path } from 'react-native-svg';
@@ -39,6 +40,7 @@ import {
     TouchableOpacity,
   View
 } from 'react-native';
+import { useScopedScreenAwake } from '@/hooks/use-scoped-screen-awake';
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 
@@ -327,7 +329,16 @@ const LivenessPreviewVideo = ({ uri }: { uri: string }) => {
   const player = useVideoPlayer(uri, (instance) => {
     instance.loop = true;
     instance.muted = true;
+    instance.keepScreenOnWhilePlaying = false;
     instance.play();
+  });
+  const { isPlaying } = useEvent(player as any, 'playingChange', { isPlaying: player.playing });
+  const { status } = useEvent(player as any, 'statusChange', { status: player.status });
+
+  useScopedScreenAwake({
+    enabled: isPlaying && status === 'readyToPlay',
+    reason: 'video_playback',
+    instanceId: `diaspora-liveness-preview:${uri}`,
   });
 
   return <VideoView player={player} style={styles.livePreviewVideo} contentFit="cover" nativeControls />;
@@ -1136,6 +1147,11 @@ export const DiasporaVerification: React.FC<DiasporaVerificationProps> = ({
   const prepRingProgress = 1;
   const prepRingOffset = ringCircumference * (1 - prepRingProgress);
   const liveRingProgress = liveRecordingProgress > 0 ? liveRecordingProgress : 0.08;
+  useScopedScreenAwake({
+    enabled: visible && showLiveLivenessCamera && !livePreviewAsset && !!device && liveCameraReady,
+    reason: liveRecording ? 'video_recording' : 'camera_capture',
+    instanceId: 'diaspora-selfie-liveness',
+  });
   const liveGuide = useMemo(() => buildFaceGuide(liveGuideWidth, liveGuideHeight), [liveGuideHeight, liveGuideWidth]);
   const liveChallengeComplete = liveChallengeReady || (liveHasFace && liveFaceCentered && liveTurnComplete && liveBlinkComplete);
   const livePrompt = liveRecording

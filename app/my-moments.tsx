@@ -1,5 +1,6 @@
 import MomentViewer from '@/components/MomentViewer';
 import MomentCommentsModal from '@/components/MomentCommentsModal';
+import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
 import TextMomentCard from '@/components/moments/TextMomentCard';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -28,14 +29,14 @@ import {
   writeOwnMomentRecentViewersSnapshot,
   writeMomentReactorsSnapshot,
 } from '@/lib/offline/moments-store';
-import { getMomentOfflineMutationSnapshot, retryFailedOfflineMutation, retryFailedOfflineMutations, subscribeToOfflineMutationEvents } from '@/lib/offline/mutation-queue';
+import { getMomentOfflineMutationSnapshot, retryFailedOfflineMutations, subscribeToOfflineMutationEvents } from '@/lib/offline/mutation-queue';
 import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Modal, Pressable, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -146,6 +147,7 @@ export default function MyMomentsScreen() {
   const [selectedReactionMoment, setSelectedReactionMoment] = useState<Moment | null>(null);
   const [reactors, setReactors] = useState<ReactorRow[]>([]);
   const [reactorProfiles, setReactorProfiles] = useState<Record<string, ReactorProfile>>({});
+  const reactorProfilesCacheRef = useRef<Record<string, ReactorProfile>>({});
   const [reactorsLoading, setReactorsLoading] = useState(false);
   const [viewersVisible, setViewersVisible] = useState(false);
   const [selectedViewedMoment, setSelectedViewedMoment] = useState<Moment | null>(null);
@@ -224,11 +226,11 @@ export default function MyMomentsScreen() {
         fetchMyMomentViewerSegments(30),
       ]);
       const nextViewTimeInsights = Array.isArray(viewTimeInsightsResult.data)
-        ? (viewTimeInsightsResult.data as Array<{
+        ? (viewTimeInsightsResult.data as {
             local_hour?: number | null;
             weekday_bucket?: number | null;
             view_count?: number | null;
-          }>).map((row) => ({
+          }[]).map((row) => ({
             localHour: Number(row.local_hour || 0),
             weekdayBucket: Number(row.weekday_bucket || 0),
             viewCount: Number(row.view_count || 0),
@@ -394,7 +396,6 @@ export default function MyMomentsScreen() {
   };
 
   const openMomentActions = (moment: Moment) => {
-    const syncState = syncStateByMomentId[moment.id] ?? null;
     const open = async () => {
       const snapshot = await getMomentOfflineMutationSnapshot();
       const issues = collectMomentSyncIssues([...snapshot.failed, ...snapshot.pending], moment.id);
@@ -471,6 +472,7 @@ export default function MyMomentsScreen() {
         if (cached) {
           setReactors(cached.reactions);
           setReactorProfiles(cached.profilesByUserId as Record<string, ReactorProfile>);
+          reactorProfilesCacheRef.current = cached.profilesByUserId as Record<string, ReactorProfile>;
         }
       }
 
@@ -490,20 +492,30 @@ export default function MyMomentsScreen() {
       const userIds = Array.from(new Set(reactionRows.map((row) => row.user_id))).filter(Boolean);
       if (userIds.length === 0) return;
 
-      const { data: profileRows } = await supabase
-        .from('profiles')
-        .select('id,user_id,full_name,avatar_url')
-        .in('user_id', userIds);
-
       const nextProfiles: Record<string, ReactorProfile> = {};
-      (profileRows || []).forEach((profileRow: any) => {
-        if (!profileRow.user_id) return;
-        nextProfiles[profileRow.user_id] = {
-          id: profileRow.id ?? null,
-          full_name: profileRow.full_name ?? null,
-          avatar_url: profileRow.avatar_url ?? null,
-        };
+      const missingUserIds = userIds.filter((userId) => !reactorProfilesCacheRef.current[userId]);
+      userIds.forEach((userId) => {
+        const cachedProfile = reactorProfilesCacheRef.current[userId];
+        if (cachedProfile) nextProfiles[userId] = cachedProfile;
       });
+
+      if (missingUserIds.length > 0) {
+        const { data: profileRows } = await supabase
+          .from('profiles')
+          .select('id,user_id,full_name,avatar_url')
+          .in('user_id', missingUserIds);
+
+        (profileRows || []).forEach((profileRow: any) => {
+          if (!profileRow.user_id) return;
+          const normalizedProfile = {
+            id: profileRow.id ?? null,
+            full_name: profileRow.full_name ?? null,
+            avatar_url: profileRow.avatar_url ?? null,
+          };
+          nextProfiles[profileRow.user_id] = normalizedProfile;
+          reactorProfilesCacheRef.current[profileRow.user_id] = normalizedProfile;
+        });
+      }
       setReactorProfiles(nextProfiles);
       if (user?.id) {
         await writeMomentReactorsSnapshot(user.id, moment.id, {
@@ -1121,7 +1133,14 @@ export default function MyMomentsScreen() {
       <Modal visible={reactorsVisible} transparent animationType="fade" onRequestClose={() => setReactorsVisible(false)}>
         <Pressable style={styles.sheetBackdrop} onPress={() => setReactorsVisible(false)} />
         <View style={styles.sheetWrap} pointerEvents="box-none">
-          <View style={styles.reactorsSheet}>
+          <BlurViewSafe
+            intensity={30}
+            tint={isDark ? 'dark' : 'light'}
+            style={[
+              styles.reactorsSheet,
+              { backgroundColor: isDark ? 'rgba(8,18,28,0.82)' : 'rgba(248,251,252,0.84)' },
+            ]}
+          >
             <View style={styles.reactorsHeader}>
               <View>
                 <Text style={styles.reactorsTitle}>Reactions</Text>
@@ -1171,14 +1190,21 @@ export default function MyMomentsScreen() {
                 })
               )}
             </ScrollView>
-          </View>
+          </BlurViewSafe>
         </View>
       </Modal>
 
       <Modal visible={viewersVisible} transparent animationType="fade" onRequestClose={() => setViewersVisible(false)}>
         <Pressable style={styles.sheetBackdrop} onPress={() => setViewersVisible(false)} />
         <View style={styles.sheetWrap} pointerEvents="box-none">
-          <View style={styles.reactorsSheet}>
+          <BlurViewSafe
+            intensity={30}
+            tint={isDark ? 'dark' : 'light'}
+            style={[
+              styles.reactorsSheet,
+              { backgroundColor: isDark ? 'rgba(8,18,28,0.82)' : 'rgba(248,251,252,0.84)' },
+            ]}
+          >
             <View style={styles.reactorsHeader}>
               <View>
                 <Text style={styles.reactorsTitle}>Views</Text>
@@ -1240,7 +1266,7 @@ export default function MyMomentsScreen() {
                 })
               )}
             </ScrollView>
-          </View>
+          </BlurViewSafe>
         </View>
       </Modal>
     </SafeAreaView>
@@ -1673,7 +1699,6 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       justifyContent: 'flex-end',
     },
     reactorsSheet: {
-      backgroundColor: theme.background,
       borderTopLeftRadius: 24,
       borderTopRightRadius: 24,
       paddingHorizontal: 18,
@@ -1682,6 +1707,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
       maxHeight: '62%',
+      overflow: 'hidden',
+      shadowColor: '#000',
+      shadowOpacity: isDark ? 0.18 : 0.10,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: -8 },
+      elevation: 10,
     },
     reactorsHeader: {
       flexDirection: 'row',
@@ -1706,9 +1737,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderRadius: 17,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: withAlpha(theme.text, isDark ? 0.05 : 0.04),
+      backgroundColor: withAlpha(theme.text, isDark ? 0.07 : 0.05),
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.08 : 0.05),
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
     },
     reactorsList: {
       flexGrow: 0,
@@ -1730,9 +1761,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       gap: 12,
       padding: 12,
       borderRadius: 16,
-      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.92 : 0.82),
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.82 : 0.62),
       borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.06),
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
     },
     reactorAvatar: {
       width: 42,

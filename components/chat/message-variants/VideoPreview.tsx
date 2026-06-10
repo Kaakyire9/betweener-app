@@ -16,6 +16,7 @@ const VideoPreview = memo(({ styles, url, resolvedUrl }: VideoPreviewProps) => {
   const player = useVideoPlayer(resolvedUrl || url, (p) => {
     p.loop = false;
     p.muted = true;
+    p.keepScreenOnWhilePlaying = false;
   });
 
   return (

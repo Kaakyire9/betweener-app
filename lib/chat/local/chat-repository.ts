@@ -107,8 +107,8 @@ export type ChatStorageDiagnosticsSnapshot = {
     pendingOutbox: number;
     syncStates: number;
   };
-  messageStatusCounts: Array<{ status: string; count: number }>;
-  outboxStatusCounts: Array<{ status: string; count: number }>;
+  messageStatusCounts: { status: string; count: number }[];
+  outboxStatusCounts: { status: string; count: number }[];
   recentThreads: ChatDiagnosticsRecentThreadRow[];
   pendingOutboxItems: ChatDiagnosticsOutboxRow[];
   syncStates: ChatDiagnosticsSyncRow[];
@@ -459,6 +459,33 @@ export const ChatRepository = {
       includeArchived ? 1 : 0,
       limit,
     );
+  },
+
+  async getRecentMessageActivityTimestamps(
+    ownerUserId: string,
+    options?: { sinceIso?: string | null; limit?: number },
+  ): Promise<string[]> {
+    const db = await getChatDb();
+    const limit = Math.max(1, Math.min(options?.limit ?? 2000, 5000));
+    const rows = await db.getAllAsync<{ created_at: string | null }>(
+      `
+        select created_at
+        from chat_messages
+        where owner_user_id = ?
+          and status <> 'deleted'
+          and (? is null or created_at >= ?)
+        order by datetime(created_at) desc, datetime(local_updated_at) desc
+        limit ?
+      `,
+      ownerUserId,
+      options?.sinceIso ?? null,
+      options?.sinceIso ?? null,
+      limit,
+    );
+
+    return rows
+      .map((row) => (typeof row?.created_at === 'string' ? row.created_at : null))
+      .filter((value): value is string => Boolean(value));
   },
 
   async getThreadById(ownerUserId: string, threadId: string): Promise<ChatThreadRow | null> {

@@ -2,6 +2,7 @@ import type { FailedOfflineMutation, OfflineMutation } from '@/lib/offline/mutat
 
 export type OfflineSyncScope =
   | 'moments'
+  | 'circles'
   | 'chat'
   | 'intent'
   | 'profile'
@@ -20,6 +21,8 @@ export const getOfflineSyncScopeLabel = (scope: OfflineSyncScope) => {
   switch (scope) {
     case 'moments':
       return 'Moments';
+    case 'circles':
+      return 'Circles';
     case 'chat':
       return 'Chat';
     case 'intent':
@@ -201,6 +204,52 @@ export const describeOfflineSyncMutation = (
         detail: 'The comment is hidden locally, but the delete has not finished syncing yet.',
         icon: 'comment-remove-outline',
         scope: 'moments',
+      };
+    case 'circle_pulse_comment_create':
+      return {
+        title: 'Circle comment not posted',
+        detail: 'Your discussion reply is still local and has not been posted yet.',
+        icon: 'comment-outline',
+        scope: 'circles',
+      };
+    case 'circle_pulse_comment_update':
+      return {
+        title: 'Circle comment edit not synced',
+        detail: 'Your latest discussion edit is still local.',
+        icon: 'comment-edit-outline',
+        scope: 'circles',
+      };
+    case 'circle_pulse_comment_delete':
+      return {
+        title: 'Circle comment delete not synced',
+        detail: 'The discussion reply is hidden locally, but the delete has not finished syncing yet.',
+        icon: 'comment-remove-outline',
+        scope: 'circles',
+      };
+    case 'circle_pulse_comment_reaction_sync':
+      return {
+        title: mutation.payload.reaction
+          ? 'Circle reaction not synced'
+          : 'Circle reaction removal not synced',
+        detail: 'Your discussion reaction change is still local.',
+        icon: 'heart-outline',
+        scope: 'circles',
+      };
+    case 'circle_pulse_comment_pin_sync':
+      return {
+        title: mutation.payload.pinned ? 'Pinned note not synced' : 'Pinned note update not synced',
+        detail: mutation.payload.pinned
+          ? 'Your pinned note change is still local.'
+          : 'Your unpin action is still local.',
+        icon: 'pin-outline',
+        scope: 'circles',
+      };
+    case 'circle_pulse_comment_report_sync':
+      return {
+        title: 'Comment report not synced',
+        detail: 'Your moderation report is still local.',
+        icon: 'alert-octagon-outline',
+        scope: 'circles',
       };
     default:
       return {

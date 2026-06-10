@@ -1,4 +1,6 @@
 import { supabase } from '@/lib/supabase';
+import { cacheOfflineImage, resolveOfflineImageUri } from '@/lib/offline/image-store';
+import { cacheOfflineVideo } from '@/lib/offline/video-store';
 import {
   createSignedCirclePulseMediaUrl,
   removeCirclePulseMedia,
@@ -6,8 +8,11 @@ import {
   type CirclePulseEditorialMediaType,
 } from './circle-pulse-media';
 import type {
+  CircleGatheringPresentationMode,
+  CircleGatheringSeatContext,
   CirclePulseComment,
   CirclePulseCommentReaction,
+  CirclePulseCommentReactionSummary,
   CirclePulseFeatureInput,
   CirclePulseItem,
   CirclePulseItemStatus,
@@ -16,6 +21,7 @@ import type {
   CircleLoveSeatHostItem,
   CirclePulseCommentReport,
   CirclePulseCommentReportAction,
+  CirclePulseDiscussionReadState,
   CirclePulseWelcomeProfile,
 } from './circle-pulse-types';
 
@@ -46,9 +52,14 @@ type CirclePulseRpcRow = {
   starts_at?: string | null;
   expires_at?: string | null;
   comment_count?: number | null;
+  discussion_cta?: string | null;
+  discussion_summary?: string | null;
   gathering_starts_at?: string | null;
   gathering_city?: string | null;
   gathering_type?: string | null;
+  gathering_presentation_mode?: CircleGatheringPresentationMode | null;
+  gathering_seat_context?: CircleGatheringSeatContext;
+  gathering_host_created_for_member?: boolean | null;
   gathering_is_partner_venue?: boolean | null;
   gathering_safe_first_date_space?: boolean | null;
   gathering_attendee_count?: number | null;
@@ -104,11 +115,19 @@ type CirclePulseCommentRpcRow = {
   parent_comment_id?: string | null;
   created_at: string;
   updated_at: string;
+  edited_at?: string | null;
   is_own?: boolean | null;
   can_remove?: boolean | null;
+  can_edit?: boolean | null;
+  can_pin?: boolean | null;
+  pinned_at?: string | null;
   report_count?: number | null;
   reaction_count?: number | null;
   my_reaction?: CirclePulseCommentReaction | null;
+  reply_preview_profile_id?: string | null;
+  reply_preview_display_name?: string | null;
+  reply_preview_body?: string | null;
+  reaction_summary?: unknown;
 };
 
 type CirclePulseCommentReactionRpcRow = {
@@ -132,7 +151,44 @@ type CirclePulseCommentReportRpcRow = {
   status: 'pending' | 'reviewing';
 };
 
+type CirclePulseDiscussionReadStateRpcRow = {
+  pulse_item_id: string;
+  last_seen_comment_id?: string | null;
+  last_seen_at?: string | null;
+  unread_count?: number | null;
+};
+
 const db = supabase as any;
+
+const toServiceError = (error: unknown, fallbackMessage: string) => {
+  if (error instanceof Error && error.message.trim()) {
+    return new Error(error.message.trim());
+  }
+
+  if (error && typeof error === 'object') {
+    const value = error as {
+      message?: unknown;
+      details?: unknown;
+      hint?: unknown;
+      code?: unknown;
+    };
+    const parts = [
+      typeof value.message === 'string' ? value.message.trim() : '',
+      typeof value.details === 'string' ? value.details.trim() : '',
+      typeof value.hint === 'string' ? value.hint.trim() : '',
+    ].filter(Boolean);
+
+    if (parts.length > 0) {
+      return new Error(parts.join(' '));
+    }
+
+    if (typeof value.code === 'string' && value.code.trim()) {
+      return new Error(value.code.trim());
+    }
+  }
+
+  return new Error(fallbackMessage);
+};
 
 const toItem = (row: CirclePulseRpcRow): CirclePulseItem => ({
   id: String(row.id),
@@ -163,9 +219,14 @@ const toItem = (row: CirclePulseRpcRow): CirclePulseItem => ({
   startsAt: row.starts_at ?? null,
   expiresAt: row.expires_at ?? null,
   commentCount: Number(row.comment_count ?? 0),
+  discussionCta: row.discussion_cta ?? null,
+  discussionSummary: row.discussion_summary ?? null,
   gatheringStartsAt: row.gathering_starts_at ?? null,
   gatheringCity: row.gathering_city ?? null,
   gatheringType: row.gathering_type ?? null,
+  gatheringPresentationMode: row.gathering_presentation_mode ?? null,
+  gatheringSeatContext: row.gathering_seat_context ?? null,
+  gatheringHostCreatedForMember: row.gathering_host_created_for_member === true,
   gatheringIsPartnerVenue: row.gathering_is_partner_venue === true,
   gatheringSafeFirstDateSpace: row.gathering_safe_first_date_space === true,
   gatheringAttendeeCount: Number(row.gathering_attendee_count ?? 0),
@@ -197,6 +258,28 @@ const toLoveSeatHostItem = (row: CircleLoveSeatHostRpcRow): CircleLoveSeatHostIt
   respondedAt: row.responded_at ?? null,
 });
 
+const toReactionSummary = (value: unknown): CirclePulseCommentReactionSummary[] => {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const row = entry as Record<string, unknown>;
+    const reaction = row.reaction;
+    const count = Number(row.count ?? 0);
+    if (
+      reaction !== 'heart'
+      && reaction !== 'laugh'
+      && reaction !== 'love'
+      && reaction !== 'thumbs_up'
+      && reaction !== 'fire'
+      && reaction !== 'clap'
+    ) {
+      return [];
+    }
+    if (!Number.isFinite(count) || count <= 0) return [];
+    return [{ reaction, count }];
+  });
+};
+
 const toComment = (row: CirclePulseCommentRpcRow): CirclePulseComment => ({
   id: String(row.id),
   itemId: String(row.pulse_item_id),
@@ -208,12 +291,33 @@ const toComment = (row: CirclePulseCommentRpcRow): CirclePulseComment => ({
   parentCommentId: row.parent_comment_id ?? null,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
+  editedAt: row.edited_at ?? null,
   isOwn: row.is_own === true,
   canRemove: row.can_remove === true,
+  canEdit: row.can_edit === true,
+  canPin: row.can_pin === true,
+  pinnedAt: row.pinned_at ?? null,
   reportCount: Number(row.report_count ?? 0),
   reactionCount: Number(row.reaction_count ?? 0),
+  replyPreviewProfileId: row.reply_preview_profile_id ?? null,
+  replyPreviewDisplayName: row.reply_preview_display_name?.trim() || null,
+  replyPreviewBody: row.reply_preview_body ?? null,
+  reactionSummary: toReactionSummary(row.reaction_summary),
   myReaction: row.my_reaction ?? null,
 });
+
+const hydrateCommentAvatars = async (comment: CirclePulseComment): Promise<CirclePulseComment> => {
+  if (!comment.avatarUrl?.startsWith('http')) return comment;
+  const cachedAvatar = await resolveOfflineImageUri(
+    `circle-pulse-comment-avatar:${comment.circleId}:${comment.id}:${comment.profileId}:${comment.avatarUrl}`,
+    comment.avatarUrl,
+  );
+  if (!cachedAvatar) return comment;
+  return {
+    ...comment,
+    avatarUrl: cachedAvatar,
+  };
+};
 
 const toCommentReport = (row: CirclePulseCommentReportRpcRow): CirclePulseCommentReport => ({
   commentId: String(row.comment_id),
@@ -230,14 +334,86 @@ const toCommentReport = (row: CirclePulseCommentReportRpcRow): CirclePulseCommen
   status: row.status,
 });
 
+const toDiscussionReadState = (row: CirclePulseDiscussionReadStateRpcRow): CirclePulseDiscussionReadState => ({
+  itemId: String(row.pulse_item_id),
+  lastSeenCommentId: row.last_seen_comment_id ?? null,
+  lastSeenAt: row.last_seen_at ?? null,
+  unreadCount: Number(row.unread_count ?? 0),
+});
+
+const buildCirclePulseMediaCacheKey = (
+  item: Pick<CirclePulseItem, 'id' | 'circleId' | 'imageUrl' | 'mediaUrl' | 'mediaType'>,
+  kind: 'image' | 'video',
+) => `circle-pulse:${item.circleId}:${item.id}:${kind}:${item.imageUrl ?? item.mediaUrl ?? 'none'}`;
+
+const cacheCirclePulseItemMedia = async (item: CirclePulseItem): Promise<CirclePulseItem> => {
+  let nextItem = item;
+
+  if (item.featuredProfileAvatarUrl?.startsWith('http')) {
+    const cachedFeaturedAvatar = await resolveOfflineImageUri(
+      `circle-pulse-featured-avatar:${item.circleId}:${item.id}:${item.featuredProfileId ?? 'none'}:${item.featuredProfileAvatarUrl}`,
+      item.featuredProfileAvatarUrl,
+    );
+    if (cachedFeaturedAvatar) {
+      nextItem = { ...nextItem, featuredProfileAvatarUrl: cachedFeaturedAvatar };
+    }
+  }
+
+  if (item.welcomeProfiles.length > 0) {
+    const nextWelcomeProfiles = await Promise.all(
+      item.welcomeProfiles.map(async (profile) => {
+        if (!profile.avatarUrl) return profile;
+        const cachedAvatar = await resolveOfflineImageUri(
+          `circle-pulse-welcome-avatar:${item.circleId}:${item.id}:${profile.profileId}:${profile.avatarUrl}`,
+          profile.avatarUrl,
+        );
+        return cachedAvatar ? { ...profile, avatarUrl: cachedAvatar } : profile;
+      }),
+    );
+    nextItem = { ...nextItem, welcomeProfiles: nextWelcomeProfiles };
+  }
+
+  if (item.imageUrl?.startsWith('http')) {
+    const cachedImage = await cacheOfflineImage(
+      buildCirclePulseMediaCacheKey(item, 'image'),
+      item.imageUrl,
+    );
+    if (cachedImage) {
+      nextItem = { ...nextItem, imageUrl: cachedImage };
+    }
+  }
+
+  if (item.mediaType === 'image' && item.mediaUrl?.startsWith('http')) {
+    const cachedMediaImage = await cacheOfflineImage(
+      buildCirclePulseMediaCacheKey(item, 'image'),
+      item.mediaUrl,
+    );
+    if (cachedMediaImage) {
+      nextItem = { ...nextItem, mediaUrl: cachedMediaImage, imageUrl: nextItem.imageUrl ?? cachedMediaImage };
+    }
+  }
+
+  if (item.mediaType === 'video' && item.mediaUrl?.startsWith('http')) {
+    const cachedVideo = await cacheOfflineVideo(
+      buildCirclePulseMediaCacheKey(item, 'video'),
+      item.mediaUrl,
+    );
+    if (cachedVideo) {
+      nextItem = { ...nextItem, mediaUrl: cachedVideo };
+    }
+  }
+
+  return nextItem;
+};
+
 export async function fetchCirclePulseItems(circleId: string) {
   const { data, error } = await db.rpc('rpc_get_circle_pulse_items', {
     p_circle_id: circleId,
     p_include_inactive: false,
   });
-  if (error) throw error;
+  if (error) throw toServiceError(error, 'Circle Pulse could not load.');
   const items = ((data ?? []) as CirclePulseRpcRow[]).map(toItem);
-  return await Promise.all(
+  const hydratedItems = await Promise.all(
     items.map(async (item) => {
       if (item.type !== 'media' || item.momentId || !item.mediaUrl) return item;
       const signedMediaUrl = await createSignedCirclePulseMediaUrl(item.mediaUrl);
@@ -254,6 +430,32 @@ export async function fetchCirclePulseItems(circleId: string) {
       };
     }),
   );
+  return await Promise.all(hydratedItems.map(cacheCirclePulseItemMedia));
+}
+
+export async function fetchCirclePulseItemSnapshot(itemId: string) {
+  const { data, error } = await db.rpc('rpc_get_circle_pulse_item_snapshot', {
+    p_item_id: itemId,
+  });
+  if (error) throw toServiceError(error, 'Circle Pulse item could not load.');
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) return null;
+  let item = toItem(row as CirclePulseRpcRow);
+  if (item.type === 'media' && !item.momentId && item.mediaUrl) {
+    const signedMediaUrl = await createSignedCirclePulseMediaUrl(item.mediaUrl);
+    const signedImageUrl =
+      item.imageUrl && item.imageUrl !== item.mediaUrl
+        ? await createSignedCirclePulseMediaUrl(item.imageUrl)
+        : item.mediaType === 'image'
+          ? signedMediaUrl
+          : item.imageUrl;
+    item = {
+      ...item,
+      mediaUrl: signedMediaUrl ?? item.mediaUrl,
+      imageUrl: signedImageUrl ?? item.imageUrl,
+    };
+  }
+  return await cacheCirclePulseItemMedia(item);
 }
 
 export async function featureCirclePulseItem(
@@ -278,7 +480,7 @@ export async function featureCirclePulseItem(
     p_status: 'active',
   };
   const { data, error } = await db.rpc('rpc_upsert_circle_pulse_item', payload);
-  if (error) throw error;
+  if (error) throw toServiceError(error, 'Circle Pulse could not be updated.');
   return data;
 }
 
@@ -315,7 +517,7 @@ export async function fetchCirclePulseComments(itemId: string) {
     p_pulse_item_id: itemId,
     p_limit: 100,
   });
-  if (error) throw error;
+  if (error) throw toServiceError(error, 'Discussion could not load.');
   const comments = ((data ?? []) as CirclePulseCommentRpcRow[]).map(toComment);
   const { data: reactionRows } = await db.rpc('rpc_get_circle_pulse_comment_reactions', {
     p_pulse_item_id: itemId,
@@ -323,7 +525,7 @@ export async function fetchCirclePulseComments(itemId: string) {
   const reactionByCommentId = new Map(
     ((reactionRows ?? []) as CirclePulseCommentReactionRpcRow[]).map((row) => [String(row.comment_id), row]),
   );
-  return comments.map((comment) => {
+  const mergedComments = comments.map((comment) => {
     const reaction = reactionByCommentId.get(comment.id);
     return {
       ...comment,
@@ -331,6 +533,36 @@ export async function fetchCirclePulseComments(itemId: string) {
       myReaction: reaction?.my_reaction ?? null,
     };
   });
+  return await Promise.all(mergedComments.map(hydrateCommentAvatars));
+}
+
+export async function fetchCirclePulseCommentsPage(
+  itemId: string,
+  options?: {
+    limit?: number;
+    beforeCreatedAt?: string | null;
+    beforeId?: string | null;
+  },
+) {
+  const { data, error } = await db.rpc('rpc_get_circle_pulse_comments_page', {
+    p_pulse_item_id: itemId,
+    p_limit: options?.limit ?? 30,
+    p_before_created_at: options?.beforeCreatedAt ?? null,
+    p_before_id: options?.beforeId ?? null,
+  });
+  if (error) throw toServiceError(error, 'Comments could not load.');
+  const comments = ((data ?? []) as CirclePulseCommentRpcRow[]).map(toComment);
+  return await Promise.all(comments.map(hydrateCommentAvatars));
+}
+
+export async function fetchCirclePulseCommentSnapshot(commentId: string) {
+  const { data, error } = await db.rpc('rpc_get_circle_pulse_comment_snapshot', {
+    p_comment_id: commentId,
+  });
+  if (error) throw toServiceError(error, 'Comment could not be loaded.');
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) throw new Error('Comment could not be loaded.');
+  return await hydrateCommentAvatars(toComment(row as CirclePulseCommentRpcRow));
 }
 
 export async function createCirclePulseComment(
@@ -345,10 +577,10 @@ export async function createCirclePulseComment(
     p_body: body,
     p_parent_comment_id: parentCommentId ?? null,
   });
-  if (error) throw error;
+  if (error) throw toServiceError(error, 'Comment could not be saved.');
   const row = Array.isArray(data) ? data[0] : data;
   if (!row) throw new Error('Comment could not be saved.');
-  return toComment(row as CirclePulseCommentRpcRow);
+  return await hydrateCommentAvatars(toComment(row as CirclePulseCommentRpcRow));
 }
 
 export async function toggleCirclePulseCommentReaction(
@@ -361,7 +593,33 @@ export async function toggleCirclePulseCommentReaction(
     p_profile_id: actorProfileId,
     p_reaction: reaction,
   });
-  if (error) throw error;
+  if (error) throw toServiceError(error, 'Reaction could not be updated.');
+  return data === true;
+}
+
+export async function updateCirclePulseComment(commentId: string, actorProfileId: string, body: string) {
+  const { data, error } = await db.rpc('rpc_update_circle_pulse_comment', {
+    p_comment_id: commentId,
+    p_profile_id: actorProfileId,
+    p_body: body,
+  });
+  if (error) throw toServiceError(error, 'Comment could not be updated.');
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) throw new Error('Comment could not be updated.');
+  return await hydrateCommentAvatars(toComment(row as CirclePulseCommentRpcRow));
+}
+
+export async function pinCirclePulseComment(
+  commentId: string,
+  actorProfileId: string,
+  pinned = true,
+) {
+  const { data, error } = await db.rpc('rpc_pin_circle_pulse_comment', {
+    p_comment_id: commentId,
+    p_profile_id: actorProfileId,
+    p_pinned: pinned,
+  });
+  if (error) throw toServiceError(error, 'Pinned note could not be updated.');
   return data === true;
 }
 
@@ -370,7 +628,7 @@ export async function deleteCirclePulseComment(commentId: string, actorProfileId
     p_comment_id: commentId,
     p_profile_id: actorProfileId,
   });
-  if (error) throw error;
+  if (error) throw toServiceError(error, 'Comment could not be removed.');
 }
 
 export async function reportCirclePulseComment(commentId: string, actorProfileId: string) {
@@ -379,7 +637,52 @@ export async function reportCirclePulseComment(commentId: string, actorProfileId
     p_profile_id: actorProfileId,
     p_reason: 'concern',
   });
-  if (error) throw error;
+  if (error) throw toServiceError(error, 'Comment could not be reported.');
+}
+
+export async function fetchCirclePulseDiscussionReadState(itemId: string, actorProfileId: string) {
+  const { data, error } = await db.rpc('rpc_get_circle_pulse_discussion_read_state', {
+    p_pulse_item_id: itemId,
+    p_profile_id: actorProfileId,
+  });
+  if (error) throw toServiceError(error, 'Discussion state could not load.');
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row) {
+    return {
+      itemId,
+      lastSeenCommentId: null,
+      lastSeenAt: null,
+      unreadCount: 0,
+    } satisfies CirclePulseDiscussionReadState;
+  }
+  return toDiscussionReadState(row as CirclePulseDiscussionReadStateRpcRow);
+}
+
+export async function fetchCirclePulseDiscussionReadStates(circleId: string, actorProfileId: string) {
+  const { data, error } = await db.rpc('rpc_get_circle_pulse_discussion_reads', {
+    p_circle_id: circleId,
+    p_profile_id: actorProfileId,
+  });
+  if (error) throw toServiceError(error, 'Discussion states could not load.');
+  return ((data ?? []) as CirclePulseDiscussionReadStateRpcRow[]).map(toDiscussionReadState);
+}
+
+export async function markCirclePulseDiscussionSeen(
+  itemId: string,
+  actorProfileId: string,
+  options?: {
+    lastSeenCommentId?: string | null;
+    lastSeenAt?: string | null;
+  },
+) {
+  const { data, error } = await db.rpc('rpc_mark_circle_pulse_discussion_seen', {
+    p_pulse_item_id: itemId,
+    p_profile_id: actorProfileId,
+    p_last_seen_comment_id: options?.lastSeenCommentId ?? null,
+    p_last_seen_at: options?.lastSeenAt ?? null,
+  });
+  if (error) throw toServiceError(error, 'Discussion state could not update.');
+  return data === true;
 }
 
 export async function nominateCircleLoveSeat(

@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { readCache, writeCache } from "@/lib/persisted-cache";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export type InboxType =
   | "LIKE_RECEIVED"
@@ -43,6 +43,7 @@ export const useInbox = (userId?: string | null) => {
   const [items, setItems] = useState<InboxItem[]>([]);
   const [loading, setLoading] = useState(false);
   const cacheKey = userId ? `cache:inbox:v1:${userId}` : null;
+  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Cached-first: show last items immediately, then refresh in background.
   useEffect(() => {
@@ -85,17 +86,26 @@ export const useInbox = (userId?: string | null) => {
     void fetchInbox();
     if (!userId) return;
 
+    const scheduleFetchInbox = () => {
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+      refreshTimeoutRef.current = setTimeout(() => {
+        refreshTimeoutRef.current = null;
+        void fetchInbox();
+      }, 250);
+    };
+
     const channel = supabase
       .channel(`inbox-items:${userId}`)
       // Server-side: insert inbox_items from triggers/edge functions for swipes, messages, matches, moments.
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "inbox_items", filter: `user_id=eq.${userId}` },
-        () => void fetchInbox(),
+        scheduleFetchInbox,
       )
       .subscribe();
 
     return () => {
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
       supabase.removeChannel(channel);
     };
   }, [fetchInbox, userId]);

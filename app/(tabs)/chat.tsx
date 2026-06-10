@@ -29,33 +29,22 @@ import {
   fetchRemoteChatListConversations,
   fetchRemoteChatListNewMatches,
 } from "@/lib/chat/sync/chat-list-sync-service";
-import { haptics } from "@/lib/haptics";
 import { isLikelyNetworkError } from "@/lib/network";
 import {
   buildChatConversationListStoreKey,
 } from "@/lib/offline/chat-store";
 import { getSafeRemoteImageUri, getUserFacingDisplayName } from "@/lib/profile/display-name";
-import { getProfileInitials, getProfilePlaceholderPalette } from "@/lib/profile-placeholders";
 import { getAuthoritativePresenceDisplay } from "@/lib/presence";
 import { getChatMessagePreviewText } from "@/lib/message-preview";
 import { getSupabaseNetEvents, supabase } from "@/lib/supabase";
 import { captureMessage } from "@/lib/telemetry/sentry";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { Image as ExpoImage } from "expo-image";
-import { LinearGradient } from "expo-linear-gradient";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert,
   FlatList,
-  Image,
-  ScrollView,
-  Pressable,
   StyleSheet,
-  Text,
-  TextInput,
   TouchableOpacity,
-  View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Notice from "@/components/ui/Notice";
@@ -185,21 +174,6 @@ const messageRowToLocalChatMessage = (ownerUserId: string, row: MessageRow): Cha
   };
 };
 
-type ConversationSummaryRow = {
-  other_user_id: string;
-  last_message_id: string;
-  last_message_text: string;
-  last_message_created_at: string;
-  last_message_sender_id: string;
-  last_message_receiver_id: string;
-  last_message_is_read: boolean;
-  last_message_delivered_at?: string | null;
-  last_message_type?: ConversationType['lastMessage']['type'] | null;
-  last_message_is_view_once?: boolean | null;
-  last_message_deleted_for_all?: boolean | null;
-  unread_count: number;
-};
-
 type NewMatch = {
   userId: string; // auth.users.id (used by messages + chat route)
   profileId: string; // profiles.id (used by matches + profile-view)
@@ -220,19 +194,6 @@ const QUICK_REPORT_REASONS = [
   { id: 'scam', label: 'Scam or fraud' },
   { id: 'other', label: 'Other' },
 ] as const;
-
-type CachedConversation = Omit<ConversationType, "matchedUser" | "lastMessage" | "matchedAt"> & {
-  matchedUser: Omit<ConversationType["matchedUser"], "lastSeen" | "typingExpiresAt"> & {
-    lastSeen: string;
-    typingExpiresAt?: string | null;
-  };
-  lastMessage: Omit<ConversationType["lastMessage"], "timestamp" | "reactionPreview" | "deliveredAt"> & {
-    timestamp: string;
-    deliveredAt: string | null;
-    reactionPreview?: Omit<NonNullable<ConversationType["lastMessage"]["reactionPreview"]>, "createdAt"> & { createdAt: string };
-  };
-  matchedAt: string;
-};
 
 const deserializeConversations = (raw: unknown): ConversationType[] => {
   if (!Array.isArray(raw)) return [];
@@ -264,6 +225,11 @@ const deserializeConversations = (raw: unknown): ConversationType[] => {
       latestActivity: c?.latestActivity
         ? {
             ...c.latestActivity,
+            preview: rewriteReactionActivityPreview(
+              c.latestActivity?.preview,
+              c.latestActivity?.kind,
+              matchedUser?.name,
+            ),
             createdAt: c.latestActivity?.createdAt ? new Date(c.latestActivity.createdAt) : new Date(),
           }
         : null,
@@ -276,6 +242,17 @@ const coerceValidDate = (value?: string | Date | null) => {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
   return Number.isFinite(date.getTime()) ? date : null;
+};
+
+const rewriteReactionActivityPreview = (
+  preview: string | null | undefined,
+  kind: ConversationType['latestActivity']['kind'] | null | undefined,
+  peerName: string | null | undefined,
+) => {
+  if (!preview || kind !== 'reaction') return preview ?? '';
+  if (!preview.startsWith('Someone reacted ')) return preview;
+  const resolvedPeerName = peerName && peerName !== 'Unknown' ? peerName : 'Someone';
+  return preview.replace('Someone reacted ', `${resolvedPeerName} reacted `);
 };
 
 const getProfileLastSeen = (profileRow: any, fallback?: Date | null) => {
@@ -355,7 +332,11 @@ const localThreadToConversation = (row: ChatThreadRow): ConversationType => {
         ? {
             kind: row.last_activity_kind,
             messageId: row.last_activity_message_id,
-            preview: row.last_activity_preview,
+            preview: rewriteReactionActivityPreview(
+              row.last_activity_preview,
+              row.last_activity_kind,
+              row.peer_name,
+            ),
             createdAt: coerceValidDate(row.last_activity_at) || timestamp,
           }
         : null,
@@ -874,7 +855,11 @@ export default function ChatScreen() {
                 ? {
                     kind: entry.activity.kind,
                     messageId: entry.activity.messageId,
-                    preview: entry.activity.preview,
+                    preview: rewriteReactionActivityPreview(
+                      entry.activity.preview,
+                      entry.activity.kind,
+                      getUserFacingDisplayName(profileRow, currentConversation?.matchedUser.name || 'Unknown'),
+                    ),
                     createdAt: new Date(entry.activity.createdAt),
                   }
                 : null,
@@ -1104,10 +1089,11 @@ export default function ChatScreen() {
       const peerName =
         conversationsRef.current.find((conversation) => conversation.id === otherId)?.matchedUser.name ||
         'Someone';
+      const resolvedPeerName = peerName && peerName !== 'Unknown' ? peerName : 'Someone';
       applyListActivity(otherId, {
         kind: 'reaction',
         messageId: messageRow.id,
-        preview: `${reactionPreview.userId === user.id ? 'You' : peerName} reacted ${reactionPreview.emoji} to ${getListReactionTarget(targetType)}`,
+        preview: `${reactionPreview.userId === user.id ? 'You' : resolvedPeerName} reacted ${reactionPreview.emoji} to ${getListReactionTarget(targetType)}`,
         createdAt: reactionPreview.createdAt,
       });
       void ChatRepository.updateThreadReactionPreview(
@@ -1203,6 +1189,7 @@ export default function ChatScreen() {
     onChatPrefChange: handleListChatPrefChange,
     onPresenceChange: handleListPresenceChange,
     visiblePeerUserIds: conversations.map((conversation) => conversation.matchedUser.userId),
+    visibleLastMessageIds: conversations.map((conversation) => conversation.lastMessage.id).filter(Boolean),
   });
   const {
     openConversationMoreActions,

@@ -3,6 +3,16 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { AppState, type AppStateStatus } from 'react-native';
 
 import { ChatRepository, type ChatMessageRow, type ChatPendingOutboxRow } from '@/lib/chat/local/chat-db';
+import {
+  createCirclePulseComment,
+  deleteCirclePulseComment,
+  fetchCirclePulseCommentSnapshot,
+  pinCirclePulseComment,
+  reportCirclePulseComment,
+  toggleCirclePulseCommentReaction,
+  updateCirclePulseComment,
+} from '@/lib/circles/pulse/circle-pulse-service';
+import type { CirclePulseCommentReaction } from '@/lib/circles/pulse/circle-pulse-types';
 import type { MomentMetadata } from '@/lib/moment-text-style';
 import {
   createMomentFromMediaStrict,
@@ -10,7 +20,12 @@ import {
   deleteMomentStrict,
 } from '@/lib/moments';
 import { isLikelyNetworkError } from '@/lib/network';
-import { removeStagedOfflineChatUpload } from '@/lib/offline/chat-store';
+import {
+  readCirclePulseCommentsSnapshotState,
+  removeCirclePulseCommentSnapshot,
+  replaceCirclePulseCommentSnapshotId,
+  upsertCirclePulseCommentSnapshot,
+} from '@/lib/offline/circle-pulse-comments-store';
 import {
   moveMomentCommentsSnapshot,
   moveMomentReactorsSnapshot,
@@ -28,8 +43,6 @@ const OFFLINE_MUTATION_QUEUE_KEY = 'offline:mutation-queue:v1';
 const OFFLINE_MUTATION_FAILED_KEY = 'offline:mutation-failed:v1';
 const MAX_MUTATION_ATTEMPTS = 8;
 const AUTO_DRAIN_INTERVAL_MS = 30_000;
-const CHAT_MEDIA_BUCKET = 'chat-media';
-const VOICE_MESSAGES_BUCKET = 'voice-messages';
 const DOCUMENT_TEXT_PREFIX = '\u{1F4CE}';
 const RETRY_DELAYS_MS = [
   5_000,
@@ -213,6 +226,53 @@ export type MomentCommentDeletePayload = {
   momentId: string;
   userId: string;
   deletedAt: string;
+};
+
+export type CirclePulseCommentCreatePayload = {
+  tempId: string;
+  itemId: string;
+  actorProfileId: string;
+  body: string;
+  parentCommentId?: string | null;
+  createdAt: string;
+};
+
+export type CirclePulseCommentUpdatePayload = {
+  commentId: string;
+  itemId: string;
+  actorProfileId: string;
+  body: string;
+  updatedAt: string;
+};
+
+export type CirclePulseCommentDeletePayload = {
+  commentId: string;
+  itemId: string;
+  actorProfileId: string;
+  deletedAt: string;
+};
+
+export type CirclePulseCommentReactionSyncPayload = {
+  commentId: string;
+  itemId: string;
+  actorProfileId: string;
+  reaction: CirclePulseCommentReaction | null;
+  syncedAt: string;
+};
+
+export type CirclePulseCommentPinSyncPayload = {
+  commentId: string;
+  itemId: string;
+  actorProfileId: string;
+  pinned: boolean;
+  syncedAt: string;
+};
+
+export type CirclePulseCommentReportSyncPayload = {
+  commentId: string;
+  itemId: string;
+  actorProfileId: string;
+  syncedAt: string;
 };
 
 export type OfflineMutation =
@@ -446,6 +506,72 @@ export type OfflineMutation =
       nextAttemptAt?: number | null;
       lastError?: string | null;
       payload: MomentCommentDeletePayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'circle_pulse_comment_create';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: CirclePulseCommentCreatePayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'circle_pulse_comment_update';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: CirclePulseCommentUpdatePayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'circle_pulse_comment_delete';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: CirclePulseCommentDeletePayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'circle_pulse_comment_reaction_sync';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: CirclePulseCommentReactionSyncPayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'circle_pulse_comment_pin_sync';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: CirclePulseCommentPinSyncPayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'circle_pulse_comment_report_sync';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: CirclePulseCommentReportSyncPayload;
     };
 
 export type FailedOfflineMutation = OfflineMutation & {
@@ -554,11 +680,32 @@ const buildMomentCommentUpdateDedupeKey = (payload: MomentCommentUpdatePayload) 
 const buildMomentCommentDeleteDedupeKey = (payload: MomentCommentDeletePayload) =>
   `moment_comment_delete:${payload.commentId}`;
 
+const buildCirclePulseCommentCreateDedupeKey = (payload: CirclePulseCommentCreatePayload) =>
+  `circle_pulse_comment_create:${payload.tempId}`;
+
+const buildCirclePulseCommentUpdateDedupeKey = (payload: CirclePulseCommentUpdatePayload) =>
+  `circle_pulse_comment_update:${payload.commentId}`;
+
+const buildCirclePulseCommentDeleteDedupeKey = (payload: CirclePulseCommentDeletePayload) =>
+  `circle_pulse_comment_delete:${payload.commentId}`;
+
+const buildCirclePulseCommentReactionSyncDedupeKey = (payload: CirclePulseCommentReactionSyncPayload) =>
+  `circle_pulse_comment_reaction_sync:${payload.commentId}:${payload.actorProfileId}`;
+
+const buildCirclePulseCommentPinSyncDedupeKey = (payload: CirclePulseCommentPinSyncPayload) =>
+  `circle_pulse_comment_pin_sync:${payload.itemId}:${payload.actorProfileId}`;
+
+const buildCirclePulseCommentReportSyncDedupeKey = (payload: CirclePulseCommentReportSyncPayload) =>
+  `circle_pulse_comment_report_sync:${payload.commentId}:${payload.actorProfileId}`;
+
 export const isOfflineMomentId = (momentId?: string | null) =>
   typeof momentId === 'string' && momentId.startsWith('offline-moment:');
 
 export const isOfflineMomentCommentId = (commentId?: string | null) =>
   typeof commentId === 'string' && commentId.startsWith('offline-comment:');
+
+export const isOfflineCirclePulseCommentId = (commentId?: string | null) =>
+  typeof commentId === 'string' && commentId.startsWith('offline-circle-pulse-comment:');
 
 const stringifyMutationError = (error: unknown) => {
   const message =
@@ -606,9 +753,30 @@ const isMomentDeleteMutation = (
   { kind: 'moment_delete' }
 > => mutation.kind === 'moment_delete';
 
-const shouldDropStaleMomentMutation = (
+const isCirclePulseCommentMutation = (
   mutation: OfflineMutation | FailedOfflineMutation,
-  allMutations: Array<OfflineMutation | FailedOfflineMutation>,
+): mutation is Extract<
+  OfflineMutation | FailedOfflineMutation,
+  {
+    kind:
+      | 'circle_pulse_comment_create'
+      | 'circle_pulse_comment_update'
+      | 'circle_pulse_comment_delete'
+      | 'circle_pulse_comment_reaction_sync'
+      | 'circle_pulse_comment_pin_sync'
+      | 'circle_pulse_comment_report_sync';
+  }
+> =>
+  mutation.kind === 'circle_pulse_comment_create' ||
+  mutation.kind === 'circle_pulse_comment_update' ||
+  mutation.kind === 'circle_pulse_comment_delete' ||
+  mutation.kind === 'circle_pulse_comment_reaction_sync' ||
+  mutation.kind === 'circle_pulse_comment_pin_sync' ||
+  mutation.kind === 'circle_pulse_comment_report_sync';
+
+const shouldDropStaleQueuedMutation = (
+  mutation: OfflineMutation | FailedOfflineMutation,
+  allMutations: (OfflineMutation | FailedOfflineMutation)[],
 ) => {
   if (isExpiredMomentCreateMutation(mutation)) return true;
 
@@ -644,17 +812,35 @@ const shouldDropStaleMomentMutation = (
     if (!hasBackingCreate) return true;
   }
 
+  if (isCirclePulseCommentMutation(mutation)) {
+    if (
+      (mutation.kind === 'circle_pulse_comment_update' ||
+        mutation.kind === 'circle_pulse_comment_delete' ||
+        mutation.kind === 'circle_pulse_comment_reaction_sync' ||
+        mutation.kind === 'circle_pulse_comment_pin_sync' ||
+        mutation.kind === 'circle_pulse_comment_report_sync') &&
+      isOfflineCirclePulseCommentId(mutation.payload.commentId)
+    ) {
+      const hasBackingCommentCreate = allMutations.some(
+        (item) =>
+          item.kind === 'circle_pulse_comment_create' &&
+          item.payload.tempId === mutation.payload.commentId,
+      );
+      if (!hasBackingCommentCreate) return true;
+    }
+  }
+
   return false;
 };
 
-async function pruneStaleMomentMutationsFromQueues() {
+async function pruneStaleQueuedMutationsFromQueues() {
   const [pendingQueue, failedQueue] = await Promise.all([
     readMutationQueue(),
     readFailedMutationQueue(),
   ]);
   const allMutations = [...pendingQueue, ...failedQueue];
-  const nextPending = pendingQueue.filter((mutation) => !shouldDropStaleMomentMutation(mutation, allMutations));
-  const nextFailed = failedQueue.filter((mutation) => !shouldDropStaleMomentMutation(mutation, allMutations));
+  const nextPending = pendingQueue.filter((mutation) => !shouldDropStaleQueuedMutation(mutation, allMutations));
+  const nextFailed = failedQueue.filter((mutation) => !shouldDropStaleQueuedMutation(mutation, allMutations));
 
   if (nextPending.length !== pendingQueue.length) {
     await writeMutationQueue(nextPending);
@@ -723,10 +909,6 @@ async function writeFailedMutationQueue(queue: FailedOfflineMutation[]) {
   await writeOfflineEnvelope(OFFLINE_MUTATION_FAILED_KEY, queue.slice(-100), { kind: 'mutation-failed' });
 }
 
-type LegacyChatSendMutation = Extract<
-  OfflineMutation,
-  { kind: 'chat_text_send' | 'chat_media_send' | 'chat_voice_send' }
->;
 type LegacyChatSendQueueMutation = Extract<
   OfflineMutation | FailedOfflineMutation,
   { kind: 'chat_text_send' | 'chat_media_send' | 'chat_voice_send' }
@@ -1023,6 +1205,43 @@ export async function clearMomentCommentMutationArtifacts(commentId: string) {
   ]);
 }
 
+export async function clearCirclePulseCommentMutationArtifacts(commentId: string) {
+  if (!commentId) return;
+
+  const [pendingQueue, failedQueue] = await Promise.all([
+    readMutationQueue(),
+    readFailedMutationQueue(),
+  ]);
+
+  const shouldKeep = (item: OfflineMutation | FailedOfflineMutation) => {
+    if (
+      item.kind === 'circle_pulse_comment_create' &&
+      item.payload.tempId === commentId
+    ) {
+      return false;
+    }
+    if (
+      (item.kind === 'circle_pulse_comment_update' ||
+        item.kind === 'circle_pulse_comment_delete' ||
+        item.kind === 'circle_pulse_comment_reaction_sync' ||
+        item.kind === 'circle_pulse_comment_pin_sync' ||
+        item.kind === 'circle_pulse_comment_report_sync') &&
+      item.payload.commentId === commentId
+    ) {
+      return false;
+    }
+    return true;
+  };
+
+  const nextPending = pendingQueue.filter(shouldKeep);
+  const nextFailed = failedQueue.filter(shouldKeep);
+
+  await Promise.all([
+    nextPending.length === pendingQueue.length ? Promise.resolve() : writeMutationQueue(nextPending),
+    nextFailed.length === failedQueue.length ? Promise.resolve() : writeFailedMutationQueue(nextFailed),
+  ]);
+}
+
 const remapMomentReferenceOnMutation = (
   mutation: OfflineMutation | FailedOfflineMutation,
   tempMomentId: string,
@@ -1153,6 +1372,98 @@ const remapCommentReferenceOnMutation = (
   return mutation;
 };
 
+const remapCirclePulseCommentReferenceOnMutation = (
+  mutation: OfflineMutation | FailedOfflineMutation,
+  tempCommentId: string,
+  realCommentId: string,
+) => {
+  if (mutation.kind === 'circle_pulse_comment_create' && mutation.payload.tempId === tempCommentId) {
+    return {
+      ...mutation,
+      dedupeKey: buildCirclePulseCommentCreateDedupeKey({
+        ...mutation.payload,
+        tempId: realCommentId,
+      }),
+      payload: {
+        ...mutation.payload,
+        tempId: realCommentId,
+      },
+    };
+  }
+
+  if (mutation.kind === 'circle_pulse_comment_update' && mutation.payload.commentId === tempCommentId) {
+    return {
+      ...mutation,
+      dedupeKey: buildCirclePulseCommentUpdateDedupeKey({
+        ...mutation.payload,
+        commentId: realCommentId,
+      }),
+      payload: {
+        ...mutation.payload,
+        commentId: realCommentId,
+      },
+    };
+  }
+
+  if (mutation.kind === 'circle_pulse_comment_delete' && mutation.payload.commentId === tempCommentId) {
+    return {
+      ...mutation,
+      dedupeKey: buildCirclePulseCommentDeleteDedupeKey({
+        ...mutation.payload,
+        commentId: realCommentId,
+      }),
+      payload: {
+        ...mutation.payload,
+        commentId: realCommentId,
+      },
+    };
+  }
+
+  if (mutation.kind === 'circle_pulse_comment_reaction_sync' && mutation.payload.commentId === tempCommentId) {
+    return {
+      ...mutation,
+      dedupeKey: buildCirclePulseCommentReactionSyncDedupeKey({
+        ...mutation.payload,
+        commentId: realCommentId,
+      }),
+      payload: {
+        ...mutation.payload,
+        commentId: realCommentId,
+      },
+    };
+  }
+
+  if (mutation.kind === 'circle_pulse_comment_pin_sync' && mutation.payload.commentId === tempCommentId) {
+    return {
+      ...mutation,
+      dedupeKey: buildCirclePulseCommentPinSyncDedupeKey({
+        ...mutation.payload,
+        commentId: realCommentId,
+      }),
+      payload: {
+        ...mutation.payload,
+        commentId: realCommentId,
+      },
+    };
+  }
+
+  if (mutation.kind === 'circle_pulse_comment_report_sync' && mutation.payload.commentId === tempCommentId) {
+    return {
+      ...mutation,
+      dedupeKey: buildCirclePulseCommentReportSyncDedupeKey({
+        ...mutation.payload,
+        commentId: realCommentId,
+      }),
+      payload: {
+        ...mutation.payload,
+        commentId: realCommentId,
+      },
+    };
+  }
+
+  return mutation;
+};
+
 async function remapCommentReferenceAcrossQueues(tempCommentId: string, realCommentId: string) {
   if (!tempCommentId || !realCommentId || tempCommentId === realCommentId) return;
 
@@ -1166,6 +1477,27 @@ async function remapCommentReferenceAcrossQueues(tempCommentId: string, realComm
   );
   const nextFailed = failedQueue.map((mutation) =>
     remapCommentReferenceOnMutation(mutation, tempCommentId, realCommentId) as FailedOfflineMutation,
+  );
+
+  await Promise.all([
+    writeMutationQueue(nextPending),
+    writeFailedMutationQueue(nextFailed),
+  ]);
+}
+
+async function remapCirclePulseCommentReferenceAcrossQueues(tempCommentId: string, realCommentId: string) {
+  if (!tempCommentId || !realCommentId || tempCommentId === realCommentId) return;
+
+  const [pendingQueue, failedQueue] = await Promise.all([
+    readMutationQueue(),
+    readFailedMutationQueue(),
+  ]);
+
+  const nextPending = pendingQueue.map((mutation) =>
+    remapCirclePulseCommentReferenceOnMutation(mutation, tempCommentId, realCommentId) as OfflineMutation,
+  );
+  const nextFailed = failedQueue.map((mutation) =>
+    remapCirclePulseCommentReferenceOnMutation(mutation, tempCommentId, realCommentId) as FailedOfflineMutation,
   );
 
   await Promise.all([
@@ -1269,75 +1601,11 @@ async function processProfileNoteCreate(payload: ProfileNoteCreatePayload) {
   if (error) throw error;
 }
 
-async function processChatTextSend(payload: ChatTextSendPayload) {
-  const { error } = await supabase.from('messages').insert({
-    text: payload.text,
-    client_message_id: payload.clientMessageId ?? null,
-    sender_id: payload.senderId,
-    receiver_id: payload.receiverId,
-    is_read: false,
-    message_type: 'text',
-    reply_to_message_id: payload.replyToMessageId ?? null,
-  });
-  if (error && (error as { code?: string }).code !== '23505') throw error;
-}
-
 const encodeStoragePath = (path: string) =>
   path
     .split('/')
     .map((segment) => encodeURIComponent(segment))
     .join('/');
-
-async function uploadQueuedPublicChatMedia(payload: ChatMediaSendPayload) {
-  const { data: sessionData } = await supabase.auth.getSession();
-  const accessToken = sessionData.session?.access_token;
-  if (!accessToken) {
-    throw new Error('unauthenticated_storage');
-  }
-
-  const filePath = `${payload.senderId}/${Date.now()}-${payload.fileName}`;
-  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
-  const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
-  if (!supabaseUrl || !supabaseAnonKey) {
-    throw new Error('missing_supabase_upload_config');
-  }
-
-  const uploadUrl = `${supabaseUrl}/storage/v1/object/${CHAT_MEDIA_BUCKET}/${encodeStoragePath(filePath)}?upsert=true`;
-  const task = FileSystem.createUploadTask(uploadUrl, payload.localUri, {
-    httpMethod: 'POST',
-    uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-    headers: {
-      'Content-Type': payload.contentType,
-      Authorization: `Bearer ${accessToken}`,
-      apikey: supabaseAnonKey,
-      'x-upsert': 'true',
-    },
-  });
-  const result = await task.uploadAsync();
-  if (!result) {
-    throw new Error('Upload failed (no response)');
-  }
-  if (result.status < 200 || result.status >= 300) {
-    const uploadError = new Error(result.body || `Upload failed (HTTP ${result.status})`);
-    (uploadError as any).status = result.status;
-    throw uploadError;
-  }
-
-  const { data } = supabase.storage.from(CHAT_MEDIA_BUCKET).getPublicUrl(filePath);
-  return data.publicUrl;
-}
-
-async function uploadQueuedVoice(payload: ChatVoiceSendPayload) {
-  const filePath = `${payload.senderId}/${Date.now()}-${payload.fileName}`;
-  const response = await fetch(payload.localUri);
-  const arrayBuffer = await response.arrayBuffer();
-  const bytes = new Uint8Array(arrayBuffer);
-  const { data, error } = await supabase.storage
-    .from(VOICE_MESSAGES_BUCKET)
-    .upload(filePath, bytes, { contentType: payload.contentType, upsert: true });
-  if (error) throw error;
-  return data?.path ?? filePath;
-}
 
 async function processChatReactionSync(payload: ChatReactionSyncPayload) {
   if (!payload.emoji) {
@@ -1359,48 +1627,6 @@ async function processChatReactionSync(payload: ChatReactionSyncPayload) {
     { onConflict: 'message_id,user_id' },
   );
   if (error) throw error;
-}
-
-async function processChatMediaSend(payload: ChatMediaSendPayload) {
-  const publicUrl = await uploadQueuedPublicChatMedia(payload);
-  const documentText =
-    payload.mediaType === 'document'
-      ? `${DOCUMENT_TEXT_PREFIX} ${[
-          payload.documentName || payload.fileName,
-          payload.documentSizeLabel,
-          payload.documentTypeLabel,
-        ].filter(Boolean).join(' | ')}\n${publicUrl}`
-      : publicUrl;
-
-  const { error } = await supabase.from('messages').insert({
-    text: documentText,
-    client_message_id: payload.clientMessageId ?? null,
-    sender_id: payload.senderId,
-    receiver_id: payload.receiverId,
-    is_read: false,
-    message_type: payload.mediaType === 'document' ? 'text' : payload.mediaType,
-    reply_to_message_id: payload.replyToMessageId ?? null,
-  });
-  if (error && (error as { code?: string }).code !== '23505') throw error;
-  await removeStagedOfflineChatUpload(payload.localUri);
-}
-
-async function processChatVoiceSend(payload: ChatVoiceSendPayload) {
-  const audioPath = await uploadQueuedVoice(payload);
-  const { error } = await supabase.from('messages').insert({
-    text: '',
-    client_message_id: payload.clientMessageId ?? null,
-    sender_id: payload.senderId,
-    receiver_id: payload.receiverId,
-    is_read: false,
-    message_type: 'voice',
-    audio_path: audioPath,
-    audio_duration: payload.durationSeconds,
-    audio_waveform: payload.waveform,
-    reply_to_message_id: payload.replyToMessageId ?? null,
-  });
-  if (error && (error as { code?: string }).code !== '23505') throw error;
-  await removeStagedOfflineChatUpload(payload.localUri);
 }
 
 async function processIntentRequestCreate(payload: IntentRequestCreatePayload) {
@@ -1747,6 +1973,104 @@ async function processMomentCommentDelete(payload: MomentCommentDeletePayload) {
   ]);
 }
 
+async function processCirclePulseCommentCreate(payload: CirclePulseCommentCreatePayload) {
+  const comment = await createCirclePulseComment(
+    payload.itemId,
+    payload.actorProfileId,
+    payload.body,
+    payload.parentCommentId ?? null,
+  );
+  await Promise.all([
+    replaceCirclePulseCommentSnapshotId(payload.itemId, payload.actorProfileId, payload.tempId, comment),
+    remapCirclePulseCommentReferenceAcrossQueues(payload.tempId, comment.id),
+  ]);
+}
+
+async function processCirclePulseCommentUpdate(payload: CirclePulseCommentUpdatePayload) {
+  const comment = await updateCirclePulseComment(
+    payload.commentId,
+    payload.actorProfileId,
+    payload.body,
+  );
+  await upsertCirclePulseCommentSnapshot(payload.itemId, payload.actorProfileId, comment);
+}
+
+async function processCirclePulseCommentDelete(payload: CirclePulseCommentDeletePayload) {
+  await deleteCirclePulseComment(payload.commentId, payload.actorProfileId);
+  await Promise.all([
+    removeCirclePulseCommentSnapshot(payload.itemId, payload.actorProfileId, payload.commentId),
+    clearCirclePulseCommentMutationArtifacts(payload.commentId),
+  ]);
+}
+
+async function processCirclePulseCommentReactionSync(payload: CirclePulseCommentReactionSyncPayload) {
+  const snapshot = await fetchCirclePulseCommentSnapshot(payload.commentId);
+  const currentReaction = snapshot.myReaction ?? null;
+  const desiredReaction = payload.reaction ?? null;
+
+  if (currentReaction === desiredReaction) {
+    await upsertCirclePulseCommentSnapshot(payload.itemId, payload.actorProfileId, snapshot);
+    return;
+  }
+
+  const reactionToToggle = desiredReaction ?? currentReaction;
+  if (!reactionToToggle) return;
+
+  await toggleCirclePulseCommentReaction(
+    payload.commentId,
+    payload.actorProfileId,
+    reactionToToggle,
+  );
+
+  const refreshed = await fetchCirclePulseCommentSnapshot(payload.commentId);
+  await upsertCirclePulseCommentSnapshot(payload.itemId, payload.actorProfileId, refreshed);
+}
+
+async function processCirclePulseCommentPinSync(payload: CirclePulseCommentPinSyncPayload) {
+  const snapshotState = await readCirclePulseCommentsSnapshotState(payload.itemId, payload.actorProfileId);
+  const previousPinnedIds = (snapshotState.data ?? [])
+    .filter((comment) => comment.id !== payload.commentId && !!comment.pinnedAt)
+    .map((comment) => comment.id);
+
+  await pinCirclePulseComment(
+    payload.commentId,
+    payload.actorProfileId,
+    payload.pinned,
+  );
+
+  const refreshed = await fetchCirclePulseCommentSnapshot(payload.commentId);
+  await upsertCirclePulseCommentSnapshot(payload.itemId, payload.actorProfileId, refreshed);
+
+  if (payload.pinned) {
+    await Promise.all(
+      previousPinnedIds.map(async (commentId) => {
+        try {
+          const comment = await fetchCirclePulseCommentSnapshot(commentId);
+          await upsertCirclePulseCommentSnapshot(payload.itemId, payload.actorProfileId, comment);
+        } catch {
+          // If the comment cannot be refreshed, keep the local copy and only clear its pinned state.
+          const current = (await readCirclePulseCommentsSnapshotState(payload.itemId, payload.actorProfileId)).data ?? [];
+          const fallback = current.find((entry) => entry.id === commentId);
+          if (fallback) {
+            await upsertCirclePulseCommentSnapshot(payload.itemId, payload.actorProfileId, {
+              ...fallback,
+              pinnedAt: null,
+            });
+          } else {
+            await removeCirclePulseCommentSnapshot(payload.itemId, payload.actorProfileId, commentId);
+          }
+        }
+      }),
+    );
+  }
+}
+
+async function processCirclePulseCommentReportSync(payload: CirclePulseCommentReportSyncPayload) {
+  await reportCirclePulseComment(payload.commentId, payload.actorProfileId);
+  const refreshed = await fetchCirclePulseCommentSnapshot(payload.commentId);
+  await upsertCirclePulseCommentSnapshot(payload.itemId, payload.actorProfileId, refreshed);
+}
+
 async function processMutation(mutation: OfflineMutation) {
   switch (mutation.kind) {
     case 'swipe_sync':
@@ -1811,6 +2135,24 @@ async function processMutation(mutation: OfflineMutation) {
       return;
     case 'moment_comment_delete':
       await processMomentCommentDelete(mutation.payload);
+      return;
+    case 'circle_pulse_comment_create':
+      await processCirclePulseCommentCreate(mutation.payload);
+      return;
+    case 'circle_pulse_comment_update':
+      await processCirclePulseCommentUpdate(mutation.payload);
+      return;
+    case 'circle_pulse_comment_delete':
+      await processCirclePulseCommentDelete(mutation.payload);
+      return;
+    case 'circle_pulse_comment_reaction_sync':
+      await processCirclePulseCommentReactionSync(mutation.payload);
+      return;
+    case 'circle_pulse_comment_pin_sync':
+      await processCirclePulseCommentPinSync(mutation.payload);
+      return;
+    case 'circle_pulse_comment_report_sync':
+      await processCirclePulseCommentReportSync(mutation.payload);
       return;
     default:
       return;
@@ -2224,6 +2566,153 @@ export async function removePendingMomentCommentCreateMutation(commentId: string
   ]);
 }
 
+export async function enqueueCirclePulseCommentCreateMutation(payload: CirclePulseCommentCreatePayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildCirclePulseCommentCreateDedupeKey(payload),
+    kind: 'circle_pulse_comment_create',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => [...current, mutation]);
+  emitMutationEvent({ type: 'queued', mutation });
+}
+
+export async function enqueueCirclePulseCommentUpdateMutation(payload: CirclePulseCommentUpdatePayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildCirclePulseCommentUpdateDedupeKey(payload),
+    kind: 'circle_pulse_comment_update',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => {
+    const filtered = current.filter((item) => item.dedupeKey !== mutation.dedupeKey);
+    return [...filtered, mutation];
+  });
+  emitMutationEvent({ type: 'queued', mutation });
+}
+
+export async function enqueueCirclePulseCommentDeleteMutation(payload: CirclePulseCommentDeletePayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildCirclePulseCommentDeleteDedupeKey(payload),
+    kind: 'circle_pulse_comment_delete',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => {
+    const filtered = current.filter(
+      (item) =>
+        item.dedupeKey !== mutation.dedupeKey &&
+        !(
+          (item.kind === 'circle_pulse_comment_update' ||
+            item.kind === 'circle_pulse_comment_reaction_sync' ||
+            item.kind === 'circle_pulse_comment_pin_sync' ||
+            item.kind === 'circle_pulse_comment_report_sync') &&
+          item.payload.commentId === payload.commentId
+        ),
+    );
+    return [...filtered, mutation];
+  });
+  emitMutationEvent({ type: 'queued', mutation });
+}
+
+export async function enqueueCirclePulseCommentReactionSyncMutation(payload: CirclePulseCommentReactionSyncPayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildCirclePulseCommentReactionSyncDedupeKey(payload),
+    kind: 'circle_pulse_comment_reaction_sync',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => {
+    const filtered = current.filter((item) => item.dedupeKey !== mutation.dedupeKey);
+    return [...filtered, mutation];
+  });
+  emitMutationEvent({ type: 'queued', mutation });
+}
+
+export async function enqueueCirclePulseCommentPinSyncMutation(payload: CirclePulseCommentPinSyncPayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildCirclePulseCommentPinSyncDedupeKey(payload),
+    kind: 'circle_pulse_comment_pin_sync',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => {
+    const filtered = current.filter((item) => item.dedupeKey !== mutation.dedupeKey);
+    return [...filtered, mutation];
+  });
+  emitMutationEvent({ type: 'queued', mutation });
+}
+
+export async function enqueueCirclePulseCommentReportSyncMutation(payload: CirclePulseCommentReportSyncPayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildCirclePulseCommentReportSyncDedupeKey(payload),
+    kind: 'circle_pulse_comment_report_sync',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => {
+    const filtered = current.filter((item) => item.dedupeKey !== mutation.dedupeKey);
+    return [...filtered, mutation];
+  });
+  emitMutationEvent({ type: 'queued', mutation });
+}
+
+export async function replacePendingCirclePulseCommentCreateBody(commentId: string, body: string) {
+  const apply = <T extends OfflineMutation | FailedOfflineMutation>(mutation: T): T =>
+    mutation.kind === 'circle_pulse_comment_create' && mutation.payload.tempId === commentId
+      ? ({
+          ...mutation,
+          payload: {
+            ...mutation.payload,
+            body,
+          },
+        } as T)
+      : mutation;
+
+  const [pendingQueue, failedQueue] = await Promise.all([
+    readMutationQueue(),
+    readFailedMutationQueue(),
+  ]);
+
+  await Promise.all([
+    writeMutationQueue(pendingQueue.map((mutation) => apply(mutation as OfflineMutation))),
+    writeFailedMutationQueue(failedQueue.map((mutation) => apply(mutation as FailedOfflineMutation))),
+  ]);
+}
+
+export async function removePendingCirclePulseCommentCreateMutation(commentId: string) {
+  const [pendingQueue, failedQueue] = await Promise.all([
+    readMutationQueue(),
+    readFailedMutationQueue(),
+  ]);
+
+  const shouldKeep = (mutation: OfflineMutation | FailedOfflineMutation) =>
+    !(mutation.kind === 'circle_pulse_comment_create' && mutation.payload.tempId === commentId);
+
+  await Promise.all([
+    writeMutationQueue(pendingQueue.filter(shouldKeep)),
+    writeFailedMutationQueue(failedQueue.filter(shouldKeep)),
+  ]);
+}
+
 export async function hasPendingSwipeSyncMutation(
   userId: string,
   targetId: string,
@@ -2269,7 +2758,7 @@ export async function getPendingOfflineMutationCount() {
 }
 
 export async function getOfflineMutationQueueSnapshot() {
-  const { pending, failed } = await pruneStaleMomentMutationsFromQueues();
+  const { pending, failed } = await pruneStaleQueuedMutationsFromQueues();
   const now = Date.now();
   return {
     pendingCount: pending.length,

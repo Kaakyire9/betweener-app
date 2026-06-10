@@ -1,6 +1,5 @@
 // @ts-nocheck
 import React from 'react';
-import { View } from 'react-native';
 import { fireEvent, render } from '@testing-library/react-native';
 
 let mockParams: Record<string, any> = {};
@@ -61,7 +60,7 @@ jest.mock('expo-image-picker', () => ({
   VideoExportPreset: { H264_1280x720: 'H264_1280x720' },
 }));
 
-import MomentCreateScreen from '@/app/moments/create';
+const MomentCreateScreen = require('@/app/moments/create').default;
 
 describe('Moment create circle context', () => {
   beforeEach(() => {

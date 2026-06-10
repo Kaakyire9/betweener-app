@@ -1,4 +1,5 @@
 import SignalIcon from "@/components/icons/SignalIcon";
+import BlurViewSafe from "@/components/NativeWrappers/BlurViewSafe";
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
@@ -149,6 +150,13 @@ export default function SendSignalSheet({
         <Pressable style={styles.backdropPress} onPress={onClose} />
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.keyboardWrap}>
           <View style={styles.sheet}>
+            <BlurViewSafe
+              pointerEvents="none"
+              intensity={42}
+              tint={isDark ? "dark" : "light"}
+              style={StyleSheet.absoluteFill}
+            />
+            <View style={styles.handle} />
             <LinearGradientSafe
               pointerEvents="none"
               colors={isDark
@@ -250,7 +258,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     backdrop: {
       flex: 1,
       justifyContent: "flex-end",
-      backgroundColor: "rgba(0,0,0,0.52)",
+      backgroundColor: isDark ? "rgba(4,10,11,0.58)" : "rgba(31,42,42,0.34)",
     },
     backdropPress: { flex: 1 },
     keyboardWrap: {
@@ -261,15 +269,23 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       maxHeight: "86%",
       overflow: "hidden",
       position: "relative",
-      borderTopLeftRadius: 28,
-      borderTopRightRadius: 28,
-      backgroundColor: isDark ? "rgba(7,30,34,0.96)" : "rgba(255,250,244,0.98)",
+      borderTopLeftRadius: 30,
+      borderTopRightRadius: 30,
+      backgroundColor: isDark ? "rgba(7,30,34,0.82)" : "rgba(255,250,244,0.9)",
       borderWidth: 1,
-      borderColor: isDark ? "rgba(255,255,255,0.10)" : "rgba(15,61,62,0.10)",
+      borderColor: isDark ? "rgba(139,92,255,0.24)" : "rgba(15,61,62,0.08)",
+    },
+    handle: {
+      alignSelf: "center",
+      width: 40,
+      height: 4,
+      borderRadius: 2,
+      backgroundColor: isDark ? "rgba(255,255,255,0.24)" : "rgba(15,61,62,0.16)",
+      marginTop: 10,
     },
     content: {
       paddingHorizontal: 18,
-      paddingTop: 16,
+      paddingTop: 12,
       paddingBottom: Platform.OS === "ios" ? 26 : 18,
     },
     header: {
@@ -284,8 +300,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       alignItems: "center",
       justifyContent: "center",
       borderWidth: 1,
-      borderColor: isDark ? "rgba(19,168,168,0.30)" : "rgba(19,168,168,0.20)",
-      backgroundColor: isDark ? "rgba(19,168,168,0.10)" : "rgba(255,255,255,0.74)",
+      borderColor: isDark ? "rgba(19,168,168,0.24)" : "rgba(19,168,168,0.16)",
+      backgroundColor: isDark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.38)",
     },
     closeButton: {
       width: 36,
@@ -294,8 +310,8 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       alignItems: "center",
       justifyContent: "center",
       borderWidth: 1,
-      borderColor: isDark ? "rgba(255,255,255,0.10)" : "rgba(15,61,62,0.08)",
-      backgroundColor: isDark ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.72)",
+      borderColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(15,61,62,0.08)",
+      backgroundColor: isDark ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.34)",
     },
     title: {
       marginTop: 14,
@@ -322,7 +338,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderRadius: 999,
       borderWidth: 1,
       borderColor: isDark ? "rgba(19,168,168,0.22)" : "rgba(19,168,168,0.16)",
-      backgroundColor: isDark ? "rgba(19,168,168,0.08)" : "rgba(255,255,255,0.72)",
+      backgroundColor: isDark ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.32)",
     },
     quotaText: {
       color: theme.text,
@@ -343,7 +359,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderRadius: 16,
       borderWidth: 1,
       borderColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(15,61,62,0.07)",
-      backgroundColor: isDark ? "rgba(255,255,255,0.045)" : "rgba(255,255,255,0.72)",
+      backgroundColor: isDark ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.3)",
     },
     reasonCardSelected: {
       borderColor: isDark ? "rgba(19,168,168,0.45)" : "rgba(19,168,168,0.34)",
@@ -382,9 +398,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       minHeight: 76,
       borderRadius: 16,
       borderWidth: 1,
-      borderColor: isDark ? "rgba(255,255,255,0.09)" : "rgba(15,61,62,0.08)",
+      borderColor: isDark ? "rgba(255,255,255,0.08)" : "rgba(15,61,62,0.08)",
       color: theme.text,
-      backgroundColor: isDark ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.76)",
+      backgroundColor: isDark ? "rgba(255,255,255,0.05)" : "rgba(255,255,255,0.34)",
       paddingHorizontal: 12,
       paddingVertical: 10,
       textAlignVertical: "top",

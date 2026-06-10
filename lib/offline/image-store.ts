@@ -86,11 +86,11 @@ const pruneImageCacheMap = async (map: ImageCacheMap): Promise<ImageCacheMap> =>
     }),
   );
 
-  const validEntries = entries.filter(Boolean) as Array<{
+  const validEntries = entries.filter(Boolean) as {
     key: string;
     entry: ImageCacheEntry & { savedAt: number };
     size: number;
-  }>;
+  }[];
   validEntries.sort((a, b) => (b.entry.savedAt ?? 0) - (a.entry.savedAt ?? 0));
 
   const kept: ImageCacheMap = {};
@@ -175,6 +175,18 @@ export const cacheOfflineImage = async (sourceKey: string, remoteUri?: string | 
   } catch {
     return null;
   }
+};
+
+export const resolveOfflineImageUri = async (
+  sourceKey: string,
+  remoteUri?: string | null,
+): Promise<string | null> => {
+  if (!sourceKey || !remoteUri) return remoteUri ?? null;
+  if (!remoteUri.startsWith('http')) return remoteUri;
+  const cached = await getOfflineImageUri(sourceKey);
+  if (cached) return cached;
+  const downloaded = await cacheOfflineImage(sourceKey, remoteUri);
+  return downloaded ?? remoteUri;
 };
 
 export const rememberOfflineImageUri = async (

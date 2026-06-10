@@ -18,8 +18,8 @@ type Props = {
   currentUserId?: string | null;
   currentUserAvatarUrl?: string | null;
   reactionSheetMessage: MessageType | null;
-  reactionSummary: Array<{ emoji: string; count: number }>;
-  reactionSheetList: Array<{ userId: string; emoji: string }>;
+  reactionSummary: { emoji: string; count: number }[];
+  reactionSheetList: { userId: string; emoji: string }[];
   reactionSheetEmoji: string | null;
   reactionProfiles: ReactionProfileMap;
   reactionProfilesLoading: boolean;

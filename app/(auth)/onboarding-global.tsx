@@ -514,7 +514,6 @@ export default function Onboarding() {
             ? "GH"
             : null,
         origin_country_source: form.originCountry ? "explicit" : form.currentCountry === "Ghana" ? "residence_backfill" : "unknown",
-        country_lock_policy: "none",
         years_in_diaspora: 0,
         profile_completed: true,
         identity_status: "active",

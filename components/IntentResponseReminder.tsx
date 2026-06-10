@@ -131,8 +131,8 @@ export default function IntentResponseReminder() {
     ]);
 
     if (signalsResult.error || requestsResult.error) return;
-    const signals = ((signalsResult.data as Array<{ id: string; expires_at: string }> | null) ?? []).filter(Boolean);
-    const requests = ((requestsResult.data as Array<{ id: string; expires_at: string }> | null) ?? []).filter(Boolean);
+    const signals = ((signalsResult.data as { id: string; expires_at: string }[] | null) ?? []).filter(Boolean);
+    const requests = ((requestsResult.data as { id: string; expires_at: string }[] | null) ?? []).filter(Boolean);
     const signalCount = signals.length;
     const requestCount = requests.length;
     const waitingCount = signalCount + requestCount;

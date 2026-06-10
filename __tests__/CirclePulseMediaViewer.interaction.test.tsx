@@ -59,6 +59,15 @@ jest.mock('react-native-gesture-handler', () => {
   };
 });
 
+jest.mock('expo-router', () => {
+  const React = require('react');
+  return {
+    useFocusEffect: (effect: () => void | (() => void)) => {
+      React.useEffect(() => effect(), [effect]);
+    },
+  };
+});
+
 const editorialItem = {
   id: 'pulse-poster',
   circleId: 'circle-1',

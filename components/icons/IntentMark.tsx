@@ -1,4 +1,4 @@
-import Svg, { Circle, Path } from "react-native-svg";
+import { Circle, Path, Svg } from "react-native-svg";
 
 type IntentMarkProps = {
   size?: number;

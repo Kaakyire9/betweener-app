@@ -5,11 +5,14 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useResponsiveMetrics } from '@/lib/responsive';
+import { normalizeProfilePhotoUri } from '@/lib/profile/media';
 import type { CirclePulseItem, CirclePulseItemType } from '@/lib/circles/pulse/circle-pulse-types';
 import { useCirclePulsePalette, type CirclePulsePalette } from '@/lib/circles/pulse/circle-pulse-theme';
 
 type Props = {
   items: CirclePulseItem[];
+  discussionUnreadByItemId?: Record<string, number>;
+  gatheringPosterMembersByUrl?: Record<string, { profileId: string; fullName: string; avatarUrl: string; seatContext?: 'welcome' | 'love' | 'featured_member' }>;
   loading?: boolean;
   error?: string | null;
   isMember: boolean;
@@ -46,17 +49,145 @@ const TYPE_ORDER: Record<CirclePulseItemType, number> = {
 
 const AUTO_ADVANCE_MS = 7200;
 
-const formatDate = (value?: string | null) => {
-  if (!value) return 'Coming soon';
+const getGatheringDateParts = (value?: string | null) => {
+  if (!value) return { month: 'SOON', day: '--', time: 'TBA' };
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return 'Coming soon';
-  return date.toLocaleDateString(undefined, {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  if (Number.isNaN(date.getTime())) return { month: 'SOON', day: '--', time: 'TBA' };
+  return {
+    month: date.toLocaleDateString(undefined, { month: 'short' }).toUpperCase(),
+    day: String(date.getDate()).padStart(2, '0'),
+    time: date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }),
+  };
+};
+
+const formatGatheringCountdown = (value?: string | null) => {
+  if (!value) return 'Starting soon';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Starting soon';
+  const deltaMs = date.getTime() - Date.now();
+  if (deltaMs <= 0) return 'Starting soon';
+  const minutes = Math.floor(deltaMs / (1000 * 60));
+  const hours = Math.floor(deltaMs / (1000 * 60 * 60));
+  const days = Math.floor(deltaMs / (1000 * 60 * 60 * 24));
+  if (minutes < 60) return `${Math.max(minutes, 1)}m to go`;
+  if (hours < 24) return `${hours}h to go`;
+  if (days >= 56) return `Coming in ${date.toLocaleDateString(undefined, { month: 'long' })}`;
+  if (days >= 14) return `In ${Math.ceil(days / 7)} weeks`;
+  return `${days}d to go`;
+};
+
+const formatGatheringAttendance = (count: number) => {
+  if (count <= 0) return 'Be the first to RSVP';
+  return count === 1 ? '1 person is planning to attend' : `${count} people are planning to attend`;
+};
+
+const formatGatheringAttendanceBadge = (count: number) => {
+  if (count <= 0) return '0 attending';
+  return count === 1 ? '1 attending' : `${count} attending`;
+};
+
+const formatCountLabel = (count: number, singular: string, plural = `${singular}s`) => {
+  if (count <= 0) return `0 ${plural}`;
+  return count === 1 ? `1 ${singular}` : `${count} ${plural}`;
+};
+
+const getDiscussionCallToAction = (item: CirclePulseItem) => {
+  if (item.commentCount > 0) {
+    if (item.type === 'welcome') return 'Open welcome';
+    if (item.type === 'love_seat') return 'Open conversation';
+    if (item.type === 'gathering') {
+      if (item.gatheringPresentationMode === 'seat_linked' && item.gatheringSeatContext === 'welcome') return 'Open welcome';
+      if (item.gatheringPresentationMode === 'seat_linked' && item.gatheringSeatContext === 'love') return 'Open conversation';
+    }
+    return 'Open discussion';
+  }
+  if (item.type === 'welcome') return 'Start the welcome';
+  if (item.type === 'love_seat') return 'Start conversation';
+  if (item.type === 'gathering') {
+    if (item.gatheringPresentationMode === 'seat_linked' && item.gatheringSeatContext === 'welcome') return 'Start welcome';
+    if (item.gatheringPresentationMode === 'seat_linked' && item.gatheringSeatContext === 'love') return 'Start conversation';
+    return 'Start discussion';
+  }
+  if (item.type === 'media') return 'Start discussion';
+  return 'Start discussion';
+};
+
+const getDiscussionAccessibilityLabel = (
+  item: CirclePulseItem,
+  welcomeName?: string | null,
+  isViewingOwnWelcomeProfile = false,
+) => {
+  if (item.type === 'gathering') {
+    return `Open gathering discussion, ${item.commentCount > 0 ? formatCountLabel(item.commentCount, 'comment') : getDiscussionCallToAction(item).toLowerCase()}`;
+  }
+  if (item.type === 'welcome') {
+    if (isViewingOwnWelcomeProfile) {
+      return item.commentCount > 0
+        ? `Open welcome discussion for you, ${formatCountLabel(item.commentCount, 'comment')}`
+        : 'Open welcome discussion for you';
+    }
+    const firstName = getFirstName(welcomeName ?? item.welcomeProfiles[0]?.name ?? 'member');
+    return item.commentCount > 0
+      ? `Open welcome discussion for ${firstName}, ${formatCountLabel(item.commentCount, 'comment')}`
+      : `Open welcome discussion for ${firstName}`;
+  }
+  if (item.type === 'love_seat') {
+    return item.commentCount > 0
+      ? `Open Love Seat discussion, ${formatCountLabel(item.commentCount, 'comment')}`
+      : 'Open Love Seat discussion';
+  }
+  return 'Open discussion';
+};
+
+const getDiscussionSummary = (
+  item: CirclePulseItem,
+  welcomeName?: string | null,
+) => {
+  if (item.commentCount <= 0) return null;
+  if (item.type === 'welcome') {
+    const firstName = getFirstName(welcomeName ?? item.welcomeProfiles[0]?.name ?? 'this member');
+    return `${formatCountLabel(item.commentCount, 'welcome note')} for ${firstName}.`;
+  }
+  if (item.type === 'love_seat') {
+    const firstName = getFirstName(item.featuredProfileName ?? 'this member');
+    return `${formatCountLabel(item.commentCount, 'thoughtful note')} for ${firstName}.`;
+  }
+  if (item.type === 'gathering') {
+    if (item.gatheringPresentationMode === 'seat_linked' && item.gatheringSeatContext === 'welcome') {
+      const firstName = getFirstName(item.featuredProfileName ?? 'this member');
+      return `${formatCountLabel(item.commentCount, 'comment')} already welcoming ${firstName}.`;
+    }
+    if (item.gatheringPresentationMode === 'seat_linked' && item.gatheringSeatContext === 'love') {
+      const firstName = getFirstName(item.featuredProfileName ?? 'this member');
+      return `${formatCountLabel(item.commentCount, 'comment')} around ${firstName}'s gathering.`;
+    }
+    return `${formatCountLabel(item.commentCount, 'comment')} on this gathering.`;
+  }
+  if (item.type === 'prompt') return `${formatCountLabel(item.commentCount, 'comment')} shaping this prompt.`;
+  if (item.type === 'media') return `${formatCountLabel(item.commentCount, 'comment')} on this moment.`;
+  return `${formatCountLabel(item.commentCount, 'comment')} on this note.`;
+};
+
+const getWelcomeActionLabel = (profileName: string, isSelf: boolean) =>
+  isSelf ? 'Open welcome' : `Welcome ${getFirstName(profileName)}`;
+
+const getWelcomeHeroCopy = (profileName: string, isSelf: boolean) =>
+  isSelf
+    ? 'See how your Circle is welcoming you in, then answer in your own voice.'
+    : `Say hello and help ${getFirstName(profileName)} feel at home in this Circle.`;
+
+const formatGatheringExactDate = (value?: string | null) => {
+  if (!value) return 'Date to be confirmed';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Date to be confirmed';
+  return `${date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} · ${date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+};
+
+const formatGatheringTypeLabel = (value?: string | null) => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (!normalized) return '';
+  if (normalized === 'partner_venue') return 'Partner venue';
+  return normalized.replace(/_/g, ' ');
 };
 
 const getLabel = (type: CirclePulseItemType) => {
@@ -69,11 +200,24 @@ const getLabel = (type: CirclePulseItemType) => {
 };
 
 const getFirstName = (name: string) => name.trim().split(/\s+/)[0] || 'member';
+const normalizePosterKey = (value?: string | null) => String(value ?? '').trim();
+const getGatheringSeatContextLabel = (value?: 'welcome' | 'love' | 'featured_member') => {
+  if (value === 'welcome') return 'Welcome Seat';
+  if (value === 'love') return 'Love Seat';
+  return 'Featured member';
+};
+const getGatheringSeatContextCopy = (value: 'welcome' | 'love' | 'featured_member' | undefined, fullName: string) => {
+  const firstName = getFirstName(fullName);
+  if (value === 'welcome') return `A host-created gathering to help members welcome ${firstName} in a warmer setting.`;
+  if (value === 'love') return `A Circle gathering created around ${firstName}'s Love Seat for warmer, intentional conversation.`;
+  return `A host-led gathering built around ${firstName}'s Circle context before members RSVP.`;
+};
 
 function InlineCircleVideo({ uri, style }: { uri: string; style: ReturnType<typeof createStyles>['mediaImage'] }) {
   const player = useVideoPlayer(uri, (instance) => {
     instance.loop = true;
     instance.muted = true;
+    instance.keepScreenOnWhilePlaying = false;
     try { instance.play(); } catch {}
   });
 
@@ -116,6 +260,8 @@ const getMediaIcon = (mediaType?: CirclePulseItem['mediaType']) => {
 
 export default function CirclePulseBoard({
   items,
+  discussionUnreadByItemId,
+  gatheringPosterMembersByUrl,
   loading = false,
   error = null,
   isMember,
@@ -159,8 +305,61 @@ export default function CirclePulseBoard({
   const selectedItemIndex = selectedItem ? orderedItems.findIndex((item) => item.id === selectedItem.id) : -1;
   const welcomeProfiles = selectedItem?.type === 'welcome' ? selectedItem.welcomeProfiles.slice(0, 3) : [];
   const welcomeProfile = welcomeProfiles[welcomeProfileIndex] ?? welcomeProfiles[0] ?? null;
+  const isViewingOwnWelcomeProfile = !!welcomeProfile && !!viewerProfileId && welcomeProfile.profileId === viewerProfileId;
   const imageUri = selectedItem?.imageUrl || (selectedItem?.mediaType === 'image' ? selectedItem.mediaUrl : null);
+  const resolvedImageUri = imageUri ? normalizeProfilePhotoUri(imageUri) || imageUri : null;
+  const selectedGatheringPosterMember = selectedItem?.type === 'gathering' && selectedItem.gatheringPresentationMode === 'seat_linked'
+    ? (
+        selectedItem.featuredProfileId && selectedItem.featuredProfileAvatarUrl
+          ? {
+              profileId: selectedItem.featuredProfileId,
+              fullName: selectedItem.featuredProfileName ?? 'Circle member',
+              avatarUrl: selectedItem.featuredProfileAvatarUrl,
+              seatContext: selectedItem.gatheringSeatContext ?? undefined,
+            }
+          : imageUri
+            ? gatheringPosterMembersByUrl?.[normalizePosterKey(imageUri)] ?? null
+            : null
+      )
+    : null;
   const isLoveSeatOwner = !!selectedItem?.featuredProfileId && selectedItem.featuredProfileId === viewerProfileId;
+  const selectedGatheringDate = selectedItem?.type === 'gathering' ? selectedItem.gatheringStartsAt || selectedItem.startsAt : null;
+  const selectedGatheringDateParts = useMemo(() => getGatheringDateParts(selectedGatheringDate), [selectedGatheringDate]);
+  const selectedGatheringCountdown = useMemo(() => formatGatheringCountdown(selectedGatheringDate), [selectedGatheringDate]);
+  const selectedGatheringExactDate = useMemo(() => formatGatheringExactDate(selectedGatheringDate), [selectedGatheringDate]);
+  const selectedGatheringAttendance = useMemo(
+    () => formatGatheringAttendance(selectedItem?.type === 'gathering' ? selectedItem.gatheringAttendeeCount : 0),
+    [selectedItem],
+  );
+  const selectedGatheringAttendanceBadge = useMemo(
+    () => formatGatheringAttendanceBadge(selectedItem?.type === 'gathering' ? selectedItem.gatheringAttendeeCount : 0),
+    [selectedItem],
+  );
+  const selectedDiscussionCallToAction = useMemo(
+    () => {
+      if (!selectedItem) return '';
+      if (selectedItem.type === 'welcome' && isViewingOwnWelcomeProfile) return 'Open welcome';
+      return selectedItem.discussionCta ?? getDiscussionCallToAction(selectedItem);
+    },
+    [isViewingOwnWelcomeProfile, selectedItem],
+  );
+  const selectedDiscussionAccessibilityLabel = useMemo(
+    () => (selectedItem ? getDiscussionAccessibilityLabel(selectedItem, welcomeProfile?.name, isViewingOwnWelcomeProfile) : ''),
+    [isViewingOwnWelcomeProfile, selectedItem, welcomeProfile?.name],
+  );
+  const selectedDiscussionSummary = useMemo(
+    () => {
+      if (!selectedItem) return null;
+      if (selectedItem.type === 'welcome' && isViewingOwnWelcomeProfile && selectedItem.commentCount > 0) {
+        return `${formatCountLabel(selectedItem.commentCount, 'welcome note')} for you.`;
+      }
+      return selectedItem.discussionSummary ?? getDiscussionSummary(selectedItem, welcomeProfile?.name);
+    },
+    [isViewingOwnWelcomeProfile, selectedItem, welcomeProfile?.name],
+  );
+  const selectedDiscussionUnreadCount = selectedItem
+    ? Math.max(0, discussionUnreadByItemId?.[selectedItem.id] ?? 0)
+    : 0;
   const selectItem = useCallback((itemId: string) => {
     if (itemId === selectedItem?.id || transitioningRef.current) return;
     transitioningRef.current = true;
@@ -328,7 +527,7 @@ export default function CirclePulseBoard({
                 <Text style={styles.title} numberOfLines={1}>{welcomeProfile.name}</Text>
                 {welcomeProfile.location ? <Text style={styles.meta}>{welcomeProfile.location}</Text> : null}
                 <Text style={styles.loveSeatQuote} numberOfLines={4}>
-                  Say hello and help {getFirstName(welcomeProfile.name)} feel at home in this Circle.
+                  {getWelcomeHeroCopy(welcomeProfile.name, isViewingOwnWelcomeProfile)}
                 </Text>
                 {welcomeProfiles.length > 1 ? (
                   <View style={styles.welcomePager}>
@@ -399,7 +598,7 @@ export default function CirclePulseBoard({
                 <MaterialCommunityIcons name={selectedItem.mediaType === 'video' ? 'play' : 'arrow-top-right'} size={17} color="#F4E8D0" />
               </View>
             </Pressable>
-          ) : imageUri ? (
+          ) : imageUri && selectedItem.type !== 'gathering' ? (
             <View style={styles.mediaShell}>
               <Image source={{ uri: imageUri }} style={styles.mediaImage} contentFit="cover" transition={160} />
               <LinearGradient colors={['transparent', 'rgba(7,30,34,0.82)']} style={styles.mediaOverlay} />
@@ -410,27 +609,98 @@ export default function CirclePulseBoard({
               ) : null}
             </View>
           ) : null}
-          {selectedItem.type !== 'love_seat' && selectedItem.type !== 'welcome' ? (
+          {selectedItem.type === 'gathering' ? (
+            <View style={styles.gatheringFeature}>
+              {selectedGatheringPosterMember ? (
+                <LinearGradient colors={['rgba(19,168,168,0.24)', 'rgba(7,30,34,0.96)']} style={styles.gatheringAvatarHero}>
+                  <View style={styles.gatheringAvatarHeroTop}>
+                    <Text style={styles.label}>Host-led invitation</Text>
+                    <Text style={styles.gatheringPosterTypePill}>{getGatheringSeatContextLabel(selectedGatheringPosterMember.seatContext)}</Text>
+                  </View>
+                  <View style={styles.gatheringAvatarHeroBody}>
+                    {onOpenFeaturedProfile ? (
+                      <Pressable
+                        accessibilityLabel={`View ${selectedGatheringPosterMember.fullName}'s profile`}
+                        style={styles.gatheringAvatarHeroRing}
+                        onPress={() => onOpenFeaturedProfile(selectedGatheringPosterMember.profileId)}
+                      >
+                        <Image source={{ uri: selectedGatheringPosterMember.avatarUrl }} style={styles.gatheringAvatarHeroImage} contentFit="cover" transition={160} />
+                      </Pressable>
+                    ) : (
+                      <View style={styles.gatheringAvatarHeroRing}>
+                        <Image source={{ uri: selectedGatheringPosterMember.avatarUrl }} style={styles.gatheringAvatarHeroImage} contentFit="cover" transition={160} />
+                      </View>
+                    )}
+                    <View style={styles.gatheringAvatarHeroCopy}>
+                      {onOpenFeaturedProfile ? (
+                        <Pressable accessibilityLabel={`View ${selectedGatheringPosterMember.fullName}'s profile`} onPress={() => onOpenFeaturedProfile(selectedGatheringPosterMember.profileId)}>
+                          <Text style={styles.gatheringAvatarHeroName} numberOfLines={1}>{selectedGatheringPosterMember.fullName}</Text>
+                        </Pressable>
+                      ) : (
+                        <Text style={styles.gatheringAvatarHeroName} numberOfLines={1}>{selectedGatheringPosterMember.fullName}</Text>
+                      )}
+                      <Text style={styles.gatheringAvatarHeroMeta} numberOfLines={2}>
+                        {selectedItem.title || 'A thoughtful gathering'}
+                      </Text>
+                      <Text style={styles.gatheringAvatarHeroSupport} numberOfLines={2}>
+                        {getGatheringSeatContextCopy(selectedGatheringPosterMember.seatContext, selectedGatheringPosterMember.fullName)}
+                      </Text>
+                    </View>
+                  </View>
+                </LinearGradient>
+              ) : resolvedImageUri ? (
+                <View style={styles.gatheringPosterHeroShell}>
+                  <Image accessibilityLabel={`${selectedItem.title || 'Gathering'} poster`} source={{ uri: resolvedImageUri }} style={styles.gatheringPosterImage} contentFit="cover" transition={160} />
+                  <LinearGradient colors={['rgba(7,30,34,0.02)', 'rgba(7,30,34,0.18)', 'rgba(7,30,34,0.72)']} style={styles.gatheringPosterImageOverlay} />
+                  <View style={styles.gatheringPosterDateBadge}>
+                    <Text style={styles.gatheringPosterMonth}>{selectedGatheringDateParts.month}</Text>
+                    <Text style={styles.gatheringPosterDay}>{selectedGatheringDateParts.day}</Text>
+                    <View style={styles.gatheringPosterDivider} />
+                    <Text style={styles.gatheringPosterTime}>{selectedGatheringDateParts.time}</Text>
+                  </View>
+                </View>
+              ) : (
+                <View style={styles.gatheringPosterCard}>
+                  <Text style={styles.gatheringPosterMonth}>{selectedGatheringDateParts.month}</Text>
+                  <Text style={styles.gatheringPosterDay}>{selectedGatheringDateParts.day}</Text>
+                  <View style={styles.gatheringPosterDivider} />
+                  <Text style={styles.gatheringPosterTime}>{selectedGatheringDateParts.time}</Text>
+                </View>
+              )}
+              <View style={styles.gatheringCopy}>
+                <Text style={styles.label}>Upcoming gathering</Text>
+                <Text style={styles.title} numberOfLines={2}>{selectedItem.title || 'A thoughtful gathering'}</Text>
+                <Text style={styles.meta} numberOfLines={2}>
+                  {selectedItem.gatheringCity || 'Circle space'}
+                  {formatGatheringTypeLabel(selectedItem.gatheringType) ? ` - ${formatGatheringTypeLabel(selectedItem.gatheringType)}` : ''}
+                </Text>
+                <View style={styles.gatheringUtilityRow}>
+                  <View style={styles.gatheringDatePill}>
+                    <MaterialCommunityIcons name="calendar-blank-outline" size={12} color={palette.tealInk} />
+                    <Text style={styles.gatheringCountdownText}>{selectedGatheringExactDate}</Text>
+                  </View>
+                  <View style={styles.gatheringCountdownPill}>
+                    <MaterialCommunityIcons name="timer-sand" size={12} color={palette.tealInk} />
+                    <Text style={styles.gatheringCountdownText}>{selectedGatheringCountdown}</Text>
+                  </View>
+                  <Text style={styles.badge}>{selectedGatheringAttendanceBadge}</Text>
+                </View>
+                {selectedItem.body ? <Text style={styles.body} numberOfLines={3}>{selectedItem.body}</Text> : null}
+                <Text style={styles.gatheringAttendanceText}>{selectedGatheringAttendance}</Text>
+                <View style={styles.badgeRow}>
+                  {selectedItem.gatheringIsPartnerVenue ? <Text style={styles.badge}>Partner venue</Text> : null}
+                  {selectedItem.gatheringSafeFirstDateSpace ? <Text style={styles.badge}>Safe first-date space</Text> : null}
+                </View>
+              </View>
+            </View>
+          ) : selectedItem.type !== 'love_seat' && selectedItem.type !== 'welcome' ? (
             <View style={styles.copyBlock}>
               <Text style={styles.label}>{getLabel(selectedItem.type)}</Text>
               <Text style={styles.title} numberOfLines={2}>{selectedItem.title || 'A thoughtful spotlight'}</Text>
-              {selectedItem.type === 'gathering' ? (
-                <Text style={styles.meta} numberOfLines={2}>
-                  {formatDate(selectedItem.gatheringStartsAt || selectedItem.startsAt)}
-                  {selectedItem.gatheringCity ? ` - ${selectedItem.gatheringCity}` : ''}
-                </Text>
-              ) : null}
               {selectedItem.type === 'media' && selectedItem.subtitle && selectedItem.subtitle !== selectedItem.body ? (
                 <Text style={styles.mediaSubtitle} numberOfLines={1}>{selectedItem.subtitle}</Text>
               ) : null}
               {selectedItem.body ? <Text style={styles.body} numberOfLines={imageUri ? 3 : 5}>{selectedItem.body}</Text> : null}
-              {selectedItem.type === 'gathering' ? (
-                <View style={styles.badgeRow}>
-                  {selectedItem.gatheringIsPartnerVenue ? <Text style={styles.badge}>Partner venue</Text> : null}
-                  {selectedItem.gatheringSafeFirstDateSpace ? <Text style={styles.badge}>Safe first-date space</Text> : null}
-                  {selectedItem.gatheringAttendeeCount > 0 ? <Text style={styles.badge}>{selectedItem.gatheringAttendeeCount} attending</Text> : null}
-                </View>
-              ) : null}
             </View>
           ) : null}
           {selectedItem.type === 'welcome' && welcomeProfile ? (
@@ -442,14 +712,22 @@ export default function CirclePulseBoard({
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.loveSeatButton} onPress={openWelcomeDiscussion}>
                   <MaterialCommunityIcons name="hand-wave-outline" size={15} color={palette.purple} />
-                  <Text style={styles.secondaryLoveSeatText}>Welcome {getFirstName(welcomeProfile.name)}</Text>
+                  <Text style={styles.secondaryLoveSeatText}>{getWelcomeActionLabel(welcomeProfile.name, isViewingOwnWelcomeProfile)}</Text>
                 </TouchableOpacity>
               </View>
               <View style={styles.loveSeatFooter}>
-                <Pressable accessibilityLabel="Open discussion" style={styles.footerMeta} onPress={openWelcomeDiscussion}>
-                  <MaterialCommunityIcons name="message-outline" size={15} color={palette.textMuted} />
-                  <Text style={styles.footerText}>{selectedItem.commentCount > 0 ? `${selectedItem.commentCount} comments` : 'Start discussion'}</Text>
-                </Pressable>
+                <View style={styles.footerMetaStack}>
+                  <Pressable accessibilityLabel={selectedDiscussionAccessibilityLabel} style={styles.footerMeta} onPress={openWelcomeDiscussion}>
+                    <MaterialCommunityIcons name="message-outline" size={15} color={palette.textMuted} />
+                    <Text style={styles.footerText}>{selectedDiscussionCallToAction}</Text>
+                    {selectedDiscussionUnreadCount > 0 ? (
+                      <View style={styles.unreadPill}>
+                        <Text style={styles.unreadPillText}>{selectedDiscussionUnreadCount} new</Text>
+                      </View>
+                    ) : null}
+                  </Pressable>
+                  {selectedDiscussionSummary ? <Text style={styles.footerSummary}>{selectedDiscussionSummary}</Text> : null}
+                </View>
               </View>
             </>
           ) : selectedItem.type === 'media' ? (
@@ -461,9 +739,15 @@ export default function CirclePulseBoard({
                 </TouchableOpacity>
                 <TouchableOpacity accessibilityLabel="Open media discussion" style={styles.mediaActionButton} onPress={() => onOpenComments?.(selectedItem)}>
                   <MaterialCommunityIcons name="message-outline" size={15} color={palette.purple} />
-                  <Text style={styles.mediaSecondaryActionText}>{selectedItem.commentCount > 0 ? `${selectedItem.commentCount} comments` : 'Discuss'}</Text>
+                  <Text style={styles.mediaSecondaryActionText}>{selectedDiscussionCallToAction}</Text>
+                  {selectedDiscussionUnreadCount > 0 ? (
+                    <View style={styles.unreadPill}>
+                      <Text style={styles.unreadPillText}>{selectedDiscussionUnreadCount} new</Text>
+                    </View>
+                  ) : null}
                 </TouchableOpacity>
               </View>
+              {selectedDiscussionSummary ? <Text style={styles.footerSummary}>{selectedDiscussionSummary}</Text> : null}
             </>
           ) : selectedItem.type === 'love_seat' && selectedItem.featuredProfileId ? (
             <>
@@ -484,18 +768,38 @@ export default function CirclePulseBoard({
                 ) : null}
               </View>
               <View style={styles.loveSeatFooter}>
-                <Pressable accessibilityLabel="Open discussion" style={styles.footerMeta} onPress={() => onOpenComments?.(selectedItem)}>
-                  <MaterialCommunityIcons name="message-outline" size={15} color={palette.textMuted} />
-                  <Text style={styles.footerText}>{selectedItem.commentCount > 0 ? `${selectedItem.commentCount} comments` : 'Start discussion'}</Text>
-                </Pressable>
+                <View style={styles.footerMetaStack}>
+                  <Pressable accessibilityLabel={selectedDiscussionAccessibilityLabel} style={styles.footerMeta} onPress={() => onOpenComments?.(selectedItem)}>
+                    <MaterialCommunityIcons name="message-outline" size={15} color={palette.textMuted} />
+                    <Text style={styles.footerText}>{selectedDiscussionCallToAction}</Text>
+                    {selectedDiscussionUnreadCount > 0 ? (
+                      <View style={styles.unreadPill}>
+                        <Text style={styles.unreadPillText}>{selectedDiscussionUnreadCount} new</Text>
+                      </View>
+                    ) : null}
+                  </Pressable>
+                  {selectedDiscussionSummary ? <Text style={styles.footerSummary}>{selectedDiscussionSummary}</Text> : null}
+                </View>
               </View>
             </>
           ) : (
             <View style={styles.footer}>
-              <Pressable accessibilityLabel="Open discussion" style={styles.footerMeta} onPress={() => onOpenComments?.(selectedItem)}>
-                <MaterialCommunityIcons name="message-outline" size={15} color={palette.textMuted} />
-                <Text style={styles.footerText}>{selectedItem.commentCount > 0 ? `${selectedItem.commentCount} comments` : 'Start discussion'}</Text>
-              </Pressable>
+              <View style={styles.footerMetaStack}>
+                <Pressable
+                  accessibilityLabel={selectedDiscussionAccessibilityLabel}
+                  style={styles.footerMeta}
+                  onPress={() => onOpenComments?.(selectedItem)}
+                >
+                  <MaterialCommunityIcons name="message-outline" size={15} color={palette.textMuted} />
+                  <Text style={styles.footerText}>{selectedDiscussionCallToAction}</Text>
+                  {selectedDiscussionUnreadCount > 0 ? (
+                    <View style={styles.unreadPill}>
+                      <Text style={styles.unreadPillText}>{selectedDiscussionUnreadCount} new</Text>
+                    </View>
+                  ) : null}
+                </Pressable>
+                {selectedDiscussionSummary ? <Text style={styles.footerSummary}>{selectedDiscussionSummary}</Text> : null}
+              </View>
               {renderAction()}
             </View>
           )}
@@ -683,6 +987,108 @@ const createStyles = (compactWidth: boolean, compactHeight: boolean, palette: Ci
       borderWidth: 1,
       borderColor: 'rgba(244,232,208,0.18)',
     },
+    gatheringFeature: { gap: 12 },
+    gatheringPosterCard: {
+      width: compactWidth ? 78 : 86,
+      minHeight: compactWidth ? 108 : 116,
+      paddingHorizontal: 10,
+      paddingVertical: 12,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: palette.outline,
+      backgroundColor: palette.surfaceMuted,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    gatheringPosterHeroShell: {
+      width: '100%',
+      height: compactHeight ? 128 : 142,
+      borderRadius: 22,
+      overflow: 'hidden',
+      backgroundColor: palette.surfaceMuted,
+      borderWidth: 1,
+      borderColor: palette.outline,
+    },
+    gatheringAvatarHero: {
+      padding: compactWidth ? 14 : 16,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: palette.tealBorder,
+      gap: 12,
+    },
+    gatheringAvatarHeroTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+    gatheringPosterTypePill: {
+      overflow: 'hidden',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+      color: palette.text,
+      backgroundColor: 'rgba(7,30,34,0.34)',
+      borderWidth: 1,
+      borderColor: 'rgba(244,232,208,0.12)',
+      fontSize: 10,
+      fontWeight: '900',
+      textTransform: 'uppercase',
+      letterSpacing: 0.8,
+    },
+    gatheringAvatarHeroBody: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+    gatheringAvatarHeroRing: {
+      width: compactWidth ? 76 : 88,
+      height: compactWidth ? 76 : 88,
+      padding: 3,
+      borderRadius: compactWidth ? 38 : 44,
+      backgroundColor: palette.tealSoft,
+      borderWidth: 1,
+      borderColor: palette.purpleStrong,
+    },
+    gatheringAvatarHeroImage: { width: '100%', height: '100%', borderRadius: compactWidth ? 35 : 41 },
+    gatheringAvatarHeroCopy: { flex: 1, gap: 4, minWidth: 0 },
+    gatheringAvatarHeroName: { color: palette.text, fontSize: compactWidth ? 17 : 19, lineHeight: compactWidth ? 22 : 24, fontFamily: 'PlayfairDisplay_700Bold' },
+    gatheringAvatarHeroMeta: { color: palette.teal, fontSize: 12, lineHeight: 18, fontWeight: '800' },
+    gatheringAvatarHeroSupport: { color: palette.textSoft, fontSize: 11, lineHeight: 16 },
+    gatheringPosterImage: { width: '100%', height: '100%' },
+    gatheringPosterImageOverlay: { ...StyleSheet.absoluteFillObject },
+    gatheringPosterDateBadge: {
+      position: 'absolute',
+      top: 10,
+      right: 10,
+      width: compactWidth ? 78 : 86,
+      paddingHorizontal: 8,
+      paddingVertical: 9,
+      borderRadius: 18,
+      backgroundColor: 'rgba(7,30,34,0.62)',
+      borderWidth: 1,
+      borderColor: 'rgba(244,232,208,0.16)',
+      alignItems: 'center',
+    },
+    gatheringPosterMonth: { color: palette.teal, fontSize: 11, fontWeight: '900', letterSpacing: 1.6 },
+    gatheringPosterDay: { marginTop: 4, color: palette.text, fontSize: compactWidth ? 28 : 32, lineHeight: compactWidth ? 32 : 36, fontFamily: 'PlayfairDisplay_700Bold' },
+    gatheringPosterDivider: { width: '100%', height: 1, marginVertical: 8, backgroundColor: palette.outline },
+    gatheringPosterTime: { color: palette.textMuted, fontSize: 11, fontWeight: '800' },
+    gatheringCopy: { flex: 1, gap: 7, minWidth: 0 },
+    gatheringUtilityRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 7 },
+    gatheringDatePill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 9,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: 'rgba(244,232,208,0.1)',
+      borderWidth: 1,
+      borderColor: 'rgba(244,232,208,0.14)',
+    },
+    gatheringCountdownPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 9,
+      paddingVertical: 6,
+      borderRadius: 999,
+      backgroundColor: palette.tealStrong,
+    },
+    gatheringCountdownText: { color: palette.tealInk, fontSize: 10, fontWeight: '900' },
+    gatheringAttendanceText: { color: palette.textMuted, fontSize: 11, lineHeight: 16, fontWeight: '700' },
     copyBlock: { flex: 1, gap: 6 },
     label: { color: palette.purple, fontSize: 11, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1.2 },
     title: { color: palette.text, fontSize: compactWidth ? 19 : 21, lineHeight: compactWidth ? 24 : 27, fontFamily: 'PlayfairDisplay_700Bold' },
@@ -701,8 +1107,22 @@ const createStyles = (compactWidth: boolean, compactHeight: boolean, palette: Ci
       fontWeight: '800',
     },
     footer: { minHeight: 36, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+    footerMetaStack: { flex: 1, gap: 3 },
     footerMeta: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 },
     footerText: { color: palette.textMuted, fontSize: 11, fontWeight: '700' },
+    footerSummary: { color: palette.textFaint, fontSize: 10, lineHeight: 14 },
+    unreadPill: {
+      marginLeft: 'auto',
+      minHeight: 20,
+      paddingHorizontal: 8,
+      borderRadius: 999,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: palette.tealBorder,
+      backgroundColor: palette.tealSoft,
+    },
+    unreadPillText: { color: palette.teal, fontSize: 9, fontWeight: '900' },
     loveSeatActions: { flexDirection: 'row', alignItems: 'center', gap: 7 },
     loveSeatButton: { minHeight: 40, flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingHorizontal: 8, borderRadius: 20, borderWidth: 1, borderColor: palette.outline, backgroundColor: palette.surfaceMuted },
     loveSeatPrimaryButton: { borderColor: palette.tealBorder, backgroundColor: palette.tealStrong },

@@ -90,16 +90,16 @@ export async function fetchMomentPostingEligibility(params: {
   const next = buildDefaultEligibility();
 
   const swipeRows =
-    (swipesResult.data as Array<{ swiper_id: string; target_id: string; action: string }> | null) ?? [];
+    (swipesResult.data as { swiper_id: string; target_id: string; action: string }[] | null) ?? [];
   const intentRows =
-    (intentsResult.data as Array<{ actor_id: string; recipient_id: string; status: string }> | null) ?? [];
+    (intentsResult.data as { actor_id: string; recipient_id: string; status: string }[] | null) ?? [];
   const signalRows =
-    (signalsResult.data as Array<{
+    (signalsResult.data as {
       sender_profile_id: string;
       receiver_profile_id: string;
       status: string;
       expires_at: string | null;
-    }> | null) ?? [];
+    }[] | null) ?? [];
 
   if (swipeRows.length === 0 && intentRows.length === 0 && signalRows.length === 0) {
     if (swipesResult.error || intentsResult.error || signalsResult.error) {

@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React from "react";
-import { Modal, View } from "react-native";
+import { Modal } from "react-native";
 import { fireEvent, render } from "@testing-library/react-native";
 
 import ChatReactionSummarySheet from "@/components/chat/ChatReactionSummarySheet";
