@@ -18,6 +18,7 @@ import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useMoments } from "@/hooks/useMoments";
 import { useAuth } from "@/lib/auth-context";
+import { clearActiveChatThread, setActiveChatThread } from "@/lib/chat/active-thread";
 import { ChatThreadActionsService } from "@/lib/chat/chat-thread-actions-service";
 import { acknowledgeIncomingMessagesDelivered } from "@/lib/chat/delivery-receipts";
 import { useChatMessages } from "@/lib/chat/hooks/use-chat-messages";
@@ -43,10 +44,12 @@ import {
   markAllOutgoingMessagesDelivered,
   markIncomingMessageRead,
   markOutgoingMessageDelivered,
+  mergeMessageWithMonotonicReceipt,
   reconcileMessageWithServer,
   replaceMessageById,
   setMessageStatus,
 } from "@/lib/chat/message-state";
+import { preserveUnchangedMessageReferences } from "@/lib/chat/message-list-reconciliation";
 import {
   buildRetryFailedTextPayload,
   canRetryFailedTextMessage,
@@ -69,7 +72,7 @@ import {
   subscribeThreadMessageRealtime,
 } from "@/lib/chat/sync/chat-realtime-service";
 import { flushThreadOutboxAndRefresh, startThreadSyncCoordinator } from "@/lib/chat/sync/chat-thread-sync-coordinator";
-import { fetchPeerTypingState, fetchRemoteSystemMessages, fetchRemoteThreadMessages } from "@/lib/chat/sync/chat-sync-service";
+import { fetchRemoteSystemMessages, fetchRemoteThreadMessages } from "@/lib/chat/sync/chat-sync-service";
 import { encryptMediaBytes, getOrCreateDeviceKeypair } from "@/lib/e2ee";
 import { decideIntentRequestOfflineSafe } from "@/lib/intents/offline-actions";
 import { computeConversationSignalLabel, computeFirstReplyHours, computeInterestOverlapRatio } from "@/lib/match/match-score";
@@ -3412,25 +3415,12 @@ export default function ConversationScreen() {
   );
   const params = useLocalSearchParams();
   const hasPlacesKey = Boolean(GOOGLE_MAPS_WEB_API_KEY);
-  const chatDebugInstanceRef = useRef(
-    `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
-  );
   const isChatInstanceMountedRef = useRef(true);
-  const debugChatBootstrap = useCallback((event: string, payload?: Record<string, unknown>) => {
-    if (!(typeof __DEV__ !== 'undefined' && __DEV__)) return;
-    if (!(globalThis as { __BETWEENER_CHAT_BOOTSTRAP_DEBUG__?: boolean }).__BETWEENER_CHAT_BOOTSTRAP_DEBUG__) return;
-    console.log('[chat-bootstrap]', {
-      instance: chatDebugInstanceRef.current,
-      event,
-      ...(payload ?? {}),
-    });
-  }, []);
-  
   // Get conversation data from params
   const routeId = params.id as string;
   const routePeerUserId = typeof params.peerUserId === 'string' ? String(params.peerUserId) : '';
   const routePeerProfileId = typeof params.peerProfileId === 'string' ? String(params.peerProfileId) : '';
-  const routeRequiresProfileResolution = !routePeerUserId && !!routePeerProfileId;
+  const routeRequiresProfileResolution = !routePeerUserId;
   const [peerUserId, setPeerUserId] = useState<string>(routePeerUserId || (routeRequiresProfileResolution ? '' : routeId));
   const [peerProfileId, setPeerProfileId] = useState<string | null>(routePeerProfileId || null);
   const [peerResolved, setPeerResolved] = useState(Boolean(routePeerUserId) || !routeRequiresProfileResolution);
@@ -3458,30 +3448,16 @@ export default function ConversationScreen() {
   // Keep both in state so we can query messages by user id and still open profile-view by profile id.
   useEffect(() => {
     isChatInstanceMountedRef.current = true;
-    debugChatBootstrap('mount', {
-      routeId,
-      routePeerUserId,
-      routePeerProfileId,
-    });
     return () => {
       isChatInstanceMountedRef.current = false;
-      debugChatBootstrap('unmount', {
-        routeId,
-      });
     };
-  }, [debugChatBootstrap, routeId, routePeerProfileId, routePeerUserId]);
+  }, []);
 
   useEffect(() => {
     setPeerUserId(routePeerUserId || (routeRequiresProfileResolution ? '' : routeId));
     setPeerProfileId(routePeerProfileId || null);
     setPeerResolved(Boolean(routePeerUserId) || !routeRequiresProfileResolution);
-    debugChatBootstrap('route_params_applied', {
-      routeId,
-      nextPeerUserId: routePeerUserId || (routeRequiresProfileResolution ? '' : routeId),
-      nextPeerProfileId: routePeerProfileId || null,
-      preResolved: Boolean(routePeerUserId),
-    });
-  }, [debugChatBootstrap, routeId, routePeerProfileId, routePeerUserId, routeRequiresProfileResolution]);
+  }, [routeId, routePeerProfileId, routePeerUserId, routeRequiresProfileResolution]);
 
   useEffect(() => {
     if (routePeerUserId) return;
@@ -3491,7 +3467,6 @@ export default function ConversationScreen() {
       // If we couldn't resolve (profile row missing or slow network), assume routeId is an auth user id.
       if (!cancelled) {
         setPeerResolved(true);
-        debugChatBootstrap('peer_resolve_timeout_fallback', { routeId });
       }
     }, 900);
     (async () => {
@@ -3505,11 +3480,6 @@ export default function ConversationScreen() {
             setPeerProfileId(localThread.peer_profile_id ?? (routePeerProfileId || null));
             setPeerUserId(localThread.peer_user_id);
             setPeerResolved(true);
-            debugChatBootstrap('peer_resolved_from_local_thread', {
-              routeId,
-              peerUserId: localThread.peer_user_id,
-              peerProfileId: localThread.peer_profile_id,
-            });
             if (t) clearTimeout(t);
             return;
           }
@@ -3525,11 +3495,6 @@ export default function ConversationScreen() {
           setPeerProfileId(String((byProfile.data as any).id));
           setPeerUserId(String((byProfile.data as any).user_id));
           setPeerResolved(true);
-          debugChatBootstrap('peer_resolved_from_profile_id', {
-            routeId,
-            peerUserId: String((byProfile.data as any).user_id),
-            peerProfileId: String((byProfile.data as any).id),
-          });
           if (t) clearTimeout(t);
           return;
         }
@@ -3544,11 +3509,6 @@ export default function ConversationScreen() {
           setPeerProfileId(String((byUser.data as any).id));
           setPeerUserId(String((byUser.data as any).user_id));
           setPeerResolved(true);
-          debugChatBootstrap('peer_resolved_from_user_id', {
-            routeId,
-            peerUserId: String((byUser.data as any).user_id),
-            peerProfileId: String((byUser.data as any).id),
-          });
           if (t) clearTimeout(t);
         }
       } catch (_e) {
@@ -3559,7 +3519,7 @@ export default function ConversationScreen() {
       cancelled = true;
       if (t) clearTimeout(t);
     };
-  }, [debugChatBootstrap, routeId, routePeerProfileId, routePeerUserId, routeRequiresProfileResolution, user?.id]);
+  }, [routeId, routePeerProfileId, routePeerUserId, routeRequiresProfileResolution, user?.id]);
 
   // For historical readability, most of this screen uses `conversationId` for the peer auth user id.
   const conversationId = peerUserId;
@@ -3592,6 +3552,8 @@ export default function ConversationScreen() {
   const [peerOnline, setPeerOnline] = useState(initialOnline);
   const [peerThreadActive, setPeerThreadActive] = useState(false);
   const peerThreadActiveRef = useRef(false);
+  const networkReadyRef = useRef(true);
+  const refreshOutgoingReceiptStatesRef = useRef<() => void>(() => {});
   const [peerLastSeen, setPeerLastSeen] = useState<Date | null>(initialLastSeen);
   const peerLastSeenRef = useRef<Date | null>(initialLastSeen);
   const [peerProfile, setPeerProfile] = useState<{
@@ -3760,6 +3722,9 @@ export default function ConversationScreen() {
   const [reactionProfiles, setReactionProfiles] = useState<Record<string, { name: string; avatar?: string | null }>>({});
   const [reactionProfilesLoading, setReactionProfilesLoading] = useState(false);
   const pendingReadTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const pendingServerReadIdsRef = useRef<Set<string>>(new Set());
+  const readReceiptFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const localThreadReadPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const viewableReadCandidateIdsRef = useRef<Set<string>>(new Set());
   const pendingReceiptSyncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingDeliveredHintTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -3817,21 +3782,6 @@ export default function ConversationScreen() {
     return isPeerTyping;
   }, []);
 
-  const persistTypingState = useCallback(async (typing: boolean) => {
-    if (!user?.id || !resolvedPeerAuthUserId) return;
-    const now = Date.now();
-    if (typing && now - lastTypingStatePersistAtRef.current < 1500) return;
-    lastTypingStatePersistAtRef.current = now;
-    const { error } = await supabase.rpc('rpc_set_chat_typing_state' as never, {
-      p_peer_user_id: resolvedPeerAuthUserId,
-      p_typing: typing,
-      p_typing_for_ms: 5000,
-    } as never);
-    if (error && !isLikelyNetworkError(error)) {
-      console.log('[chat] typing state upsert error', error);
-    }
-  }, [resolvedPeerAuthUserId, user?.id]);
-
   const applyBackendPresence = useCallback((row?: { online?: boolean | null; last_active?: string | null } | null) => {
     if (!row) return;
     const incomingLastActive = row.last_active ? new Date(row.last_active) : null;
@@ -3846,66 +3796,50 @@ export default function ConversationScreen() {
     setNowTick(Date.now());
   }, []);
 
-  const applyBackendTypingState = useCallback((row?: {
-    user_id?: string;
-    peer_user_id?: string;
-    typing_until?: string | null;
-    updated_at?: string | null;
-  } | null) => {
-    if (!row || row.user_id !== resolvedPeerAuthUserId || row.peer_user_id !== user?.id) return;
-    const isPeerTyping = setPeerTypingUntil(row.typing_until ?? null);
-    if (isPeerTyping) {
-      markPeerThreadActive();
-    }
-  }, [markPeerThreadActive, resolvedPeerAuthUserId, setPeerTypingUntil, user?.id]);
-
   const refreshPeerStatus = useCallback(async () => {
-    if (!resolvedPeerAuthUserId || !user?.id) return;
-    const [presenceResult, typingResult] = await Promise.all([
-      fetchUserPresence(resolvedPeerAuthUserId),
-      supabase
-        .from('chat_typing_state')
-        .select('user_id,peer_user_id,typing_until,updated_at')
-        .eq('user_id', resolvedPeerAuthUserId)
-        .eq('peer_user_id', user.id)
-        .maybeSingle(),
-    ]);
+    if (!resolvedPeerAuthUserId) return;
+    const presenceResult = await fetchUserPresence(resolvedPeerAuthUserId);
 
     if (!presenceResult.error) {
       applyBackendPresence(presenceResult.data as { online?: boolean | null; last_active?: string | null } | null);
     } else if (!isLikelyNetworkError(presenceResult.error)) {
       console.log('[chat] peer presence refresh error', presenceResult.error);
     }
-
-    if (!typingResult.error) {
-      applyBackendTypingState(typingResult.data as any);
-    } else if (!isLikelyNetworkError(typingResult.error)) {
-      console.log('[chat] typing state refresh error', typingResult.error);
-    }
-  }, [applyBackendPresence, applyBackendTypingState, resolvedPeerAuthUserId, user?.id]);
+  }, [applyBackendPresence, resolvedPeerAuthUserId]);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       const state = await fetchNetInfo();
       if (!cancelled) {
-        setNetworkReady(Boolean(state.isConnected) && state.isInternetReachable !== false);
+        const nextReady = Boolean(state.isConnected) && state.isInternetReachable !== false;
+        networkReadyRef.current = nextReady;
+        setNetworkReady(nextReady);
       }
     })();
     const unsubscribe = addNetInfoListener((state) => {
       const nextReady = Boolean(state.isConnected) && state.isInternetReachable !== false;
+      const wasReady = networkReadyRef.current;
+      networkReadyRef.current = nextReady;
       setNetworkReady(nextReady);
       if (!nextReady) {
-        setPeerOnline(false);
-        markPeerThreadInactive();
         setIsTyping(false);
+        return;
+      }
+      if (!wasReady && AppState.currentState === 'active') {
+        void refreshPeerStatus();
+        refreshOutgoingReceiptStatesRef.current();
       }
     });
     return () => {
       cancelled = true;
       unsubscribe();
     };
-  }, [markPeerThreadInactive]);
+  }, [refreshPeerStatus]);
+
+  useEffect(() => {
+    networkReadyRef.current = networkReady;
+  }, [networkReady]);
 
   useEffect(() => {
     peerLastSeenRef.current = peerLastSeen;
@@ -4158,12 +4092,7 @@ export default function ConversationScreen() {
     useCallback(() => {
       if (!conversationId || !user?.id) return () => {};
       void refreshPeerStatus();
-      const interval = setInterval(() => {
-        void refreshPeerStatus();
-      }, 30000);
-      return () => {
-        clearInterval(interval);
-      };
+      return () => {};
     }, [conversationId, refreshPeerStatus, user?.id]),
   );
 
@@ -4421,6 +4350,7 @@ export default function ConversationScreen() {
   
   const messagesRef = useRef<MessageType[]>([]);
   const activePeerMessageUserIdRef = useRef<string | null>(null);
+  const activeThreadTokenRef = useRef<symbol | null>(null);
   const fetchMessagesInFlightRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const isScreenFocusedRef = useRef(false);
   const flatListRef = useRef<FlashListRef<MessageType>>(null);
@@ -4458,7 +4388,7 @@ export default function ConversationScreen() {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const threadPresenceSessionRef = useRef<ReturnType<typeof startThreadPresenceSession> | null>(null);
   const threadSyncCoordinatorRef = useRef<ReturnType<typeof startThreadSyncCoordinator> | null>(null);
-  const lastTypingStatePersistAtRef = useRef(0);
+  const lastTypingBroadcastAtRef = useRef(0);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shouldAutoScrollRef = useRef(true);
   const hasAutoScrolledRef = useRef(false);
@@ -4468,8 +4398,13 @@ export default function ConversationScreen() {
     layoutHeight: 0,
     offsetY: 0,
   });
+  const listInteractionRef = useRef({
+    dragging: false,
+    momentum: false,
+  });
   const wasAtBottomRef = useRef(true);
-  const lastLoadTriggerRef = useRef(0);
+  const loadingEarlierRef = useRef(false);
+  const paginationUserInitiatedRef = useRef(false);
   const scrollRequestRef = useRef<number | null>(null);
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const jumpSettleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -4484,13 +4419,30 @@ export default function ConversationScreen() {
   useFocusEffect(
     useCallback(() => {
       isScreenFocusedRef.current = true;
+      if (user?.id && activePeerMessageUserId) {
+        activeThreadTokenRef.current = setActiveChatThread(user.id, activePeerMessageUserId);
+        void ChatRepository.markThreadRead(user.id, activePeerMessageUserId).catch((localError) =>
+          console.log('[chat] local mark focused thread read error', localError),
+        );
+      }
       return () => {
         isScreenFocusedRef.current = false;
+        clearActiveChatThread(user?.id, activePeerMessageUserId, activeThreadTokenRef.current);
+        activeThreadTokenRef.current = null;
         viewableReadCandidateIdsRef.current.clear();
         Object.values(pendingReadTimersRef.current).forEach((timer) => clearTimeout(timer));
         pendingReadTimersRef.current = {};
+        pendingServerReadIdsRef.current.clear();
+        if (readReceiptFlushTimerRef.current) {
+          clearTimeout(readReceiptFlushTimerRef.current);
+          readReceiptFlushTimerRef.current = null;
+        }
+        if (localThreadReadPersistTimerRef.current) {
+          clearTimeout(localThreadReadPersistTimerRef.current);
+          localThreadReadPersistTimerRef.current = null;
+        }
       };
-    }, []),
+    }, [activePeerMessageUserId, user?.id]),
   );
 
   const forceScrollToBottom = useCallback(() => {
@@ -4511,6 +4463,8 @@ export default function ConversationScreen() {
   useEffect(() => {
     initialScrollTimersRef.current.forEach((timer) => clearTimeout(timer));
     initialScrollTimersRef.current = [];
+    loadingEarlierRef.current = false;
+    paginationUserInitiatedRef.current = false;
     initialAutoScrollDoneRef.current = false;
     initialAutoScrollAttemptsRef.current = 0;
     lockAutoScrollUntilRef.current = Date.now() + 2500;
@@ -5077,23 +5031,28 @@ const resolveQueuedVideoUri = async (
 
   useEffect(() => {
     if (!user?.id || !activePeerMessageUserId) return;
+    if (!isScreenFocusedRef.current) return;
     if (!localThreadState.mergedMessages || localThreadState.mergedMessages.length === 0) return;
 
     const localKey = `${user.id}:${activePeerMessageUserId}`;
     if (chatThreadLocalLoadedKeyRef.current !== localKey) {
       chatThreadLocalLoadedKeyRef.current = localKey;
-      debugChatBootstrap('local_sqlite_thread_hydrated', {
-        routeId,
-        conversationId: activePeerMessageUserId,
-      });
     }
 
     if (messagesRef.current !== localThreadState.mergedMessages) {
-      setMessages(localThreadState.mergedMessages);
+      setMessages((prev) => {
+        const prevKey = prev.map(getMessageLocalObserverKey).join("|");
+        const nextKey = localThreadState.mergedMessages!
+          .map(getMessageLocalObserverKey)
+          .join("|");
+        return prevKey === nextKey ? prev : localThreadState.mergedMessages!;
+      });
     }
     setMessagesLoaded((prev) => (prev ? prev : true));
     setThreadBootstrapSettled((prev) => (prev ? prev : true));
-    setHasMore((prev) => (prev === localThreadState.hasMore ? prev : localThreadState.hasMore));
+    if (!remoteMessagesChecked) {
+      setHasMore((prev) => (prev === localThreadState.hasMore ? prev : localThreadState.hasMore));
+    }
     setOldestTimestamp((prev) => {
       const prevTime = prev?.getTime() ?? null;
       const nextTime = localThreadState.oldestTimestamp?.getTime() ?? null;
@@ -5101,9 +5060,8 @@ const resolveQueuedVideoUri = async (
     });
   }, [
     activePeerMessageUserId,
-    debugChatBootstrap,
     localThreadState,
-    routeId,
+    remoteMessagesChecked,
     user?.id,
   ]);
 
@@ -7032,20 +6990,10 @@ const resolveQueuedVideoUri = async (
     if (!isScreenFocusedRef.current) return;
     const fetchKey = `${user.id}:${activePeerMessageUserId}`;
     if (fetchMessagesInFlightRef.current?.key === fetchKey) {
-      debugChatBootstrap('fetch_messages_deduped', {
-        routeId,
-        conversationId: activePeerMessageUserId,
-      });
       await fetchMessagesInFlightRef.current.promise;
       return;
     }
     const run = async () => {
-    debugChatBootstrap('fetch_messages_start', {
-      routeId,
-      conversationId: activePeerMessageUserId,
-      currentMessageCount: messagesRef.current.length,
-      hasCacheKey: Boolean(chatThreadCacheKey),
-    });
     const { data, error, isIncrementalFetch, threadSyncCursor } = await fetchRemoteThreadMessages({
       currentUserId: user.id,
       peerUserId: activePeerMessageUserId,
@@ -7055,19 +7003,9 @@ const resolveQueuedVideoUri = async (
     });
     const isStaleFetch = activePeerMessageUserIdRef.current !== activePeerMessageUserId;
     if (isStaleFetch) {
-      debugChatBootstrap('fetch_messages_stale_drop', {
-        routeId,
-        fetchedConversationId: activePeerMessageUserId,
-        currentConversationId: activePeerMessageUserIdRef.current,
-      });
       return;
     }
     if (!isChatInstanceMountedRef.current) {
-      debugChatBootstrap('fetch_messages_unmounted_drop', {
-        routeId,
-        conversationId: activePeerMessageUserId,
-        phase: 'post_messages_query',
-      });
       return;
     }
 
@@ -7076,13 +7014,6 @@ const resolveQueuedVideoUri = async (
         code: (error as { code?: string })?.code ?? null,
         message: error.message || 'Failed to load thread messages',
       }, { threadId: activePeerMessageUserId });
-      debugChatBootstrap('fetch_messages_error', {
-        routeId,
-        conversationId: activePeerMessageUserId,
-        code: (error as any)?.code ?? null,
-        message: (error as any)?.message ?? null,
-        likelyNetwork: isLikelyNetworkError(error),
-      });
       console.log('[chat] fetch messages error', error);
       if (isLikelyNetworkError(error)) {
         if (messagesRef.current.length === 0 && chatThreadCacheKey) {
@@ -7093,11 +7024,6 @@ const resolveQueuedVideoUri = async (
               : null);
           if (cached) {
             if (!isChatInstanceMountedRef.current) {
-              debugChatBootstrap('fetch_messages_unmounted_drop', {
-                routeId,
-                conversationId: activePeerMessageUserId,
-                phase: 'network_fallback_cache_hydrate',
-              });
               return;
             }
             const hydrated = reconcileDeliveredFallback(linkReplies(deserializeCachedMessages(cached)));
@@ -7107,30 +7033,15 @@ const resolveQueuedVideoUri = async (
           }
         }
         if (!isChatInstanceMountedRef.current) {
-          debugChatBootstrap('fetch_messages_unmounted_drop', {
-            routeId,
-            conversationId: activePeerMessageUserId,
-            phase: 'network_fallback_finalize',
-          });
           return;
         }
         setMessagesLoaded(true);
         setThreadBootstrapSettled(true);
-        debugChatBootstrap('fetch_messages_network_fallback', {
-          routeId,
-          conversationId: activePeerMessageUserId,
-          cachedCount: messagesRef.current.length,
-        });
         return;
       }
-      setMessages([]);
       setMessagesLoaded(true);
       setThreadBootstrapSettled(true);
       setRemoteMessagesChecked(true);
-      debugChatBootstrap('fetch_messages_hard_empty', {
-        routeId,
-        conversationId: activePeerMessageUserId,
-      });
       return;
     }
 
@@ -7139,24 +7050,27 @@ const resolveQueuedVideoUri = async (
     const mapped: MessageType[] = (data || [])
       .map((row: MessageRow) => {
         const nextMessage = mapRowToMessage(row);
-        return mergeOfflineMediaIntoMessage(nextMessage, previousById.get(nextMessage.id));
+        const previous = previousById.get(nextMessage.id);
+        const withOfflineMedia = mergeOfflineMediaIntoMessage(nextMessage, previous);
+        return previous
+          ? mergeMessageWithMonotonicReceipt(previous, withOfflineMedia)
+          : withOfflineMedia;
       })
       .filter((msg) => !hiddenSet.has(msg.id));
 
     const ordered = isIncrementalFetch ? mapped : mapped.reverse();
     const systemRows = await fetchSystemMessages();
     if (!isChatInstanceMountedRef.current) {
-      debugChatBootstrap('fetch_messages_unmounted_drop', {
-        routeId,
-        conversationId: activePeerMessageUserId,
-        phase: 'post_system_messages_query',
-      });
       return;
     }
     const combined = [...ordered, ...systemRows].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
     const linked = reconcileDeliveredFallback(linkReplies(combined));
     let mergedForState: MessageType[] = linked;
     setMessages((prev) => {
+      if (!isIncrementalFetch && linked.length === 0 && prev.length > 0) {
+        mergedForState = prev;
+        return prev;
+      }
       const fetchedMessages = isIncrementalFetch ? mergeIncrementalFetchedMessages(prev, linked) : linked;
       mergedForState = reconcileDeliveredFallback(
         linkReplies(
@@ -7164,28 +7078,19 @@ const resolveQueuedVideoUri = async (
             fetchedMessages,
             previousMessages: prev,
             currentUserId: user.id,
-            debug: (payload) => {
-              debugChatBootstrap('fetch_messages_pending_merge', {
-                routeId,
-                conversationId: activePeerMessageUserId,
-                ...payload,
-              });
-            },
           }),
         ),
+      );
+      mergedForState = preserveUnchangedMessageReferences(
+        prev,
+        mergedForState,
+        getMessageLocalObserverKey,
       );
       return mergedForState;
     });
     setMessagesLoaded(true);
     setThreadBootstrapSettled(true);
     setRemoteMessagesChecked(true);
-    debugChatBootstrap('fetch_messages_success', {
-      routeId,
-      conversationId: activePeerMessageUserId,
-      mode: isIncrementalFetch ? 'incremental' : 'latest_page',
-      serverCount: Array.isArray(data) ? data.length : 0,
-      linkedCount: mergedForState.length,
-    });
     if (chatThreadCacheKey) {
       void writeOfflineSnapshot(chatThreadCacheKey, serializeCachedMessages(mergedForState));
     }
@@ -7210,7 +7115,7 @@ const resolveQueuedVideoUri = async (
     });
     fetchMessagesInFlightRef.current = { key: fetchKey, promise };
     await promise;
-  }, [activePeerMessageUserId, chatThreadCacheKey, debugChatBootstrap, isBlockedByMe, isChatBlocked, linkReplies, mapRowToMessage, reconcileDeliveredFallback, routeId, syncMessageReactions, syncViewOnceStatus, user?.id]);
+  }, [activePeerMessageUserId, chatThreadCacheKey, linkReplies, mapRowToMessage, reconcileDeliveredFallback, syncMessageReactions, syncViewOnceStatus, user?.id]);
 
   useEffect(() => {
     localHydrationActionRefs.current = {
@@ -7220,29 +7125,6 @@ const resolveQueuedVideoUri = async (
       fetchMessages,
     };
   }, [fetchBlockStatus, fetchHiddenMessages, fetchMessages, fetchPinnedMessages]);
-
-  useEffect(() => {
-    debugChatBootstrap('bootstrap_state', {
-      routeId,
-      conversationId,
-      peerResolved,
-      resolvedPeerAuthUserId,
-      messagesLoaded,
-      remoteMessagesChecked,
-      threadBootstrapSettled,
-      messageCount: messages.length,
-    });
-  }, [
-    conversationId,
-    debugChatBootstrap,
-    messages.length,
-    messagesLoaded,
-    peerResolved,
-    remoteMessagesChecked,
-    resolvedPeerAuthUserId,
-    routeId,
-    threadBootstrapSettled,
-  ]);
 
   useEffect(() => {
     activePeerMessageUserIdRef.current = activePeerMessageUserId ?? null;
@@ -7316,6 +7198,15 @@ const resolveQueuedVideoUri = async (
       pendingReceiptSyncTimersRef.current = {};
       Object.values(pendingDeliveredHintTimersRef.current).forEach((timer) => clearTimeout(timer));
       pendingDeliveredHintTimersRef.current = {};
+      pendingServerReadIdsRef.current.clear();
+      if (readReceiptFlushTimerRef.current) {
+        clearTimeout(readReceiptFlushTimerRef.current);
+        readReceiptFlushTimerRef.current = null;
+      }
+      if (localThreadReadPersistTimerRef.current) {
+        clearTimeout(localThreadReadPersistTimerRef.current);
+        localThreadReadPersistTimerRef.current = null;
+      }
     };
   }, []);
 
@@ -7390,6 +7281,34 @@ const resolveQueuedVideoUri = async (
     },
     [hintOutgoingDelivered, peerPresenceDisplay.online, syncOutgoingReceiptState]
   );
+
+  const refreshOutgoingReceiptStates = useCallback(() => {
+    if (!user?.id || !networkReadyRef.current) return;
+    const pendingMessageIds = Array.from(
+      new Set(
+        messagesRef.current
+          .filter((message) =>
+            message.senderId === user.id &&
+            !String(message.id).startsWith('temp-') &&
+            message.status !== 'read' &&
+            message.status !== 'failed',
+          )
+          .map((message) => message.id),
+      ),
+    );
+
+    pendingMessageIds.forEach((messageId, index) => {
+      if (pendingReceiptSyncTimersRef.current[messageId]) return;
+      pendingReceiptSyncTimersRef.current[messageId] = setTimeout(() => {
+        delete pendingReceiptSyncTimersRef.current[messageId];
+        void syncOutgoingReceiptState(messageId);
+      }, Math.min(index * 120, 720));
+    });
+  }, [syncOutgoingReceiptState, user?.id]);
+
+  useEffect(() => {
+    refreshOutgoingReceiptStatesRef.current = refreshOutgoingReceiptStates;
+  }, [refreshOutgoingReceiptStates]);
 
   const markOutgoingMessagesDelivered = useCallback(() => {
     setMessages((prev) => {
@@ -7598,60 +7517,72 @@ const resolveQueuedVideoUri = async (
   }, [chatSafetyStorageKey]);
 
   const loadEarlier = useCallback(async () => {
-    if (!user?.id || !activePeerMessageUserId || loadingEarlier || !oldestTimestamp) return;
+    if (
+      !user?.id ||
+      !activePeerMessageUserId ||
+      loadingEarlierRef.current ||
+      !oldestTimestamp
+    ) return;
+    loadingEarlierRef.current = true;
     setLoadingEarlier(true);
     shouldAutoScrollRef.current = false;
     wasAtBottomRef.current = false;
-    const localRows = await ChatRepository.getMessages(user.id, activePeerMessageUserId, {
-      limit: PAGE_SIZE,
-      before: oldestTimestamp.toISOString(),
-    });
-    const localEarlierMessages = localRows.map(localRowToChatMessage);
-    let networkBefore = oldestTimestamp;
-
-    if (localEarlierMessages.length > 0) {
-      setMessages((prev) => {
-        const existing = new Set(prev.map((msg) => msg.id));
-        const merged = localEarlierMessages.filter((msg) => !existing.has(msg.id));
-        const combined = [...merged, ...prev].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
-        return linkReplies(combined);
+    try {
+      const localRows = await ChatRepository.getMessages(user.id, activePeerMessageUserId, {
+        limit: PAGE_SIZE,
+        before: oldestTimestamp.toISOString(),
       });
-      networkBefore = localEarlierMessages[0]?.timestamp ?? oldestTimestamp;
-      setOldestTimestamp(networkBefore);
+      const localEarlierMessages = localRows.map(localRowToChatMessage);
+      let networkBefore = oldestTimestamp;
 
-      if (localEarlierMessages.length >= PAGE_SIZE) {
-        setHasMore(true);
-        setLoadingEarlier(false);
+      if (localEarlierMessages.length > 0) {
+        setMessages((prev) => {
+          const existing = new Set(prev.map((msg) => msg.id));
+          const merged = localEarlierMessages.filter((msg) => !existing.has(msg.id));
+          if (merged.length === 0) return prev;
+          const combined = [...merged, ...prev].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+          return linkReplies(combined);
+        });
+        networkBefore = localEarlierMessages[0]?.timestamp ?? oldestTimestamp;
+        setOldestTimestamp(networkBefore);
+
+        if (localEarlierMessages.length >= PAGE_SIZE) {
+          setHasMore(true);
+          return;
+        }
+      }
+
+      const { data, error } = await supabase
+        .from('messages')
+        .select(MESSAGE_SELECT_FIELDS)
+        .or(
+          `and(sender_id.eq.${user.id},receiver_id.eq.${activePeerMessageUserId}),and(sender_id.eq.${activePeerMessageUserId},receiver_id.eq.${user.id})`
+        )
+        .lt('created_at', networkBefore.toISOString())
+        .order('created_at', { ascending: false })
+        .limit(PAGE_SIZE);
+
+      if (error) {
+        console.log('[chat] load earlier error', error);
+        if (localEarlierMessages.length > 0) {
+          setHasMore(localEarlierMessages.length >= PAGE_SIZE);
+        }
         return;
       }
-    }
 
-    const { data, error } = await supabase
-      .from('messages')
-      .select(MESSAGE_SELECT_FIELDS)
-      .or(
-        `and(sender_id.eq.${user.id},receiver_id.eq.${activePeerMessageUserId}),and(sender_id.eq.${activePeerMessageUserId},receiver_id.eq.${user.id})`
-      )
-      .lt('created_at', networkBefore.toISOString())
-      .order('created_at', { ascending: false })
-      .limit(PAGE_SIZE);
+      const hiddenSet = hiddenMessageIdsRef.current;
+      const previousById = new Map(messagesRef.current.map((message) => [message.id, message] as const));
+      const mapped: MessageType[] = (data || []).map((row: MessageRow) =>
+        {
+          const previous = previousById.get(row.id);
+          const withOfflineMedia = mergeOfflineMediaIntoMessage(mapRowToMessage(row), previous);
+          return previous
+            ? mergeMessageWithMonotonicReceipt(previous, withOfflineMedia)
+            : withOfflineMedia;
+        }
+      ).filter((msg) => !hiddenSet.has(msg.id));
 
-    if (error) {
-      console.log('[chat] load earlier error', error);
-      if (localEarlierMessages.length > 0) {
-        setHasMore(localEarlierMessages.length >= PAGE_SIZE);
-      }
-      setLoadingEarlier(false);
-      return;
-    }
-
-    const hiddenSet = hiddenMessageIdsRef.current;
-    const previousById = new Map(messagesRef.current.map((message) => [message.id, message] as const));
-    const mapped: MessageType[] = (data || []).map((row: MessageRow) =>
-      mergeOfflineMediaIntoMessage(mapRowToMessage(row), previousById.get(row.id))
-    ).filter((msg) => !hiddenSet.has(msg.id));
-
-    const ordered = mapped.reverse();
+      const ordered = mapped.reverse();
       if (ordered.length > 0) {
         void ChatRepository.upsertMessages(
           user.id,
@@ -7661,6 +7592,7 @@ const resolveQueuedVideoUri = async (
         setMessages((prev) => {
           const existing = new Set(prev.map((msg) => msg.id));
           const merged = ordered.filter((msg) => !existing.has(msg.id));
+          if (merged.length === 0) return prev;
           const combined = [...merged, ...prev].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
           return linkReplies(combined);
         });
@@ -7669,8 +7601,11 @@ const resolveQueuedVideoUri = async (
         void syncViewOnceStatus(viewOnceIds);
         setOldestTimestamp(ordered[0]?.timestamp ?? networkBefore);
       }
-    setHasMore((data || []).length === PAGE_SIZE);
-    setLoadingEarlier(false);
+      setHasMore((data || []).length === PAGE_SIZE);
+    } finally {
+      loadingEarlierRef.current = false;
+      setLoadingEarlier(false);
+    }
   }, [activePeerMessageUserId, linkReplies, loadingEarlier, mapRowToMessage, oldestTimestamp, syncMessageReactions, syncViewOnceStatus, user?.id]);
 
   useFocusEffect(
@@ -7686,17 +7621,18 @@ const resolveQueuedVideoUri = async (
     }, [activePeerMessageUserId, user?.id])
   );
 
-  useEffect(() => {
-    if (!user?.id || !activePeerMessageUserId) return;
-    const handleRealtimeStatus = (status: string) => {
-      threadSyncCoordinatorRef.current?.handleRealtimeStatus(status);
-    };
+  useFocusEffect(
+    useCallback(() => {
+      if (!user?.id || !activePeerMessageUserId) return () => {};
+      const handleRealtimeStatus = (status: string) => {
+        threadSyncCoordinatorRef.current?.handleRealtimeStatus(status);
+      };
 
-    const stopRealtime = subscribeThreadMessageRealtime({
-      currentUserId: user.id,
-      peerUserId: activePeerMessageUserId,
-      onStatus: handleRealtimeStatus,
-      onInboxInsert: (row) => {
+      const stopRealtime = subscribeThreadMessageRealtime({
+        currentUserId: user.id,
+        peerUserId: activePeerMessageUserId,
+        onStatus: handleRealtimeStatus,
+        onInboxInsert: (row) => {
         setIsTyping(false);
         const incomingMessage = mapRowToMessage(row as MessageRow);
         void ChatRepository.upsertMessages(user.id, activePeerMessageUserId, [
@@ -7821,7 +7757,10 @@ const resolveQueuedVideoUri = async (
             linkReplies(
               prev.map((msg) =>
                 msg.id === row.id
-                  ? { ...nextMessage, reactions: msg.reactions }
+                  ? {
+                      ...mergeMessageWithMonotonicReceipt(msg, nextMessage),
+                      reactions: msg.reactions,
+                    }
                   : msg
               ),
             ),
@@ -7837,65 +7776,39 @@ const resolveQueuedVideoUri = async (
           );
           return linkReplies(combined);
         });
-      },
-    });
+        },
+      });
 
-    return () => {
-      stopRealtime();
-      if (reconnectTimerRef.current) {
-        clearTimeout(reconnectTimerRef.current);
-      }
-    };
-  }, [
-    activePeerMessageUserId,
-    conversationId,
-    fetchMessages,
-    linkReplies,
-    mapRowToMessage,
-    mapSystemRowToMessage,
-    reconcileDeliveredFallback,
-    scheduleOutgoingReceiptStateSync,
-    syncMessageReactions,
-    syncViewOnceStatus,
-    user?.id,
-  ]);
-
-  const applyPeerTypingStateRow = useCallback((row?: {
-    user_id?: string;
-    peer_user_id?: string;
-    typing_until?: string | null;
-    updated_at?: string | null;
-  } | null) => {
-    if (!row || !user?.id || !resolvedPeerAuthUserId) return;
-    if (row.user_id !== resolvedPeerAuthUserId || row.peer_user_id !== user.id) return;
-    const isPeerTyping = setPeerTypingUntil(row.typing_until ?? null);
-    if (isPeerTyping) {
-      markPeerThreadActive();
-    }
-  }, [markPeerThreadActive, resolvedPeerAuthUserId, setPeerTypingUntil, user?.id]);
-
-  useEffect(() => {
-    if (!user?.id || !conversationId || !resolvedPeerAuthUserId) return;
-
-    void (async () => {
-      try {
-        const row = await fetchPeerTypingState({
-          currentUserId: user.id,
-          peerUserId: resolvedPeerAuthUserId,
-        });
-        applyPeerTypingStateRow(row);
-      } catch (error) {
-        if (!isLikelyNetworkError(error)) {
-          console.log('[chat] typing state fetch error', error);
+      return () => {
+        stopRealtime();
+        if (reconnectTimerRef.current) {
+          clearTimeout(reconnectTimerRef.current);
         }
-      }
-    })();
-
-    const stopAncillaryRealtime = subscribeThreadAncillaryRealtime({
-      currentUserId: user.id,
+      };
+    }, [
+      activePeerMessageUserId,
       conversationId,
-      peerUserId: resolvedPeerAuthUserId,
-      onReactionInsert: (row) => {
+      fetchMessages,
+      linkReplies,
+      mapRowToMessage,
+      mapSystemRowToMessage,
+      reconcileDeliveredFallback,
+      scheduleOutgoingReceiptStateSync,
+      syncMessageReactions,
+      syncViewOnceStatus,
+      user?.id,
+    ]),
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!user?.id || !conversationId || !resolvedPeerAuthUserId) return () => {};
+
+      const stopAncillaryRealtime = subscribeThreadAncillaryRealtime({
+        currentUserId: user.id,
+        conversationId,
+        peerUserId: resolvedPeerAuthUserId,
+        onReactionInsert: (row) => {
         if (!messagesRef.current.some((msg) => msg.id === row.message_id)) return;
         applyReactionUpdate(row as ReactionRow, 'upsert');
       },
@@ -7918,21 +7831,14 @@ const resolveQueuedVideoUri = async (
           };
           return { ...prev, [row.message_id]: next };
         });
-      },
-      onTypingUpsert: (row) => {
-        applyPeerTypingStateRow(row);
-      },
-      onTypingDelete: (row) => {
-        if (row?.user_id === resolvedPeerAuthUserId) {
-          setIsTyping(false);
-        }
-      },
-    });
+        },
+      });
 
-    return () => {
-      stopAncillaryRealtime();
-    };
-  }, [applyPeerTypingStateRow, applyReactionUpdate, conversationId, resolvedPeerAuthUserId, user?.id]);
+      return () => {
+        stopAncillaryRealtime();
+      };
+    }, [applyReactionUpdate, conversationId, resolvedPeerAuthUserId, user?.id]),
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -7940,7 +7846,6 @@ const resolveQueuedVideoUri = async (
       const session = startThreadPresenceSession({
         currentUserId: user.id,
         peerUserId: resolvedPeerAuthUserId,
-        persistTypingState,
         onPeerPresenceSync: ({ hasPeer, peerTyping }) => {
           if (hasPeer) {
             markPeerThreadActive();
@@ -7969,10 +7874,11 @@ const resolveQueuedVideoUri = async (
             markOutgoingMessagesDelivered();
             return;
           }
-          void refreshPeerStatus();
+          setPeerTypingUntil(null);
         },
         onAppActive: () => {
           void refreshPeerStatus();
+          refreshOutgoingReceiptStates();
         },
       });
       threadPresenceSessionRef.current = session;
@@ -7993,16 +7899,53 @@ const resolveQueuedVideoUri = async (
       markOutgoingMessagesDelivered,
       markPeerThreadActive,
       markPeerThreadInactive,
-      persistTypingState,
       refreshPeerStatus,
+      refreshOutgoingReceiptStates,
       resolvedPeerAuthUserId,
       setPeerTypingUntil,
       user?.id,
     ]),
   );
 
+  const flushReadReceipts = useCallback(() => {
+    readReceiptFlushTimerRef.current = null;
+    const messageIds = Array.from(pendingServerReadIdsRef.current);
+    pendingServerReadIdsRef.current.clear();
+    if (!user?.id || messageIds.length === 0) return;
+    void ChatThreadActionsService.markMessagesRead({
+      messageIds,
+      currentUserId: user.id,
+    }).then(({ error }) => {
+      if (error) {
+        console.log('[chat] mark messages read error', error);
+      }
+    });
+  }, [user?.id]);
+
+  const scheduleReadReceiptFlush = useCallback(
+    (messageId: string) => {
+      pendingServerReadIdsRef.current.add(messageId);
+      if (!readReceiptFlushTimerRef.current) {
+        readReceiptFlushTimerRef.current = setTimeout(flushReadReceipts, 120);
+      }
+      if (
+        user?.id &&
+        activePeerMessageUserId &&
+        !localThreadReadPersistTimerRef.current
+      ) {
+        localThreadReadPersistTimerRef.current = setTimeout(() => {
+          localThreadReadPersistTimerRef.current = null;
+          void ChatRepository.markThreadRead(user.id, activePeerMessageUserId).catch((localError) =>
+            console.log('[chat] local mark thread read error', localError),
+          );
+        }, 120);
+      }
+    },
+    [activePeerMessageUserId, flushReadReceipts, user?.id],
+  );
+
   const markAsRead = useCallback(
-    async (messageId: string) => {
+    (messageId: string) => {
       if (!user?.id || !activePeerMessageUserId) return;
       clearPendingReadTimer(messageId);
       if (!isScreenFocusedRef.current || AppState.currentState !== 'active') return;
@@ -8016,18 +7959,9 @@ const resolveQueuedVideoUri = async (
           currentUserId: user.id,
         })
       );
-      void ChatRepository.markThreadRead(user.id, activePeerMessageUserId).catch((localError) =>
-        console.log('[chat] local mark thread read error', localError),
-      );
-      const { error } = await ChatThreadActionsService.markMessageRead({
-        messageId,
-        currentUserId: user.id,
-      });
-      if (error) {
-        console.log('[chat] markAsRead error', error);
-      }
+      scheduleReadReceiptFlush(messageId);
     },
-    [activePeerMessageUserId, clearPendingReadTimer, user?.id]
+    [activePeerMessageUserId, clearPendingReadTimer, scheduleReadReceiptFlush, user?.id]
   );
 
   const scheduleMarkAsRead = useCallback(
@@ -8369,11 +8303,17 @@ const resolveQueuedVideoUri = async (
         presenceSession.broadcastTyping(typing);
       };
       if (text.trim().length === 0) {
+        lastTypingBroadcastAtRef.current = 0;
         sendTypingStatus(false);
         return;
       }
-      sendTypingStatus(true);
+      const now = Date.now();
+      if (now - lastTypingBroadcastAtRef.current >= 800) {
+        lastTypingBroadcastAtRef.current = now;
+        sendTypingStatus(true);
+      }
       typingTimeoutRef.current = setTimeout(() => {
+        lastTypingBroadcastAtRef.current = 0;
         sendTypingStatus(false);
       }, 1500);
     },
@@ -9454,15 +9394,14 @@ const resolveQueuedVideoUri = async (
       distanceToBottom <= paddingToBottom;
     wasAtBottomRef.current = distanceToBottom <= paddingToBottom;
     updateJumpToBottomVisibility(distanceToBottom);
+  }, [updateJumpToBottomVisibility]);
 
-    if (contentOffset.y <= 24 && hasMore && !loadingEarlier) {
-      const now = Date.now();
-      if (now - lastLoadTriggerRef.current > 800) {
-        lastLoadTriggerRef.current = now;
-        loadEarlier();
-      }
-    }
-  }, [hasMore, loadEarlier, loadingEarlier, updateJumpToBottomVisibility]);
+  const handleStartReached = useCallback(() => {
+    if (!paginationUserInitiatedRef.current) return;
+    if (!hasMore || loadingEarlierRef.current) return;
+    paginationUserInitiatedRef.current = false;
+    void loadEarlier();
+  }, [hasMore, loadEarlier]);
 
   useEffect(() => {
     if (!threadBootstrapSettled) return;
@@ -9525,7 +9464,7 @@ const resolveQueuedVideoUri = async (
     };
   }, []);
 
-  messagesRef.current = renderedMessages;
+  messagesRef.current = messages;
 
   useEffect(() => {
     if (!messagesLoaded || seededMessageAnimationsRef.current) return;
@@ -9609,25 +9548,24 @@ const resolveQueuedVideoUri = async (
     if (!threadBootstrapSettled) return;
     if (renderedMessages.length === 0) return;
     if (!initialAutoScrollDoneRef.current) return;
-    const paddingToBottom = keyboardVisibleRef.current ? 200 : 60;
     updateJumpToBottomVisibility(getDistanceToBottom());
-    if (
-      shouldAutoScrollRef.current ||
-      wasAtBottomRef.current ||
-      getDistanceToBottom() <= paddingToBottom
-    ) {
-      maybeScrollToEnd(true);
-    }
-  }, [ensureInitialScrollToBottom, getDistanceToBottom, maybeScrollToEnd, renderedMessages.length, threadBootstrapSettled, updateJumpToBottomVisibility]);
+  }, [getDistanceToBottom, renderedMessages.length, threadBootstrapSettled, updateJumpToBottomVisibility]);
 
   const handleMessagesLayout = useCallback((event: any) => {
-    listMetricsRef.current.layoutHeight = event.nativeEvent.layout.height;
+    const height = event.nativeEvent.layout.height;
+    listMetricsRef.current.layoutHeight = height;
     if (!threadBootstrapSettled) return;
     if (renderedMessages.length === 0) return;
     if (!initialAutoScrollDoneRef.current) return;
-    wasAtBottomRef.current = true;
-    updateJumpToBottomVisibility(getDistanceToBottom());
-    if (shouldAutoScrollRef.current) {
+    const distanceToBottom = getDistanceToBottom();
+    const paddingToBottom = keyboardVisibleRef.current ? 200 : 60;
+    wasAtBottomRef.current = distanceToBottom <= paddingToBottom;
+    updateJumpToBottomVisibility(distanceToBottom);
+    if (
+      shouldAutoScrollRef.current &&
+      !listInteractionRef.current.dragging &&
+      !listInteractionRef.current.momentum
+    ) {
       maybeScrollToEnd(false);
     }
   }, [ensureInitialScrollToBottom, getDistanceToBottom, maybeScrollToEnd, renderedMessages.length, threadBootstrapSettled, updateJumpToBottomVisibility]);
@@ -9645,12 +9583,26 @@ const resolveQueuedVideoUri = async (
   }, []);
 
   const onScrollBeginDrag = useCallback(() => {
+    listInteractionRef.current.dragging = true;
+    paginationUserInitiatedRef.current = true;
     setShowReactions(null);
     clearFocus();
     initialAutoScrollDoneRef.current = true;
     initialAutoScrollAttemptsRef.current = 0;
     lockAutoScrollUntilRef.current = 0;
   }, [clearFocus]);
+
+  const onScrollEndDrag = useCallback(() => {
+    listInteractionRef.current.dragging = false;
+  }, []);
+
+  const onMomentumScrollBegin = useCallback(() => {
+    listInteractionRef.current.momentum = true;
+  }, []);
+
+  const onMomentumScrollEnd = useCallback(() => {
+    listInteractionRef.current.momentum = false;
+  }, []);
 
   useEffect(() => {
     const maxWidth = Math.min(responsive.width * 0.72, 340);
@@ -12435,11 +12387,23 @@ const resolveQueuedVideoUri = async (
               drawDistance={900}
               removeClippedSubviews={Platform.OS === 'android'}
               showsVerticalScrollIndicator={false}
+              bounces={false}
+              alwaysBounceVertical={false}
+              overScrollMode="never"
+              maintainVisibleContentPosition={{
+                disabled: false,
+                animateAutoScrollToBottom: false,
+              }}
               onScroll={handleScroll}
               scrollEventThrottle={16}
+              onStartReached={handleStartReached}
+              onStartReachedThreshold={0.08}
               onContentSizeChange={handleMessagesContentSizeChange}
               onLayout={handleMessagesLayout}
               onScrollBeginDrag={onScrollBeginDrag}
+              onScrollEndDrag={onScrollEndDrag}
+              onMomentumScrollBegin={onMomentumScrollBegin}
+              onMomentumScrollEnd={onMomentumScrollEnd}
               onViewableItemsChanged={onViewableItemsChanged}
               viewabilityConfig={messageListViewabilityConfig}
             />
@@ -12678,15 +12642,10 @@ const createStyles = (
       flexDirection: 'row',
       alignItems: 'center',
       paddingHorizontal: 16,
-      paddingVertical: 12,
+      paddingVertical: 10,
       backgroundColor: theme.background,
       borderBottomWidth: 1,
       borderBottomColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
-      shadowColor: Colors.dark.background,
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.08,
-      shadowRadius: 3,
-      elevation: 3,
     },
     intentBanner: {
       marginHorizontal: 16,
@@ -12746,7 +12705,7 @@ const createStyles = (
     backButton: {
       width: 40,
       height: 40,
-      borderRadius: 20,
+      borderRadius: 14,
       backgroundColor: theme.backgroundSubtle,
       justifyContent: 'center',
       alignItems: 'center',
@@ -12760,7 +12719,7 @@ const createStyles = (
     headerOptionsButton: {
       width: 40,
       height: 40,
-      borderRadius: 20,
+      borderRadius: 14,
       marginLeft: 10,
       alignItems: 'center',
       justifyContent: 'center',
@@ -12869,7 +12828,7 @@ const createStyles = (
       flex: 1,
     },
     headerName: {
-      fontSize: 16,
+      fontSize: 17,
       fontFamily: 'PlayfairDisplay_700Bold',
       color: theme.text,
     },
@@ -14810,7 +14769,8 @@ const createStyles = (
     },
     messagesList: {
       paddingHorizontal: 16,
-      paddingVertical: 14,
+      paddingTop: 16,
+      paddingBottom: 18,
     },
     daySeparator: {
       alignSelf: 'center',
@@ -14928,10 +14888,10 @@ const createStyles = (
       height: 28,
     },
     messageBubble: {
-      maxWidth: screenWidth * 0.72,
-      paddingHorizontal: 13,
-      paddingVertical: 7,
-      borderRadius: 20,
+      maxWidth: screenWidth * 0.76,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 18,
       position: 'relative',
       overflow: 'visible',
     },
@@ -15025,13 +14985,8 @@ const createStyles = (
     },
     myMessageBubble: {
       backgroundColor: theme.tint,
-      shadowColor: theme.tint,
-      shadowOffset: { width: 0, height: 8 },
-      shadowOpacity: isDark ? 0.22 : 0.14,
-      shadowRadius: 16,
-      elevation: 4,
       borderWidth: 1,
-      borderColor: withAlpha(Colors.light.background, isDark ? 0.18 : 0.22),
+      borderColor: withAlpha(Colors.light.background, isDark ? 0.14 : 0.18),
     },
     myMessageBubbleGroupedTop: {
       borderTopRightRadius: 10,
@@ -15041,11 +14996,6 @@ const createStyles = (
     },
     theirMessageBubble: {
       backgroundColor: theme.backgroundSubtle,
-      shadowColor: Colors.dark.background,
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.04,
-      shadowRadius: 4,
-      elevation: 0,
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
     },
@@ -15616,7 +15566,7 @@ const createStyles = (
     // Input Area
     inputContainer: {
       paddingHorizontal: 16,
-      paddingTop: 10,
+      paddingTop: 9,
       paddingBottom: 12,
       backgroundColor: theme.background,
       borderTopWidth: 1,
@@ -15628,15 +15578,15 @@ const createStyles = (
       gap: 10,
       paddingHorizontal: 10,
       paddingVertical: 8,
-      borderRadius: 26,
+      borderRadius: 22,
       backgroundColor: isDark ? withAlpha(theme.backgroundSubtle, 0.92) : withAlpha('#fffaf5', 0.96),
       borderWidth: 1,
       borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
       shadowColor: Colors.dark.background,
-      shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: isDark ? 0.16 : 0.08,
-      shadowRadius: 16,
-      elevation: 3,
+      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: isDark ? 0.12 : 0.06,
+      shadowRadius: 10,
+      elevation: 2,
     },
     composerShellFocused: {
       borderColor: withAlpha(theme.tint, isDark ? 0.46 : 0.3),

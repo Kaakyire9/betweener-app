@@ -5,6 +5,7 @@ import type {
   ChatSyncStateRow,
   ChatThreadRow,
 } from '@/lib/chat/local/chat-schema';
+import { resolveThreadUnreadCount } from '@/lib/chat/active-thread';
 import { CHAT_DB_NAME, CHAT_SCHEMA_VERSION } from '@/lib/chat/local/chat-schema';
 import { getChatMessagePreviewText } from '@/lib/message-preview';
 import { getChatDb } from '@/lib/storage/sqlite';
@@ -389,19 +390,23 @@ const refreshThreadSummaryFromMessages = async (
           else null
         end,
         last_activity_kind = case
-          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at) then chat_threads.last_activity_kind
+          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at)
+          then chat_threads.last_activity_kind
           else null
         end,
         last_activity_message_id = case
-          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at) then chat_threads.last_activity_message_id
+          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at)
+          then chat_threads.last_activity_message_id
           else null
         end,
         last_activity_preview = case
-          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at) then chat_threads.last_activity_preview
+          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at)
+          then chat_threads.last_activity_preview
           else null
         end,
         last_activity_at = case
-          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at) then chat_threads.last_activity_at
+          when datetime(chat_threads.last_activity_at) > datetime(excluded.last_message_at)
+          then chat_threads.last_activity_at
           else null
         end,
         last_message_at = excluded.last_message_at,
@@ -643,6 +648,10 @@ export const ChatRepository = {
             or last_activity_at is null
             or datetime(?) >= datetime(last_activity_at)
           )
+          and (
+            ? is null
+            or datetime(?) > datetime(last_message_at)
+          )
       `,
       activity?.kind ?? null,
       activity?.messageId ?? null,
@@ -651,6 +660,8 @@ export const ChatRepository = {
       nowIso(),
       ownerUserId,
       threadId,
+      activity?.createdAt ?? null,
+      activity?.createdAt ?? null,
       activity?.createdAt ?? null,
       activity?.createdAt ?? null,
     ));
@@ -662,6 +673,14 @@ export const ChatRepository = {
     const db = await getChatDb();
     await withExclusiveTransaction(db, async (txn) => {
       for (const thread of threads) {
+        const incomingThread = {
+          ...thread,
+          unread_count: resolveThreadUnreadCount(
+            ownerUserId,
+            thread.peer_user_id || thread.id,
+            Number(thread.unread_count) || 0,
+          ),
+        };
         await txn.runAsync(
           `
             insert into chat_threads (
@@ -709,7 +728,7 @@ export const ChatRepository = {
               local_updated_at = excluded.local_updated_at,
               created_at = excluded.created_at
           `,
-          ...toThreadParams({ ...thread, owner_user_id: ownerUserId }),
+          ...toThreadParams({ ...incomingThread, owner_user_id: ownerUserId }),
         );
       }
     });
@@ -1086,7 +1105,31 @@ export const ChatRepository = {
       await txn.runAsync(
         `
           update chat_messages
-          set status = ?,
+          set status = case
+                when status = 'deleted' then status
+                when (
+                  case ?
+                    when 'read' then 6
+                    when 'delivered' then 5
+                    when 'sent' then 4
+                    when 'sending' then 3
+                    when 'pending' then 2
+                    when 'failed' then 1
+                    else 0
+                  end
+                ) >= (
+                  case status
+                    when 'read' then 6
+                    when 'delivered' then 5
+                    when 'sent' then 4
+                    when 'sending' then 3
+                    when 'pending' then 2
+                    when 'failed' then 1
+                    else 0
+                  end
+                ) then ?
+                else status
+              end,
               local_updated_at = ?
           where owner_user_id = ?
             and thread_id = ?
@@ -1094,6 +1137,7 @@ export const ChatRepository = {
             and direction = 'outgoing'
             and status <> 'deleted'
         `,
+        status,
         status,
         nowIso(),
         ownerUserId,

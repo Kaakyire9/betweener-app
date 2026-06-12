@@ -14,7 +14,7 @@
     "lint": "eslint .",
     "lint:expo": "expo lint",
     "test:rn": "jest --runInBand --config jest.config.js",
-    "test:chat-logic": "node --experimental-strip-types --test __tests__/chat-thread-behavior.regression.test.ts __tests__/chat-message-state.regression.test.ts __tests__/chat-message-actions.regression.test.ts __tests__/chat-presence.regression.test.ts",
+    "test:chat-logic": "node --experimental-strip-types --test __tests__/chat-thread-behavior.regression.test.ts __tests__/chat-message-state.regression.test.ts __tests__/chat-message-actions.regression.test.ts __tests__/chat-message-list-reconciliation.regression.test.ts __tests__/chat-list-message-merge.regression.test.ts __tests__/chat-presence.regression.test.ts",
     "test:vibes-logic": "node --experimental-strip-types --test __tests__/location-display.regression.test.ts __tests__/vibes-discovery.regression.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "supabase:types": "python ./scripts/supabase_gen_types.py",
@@ -108,6 +108,16 @@
     "react-refresh": "^0.14.2",
     "react-test-renderer": "^19.1.0",
     "typescript": "~5.9.2"
+  },
+  "expo": {
+    "doctor": {
+      "reactNativeDirectoryCheck": {
+        "exclude": [
+          "react-native-compressor",
+          "react-native-vision-camera-face-detector"
+        ]
+      }
+    }
   },
   "private": true
 }

@@ -3,6 +3,7 @@ import Notice from "@/components/ui/Notice";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
 import { isLikelyNetworkError } from "@/lib/network";
+import { normalizeOtherText, replaceOtherInList, resolveOtherValue } from "@/lib/profile/other-option";
 import { RELIGION_LABELS, isReligionEnumError, normalizeReligionForProfile } from "@/lib/profile/religion";
 import { type ResponsiveMetrics, useResponsiveMetrics } from "@/lib/responsive";
 import { clearSignupSession, consumeSignupMetadata, finalizeSignupPhoneVerification, getSignupPhoneState } from "@/lib/signup-tracking";
@@ -212,19 +213,19 @@ export default function Onboarding() {
     scale: new Animated.Value(0.6),
   }))).current;
 
-  const normalizeRoots = (values: string[]) =>
-    Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+  const normalizeRoots = (values: string[], otherValue = "") =>
+    replaceOtherInList(values, otherValue);
 
   const handleRootToggle = (value: string) => {
     setForm((prev) => {
-      const current = normalizeRoots(prev.roots);
+      const current = Array.from(new Set(prev.roots.map((root) => root.trim()).filter(Boolean)));
       const next = current.includes(value)
         ? current.filter((root) => root !== value)
         : [...current, value];
 
       return { ...prev, roots: next };
     });
-    setErrors((prev) => ({ ...prev, roots: "" }));
+    setErrors((prev) => ({ ...prev, roots: "", rootsNote: "" }));
   };
 
   const pickImage = async () => {
@@ -252,6 +253,8 @@ export default function Onboarding() {
 
   const validateStep = (step: number) => {
     const newErrors: { [key: string]: string } = {};
+    const resolvedOccupation = resolveOtherValue(form.occupation, customOccupation);
+    const normalizedRoots = normalizeRoots(form.roots, form.rootsNote);
     
     switch (step) {
       case 1: // Basic Info
@@ -259,8 +262,7 @@ export default function Onboarding() {
         if (!form.age || Number(form.age) < 18) newErrors.age = "You must be at least 18.";
         if (!form.gender) newErrors.gender = "Gender is required.";
         if (!form.bio.trim()) newErrors.bio = "Bio is required.";
-        if (!form.occupation) newErrors.occupation = "Occupation is required.";
-        if (form.occupation === "Other" && !customOccupation.trim())
+        if (!resolvedOccupation)
           newErrors.occupation = "Please enter your occupation.";
         break;
       case 2: // Photo
@@ -268,7 +270,10 @@ export default function Onboarding() {
         break;
       case 3: // Location
         if (!form.region) newErrors.region = "Region is required.";
-        if (normalizeRoots(form.roots).length === 0) newErrors.roots = "Pick at least one root.";
+        if (normalizedRoots.length === 0) newErrors.roots = "Pick at least one root.";
+        if (form.roots.includes("Other") && !normalizeOtherText(form.rootsNote)) {
+          newErrors.rootsNote = "Tell us how you identify if you choose Other.";
+        }
         if (!form.religion) newErrors.religion = "Religion is required.";
         break;
       case 4: // Preferences
@@ -463,17 +468,14 @@ export default function Onboarding() {
         return;
       }
       
-      const normalizedRoots = normalizeRoots(form.roots);
-      const rootsNote = form.rootsNote.trim();
+      const rootsNote = normalizeOtherText(form.rootsNote);
+      const normalizedRoots = normalizeRoots(form.roots, rootsNote);
       const profileData = {
         full_name: form.fullName,
         age: Number(form.age),
         gender: form.gender.toUpperCase() as any,
         bio: form.bio,
-        occupation:
-          form.occupation === "Other" && customOccupation.trim()
-            ? customOccupation.trim()
-            : form.occupation,
+        occupation: resolveOtherValue(form.occupation, customOccupation),
         region: form.region,
         tribe: normalizedRoots[0] ?? null,
         roots: normalizedRoots.length > 0 ? normalizedRoots : null,
@@ -1079,7 +1081,7 @@ export default function Onboarding() {
                   value={customOccupation}
                   onChangeText={(text) => {
                     setCustomOccupation(text);
-                    if (text.trim()) {
+                    if (normalizeOtherText(text)) {
                       setErrors((prev) => ({ ...prev, occupation: "" }));
                     }
                   }}
@@ -1214,9 +1216,15 @@ export default function Onboarding() {
             style={[
               styles.textArea,
               focusedField === "rootsNote" && styles.textAreaFocused,
+              errors.rootsNote && styles.inputError,
             ]}
             value={form.rootsNote}
-            onChangeText={(text) => setForm((prev) => ({ ...prev, rootsNote: text }))}
+            onChangeText={(text) => {
+              setForm((prev) => ({ ...prev, rootsNote: text }));
+              if (normalizeOtherText(text)) {
+                setErrors((prev) => ({ ...prev, roots: "", rootsNote: "" }));
+              }
+            }}
             placeholder="Optional: Half Ewe, half Ashanti"
             placeholderTextColor="#9ca3af"
             onFocus={() => setFocusedField("rootsNote")}
@@ -1224,6 +1232,7 @@ export default function Onboarding() {
             multiline
             numberOfLines={3}
           />
+          {errors.rootsNote ? <Text style={styles.errorText}>{errors.rootsNote}</Text> : null}
         </View>
 
         <View style={styles.inputContainer}>

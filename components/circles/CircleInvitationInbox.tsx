@@ -1,8 +1,8 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, AppState, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
@@ -10,6 +10,7 @@ import {
   respondToCircleInvitation,
   type MyCircleInvitation,
 } from '@/lib/circles/circle-invitations';
+import { supabase } from '@/lib/supabase';
 
 type Props = {
   profileId: string | null;
@@ -22,6 +23,7 @@ export default function CircleInvitationInbox({ profileId, onChanged }: Props) {
   const styles = useMemo(() => createStyles(theme, (colorScheme ?? 'light') === 'dark'), [colorScheme, theme]);
   const [items, setItems] = useState<MyCircleInvitation[]>([]);
   const [respondingId, setRespondingId] = useState<string | null>(null);
+  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     if (!profileId) {
@@ -37,9 +39,42 @@ export default function CircleInvitationInbox({ profileId, onChanged }: Props) {
 
   useEffect(() => {
     void load();
-    const timer = setInterval(() => void load(), 30_000);
-    return () => clearInterval(timer);
-  }, [load]);
+    if (!profileId) return;
+
+    const scheduleLoad = () => {
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+      refreshTimeoutRef.current = setTimeout(() => {
+        refreshTimeoutRef.current = null;
+        void load();
+      }, 250);
+    };
+    const channel = supabase
+      .channel(`circle-invitations:inbox:${profileId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'circle_invitations',
+          filter: `invited_profile_id=eq.${profileId}`,
+        },
+        scheduleLoad,
+      )
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          scheduleLoad();
+        }
+      });
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') scheduleLoad();
+    });
+
+    return () => {
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+      appStateSubscription.remove();
+      supabase.removeChannel(channel);
+    };
+  }, [load, profileId]);
 
   const decline = (invitation: MyCircleInvitation) => {
     if (!profileId || respondingId) return;

@@ -500,42 +500,17 @@ export default function useVibesFeed({
 
     const fetchChatPeers = async () => {
       try {
-        let viewerAuthUserId =
-          typeof viewerProfile?.user_id === 'string'
-            ? viewerProfile.user_id
-            : typeof viewerProfile?.userId === 'string'
-              ? viewerProfile.userId
-              : null;
-
-        if (!viewerAuthUserId) {
-          const { data: profileRow } = await supabase
-            .from('profiles')
-            .select('user_id')
-            .eq('id', userId)
-            .maybeSingle();
-          viewerAuthUserId = typeof (profileRow as any)?.user_id === 'string' ? (profileRow as any).user_id : null;
-        }
-
-        if (!viewerAuthUserId || cancelled) return;
-
         const { data, error } = await supabase
-          .from('messages')
-          .select('sender_id,receiver_id')
-          .or(`sender_id.eq.${viewerAuthUserId},receiver_id.eq.${viewerAuthUserId}`)
-          .order('created_at', { ascending: false })
-          .limit(500);
+          .rpc('rpc_get_chat_conversation_summaries', {
+            p_limit: 500,
+            p_offset: 0,
+          });
         if (error || !Array.isArray(data) || cancelled) return;
 
         const peerUserIds = Array.from(
           new Set(
             (data as any[])
-              .map((row) => {
-                const sender = row?.sender_id ? String(row.sender_id) : null;
-                const receiver = row?.receiver_id ? String(row.receiver_id) : null;
-                if (sender === viewerAuthUserId) return receiver;
-                if (receiver === viewerAuthUserId) return sender;
-                return null;
-              })
+              .map((row) => (row?.other_user_id ? String(row.other_user_id) : null))
               .filter((value): value is string => Boolean(value)),
           ),
         );
@@ -570,7 +545,7 @@ export default function useVibesFeed({
     return () => {
       cancelled = true;
     };
-  }, [liveFetchEnabled, refreshCount, userId, viewerProfile?.user_id, viewerProfile?.userId]);
+  }, [liveFetchEnabled, refreshCount, userId]);
 
   // If the server returns 0 rows (valid when there are no eligible profiles yet),
   // we still want to stop showing the skeleton.

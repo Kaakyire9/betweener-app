@@ -16,6 +16,12 @@ import {
   isPeerThreadActivityLeaseFresh,
 } from '../lib/chat/thread-activity.ts';
 import { canSendWebsocketBroadcast } from '../lib/chat/realtime-channel.ts';
+import {
+  clearActiveChatThread,
+  isActiveChatThread,
+  resolveThreadUnreadCount,
+  setActiveChatThread,
+} from '../lib/chat/active-thread.ts';
 import { isNetworkConnectionAvailable } from '../lib/network-state.ts';
 import {
   getJwtExpirySeconds,
@@ -78,11 +84,11 @@ test('authoritative chat presence progresses from Active now to Recently active 
   );
 });
 
-test('thread presence wording uses room membership without inventing durable online state', () => {
+test('thread presence wording prioritizes direct room membership over durable heartbeat lag', () => {
   const fresh = ago(10_000);
   assert.equal(getChatThreadPresenceKind(true, fresh, true, now), 'active_now');
   assert.equal(getChatThreadPresenceKind(true, fresh, false, now), 'recently_active');
-  assert.equal(getChatThreadPresenceKind(false, fresh, true, now), 'offline');
+  assert.equal(getChatThreadPresenceKind(false, fresh, true, now), 'active_now');
 });
 
 test('thread activity lease absorbs transient sync gaps but expires without heartbeats', () => {
@@ -98,7 +104,7 @@ test('thread activity lease absorbs transient sync gaps but expires without hear
 });
 
 test('foreground presence retries while the websocket channel rejoins', () => {
-  assert.deepEqual(THREAD_ACTIVITY_FOREGROUND_REANNOUNCE_DELAYS_MS, [0, 350, 900, 1800]);
+  assert.deepEqual(THREAD_ACTIVITY_FOREGROUND_REANNOUNCE_DELAYS_MS, [0, 750]);
 });
 
 test('ephemeral broadcasts only send through a joined websocket channel', () => {
@@ -123,6 +129,33 @@ test('ephemeral broadcasts only send through a joined websocket channel', () => 
     }),
     false,
   );
+});
+
+test('global chat hydration yields ownership to the focused thread', () => {
+  const token = setActiveChatThread('me', 'peer-a');
+  assert.equal(isActiveChatThread('me', 'peer-a'), true);
+  assert.equal(isActiveChatThread('me', 'peer-b'), false);
+  clearActiveChatThread('me', 'peer-a', token);
+  assert.equal(isActiveChatThread('me', 'peer-a'), false);
+});
+
+test('stale screen cleanup cannot clear newer active-thread ownership', () => {
+  const staleToken = setActiveChatThread('me', 'peer-a');
+  const currentToken = setActiveChatThread('me', 'peer-a');
+  clearActiveChatThread('me', 'peer-a', staleToken);
+  assert.equal(isActiveChatThread('me', 'peer-a'), true);
+  clearActiveChatThread('me', 'peer-a', currentToken);
+  assert.equal(isActiveChatThread('me', 'peer-a'), false);
+});
+
+test('active thread rejects stale remote unread counts', () => {
+  const token = setActiveChatThread('me', 'peer-a');
+
+  assert.equal(resolveThreadUnreadCount('me', 'peer-a', 3), 0);
+  assert.equal(resolveThreadUnreadCount('me', 'peer-b', 3), 3);
+
+  clearActiveChatThread('me', 'peer-a', token);
+  assert.equal(resolveThreadUnreadCount('me', 'peer-a', 3), 3);
 });
 
 test('auth recovery does not treat unknown or disconnected NetInfo state as online', () => {

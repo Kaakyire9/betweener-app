@@ -52,10 +52,3 @@ export type RemoteMessageViewRow = {
   message_id: string;
   viewer_id: string;
 };
-
-export type RemoteTypingStateRow = {
-  user_id?: string;
-  peer_user_id?: string;
-  typing_until?: string | null;
-  updated_at?: string | null;
-};

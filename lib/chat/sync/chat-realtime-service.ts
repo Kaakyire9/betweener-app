@@ -13,7 +13,6 @@ import type {
   RemoteReactionRow,
   RemoteSystemMessageRow,
   RemoteThreadMessageRow,
-  RemoteTypingStateRow,
 } from "./chat-sync-types";
 
 type SubscribeThreadMessageRealtimeArgs = {
@@ -37,69 +36,57 @@ export const subscribeThreadMessageRealtime = ({
   onSentUpdate,
   onSystemInsert,
 }: SubscribeThreadMessageRealtimeArgs) => {
-  const inboxChannel = supabase
-    .channel(`messages:inbox:${currentUserId}`)
-    .on(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'messages',
-        filter: `receiver_id=eq.${currentUserId}`,
-      },
-      (payload) => {
-        const row = payload.new as RemoteThreadMessageRow;
-        if (row.sender_id !== peerUserId) return;
-        onInboxInsert(row);
-      },
-    )
-    .on(
-      'postgres_changes',
-      {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'messages',
-        filter: `receiver_id=eq.${currentUserId}`,
-      },
-      (payload) => {
-        const row = payload.new as RemoteThreadMessageRow;
-        if (row.sender_id !== peerUserId) return;
-        onInboxUpdate(row);
-      },
-    )
-    .subscribe(onStatus);
+  const channelStates = new Map<string, ChatRealtimeStatus>();
+  let reportedSubscribed = false;
+  let reportedFailure: ChatRealtimeStatus | null = null;
+  const reportStatus = (channelName: string, status: ChatRealtimeStatus) => {
+    channelStates.set(channelName, status);
+    if (status === 'SUBSCRIBED') {
+      reportedFailure = null;
+      if (
+        !reportedSubscribed &&
+        channelStates.get('messages') === 'SUBSCRIBED' &&
+        channelStates.get('system') === 'SUBSCRIBED'
+      ) {
+        reportedSubscribed = true;
+        onStatus('SUBSCRIBED');
+      }
+      return;
+    }
+    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+      reportedSubscribed = false;
+      if (reportedFailure !== status) {
+        reportedFailure = status;
+        onStatus(status);
+      }
+    }
+  };
 
-  const sentChannel = supabase
-    .channel(`messages:sent:${currentUserId}`)
+  const messagesChannel = supabase
+    .channel(`messages:thread:${currentUserId}:${peerUserId}`)
     .on(
       'postgres_changes',
       {
-        event: 'INSERT',
+        event: '*',
         schema: 'public',
         table: 'messages',
-        filter: `sender_id=eq.${currentUserId}`,
       },
       (payload) => {
+        if (payload.eventType === 'DELETE') return;
         const row = payload.new as RemoteThreadMessageRow;
-        if (row.receiver_id !== peerUserId) return;
-        onSentInsert(row);
+        const isInbox = row.receiver_id === currentUserId && row.sender_id === peerUserId;
+        const isSent = row.sender_id === currentUserId && row.receiver_id === peerUserId;
+        if (!isInbox && !isSent) return;
+        if (payload.eventType === 'INSERT') {
+          if (isInbox) onInboxInsert(row);
+          if (isSent) onSentInsert(row);
+          return;
+        }
+        if (isInbox) onInboxUpdate(row);
+        if (isSent) onSentUpdate(row);
       },
     )
-    .on(
-      'postgres_changes',
-      {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'messages',
-        filter: `sender_id=eq.${currentUserId}`,
-      },
-      (payload) => {
-        const row = payload.new as RemoteThreadMessageRow;
-        if (row.receiver_id !== peerUserId) return;
-        onSentUpdate(row);
-      },
-    )
-    .subscribe(onStatus);
+    .subscribe((status) => reportStatus('messages', status));
 
   const systemChannel = supabase
     .channel(`system_messages:${currentUserId}:${peerUserId}`)
@@ -117,11 +104,10 @@ export const subscribeThreadMessageRealtime = ({
         onSystemInsert(row);
       },
     )
-    .subscribe(onStatus);
+    .subscribe((status) => reportStatus('system', status));
 
   return () => {
-    supabase.removeChannel(inboxChannel);
-    supabase.removeChannel(sentChannel);
+    supabase.removeChannel(messagesChannel);
     supabase.removeChannel(systemChannel);
   };
 };
@@ -134,8 +120,6 @@ type SubscribeThreadAncillaryRealtimeArgs = {
   onReactionUpdate: (row: RemoteReactionRow) => void;
   onReactionDelete: (row: RemoteReactionRow) => void;
   onMessageViewInsert: (row: RemoteMessageViewRow) => void;
-  onTypingUpsert: (row: RemoteTypingStateRow | null) => void;
-  onTypingDelete: (row: RemoteTypingStateRow | null) => void;
 };
 
 export const subscribeThreadAncillaryRealtime = ({
@@ -146,70 +130,27 @@ export const subscribeThreadAncillaryRealtime = ({
   onReactionUpdate,
   onReactionDelete,
   onMessageViewInsert,
-  onTypingUpsert,
-  onTypingDelete,
 }: SubscribeThreadAncillaryRealtimeArgs) => {
   const reactionsChannel = supabase
     .channel(`message_reactions:${conversationId}:${currentUserId}`)
     .on(
       'postgres_changes',
       {
-        event: 'INSERT',
+        event: '*',
         schema: 'public',
         table: 'message_reactions',
-        filter: `user_id=eq.${currentUserId}`,
       },
-      (payload) => onReactionInsert(payload.new as RemoteReactionRow),
-    )
-    .on(
-      'postgres_changes',
-      {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'message_reactions',
-        filter: `user_id=eq.${currentUserId}`,
+      (payload) => {
+        const row = (payload.eventType === 'DELETE' ? payload.old : payload.new) as RemoteReactionRow;
+        if (row.user_id !== currentUserId && row.user_id !== peerUserId) return;
+        if (payload.eventType === 'INSERT') {
+          onReactionInsert(row);
+        } else if (payload.eventType === 'UPDATE') {
+          onReactionUpdate(row);
+        } else {
+          onReactionDelete(row);
+        }
       },
-      (payload) => onReactionUpdate(payload.new as RemoteReactionRow),
-    )
-    .on(
-      'postgres_changes',
-      {
-        event: 'DELETE',
-        schema: 'public',
-        table: 'message_reactions',
-        filter: `user_id=eq.${currentUserId}`,
-      },
-      (payload) => onReactionDelete(payload.old as RemoteReactionRow),
-    )
-    .on(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'message_reactions',
-        filter: `user_id=eq.${peerUserId}`,
-      },
-      (payload) => onReactionInsert(payload.new as RemoteReactionRow),
-    )
-    .on(
-      'postgres_changes',
-      {
-        event: 'UPDATE',
-        schema: 'public',
-        table: 'message_reactions',
-        filter: `user_id=eq.${peerUserId}`,
-      },
-      (payload) => onReactionUpdate(payload.new as RemoteReactionRow),
-    )
-    .on(
-      'postgres_changes',
-      {
-        event: 'DELETE',
-        schema: 'public',
-        table: 'message_reactions',
-        filter: `user_id=eq.${peerUserId}`,
-      },
-      (payload) => onReactionDelete(payload.old as RemoteReactionRow),
     )
     .subscribe();
 
@@ -218,42 +159,15 @@ export const subscribeThreadAncillaryRealtime = ({
     .on(
       'postgres_changes',
       {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'message_views',
-        filter: `viewer_id=eq.${currentUserId}`,
-      },
-      (payload) => onMessageViewInsert(payload.new as RemoteMessageViewRow),
-    )
-    .on(
-      'postgres_changes',
-      {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'message_views',
-        filter: `viewer_id=eq.${peerUserId}`,
-      },
-      (payload) => onMessageViewInsert(payload.new as RemoteMessageViewRow),
-    )
-    .subscribe();
-
-  const typingChannel = supabase
-    .channel(`chat_typing_state:${currentUserId}:${peerUserId}`)
-    .on(
-      'postgres_changes',
-      {
         event: '*',
         schema: 'public',
-        table: 'chat_typing_state',
-        filter: `peer_user_id=eq.${currentUserId}`,
+        table: 'message_views',
       },
       (payload) => {
-        const row = (payload.new || payload.old) as RemoteTypingStateRow | null;
-        if (payload.eventType === 'DELETE') {
-          onTypingDelete(row);
-          return;
-        }
-        onTypingUpsert(row ?? null);
+        if (payload.eventType === 'DELETE') return;
+        const row = payload.new as RemoteMessageViewRow;
+        if (row.viewer_id !== currentUserId && row.viewer_id !== peerUserId) return;
+        onMessageViewInsert(row);
       },
     )
     .subscribe();
@@ -261,14 +175,12 @@ export const subscribeThreadAncillaryRealtime = ({
   return () => {
     supabase.removeChannel(reactionsChannel);
     supabase.removeChannel(viewsChannel);
-    supabase.removeChannel(typingChannel);
   };
 };
 
 type StartThreadPresenceSessionArgs = {
   currentUserId: string;
   peerUserId: string;
-  persistTypingState: (typing: boolean) => void | Promise<void>;
   onPeerPresenceSync: (payload: { hasPeer: boolean; peerTyping: boolean }) => void;
   onPeerJoin: () => void;
   onPeerLeave: () => void;
@@ -280,7 +192,6 @@ type StartThreadPresenceSessionArgs = {
 export const startThreadPresenceSession = ({
   currentUserId,
   peerUserId,
-  persistTypingState,
   onPeerPresenceSync,
   onPeerJoin,
   onPeerLeave,
@@ -303,16 +214,33 @@ export const startThreadPresenceSession = ({
   let chatListTypingSubscribed = false;
   let appIsActive = AppState.currentState === 'active';
   const foregroundAnnouncementTimers = new Set<ReturnType<typeof setTimeout>>();
+  let peerAbsenceTimer: ReturnType<typeof setTimeout> | null = null;
+  let peerWasPresent = false;
 
   const clearForegroundAnnouncementTimers = () => {
     foregroundAnnouncementTimers.forEach((timer) => clearTimeout(timer));
     foregroundAnnouncementTimers.clear();
   };
 
+  const clearPeerAbsenceTimer = () => {
+    if (!peerAbsenceTimer) return;
+    clearTimeout(peerAbsenceTimer);
+    peerAbsenceTimer = null;
+  };
+
+  const trackThreadPresence = (typing: boolean, reason: string) => {
+    if (stopped || !presenceSubscribed || !appIsActive) return;
+    void presenceChannel.track({
+      onlineAt: new Date().toISOString(),
+      typing,
+      reason,
+    });
+  };
+
   const announceThreadOpen = (reason: string) => {
     if (stopped || !presenceSubscribed || !appIsActive) return;
     const openedAt = new Date().toISOString();
-    void presenceChannel.track({ onlineAt: openedAt, typing: false, reason });
+    trackThreadPresence(false, reason);
     if (canSendWebsocketBroadcast(presenceChannel as any)) {
       void presenceChannel.send({
         type: 'broadcast',
@@ -332,7 +260,32 @@ export const startThreadPresenceSession = ({
     const peer = (state as any)[peerUserId] as { typing?: boolean }[] | undefined;
     const hasPeer = Boolean(peer && peer.length > 0);
     const peerTyping = Boolean(peer?.some((entry) => entry.typing));
-    onPeerPresenceSync({ hasPeer, peerTyping });
+    if (hasPeer) {
+      clearPeerAbsenceTimer();
+      peerWasPresent = true;
+      onPeerPresenceSync({ hasPeer: true, peerTyping });
+      return;
+    }
+    if (peerAbsenceTimer) return;
+    peerAbsenceTimer = setTimeout(() => {
+      peerAbsenceTimer = null;
+      if (stopped) return;
+      const latestState = presenceChannel.presenceState();
+      const latestPeer = (latestState as any)[peerUserId] as { typing?: boolean }[] | undefined;
+      if (latestPeer?.length) {
+        peerWasPresent = true;
+        onPeerPresenceSync({
+          hasPeer: true,
+          peerTyping: latestPeer.some((entry) => entry.typing),
+        });
+        return;
+      }
+      onPeerPresenceSync({ hasPeer: false, peerTyping: false });
+      if (peerWasPresent) {
+        peerWasPresent = false;
+        onPeerLeave();
+      }
+    }, 2500);
   };
 
   const scheduleThreadOpenAnnouncements = (reason: string) => {
@@ -350,7 +303,6 @@ export const startThreadPresenceSession = ({
 
   const broadcastTyping = (typing: boolean) => {
     if (stopped) return;
-    void persistTypingState(typing);
     if (
       presenceSubscribed &&
       appIsActive &&
@@ -382,7 +334,6 @@ export const startThreadPresenceSession = ({
   const leaveThreadRoom = () => {
     if (stopped) return;
     appIsActive = false;
-    void persistTypingState(false);
     if (
       chatListTypingSubscribed &&
       canSendWebsocketBroadcast(chatListTypingChannel as any)
@@ -413,12 +364,14 @@ export const startThreadPresenceSession = ({
     .on('presence', { event: 'sync' }, syncPeerPresence)
     .on('presence', { event: 'join' }, ({ key }) => {
       if (key !== peerUserId) return;
+      clearPeerAbsenceTimer();
+      peerWasPresent = true;
       onPeerJoin();
       syncPeerPresence();
     })
     .on('presence', { event: 'leave' }, ({ key }) => {
       if (key !== peerUserId) return;
-      onPeerLeave();
+      syncPeerPresence();
     })
     .on('broadcast', { event: 'opened_thread' }, ({ payload }) => {
       if (!payload || payload.senderId !== peerUserId) return;
@@ -469,7 +422,7 @@ export const startThreadPresenceSession = ({
 
   const presenceHeartbeat = setInterval(() => {
     if (stopped || !appIsActive || AppState.currentState !== 'active') return;
-    announceThreadOpen('heartbeat');
+    trackThreadPresence(false, 'heartbeat');
     syncPeerPresence();
   }, THREAD_ACTIVITY_HEARTBEAT_MS);
 
@@ -480,6 +433,7 @@ export const startThreadPresenceSession = ({
       appStateSubscription.remove();
       clearInterval(presenceHeartbeat);
       clearForegroundAnnouncementTimers();
+      clearPeerAbsenceTimer();
       leaveThreadRoom();
       stopped = true;
       presenceSubscribed = false;

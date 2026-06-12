@@ -74,9 +74,10 @@ export const getChatThreadPresenceKind = (
   threadActive = false,
   now = Date.now(),
 ) => {
+  if (threadActive) return 'active_now' as const;
   const presence = getAuthoritativePresenceDisplay(online, lastActive, now);
   if (!presence.online) return 'offline' as const;
-  return threadActive ? 'active_now' as const : 'recently_active' as const;
+  return 'recently_active' as const;
 };
 
 const hashRealtimeTopic = (value: string) => {

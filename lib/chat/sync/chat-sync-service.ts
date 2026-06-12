@@ -2,7 +2,7 @@ import type { MessageType } from "@/components/chat/types";
 import { ChatRepository } from "@/lib/chat/local/chat-db";
 import { supabase } from "@/lib/supabase";
 
-import type { RemoteSystemMessageRow, RemoteThreadMessageRow, RemoteTypingStateRow } from "./chat-sync-types";
+import type { RemoteSystemMessageRow, RemoteThreadMessageRow } from "./chat-sync-types";
 
 type FetchRemoteThreadMessagesArgs = {
   currentUserId: string;
@@ -88,27 +88,4 @@ export const fetchRemoteSystemMessages = async <T>({
   }
 
   return ((data || []) as RemoteSystemMessageRow[]).map(mapRow);
-};
-
-type FetchPeerTypingStateArgs = {
-  currentUserId: string;
-  peerUserId: string;
-};
-
-export const fetchPeerTypingState = async ({
-  currentUserId,
-  peerUserId,
-}: FetchPeerTypingStateArgs): Promise<RemoteTypingStateRow | null> => {
-  const { data, error } = await supabase
-    .from('chat_typing_state')
-    .select('user_id,peer_user_id,typing_until,updated_at')
-    .eq('user_id', peerUserId)
-    .eq('peer_user_id', currentUserId)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return (data as RemoteTypingStateRow | null) ?? null;
 };

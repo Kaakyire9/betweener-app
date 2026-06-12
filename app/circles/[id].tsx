@@ -9,6 +9,7 @@ import CirclePulseModerationSheet from '@/components/circles/CirclePulseModerati
 import Notice from '@/components/ui/Notice';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
 import { getCircleScopeLabel } from '@/lib/circles/circle-display';
 import { endCircleLoveSeat, fetchCirclePulseDiscussionReadStates } from '@/lib/circles/pulse/circle-pulse-service';
@@ -70,6 +71,7 @@ type Circle = {
   visibility?: string | null;
   category?: string | null;
   created_by_profile_id?: string | null;
+  created_by_user_id?: string | null;
   cover_image_url?: string | null;
   icon_url?: string | null;
   image_path?: string | null;
@@ -118,6 +120,16 @@ type MemberRow = {
 };
 
 const NEW_MEMBER_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+
+const isCircleOwnerForActor = (
+  circle: Pick<Circle, 'created_by_profile_id' | 'created_by_user_id'> | null | undefined,
+  profileId?: string | null,
+  userId?: string | null,
+) =>
+  Boolean(
+    (circle?.created_by_profile_id && profileId && circle.created_by_profile_id === profileId)
+    || (circle?.created_by_user_id && userId && circle.created_by_user_id === userId),
+  );
 
 const isRecentCircleMember = (joinedAt?: string | null) => {
   if (!joinedAt) return false;
@@ -426,6 +438,7 @@ const summarizeCircleMomentDiagnostics = (diagnostics: any) => {
 
 export default function CircleDetailScreen() {
   const { profile, user } = useAuth();
+  const { profileId: currentProfileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
   const authProfile = profile as any;
   const params = useLocalSearchParams();
   const circleId = String(params?.id ?? '');
@@ -462,8 +475,6 @@ export default function CircleDetailScreen() {
   const isDark = (colorScheme ?? 'light') === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
 
-  const [resolvedProfileId, setResolvedProfileId] = useState<string | null>(profile?.id ?? null);
-  const currentProfileId = resolvedProfileId;
   const [activeTab, setActiveTab] = useState<DetailTab>(initialRequestedTab);
   const [circle, setCircle] = useState<Circle | null>(null);
   const [members, setMembers] = useState<MemberRow[]>([]);
@@ -556,6 +567,8 @@ export default function CircleDetailScreen() {
   const handledPulseNotificationKeyRef = useRef<string | null>(null);
   const pulseNotificationReloadAttemptRef = useRef<string | null>(null);
   const activeTabRef = useRef<DetailTab>(initialRequestedTab);
+  const loadCircleBootstrapRef = useRef<(() => Promise<void>) | null>(null);
+  const refreshCircleMomentsPersistedRef = useRef<(() => Promise<unknown>) | null>(null);
 
   useEffect(() => {
     if (!requestedTab) return;
@@ -572,29 +585,6 @@ export default function CircleDetailScreen() {
     const timer = setInterval(() => setPresenceNow(Date.now()), 60_000);
     return () => clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (profile?.id) {
-      setResolvedProfileId(profile.id);
-      return () => {
-        cancelled = true;
-      };
-    }
-    if (!user?.id) {
-      setResolvedProfileId(null);
-      return () => {
-        cancelled = true;
-      };
-    }
-    void (async () => {
-      const { data } = await db.from('profiles').select('id').eq('user_id', user.id).maybeSingle();
-      if (!cancelled) setResolvedProfileId(data?.id ?? null);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [profile?.id, user?.id]);
 
   const applyCircleDetailSnapshot = useCallback((snapshot: OfflineCircleDetailSnapshot) => {
     setCircle((snapshot.circle as Circle | null) ?? null);
@@ -685,13 +675,26 @@ export default function CircleDetailScreen() {
 
     const circlePromise = db
       .from('circles')
-      .select('id,name,slug,description,short_description,visibility,category,created_by_profile_id,cover_image_url,icon_url,image_path,image_updated_at,circle_type,status,visibility_scope,country_code,country_name,region,city,is_official,is_partner,is_featured,requires_join_approval,rules,safety_note,member_count,gathering_count,archived_at,host_note,host_note_updated_at,host_note_updated_by_profile_id')
+      .select('id,name,slug,description,short_description,visibility,category,created_by_profile_id,created_by_user_id,cover_image_url,icon_url,image_path,image_updated_at,circle_type,status,visibility_scope,country_code,country_name,region,city,is_official,is_partner,is_featured,requires_join_approval,rules,safety_note,member_count,gathering_count,archived_at,host_note,host_note_updated_at,host_note_updated_by_profile_id')
       .eq('id', circleId)
       .maybeSingle();
 
-    const membershipPromise = currentProfileId
-      ? db.from('circle_members').select('id,role,status,is_visible,profile_id,user_id').eq('circle_id', circleId).eq('profile_id', currentProfileId).maybeSingle()
-      : Promise.resolve({ data: null, error: null });
+    const membershipPromise = (() => {
+      if (!currentProfileId && !user?.id) {
+        return Promise.resolve({ data: null, error: null });
+      }
+      const query = db
+        .from('circle_members')
+        .select('id,role,status,is_visible,profile_id,user_id')
+        .eq('circle_id', circleId);
+      if (currentProfileId && user?.id) {
+        return query.or(`profile_id.eq.${currentProfileId},user_id.eq.${user.id}`).maybeSingle();
+      }
+      if (currentProfileId) {
+        return query.eq('profile_id', currentProfileId).maybeSingle();
+      }
+      return query.eq('user_id', user!.id).maybeSingle();
+    })();
 
     const [{ data: circleRow }, { data: myMembership }] = await Promise.all([circlePromise, membershipPromise]);
     const nextCircle = (circleRow as Circle) || null;
@@ -699,7 +702,7 @@ export default function CircleDetailScreen() {
     setCircle(nextCircle);
     setMembership(nextMembership);
     return { circle: nextCircle, membership: nextMembership };
-  }, [circleId, currentProfileId]);
+  }, [circleId, currentProfileId, user?.id]);
 
   const refreshCircleMembersState = useCallback(async () => {
     if (!circleId) {
@@ -927,8 +930,8 @@ export default function CircleDetailScreen() {
     const nextCircle = options?.circleOverride ?? circle;
     const nextMembership = options?.membershipOverride ?? membership;
     const nextMembershipRole = normalizeCircleRole(nextMembership?.status === 'active' ? nextMembership.role : null);
-    const canLoadModerationReports = !!currentProfileId && (
-      String(nextCircle?.created_by_profile_id ?? '') === currentProfileId
+    const canLoadModerationReports = !!(currentProfileId || user?.id) && (
+      isCircleOwnerForActor(nextCircle, currentProfileId, user?.id)
       || ['host', 'admin', 'moderator'].includes(nextMembershipRole)
     );
 
@@ -959,7 +962,7 @@ export default function CircleDetailScreen() {
 
     setModerationReports(nextModerationReports);
     return nextModerationReports;
-  }, [circle, circleId, currentProfileId, membership]);
+  }, [circle, circleId, currentProfileId, membership, user?.id]);
 
   const refreshCircleMembershipView = useCallback(async () => {
     const [coreState, memberState] = await Promise.all([
@@ -996,7 +999,7 @@ export default function CircleDetailScreen() {
     const canLoadMoments =
       options?.canLoad
       ?? Boolean(
-        (circle?.created_by_profile_id && circle.created_by_profile_id === currentProfileId)
+        isCircleOwnerForActor(circle, currentProfileId, user?.id)
         || membership?.status === 'active',
       );
     if (!circleId || !canLoadMoments) {
@@ -1065,7 +1068,7 @@ export default function CircleDetailScreen() {
       moments: nextMoments,
       momentLoadError: null as string | null,
     };
-  }, [circle?.created_by_profile_id, circleId, currentProfileId, members, membership?.status]);
+  }, [circle, circleId, currentProfileId, members, membership?.status, user?.id]);
 
   const refreshCircleMomentsPersisted = useCallback(async () => {
     const nextMomentState = await refreshCircleMoments();
@@ -1084,10 +1087,7 @@ export default function CircleDetailScreen() {
       refreshCircleGatheringsState(),
     ]);
 
-    const nextIsOwner = !!(
-      coreState.circle?.created_by_profile_id
-      && coreState.circle.created_by_profile_id === currentProfileId
-    );
+    const nextIsOwner = isCircleOwnerForActor(coreState.circle, currentProfileId, user?.id);
     const nextIsMember = nextIsOwner || coreState.membership?.status === 'active';
 
     const [nextRoleRequests, nextModerationReports, nextMomentState] = await Promise.all([
@@ -1130,6 +1130,7 @@ export default function CircleDetailScreen() {
     refreshCirclePromptsState,
     refreshCircleReportsState,
     refreshCircleRoleRequestsState,
+    user?.id,
   ]);
 
   const refreshCirclePromptsStatePersisted = useCallback(async () => {
@@ -1262,6 +1263,10 @@ export default function CircleDetailScreen() {
   ]);
 
   useEffect(() => {
+    loadCircleBootstrapRef.current = loadCircleBootstrap;
+  }, [loadCircleBootstrap]);
+
+  useEffect(() => {
     let cancelled = false;
     const resolveMomentUrls = async () => {
       const unresolved = moments.filter((moment) => {
@@ -1304,15 +1309,23 @@ export default function CircleDetailScreen() {
     };
   }, [circleId, momentSignedUrls, moments]);
 
+  useEffect(() => {
+    refreshCircleMomentsPersistedRef.current = refreshCircleMomentsPersisted;
+  }, [refreshCircleMomentsPersisted]);
+
   useFocusEffect(
     useCallback(() => {
+      let active = true;
       void (async () => {
-        await loadCircleBootstrap();
-        if (activeTabRef.current === 'moments') {
-          await refreshCircleMomentsPersisted();
+        await loadCircleBootstrapRef.current?.();
+        if (active && activeTabRef.current === 'moments') {
+          await refreshCircleMomentsPersistedRef.current?.();
         }
       })();
-    }, [loadCircleBootstrap, refreshCircleMomentsPersisted]),
+      return () => {
+        active = false;
+      };
+    }, [circleId]),
   );
 
   useEffect(() => {
@@ -1376,7 +1389,7 @@ export default function CircleDetailScreen() {
     };
   }, [circle?.cover_image_url, circle?.icon_url, circle?.id, circle?.image_path, circle?.image_updated_at, networkReady]);
 
-  const isOwner = !!(circle?.created_by_profile_id && circle.created_by_profile_id === currentProfileId);
+  const isOwner = isCircleOwnerForActor(circle, currentProfileId, user?.id);
   const membershipRole = normalizeCircleRole(membership?.status === 'active' ? membership.role : null);
   const isMember = isOwner || membership?.status === 'active';
   const circleMemberUserIds = useMemo(
@@ -1480,7 +1493,7 @@ export default function CircleDetailScreen() {
     loading: pulseLoading,
     error: pulseError,
     reload: reloadPulse,
-  } = useCirclePulse({ circleId, enabled: isMember });
+  } = useCirclePulse({ circleId, enabled: isMember, viewerProfileId: currentProfileId });
 
   const reloadPulseDiscussionUnreadState = useCallback(async () => {
     if (pulseItems.length === 0) {
@@ -3703,79 +3716,95 @@ export default function CircleDetailScreen() {
         {activeTab === 'members' ? (
           <View style={styles.section}>
             <Text style={styles.sectionLead}>People shaping the tone, trust, and introductions inside this Circle.</Text>
-            <View style={styles.memberContextRow}>
-              <TouchableOpacity
-                style={styles.memberContextCard}
-                disabled={!primaryHost?.profiles?.id}
-                onPress={() => openProfile(primaryHost?.profiles?.id)}
-              >
-                <View style={styles.memberContextIcon}>
-                  <MaterialCommunityIcons name="shield-account-outline" size={20} color={theme.tint} />
-                </View>
-                <View style={styles.memberContextCopy}>
-                  <Text style={styles.memberContextKicker}>Circle host</Text>
-                  <Text style={styles.memberContextTitle} numberOfLines={1}>{primaryHost?.profiles?.full_name || 'Leadership team'}</Text>
-                  <Text style={styles.memberContextMeta}>Tone, trust, and member care</Text>
-                </View>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.memberContextCard} onPress={() => setActiveTab('overview')}>
-                <View style={styles.memberContextIcon}>
-                  <MaterialCommunityIcons name="message-processing-outline" size={20} color={theme.tint} />
-                </View>
-                <View style={styles.memberContextCopy}>
-                  <Text style={styles.memberContextKicker}>Live discussion</Text>
-                  <Text style={styles.memberContextTitle}>{pulseCommentCount ? `${pulseCommentCount} Pulse comments` : 'Ready when you are'}</Text>
-                  <Text style={styles.memberContextMeta}>Reply, react, and see who is typing</Text>
-                </View>
-              </TouchableOpacity>
-            </View>
-            {canManageRoles ? (
-              <Text style={styles.emptySupport}>Tap `Roles` on any member to promote them to matchmaker, moderator, or host.</Text>
-            ) : null}
-            <View style={styles.roleSummaryRow}>
-              <View style={styles.roleSummaryPill}>
-                <Text style={styles.roleSummaryText}>{leadershipMembers.length} leads</Text>
-              </View>
-              <View style={styles.roleSummaryPill}>
-                <Text style={styles.roleSummaryText}>{matchmakerCount} matchmakers</Text>
-              </View>
-              {pendingCount > 0 ? (
-                <View style={styles.roleSummaryPillAccent}>
-                  <Text style={styles.roleSummaryTextAccent}>{pendingCount} pending</Text>
-                </View>
-              ) : null}
-            </View>
-            {leadershipMembers.length > 0 ? (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Leadership</Text>
-                <Text style={styles.sectionLead}>Hosts, moderators, and matchmakers who shape the quality of this space.</Text>
-                <View style={styles.leadStack}>
-                  {leadershipMembers.map((item) => renderLeader(item, true))}
-                </View>
-              </View>
-            ) : null}
-            {loading && members.length === 0 ? <Text style={styles.emptyText}>Loading members...</Text> : null}
-            {members.length === 0 ? (
+            {!isMember ? (
               <View style={styles.emptyCard}>
                 <View style={styles.emptyIcon}>
-                  <MaterialCommunityIcons name="account-group-outline" size={24} color={theme.tint} />
+                  <MaterialCommunityIcons name="account-lock-outline" size={24} color={theme.tint} />
                 </View>
-                <Text style={styles.emptyTitle}>This Circle is still taking shape</Text>
-                <Text style={styles.emptyHint}>The first few members usually define the quality of every introduction after that.</Text>
-                <Text style={styles.emptySupport}>Join momentum starts with trusted people, not volume.</Text>
-              </View>
-            ) : communityMembers.length > 0 ? (
-              <FlatList data={communityMembers} keyExtractor={(item) => item.id} renderItem={renderMember} scrollEnabled={false} contentContainerStyle={styles.memberList} />
-            ) : leadershipMembers.length > 0 ? (
-              <View style={styles.emptyCard}>
-                <View style={styles.emptyIcon}>
-                  <MaterialCommunityIcons name="account-star-outline" size={24} color={theme.tint} />
-                </View>
-                <Text style={styles.emptyTitle}>Leadership is set</Text>
-                <Text style={styles.emptyHint}>The broader member layer has not opened up yet. This Circle is still being curated carefully.</Text>
+                <Text style={styles.emptyTitle}>Join this Circle to see members</Text>
+                <Text style={styles.emptyHint}>Member profiles, leadership roles, and introductions only open after you join.</Text>
+                <Text style={styles.emptySupport}>Once your membership is active, you will be able to see who is hosting, matching, and already inside.</Text>
+                <TouchableOpacity style={styles.primaryButton} onPress={() => void handleJoin()}>
+                  <Text style={styles.primaryText}>{joinLabel}</Text>
+                </TouchableOpacity>
               </View>
             ) : (
-              <FlatList data={members} keyExtractor={(item) => item.id} renderItem={renderMember} scrollEnabled={false} contentContainerStyle={styles.memberList} />
+              <>
+                <View style={styles.memberContextRow}>
+                  <TouchableOpacity
+                    style={styles.memberContextCard}
+                    disabled={!primaryHost?.profiles?.id}
+                    onPress={() => openProfile(primaryHost?.profiles?.id)}
+                  >
+                    <View style={styles.memberContextIcon}>
+                      <MaterialCommunityIcons name="shield-account-outline" size={20} color={theme.tint} />
+                    </View>
+                    <View style={styles.memberContextCopy}>
+                      <Text style={styles.memberContextKicker}>Circle host</Text>
+                      <Text style={styles.memberContextTitle} numberOfLines={1}>{primaryHost?.profiles?.full_name || 'Leadership team'}</Text>
+                      <Text style={styles.memberContextMeta}>Tone, trust, and member care</Text>
+                    </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.memberContextCard} onPress={() => setActiveTab('overview')}>
+                    <View style={styles.memberContextIcon}>
+                      <MaterialCommunityIcons name="message-processing-outline" size={20} color={theme.tint} />
+                    </View>
+                    <View style={styles.memberContextCopy}>
+                      <Text style={styles.memberContextKicker}>Live discussion</Text>
+                      <Text style={styles.memberContextTitle}>{pulseCommentCount ? `${pulseCommentCount} Pulse comments` : 'Ready when you are'}</Text>
+                      <Text style={styles.memberContextMeta}>Reply, react, and see who is typing</Text>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+                {canManageRoles ? (
+                  <Text style={styles.emptySupport}>Tap `Roles` on any member to promote them to matchmaker, moderator, or host.</Text>
+                ) : null}
+                <View style={styles.roleSummaryRow}>
+                  <View style={styles.roleSummaryPill}>
+                    <Text style={styles.roleSummaryText}>{leadershipMembers.length} leads</Text>
+                  </View>
+                  <View style={styles.roleSummaryPill}>
+                    <Text style={styles.roleSummaryText}>{matchmakerCount} matchmakers</Text>
+                  </View>
+                  {pendingCount > 0 ? (
+                    <View style={styles.roleSummaryPillAccent}>
+                      <Text style={styles.roleSummaryTextAccent}>{pendingCount} pending</Text>
+                    </View>
+                  ) : null}
+                </View>
+                {leadershipMembers.length > 0 ? (
+                  <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Leadership</Text>
+                    <Text style={styles.sectionLead}>Hosts, moderators, and matchmakers who shape the quality of this space.</Text>
+                    <View style={styles.leadStack}>
+                      {leadershipMembers.map((item) => renderLeader(item, true))}
+                    </View>
+                  </View>
+                ) : null}
+                {loading && members.length === 0 ? <Text style={styles.emptyText}>Loading members...</Text> : null}
+                {members.length === 0 ? (
+                  <View style={styles.emptyCard}>
+                    <View style={styles.emptyIcon}>
+                      <MaterialCommunityIcons name="account-group-outline" size={24} color={theme.tint} />
+                    </View>
+                    <Text style={styles.emptyTitle}>This Circle is still taking shape</Text>
+                    <Text style={styles.emptyHint}>The first few members usually define the quality of every introduction after that.</Text>
+                    <Text style={styles.emptySupport}>Join momentum starts with trusted people, not volume.</Text>
+                  </View>
+                ) : communityMembers.length > 0 ? (
+                  <FlatList data={communityMembers} keyExtractor={(item) => item.id} renderItem={renderMember} scrollEnabled={false} contentContainerStyle={styles.memberList} />
+                ) : leadershipMembers.length > 0 ? (
+                  <View style={styles.emptyCard}>
+                    <View style={styles.emptyIcon}>
+                      <MaterialCommunityIcons name="account-star-outline" size={24} color={theme.tint} />
+                    </View>
+                    <Text style={styles.emptyTitle}>Leadership is set</Text>
+                    <Text style={styles.emptyHint}>The broader member layer has not opened up yet. This Circle is still being curated carefully.</Text>
+                  </View>
+                ) : (
+                  <FlatList data={members} keyExtractor={(item) => item.id} renderItem={renderMember} scrollEnabled={false} contentContainerStyle={styles.memberList} />
+                )}
+              </>
             )}
           </View>
         ) : null}

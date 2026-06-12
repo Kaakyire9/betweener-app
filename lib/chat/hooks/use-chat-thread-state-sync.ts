@@ -258,10 +258,6 @@ export const useChatThreadStateSync = ({
     setBlockStatus(blockedByMe ? blockedByMeValue : blockedByThem ? blockedByThemValue : null);
   }, [blockedByMeValue, blockedByThemValue, conversationId, userId]);
 
-  const isBlockedByMe = blockStatus === blockedByMeValue;
-  const isBlockedByThem = blockStatus === blockedByThemValue;
-  const isChatBlocked = isBlockedByMe || isBlockedByThem;
-
   useEffect(() => {
     let isMounted = true;
     if (!conversationId) return;
@@ -500,14 +496,9 @@ export const useChatThreadStateSync = ({
   useFocusEffect(
     useCallback(() => {
       if (!userId || !conversationId) return () => {};
-      const intervalMs = isChatBlocked ? 5000 : 15000;
-      const interval = setInterval(() => {
-        void fetchBlockStatus();
-      }, intervalMs);
-      return () => {
-        clearInterval(interval);
-      };
-    }, [conversationId, fetchBlockStatus, isChatBlocked, userId]),
+      void fetchBlockStatus();
+      return () => {};
+    }, [conversationId, fetchBlockStatus, userId]),
   );
 
   useEffect(() => {

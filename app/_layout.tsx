@@ -23,7 +23,7 @@ import NetworkStatusBanner from "@/components/NetworkStatusBanner";
 import OfflineSyncHistoryHydrator from "@/components/OfflineSyncHistoryHydrator";
 import OfflineSyncStatusPill from "@/components/OfflineSyncStatusPill";
 import ScreenAwakeSafetyGuard from "@/components/system/ScreenAwakeSafetyGuard";
-import ChatDeliveryReceiptAcknowledger from "@/components/ChatDeliveryReceiptAcknowledger";
+import ChatRealtimeHydrator from "@/components/ChatRealtimeHydrator";
 import {
   drainOfflineMutationQueue,
   migrateLegacyChatSendMutationsToSQLiteOutbox,
@@ -781,7 +781,7 @@ function RootLayout() {
           <OfflineSyncHistoryHydrator />
           <NetworkRecoveryHydrator />
           <ScreenAwakeSafetyGuard />
-          <ChatDeliveryReceiptAcknowledger />
+          <ChatRealtimeHydrator />
           <PendingNotificationRouteHydrator />
           <Slot />
           <InAppToasts />

@@ -36,6 +36,10 @@ import {
 import { getSafeRemoteImageUri, getUserFacingDisplayName } from "@/lib/profile/display-name";
 import { getAuthoritativePresenceDisplay } from "@/lib/presence";
 import { getChatMessagePreviewText } from "@/lib/message-preview";
+import {
+  selectChatListLastMessage,
+  selectLatestChatListActivity,
+} from "@/lib/chat/chat-list-message-merge";
 import { getSupabaseNetEvents, supabase } from "@/lib/supabase";
 import { captureMessage } from "@/lib/telemetry/sentry";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -113,25 +117,6 @@ const getListRowPreviewText = (row?: Pick<MessageRow, 'deleted_for_all' | 'text'
       isViewOnce: Boolean(row.is_view_once),
     }) || row.text || ''
   );
-};
-
-const getListReactionTarget = (messageType?: string | null) => {
-  switch (messageType) {
-    case 'image':
-      return 'photo';
-    case 'video':
-      return 'video';
-    case 'voice':
-      return 'voice note';
-    case 'document':
-      return 'document';
-    case 'location':
-      return 'location';
-    case 'mood_sticker':
-      return 'sticker';
-    default:
-      return 'message';
-  }
 };
 
 const messageRowToLocalChatMessage = (ownerUserId: string, row: MessageRow): ChatMessageRow => {
@@ -489,14 +474,22 @@ const mergeLocalThreadsIntoConversations = (
     const hasUsefulLocalIdentity =
       localConversation.matchedUser.name !== 'Unknown' || Boolean(localConversation.matchedUser.avatar_url);
 
-    const isSameLastMessage = localConversation.lastMessage.id === existing.lastMessage.id;
+    const resolvedLastMessage = selectChatListLastMessage(
+      existing.lastMessage,
+      localConversation.lastMessage,
+    );
+    const resolvedLatestActivity = selectLatestChatListActivity(
+      resolvedLastMessage,
+      [localConversation.latestActivity, existing.latestActivity],
+    );
+
     mergedById.set(thread.id, {
       ...existing,
       isArchived: localConversation.isArchived,
       isMuted: localConversation.isMuted,
       isPinned: localConversation.isPinned,
       unreadCount: localConversation.unreadCount,
-      latestActivity: localConversation.latestActivity,
+      latestActivity: resolvedLatestActivity,
       matchedAt: existing.matchedAt ?? localConversation.matchedAt,
       matchedUser: hasUsefulLocalIdentity
         ? {
@@ -512,22 +505,21 @@ const mergeLocalThreadsIntoConversations = (
             lastSeen: localConversation.matchedUser.lastSeen,
           }
         : existing.matchedUser,
-      lastMessage: {
-        ...existing.lastMessage,
-        ...localConversation.lastMessage,
-        editedAt:
-          localConversation.lastMessage.editedAt ??
-          (isSameLastMessage ? existing.lastMessage.editedAt : null),
-        reactionPreview:
-          localConversation.lastMessage.reactionPreview ??
-          (isSameLastMessage ? existing.lastMessage.reactionPreview : undefined),
-      },
+      lastMessage: resolvedLastMessage,
     });
   });
 
   const next = Array.from(mergedById.values()).sort((a, b) => {
     if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
-    return b.lastMessage.timestamp.getTime() - a.lastMessage.timestamp.getTime();
+    const aActivityAt = Math.max(
+      a.lastMessage.timestamp.getTime(),
+      a.latestActivity?.createdAt.getTime() ?? 0,
+    );
+    const bActivityAt = Math.max(
+      b.lastMessage.timestamp.getTime(),
+      b.latestActivity?.createdAt.getTime() ?? 0,
+    );
+    return bActivityAt - aActivityAt;
   });
 
   const currentKey = current.map(getConversationLocalMergeKey).join('|');
@@ -963,6 +955,21 @@ export default function ChatScreen() {
   const applyListActivity = useCallback(
     (otherId: string, activity: NonNullable<ConversationType['latestActivity']>) => {
       if (!user?.id) return;
+      const currentConversation = conversationsRef.current.find(
+        (conversation) => conversation.id === otherId,
+      );
+      if (!currentConversation) {
+        return;
+      }
+      const targetsLatestMessage =
+        currentConversation.lastMessage.id === activity.messageId;
+      if (
+        activity.createdAt.getTime() <=
+          currentConversation.lastMessage.timestamp.getTime() ||
+        (activity.kind !== 'reaction' && !targetsLatestMessage)
+      ) {
+        return;
+      }
       void ChatRepository.updateThreadActivityPreview(user.id, otherId, {
         kind: activity.kind,
         messageId: activity.messageId,
@@ -1086,14 +1093,27 @@ export default function ChatScreen() {
         void fetchConversations();
         return;
       }
-      const peerName =
-        conversationsRef.current.find((conversation) => conversation.id === otherId)?.matchedUser.name ||
-        'Someone';
-      const resolvedPeerName = peerName && peerName !== 'Unknown' ? peerName : 'Someone';
+      const currentConversation = conversationsRef.current.find(
+        (conversation) => conversation.id === otherId,
+      );
+      if (
+        !currentConversation ||
+        reactionPreview.createdAt.getTime() <=
+          currentConversation.lastMessage.timestamp.getTime()
+      ) {
+        return;
+      }
       applyListActivity(otherId, {
         kind: 'reaction',
         messageId: messageRow.id,
-        preview: `${reactionPreview.userId === user.id ? 'You' : resolvedPeerName} reacted ${reactionPreview.emoji} to ${getListReactionTarget(targetType)}`,
+        preview:
+          reactionPreview.userId === user.id
+            ? reactionPreview.emoji
+              ? `You reacted ${reactionPreview.emoji} to their message`
+              : 'You reacted to their message'
+            : reactionPreview.emoji
+            ? `Reacted ${reactionPreview.emoji} to your message`
+            : 'Reacted to your message',
         createdAt: reactionPreview.createdAt,
       });
       void ChatRepository.updateThreadReactionPreview(
@@ -1189,7 +1209,6 @@ export default function ChatScreen() {
     onChatPrefChange: handleListChatPrefChange,
     onPresenceChange: handleListPresenceChange,
     visiblePeerUserIds: conversations.map((conversation) => conversation.matchedUser.userId),
-    visibleLastMessageIds: conversations.map((conversation) => conversation.lastMessage.id).filter(Boolean),
   });
   const {
     openConversationMoreActions,
@@ -1356,23 +1375,19 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     header: {
       backgroundColor: theme.background,
       paddingHorizontal: 20,
-      paddingBottom: 16,
+      paddingBottom: 12,
       borderBottomWidth: 1,
       borderBottomColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
-      shadowColor: Colors.dark.background,
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.06,
-      shadowRadius: 3,
-      elevation: 3,
     },
     headerTop: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingVertical: 16,
+      paddingTop: 14,
+      paddingBottom: 12,
     },
     headerTitle: {
-      fontSize: 28,
+      fontSize: 30,
       fontFamily: 'PlayfairDisplay_700Bold',
       color: theme.text,
     },
@@ -1381,9 +1396,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       gap: 12,
     },
     headerButton: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
+      width: 42,
+      height: 42,
+      borderRadius: 14,
       backgroundColor: theme.backgroundSubtle,
       justifyContent: 'center',
       alignItems: 'center',
@@ -1472,15 +1487,19 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     // Filter Tabs
     filterTabs: {
       flexDirection: 'row',
-      gap: 8,
+      gap: 3,
+      padding: 4,
+      borderRadius: 14,
+      backgroundColor: withAlpha(theme.backgroundSubtle, isDark ? 0.7 : 0.9),
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.07),
     },
     filterTab: {
-      paddingHorizontal: 16,
-      paddingVertical: 8,
-      borderRadius: 20,
-      backgroundColor: theme.backgroundSubtle,
-      borderWidth: 1,
-      borderColor: withAlpha(theme.text, isDark ? 0.12 : 0.08),
+      flex: 1,
+      alignItems: 'center',
+      paddingHorizontal: 8,
+      paddingVertical: 9,
+      borderRadius: 10,
     },
     activeFilterTab: {
       backgroundColor: theme.tint,
@@ -1503,7 +1522,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
 
     // Conversations List
     conversationsList: {
-      paddingVertical: 8,
+      paddingTop: 4,
       paddingBottom: 92,
     },
     swipeActionRail: {
@@ -1542,25 +1561,14 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       color: Colors.light.background,
     },
     conversationItem: {
-      backgroundColor: isDark
-        ? withAlpha(theme.backgroundSubtle, 0.56)
-        : withAlpha('#fffaf5', 0.94),
       marginHorizontal: 16,
-      marginVertical: 4,
-      paddingHorizontal: 14,
-      paddingVertical: 12,
-      borderRadius: 18,
-      borderWidth: 1,
+      paddingHorizontal: 4,
+      paddingVertical: 15,
+      borderBottomWidth: StyleSheet.hairlineWidth,
       borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.07),
-      shadowColor: Colors.dark.background,
-      shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: isDark ? 0.16 : 0.05,
-      shadowRadius: 10,
-      elevation: 2,
     },
     conversationItemPressed: {
-      transform: [{ scale: 0.992 }],
-      shadowOpacity: 0.04,
+      opacity: 0.72,
     },
     leftConversation: {
       backgroundColor: isDark ? 'rgba(232, 219, 203, 0.045)' : 'rgba(247, 240, 232, 0.96)',
@@ -1568,16 +1576,15 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     pinnedConversation: {
       backgroundColor: withAlpha(theme.accent, isDark ? 0.13 : 0.08),
-      borderColor: withAlpha(theme.accent, isDark ? 0.34 : 0.2),
-      shadowColor: theme.accent,
+      borderBottomColor: withAlpha(theme.accent, isDark ? 0.34 : 0.2),
     },
     archivedConversation: {
       backgroundColor: withAlpha(theme.text, isDark ? 0.08 : 0.035),
       borderColor: withAlpha(theme.text, isDark ? 0.18 : 0.1),
     },
     unreadConversation: {
-      backgroundColor: withAlpha(theme.tint, isDark ? 0.11 : 0.065),
-      borderColor: withAlpha(theme.tint, isDark ? 0.28 : 0.18),
+      backgroundColor: withAlpha(theme.tint, isDark ? 0.075 : 0.045),
+      borderBottomColor: withAlpha(theme.tint, isDark ? 0.28 : 0.18),
     },
     conversationLeft: {
       flexDirection: 'row',
@@ -1628,9 +1635,9 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       overflow: 'hidden',
     },
     conversationAvatar: {
-      width: 46,
-      height: 46,
-      borderRadius: 23,
+      width: 50,
+      height: 50,
+      borderRadius: 25,
     },
     avatarFallback: {
       backgroundColor: withAlpha(theme.text, isDark ? 0.16 : 0.08),
@@ -1709,7 +1716,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       marginLeft: 8,
     },
     conversationName: {
-      fontSize: 15.5,
+      fontSize: 16,
       fontFamily: 'Archivo_600SemiBold',
       color: theme.text,
       flex: 1,
@@ -1776,10 +1783,6 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     leftConversationPreviewText: {
       color: isDark ? 'rgba(226, 212, 197, 0.72)' : '#887360',
-    },
-    lastMessageReaction: {
-      fontStyle: 'italic',
-      fontFamily: 'Manrope_500Medium',
     },
     typingText: {
       fontFamily: 'Manrope_500Medium',

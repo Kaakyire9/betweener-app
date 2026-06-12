@@ -1,15 +1,28 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { logger } from '@/lib/telemetry/logger';
 import { supabase } from '@/lib/supabase';
 import { fetchCirclePulseItemSnapshot, fetchCirclePulseItems } from './circle-pulse-service';
 import type { CirclePulseItem } from './circle-pulse-types';
 import { useCirclePulseRefresh } from './use-circle-pulse-refresh';
 import { readCirclePulseSnapshotState, writeCirclePulseSnapshot } from '@/lib/offline/circle-pulse-store';
+import { isLikelyNetworkError } from '@/lib/network';
+import { isNetworkConnectionAvailable } from '@/lib/network-state';
+import { fetch as fetchNetInfo } from '@react-native-community/netinfo';
 
-export function useCirclePulse({ circleId, enabled }: { circleId: string; enabled: boolean }) {
+export function useCirclePulse({
+  circleId,
+  enabled,
+  viewerProfileId,
+}: {
+  circleId: string;
+  enabled: boolean;
+  viewerProfileId?: string | null;
+}) {
   const [items, setItems] = useState<CirclePulseItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const itemsRef = useRef<CirclePulseItem[]>([]);
+  const canPersistSnapshotRef = useRef(false);
 
   const sortItems = useCallback((entries: CirclePulseItem[]) => (
     [...entries].sort((left, right) => {
@@ -89,61 +102,90 @@ export function useCirclePulse({ circleId, enabled }: { circleId: string; enable
   }), [circleId]);
 
   useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  useEffect(() => {
+    canPersistSnapshotRef.current = false;
+  }, [circleId, enabled, viewerProfileId]);
+
+  useEffect(() => {
     let cancelled = false;
     if (!circleId || !enabled) return () => {
       cancelled = true;
     };
 
     void (async () => {
-      const snapshotState = await readCirclePulseSnapshotState(circleId);
-      if (cancelled || !snapshotState.data) return;
+      const snapshotState = await readCirclePulseSnapshotState(circleId, viewerProfileId);
+      if (cancelled || !snapshotState.data || snapshotState.isStale) return;
+      canPersistSnapshotRef.current = true;
       setItems((current) => (current.length ? current : snapshotState.data ?? []));
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [circleId, enabled]);
+  }, [circleId, enabled, viewerProfileId]);
 
   const reload = useCallback(async () => {
     if (!circleId || !enabled) {
+      canPersistSnapshotRef.current = false;
       setItems([]);
       setLoading(false);
       setError(null);
       return;
     }
 
+    const hadLiveItems = itemsRef.current.length > 0;
     setLoading(true);
-    setError(null);
     try {
+      const netState = await fetchNetInfo().catch(() => null);
+      if (!isNetworkConnectionAvailable(netState)) {
+        const snapshotState = await readCirclePulseSnapshotState(circleId, viewerProfileId);
+        if (snapshotState.data && !hadLiveItems) {
+          canPersistSnapshotRef.current = true;
+          setItems(snapshotState.data);
+          setError('Showing saved Circle Pulse.');
+        } else if (!hadLiveItems) {
+          setError('Circle Pulse needs a connection the first time it opens on this device.');
+        } else {
+          setError(null);
+        }
+        return;
+      }
+
       const nextItems = await fetchCirclePulseItems(circleId);
+      canPersistSnapshotRef.current = true;
       setItems(nextItems);
-      void writeCirclePulseSnapshot(circleId, nextItems);
+      setError(null);
     } catch (loadError) {
       logger.warn('[circles] pulse_load_failed', {
         circleId,
         message: loadError instanceof Error ? loadError.message : String(loadError),
       });
-      const snapshotState = await readCirclePulseSnapshotState(circleId);
-      if (snapshotState.data) {
+      const snapshotState = await readCirclePulseSnapshotState(circleId, viewerProfileId);
+      if (snapshotState.data && !hadLiveItems) {
+        canPersistSnapshotRef.current = true;
         setItems(snapshotState.data);
         setError('Showing saved Circle Pulse.');
+      } else if (!hadLiveItems) {
+        setError(isLikelyNetworkError(loadError) ? 'Circle Pulse needs a connection the first time it opens on this device.' : 'Circle Pulse could not refresh.');
       } else {
-        setError('Circle Pulse could not refresh.');
+        setError(null);
       }
     } finally {
       setLoading(false);
     }
-  }, [circleId, enabled]);
+  }, [circleId, enabled, viewerProfileId]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
   useEffect(() => {
-    if (!enabled || !circleId) return;
-    void writeCirclePulseSnapshot(circleId, items);
-  }, [circleId, enabled, items]);
+    if (!enabled || !circleId || !canPersistSnapshotRef.current) return;
+    void writeCirclePulseSnapshot(circleId, viewerProfileId, items);
+  }, [circleId, enabled, items, viewerProfileId]);
 
   useCirclePulseRefresh({
     enabled: enabled && !!circleId,

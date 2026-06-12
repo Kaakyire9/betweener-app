@@ -11,6 +11,7 @@ import {
 } from "@/lib/location/countries";
 import { toFlagEmoji } from "@/lib/location/location-display";
 import { isLikelyNetworkError } from "@/lib/network";
+import { normalizeOtherText, resolveOtherValue } from "@/lib/profile/other-option";
 import { RELIGION_LABELS, isReligionEnumError, normalizeReligionForProfile } from "@/lib/profile/religion";
 import { type ResponsiveMetrics, useResponsiveMetrics } from "@/lib/responsive";
 import { captureSignupContext, clearSignupSession, consumeSignupMetadata, finalizeSignupPhoneVerification, getSignupPhoneState } from "@/lib/signup-tracking";
@@ -122,6 +123,7 @@ export default function Onboarding() {
   const [currentStep, setCurrentStep] = useState(0);
   const [focusedField, setFocusedField] = useState<string | null>(null);
   const [customOccupation, setCustomOccupation] = useState("");
+  const [customTribe, setCustomTribe] = useState("");
   const [countryModalVisible, setCountryModalVisible] = useState(false);
   const [countryPickerTarget, setCountryPickerTarget] = useState<"current" | "origin">("current");
   const [countrySearch, setCountrySearch] = useState("");
@@ -270,6 +272,8 @@ export default function Onboarding() {
 
   const validateStep = (step: number) => {
     const newErrors: { [key: string]: string } = {};
+    const resolvedOccupation = resolveOtherValue(form.occupation, customOccupation);
+    const resolvedTribe = resolveOtherValue(form.tribe, customTribe);
     
     switch (step) {
       case 1: // Basic Info
@@ -277,8 +281,7 @@ export default function Onboarding() {
         if (!form.age || Number(form.age) < 18) newErrors.age = "You must be at least 18.";
         if (!form.gender) newErrors.gender = "Gender is required.";
         if (!form.bio.trim()) newErrors.bio = "Bio is required.";
-        if (!form.occupation) newErrors.occupation = "Occupation is required.";
-        if (form.occupation === "Other" && !customOccupation.trim())
+        if (!resolvedOccupation)
           newErrors.occupation = "Please enter your occupation.";
         break;
       case 2: // Photo
@@ -286,7 +289,7 @@ export default function Onboarding() {
         break;
       case 3: // Location
         if (!form.region) newErrors.region = "Region is required.";
-        if (!form.tribe) newErrors.tribe = "Tribe is required.";
+        if (!resolvedTribe) newErrors.tribe = "Please enter your cultural background.";
         if (!form.religion) newErrors.religion = "Religion is required.";
         if (!form.currentCountry) {
           newErrors.currentCountry = "Please select your current country.";
@@ -491,12 +494,9 @@ export default function Onboarding() {
         age: Number(form.age),
         gender: form.gender.toUpperCase() as any,
         bio: form.bio,
-        occupation:
-          form.occupation === "Other" && customOccupation.trim()
-            ? customOccupation.trim()
-            : form.occupation,
+        occupation: resolveOtherValue(form.occupation, customOccupation),
         region: form.region,
-        tribe: form.tribe,
+        tribe: resolveOtherValue(form.tribe, customTribe),
         religion: normalizeReligionForProfile(form.religion) as any,
         avatar_url: imageUrl,
         phone_number: phoneNumber,
@@ -1085,7 +1085,7 @@ export default function Onboarding() {
                   value={customOccupation}
                   onChangeText={(text) => {
                     setCustomOccupation(text);
-                    if (text.trim()) {
+                    if (normalizeOtherText(text)) {
                       setErrors((prev) => ({ ...prev, occupation: "" }));
                     }
                   }}
@@ -1323,7 +1323,13 @@ export default function Onboarding() {
                   styles.gridOption,
                   form.tribe === tribe && styles.gridOptionSelected,
                 ]}
-                onPress={() => setForm((prev) => ({ ...prev, tribe }))}
+                onPress={() => {
+                  setForm((prev) => ({ ...prev, tribe }));
+                  setErrors((prev) => ({ ...prev, tribe: "" }));
+                  if (tribe !== "Other") {
+                    setCustomTribe("");
+                  }
+                }}
               >
                 <Text
                   style={[
@@ -1336,6 +1342,26 @@ export default function Onboarding() {
               </TouchableOpacity>
             ))}
           </View>
+          {form.tribe === "Other" ? (
+            <TextInput
+              style={[
+                styles.input,
+                focusedField === "customTribe" && styles.inputFocused,
+                errors.tribe && styles.inputError,
+              ]}
+              value={customTribe}
+              onChangeText={(text) => {
+                setCustomTribe(text);
+                if (normalizeOtherText(text)) {
+                  setErrors((prev) => ({ ...prev, tribe: "" }));
+                }
+              }}
+              placeholder="Enter your cultural background"
+              placeholderTextColor="#9ca3af"
+              onFocus={() => setFocusedField("customTribe")}
+              onBlur={() => setFocusedField(null)}
+            />
+          ) : null}
           {errors.tribe && <Text style={styles.errorText}>{errors.tribe}</Text>}
         </View>
 

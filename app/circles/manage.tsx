@@ -1,5 +1,6 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
 import { canCreateCircle, canCreateGathering, type CircleAccessEntitlements } from '@/lib/circles/circle-access';
 import { supabase } from '@/lib/supabase';
@@ -98,13 +99,11 @@ const creatorStatusLabel = (status?: string | null) => {
 
 export default function CircleCreatorManageScreen() {
   const { profile, user } = useAuth();
+  const { profileId: currentProfileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
   const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
-
-  const [resolvedProfileId, setResolvedProfileId] = useState<string | null>(profile?.id ?? null);
-  const currentProfileId = resolvedProfileId;
   const [creatorCircles, setCreatorCircles] = useState<CreatorCircle[]>([]);
   const [creatorGatherings, setCreatorGatherings] = useState<CreatorGathering[]>([]);
   const [creatorGists, setCreatorGists] = useState<CreatorGist[]>([]);
@@ -118,6 +117,7 @@ export default function CircleCreatorManageScreen() {
   const [creatingGathering, setCreatingGathering] = useState(false);
   const [savingGist, setSavingGist] = useState(false);
   const [editingCircleId, setEditingCircleId] = useState<string | null>(null);
+  const [editingCircleStatus, setEditingCircleStatus] = useState<string | null>(null);
   const [editingGatheringId, setEditingGatheringId] = useState<string | null>(null);
   const [editingGistId, setEditingGistId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
@@ -136,29 +136,6 @@ export default function CircleCreatorManageScreen() {
   const [gistShortBodyDraft, setGistShortBodyDraft] = useState('');
   const [gistBodyDraft, setGistBodyDraft] = useState('');
   const [gistPerspectiveDraft, setGistPerspectiveDraft] = useState<(typeof GIST_PERSPECTIVES)[number]>('general');
-
-  useEffect(() => {
-    let cancelled = false;
-    if (profile?.id) {
-      setResolvedProfileId(profile.id);
-      return () => {
-        cancelled = true;
-      };
-    }
-    if (!user?.id) {
-      setResolvedProfileId(null);
-      return () => {
-        cancelled = true;
-      };
-    }
-    void (async () => {
-      const { data } = await db.from('profiles').select('id').eq('user_id', user.id).maybeSingle();
-      if (!cancelled) setResolvedProfileId(data?.id ?? null);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [profile?.id, user?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -254,6 +231,7 @@ export default function CircleCreatorManageScreen() {
     setNewCity(profile?.city ?? '');
     setNewScope('country');
     setEditingCircleId(null);
+    setEditingCircleStatus(null);
     setCreateOpen(true);
   }, [canSubmitCircle, profile?.city]);
 
@@ -276,6 +254,7 @@ export default function CircleCreatorManageScreen() {
 
   const prefillCircleRequest = useCallback((circle: CreatorCircle) => {
     setEditingCircleId(circle.id);
+    setEditingCircleStatus(circle.status ?? null);
     setNewName(circle.name ?? '');
     setNewPurpose(circle.description ?? circle.short_description ?? '');
     setNewCity(circle.city ?? (profile?.city ?? ''));
@@ -379,17 +358,30 @@ export default function CircleCreatorManageScreen() {
       if (error) throw error;
       setCreateOpen(false);
       setEditingCircleId(null);
+      setEditingCircleStatus(null);
       await loadCreatorData();
       Alert.alert(
-        isAdmin ? 'Circle published' : editingCircleId ? 'Resubmitted for review' : 'Submitted for review',
-        isAdmin ? 'Your official Circle is live.' : editingCircleId ? 'Your Circle changes were saved and sent back for review.' : "We'll notify you once Betweener approves it.",
+        isAdmin
+          ? 'Circle published'
+          : editingCircleId
+            ? editingCircleStatus === 'approved'
+              ? 'Changes sent for review'
+              : 'Resubmitted for review'
+            : 'Submitted for review',
+        isAdmin
+          ? 'Your official Circle is live.'
+          : editingCircleId
+            ? editingCircleStatus === 'approved'
+              ? 'Your Circle changes were saved. Once reviewed, the updated details will go live.'
+              : 'Your Circle changes were saved and sent back for review.'
+            : "We'll notify you once Betweener approves it.",
       );
     } catch (error) {
       Alert.alert('Circle request failed', error instanceof Error ? error.message : 'Please try again.');
     } finally {
       setCreating(false);
     }
-  }, [creating, editingCircleId, isAdmin, loadCreatorData, newCity, newName, newPurpose, newScope, profile]);
+  }, [creating, editingCircleId, editingCircleStatus, isAdmin, loadCreatorData, newCity, newName, newPurpose, newScope, profile]);
 
   const handleSubmitGathering = useCallback(async () => {
     Keyboard.dismiss();
@@ -627,18 +619,13 @@ export default function CircleCreatorManageScreen() {
               <Text style={styles.cardBody}>{circle.short_description || circle.description || 'Awaiting curation details.'}</Text>
               {circle.rejected_reason ? <Text style={styles.warningText}>Reason: {circle.rejected_reason}</Text> : null}
               <View style={styles.cardActions}>
-                {circle.status === 'approved' ? (
-                  <TouchableOpacity style={styles.secondaryButton} onPress={() => openCircle(circle.id, 'overview')}>
-                    <Text style={styles.secondaryText}>Open Circle</Text>
-                  </TouchableOpacity>
-                ) : null}
-                {['draft', 'pending_review', 'rejected'].includes(String(circle.status ?? '')) ? (
+                {['draft', 'pending_review', 'rejected', 'approved'].includes(String(circle.status ?? '')) ? (
                   <TouchableOpacity
                     style={circle.status === 'rejected' ? styles.primaryButton : styles.secondaryButton}
                     onPress={() => prefillCircleRequest(circle)}
                   >
                     <Text style={circle.status === 'rejected' ? styles.primaryText : styles.secondaryText}>
-                      {circle.status === 'rejected' ? 'Edit and resubmit' : 'Open request'}
+                      {circle.status === 'approved' ? 'Edit Circle' : circle.status === 'rejected' ? 'Edit and resubmit' : 'Open request'}
                     </Text>
                   </TouchableOpacity>
                 ) : null}
@@ -844,8 +831,8 @@ export default function CircleCreatorManageScreen() {
         </Pressable>
       </Modal>
 
-      <Modal visible={createOpen} transparent animationType="fade" onRequestClose={() => { setCreateOpen(false); setEditingCircleId(null); }}>
-        <Pressable style={styles.modalBackdrop} onPress={() => { setCreateOpen(false); setEditingCircleId(null); }}>
+      <Modal visible={createOpen} transparent animationType="fade" onRequestClose={() => { setCreateOpen(false); setEditingCircleId(null); setEditingCircleStatus(null); }}>
+        <Pressable style={styles.modalBackdrop} onPress={() => { setCreateOpen(false); setEditingCircleId(null); setEditingCircleStatus(null); }}>
           <KeyboardAvoidingView
             style={styles.modalKeyboardWrap}
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -857,7 +844,13 @@ export default function CircleCreatorManageScreen() {
                 keyboardShouldPersistTaps="handled"
                 showsVerticalScrollIndicator={false}
               >
-                <Text style={styles.modalTitle}>{editingCircleId ? 'Edit Circle request' : 'Request Circle'}</Text>
+                <Text style={styles.modalTitle}>
+                  {editingCircleId
+                    ? editingCircleStatus === 'approved'
+                      ? 'Edit Circle'
+                      : 'Edit Circle request'
+                    : 'Request Circle'}
+                </Text>
                 <TextInput value={newName} onChangeText={setNewName} placeholder="Circle name" placeholderTextColor={theme.textMuted} style={styles.input} returnKeyType="next" />
                 <TextInput value={newPurpose} onChangeText={setNewPurpose} placeholder="Purpose and who it is for" placeholderTextColor={theme.textMuted} multiline style={[styles.input, styles.multiline]} returnKeyType="default" />
                 <TextInput value={newCity} onChangeText={setNewCity} placeholder="City" placeholderTextColor={theme.textMuted} style={styles.input} returnKeyType="done" />
@@ -871,11 +864,19 @@ export default function CircleCreatorManageScreen() {
                   ))}
                 </View>
                 <View style={styles.modalActions}>
-                  <TouchableOpacity style={styles.secondaryButton} onPress={() => { setCreateOpen(false); setEditingCircleId(null); }}>
+                  <TouchableOpacity style={styles.secondaryButton} onPress={() => { setCreateOpen(false); setEditingCircleId(null); setEditingCircleStatus(null); }}>
                     <Text style={styles.secondaryText}>Cancel</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.primaryButton} disabled={creating} onPress={handleSubmitCircle}>
-                    <Text style={styles.primaryText}>{creating ? 'Submitting' : editingCircleId ? 'Save and resubmit' : 'Submit for review'}</Text>
+                    <Text style={styles.primaryText}>
+                      {creating
+                        ? 'Submitting'
+                        : editingCircleId
+                          ? editingCircleStatus === 'approved'
+                            ? 'Save changes'
+                            : 'Save and resubmit'
+                          : 'Submit for review'}
+                    </Text>
                   </TouchableOpacity>
                 </View>
               </ScrollView>

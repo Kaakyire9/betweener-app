@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useResponsiveMetrics } from '@/lib/responsive';
 import { normalizeProfilePhotoUri } from '@/lib/profile/media';
-import type { CirclePulseItem, CirclePulseItemType } from '@/lib/circles/pulse/circle-pulse-types';
+import type { CirclePulseItem, CirclePulseItemType, CirclePulseWelcomeProfile } from '@/lib/circles/pulse/circle-pulse-types';
 import { useCirclePulsePalette, type CirclePulsePalette } from '@/lib/circles/pulse/circle-pulse-theme';
 
 type Props = {
@@ -48,6 +48,19 @@ const TYPE_ORDER: Record<CirclePulseItemType, number> = {
 };
 
 const AUTO_ADVANCE_MS = 7200;
+
+const combineWelcomeProfiles = (welcomeItems: CirclePulseItem[]): CirclePulseWelcomeProfile[] => {
+  const seenProfileIds = new Set<string>();
+  const combinedProfiles: CirclePulseWelcomeProfile[] = [];
+  for (const item of welcomeItems) {
+    for (const profile of item.welcomeProfiles) {
+      if (seenProfileIds.has(profile.profileId)) continue;
+      seenProfileIds.add(profile.profileId);
+      combinedProfiles.push(profile);
+    }
+  }
+  return combinedProfiles;
+};
 
 const getGatheringDateParts = (value?: string | null) => {
   if (!value) return { month: 'SOON', day: '--', time: 'TBA' };
@@ -297,14 +310,40 @@ export default function CirclePulseBoard({
     }),
     [items],
   );
-  const selectedItem = useMemo(
-    () => orderedItems.find((item) => item.id === selectedItemId) ?? orderedItems[0] ?? null,
-    [orderedItems, selectedItemId],
+  const welcomeItems = useMemo(
+    () => orderedItems.filter((item) => item.type === 'welcome'),
+    [orderedItems],
   );
-  const activeType = selectedItem?.type ?? null;
-  const selectedItemIndex = selectedItem ? orderedItems.findIndex((item) => item.id === selectedItem.id) : -1;
-  const welcomeProfiles = selectedItem?.type === 'welcome' ? selectedItem.welcomeProfiles.slice(0, 3) : [];
+  const displayItems = useMemo(() => {
+    if (welcomeItems.length === 0) return orderedItems;
+    const combinedWelcomeProfiles = combineWelcomeProfiles(welcomeItems);
+    let welcomeInserted = false;
+    return orderedItems.flatMap((item) => {
+      if (item.type !== 'welcome') return [item];
+      if (welcomeInserted) return [];
+      welcomeInserted = true;
+      return [{ ...item, welcomeProfiles: combinedWelcomeProfiles }];
+    });
+  }, [orderedItems, welcomeItems]);
+  const selectedDisplayItem = useMemo(() => {
+    if (displayItems.length === 0) return null;
+    const directMatch = displayItems.find((item) => item.id === selectedItemId);
+    if (directMatch) return directMatch;
+    if (selectedItemId && welcomeItems.some((item) => item.id === selectedItemId)) {
+      return displayItems.find((item) => item.type === 'welcome') ?? displayItems[0];
+    }
+    return displayItems[0];
+  }, [displayItems, selectedItemId, welcomeItems]);
+  const activeWelcomeItems = selectedDisplayItem?.type === 'welcome' ? welcomeItems : [];
+  const welcomeProfiles = selectedDisplayItem?.type === 'welcome'
+    ? (activeWelcomeItems.length > 0 ? combineWelcomeProfiles(activeWelcomeItems) : selectedDisplayItem.welcomeProfiles)
+    : [];
   const welcomeProfile = welcomeProfiles[welcomeProfileIndex] ?? welcomeProfiles[0] ?? null;
+  const selectedItem = selectedDisplayItem?.type === 'welcome'
+    ? activeWelcomeItems[welcomeProfileIndex] ?? activeWelcomeItems[0] ?? selectedDisplayItem
+    : selectedDisplayItem;
+  const activeType = selectedDisplayItem?.type ?? null;
+  const selectedItemIndex = selectedDisplayItem ? displayItems.findIndex((item) => item.id === selectedDisplayItem.id) : -1;
   const isViewingOwnWelcomeProfile = !!welcomeProfile && !!viewerProfileId && welcomeProfile.profileId === viewerProfileId;
   const imageUri = selectedItem?.imageUrl || (selectedItem?.mediaType === 'image' ? selectedItem.mediaUrl : null);
   const resolvedImageUri = imageUri ? normalizeProfilePhotoUri(imageUri) || imageUri : null;
@@ -361,7 +400,7 @@ export default function CirclePulseBoard({
     ? Math.max(0, discussionUnreadByItemId?.[selectedItem.id] ?? 0)
     : 0;
   const selectItem = useCallback((itemId: string) => {
-    if (itemId === selectedItem?.id || transitioningRef.current) return;
+    if (itemId === selectedDisplayItem?.id || transitioningRef.current) return;
     transitioningRef.current = true;
     Animated.timing(transitionProgress, {
       toValue: 0,
@@ -380,17 +419,20 @@ export default function CirclePulseBoard({
         transitioningRef.current = false;
       });
     });
-  }, [selectedItem?.id, transitionProgress]);
+  }, [selectedDisplayItem?.id, transitionProgress]);
   const showAdjacentItem = useCallback((direction: -1 | 1) => {
-    if (orderedItems.length < 2 || selectedItemIndex < 0) return;
-    const nextIndex = (selectedItemIndex + direction + orderedItems.length) % orderedItems.length;
-    selectItem(orderedItems[nextIndex].id);
-  }, [orderedItems, selectItem, selectedItemIndex]);
+    if (displayItems.length < 2 || selectedItemIndex < 0) return;
+    const nextIndex = (selectedItemIndex + direction + displayItems.length) % displayItems.length;
+    selectItem(displayItems[nextIndex].id);
+  }, [displayItems, selectItem, selectedItemIndex]);
   const openWelcomeDiscussion = () => {
     if (!selectedItem || selectedItem.type !== 'welcome' || !welcomeProfile) return;
+    const prioritizedWelcomeProfiles = selectedItem.welcomeProfiles.length > 1
+      ? [welcomeProfile, ...selectedItem.welcomeProfiles.filter((profile) => profile.profileId !== welcomeProfile.profileId)]
+      : [welcomeProfile];
     onOpenComments?.({
       ...selectedItem,
-      welcomeProfiles: [welcomeProfile, ...welcomeProfiles.filter((profile) => profile.profileId !== welcomeProfile.profileId)],
+      welcomeProfiles: prioritizedWelcomeProfiles,
     });
   };
   const showAdjacentWelcomeProfile = (direction: -1 | 1) => {
@@ -400,13 +442,13 @@ export default function CirclePulseBoard({
 
   useEffect(() => {
     setWelcomeProfileIndex(0);
-  }, [selectedItem?.id]);
+  }, [selectedDisplayItem?.id]);
 
   useEffect(() => {
-    if (!isMember || orderedItems.length < 2) return;
+    if (!isMember || displayItems.length < 2) return;
     const timer = setInterval(() => showAdjacentItem(1), AUTO_ADVANCE_MS);
     return () => clearInterval(timer);
-  }, [isMember, orderedItems.length, selectedItem?.id, showAdjacentItem]);
+  }, [displayItems.length, isMember, selectedDisplayItem?.id, showAdjacentItem]);
 
   const animatedFeatureStyle = useMemo(
     () => ({
@@ -466,14 +508,14 @@ export default function CirclePulseBoard({
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterTrack} contentContainerStyle={styles.filterRow}>
         {FILTERS.map((filter) => {
           const active = !!activeType && filter.types.includes(activeType);
-          const available = orderedItems.some((item) => filter.types.includes(item.type));
+          const available = displayItems.some((item) => filter.types.includes(item.type));
           return (
             <Pressable
               key={filter.key}
               style={[styles.filterChip, active && styles.filterChipActive, !available && styles.filterChipUnavailable]}
               disabled={!available}
               onPress={() => {
-                const item = orderedItems.find((candidate) => filter.types.includes(candidate.type));
+                const item = displayItems.find((candidate) => filter.types.includes(candidate.type));
                 if (item) selectItem(item.id);
               }}
             >
@@ -568,7 +610,7 @@ export default function CirclePulseBoard({
               </View>
             </View>
           ) : selectedItem.type === 'media' ? (
-            <Pressable accessibilityLabel="Open Circle media" style={[styles.mediaShell, styles.mediaSpotlight]} onPress={() => onOpenMedia?.(selectedItem)}>
+            <View style={[styles.mediaShell, styles.mediaSpotlight, styles.mediaPoster]}>
               {selectedItem.mediaType === 'video' && selectedItem.mediaUrl ? (
                 <InlineCircleVideo uri={selectedItem.mediaUrl} style={styles.mediaImage} />
               ) : imageUri ? (
@@ -589,7 +631,17 @@ export default function CirclePulseBoard({
                   <MaterialCommunityIcons name={getMediaIcon(selectedItem.mediaType) as any} size={26} color={palette.purple} />
                 </View>
               )}
-              <LinearGradient colors={['rgba(7,30,34,0.06)', 'rgba(7,30,34,0.9)']} style={styles.mediaOverlay} />
+              <Pressable
+                accessibilityLabel="Open Circle media"
+                style={StyleSheet.absoluteFill}
+                onPress={() => onOpenMedia?.(selectedItem)}
+              />
+              <LinearGradient
+                pointerEvents="none"
+                colors={['rgba(7,30,34,0.08)', 'rgba(7,30,34,0.28)', 'rgba(7,30,34,0.96)']}
+                locations={[0, 0.42, 1]}
+                style={styles.mediaOverlay}
+              />
               <View style={styles.mediaTypeBadge}>
                 <MaterialCommunityIcons name={getMediaIcon(selectedItem.mediaType) as any} size={13} color="#F4E8D0" />
                 <Text style={styles.mediaTypeText}>{getMediaLabel(selectedItem)}</Text>
@@ -597,7 +649,42 @@ export default function CirclePulseBoard({
               <View style={styles.mediaOpenIcon}>
                 <MaterialCommunityIcons name={selectedItem.mediaType === 'video' ? 'play' : 'arrow-top-right'} size={17} color="#F4E8D0" />
               </View>
-            </Pressable>
+              <View style={styles.mediaPosterContent}>
+                <Text style={styles.mediaPosterLabel}>{getLabel(selectedItem.type)}</Text>
+                <Text style={styles.mediaPosterTitle} numberOfLines={2}>
+                  {selectedItem.title || 'A thoughtful spotlight'}
+                </Text>
+                {selectedItem.subtitle && selectedItem.subtitle !== selectedItem.body ? (
+                  <Text style={styles.mediaPosterSubtitle} numberOfLines={1}>{selectedItem.subtitle}</Text>
+                ) : null}
+                {selectedItem.body ? (
+                  <Text style={styles.mediaPosterBody} numberOfLines={2}>{selectedItem.body}</Text>
+                ) : null}
+                <View style={styles.mediaActions}>
+                  <TouchableOpacity
+                    accessibilityLabel="Open Circle media"
+                    style={[styles.mediaActionButton, styles.mediaPrimaryAction]}
+                    onPress={() => onOpenMedia?.(selectedItem)}
+                  >
+                    <MaterialCommunityIcons name={getMediaIcon(selectedItem.mediaType) as any} size={15} color={palette.tealInk} />
+                    <Text style={styles.mediaPrimaryActionText}>{getMediaActionLabel(selectedItem)}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    accessibilityLabel="Open media discussion"
+                    style={[styles.mediaActionButton, styles.mediaPosterSecondaryAction]}
+                    onPress={() => onOpenComments?.(selectedItem)}
+                  >
+                    <MaterialCommunityIcons name="message-outline" size={15} color="#E8DFFF" />
+                    <Text style={styles.mediaPosterSecondaryActionText}>{selectedDiscussionCallToAction}</Text>
+                    {selectedDiscussionUnreadCount > 0 ? (
+                      <View style={styles.unreadPill}>
+                        <Text style={styles.unreadPillText}>{selectedDiscussionUnreadCount} new</Text>
+                      </View>
+                    ) : null}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
           ) : imageUri && selectedItem.type !== 'gathering' ? (
             <View style={styles.mediaShell}>
               <Image source={{ uri: imageUri }} style={styles.mediaImage} contentFit="cover" transition={160} />
@@ -693,13 +780,10 @@ export default function CirclePulseBoard({
                 </View>
               </View>
             </View>
-          ) : selectedItem.type !== 'love_seat' && selectedItem.type !== 'welcome' ? (
+          ) : selectedItem.type !== 'love_seat' && selectedItem.type !== 'welcome' && selectedItem.type !== 'media' ? (
             <View style={styles.copyBlock}>
               <Text style={styles.label}>{getLabel(selectedItem.type)}</Text>
               <Text style={styles.title} numberOfLines={2}>{selectedItem.title || 'A thoughtful spotlight'}</Text>
-              {selectedItem.type === 'media' && selectedItem.subtitle && selectedItem.subtitle !== selectedItem.body ? (
-                <Text style={styles.mediaSubtitle} numberOfLines={1}>{selectedItem.subtitle}</Text>
-              ) : null}
               {selectedItem.body ? <Text style={styles.body} numberOfLines={imageUri ? 3 : 5}>{selectedItem.body}</Text> : null}
             </View>
           ) : null}
@@ -731,24 +815,7 @@ export default function CirclePulseBoard({
               </View>
             </>
           ) : selectedItem.type === 'media' ? (
-            <>
-              <View style={styles.mediaActions}>
-                <TouchableOpacity accessibilityLabel="Open Circle media" style={[styles.mediaActionButton, styles.mediaPrimaryAction]} onPress={() => onOpenMedia?.(selectedItem)}>
-                  <MaterialCommunityIcons name={getMediaIcon(selectedItem.mediaType) as any} size={15} color={palette.tealInk} />
-                  <Text style={styles.mediaPrimaryActionText}>{getMediaActionLabel(selectedItem)}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity accessibilityLabel="Open media discussion" style={styles.mediaActionButton} onPress={() => onOpenComments?.(selectedItem)}>
-                  <MaterialCommunityIcons name="message-outline" size={15} color={palette.purple} />
-                  <Text style={styles.mediaSecondaryActionText}>{selectedDiscussionCallToAction}</Text>
-                  {selectedDiscussionUnreadCount > 0 ? (
-                    <View style={styles.unreadPill}>
-                      <Text style={styles.unreadPillText}>{selectedDiscussionUnreadCount} new</Text>
-                    </View>
-                  ) : null}
-                </TouchableOpacity>
-              </View>
-              {selectedDiscussionSummary ? <Text style={styles.footerSummary}>{selectedDiscussionSummary}</Text> : null}
-            </>
+            selectedDiscussionSummary ? <Text style={styles.footerSummary}>{selectedDiscussionSummary}</Text> : null
           ) : selectedItem.type === 'love_seat' && selectedItem.featuredProfileId ? (
             <>
               <View style={styles.loveSeatActions}>
@@ -808,18 +875,18 @@ export default function CirclePulseBoard({
               <Text style={styles.leaveLoveSeatText}>{isLoveSeatOwner ? 'Leave Love Seat' : 'End feature'}</Text>
             </Pressable>
           ) : null}
-          {orderedItems.length > 1 ? (
+          {displayItems.length > 1 ? (
             <View style={styles.mediaPager}>
               <Pressable accessibilityLabel="Previous Circle spotlight" style={styles.mediaPagerButton} onPress={() => showAdjacentItem(-1)}>
                 <MaterialCommunityIcons name="chevron-left" size={17} color={palette.textMuted} />
               </Pressable>
               <View accessibilityLabel="Circle spotlight position" style={styles.carouselDashes}>
-                {orderedItems.map((item, index) => (
+                {displayItems.map((item, index) => (
                   <Pressable
                     key={item.id}
                     accessibilityLabel={`Show ${getLabel(item.type)} spotlight ${index + 1}`}
-                    accessibilityState={{ selected: item.id === selectedItem.id }}
-                    style={[styles.carouselDash, item.id === selectedItem.id && styles.carouselDashActive]}
+                    accessibilityState={{ selected: item.id === selectedDisplayItem.id }}
+                    style={[styles.carouselDash, item.id === selectedDisplayItem.id && styles.carouselDashActive]}
                     onPress={() => selectItem(item.id)}
                   />
                 ))}
@@ -964,6 +1031,7 @@ const createStyles = (compactWidth: boolean, compactHeight: boolean, palette: Ci
     loveSeatQuote: { color: palette.textSoft, fontSize: 12, lineHeight: 17, fontStyle: 'italic' },
     mediaShell: { height: compactHeight ? 108 : 124, overflow: 'hidden', borderRadius: 18, backgroundColor: palette.surfaceMuted },
     mediaSpotlight: { borderWidth: 1, borderColor: palette.tealBorder },
+    mediaPoster: { position: 'relative', height: compactHeight ? 220 : 252, borderRadius: 20 },
     mediaImage: { width: '100%', height: '100%' },
     mediaOverlay: { ...StyleSheet.absoluteFillObject },
     mediaFallback: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.purpleSoft },
@@ -973,7 +1041,12 @@ const createStyles = (compactWidth: boolean, compactHeight: boolean, palette: Ci
     audioBar: { width: 3, borderRadius: 2, backgroundColor: palette.teal },
     mediaTypeBadge: { position: 'absolute', left: 10, top: 10, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 14, backgroundColor: 'rgba(7,30,34,0.76)', borderWidth: 1, borderColor: 'rgba(244,232,208,0.16)' },
     mediaTypeText: { color: '#F4E8D0', fontSize: 10, fontWeight: '900' },
-    mediaOpenIcon: { position: 'absolute', right: 10, bottom: 10, width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(139,92,255,0.72)', borderWidth: 1, borderColor: 'rgba(217,204,255,0.68)' },
+    mediaOpenIcon: { position: 'absolute', right: 12, top: 12, width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(139,92,255,0.76)', borderWidth: 1, borderColor: 'rgba(217,204,255,0.68)' },
+    mediaPosterContent: { position: 'absolute', left: 14, right: 14, bottom: 14, gap: 4 },
+    mediaPosterLabel: { color: '#C9B5FF', fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1.2 },
+    mediaPosterTitle: { color: '#F6EFE3', fontSize: compactWidth ? 21 : 24, lineHeight: compactWidth ? 25 : 29, fontFamily: 'PlayfairDisplay_700Bold' },
+    mediaPosterSubtitle: { color: '#78E1DF', fontSize: 11, lineHeight: 15, fontWeight: '900' },
+    mediaPosterBody: { color: 'rgba(246,239,227,0.78)', fontSize: 11, lineHeight: 15 },
     playIcon: {
       position: 'absolute',
       left: 12,
@@ -1144,6 +1217,8 @@ const createStyles = (compactWidth: boolean, compactHeight: boolean, palette: Ci
     mediaPrimaryAction: { borderColor: palette.tealBorder, backgroundColor: palette.teal },
     mediaPrimaryActionText: { color: palette.tealInk, fontSize: 11, fontWeight: '900' },
     mediaSecondaryActionText: { color: palette.purple, fontSize: 11, fontWeight: '900' },
+    mediaPosterSecondaryAction: { borderColor: 'rgba(217,204,255,0.46)', backgroundColor: 'rgba(7,30,34,0.64)' },
+    mediaPosterSecondaryActionText: { color: '#E8DFFF', fontSize: 11, fontWeight: '900' },
     primaryButton: {
       alignSelf: 'flex-start',
       alignItems: 'center',

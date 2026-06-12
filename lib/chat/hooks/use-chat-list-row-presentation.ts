@@ -3,7 +3,10 @@ import { useMemo } from "react";
 import { getChatMessagePreviewText } from "@/lib/message-preview";
 import { getProfilePlaceholderPalette } from "@/lib/profile-placeholders";
 import { getAuthoritativePresenceDisplay } from "@/lib/presence";
-import { resolveChatListPreview } from "@/lib/chat/chat-list-preview";
+import {
+  formatConversationPreview,
+  resolveChatListPreview,
+} from "@/lib/chat/chat-list-preview";
 
 type MessageType = 'text' | 'voice' | 'image' | 'mood_sticker' | 'video' | 'document' | 'location';
 type LocalStatus = 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
@@ -174,7 +177,7 @@ export const useChatListRowPresentation = ({
       !isLeftBetweener &&
       Boolean(typingExpiresAtByPeer[item.id] && typingExpiresAtByPeer[item.id] > Date.now());
     const messagePreview = getLastMessagePreview(item.lastMessage);
-    const { previewText: lastMessagePreviewText, visibleReactionPreview } = resolveChatListPreview({
+    const { previewText: normalPreviewText } = resolveChatListPreview({
       messagePreview,
       editedAt: item.lastMessage.editedAt,
       reactionPreview:
@@ -186,11 +189,15 @@ export const useChatListRowPresentation = ({
           : null,
       isTyping,
     });
-    const latestActivityPreview =
-      item.latestActivity && item.latestActivity.createdAt.getTime() > item.lastMessage.timestamp.getTime()
-        ? item.latestActivity.preview
-        : null;
-    const previewText = isTyping ? 'Typing...' : latestActivityPreview ?? lastMessagePreviewText;
+    const previewText = isTyping
+      ? 'Typing...'
+      : formatConversationPreview({
+          messagePreview: normalPreviewText,
+          latestActivity: item.latestActivity,
+          reactionEmoji: item.lastMessage.reactionPreview?.emoji,
+          reactionUserId: item.lastMessage.reactionPreview?.userId,
+          currentUserId: userId,
+        });
     const avatarUri = item.matchedUser.avatar_url || null;
     const shouldUseFallbackAvatar = !avatarUri || failedAvatarUris[item.id] === avatarUri;
     const avatarPalette = getProfilePlaceholderPalette(item.matchedUser.id || item.matchedUser.name);
@@ -203,13 +210,18 @@ export const useChatListRowPresentation = ({
       isMyLastMessage,
       isOnline,
       receiptIcon,
-      reactionPreview: latestActivityPreview ? null : visibleReactionPreview,
       isTyping,
       previewText,
       avatarUri,
       shouldUseFallbackAvatar,
       avatarPalette,
-      formattedTime: formatLastMessageTime(item.lastMessage.timestamp),
+      formattedTime: formatLastMessageTime(
+        item.latestActivity?.kind === 'reaction' &&
+          item.latestActivity.createdAt.getTime() >
+            item.lastMessage.timestamp.getTime()
+          ? item.latestActivity.createdAt
+          : item.lastMessage.timestamp,
+      ),
     };
   }, [
     activeMomentPeerUserIds,

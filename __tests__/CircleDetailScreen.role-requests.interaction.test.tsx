@@ -9,7 +9,7 @@ let mockParams: Record<string, any> = { id: 'circle-1' };
 let mockProfile: any = { id: 'profile-me', city: 'London' };
 let mockUser: any = { id: 'user-me' };
 let mockPulseItems: any[] = [];
-let mockFocusEffectCallbacks: Array<() => void | (() => void)> = [];
+let mockFocusEffectCallbacks: (() => void | (() => void))[] = [];
 const mockPush = jest.fn();
 const mockReplace = jest.fn();
 const mockRpc = jest.fn();
@@ -23,6 +23,7 @@ const dataset = {
       short_description: 'Trusted space',
       visibility: 'public',
       created_by_profile_id: 'profile-owner',
+      created_by_user_id: 'user-owner',
       circle_type: 'community',
       status: 'approved',
       visibility_scope: 'country',
@@ -57,6 +58,7 @@ function mockCreateQuery(table: string) {
   const state: any = {
     table,
     filters: [] as { field: string; value: any }[],
+    orFilters: [] as { field: string; value: any }[],
     limitValue: null as number | null,
   };
 
@@ -64,6 +66,11 @@ function mockCreateQuery(table: string) {
     let rows = [...(dataset[table] ?? [])];
     for (const filter of state.filters) {
       rows = rows.filter((row) => row[filter.field] === filter.value);
+    }
+    if (state.orFilters.length) {
+      rows = rows.filter((row) =>
+        state.orFilters.some((filter) => row[filter.field] === filter.value),
+      );
     }
     if (typeof state.limitValue === 'number') {
       rows = rows.slice(0, state.limitValue);
@@ -75,6 +82,23 @@ function mockCreateQuery(table: string) {
     select: () => builder,
     eq: (field: string, value: any) => {
       state.filters.push({ field, value });
+      return builder;
+    },
+    or: (value: string) => {
+      state.orFilters = String(value)
+        .split(',')
+        .map((segment) => segment.trim())
+        .filter(Boolean)
+        .map((segment) => {
+          const [field, operator, ...rest] = segment.split('.');
+          return {
+            field,
+            operator,
+            value: rest.join('.'),
+          };
+        })
+        .filter((filter) => filter.field && filter.operator === 'eq' && filter.value !== '')
+        .map(({ field, value }) => ({ field, value }));
       return builder;
     },
     in: () => builder,
@@ -237,6 +261,7 @@ describe('Circle detail role requests and role controls', () => {
     alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     dataset.circle_members = [];
     dataset.circles[0].created_by_profile_id = 'profile-owner';
+    dataset.circles[0].created_by_user_id = 'user-owner';
     dataset.circles[0].status = 'approved';
     dataset.circles[0].archived_at = null;
     dataset.circle_role_requests = [];
@@ -405,6 +430,7 @@ describe('Circle detail role requests and role controls', () => {
 
   it('lets a creator archive a live Circle from the options sheet', async () => {
     dataset.circles[0].created_by_profile_id = 'profile-me';
+    dataset.circles[0].created_by_user_id = 'user-me';
     dataset.circle_members = [
       {
         id: 'membership-me',
@@ -421,6 +447,43 @@ describe('Circle detail role requests and role controls', () => {
     const { getByLabelText, getByText, queryByText } = await renderFocusedScreen();
 
     await waitFor(() => expect(getByLabelText('Circle options')).toBeTruthy());
+    fireEvent.press(getByLabelText('Circle options'));
+
+    await waitFor(() => expect(getByText('Archive Circle')).toBeTruthy());
+    expect(queryByText('Leave Circle')).toBeNull();
+  });
+
+  it('treats the creator as owner when only created_by_user_id and membership user_id match', async () => {
+    mockProfile = null;
+    dataset.circles[0].created_by_profile_id = 'profile-legacy-owner';
+    dataset.circles[0].created_by_user_id = 'user-me';
+    dataset.circle_members = [
+      {
+        id: 'membership-me',
+        circle_id: 'circle-1',
+        role: 'host',
+        status: 'active',
+        is_visible: true,
+        profile_id: 'profile-legacy-owner',
+        user_id: 'user-me',
+        profiles: { id: 'profile-legacy-owner', user_id: 'user-me', full_name: 'Ada', city: 'London', region: null, location: null, age: 29, avatar_url: null },
+      },
+      {
+        id: 'membership-other',
+        circle_id: 'circle-1',
+        role: 'member',
+        status: 'active',
+        is_visible: true,
+        profile_id: 'profile-other',
+        user_id: 'user-other',
+        profiles: { id: 'profile-other', full_name: 'Kojo', city: 'London', region: null, location: null, age: 31, avatar_url: null },
+      },
+    ];
+
+    const { getByLabelText, getByText, queryByText } = await renderFocusedScreen();
+
+    await waitFor(() => expect(getByText('Hosts and moderators')).toBeTruthy());
+
     fireEvent.press(getByLabelText('Circle options'));
 
     await waitFor(() => expect(getByText('Archive Circle')).toBeTruthy());

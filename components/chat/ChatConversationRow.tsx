@@ -64,7 +64,6 @@ export function ChatConversationRow({
     isMyLastMessage,
     isOnline,
     receiptIcon,
-    reactionPreview,
     isTyping,
     previewText,
     avatarUri,
@@ -279,11 +278,11 @@ export function ChatConversationRow({
                   style={[
                     styles.lastMessage,
                     isLeftBetweener && styles.leftConversationPreviewText,
-                    reactionPreview && !isTyping && styles.lastMessageReaction,
                     isTyping && styles.typingText,
                     isUnread && styles.unreadMessage,
                   ]}
                   numberOfLines={1}
+                  ellipsizeMode="tail"
                 >
                   {previewText}
                 </Text>

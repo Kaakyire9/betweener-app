@@ -119,8 +119,18 @@ const welcomeItem = {
   welcomeProfiles: [
     { profileId: 'profile-3', name: 'Jennifer Doe', avatarUrl: null, location: 'London', joinedAt: '2026-06-02T08:00:00.000Z' },
     { profileId: 'profile-4', name: 'Ama Mensah', avatarUrl: null, location: 'Accra', joinedAt: '2026-06-01T08:00:00.000Z' },
+    { profileId: 'profile-5', name: 'Kojo Smith', avatarUrl: null, location: 'Kumasi', joinedAt: '2026-05-31T08:00:00.000Z' },
+    { profileId: 'profile-6', name: 'Naa Ofori', avatarUrl: null, location: 'Tema', joinedAt: '2026-05-30T08:00:00.000Z' },
   ],
 };
+
+const welcomeSeatItems = welcomeItem.welcomeProfiles.map((profile, index) => ({
+  ...welcomeItem,
+  id: `pulse-welcome-${profile.profileId}`,
+  title: 'Welcome new member',
+  commentCount: index === 1 ? 2 : 0,
+  welcomeProfiles: [profile],
+}));
 
 describe('CirclePulseBoard', () => {
   it('uses the Circle join wording for non-members', () => {
@@ -331,21 +341,40 @@ describe('CirclePulseBoard', () => {
     expect(getByLabelText('Show Circle Media spotlight 2').props.accessibilityState.selected).toBe(true);
   });
 
+  it('keeps Welcome as one main spotlight while paging members inside it', async () => {
+    const { getByText, queryByText, getByLabelText } = render(
+      <CirclePulseBoard
+        items={[promptItem, ...welcomeSeatItems.slice(0, 2), loveSeatItem]}
+        isMember
+        canManage={false}
+      />,
+    );
+
+    expect(getByText('First-date energy')).toBeTruthy();
+    fireEvent.press(getByLabelText('Next Circle spotlight'));
+
+    await waitFor(() => expect(getByText('Jennifer Doe')).toBeTruthy());
+    expect(queryByText('Ama Mensah')).toBeNull();
+    fireEvent.press(getByLabelText('Next Circle spotlight'));
+
+    await waitFor(() => expect(getByText('Akosua, 28')).toBeTruthy());
+  });
+
   it('pages new members inside the Welcome Seat and opens a targeted discussion', () => {
     const onOpenComments = jest.fn();
     const { getByLabelText, getByText } = render(
-      <CirclePulseBoard items={[welcomeItem]} isMember canManage={false} onOpenComments={onOpenComments} />,
+      <CirclePulseBoard items={welcomeSeatItems} isMember canManage={false} onOpenComments={onOpenComments} />,
     );
 
     expect(getByText('Jennifer Doe')).toBeTruthy();
     expect(getByText('New')).toBeTruthy();
-    expect(getByText('1 of 2')).toBeTruthy();
+    expect(getByText('1 of 4')).toBeTruthy();
     fireEvent.press(getByLabelText('Next new member'));
     fireEvent.press(getByText('Welcome Ama'));
 
     expect(getByText('Ama Mensah')).toBeTruthy();
     expect(onOpenComments).toHaveBeenCalledWith(expect.objectContaining({
-      id: 'pulse-welcome',
+      id: 'pulse-welcome-profile-4',
       welcomeProfiles: expect.arrayContaining([
         expect.objectContaining({ profileId: 'profile-4' }),
       ]),

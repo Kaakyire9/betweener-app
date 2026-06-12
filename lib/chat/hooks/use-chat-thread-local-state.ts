@@ -1,5 +1,7 @@
 import type { MessageType } from "@/components/chat/types";
 import type { ChatMessageRow } from "@/lib/chat/local/chat-db";
+import { preserveUnchangedMessageReferences } from "@/lib/chat/message-list-reconciliation";
+import { mergeMessageWithMonotonicReceipt } from "@/lib/chat/message-state";
 import { useMemo } from "react";
 
 type UseChatThreadLocalStateArgs = {
@@ -42,19 +44,20 @@ export const useChatThreadLocalState = ({
       const previous = previousById.get(message.id);
       const withOfflineMedia = mergeOfflineMediaIntoMessage(message, previous);
       if (!previous) return withOfflineMedia;
+      const withReceipt = mergeMessageWithMonotonicReceipt(previous, withOfflineMedia);
       return {
-        ...withOfflineMedia,
-        reactions: previous.reactions?.length ? previous.reactions : withOfflineMedia.reactions,
+        ...withReceipt,
+        reactions: previous.reactions?.length ? previous.reactions : withReceipt.reactions,
         replyTo: previous.replyTo,
-        offlineImageUri: withOfflineMedia.offlineImageUri ?? previous.offlineImageUri,
-        offlineVideoUri: withOfflineMedia.offlineVideoUri ?? previous.offlineVideoUri,
+        offlineImageUri: withReceipt.offlineImageUri ?? previous.offlineImageUri,
+        offlineVideoUri: withReceipt.offlineVideoUri ?? previous.offlineVideoUri,
         voiceMessage:
-          withOfflineMedia.voiceMessage && previous.voiceMessage
+          withReceipt.voiceMessage && previous.voiceMessage
             ? {
-                ...withOfflineMedia.voiceMessage,
+                ...withReceipt.voiceMessage,
                 isPlaying: previous.voiceMessage.isPlaying,
               }
-            : withOfflineMedia.voiceMessage,
+            : withReceipt.voiceMessage,
       } satisfies MessageType;
     });
 
@@ -63,11 +66,14 @@ export const useChatThreadLocalState = ({
       linkReplies([...mergedLocal, ...preserved].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())),
     );
 
-    const currentKey = currentMessages.map(getMessageLocalObserverKey).join("|");
-    const nextKey = mergedMessages.map(getMessageLocalObserverKey).join("|");
+    const reconciledMessages = preserveUnchangedMessageReferences(
+      currentMessages,
+      mergedMessages,
+      getMessageLocalObserverKey,
+    );
 
     return {
-      mergedMessages: currentKey === nextKey ? currentMessages : mergedMessages,
+      mergedMessages: reconciledMessages,
       hasMore: rows.length >= pageSize,
       oldestTimestamp: rows[0] ? new Date(rows[0].created_at) : null,
     };

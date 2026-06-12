@@ -8,6 +8,7 @@ import {
   markAllOutgoingMessagesDelivered,
   markIncomingMessageRead,
   markOutgoingMessageDelivered,
+  mergeMessageWithMonotonicReceipt,
   reconcileMessageWithServer,
   removeMessageById,
   replaceMessageById,
@@ -77,6 +78,33 @@ test('reconcileMessageWithServer keeps local reply metadata when server copy lac
   assert.equal(reconciled[0].id, 'server-1');
   assert.equal(reconciled[0].replyToId, 'reply-1');
   assert.equal(reconciled[0].replyTo?.text, 'Earlier');
+});
+
+test('server and cache snapshots cannot downgrade delivered or read receipts', () => {
+  const delivered = mergeMessageWithMonotonicReceipt(
+    { ...baseMessage, status: 'delivered' },
+    { ...baseMessage, status: 'sent', text: 'Server copy' },
+  );
+  assert.equal(delivered.status, 'delivered');
+  assert.equal(delivered.text, 'Server copy');
+
+  const readAt = new Date('2026-05-22T09:10:00.000Z');
+  const read = mergeMessageWithMonotonicReceipt(
+    { ...baseMessage, status: 'read', readAt },
+    { ...baseMessage, status: 'delivered' },
+  );
+  assert.equal(read.status, 'read');
+  assert.equal(read.readAt, readAt);
+});
+
+test('reconcileMessageWithServer preserves a more advanced local receipt', () => {
+  const reconciled = reconcileMessageWithServer({
+    items: [{ ...baseMessage, status: 'delivered' }],
+    messageId: baseMessage.id,
+    serverMessage: { ...baseMessage, status: 'sent' },
+  });
+
+  assert.equal(reconciled[0].status, 'delivered');
 });
 
 test('markIncomingMessageRead only updates unread incoming messages', () => {
@@ -161,7 +189,7 @@ test('applySyncedOutgoingReceiptState resolves sent, delivered, and read states 
   assert.equal(read.items[0].readAt, readAt);
 });
 
-test('applySyncedOutgoingReceiptState downgrades optimistic delivered back to sent when server has no receipt yet', () => {
+test('applySyncedOutgoingReceiptState keeps optimistic delivered while the server receipt catches up', () => {
   const items = [
     { ...baseMessage, id: 'msg-optimistic', senderId: 'me', status: 'delivered' },
   ];
@@ -174,8 +202,8 @@ test('applySyncedOutgoingReceiptState downgrades optimistic delivered back to se
     deliveredAt: null,
   });
 
-  assert.equal(reconciled.resolvedStatus, 'sent');
-  assert.equal(reconciled.items[0].status, 'sent');
+  assert.equal(reconciled.resolvedStatus, 'delivered');
+  assert.equal(reconciled.items[0].status, 'delivered');
 });
 
 test('applySyncedOutgoingReceiptState keeps failed messages failed when server has no receipt yet', () => {

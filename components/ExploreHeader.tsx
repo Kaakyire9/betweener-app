@@ -5,12 +5,14 @@ import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
 import GlassSurface from "@/components/vibes/depth/GlassSurface";
 import GlowOrb from "@/components/vibes/depth/GlowOrb";
 import RimLight from "@/components/vibes/depth/RimLight";
+import DiscoveryContextLabel from "@/components/vibes/DiscoveryContextLabel";
 import { VIBES_DEPTH_COLORS } from "@/components/vibes/depth/platformGlass";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useMemo, type ReactNode } from "react";
 import { StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
 
 type Tab = { id: string; label: string; icon: string };
+type SubtitleEmblem = 'ghana' | 'global';
 
 export default function ExploreHeader({
   title = 'Vibes',
@@ -24,9 +26,11 @@ export default function ExploreHeader({
   onPressFilter,
   filterCount,
   rightAccessory,
+  subtitleEmblem = 'global',
 }: {
   title?: string;
   subtitle?: string;
+  subtitleEmblem?: SubtitleEmblem;
   tabs: Tab[];
   activeTab: string;
   setActiveTab: (id: string) => void;
@@ -50,8 +54,10 @@ export default function ExploreHeader({
         <View style={styles.titleCluster}>
           <Text style={styles.title}>{title}</Text>
           <View style={styles.subtitleRow}>
-            <View style={styles.subtitleDot} />
-            <Text style={styles.subtitle}>{subtitle}</Text>
+            <DiscoveryContextLabel
+              mode={subtitleEmblem === 'ghana' ? 'ghana_diaspora' : 'global'}
+              label={subtitle}
+            />
           </View>
         </View>
         <GlassSurface
@@ -167,24 +173,6 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, compact: bool
       flexDirection: 'row',
       alignItems: 'center',
       marginTop: compact ? 5 : 7,
-    },
-    subtitleDot: {
-      width: 8,
-      height: 8,
-      borderRadius: 4,
-      marginRight: 8,
-      backgroundColor: VIBES_DEPTH_COLORS.teal,
-      shadowColor: VIBES_DEPTH_COLORS.teal,
-      shadowOpacity: isDark ? 0.45 : 0.18,
-      shadowRadius: 8,
-      shadowOffset: { width: 0, height: 0 },
-    },
-    subtitle: {
-      color: isDark ? "rgba(244,248,248,0.74)" : "rgba(31,42,42,0.66)",
-      fontFamily: 'Manrope_600SemiBold',
-      flexShrink: 1,
-      fontSize: compact ? 13 : 14,
-      letterSpacing: 0.1,
     },
     filterButton: {
       alignItems: 'center',

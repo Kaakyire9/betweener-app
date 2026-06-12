@@ -12,6 +12,7 @@ export type OfflineCircleDetailCircle = {
   visibility?: string | null;
   category?: string | null;
   created_by_profile_id?: string | null;
+  created_by_user_id?: string | null;
   cover_image_url?: string | null;
   icon_url?: string | null;
   image_path?: string | null;

@@ -1,6 +1,6 @@
 import type { DatePlanResponseKind, MessageType } from "@/components/chat/types";
 
-export const CHAT_READ_RECEIPT_DELAY_MS = 2400;
+export const CHAT_READ_RECEIPT_DELAY_MS = 700;
 
 type MaterialCommunityIconName =
   | 'calendar-check'

@@ -287,6 +287,10 @@ export default function ExploreScreen() {
   const { profile, user, refreshProfile, authRecoveryPending, usingPersistedSessionFallback } = useAuth();
   const showingRecoveredSnapshot = authRecoveryPending || usingPersistedSessionFallback;
   const { profileId: resolvedProfileId } = useResolvedProfileId(user?.id ?? null, profile?.id ?? null);
+  const usesGhanaOnboarding = String(profile?.country_lock_policy || '').startsWith('ghana_');
+  const vibesSubtitle = usesGhanaOnboarding
+    ? 'Ghana Diaspora Connections'
+    : 'Where worlds apart feel closer';
   const { hasAccess } = usePremiumState();
   const { access: signalAccess, refresh: refreshSignalAccess } = useSignalAccess(Boolean(resolvedProfileId));
   const hasAdvancedFilters = hasAccess('SILVER');
@@ -2319,7 +2323,8 @@ export default function ExploreScreen() {
         {/* TOP HEADER */}
         <ExploreHeader
           title="Vibes"
-          subtitle="Ghana Diaspora Connections"
+          subtitle={vibesSubtitle}
+          subtitleEmblem={usesGhanaOnboarding ? 'ghana' : 'global'}
           tabs={[
             { id: "recommended", label: "For You", icon: "heart" },
             { id: "nearby", label: "Nearby", icon: "map-marker" },

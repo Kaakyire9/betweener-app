@@ -2,6 +2,42 @@ import type { MessageType } from "@/components/chat/types";
 
 type MessageStatus = NonNullable<MessageType["status"]>;
 
+const getOutgoingReceiptRank = (status?: MessageType["status"] | null) => {
+  switch (status) {
+    case 'read':
+      return 4;
+    case 'delivered':
+      return 3;
+    case 'sent':
+      return 2;
+    case 'sending':
+      return 1;
+    case 'queued':
+      return 1;
+    case 'failed':
+      return 0;
+    default:
+      return 0;
+  }
+};
+
+export const mergeMessageWithMonotonicReceipt = (
+  previous: MessageType,
+  next: MessageType,
+): MessageType => {
+  const status =
+    getOutgoingReceiptRank(previous.status) > getOutgoingReceiptRank(next.status)
+      ? previous.status
+      : next.status;
+  const readAt = status === 'read' ? previous.readAt ?? next.readAt : next.readAt;
+
+  return {
+    ...next,
+    status,
+    readAt,
+  };
+};
+
 export const appendMessage = (
   items: MessageType[],
   message: MessageType,
@@ -49,10 +85,11 @@ export const reconcileMessageWithServer = ({
 }) =>
   items.map((msg) => {
     if (msg.id !== messageId) return msg;
+    const merged = mergeMessageWithMonotonicReceipt(msg, serverMessage);
     return {
-      ...serverMessage,
-      replyToId: msg.replyToId ?? serverMessage.replyToId ?? null,
-      replyTo: msg.replyTo ?? serverMessage.replyTo,
+      ...merged,
+      replyToId: msg.replyToId ?? merged.replyToId ?? null,
+      replyTo: msg.replyTo ?? merged.replyTo,
     };
   });
 
@@ -136,13 +173,17 @@ export const applySyncedOutgoingReceiptState = ({
   let changed = false;
   const next = items.map((msg) => {
     if (msg.id !== messageId || msg.senderId !== (currentUserId || '')) return msg;
-    const nextStatus: MessageType["status"] = isRead
+    const resolvedFromServer: MessageType["status"] = isRead
       ? 'read'
       : deliveredAt
       ? 'delivered'
       : msg.status === 'failed'
       ? 'failed'
       : 'sent';
+    const nextStatus =
+      getOutgoingReceiptRank(resolvedFromServer) >= getOutgoingReceiptRank(msg.status)
+        ? resolvedFromServer
+        : msg.status;
     resolvedStatus = nextStatus;
     const nextReadAt = isRead ? (msg.readAt ?? readAt) : msg.readAt;
     if (msg.status === nextStatus && msg.readAt === nextReadAt) return msg;

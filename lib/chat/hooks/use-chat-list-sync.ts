@@ -1,4 +1,3 @@
-import { isLikelyNetworkError } from "@/lib/network";
 import { subscribeToNetworkRestored } from "@/lib/network-recovery";
 import { buildUserScopedRealtimeTopic } from "@/lib/presence";
 import { supabase } from "@/lib/supabase";
@@ -21,12 +20,6 @@ export type ChatListMessageRealtimeRow = {
   edited_at?: string | null;
   message_type?: string | null;
   is_view_once?: boolean | null;
-};
-
-export type ChatListTypingStateRow = {
-  user_id?: string;
-  peer_user_id?: string;
-  typing_until?: string | null;
 };
 
 export type ChatListReactionRow = {
@@ -55,7 +48,6 @@ type UseChatListSyncArgs = {
   onChatPrefChange: (row: ChatListChatPrefRow) => void;
   onPresenceChange: (row: UserPresenceRow) => void;
   visiblePeerUserIds: string[];
-  visibleLastMessageIds: string[];
 };
 
 export const useChatListSync = ({
@@ -71,20 +63,14 @@ export const useChatListSync = ({
   onChatPrefChange,
   onPresenceChange,
   visiblePeerUserIds,
-  visibleLastMessageIds,
 }: UseChatListSyncArgs) => {
   const [isFocused, setIsFocused] = useState(false);
   const [appState, setAppState] = useState(AppState.currentState);
   const realtimeActive = isFocused && appState === 'active';
   const visiblePeerUserIdsKey = Array.from(new Set(visiblePeerUserIds.filter(Boolean))).slice(0, 60).sort().join(':');
-  const visibleLastMessageIdsKey = Array.from(new Set(visibleLastMessageIds.filter(Boolean))).slice(0, 60).sort().join(':');
   const visiblePeerUserIdSet = useMemo(
     () => new Set(visiblePeerUserIdsKey ? visiblePeerUserIdsKey.split(':') : []),
     [visiblePeerUserIdsKey],
-  );
-  const visibleLastMessageIdSet = useMemo(
-    () => new Set(visibleLastMessageIdsKey ? visibleLastMessageIdsKey.split(':') : []),
-    [visibleLastMessageIdsKey],
   );
 
   useFocusEffect(
@@ -133,99 +119,31 @@ export const useChatListSync = ({
 
   useEffect(() => {
     if (!userId || !realtimeActive) return;
-
-    const applyTypingRow = (row?: ChatListTypingStateRow | null) => {
-      if (!row?.user_id || row.peer_user_id !== userId) return;
-      const typingUntil = row.typing_until ? new Date(row.typing_until).getTime() : 0;
-      setPeerTypingState(row.user_id, typingUntil > Date.now(), typingUntil);
-    };
-
-    void (async () => {
-      const { data, error } = await supabase
-        .from('chat_typing_state')
-        .select('user_id,peer_user_id,typing_until')
-        .eq('peer_user_id', userId);
-      if (error) {
-        if (!isLikelyNetworkError(error)) {
-          console.log('[chat] list typing state fetch error', error);
-        }
-        return;
-      }
-      ((data as ChatListTypingStateRow[] | null) ?? []).forEach((row) => applyTypingRow(row));
-    })();
-
-    const channel = supabase
-      .channel(`chat_typing_state:list:${userId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'chat_typing_state',
-          filter: `peer_user_id=eq.${userId}`,
-        },
-        (payload) => {
-          const row = (payload.new || payload.old) as ChatListTypingStateRow | null;
-          if (payload.eventType === 'DELETE') {
-            if (row?.user_id) {
-              setPeerTypingState(row.user_id, false);
-            }
-            return;
-          }
-          applyTypingRow(row);
-        },
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [realtimeActive, setPeerTypingState, userId]);
-
-  useEffect(() => {
-    if (!userId || !realtimeActive) return;
     const channel = supabase.channel(`messages:chatlist:${userId}`);
 
     channel
       .on(
         'postgres_changes',
         {
-          event: 'INSERT',
+          event: '*',
           schema: 'public',
           table: 'messages',
-          filter: `receiver_id=eq.${userId}`,
         },
-        (payload) => onMessageInsert(payload.new as ChatListMessageRealtimeRow),
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `sender_id=eq.${userId}`,
+        (payload) => {
+          if (payload.eventType === 'DELETE') {
+            void fetchConversations();
+            return;
+          }
+
+          const row = payload.new as ChatListMessageRealtimeRow;
+          if (!row?.id) return;
+          if (payload.eventType === 'INSERT') {
+            onMessageInsert(row);
+            return;
+          }
+          if (row.receiver_id === userId) onMessageReceiverUpdate(row);
+          if (row.sender_id === userId) onMessageSenderUpdate(row);
         },
-        (payload) => onMessageInsert(payload.new as ChatListMessageRealtimeRow),
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'messages',
-          filter: `receiver_id=eq.${userId}`,
-        },
-        (payload) => onMessageReceiverUpdate(payload.new as ChatListMessageRealtimeRow),
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'messages',
-          filter: `sender_id=eq.${userId}`,
-        },
-        (payload) => onMessageSenderUpdate(payload.new as ChatListMessageRealtimeRow),
       )
       .subscribe((status) => {
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
@@ -246,42 +164,28 @@ export const useChatListSync = ({
   ]);
 
   useEffect(() => {
-    if (!userId || !realtimeActive || visibleLastMessageIdSet.size === 0) return;
+    if (!userId || !realtimeActive) return;
     const channel = supabase.channel(`message_reactions:chatlist:${userId}`);
 
-    visibleLastMessageIdSet.forEach((messageId) => {
-      channel
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'message_reactions', filter: `message_id=eq.${messageId}` },
-          (payload) => {
-            const row = (payload.new || payload.old) as ChatListReactionRow;
-            void onReactionChange(row);
-          },
-        )
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'message_reactions', filter: `message_id=eq.${messageId}` },
-          (payload) => {
-            const row = (payload.new || payload.old) as ChatListReactionRow;
-            void onReactionChange(row);
-          },
-        )
-        .on(
-          'postgres_changes',
-          { event: 'DELETE', schema: 'public', table: 'message_reactions', filter: `message_id=eq.${messageId}` },
-          (payload) => {
-            const row = (payload.old || payload.new) as ChatListReactionRow;
-            void onReactionChange(row);
-          },
-        );
-    });
-    channel.subscribe();
+    channel
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'message_reactions' },
+        (payload) => {
+          const row = (payload.new || payload.old) as ChatListReactionRow;
+          void onReactionChange(row);
+        },
+      )
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          void fetchConversations();
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [onReactionChange, realtimeActive, userId, visibleLastMessageIdSet]);
+  }, [fetchConversations, onReactionChange, realtimeActive, userId]);
 
   useEffect(() => {
     if (!userId || !realtimeActive) return;
@@ -306,23 +210,22 @@ export const useChatListSync = ({
 
   useEffect(() => {
     if (!userId || !realtimeActive || visiblePeerUserIdSet.size === 0) return;
-    const channel = supabase.channel(`user_presence:chatlist:${userId}`);
-    visiblePeerUserIdSet.forEach((peerUserId) => {
-      channel.on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'user_presence', filter: `user_id=eq.${peerUserId}` },
-        (payload) => {
-          const row = (payload.new || payload.old) as UserPresenceRow;
-          if (row?.user_id) {
-            onPresenceChange(row);
-          }
-        },
-      );
-    });
-    channel.subscribe();
+    let cancelled = false;
+    const peerUserIds = Array.from(visiblePeerUserIdSet);
+    const refreshPresence = async () => {
+      const { data, error } = await supabase
+        .from('user_presence')
+        .select('user_id,online,last_active,updated_at')
+        .in('user_id', peerUserIds);
+      if (cancelled || error) return;
+      (data || []).forEach((row) => onPresenceChange(row as UserPresenceRow));
+    };
 
+    void refreshPresence();
+    const interval = setInterval(() => void refreshPresence(), 60_000);
     return () => {
-      supabase.removeChannel(channel);
+      cancelled = true;
+      clearInterval(interval);
     };
   }, [onPresenceChange, realtimeActive, userId, visiblePeerUserIdSet]);
 };

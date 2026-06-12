@@ -8,6 +8,12 @@ export const ChatThreadActionsService = {
     } as never);
   },
 
+  markMessagesRead(args: { messageIds: string[]; currentUserId: string }) {
+    return supabase.rpc('rpc_mark_messages_read' as never, {
+      p_message_ids: args.messageIds,
+    } as never);
+  },
+
   editMessage(args: { messageId: string; newText: string }) {
     const { messageId, newText } = args;
     return supabase.rpc('edit_message', {

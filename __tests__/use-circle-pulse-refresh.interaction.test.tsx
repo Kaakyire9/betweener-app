@@ -3,7 +3,7 @@ import React from 'react';
 import { AppState, View } from 'react-native';
 import { act, render } from '@testing-library/react-native';
 import {
-  CIRCLE_PULSE_REFRESH_INTERVAL_MS,
+  CIRCLE_PULSE_FOREGROUND_MIN_GAP_MS,
   useCirclePulseRefresh,
 } from '@/lib/circles/pulse/use-circle-pulse-refresh';
 
@@ -22,7 +22,7 @@ describe('useCirclePulseRefresh', () => {
     jest.useRealTimers();
   });
 
-  it('refreshes while active, reloads on foreground, and cleans up on unmount', () => {
+  it('reloads stale data on foreground without polling and cleans up on unmount', () => {
     const reload = jest.fn();
     const remove = jest.fn();
     let onAppStateChange: ((state: string) => void) | null = null;
@@ -34,22 +34,22 @@ describe('useCirclePulseRefresh', () => {
     const { unmount } = render(<RefreshHarness enabled reload={reload} />);
 
     act(() => {
-      jest.advanceTimersByTime(CIRCLE_PULSE_REFRESH_INTERVAL_MS);
+      jest.advanceTimersByTime(CIRCLE_PULSE_FOREGROUND_MIN_GAP_MS);
     });
-    expect(reload).toHaveBeenCalledTimes(1);
+    expect(reload).not.toHaveBeenCalled();
 
     act(() => {
       onAppStateChange?.('active');
     });
-    expect(reload).toHaveBeenCalledTimes(2);
+    expect(reload).toHaveBeenCalledTimes(1);
 
     unmount();
     expect(remove).toHaveBeenCalledTimes(1);
 
     act(() => {
-      jest.advanceTimersByTime(CIRCLE_PULSE_REFRESH_INTERVAL_MS);
+      jest.advanceTimersByTime(CIRCLE_PULSE_FOREGROUND_MIN_GAP_MS);
     });
-    expect(reload).toHaveBeenCalledTimes(2);
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 
   it('does not subscribe while refresh is disabled', () => {
@@ -58,7 +58,7 @@ describe('useCirclePulseRefresh', () => {
     render(<RefreshHarness enabled={false} reload={reload} />);
 
     act(() => {
-      jest.advanceTimersByTime(CIRCLE_PULSE_REFRESH_INTERVAL_MS);
+      jest.advanceTimersByTime(CIRCLE_PULSE_FOREGROUND_MIN_GAP_MS);
     });
     expect(reload).not.toHaveBeenCalled();
   });

@@ -13,6 +13,9 @@ type ChatListFilterConversation = {
   lastMessage: {
     timestamp: Date;
   };
+  latestActivity?: {
+    createdAt: Date;
+  } | null;
 };
 
 type UseChatListFiltersArgs<TConversation extends ChatListFilterConversation> = {
@@ -46,7 +49,15 @@ export const useChatListFilters = <TConversation extends ChatListFilterConversat
       .sort((a, b) => {
         if (a.isPinned && !b.isPinned) return -1;
         if (!a.isPinned && b.isPinned) return 1;
-        return b.lastMessage.timestamp.getTime() - a.lastMessage.timestamp.getTime();
+        const aActivityAt = Math.max(
+          a.lastMessage.timestamp.getTime(),
+          a.latestActivity?.createdAt.getTime() ?? 0,
+        );
+        const bActivityAt = Math.max(
+          b.lastMessage.timestamp.getTime(),
+          b.latestActivity?.createdAt.getTime() ?? 0,
+        );
+        return bActivityAt - aActivityAt;
       });
   }, [activeTab, conversations, searchQuery]);
 

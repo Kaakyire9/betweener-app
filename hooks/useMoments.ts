@@ -349,23 +349,6 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
     void refresh();
   }, [refresh]);
 
-  const scopedMomentUserIds = useMemo(() => {
-    const orderedUserIds: string[] = [];
-    const seen = new Set<string>();
-    if (currentUserId) {
-      seen.add(currentUserId);
-      orderedUserIds.push(currentUserId);
-    }
-    for (const moment of moments) {
-      const userId = typeof moment?.user_id === 'string' ? moment.user_id : '';
-      if (!userId || seen.has(userId)) continue;
-      seen.add(userId);
-      orderedUserIds.push(userId);
-      if (orderedUserIds.length >= 40) break;
-    }
-    return orderedUserIds;
-  }, [currentUserId, moments]);
-
   useEffect(() => {
     if (!currentUserId) return;
     let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -377,24 +360,25 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
       }, 350);
     };
 
-    const subscribedUserIds = scopedMomentUserIds.length > 0 ? scopedMomentUserIds : [currentUserId];
-    const channel = supabase.channel(`moments-updates:${currentUserId}:${subscribedUserIds.length}`);
-
-    subscribedUserIds.forEach((userId) => {
-      channel.on(
+    const channel = supabase
+      .channel(`moments-updates:${currentUserId}`)
+      .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'moments', filter: `user_id=eq.${userId}` },
+        { event: '*', schema: 'public', table: 'moments' },
         scheduleRefresh,
       );
-    });
 
-    channel.subscribe();
+    channel.subscribe((status) => {
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        scheduleRefresh();
+      }
+    });
 
     return () => {
       if (refreshTimeout) clearTimeout(refreshTimeout);
       supabase.removeChannel(channel);
     };
-  }, [currentUserId, refresh, scopedMomentUserIds]);
+  }, [currentUserId, refresh]);
 
   useEffect(() => {
     if (!currentUserId) return;

@@ -1,6 +1,7 @@
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
+import { subscribeForegroundChatMessages, type ForegroundChatMessageEvent } from '@/lib/chat/chat-foreground-events';
 import { upsertChatPref } from '@/lib/chat/chat-list-actions-service';
 import { ChatOutboxService } from '@/lib/chat/outbox/chat-outbox-service';
 import { getStickerReactionTarget, parseStickerPreview } from '@/lib/chat-sticker-preview';
@@ -880,6 +881,61 @@ export default function InAppToasts() {
     );
   }, []);
 
+  const queueIncomingMessageToast = useCallback(
+    (row: ForegroundChatMessageEvent | MessageToastRow) => {
+      if (!user?.id) return;
+      if (!row?.id || !row?.sender_id || row.sender_id === user.id) return;
+      if (shouldSuppressToast(`message:${String(row.id)}`)) return;
+      if (isChatThreadRoute) return;
+      if (isActiveChatWith(row.sender_id)) return;
+      if (!canInAppNotify('messages')) return;
+
+      const previewAllowed = prefs?.preview_text !== false;
+      const preview = messagePreview(row, previewAllowed);
+      const kind = getMessageToastKind(row);
+      const mediaThumbnail = getMessageMediaThumbnail(row);
+
+      void (async () => {
+        let name = 'New message';
+        let avatarUrl: string | null = null;
+        let senderProfileId: string | null = null;
+        try {
+          const p = await getProfileLite(String(row.sender_id), { preferUserId: true });
+          name = getUserFacingDisplayName(p, 'New message');
+          if (p?.avatar_url) avatarUrl = p.avatar_url;
+          if (p?.id) senderProfileId = p.id;
+        } catch {}
+
+        pushToast({
+          id: `msg-${row.id}`,
+          title: name,
+          body: preview,
+          kind,
+          avatarUrl,
+          profileId: senderProfileId ?? null,
+          chatId: senderProfileId ?? String(row.sender_id),
+          peerUserId: String(row.sender_id),
+          groupKey: `chat:${String(row.sender_id)}`,
+          groupCount: 1,
+          mediaThumbnailUrl: mediaThumbnail.url,
+          mediaThumbnailKind: mediaThumbnail.kind,
+          mediaThumbnailLabel: mediaThumbnail.label,
+        });
+      })();
+    },
+    [
+      canInAppNotify,
+      getProfileLite,
+      isActiveChatWith,
+      isChatThreadRoute,
+      messagePreview,
+      prefs?.preview_text,
+      pushToast,
+      shouldSuppressToast,
+      user?.id,
+    ],
+  );
+
   const messageReactionPreview = useCallback((row: any, emoji: string | null | undefined, previewsAllowed: boolean) => {
     const reactionPrefix = emoji ? `reacted ${emoji}` : 'reacted';
     if (!previewsAllowed) return `${reactionPrefix} to your message`;
@@ -1434,58 +1490,11 @@ export default function InAppToasts() {
 
   useEffect(() => {
     if (!user?.id) return;
-
-    const channel = supabase
-      .channel(`inapp_messages:${user.id}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'messages', filter: `receiver_id=eq.${user.id}` },
-        (payload) => {
-          const row = payload.new as any;
-          if (!row) return;
-          if (shouldSuppressToast(`message:${String(row.id)}`)) return;
-          if (row.sender_id === user.id) return;
-          if (isChatThreadRoute) return;
-          if (isActiveChatWith(row.sender_id)) return;
-          if (!canInAppNotify('messages')) return;
-          const previewAllowed = prefs?.preview_text !== false;
-          const preview = messagePreview(row, previewAllowed);
-          const kind = getMessageToastKind(row);
-          const mediaThumbnail = getMessageMediaThumbnail(row);
-          void (async () => {
-              let name = 'New message';
-            let avatarUrl: string | null = null;
-            let senderProfileId: string | null = null;
-            try {
-              const p = await getProfileLite(String(row.sender_id), { preferUserId: true });
-                name = getUserFacingDisplayName(p, 'New message');
-                if (p?.avatar_url) avatarUrl = p.avatar_url;
-              if (p?.id) senderProfileId = p.id;
-            } catch {}
-            pushToast({
-              id: `msg-${row.id}`,
-              title: name,
-              body: preview,
-              kind,
-              avatarUrl,
-              profileId: senderProfileId ?? null,
-              chatId: senderProfileId ?? String(row.sender_id),
-              peerUserId: String(row.sender_id),
-              groupKey: `chat:${String(row.sender_id)}`,
-              groupCount: 1,
-              mediaThumbnailUrl: mediaThumbnail.url,
-              mediaThumbnailKind: mediaThumbnail.kind,
-              mediaThumbnailLabel: mediaThumbnail.label,
-            });
-          })();
-        },
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [canInAppNotify, getProfileLite, isActiveChatWith, isChatThreadRoute, messagePreview, prefs?.preview_text, pushToast, shouldSuppressToast, user?.id]);
+    return subscribeForegroundChatMessages((row) => {
+      if (row.receiver_id !== user.id) return;
+      queueIncomingMessageToast(row);
+    });
+  }, [queueIncomingMessageToast, user?.id]);
 
   useEffect(() => {
     if (!user?.id) return;

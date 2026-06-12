@@ -582,6 +582,99 @@ export type Database = {
         }
         Relationships: []
       }
+      chat_conversation_summaries: {
+        Row: {
+          last_activity_at: string | null
+          last_activity_kind: string | null
+          last_activity_message_id: string | null
+          last_activity_preview: string | null
+          last_message_created_at: string | null
+          last_message_deleted_for_all: boolean
+          last_message_delivered_at: string | null
+          last_message_edited_at: string | null
+          last_message_id: string | null
+          last_message_is_read: boolean
+          last_message_is_view_once: boolean
+          last_message_reaction_created_at: string | null
+          last_message_reaction_emoji: string | null
+          last_message_reaction_target_type: string | null
+          last_message_reaction_user_id: string | null
+          last_message_receiver_id: string | null
+          last_message_sender_id: string | null
+          last_message_text: string | null
+          last_message_type: string | null
+          owner_user_id: string
+          peer_user_id: string
+          unread_count: number
+          updated_at: string
+        }
+        Insert: {
+          last_activity_at?: string | null
+          last_activity_kind?: string | null
+          last_activity_message_id?: string | null
+          last_activity_preview?: string | null
+          last_message_created_at?: string | null
+          last_message_deleted_for_all?: boolean
+          last_message_delivered_at?: string | null
+          last_message_edited_at?: string | null
+          last_message_id?: string | null
+          last_message_is_read?: boolean
+          last_message_is_view_once?: boolean
+          last_message_reaction_created_at?: string | null
+          last_message_reaction_emoji?: string | null
+          last_message_reaction_target_type?: string | null
+          last_message_reaction_user_id?: string | null
+          last_message_receiver_id?: string | null
+          last_message_sender_id?: string | null
+          last_message_text?: string | null
+          last_message_type?: string | null
+          owner_user_id: string
+          peer_user_id: string
+          unread_count?: number
+          updated_at?: string
+        }
+        Update: {
+          last_activity_at?: string | null
+          last_activity_kind?: string | null
+          last_activity_message_id?: string | null
+          last_activity_preview?: string | null
+          last_message_created_at?: string | null
+          last_message_deleted_for_all?: boolean
+          last_message_delivered_at?: string | null
+          last_message_edited_at?: string | null
+          last_message_id?: string | null
+          last_message_is_read?: boolean
+          last_message_is_view_once?: boolean
+          last_message_reaction_created_at?: string | null
+          last_message_reaction_emoji?: string | null
+          last_message_reaction_target_type?: string | null
+          last_message_reaction_user_id?: string | null
+          last_message_receiver_id?: string | null
+          last_message_sender_id?: string | null
+          last_message_text?: string | null
+          last_message_type?: string | null
+          owner_user_id?: string
+          peer_user_id?: string
+          unread_count?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_conversation_summaries_last_activity_message_id_fkey"
+            columns: ["last_activity_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_conversation_summaries_last_message_id_fkey"
+            columns: ["last_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chat_prefs: {
         Row: {
           id: string
@@ -946,6 +1039,48 @@ export type Database = {
           },
         ]
       }
+      circle_pulse_comment_edits: {
+        Row: {
+          comment_id: string
+          created_at: string
+          editor_profile_id: string
+          editor_user_id: string
+          id: string
+          previous_body: string
+        }
+        Insert: {
+          comment_id: string
+          created_at?: string
+          editor_profile_id: string
+          editor_user_id: string
+          id?: string
+          previous_body: string
+        }
+        Update: {
+          comment_id?: string
+          created_at?: string
+          editor_profile_id?: string
+          editor_user_id?: string
+          id?: string
+          previous_body?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_pulse_comment_edits_comment_id_fkey"
+            columns: ["comment_id"]
+            isOneToOne: false
+            referencedRelation: "circle_pulse_comments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_comment_edits_editor_profile_id_fkey"
+            columns: ["editor_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       circle_pulse_comment_reactions: {
         Row: {
           circle_id: string
@@ -1095,8 +1230,12 @@ export type Database = {
           circle_id: string
           created_at: string
           deleted_at: string | null
+          edited_at: string | null
           id: string
           parent_comment_id: string | null
+          pinned_at: string | null
+          pinned_by_profile_id: string | null
+          pinned_by_user_id: string | null
           profile_id: string
           pulse_item_id: string
           reaction_count: number
@@ -1110,8 +1249,12 @@ export type Database = {
           circle_id: string
           created_at?: string
           deleted_at?: string | null
+          edited_at?: string | null
           id?: string
           parent_comment_id?: string | null
+          pinned_at?: string | null
+          pinned_by_profile_id?: string | null
+          pinned_by_user_id?: string | null
           profile_id: string
           pulse_item_id: string
           reaction_count?: number
@@ -1125,8 +1268,12 @@ export type Database = {
           circle_id?: string
           created_at?: string
           deleted_at?: string | null
+          edited_at?: string | null
           id?: string
           parent_comment_id?: string | null
+          pinned_at?: string | null
+          pinned_by_profile_id?: string | null
+          pinned_by_user_id?: string | null
           profile_id?: string
           pulse_item_id?: string
           reaction_count?: number
@@ -1151,6 +1298,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "circle_pulse_comments_pinned_by_profile_id_fkey"
+            columns: ["pinned_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "circle_pulse_comments_profile_id_fkey"
             columns: ["profile_id"]
             isOneToOne: false
@@ -1166,13 +1320,81 @@ export type Database = {
           },
         ]
       }
+      circle_pulse_discussion_reads: {
+        Row: {
+          circle_id: string
+          created_at: string
+          id: string
+          last_seen_at: string
+          last_seen_comment_id: string | null
+          profile_id: string
+          pulse_item_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          circle_id: string
+          created_at?: string
+          id?: string
+          last_seen_at?: string
+          last_seen_comment_id?: string | null
+          profile_id: string
+          pulse_item_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          circle_id?: string
+          created_at?: string
+          id?: string
+          last_seen_at?: string
+          last_seen_comment_id?: string | null
+          profile_id?: string
+          pulse_item_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "circle_pulse_discussion_reads_circle_id_fkey"
+            columns: ["circle_id"]
+            isOneToOne: false
+            referencedRelation: "circles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_discussion_reads_last_seen_comment_id_fkey"
+            columns: ["last_seen_comment_id"]
+            isOneToOne: false
+            referencedRelation: "circle_pulse_comments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_discussion_reads_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_discussion_reads_pulse_item_id_fkey"
+            columns: ["pulse_item_id"]
+            isOneToOne: false
+            referencedRelation: "circle_pulse_items"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       circle_pulse_items: {
         Row: {
           body: string | null
           circle_id: string
+          comment_count: number
           created_at: string
           created_by_profile_id: string | null
           created_by_user_id: string | null
+          discussion_cta: string | null
+          discussion_summary: string | null
           expires_at: string | null
           gathering_id: string | null
           id: string
@@ -1193,9 +1415,12 @@ export type Database = {
         Insert: {
           body?: string | null
           circle_id: string
+          comment_count?: number
           created_at?: string
           created_by_profile_id?: string | null
           created_by_user_id?: string | null
+          discussion_cta?: string | null
+          discussion_summary?: string | null
           expires_at?: string | null
           gathering_id?: string | null
           id?: string
@@ -1216,9 +1441,12 @@ export type Database = {
         Update: {
           body?: string | null
           circle_id?: string
+          comment_count?: number
           created_at?: string
           created_by_profile_id?: string | null
           created_by_user_id?: string | null
+          discussion_cta?: string | null
+          discussion_summary?: string | null
           expires_at?: string | null
           gathering_id?: string | null
           id?: string
@@ -1290,6 +1518,7 @@ export type Database = {
           joined_at: string
           membership_id: string
           profile_id: string
+          pulse_item_id: string | null
           status: string
           updated_at: string
         }
@@ -1301,6 +1530,7 @@ export type Database = {
           joined_at?: string
           membership_id: string
           profile_id: string
+          pulse_item_id?: string | null
           status?: string
           updated_at?: string
         }
@@ -1312,6 +1542,7 @@ export type Database = {
           joined_at?: string
           membership_id?: string
           profile_id?: string
+          pulse_item_id?: string | null
           status?: string
           updated_at?: string
         }
@@ -1335,6 +1566,13 @@ export type Database = {
             columns: ["profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "circle_pulse_welcome_members_pulse_item_id_fkey"
+            columns: ["pulse_item_id"]
+            isOneToOne: false
+            referencedRelation: "circle_pulse_items"
             referencedColumns: ["id"]
           },
         ]
@@ -2003,7 +2241,9 @@ export type Database = {
           created_by_user_id: string | null
           description: string | null
           ends_at: string | null
+          featured_profile_id: string | null
           gathering_type: string
+          host_created_for_member: boolean
           id: string
           is_official: boolean
           is_partner_venue: boolean
@@ -2013,10 +2253,12 @@ export type Database = {
           online_url: string | null
           platform: string | null
           poster_url: string | null
+          presentation_mode: string
           region: string | null
           rejected_reason: string | null
           safe_first_date_space: boolean
           safety_note: string | null
+          seat_context: string | null
           slug: string | null
           starts_at: string
           status: string
@@ -2042,7 +2284,9 @@ export type Database = {
           created_by_user_id?: string | null
           description?: string | null
           ends_at?: string | null
+          featured_profile_id?: string | null
           gathering_type?: string
+          host_created_for_member?: boolean
           id?: string
           is_official?: boolean
           is_partner_venue?: boolean
@@ -2052,10 +2296,12 @@ export type Database = {
           online_url?: string | null
           platform?: string | null
           poster_url?: string | null
+          presentation_mode?: string
           region?: string | null
           rejected_reason?: string | null
           safe_first_date_space?: boolean
           safety_note?: string | null
+          seat_context?: string | null
           slug?: string | null
           starts_at: string
           status?: string
@@ -2081,7 +2327,9 @@ export type Database = {
           created_by_user_id?: string | null
           description?: string | null
           ends_at?: string | null
+          featured_profile_id?: string | null
           gathering_type?: string
+          host_created_for_member?: boolean
           id?: string
           is_official?: boolean
           is_partner_venue?: boolean
@@ -2091,10 +2339,12 @@ export type Database = {
           online_url?: string | null
           platform?: string | null
           poster_url?: string | null
+          presentation_mode?: string
           region?: string | null
           rejected_reason?: string | null
           safe_first_date_space?: boolean
           safety_note?: string | null
+          seat_context?: string | null
           slug?: string | null
           starts_at?: string
           status?: string
@@ -2116,6 +2366,13 @@ export type Database = {
           {
             foreignKeyName: "gatherings_created_by_profile_id_fkey"
             columns: ["created_by_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "gatherings_featured_profile_id_fkey"
+            columns: ["featured_profile_id"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -2877,6 +3134,7 @@ export type Database = {
         Row: {
           announcements: boolean
           boosts: boolean
+          circle_discussions: boolean
           gifts: boolean
           id: string
           inapp_enabled: boolean
@@ -2901,6 +3159,7 @@ export type Database = {
         Insert: {
           announcements?: boolean
           boosts?: boolean
+          circle_discussions?: boolean
           gifts?: boolean
           id?: string
           inapp_enabled?: boolean
@@ -2925,6 +3184,7 @@ export type Database = {
         Update: {
           announcements?: boolean
           boosts?: boolean
+          circle_discussions?: boolean
           gifts?: boolean
           id?: string
           inapp_enabled?: boolean
@@ -3571,6 +3831,8 @@ export type Database = {
           verification_refresh_resolved_at: string | null
           verification_refresh_target_level: number | null
           verification_refresh_user_notified: boolean
+          vibes_practice_completed_at: string | null
+          vibes_practice_completed_version: number
           wants_children: string | null
           years_in_diaspora: number | null
         }
@@ -3663,6 +3925,8 @@ export type Database = {
           verification_refresh_resolved_at?: string | null
           verification_refresh_target_level?: number | null
           verification_refresh_user_notified?: boolean
+          vibes_practice_completed_at?: string | null
+          vibes_practice_completed_version?: number
           wants_children?: string | null
           years_in_diaspora?: number | null
         }
@@ -3755,6 +4019,8 @@ export type Database = {
           verification_refresh_resolved_at?: string | null
           verification_refresh_target_level?: number | null
           verification_refresh_user_notified?: boolean
+          vibes_practice_completed_at?: string | null
+          vibes_practice_completed_version?: number
           wants_children?: string | null
           years_in_diaspora?: number | null
         }
@@ -5041,6 +5307,10 @@ export type Database = {
             }
             Returns: string
           }
+      apply_profile_country_lock_policy: {
+        Args: { p_profile_id: string }
+        Returns: undefined
+      }
       bump_rate_limit: {
         Args: { p_key: string; p_limit: number; p_window_seconds: number }
         Returns: {
@@ -5081,6 +5351,10 @@ export type Database = {
       }
       can_post_moment: { Args: { p_user_id?: string }; Returns: boolean }
       can_view_moment: { Args: { p_moment_id: string }; Returns: boolean }
+      circle_pulse_comment_reaction_summary_json: {
+        Args: { p_comment_id: string }
+        Returns: Json
+      }
       clean_expired_distance_cache: { Args: never; Returns: number }
       cleanup_phone_verifications_orphans: { Args: never; Returns: undefined }
       decrement_superlike: { Args: { p_profile_id: string }; Returns: number }
@@ -5172,6 +5446,17 @@ export type Database = {
         }
       }
       enablelongtransactions: { Args: never; Returns: string }
+      enqueue_circle_pulse_push: {
+        Args: {
+          p_actor_user_id: string
+          p_body: string
+          p_data: Json
+          p_pref_kind: string
+          p_target_user_id: string
+          p_title: string
+        }
+        Returns: boolean
+      }
       equals: { Args: { geom1: unknown; geom2: unknown }; Returns: boolean }
       geometry: { Args: { "": string }; Returns: unknown }
       geometry_above: {
@@ -5274,6 +5559,38 @@ export type Database = {
       get_active_subscription_plan: {
         Args: { p_user_id?: string }
         Returns: Database["public"]["Enums"]["subscription_type"]
+      }
+      get_circle_pulse_comment_projection: {
+        Args: {
+          p_comment_id: string
+          p_viewer_profile_id: string
+          p_viewer_user_id: string
+        }
+        Returns: {
+          avatar_url: string
+          body: string
+          can_edit: boolean
+          can_pin: boolean
+          can_remove: boolean
+          circle_id: string
+          created_at: string
+          display_name: string
+          edited_at: string
+          id: string
+          is_own: boolean
+          my_reaction: string
+          parent_comment_id: string
+          pinned_at: string
+          profile_id: string
+          pulse_item_id: string
+          reaction_count: number
+          reaction_summary: Json
+          reply_preview_body: string
+          reply_preview_display_name: string
+          reply_preview_profile_id: string
+          report_count: number
+          updated_at: string
+        }[]
       }
       get_moment_relationship_cue: {
         Args: { p_peer_profile_id: string; p_profile_id: string }
@@ -5577,6 +5894,14 @@ export type Database = {
       }
       postgis_version: { Args: never; Returns: string }
       postgis_wagyu_version: { Args: never; Returns: string }
+      refresh_chat_conversation_summary: {
+        Args: { p_owner_user_id: string; p_peer_user_id: string }
+        Returns: undefined
+      }
+      refresh_chat_conversation_summary_unchecked: {
+        Args: { p_owner_user_id: string; p_peer_user_id: string }
+        Returns: undefined
+      }
       reset_daily_superlikes: { Args: never; Returns: undefined }
       rpc_accept_date_plan: {
         Args: { p_plan_id: string }
@@ -5870,7 +6195,9 @@ export type Database = {
           created_by_user_id: string | null
           description: string | null
           ends_at: string | null
+          featured_profile_id: string | null
           gathering_type: string
+          host_created_for_member: boolean
           id: string
           is_official: boolean
           is_partner_venue: boolean
@@ -5880,10 +6207,12 @@ export type Database = {
           online_url: string | null
           platform: string | null
           poster_url: string | null
+          presentation_mode: string
           region: string | null
           rejected_reason: string | null
           safe_first_date_space: boolean
           safety_note: string | null
+          seat_context: string | null
           slug: string | null
           starts_at: string
           status: string
@@ -6141,7 +6470,9 @@ export type Database = {
           created_by_user_id: string | null
           description: string | null
           ends_at: string | null
+          featured_profile_id: string | null
           gathering_type: string
+          host_created_for_member: boolean
           id: string
           is_official: boolean
           is_partner_venue: boolean
@@ -6151,10 +6482,12 @@ export type Database = {
           online_url: string | null
           platform: string | null
           poster_url: string | null
+          presentation_mode: string
           region: string | null
           rejected_reason: string | null
           safe_first_date_space: boolean
           safety_note: string | null
+          seat_context: string | null
           slug: string | null
           starts_at: string
           status: string
@@ -6178,6 +6511,10 @@ export type Database = {
       }
       rpc_archive_owned_circle: {
         Args: { p_actor_profile_id: string; p_circle_id: string }
+        Returns: boolean
+      }
+      rpc_archive_relationship_gist_editorial: {
+        Args: { p_actor_profile_id: string; p_gist_id: string }
         Returns: boolean
       }
       rpc_attend_gathering: {
@@ -6310,15 +6647,25 @@ export type Database = {
         Returns: {
           avatar_url: string
           body: string
+          can_edit: boolean
+          can_pin: boolean
           can_remove: boolean
           circle_id: string
           created_at: string
           display_name: string
+          edited_at: string
           id: string
           is_own: boolean
+          my_reaction: string
           parent_comment_id: string
+          pinned_at: string
           profile_id: string
           pulse_item_id: string
+          reaction_count: number
+          reaction_summary: Json
+          reply_preview_body: string
+          reply_preview_display_name: string
+          reply_preview_profile_id: string
           report_count: number
           updated_at: string
         }[]
@@ -6443,12 +6790,17 @@ export type Database = {
           p_country_name?: string
           p_description?: string
           p_ends_at?: string
+          p_featured_profile_id?: string
           p_gathering_type?: string
+          p_host_created_for_member?: boolean
           p_max_attendees?: number
           p_online_url?: string
           p_platform?: string
+          p_poster_url?: string
+          p_presentation_mode?: string
           p_region?: string
           p_safety_note?: string
+          p_seat_context?: string
           p_starts_at?: string
           p_tags?: string[]
           p_timezone?: string
@@ -6471,7 +6823,9 @@ export type Database = {
           created_by_user_id: string | null
           description: string | null
           ends_at: string | null
+          featured_profile_id: string | null
           gathering_type: string
+          host_created_for_member: boolean
           id: string
           is_official: boolean
           is_partner_venue: boolean
@@ -6481,10 +6835,12 @@ export type Database = {
           online_url: string | null
           platform: string | null
           poster_url: string | null
+          presentation_mode: string
           region: string | null
           rejected_reason: string | null
           safe_first_date_space: boolean
           safety_note: string | null
+          seat_context: string | null
           slug: string | null
           starts_at: string
           status: string
@@ -6609,12 +6965,28 @@ export type Database = {
           status: string
         }[]
       }
+      rpc_delete_circle_prompt: {
+        Args: { p_circle_id: string; p_prompt_id: string }
+        Returns: boolean
+      }
       rpc_delete_circle_pulse_comment: {
         Args: { p_comment_id: string; p_profile_id: string }
         Returns: boolean
       }
       rpc_delete_circle_pulse_item: {
         Args: { p_actor_profile_id: string; p_item_id: string }
+        Returns: boolean
+      }
+      rpc_delete_circle_relationship_gist: {
+        Args: {
+          p_actor_profile_id: string
+          p_circle_id: string
+          p_gist_id: string
+        }
+        Returns: boolean
+      }
+      rpc_delete_gathering_request: {
+        Args: { p_gathering_id: string }
         Returns: boolean
       }
       rpc_delete_moment_comment: {
@@ -6647,9 +7019,14 @@ export type Database = {
           last_message_created_at: string
           last_message_deleted_for_all: boolean
           last_message_delivered_at: string
+          last_message_edited_at: string
           last_message_id: string
           last_message_is_read: boolean
           last_message_is_view_once: boolean
+          last_message_reaction_created_at: string
+          last_message_reaction_emoji: string
+          last_message_reaction_target_type: string
+          last_message_reaction_user_id: string
           last_message_receiver_id: string
           last_message_sender_id: string
           last_message_text: string
@@ -6711,6 +7088,34 @@ export type Database = {
           reaction_count: number
         }[]
       }
+      rpc_get_circle_pulse_comment_snapshot: {
+        Args: { p_comment_id: string }
+        Returns: {
+          avatar_url: string
+          body: string
+          can_edit: boolean
+          can_pin: boolean
+          can_remove: boolean
+          circle_id: string
+          created_at: string
+          display_name: string
+          edited_at: string
+          id: string
+          is_own: boolean
+          my_reaction: string
+          parent_comment_id: string
+          pinned_at: string
+          profile_id: string
+          pulse_item_id: string
+          reaction_count: number
+          reaction_summary: Json
+          reply_preview_body: string
+          reply_preview_display_name: string
+          reply_preview_profile_id: string
+          report_count: number
+          updated_at: string
+        }[]
+      }
       rpc_get_circle_pulse_comments: {
         Args: { p_limit?: number; p_pulse_item_id: string }
         Returns: {
@@ -6729,12 +7134,65 @@ export type Database = {
           updated_at: string
         }[]
       }
+      rpc_get_circle_pulse_comments_page: {
+        Args: {
+          p_before_created_at?: string
+          p_before_id?: string
+          p_limit?: number
+          p_pulse_item_id: string
+        }
+        Returns: {
+          avatar_url: string
+          body: string
+          can_edit: boolean
+          can_pin: boolean
+          can_remove: boolean
+          circle_id: string
+          created_at: string
+          display_name: string
+          edited_at: string
+          id: string
+          is_own: boolean
+          my_reaction: string
+          parent_comment_id: string
+          pinned_at: string
+          profile_id: string
+          pulse_item_id: string
+          reaction_count: number
+          reaction_summary: Json
+          reply_preview_body: string
+          reply_preview_display_name: string
+          reply_preview_profile_id: string
+          report_count: number
+          updated_at: string
+        }[]
+      }
+      rpc_get_circle_pulse_discussion_read_state: {
+        Args: { p_profile_id: string; p_pulse_item_id: string }
+        Returns: {
+          last_seen_at: string
+          last_seen_comment_id: string
+          pulse_item_id: string
+          unread_count: number
+        }[]
+      }
+      rpc_get_circle_pulse_discussion_reads: {
+        Args: { p_circle_id: string; p_profile_id: string }
+        Returns: {
+          last_seen_at: string
+          last_seen_comment_id: string
+          pulse_item_id: string
+          unread_count: number
+        }[]
+      }
       rpc_get_circle_pulse_items: {
         Args: { p_circle_id: string; p_include_inactive?: boolean }
         Returns: {
           body: string
           circle_id: string
           comment_count: number
+          discussion_cta: string
+          discussion_summary: string
           expires_at: string
           featured_profile_age: number
           featured_profile_avatar_url: string
@@ -6744,9 +7202,12 @@ export type Database = {
           featured_profile_name: string
           gathering_attendee_count: number
           gathering_city: string
+          gathering_host_created_for_member: boolean
           gathering_id: string
           gathering_is_partner_venue: boolean
+          gathering_presentation_mode: string
           gathering_safe_first_date_space: boolean
+          gathering_seat_context: string
           gathering_starts_at: string
           gathering_type: string
           id: string
@@ -7008,12 +7469,25 @@ export type Database = {
         }
         Returns: boolean
       }
+      rpc_mark_circle_pulse_discussion_seen: {
+        Args: {
+          p_last_seen_at?: string
+          p_last_seen_comment_id?: string
+          p_profile_id: string
+          p_pulse_item_id: string
+        }
+        Returns: boolean
+      }
       rpc_mark_expired_intent_requests: { Args: never; Returns: number }
       rpc_mark_match_celebration_seen: {
         Args: { p_event_id: string }
         Returns: boolean
       }
       rpc_mark_message_read: { Args: { p_message_id: string }; Returns: number }
+      rpc_mark_messages_read: {
+        Args: { p_message_ids: string[] }
+        Returns: number
+      }
       rpc_mark_moment_view: { Args: { p_moment_id: string }; Returns: boolean }
       rpc_mark_signin_provider_disconnected: {
         Args: { p_provider: string }
@@ -7048,6 +7522,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      rpc_pin_circle_pulse_comment: {
+        Args: { p_comment_id: string; p_pinned?: boolean; p_profile_id: string }
+        Returns: boolean
       }
       rpc_process_intent_request_jobs: {
         Args: { p_remind_before?: string; p_window?: string }
@@ -7169,7 +7647,9 @@ export type Database = {
           created_by_user_id: string | null
           description: string | null
           ends_at: string | null
+          featured_profile_id: string | null
           gathering_type: string
+          host_created_for_member: boolean
           id: string
           is_official: boolean
           is_partner_venue: boolean
@@ -7179,10 +7659,12 @@ export type Database = {
           online_url: string | null
           platform: string | null
           poster_url: string | null
+          presentation_mode: string
           region: string | null
           rejected_reason: string | null
           safe_first_date_space: boolean
           safety_note: string | null
+          seat_context: string | null
           slug: string | null
           starts_at: string
           status: string
@@ -7718,6 +8200,102 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      rpc_update_circle_prompt: {
+        Args: {
+          p_circle_id: string
+          p_expires_at?: string
+          p_prompt: string
+          p_prompt_id: string
+          p_prompt_type?: string
+          p_title: string
+        }
+        Returns: {
+          circle_id: string | null
+          created_at: string
+          created_by_admin_id: string | null
+          created_by_profile_id: string | null
+          expires_at: string | null
+          id: string
+          prompt: string
+          prompt_type: string
+          starts_at: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "circle_prompts"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      rpc_update_circle_pulse_comment: {
+        Args: { p_body: string; p_comment_id: string; p_profile_id: string }
+        Returns: {
+          avatar_url: string
+          body: string
+          can_edit: boolean
+          can_pin: boolean
+          can_remove: boolean
+          circle_id: string
+          created_at: string
+          display_name: string
+          edited_at: string
+          id: string
+          is_own: boolean
+          my_reaction: string
+          parent_comment_id: string
+          pinned_at: string
+          profile_id: string
+          pulse_item_id: string
+          reaction_count: number
+          reaction_summary: Json
+          reply_preview_body: string
+          reply_preview_display_name: string
+          reply_preview_profile_id: string
+          report_count: number
+          updated_at: string
+        }[]
+      }
+      rpc_update_circle_relationship_gist: {
+        Args: {
+          p_actor_profile_id: string
+          p_body: string
+          p_circle_id: string
+          p_gist_id: string
+          p_perspective?: string
+          p_short_body: string
+          p_title: string
+        }
+        Returns: {
+          audience_tags: string[]
+          body: string
+          circle_id: string | null
+          city: string | null
+          country_code: string | null
+          created_at: string
+          created_by_admin_id: string | null
+          created_by_profile_id: string | null
+          culture_tags: string[]
+          faith_tags: string[]
+          id: string
+          perspective: string
+          published_at: string | null
+          relationship_intent_tags: string[]
+          scheduled_for: string | null
+          short_body: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "relationship_gists"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       rpc_update_circle_request: {
         Args: {
           p_audience_tags?: string[]
@@ -7802,13 +8380,18 @@ export type Database = {
           p_country_name?: string
           p_description?: string
           p_ends_at?: string
+          p_featured_profile_id?: string
           p_gathering_id: string
           p_gathering_type?: string
+          p_host_created_for_member?: boolean
           p_max_attendees?: number
           p_online_url?: string
           p_platform?: string
+          p_poster_url?: string
+          p_presentation_mode?: string
           p_region?: string
           p_safety_note?: string
+          p_seat_context?: string
           p_starts_at?: string
           p_tags?: string[]
           p_timezone?: string
@@ -7831,7 +8414,9 @@ export type Database = {
           created_by_user_id: string | null
           description: string | null
           ends_at: string | null
+          featured_profile_id: string | null
           gathering_type: string
+          host_created_for_member: boolean
           id: string
           is_official: boolean
           is_partner_venue: boolean
@@ -7841,10 +8426,12 @@ export type Database = {
           online_url: string | null
           platform: string | null
           poster_url: string | null
+          presentation_mode: string
           region: string | null
           rejected_reason: string | null
           safe_first_date_space: boolean
           safety_note: string | null
+          seat_context: string | null
           slug: string | null
           starts_at: string
           status: string
@@ -7902,9 +8489,12 @@ export type Database = {
         Returns: {
           body: string | null
           circle_id: string
+          comment_count: number
           created_at: string
           created_by_profile_id: string | null
           created_by_user_id: string | null
+          discussion_cta: string | null
+          discussion_summary: string | null
           expires_at: string | null
           gathering_id: string | null
           id: string
@@ -7940,6 +8530,44 @@ export type Database = {
           p_target_profile_id: string
         }
         Returns: string
+      }
+      rpc_upsert_relationship_gist_editorial: {
+        Args: {
+          p_actor_profile_id?: string
+          p_body?: string
+          p_gist_id?: string
+          p_perspective?: string
+          p_short_body?: string
+          p_status?: string
+          p_title?: string
+        }
+        Returns: {
+          audience_tags: string[]
+          body: string
+          circle_id: string | null
+          city: string | null
+          country_code: string | null
+          created_at: string
+          created_by_admin_id: string | null
+          created_by_profile_id: string | null
+          culture_tags: string[]
+          faith_tags: string[]
+          id: string
+          perspective: string
+          published_at: string | null
+          relationship_intent_tags: string[]
+          scheduled_for: string | null
+          short_body: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "relationship_gists"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
@@ -8558,6 +9186,10 @@ export type Database = {
           viewer_guess: string
         }[]
       }
+      sync_circle_pulse_item_comment_count: {
+        Args: { p_pulse_item_id: string }
+        Returns: undefined
+      }
       unaccent: { Args: { "": string }; Returns: string }
       unlockrows: { Args: { "": string }; Returns: number }
       updategeometrysrid: {
@@ -8569,6 +9201,15 @@ export type Database = {
           table_name: string
         }
         Returns: string
+      }
+      upsert_chat_conversation_summary_from_message: {
+        Args: {
+          p_message_id: string
+          p_owner_user_id: string
+          p_peer_user_id: string
+          p_unread_increment?: number
+        }
+        Returns: undefined
       }
       upsert_push_token: {
         Args: {

@@ -94,7 +94,7 @@ const AUTH_SNAPSHOT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const NETINFO_TIMEOUT_MS = 1200;
 const UNREQUESTED_SIGNED_OUT_THROTTLE_MS = 15_000;
 const RECOVERABLE_SESSION_RETRY_BACKOFF_MS = 60_000;
-const PRESENCE_HEARTBEAT_MS = 30_000;
+const PRESENCE_HEARTBEAT_MS = 60_000;
 
 const isExpiredJwtError = (error: unknown) => {
   const code = String((error as any)?.code || '');

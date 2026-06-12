@@ -23,7 +23,7 @@ const baseMessage = {
 };
 
 test('chat read receipt delay stays stable', () => {
-  assert.equal(CHAT_READ_RECEIPT_DELAY_MS, 2400);
+  assert.equal(CHAT_READ_RECEIPT_DELAY_MS, 700);
 });
 
 test('canRetryFailedTextMessage only allows my failed text messages', () => {

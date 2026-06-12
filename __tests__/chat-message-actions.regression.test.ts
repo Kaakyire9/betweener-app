@@ -11,7 +11,10 @@ import {
   removePinnedMessageId,
   restoreMessageReactions,
 } from '../lib/chat/message-actions.ts';
-import { resolveChatListPreview } from '../lib/chat/chat-list-preview.ts';
+import {
+  formatConversationPreview,
+  resolveChatListPreview,
+} from '../lib/chat/chat-list-preview.ts';
 
 const baseMessage = {
   id: 'msg-1',
@@ -157,10 +160,10 @@ test('chat list preview shows an edit when it is newer than the latest reaction'
   });
 
   assert.equal(preview.previewText, 'Edited: Updated text');
-  assert.equal(preview.visibleReactionPreview, null);
+  assert.equal(preview.visibleReactionPreview, 'Jennifer reacted heart to message');
 });
 
-test('chat list preview shows a reaction when it is newer than the latest edit', () => {
+test('chat list preview keeps the latest message primary when a reaction is newer', () => {
   const preview = resolveChatListPreview({
     messagePreview: 'Updated text',
     editedAt: new Date('2026-06-01T10:00:00.000Z'),
@@ -171,6 +174,81 @@ test('chat list preview shows a reaction when it is newer than the latest edit',
     isTyping: false,
   });
 
-  assert.equal(preview.previewText, 'Jennifer reacted heart to message');
+  assert.equal(preview.previewText, 'Edited: Updated text');
   assert.equal(preview.visibleReactionPreview, 'Jennifer reacted heart to message');
+});
+
+test('conversation preview explains a peer reaction inline', () => {
+  const preview = formatConversationPreview({
+    messagePreview: 'I hope you are doing well?',
+    latestActivity: {
+      kind: 'reaction',
+      messageId: 'message-1',
+      preview: 'Someone reacted',
+      createdAt: new Date('2026-06-12T20:55:00.000Z'),
+    },
+    reactionEmoji: '❤️',
+    reactionUserId: 'peer-user',
+    currentUserId: 'current-user',
+  });
+
+  assert.equal(preview, 'Reacted ❤️ to your message');
+});
+
+test('conversation preview explains my reaction inline', () => {
+  const preview = formatConversationPreview({
+    messagePreview: 'Their message',
+    latestActivity: {
+      kind: 'reaction',
+      messageId: 'message-1',
+      preview: 'You reacted',
+      createdAt: new Date('2026-06-12T20:55:00.000Z'),
+    },
+    reactionEmoji: '👍',
+    reactionUserId: 'current-user',
+    currentUserId: 'current-user',
+  });
+
+  assert.equal(preview, 'You reacted 👍 to their message');
+});
+
+test('conversation preview handles reaction and legacy fallbacks defensively', () => {
+  assert.equal(
+    formatConversationPreview({
+      messagePreview: '',
+      latestActivity: {
+        kind: 'reaction',
+        messageId: 'message-1',
+        preview: '',
+        createdAt: new Date('2026-06-12T20:55:00.000Z'),
+      },
+      reactionEmoji: null,
+      reactionUserId: null,
+      currentUserId: null,
+    }),
+    'Reacted to your message',
+  );
+
+  assert.equal(
+    formatConversationPreview({
+      messagePreview: 'Message deleted',
+      latestActivity: null,
+    }),
+    'Message deleted',
+  );
+});
+
+test('conversation preview uses stored activity for a reaction to a previous message', () => {
+  const preview = formatConversationPreview({
+    messagePreview: 'Latest sent message',
+    latestActivity: {
+      kind: 'reaction',
+      messageId: 'previous-message',
+      preview: 'Reacted ❤️ to your message',
+      createdAt: new Date('2026-06-12T20:56:00.000Z'),
+    },
+    currentUserId: 'current-user',
+  });
+
+  assert.equal(preview, 'Reacted ❤️ to your message');
 });

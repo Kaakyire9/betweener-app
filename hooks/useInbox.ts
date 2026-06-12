@@ -43,7 +43,7 @@ export const useInbox = (userId?: string | null) => {
   const [items, setItems] = useState<InboxItem[]>([]);
   const [loading, setLoading] = useState(false);
   const cacheKey = userId ? `cache:inbox:v1:${userId}` : null;
-  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recoveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Cached-first: show last items immediately, then refresh in background.
   useEffect(() => {
@@ -86,29 +86,43 @@ export const useInbox = (userId?: string | null) => {
     void fetchInbox();
     if (!userId) return;
 
-    const scheduleFetchInbox = () => {
-      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
-      refreshTimeoutRef.current = setTimeout(() => {
-        refreshTimeoutRef.current = null;
+    const scheduleRecoveryFetch = () => {
+      if (recoveryTimeoutRef.current) clearTimeout(recoveryTimeoutRef.current);
+      recoveryTimeoutRef.current = setTimeout(() => {
+        recoveryTimeoutRef.current = null;
         void fetchInbox();
       }, 250);
     };
 
     const channel = supabase
       .channel(`inbox-items:${userId}`)
-      // Server-side: insert inbox_items from triggers/edge functions for swipes, messages, matches, moments.
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "inbox_items", filter: `user_id=eq.${userId}` },
-        scheduleFetchInbox,
+        (payload) => {
+          const row = (payload.eventType === 'DELETE' ? payload.old : payload.new) as InboxItem;
+          if (!row?.id) return;
+          setItems((current) => {
+            const next = payload.eventType === 'DELETE'
+              ? current.filter((item) => item.id !== row.id)
+              : [...current.filter((item) => item.id !== row.id), row];
+            const sorted = sortInboxItems(next);
+            if (cacheKey) void writeCache(cacheKey, sorted);
+            return sorted;
+          });
+        },
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          scheduleRecoveryFetch();
+        }
+      });
 
     return () => {
-      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+      if (recoveryTimeoutRef.current) clearTimeout(recoveryTimeoutRef.current);
       supabase.removeChannel(channel);
     };
-  }, [fetchInbox, userId]);
+  }, [cacheKey, fetchInbox, userId]);
 
   const markRead = useCallback(
     async (id: string) => {
