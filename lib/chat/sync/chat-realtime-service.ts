@@ -2,6 +2,7 @@ import { buildPairScopedRealtimeTopic, buildUserScopedRealtimeTopic } from "@/li
 import { supabase } from "@/lib/supabase";
 import { AppState } from "react-native";
 import {
+  getThreadRealtimeReconnectDelayMs,
   THREAD_ACTIVITY_FOREGROUND_REANNOUNCE_DELAYS_MS,
   THREAD_ACTIVITY_HEARTBEAT_MS,
 } from "@/lib/chat/thread-activity";
@@ -200,19 +201,21 @@ export const startThreadPresenceSession = ({
   onAppActive,
 }: StartThreadPresenceSessionArgs) => {
   const presenceRoom = buildPairScopedRealtimeTopic('presence:chat', currentUserId, peerUserId);
-  const presenceChannel = supabase.channel(presenceRoom, {
-    config: {
-      presence: { key: currentUserId },
-    },
-  });
-  const chatListTypingChannel = supabase.channel(
-    buildUserScopedRealtimeTopic('typing:chatlist', peerUserId),
-  );
+  const chatListTypingRoom = buildUserScopedRealtimeTopic('typing:chatlist', peerUserId);
+  type ThreadRealtimeChannel = ReturnType<typeof supabase.channel>;
 
   let stopped = false;
   let presenceSubscribed = false;
+  let presenceConnecting = false;
   let chatListTypingSubscribed = false;
+  let chatListTypingConnecting = false;
   let appIsActive = AppState.currentState === 'active';
+  let presenceChannel: ThreadRealtimeChannel | null = null;
+  let chatListTypingChannel: ThreadRealtimeChannel | null = null;
+  let presenceReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let chatListTypingReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let presenceReconnectAttempt = 0;
+  let chatListTypingReconnectAttempt = 0;
   const foregroundAnnouncementTimers = new Set<ReturnType<typeof setTimeout>>();
   let peerAbsenceTimer: ReturnType<typeof setTimeout> | null = null;
   let peerWasPresent = false;
@@ -228,9 +231,24 @@ export const startThreadPresenceSession = ({
     peerAbsenceTimer = null;
   };
 
+  const clearPresenceReconnectTimer = () => {
+    if (!presenceReconnectTimer) return;
+    clearTimeout(presenceReconnectTimer);
+    presenceReconnectTimer = null;
+  };
+
+  const clearChatListTypingReconnectTimer = () => {
+    if (!chatListTypingReconnectTimer) return;
+    clearTimeout(chatListTypingReconnectTimer);
+    chatListTypingReconnectTimer = null;
+  };
+
   const trackThreadPresence = (typing: boolean, reason: string) => {
-    if (stopped || !presenceSubscribed || !appIsActive) return;
-    void presenceChannel.track({
+    const channel = presenceChannel;
+    if (stopped || !channel || !presenceSubscribed || !appIsActive) {
+      return;
+    }
+    void channel.track({
       onlineAt: new Date().toISOString(),
       typing,
       reason,
@@ -238,11 +256,12 @@ export const startThreadPresenceSession = ({
   };
 
   const announceThreadOpen = (reason: string) => {
-    if (stopped || !presenceSubscribed || !appIsActive) return;
+    const channel = presenceChannel;
+    if (stopped || !channel || !presenceSubscribed || !appIsActive) return;
     const openedAt = new Date().toISOString();
     trackThreadPresence(false, reason);
-    if (canSendWebsocketBroadcast(presenceChannel as any)) {
-      void presenceChannel.send({
+    if (canSendWebsocketBroadcast(channel as any)) {
+      void channel.send({
         type: 'broadcast',
         event: 'opened_thread',
         payload: {
@@ -255,8 +274,17 @@ export const startThreadPresenceSession = ({
     }
   };
 
-  const syncPeerPresence = () => {
-    const state = presenceChannel.presenceState();
+  const syncPeerPresence = (sourceChannel = presenceChannel) => {
+    if (
+      stopped ||
+      !appIsActive ||
+      AppState.currentState !== 'active' ||
+      !sourceChannel ||
+      sourceChannel !== presenceChannel
+    ) {
+      return;
+    }
+    const state = sourceChannel.presenceState();
     const peer = (state as any)[peerUserId] as { typing?: boolean }[] | undefined;
     const hasPeer = Boolean(peer && peer.length > 0);
     const peerTyping = Boolean(peer?.some((entry) => entry.typing));
@@ -269,8 +297,15 @@ export const startThreadPresenceSession = ({
     if (peerAbsenceTimer) return;
     peerAbsenceTimer = setTimeout(() => {
       peerAbsenceTimer = null;
-      if (stopped) return;
-      const latestState = presenceChannel.presenceState();
+      if (
+        stopped ||
+        !appIsActive ||
+        AppState.currentState !== 'active' ||
+        sourceChannel !== presenceChannel
+      ) {
+        return;
+      }
+      const latestState = sourceChannel.presenceState();
       const latestPeer = (latestState as any)[peerUserId] as { typing?: boolean }[] | undefined;
       if (latestPeer?.length) {
         peerWasPresent = true;
@@ -301,29 +336,75 @@ export const startThreadPresenceSession = ({
     });
   };
 
+  const removePresenceChannel = (channel: ThreadRealtimeChannel | null) => {
+    if (!channel) return;
+    void supabase.removeChannel(channel);
+  };
+
+  const removeChatListTypingChannel = (channel: ThreadRealtimeChannel | null) => {
+    if (!channel) return;
+    void supabase.removeChannel(channel);
+  };
+
+  function schedulePresenceReconnect(_reason: string) {
+    if (
+      stopped ||
+      !appIsActive ||
+      AppState.currentState !== 'active' ||
+      presenceReconnectTimer ||
+      presenceConnecting
+    ) {
+      return;
+    }
+    const delayMs = getThreadRealtimeReconnectDelayMs(presenceReconnectAttempt);
+    presenceReconnectAttempt += 1;
+    presenceReconnectTimer = setTimeout(() => {
+      presenceReconnectTimer = null;
+      connectPresenceChannel('retry');
+    }, delayMs);
+  }
+
+  function scheduleChatListTypingReconnect(_reason: string) {
+    if (
+      stopped ||
+      !appIsActive ||
+      AppState.currentState !== 'active' ||
+      chatListTypingReconnectTimer ||
+      chatListTypingConnecting
+    ) {
+      return;
+    }
+    const delayMs = getThreadRealtimeReconnectDelayMs(chatListTypingReconnectAttempt);
+    chatListTypingReconnectAttempt += 1;
+    chatListTypingReconnectTimer = setTimeout(() => {
+      chatListTypingReconnectTimer = null;
+      connectChatListTypingChannel('retry');
+    }, delayMs);
+  }
+
   const broadcastTyping = (typing: boolean) => {
     if (stopped) return;
+    const activePresenceChannel = presenceChannel;
     if (
+      activePresenceChannel &&
       presenceSubscribed &&
       appIsActive &&
-      canSendWebsocketBroadcast(presenceChannel as any)
+      canSendWebsocketBroadcast(activePresenceChannel as any)
     ) {
       const at = new Date().toISOString();
-      void presenceChannel.track({
-        onlineAt: at,
-        typing,
-      });
-      void presenceChannel.send({
+      void activePresenceChannel.send({
         type: 'broadcast',
         event: 'typing',
         payload: { senderId: currentUserId, typing, at },
       });
     }
+    const activeTypingChannel = chatListTypingChannel;
     if (
+      activeTypingChannel &&
       chatListTypingSubscribed &&
-      canSendWebsocketBroadcast(chatListTypingChannel as any)
+      canSendWebsocketBroadcast(activeTypingChannel as any)
     ) {
-      void chatListTypingChannel.send({
+      void activeTypingChannel.send({
         type: 'broadcast',
         event: 'typing',
         payload: { senderId: currentUserId, typing, at: new Date().toISOString() },
@@ -334,77 +415,153 @@ export const startThreadPresenceSession = ({
   const leaveThreadRoom = () => {
     if (stopped) return;
     appIsActive = false;
+    const activeTypingChannel = chatListTypingChannel;
     if (
+      activeTypingChannel &&
       chatListTypingSubscribed &&
-      canSendWebsocketBroadcast(chatListTypingChannel as any)
+      canSendWebsocketBroadcast(activeTypingChannel as any)
     ) {
-      void chatListTypingChannel.send({
+      void activeTypingChannel.send({
         type: 'broadcast',
         event: 'typing',
         payload: { senderId: currentUserId, typing: false, at: new Date().toISOString() },
       });
     }
-    if (presenceSubscribed) {
+    if (presenceSubscribed && presenceChannel) {
       void presenceChannel.untrack();
     }
   };
 
-  chatListTypingChannel.subscribe((status) => {
-    if (stopped) return;
-    if (status === 'SUBSCRIBED') {
-      chatListTypingSubscribed = true;
-      return;
+  function connectChatListTypingChannel(_reason: string) {
+    if (stopped || chatListTypingConnecting || chatListTypingSubscribed) return;
+    clearChatListTypingReconnectTimer();
+    chatListTypingConnecting = true;
+    const previousChannel = chatListTypingChannel;
+    const channel = supabase.channel(chatListTypingRoom);
+    chatListTypingChannel = channel;
+    if (previousChannel && previousChannel !== channel) {
+      removeChatListTypingChannel(previousChannel);
     }
-    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-      chatListTypingSubscribed = false;
-    }
-  });
-
-  presenceChannel
-    .on('presence', { event: 'sync' }, syncPeerPresence)
-    .on('presence', { event: 'join' }, ({ key }) => {
-      if (key !== peerUserId) return;
-      clearPeerAbsenceTimer();
-      peerWasPresent = true;
-      onPeerJoin();
-      syncPeerPresence();
-    })
-    .on('presence', { event: 'leave' }, ({ key }) => {
-      if (key !== peerUserId) return;
-      syncPeerPresence();
-    })
-    .on('broadcast', { event: 'opened_thread' }, ({ payload }) => {
-      if (!payload || payload.senderId !== peerUserId) return;
-      onPeerOpenedThread({ openedAt: payload.openedAt ?? null });
-    })
-    .on('broadcast', { event: 'typing' }, ({ payload }) => {
-      if (!payload || payload.senderId !== peerUserId) return;
-      onPeerTypingBroadcast({
-        typing: Boolean(payload.typing),
-        at: payload.at ?? null,
-      });
-    })
-    .subscribe((status) => {
-      if (stopped) return;
+    channel.subscribe((status) => {
+      if (stopped || channel !== chatListTypingChannel) return;
       if (status === 'SUBSCRIBED') {
-        presenceSubscribed = true;
-        if (appIsActive) {
-          announceThreadOpen('subscribed');
-        } else {
-          void presenceChannel.untrack();
-        }
-        setTimeout(syncPeerPresence, 350);
+        chatListTypingConnecting = false;
+        chatListTypingSubscribed = true;
+        chatListTypingReconnectAttempt = 0;
         return;
       }
       if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-        presenceSubscribed = false;
+        chatListTypingConnecting = false;
+        chatListTypingSubscribed = false;
+        chatListTypingChannel = null;
+        removeChatListTypingChannel(channel);
+        scheduleChatListTypingReconnect(status);
       }
     });
+  }
+
+  function connectPresenceChannel(_reason: string) {
+    if (stopped || presenceConnecting || presenceSubscribed) return;
+    clearPresenceReconnectTimer();
+    presenceConnecting = true;
+    const previousChannel = presenceChannel;
+    const channel = supabase.channel(presenceRoom, {
+      config: {
+        presence: { key: currentUserId },
+      },
+    });
+    presenceChannel = channel;
+    if (previousChannel && previousChannel !== channel) {
+      removePresenceChannel(previousChannel);
+    }
+
+    channel
+      .on('presence', { event: 'sync' }, () => syncPeerPresence(channel))
+      .on('presence', { event: 'join' }, ({ key }) => {
+        if (
+          !appIsActive ||
+          AppState.currentState !== 'active' ||
+          channel !== presenceChannel ||
+          key !== peerUserId
+        ) {
+          return;
+        }
+        clearPeerAbsenceTimer();
+        peerWasPresent = true;
+        onPeerJoin();
+        syncPeerPresence(channel);
+      })
+      .on('presence', { event: 'leave' }, ({ key }) => {
+        if (
+          !appIsActive ||
+          AppState.currentState !== 'active' ||
+          channel !== presenceChannel ||
+          key !== peerUserId
+        ) {
+          return;
+        }
+        syncPeerPresence(channel);
+      })
+      .on('broadcast', { event: 'opened_thread' }, ({ payload }) => {
+        if (
+          !appIsActive ||
+          AppState.currentState !== 'active' ||
+          channel !== presenceChannel ||
+          !payload ||
+          payload.senderId !== peerUserId
+        ) {
+          return;
+        }
+        onPeerOpenedThread({ openedAt: payload.openedAt ?? null });
+      })
+      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+        if (
+          !appIsActive ||
+          AppState.currentState !== 'active' ||
+          channel !== presenceChannel ||
+          !payload ||
+          payload.senderId !== peerUserId
+        ) {
+          return;
+        }
+        onPeerTypingBroadcast({
+          typing: Boolean(payload.typing),
+          at: payload.at ?? null,
+        });
+      })
+      .subscribe((status) => {
+        if (stopped || channel !== presenceChannel) return;
+        if (status === 'SUBSCRIBED') {
+          presenceConnecting = false;
+          presenceSubscribed = true;
+          presenceReconnectAttempt = 0;
+          if (appIsActive) {
+            announceThreadOpen('subscribed');
+          } else {
+            void channel.untrack();
+          }
+          setTimeout(() => syncPeerPresence(channel), 350);
+          return;
+        }
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          presenceConnecting = false;
+          presenceSubscribed = false;
+          presenceChannel = null;
+          removePresenceChannel(channel);
+          schedulePresenceReconnect(status);
+        }
+      });
+  }
+
+  connectChatListTypingChannel('initial');
+  connectPresenceChannel('initial');
 
   const appStateSubscription = AppState.addEventListener('change', (state) => {
     if (stopped) return;
     if (state !== 'active') {
       clearForegroundAnnouncementTimers();
+      clearPresenceReconnectTimer();
+      clearChatListTypingReconnectTimer();
       leaveThreadRoom();
       return;
     }
@@ -413,6 +570,12 @@ export const startThreadPresenceSession = ({
       supabase.realtime.connect();
     } catch {
       // best effort only
+    }
+    if (!presenceSubscribed && !presenceConnecting) {
+      connectPresenceChannel('app_active');
+    }
+    if (!chatListTypingSubscribed && !chatListTypingConnecting) {
+      connectChatListTypingChannel('app_active');
     }
     scheduleThreadOpenAnnouncements('app_active');
     setTimeout(() => {
@@ -434,12 +597,20 @@ export const startThreadPresenceSession = ({
       clearInterval(presenceHeartbeat);
       clearForegroundAnnouncementTimers();
       clearPeerAbsenceTimer();
+      clearPresenceReconnectTimer();
+      clearChatListTypingReconnectTimer();
       leaveThreadRoom();
       stopped = true;
       presenceSubscribed = false;
+      presenceConnecting = false;
       chatListTypingSubscribed = false;
-      presenceChannel.unsubscribe();
-      chatListTypingChannel.unsubscribe();
+      chatListTypingConnecting = false;
+      const activePresenceChannel = presenceChannel;
+      const activeTypingChannel = chatListTypingChannel;
+      presenceChannel = null;
+      chatListTypingChannel = null;
+      removePresenceChannel(activePresenceChannel);
+      removeChatListTypingChannel(activeTypingChannel);
     },
   };
 };

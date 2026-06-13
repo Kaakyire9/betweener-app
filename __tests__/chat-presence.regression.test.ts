@@ -10,9 +10,11 @@ import {
   getChatThreadPresenceKind,
 } from '../lib/presence.ts';
 import {
+  getThreadRealtimeReconnectDelayMs,
   THREAD_ACTIVITY_FOREGROUND_REANNOUNCE_DELAYS_MS,
   THREAD_ACTIVITY_HEARTBEAT_MS,
   THREAD_ACTIVITY_LEASE_MS,
+  THREAD_REALTIME_RECONNECT_DELAYS_MS,
   isPeerThreadActivityLeaseFresh,
 } from '../lib/chat/thread-activity.ts';
 import { canSendWebsocketBroadcast } from '../lib/chat/realtime-channel.ts';
@@ -105,6 +107,14 @@ test('thread activity lease absorbs transient sync gaps but expires without hear
 
 test('foreground presence retries while the websocket channel rejoins', () => {
   assert.deepEqual(THREAD_ACTIVITY_FOREGROUND_REANNOUNCE_DELAYS_MS, [0, 750]);
+});
+
+test('thread realtime reconnect uses bounded backoff', () => {
+  assert.deepEqual(THREAD_REALTIME_RECONNECT_DELAYS_MS, [750, 2_000, 5_000, 10_000]);
+  assert.equal(getThreadRealtimeReconnectDelayMs(-1), 750);
+  assert.equal(getThreadRealtimeReconnectDelayMs(0), 750);
+  assert.equal(getThreadRealtimeReconnectDelayMs(1), 2_000);
+  assert.equal(getThreadRealtimeReconnectDelayMs(99), 10_000);
 });
 
 test('ephemeral broadcasts only send through a joined websocket channel', () => {

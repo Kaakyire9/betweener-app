@@ -98,9 +98,27 @@ export const shouldScheduleMessageRead = ({
 }) =>
   Boolean(
     item?.id &&
+      !item.id.startsWith('system:') &&
+      !item.id.startsWith('temp-') &&
       item.senderId !== (currentUserId || '') &&
       item.status !== 'read',
   );
+
+export const markLoadedIncomingMessagesRead = ({
+  items,
+  currentUserId,
+}: {
+  items: MessageType[];
+  currentUserId?: string | null;
+}) => {
+  let changed = false;
+  const nextItems = items.map((item) => {
+    if (!shouldScheduleMessageRead({ item, currentUserId })) return item;
+    changed = true;
+    return { ...item, status: 'read' as const };
+  });
+  return changed ? nextItems : items;
+};
 
 export const createDatePlanDraftFromInvite = ({
   invite,

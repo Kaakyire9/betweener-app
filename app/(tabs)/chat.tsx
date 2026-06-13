@@ -901,14 +901,16 @@ export default function ChatScreen() {
         return;
       }
       setLoadError(null);
-      await ChatRepository.upsertThreads(
-        user.id,
-        hydrated.map((conversation) => conversationToLocalThread(user.id, conversation)),
-      );
-      // SQLite receives durable state first. Keep remote-only block metadata
-      // visible without making AsyncStorage a competing list source.
       setConversations(hydrated);
-      void ChatRepository.markSyncSucceeded(user.id, 'global_threads', { cursor: syncCursor });
+      try {
+        await ChatRepository.upsertThreads(
+          user.id,
+          hydrated.map((conversation) => conversationToLocalThread(user.id, conversation)),
+        );
+        void ChatRepository.markSyncSucceeded(user.id, 'global_threads', { cursor: syncCursor });
+      } catch (cacheError) {
+        console.log('[chat] conversation cache persist error', cacheError);
+      }
 
       // New matches are accepted matches without any message history yet.
       void fetchNewMatches(new Set(combinedOtherUserIds));

@@ -6,7 +6,60 @@ import { captureException, captureMessage } from '@/lib/telemetry/sentry';
 
 export type ChatSQLiteDatabase = SQLite.SQLiteDatabase;
 
-let chatDbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
+type ChatDbRuntime = {
+  dbPromise: Promise<SQLite.SQLiteDatabase> | null;
+  operationQueue: Promise<unknown>;
+};
+
+const CHAT_DB_RUNTIME_KEY = '__betweenerChatDbRuntime';
+const globalWithChatDbRuntime = globalThis as typeof globalThis & {
+  [CHAT_DB_RUNTIME_KEY]?: ChatDbRuntime;
+};
+const chatDbRuntime =
+  globalWithChatDbRuntime[CHAT_DB_RUNTIME_KEY] ??
+  (globalWithChatDbRuntime[CHAT_DB_RUNTIME_KEY] = {
+    dbPromise: null,
+    operationQueue: Promise.resolve(),
+  });
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const isDatabaseLockedError = (error: unknown) => {
+  const message = String((error as { message?: unknown })?.message ?? error).toLowerCase();
+  return message.includes('database is locked') || message.includes('error code 5');
+};
+
+export async function runSerializedChatDbOperation<T>(task: () => Promise<T>): Promise<T> {
+  const runWithRetry = async () => {
+    const retryDelays = [40, 90, 180, 360, 720];
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await task();
+      } catch (error) {
+        const delay = retryDelays[attempt];
+        if (!isDatabaseLockedError(error) || delay == null) {
+          throw error;
+        }
+        await wait(delay);
+      }
+    }
+  };
+
+  const next = chatDbRuntime.operationQueue.then(runWithRetry, runWithRetry);
+  chatDbRuntime.operationQueue = next.catch(() => undefined);
+  return next;
+}
+
+export async function withSerializedChatDbTransaction(
+  task: (db: SQLite.SQLiteDatabase) => Promise<void>,
+): Promise<void> {
+  const db = await getChatDb();
+  await runSerializedChatDbOperation(async () => {
+    await db.withTransactionAsync(async () => {
+      await task(db);
+    });
+  });
+}
 
 const CHAT_TABLES_SCOPED_BY_OWNER = [
   'chat_message_media',
@@ -19,9 +72,9 @@ const CHAT_TABLES_SCOPED_BY_OWNER = [
 ] as const;
 
 export async function initLocalChatDb(): Promise<SQLite.SQLiteDatabase> {
-  if (chatDbPromise) return chatDbPromise;
+  if (chatDbRuntime.dbPromise) return chatDbRuntime.dbPromise;
 
-  chatDbPromise = (async () => {
+  chatDbRuntime.dbPromise = (async () => {
     captureMessage('chat_db_init_started');
     try {
       const db = await SQLite.openDatabaseAsync(CHAT_DB_NAME);
@@ -34,13 +87,13 @@ export async function initLocalChatDb(): Promise<SQLite.SQLiteDatabase> {
       captureMessage('chat_db_init_succeeded');
       return db;
     } catch (error) {
-      chatDbPromise = null;
+      chatDbRuntime.dbPromise = null;
       captureException(error, { where: 'initLocalChatDb' });
       throw error;
     }
   })();
 
-  return chatDbPromise;
+  return chatDbRuntime.dbPromise;
 }
 
 export async function getChatDb(): Promise<SQLite.SQLiteDatabase> {
@@ -48,10 +101,9 @@ export async function getChatDb(): Promise<SQLite.SQLiteDatabase> {
 }
 
 export async function clearChatDataForUser(ownerUserId: string): Promise<void> {
-  const db = await getChatDb();
-  await db.withExclusiveTransactionAsync(async (txn) => {
+  await withSerializedChatDbTransaction(async (db) => {
     for (const table of CHAT_TABLES_SCOPED_BY_OWNER) {
-      await txn.runAsync(`delete from ${table} where owner_user_id = ?`, ownerUserId);
+      await db.runAsync(`delete from ${table} where owner_user_id = ?`, ownerUserId);
     }
   });
 }
@@ -62,12 +114,16 @@ export async function resetChatDbForUserSignOut(ownerUserId?: string | null): Pr
     return;
   }
 
-  const existingDb = chatDbPromise ? await chatDbPromise.catch(() => null) : null;
-  if (existingDb) {
-    await existingDb.closeAsync().catch(() => undefined);
-  }
-  chatDbPromise = null;
-  await SQLite.deleteDatabaseAsync(CHAT_DB_NAME).catch((error) => {
-    captureException(error, { where: 'resetChatDbForUserSignOut' });
+  await runSerializedChatDbOperation(async () => {
+    const existingDb = chatDbRuntime.dbPromise
+      ? await chatDbRuntime.dbPromise.catch(() => null)
+      : null;
+    if (existingDb) {
+      await existingDb.closeAsync().catch(() => undefined);
+    }
+    chatDbRuntime.dbPromise = null;
+    await SQLite.deleteDatabaseAsync(CHAT_DB_NAME).catch((error) => {
+      captureException(error, { where: 'resetChatDbForUserSignOut' });
+    });
   });
 }

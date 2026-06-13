@@ -9,6 +9,7 @@ import {
   createDatePlanDraftFromInvite,
   getDatePlanUiState,
   getRetryFailedTextFailureStatus,
+  markLoadedIncomingMessagesRead,
   resolveDatePlanResponseKind,
   shouldScheduleMessageRead,
 } from '../lib/chat/thread-behavior.ts';
@@ -132,6 +133,49 @@ test('shouldScheduleMessageRead only schedules unread incoming messages', () => 
       currentUserId: 'me',
     }),
     false,
+  );
+
+  assert.equal(
+    shouldScheduleMessageRead({
+      item: { ...baseMessage, id: 'system:welcome', senderId: 'peer-1' },
+      currentUserId: 'me',
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldScheduleMessageRead({
+      item: { ...baseMessage, id: 'temp-1', senderId: 'peer-1' },
+      currentUserId: 'me',
+    }),
+    false,
+  );
+});
+
+test('markLoadedIncomingMessagesRead updates only persisted unread incoming messages', () => {
+  const outgoing = { ...baseMessage, id: 'outgoing', senderId: 'me', status: 'delivered' };
+  const incoming = { ...baseMessage, id: 'incoming', senderId: 'peer-1', status: 'delivered' };
+  const alreadyRead = { ...baseMessage, id: 'read', senderId: 'peer-1', status: 'read' };
+  const systemMessage = { ...baseMessage, id: 'system:notice', senderId: 'peer-1' };
+  const items = [outgoing, incoming, alreadyRead, systemMessage];
+
+  const result = markLoadedIncomingMessagesRead({
+    items,
+    currentUserId: 'me',
+  });
+
+  assert.notEqual(result, items);
+  assert.equal(result[0], outgoing);
+  assert.equal(result[1].status, 'read');
+  assert.equal(result[2], alreadyRead);
+  assert.equal(result[3], systemMessage);
+  const unchangedItems = [outgoing, alreadyRead];
+  assert.equal(
+    markLoadedIncomingMessagesRead({
+      items: unchangedItems,
+      currentUserId: 'me',
+    }),
+    unchangedItems,
   );
 });
 

@@ -58,6 +58,7 @@ import {
   type DatePlannerMode,
   getDatePlanUiState,
   getRetryFailedTextFailureStatus,
+  markLoadedIncomingMessagesRead,
   resolveDatePlanResponseKind,
   shouldScheduleMessageRead,
 } from "@/lib/chat/thread-behavior";
@@ -3725,6 +3726,11 @@ export default function ConversationScreen() {
   const pendingServerReadIdsRef = useRef<Set<string>>(new Set());
   const readReceiptFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const localThreadReadPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const focusedThreadReadActionRef = useRef<
+    (options?: { forceRemote?: boolean }) => Promise<void>
+  >(async () => {});
+  const focusedThreadReadInFlightRef = useRef<Map<string, Promise<void>>>(new Map());
+  const focusedThreadReadCompletedRef = useRef<Set<string>>(new Set());
   const viewableReadCandidateIdsRef = useRef<Set<string>>(new Set());
   const pendingReceiptSyncTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const pendingDeliveredHintTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -3746,7 +3752,7 @@ export default function ConversationScreen() {
     peerThreadActiveRef.current = false;
     setPeerThreadActive(false);
     setNowTick(Date.now());
-  }, [clearPeerThreadActiveLeaseTimer]);
+  }, [clearPeerThreadActiveLeaseTimer, resolvedPeerAuthUserId]);
   const markPeerThreadActive = useCallback(() => {
     const activityAt = Date.now();
     peerThreadLastActivityAtRef.current = activityAt;
@@ -3762,7 +3768,7 @@ export default function ConversationScreen() {
       setPeerThreadActive(false);
       setNowTick(Date.now());
     }, THREAD_ACTIVITY_LEASE_MS + 50);
-  }, [clearPeerThreadActiveLeaseTimer]);
+  }, [clearPeerThreadActiveLeaseTimer, resolvedPeerAuthUserId]);
 
   const setPeerTypingUntil = useCallback((typingUntilValue?: string | null) => {
     if (peerTypingClearTimerRef.current) {
@@ -3794,7 +3800,7 @@ export default function ConversationScreen() {
     }
     setPeerOnline(row.online === true);
     setNowTick(Date.now());
-  }, []);
+  }, [resolvedPeerAuthUserId]);
 
   const refreshPeerStatus = useCallback(async () => {
     if (!resolvedPeerAuthUserId) return;
@@ -4416,35 +4422,6 @@ export default function ConversationScreen() {
   const initialAutoScrollAttemptsRef = useRef(0);
   const lockAutoScrollUntilRef = useRef(0);
 
-  useFocusEffect(
-    useCallback(() => {
-      isScreenFocusedRef.current = true;
-      if (user?.id && activePeerMessageUserId) {
-        activeThreadTokenRef.current = setActiveChatThread(user.id, activePeerMessageUserId);
-        void ChatRepository.markThreadRead(user.id, activePeerMessageUserId).catch((localError) =>
-          console.log('[chat] local mark focused thread read error', localError),
-        );
-      }
-      return () => {
-        isScreenFocusedRef.current = false;
-        clearActiveChatThread(user?.id, activePeerMessageUserId, activeThreadTokenRef.current);
-        activeThreadTokenRef.current = null;
-        viewableReadCandidateIdsRef.current.clear();
-        Object.values(pendingReadTimersRef.current).forEach((timer) => clearTimeout(timer));
-        pendingReadTimersRef.current = {};
-        pendingServerReadIdsRef.current.clear();
-        if (readReceiptFlushTimerRef.current) {
-          clearTimeout(readReceiptFlushTimerRef.current);
-          readReceiptFlushTimerRef.current = null;
-        }
-        if (localThreadReadPersistTimerRef.current) {
-          clearTimeout(localThreadReadPersistTimerRef.current);
-          localThreadReadPersistTimerRef.current = null;
-        }
-      };
-    }, [activePeerMessageUserId, user?.id]),
-  );
-
   const forceScrollToBottom = useCallback(() => {
     if (!flatListRef.current) return;
     const schedule = (delayMs: number) => {
@@ -4627,6 +4604,17 @@ const resolveQueuedVideoUri = async (
           : peerLastSeen
             ? `Last seen ${formatLastSeen(peerLastSeen)}`
             : 'Last seen unavailable';
+
+  useEffect(() => {
+  }, [
+    headerStatusLabel,
+    isTyping,
+    peerLastSeen,
+    peerOnline,
+    peerPresenceDisplay.label,
+    peerThreadActive,
+    resolvedPeerAuthUserId,
+  ]);
   const needsRouteIdentityResolution = routeRequiresProfileResolution && !peerResolved;
   const showThreadBootstrapLoader = false;
   const showThreadBootstrapPlaceholder =
@@ -7107,6 +7095,7 @@ const resolveQueuedVideoUri = async (
     }
 
     await acknowledgeIncomingMessagesDelivered(user.id, null, activePeerMessageUserId);
+    await focusedThreadReadActionRef.current();
     };
     const promise = run().finally(() => {
       if (fetchMessagesInFlightRef.current?.key === fetchKey) {
@@ -7654,6 +7643,7 @@ const resolveQueuedVideoUri = async (
           }
         }
         void acknowledgeIncomingMessagesDelivered(user.id, row.id, activePeerMessageUserId);
+        void focusedThreadReadActionRef.current({ forceRemote: true });
       },
       onInboxUpdate: (row) => {
         if (hiddenMessageIdsRef.current.has(row.id)) return;
@@ -7907,18 +7897,123 @@ const resolveQueuedVideoUri = async (
     ]),
   );
 
+  const markFocusedThreadRead = useCallback(async (
+    options?: { forceRemote?: boolean },
+  ) => {
+    if (
+      !user?.id ||
+      !activePeerMessageUserId ||
+      !isScreenFocusedRef.current ||
+      AppState.currentState !== 'active'
+    ) {
+      return;
+    }
+    const readKey = `${user.id}:${activePeerMessageUserId}`;
+    const currentUserId = user.id;
+    const peerUserId = activePeerMessageUserId;
+
+    setMessages((prev) =>
+      markLoadedIncomingMessagesRead({
+        items: prev,
+        currentUserId,
+      }),
+    );
+
+    const existingRead = focusedThreadReadInFlightRef.current.get(readKey);
+    if (existingRead) {
+      await existingRead;
+      if (!options?.forceRemote) return;
+    }
+    if (!options?.forceRemote && focusedThreadReadCompletedRef.current.has(readKey)) {
+      return;
+    }
+    if (options?.forceRemote) {
+      focusedThreadReadCompletedRef.current.delete(readKey);
+    }
+    const run = (async () => {
+      try {
+        await ChatRepository.markThreadRead(currentUserId, peerUserId);
+      } catch (localError) {
+        console.log('[chat] local mark focused thread read error', localError);
+      }
+
+      try {
+        const { error } = await Promise.resolve(
+          ChatThreadActionsService.markThreadRead({
+            peerUserId,
+            currentUserId,
+          }),
+        );
+        if (error) {
+          console.log('[chat] mark focused thread read error', error);
+        } else {
+          focusedThreadReadCompletedRef.current.add(readKey);
+        }
+      } catch (error) {
+        console.log('[chat] mark focused thread read exception', error);
+      }
+    })().finally(() => {
+      if (focusedThreadReadInFlightRef.current.get(readKey) === run) {
+        focusedThreadReadInFlightRef.current.delete(readKey);
+      }
+    });
+
+    focusedThreadReadInFlightRef.current.set(readKey, run);
+    await run;
+  }, [activePeerMessageUserId, user?.id]);
+
+  useEffect(() => {
+    focusedThreadReadActionRef.current = markFocusedThreadRead;
+  }, [markFocusedThreadRead]);
+
+  useFocusEffect(
+    useCallback(() => {
+      isScreenFocusedRef.current = true;
+      if (user?.id && activePeerMessageUserId) {
+        activeThreadTokenRef.current = setActiveChatThread(user.id, activePeerMessageUserId);
+        void markFocusedThreadRead();
+      }
+      return () => {
+        isScreenFocusedRef.current = false;
+        clearActiveChatThread(user?.id, activePeerMessageUserId, activeThreadTokenRef.current);
+        activeThreadTokenRef.current = null;
+        if (user?.id && activePeerMessageUserId) {
+          focusedThreadReadCompletedRef.current.delete(
+            `${user.id}:${activePeerMessageUserId}`,
+          );
+        }
+        viewableReadCandidateIdsRef.current.clear();
+        Object.values(pendingReadTimersRef.current).forEach((timer) => clearTimeout(timer));
+        pendingReadTimersRef.current = {};
+        pendingServerReadIdsRef.current.clear();
+        if (readReceiptFlushTimerRef.current) {
+          clearTimeout(readReceiptFlushTimerRef.current);
+          readReceiptFlushTimerRef.current = null;
+        }
+        if (localThreadReadPersistTimerRef.current) {
+          clearTimeout(localThreadReadPersistTimerRef.current);
+          localThreadReadPersistTimerRef.current = null;
+        }
+      };
+    }, [activePeerMessageUserId, markFocusedThreadRead, user?.id]),
+  );
+
   const flushReadReceipts = useCallback(() => {
     readReceiptFlushTimerRef.current = null;
     const messageIds = Array.from(pendingServerReadIdsRef.current);
     pendingServerReadIdsRef.current.clear();
     if (!user?.id || messageIds.length === 0) return;
-    void ChatThreadActionsService.markMessagesRead({
-      messageIds,
-      currentUserId: user.id,
-    }).then(({ error }) => {
+    void Promise.resolve(
+      ChatThreadActionsService.markMessagesRead({
+        messageIds,
+        currentUserId: user.id,
+      }),
+    ).then(({ error }) => {
       if (error) {
         console.log('[chat] mark messages read error', error);
       }
+    }).catch((error) => {
+      console.log('[chat] mark messages read exception', error);
     });
   }, [user?.id]);
 
@@ -7948,10 +8043,16 @@ const resolveQueuedVideoUri = async (
     (messageId: string) => {
       if (!user?.id || !activePeerMessageUserId) return;
       clearPendingReadTimer(messageId);
-      if (!isScreenFocusedRef.current || AppState.currentState !== 'active') return;
-      if (!viewableReadCandidateIdsRef.current.has(messageId)) return;
+      if (!isScreenFocusedRef.current || AppState.currentState !== 'active') {
+        return;
+      }
+      if (!viewableReadCandidateIdsRef.current.has(messageId)) {
+        return;
+      }
       const targetMessage = messagesRef.current.find((message) => message.id === messageId);
-      if (!shouldScheduleMessageRead({ item: targetMessage, currentUserId: user.id })) return;
+      if (!shouldScheduleMessageRead({ item: targetMessage, currentUserId: user.id })) {
+        return;
+      }
       setMessages((prev) =>
         markIncomingMessageRead({
           items: prev,
@@ -8317,7 +8418,7 @@ const resolveQueuedVideoUri = async (
         sendTypingStatus(false);
       }, 1500);
     },
-    [isChatBlocked, user?.id]
+    [isChatBlocked, resolvedPeerAuthUserId, user?.id]
   );
 
   const handleInputChange = (text: string) => {
@@ -9744,7 +9845,7 @@ const resolveQueuedVideoUri = async (
         }
       });
     },
-    [clearPendingReadTimer, scheduleMarkAsRead, user?.id]
+    [activePeerMessageUserId, clearPendingReadTimer, scheduleMarkAsRead, user?.id]
   );
 
   const resetImageScale = useCallback(() => {

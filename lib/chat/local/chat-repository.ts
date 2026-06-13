@@ -8,7 +8,11 @@ import type {
 import { resolveThreadUnreadCount } from '@/lib/chat/active-thread';
 import { CHAT_DB_NAME, CHAT_SCHEMA_VERSION } from '@/lib/chat/local/chat-schema';
 import { getChatMessagePreviewText } from '@/lib/message-preview';
-import { getChatDb } from '@/lib/storage/sqlite';
+import {
+  getChatDb,
+  runSerializedChatDbOperation,
+  withSerializedChatDbTransaction,
+} from '@/lib/storage/sqlite';
 
 type Listener = () => void;
 
@@ -115,45 +119,14 @@ export type ChatStorageDiagnosticsSnapshot = {
   syncStates: ChatDiagnosticsSyncRow[];
 };
 
-let writeQueue: Promise<unknown> = Promise.resolve();
+const runSerializedWrite = runSerializedChatDbOperation;
+const runSerializedRead = runSerializedChatDbOperation;
 
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const isDatabaseLockedError = (error: unknown) => {
-  const message = String((error as { message?: unknown })?.message ?? error).toLowerCase();
-  return message.includes('database is locked') || message.includes('error code 5');
-};
-
-const runSerializedWrite = async <T>(task: () => Promise<T>): Promise<T> => {
-  const runWithRetry = async () => {
-    const retryDelays = [40, 90, 180, 360, 720];
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        return await task();
-      } catch (error) {
-        const delay = retryDelays[attempt];
-        if (!isDatabaseLockedError(error) || delay == null) {
-          throw error;
-        }
-        await wait(delay);
-      }
-    }
-  };
-
-  const next = writeQueue.then(runWithRetry, runWithRetry);
-  writeQueue = next.catch(() => undefined);
-  return next;
-};
-
-const withExclusiveTransaction = async (
-  db: ChatDb,
-  task: (txn: ChatDb) => Promise<void>,
+const withSerializedTransaction = async (
+  _db: ChatDb,
+  task: (transactionDb: ChatDb) => Promise<void>,
 ) => {
-  await runSerializedWrite(async () => {
-    await db.withExclusiveTransactionAsync(async (txn) => {
-      await task(txn as ChatDb);
-    });
-  });
+  await withSerializedChatDbTransaction(task);
 };
 
 const toThreadParams = (thread: ChatThreadRow) => [
@@ -450,7 +423,7 @@ export const ChatRepository = {
     const db = await getChatDb();
     const includeArchived = options?.includeArchived === true;
     const limit = Math.max(1, Math.min(options?.limit ?? 200, 500));
-    return db.getAllAsync<ChatThreadRow>(
+    return runSerializedRead(() => db.getAllAsync<ChatThreadRow>(
       `
         select *
         from chat_threads
@@ -463,7 +436,7 @@ export const ChatRepository = {
       ownerUserId,
       includeArchived ? 1 : 0,
       limit,
-    );
+    ));
   },
 
   async getRecentMessageActivityTimestamps(
@@ -472,7 +445,7 @@ export const ChatRepository = {
   ): Promise<string[]> {
     const db = await getChatDb();
     const limit = Math.max(1, Math.min(options?.limit ?? 2000, 5000));
-    const rows = await db.getAllAsync<{ created_at: string | null }>(
+    const rows = await runSerializedRead(() => db.getAllAsync<{ created_at: string | null }>(
       `
         select created_at
         from chat_messages
@@ -486,7 +459,7 @@ export const ChatRepository = {
       options?.sinceIso ?? null,
       options?.sinceIso ?? null,
       limit,
-    );
+    ));
 
     return rows
       .map((row) => (typeof row?.created_at === 'string' ? row.created_at : null))
@@ -495,16 +468,16 @@ export const ChatRepository = {
 
   async getThreadById(ownerUserId: string, threadId: string): Promise<ChatThreadRow | null> {
     const db = await getChatDb();
-    return db.getFirstAsync<ChatThreadRow>(
+    return runSerializedRead(() => db.getFirstAsync<ChatThreadRow>(
       'select * from chat_threads where owner_user_id = ? and id = ? limit 1',
       ownerUserId,
       threadId,
-    );
+    ));
   },
 
   async getThreadByPeerProfileId(ownerUserId: string, peerProfileId: string): Promise<ChatThreadRow | null> {
     const db = await getChatDb();
-    return db.getFirstAsync<ChatThreadRow>(
+    return runSerializedRead(() => db.getFirstAsync<ChatThreadRow>(
       `
         select *
         from chat_threads
@@ -515,12 +488,12 @@ export const ChatRepository = {
       `,
       ownerUserId,
       peerProfileId,
-    );
+    ));
   },
 
   async hasThreadMessages(ownerUserId: string, threadId: string): Promise<boolean> {
     const db = await getChatDb();
-    const row = await db.getFirstAsync<{ has_messages: number }>(
+    const row = await runSerializedRead(() => db.getFirstAsync<{ has_messages: number }>(
       `
         select exists (
           select 1
@@ -532,7 +505,7 @@ export const ChatRepository = {
       `,
       ownerUserId,
       threadId,
-    );
+    ));
     return row?.has_messages === 1;
   },
 
@@ -671,7 +644,7 @@ export const ChatRepository = {
   async upsertThreads(ownerUserId: string, threads: ChatThreadRow[]): Promise<void> {
     if (threads.length === 0) return;
     const db = await getChatDb();
-    await withExclusiveTransaction(db, async (txn) => {
+    await withSerializedTransaction(db, async (txn) => {
       for (const thread of threads) {
         const incomingThread = {
           ...thread,
@@ -743,7 +716,7 @@ export const ChatRepository = {
     const db = await getChatDb();
     const limit = Math.max(1, Math.min(options?.limit ?? 50, 200));
     const before = options?.before ?? null;
-    const rows = await db.getAllAsync<ChatMessageRow>(
+    const rows = await runSerializedRead(() => db.getAllAsync<ChatMessageRow>(
       `
         select *
         from chat_messages
@@ -758,14 +731,14 @@ export const ChatRepository = {
       before,
       before,
       limit,
-    );
+    ));
     return rows.reverse();
   },
 
   async upsertMessages(ownerUserId: string, threadId: string, messages: ChatMessageRow[]): Promise<void> {
     if (messages.length === 0) return;
     const db = await getChatDb();
-    await withExclusiveTransaction(db, async (txn) => {
+    await withSerializedTransaction(db, async (txn) => {
       for (const message of messages) {
         if (message.local_id && !String(message.id).startsWith('temp-')) {
           await txn.runAsync(
@@ -877,7 +850,7 @@ export const ChatRepository = {
     const db = await getChatDb();
     const limit = Math.max(1, Math.min(options?.limit ?? 50, 200));
     const staleSendingBefore = new Date(Date.now() - 2 * 60 * 1000).toISOString();
-    return db.getAllAsync<ChatPendingOutboxRow>(
+    return runSerializedRead(() => db.getAllAsync<ChatPendingOutboxRow>(
       `
         select *
         from chat_pending_outbox
@@ -894,7 +867,7 @@ export const ChatRepository = {
       staleSendingBefore,
       nowIso(),
       limit,
-    );
+    ));
   },
 
   async markOutboxItemStatus(
@@ -905,7 +878,7 @@ export const ChatRepository = {
     options?: { nextRetryAt?: string | null },
   ): Promise<void> {
     const db = await getChatDb();
-    const thread = await db.getFirstAsync<{ thread_id: string }>(
+    const thread = await runSerializedRead(() => db.getFirstAsync<{ thread_id: string }>(
       `
         select thread_id
         from chat_pending_outbox
@@ -915,7 +888,7 @@ export const ChatRepository = {
       `,
       ownerUserId,
       localMessageId,
-    );
+    ));
     const nextMessageStatus = mapOutboxStatusToMessageStatus(status);
     const updatedAt = nowIso();
 
@@ -970,7 +943,7 @@ export const ChatRepository = {
 
   async markOutboxItemAttempting(ownerUserId: string, localMessageId: string): Promise<void> {
     const db = await getChatDb();
-    const thread = await db.getFirstAsync<{ thread_id: string }>(
+    const thread = await runSerializedRead(() => db.getFirstAsync<{ thread_id: string }>(
       `
         select thread_id
         from chat_pending_outbox
@@ -980,7 +953,7 @@ export const ChatRepository = {
       `,
       ownerUserId,
       localMessageId,
-    );
+    ));
     const updatedAt = nowIso();
 
     await runSerializedWrite(async () => {
@@ -1026,7 +999,7 @@ export const ChatRepository = {
 
   async markThreadRead(ownerUserId: string, threadId: string): Promise<void> {
     const db = await getChatDb();
-    await withExclusiveTransaction(db, async (txn) => {
+    await withSerializedTransaction(db, async (txn) => {
       const now = nowIso();
       const latestRead = await txn.getFirstAsync<{ id: string; created_at: string }>(
         `
@@ -1101,7 +1074,7 @@ export const ChatRepository = {
   ): Promise<void> {
     if (!messageId) return;
     const db = await getChatDb();
-    await withExclusiveTransaction(db, async (txn) => {
+    await withSerializedTransaction(db, async (txn) => {
       await txn.runAsync(
         `
           update chat_messages
@@ -1155,7 +1128,7 @@ export const ChatRepository = {
     if (ids.length === 0) return;
     const db = await getChatDb();
     const placeholders = ids.map(() => '?').join(',');
-    await withExclusiveTransaction(db, async (txn) => {
+    await withSerializedTransaction(db, async (txn) => {
       await txn.runAsync(
         `
           delete from chat_message_media
@@ -1186,7 +1159,7 @@ export const ChatRepository = {
 
   async clearThreadMessages(ownerUserId: string, threadId: string): Promise<void> {
     const db = await getChatDb();
-    await withExclusiveTransaction(db, async (txn) => {
+    await withSerializedTransaction(db, async (txn) => {
       await txn.runAsync(
         'delete from chat_message_media where owner_user_id = ? and thread_id = ?',
         ownerUserId,
@@ -1205,7 +1178,7 @@ export const ChatRepository = {
 
   async hideThreadForUser(ownerUserId: string, threadId: string): Promise<void> {
     const db = await getChatDb();
-    await withExclusiveTransaction(db, async (txn) => {
+    await withSerializedTransaction(db, async (txn) => {
       await txn.runAsync(
         'delete from chat_message_media where owner_user_id = ? and thread_id = ?',
         ownerUserId,
@@ -1259,7 +1232,7 @@ export const ChatRepository = {
     threadId?: string | null,
   ): Promise<ChatSyncStateRow | null> {
     const db = await getChatDb();
-    return db.getFirstAsync<ChatSyncStateRow>(
+    return runSerializedRead(() => db.getFirstAsync<ChatSyncStateRow>(
       `
         select *
         from chat_sync_state
@@ -1271,7 +1244,7 @@ export const ChatRepository = {
       ownerUserId,
       scope,
       threadId ?? null,
-    );
+    ));
   },
 
   async markSyncSucceeded(

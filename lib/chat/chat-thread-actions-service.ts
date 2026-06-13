@@ -14,6 +14,12 @@ export const ChatThreadActionsService = {
     } as never);
   },
 
+  markThreadRead(args: { peerUserId: string; currentUserId: string }) {
+    return supabase.rpc('rpc_mark_chat_thread_read' as never, {
+      p_peer_user_id: args.peerUserId,
+    } as never);
+  },
+
   editMessage(args: { messageId: string; newText: string }) {
     const { messageId, newText } = args;
     return supabase.rpc('edit_message', {
