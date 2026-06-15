@@ -918,9 +918,9 @@ export default function DashboardScreen() {
       <Text style={styles.cardTitle}>Your Week in Numbers</Text>
       <View style={styles.insightsGrid}>
         <View style={styles.insightItem}>
-          <MaterialCommunityIcons name="eye" size={24} color={theme.secondary} />
+          <MaterialCommunityIcons name="heart-outline" size={24} color={theme.secondary} />
           <Text style={styles.insightNumber}>{profileViews}</Text>
-          <Text style={styles.insightLabel}>Profile Views</Text>
+          <Text style={styles.insightLabel}>Profile Interest</Text>
         </View>
         <View style={styles.insightItem}>
           <MaterialCommunityIcons name="heart" size={24} color={theme.tint} />

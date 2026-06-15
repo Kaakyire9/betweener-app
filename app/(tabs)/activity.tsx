@@ -300,6 +300,18 @@ export default function ActivityScreen() {
       const handleOpen = () => {
         handleMarkRead(item);
         if (item.type === "SYSTEM") {
+          const route =
+            typeof item.metadata?.route === "string" && item.metadata.route.startsWith("/")
+              ? item.metadata.route
+              : null;
+          if (item.entity_type === "profile_interest" || route === "/profile-interest") {
+            router.push("/profile-interest");
+            return;
+          }
+          if (route) {
+            router.push(route as any);
+            return;
+          }
           router.push("/(tabs)/profile");
           return;
         }

@@ -35,6 +35,16 @@ export const buildLocationSearchText = (match: Match) =>
       '',
   ).toLowerCase();
 
+export const applyInboundInterestLift = (list: Match[]) =>
+  list
+    .map((match, index) => {
+      const rawInterest = Number(match.interestRelevanceScore) || 0;
+      const boundedLift = Math.min(4, Math.max(0, rawInterest) / 25);
+      return { match, rank: index - boundedLift };
+    })
+    .sort((left, right) => left.rank - right.rank)
+    .map((entry) => entry.match);
+
 const getDistanceKm = (match: Match) => {
   const direct = (match as any).distanceKm;
   if (typeof direct === 'number' && Number.isFinite(direct)) return direct;

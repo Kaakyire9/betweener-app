@@ -31,12 +31,14 @@ import { getProfileViewReturnCircleId, shouldReturnToCirclesHome } from '@/lib/p
 import { formatReligionLabel } from '@/lib/profile/religion';
 import { cacheOfflineVideo, getOfflineVideoUri } from '@/lib/offline/video-store';
 import { getProfileInitials, getProfilePlaceholderPalette } from '@/lib/profile-placeholders';
+import { isProfileSaved, setProfileSaved } from '@/lib/profile-interest';
 import {
   mergeViewedProfileSnapshots,
   readViewedProfileSnapshot,
   writeViewedProfileSnapshot,
 } from '@/lib/offline/profile-store';
 import { recordProfileSignal } from '@/lib/profile-signals';
+import { logVibesEvent } from '@/lib/vibes/events';
 import { isGuessPrompt, isMultipleChoiceGuess } from '@/lib/prompts/guess-prompts';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/telemetry/logger';
@@ -574,6 +576,7 @@ export default function ProfileViewPremiumV2Screen() {
   const [fetchRetryNonce, setFetchRetryNonce] = useState(0);
   const [myInterests, setMyInterests] = useState<string[]>([]);
   const signalOpenedRef = useRef<string | null>(null);
+  const fullProfileOpenedRef = useRef<string | null>(null);
   const signalIntroRef = useRef<string | null>(null);
   const dwellTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -689,6 +692,16 @@ export default function ProfileViewPremiumV2Screen() {
       targetProfileId: resolvedProfile.id,
       openedDelta: 1,
     });
+    if (fullProfileOpenedRef.current !== key) {
+      fullProfileOpenedRef.current = key;
+      void logVibesEvent({
+        viewerProfileId: currentProfile.id,
+        targetProfileId: resolvedProfile.id,
+        segment: 'forYou',
+        eventType: 'full_profile_opened',
+        metadata: { source: 'profile_view' },
+      });
+    }
   }, [currentProfile?.id, resolvedProfile.id]);
 
   useEffect(() => {
@@ -1411,6 +1424,13 @@ export default function ProfileViewPremiumV2Screen() {
       targetProfileId: resolvedProfile.id,
       introVideoStarted: true,
     });
+    void logVibesEvent({
+      viewerProfileId: currentProfile.id,
+      targetProfileId: resolvedProfile.id,
+      segment: 'forYou',
+      eventType: 'intro_played',
+      metadata: { source: 'profile_view' },
+    });
   }, [currentProfile?.id, heroVideoUrl, resolvedProfile.id, showHeroVideo]);
   const videoThumbUri = useMemo(() => {
     if (resolvedProfile.profilePicture) return resolvedProfile.profilePicture;
@@ -1485,8 +1505,17 @@ export default function ProfileViewPremiumV2Screen() {
 
   const openIntentSheet = useCallback(() => {
     if (!resolvedProfile.id || isOwnProfile) return;
+    if (currentProfile?.id) {
+      void logVibesEvent({
+        viewerProfileId: currentProfile.id,
+        targetProfileId: resolvedProfile.id,
+        segment: 'forYou',
+        eventType: 'intent_opened',
+        metadata: { source: 'profile_view' },
+      });
+    }
     setIntentSheetOpen(true);
-  }, [isOwnProfile, resolvedProfile.id]);
+  }, [currentProfile?.id, isOwnProfile, resolvedProfile.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4104,6 +4133,8 @@ function FloatingActions({
   const [boostSending, setBoostSending] = useState(false);
   const [likeSending, setLikeSending] = useState(false);
   const [liked, setLiked] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
   const giftOptions = useMemo(
     () => [
       { id: 'rose', label: 'Rose', icon: 'flower', note: 'Classic and elegant' },
@@ -4275,6 +4306,44 @@ function FloatingActions({
     };
   }, [isOwnProfile, profileId, viewerProfileId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!viewerProfileId || !profileId || isOwnProfile) {
+      setSaved(false);
+      return;
+    }
+    void isProfileSaved(viewerProfileId, profileId)
+      .then((value) => {
+        if (!cancelled) setSaved(value);
+      })
+      .catch(() => {
+        if (!cancelled) setSaved(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOwnProfile, profileId, viewerProfileId]);
+
+  const toggleSaved = async () => {
+    if (!viewerProfileId || !profileId || isOwnProfile || savingProfile) return;
+    const nextSaved = !saved;
+    setSaved(nextSaved);
+    setSavingProfile(true);
+    try {
+      const confirmed = await setProfileSaved(viewerProfileId, profileId, nextSaved);
+      setSaved(confirmed);
+      Haptics.selectionAsync().catch(() => undefined);
+    } catch (error) {
+      setSaved(!nextSaved);
+      logger.warn('[profile-view] save_profile_failed', {
+        message: String((error as any)?.message || error || 'unknown'),
+      });
+      Alert.alert('Unable to update saved profile', 'Please try again.');
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
   const sendLike = async () => {
     // Swipes are keyed by profile ids (swiper_id/target_id). Use the viewer's profile id.
     if (!viewerProfileId || !profileId || isOwnProfile || likeSending) return;
@@ -4358,6 +4427,16 @@ function FloatingActions({
             },
           ]}
         >
+          {!isOwnProfile ? (
+            <Fab
+              theme={theme}
+              label={saved ? 'Saved' : 'Save'}
+              icon={saved ? 'bookmark' : 'bookmark-outline'}
+              colors={saved ? ['#F1C75B', '#A87812'] as const : ['#748E91', '#3D5D61'] as const}
+              onPress={toggleSaved}
+              showLabel={false}
+            />
+          ) : null}
           {!isOwnProfile ? (
             <Fab
               theme={theme}

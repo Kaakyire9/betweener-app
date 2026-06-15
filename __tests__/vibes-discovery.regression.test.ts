@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildLocationSearchText, rerankVibesSegment } from '../lib/vibes/discovery-logic.ts';
+import { applyInboundInterestLift, buildLocationSearchText, rerankVibesSegment } from '../lib/vibes/discovery-logic.ts';
 
 const createMatch = (overrides: Record<string, any>) => ({
   id: overrides.id ?? 'm1',
@@ -74,4 +74,20 @@ test('location search text prefers city before region/country fallback', () => {
 
   assert.equal(cityValue, 'oforikrom');
   assert.equal(fallbackValue, 'canada');
+});
+
+test('inbound interest can lift a profile without overwhelming server order', () => {
+  const profiles = [
+    { id: 'a', name: 'A', interestRelevanceScore: 0 },
+    { id: 'b', name: 'B', interestRelevanceScore: 0 },
+    { id: 'c', name: 'C', interestRelevanceScore: 0 },
+    { id: 'd', name: 'D', interestRelevanceScore: 100 },
+    { id: 'e', name: 'E', interestRelevanceScore: 0 },
+    { id: 'f', name: 'F', interestRelevanceScore: 100 },
+  ];
+
+  const ranked = applyInboundInterestLift(profiles);
+
+  assert.equal(ranked[0]?.id, 'd');
+  assert.ok(ranked.findIndex((profile) => profile.id === 'f') >= 1);
 });

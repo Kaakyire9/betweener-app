@@ -132,6 +132,11 @@ function ExploreCard({
     () => formatDisplayNameForCard(match.name, (match as any).age, resolvedLayoutMetrics.device.compactWidth ? 18 : 24),
     [resolvedLayoutMetrics.device.compactWidth, match.name, (match as any).age],
   );
+  const premiumPlan =
+    (match as any).premiumPlan === 'GOLD' || (match as any).premiumPlan === 'SILVER'
+      ? (match as any).premiumPlan as 'GOLD' | 'SILVER'
+      : null;
+  const isNewHere = Boolean((match as any).isNewHere);
 
   const [presenceNow, setPresenceNow] = useState(() => Date.now());
   const lastActiveValue = match.lastActive || (match as any).last_active;
@@ -497,7 +502,35 @@ function ExploreCard({
             ) : null}
           </View>
 
-          {null}
+          {premiumPlan || isNewHere ? (
+            <View style={styles.identityBadges} pointerEvents="none">
+              {premiumPlan ? (
+                <LinearGradientSafe
+                  colors={premiumPlan === 'GOLD'
+                    ? ['rgba(252,222,133,0.96)', 'rgba(172,112,24,0.94)']
+                    : ['rgba(226,237,242,0.96)', 'rgba(123,148,158,0.94)']}
+                  start={[0, 0]}
+                  end={[1, 1]}
+                  style={styles.membershipBadge}
+                >
+                  <MaterialCommunityIcons
+                    name={premiumPlan === 'GOLD' ? 'crown' : 'diamond-stone'}
+                    size={11}
+                    color={premiumPlan === 'GOLD' ? '#3A2506' : '#173038'}
+                  />
+                  <Text style={[styles.membershipBadgeText, premiumPlan === 'GOLD' ? styles.goldBadgeText : null]}>
+                    {premiumPlan === 'GOLD' ? 'Gold' : 'Silver'}
+                  </Text>
+                </LinearGradientSafe>
+              ) : null}
+              {isNewHere ? (
+                <View style={styles.newHereBadge}>
+                  <MaterialCommunityIcons name="creation" size={10} color="#D9FFFF" />
+                  <Text style={styles.newHereBadgeText}>New here</Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
 
           {locationDisplay || countryFlag ? (
             <View style={styles.locationRow}>
@@ -702,6 +735,56 @@ const createStyles = (
     },
     location: { color: "rgba(255,255,255,0.92)", marginLeft: 6, fontFamily: 'Manrope_600SemiBold', flexShrink: 1, fontSize: metrics.device.compactHeight ? 13 : 14, letterSpacing: 0.1 },
     locationFlag: { marginLeft: 6, fontSize: 15 },
+    identityBadges: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      gap: 6,
+      marginTop: metrics.device.compactHeight ? -4 : -5,
+      marginBottom: metrics.device.compactHeight ? 7 : 9,
+    },
+    membershipBadge: {
+      minHeight: 23,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(255,255,255,0.42)',
+    },
+    membershipBadgeText: {
+      color: '#173038',
+      fontSize: 9,
+      lineHeight: 11,
+      fontFamily: 'Archivo_700Bold',
+      textTransform: 'uppercase',
+      letterSpacing: 0.7,
+    },
+    goldBadgeText: {
+      color: '#3A2506',
+    },
+    newHereBadge: {
+      minHeight: 23,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: 'rgba(91,193,187,0.48)',
+      backgroundColor: 'rgba(6,63,68,0.76)',
+    },
+    newHereBadgeText: {
+      color: '#E9FFFF',
+      fontSize: 9,
+      lineHeight: 11,
+      fontFamily: 'Archivo_700Bold',
+      textTransform: 'uppercase',
+      letterSpacing: 0.65,
+    },
     contextRow: {
       flexDirection: 'row',
       alignItems: 'flex-start',

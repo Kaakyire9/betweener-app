@@ -1,8 +1,9 @@
 import useAIRecommendations from '@/hooks/useAIRecommendations';
 import type { Match } from '@/types/match';
 import { getSupabaseNetEvents, supabase } from '@/lib/supabase';
+import { getProfileCardContext } from '@/lib/profile-interest';
 import { captureMessage } from '@/lib/telemetry/sentry';
-import { buildLocationSearchText, isRecentlyActive, parseDistanceKm, rerankVibesSegment, type VibesSegment } from '@/lib/vibes/discovery-logic';
+import { applyInboundInterestLift, buildLocationSearchText, isRecentlyActive, parseDistanceKm, rerankVibesSegment, type VibesSegment } from '@/lib/vibes/discovery-logic';
 import { readVibesSnapshot, writeVibesSnapshot } from '@/lib/offline/vibes-store';
 import type { RelationshipCompass } from '@/lib/relationship-compass';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -180,7 +181,7 @@ export function applyVibesFilters(
   }
 
   if (opts.preserveOrder) {
-    return out;
+    return applyInboundInterestLift(out);
   }
 
   return rerankVibesSegment(out, segment, viewerInterests, momentUserIds, relationshipCompass, viewerProfile);
@@ -228,6 +229,11 @@ export default function useVibesFeed({
   const [cachedMatches, setCachedMatches] = useState<Match[]>([]);
   const [snapshotHydrated, setSnapshotHydrated] = useState(false);
   const [watchdogError, setWatchdogError] = useState<Error | null>(null);
+  const [cardContext, setCardContext] = useState<Record<string, {
+    premiumPlan: 'FREE' | 'SILVER' | 'GOLD';
+    isNewHere: boolean;
+    interestRelevanceScore: number;
+  }>>({});
   const lastWatchdogLogAtRef = useRef(0);
 
   const mode = segment === 'activeNow' ? 'active' : segment === 'nearby' ? 'nearby' : 'forYou';
@@ -620,6 +626,49 @@ export default function useVibesFeed({
     return matches;
   }, [cachedMatches, hasFetchedOnce, lastError, matches, watchdogError]);
 
+  const sourceProfileIdsSignature = useMemo(
+    () => sourceMatches.map((match) => String(match.id)).filter(Boolean).sort().join(','),
+    [sourceMatches],
+  );
+
+  useEffect(() => {
+    if (!liveFetchEnabled || !sourceProfileIdsSignature) {
+      setCardContext({});
+      return;
+    }
+
+    let cancelled = false;
+    const profileIds = sourceProfileIdsSignature.split(',').filter(Boolean).slice(0, 80);
+    void getProfileCardContext(profileIds)
+      .then((rows) => {
+        if (cancelled) return;
+        const next: Record<string, {
+          premiumPlan: 'FREE' | 'SILVER' | 'GOLD';
+          isNewHere: boolean;
+          interestRelevanceScore: number;
+        }> = {};
+        rows.forEach((row: any) => {
+          const id = String(row?.profile_id || '');
+          if (!id) return;
+          next[id] = {
+            premiumPlan: row?.premium_plan === 'GOLD' || row?.premium_plan === 'SILVER'
+              ? row.premium_plan
+              : 'FREE',
+            isNewHere: Boolean(row?.is_new_here),
+            interestRelevanceScore: Math.max(0, Math.min(100, Number(row?.interest_relevance_score) || 0)),
+          };
+        });
+        setCardContext(next);
+      })
+      .catch(() => {
+        if (!cancelled) setCardContext({});
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [liveFetchEnabled, sourceProfileIdsSignature]);
+
   const usingCachedSnapshot = useMemo(
     () => matches.length === 0 && cachedMatches.length > 0 && (!hasFetchedOnce || !!lastError || !!watchdogError),
     [cachedMatches.length, hasFetchedOnce, lastError, matches.length, watchdogError],
@@ -633,10 +682,17 @@ export default function useVibesFeed({
   );
 
   const poolProfiles = useMemo(() => {
-    let list = sourceMatches.slice().map((match) => ({
-      ...match,
-      commonInterests: computeSharedInterests(viewerInterests, (match as any).interests),
-    }));
+    let list = sourceMatches.slice().map((match) => {
+      const context = cardContext[String(match.id)];
+      return {
+        ...match,
+        commonInterests: computeSharedInterests(viewerInterests, (match as any).interests),
+        premiumPlan: context?.premiumPlan ?? (match as any).premiumPlan ?? 'FREE',
+        isNewHere: context?.isNewHere ?? (match as any).isNewHere ?? false,
+        interestRelevanceScore:
+          context?.interestRelevanceScore ?? (match as any).interestRelevanceScore ?? 0,
+      };
+    });
     const normalizedViewerGender =
       viewerGender === 'MALE' || viewerGender === 'FEMALE' ? viewerGender : null;
 
@@ -667,7 +723,7 @@ export default function useVibesFeed({
     }
 
     return list;
-  }, [sourceMatches, blockedIds, swipedTodayIds, pendingIntentPeerIds, acceptedMatchPeerIds, chattedPeerIds, viewerInterests, viewerGender]);
+  }, [sourceMatches, cardContext, blockedIds, swipedTodayIds, pendingIntentPeerIds, acceptedMatchPeerIds, chattedPeerIds, viewerInterests, viewerGender]);
 
   const filteredProfiles = useMemo(() => {
     return applyVibesFilters(poolProfiles, filters, {

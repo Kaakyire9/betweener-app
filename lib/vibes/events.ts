@@ -4,8 +4,10 @@ import type { VibesSegment } from '@/lib/vibes/discovery-logic';
 export type VibesEventType =
   | 'card_seen'
   | 'profile_opened'
+  | 'full_profile_opened'
   | 'intro_played'
   | 'intro_completed'
+  | 'profile_saved'
   | 'pass'
   | 'like'
   | 'signal_opened'

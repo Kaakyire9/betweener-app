@@ -21,5 +21,8 @@ export type Match = {
   commonInterests?: string[] | null;
   compatibility?: number | null;
   profileVideo?: string | null;
+  premiumPlan?: 'FREE' | 'SILVER' | 'GOLD';
+  isNewHere?: boolean;
+  interestRelevanceScore?: number;
   [key: string]: unknown;
 };

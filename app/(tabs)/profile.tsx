@@ -4751,6 +4751,69 @@ export default function ProfileScreen() {
               ) : null}
           </View>
 
+          <View style={styles.insightsSection}>
+            <View style={styles.insightsSectionHeader}>
+              <View>
+                <Text style={[styles.insightsEyebrow, { color: theme.tint }]}>INSIGHTS</Text>
+                <Text style={[styles.insightsTitle, { color: theme.text }]}>Your profile, understood</Text>
+              </View>
+              <MaterialCommunityIcons name="chart-timeline-variant-shimmer" size={22} color={theme.accent} />
+            </View>
+            <View style={[styles.insightsList, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
+              {[
+                {
+                  id: 'profile-interest',
+                  title: 'Profile Interest',
+                  body: 'See how people engage with your profile.',
+                  icon: 'heart-eye-outline',
+                  onPress: () => router.push('/profile-interest'),
+                },
+                {
+                  id: 'profile-strength',
+                  title: 'Profile Strength',
+                  body: `${profileCompletion.percent}% complete`,
+                  icon: 'shield-star-outline',
+                  onPress: () => setShowEditModal(true),
+                },
+                {
+                  id: 'intent-signals',
+                  title: 'Intent Signals',
+                  body: 'Review thoughtful openings and requests.',
+                  icon: 'target',
+                  onPress: () => router.push('/(tabs)/intent'),
+                },
+                {
+                  id: 'compatibility',
+                  title: 'Compatibility Insights',
+                  body: 'Refine the values shaping your recommendations.',
+                  icon: 'compass-rose',
+                  onPress: () => router.push('/relationship-compass'),
+                },
+              ].map((item, index) => (
+                <TouchableOpacity
+                  key={item.id}
+                  activeOpacity={0.86}
+                  onPress={item.onPress}
+                  style={[
+                    styles.insightsRow,
+                    index < 3 ? { borderBottomColor: theme.outline, borderBottomWidth: StyleSheet.hairlineWidth } : null,
+                  ]}
+                >
+                  <View style={[styles.insightsRowIcon, { backgroundColor: theme.background }]}>
+                    <MaterialCommunityIcons name={item.icon as any} size={18} color={theme.tint} />
+                  </View>
+                  <View style={styles.insightsRowCopy}>
+                    <Text style={[styles.insightsRowTitle, { color: theme.text }]}>{item.title}</Text>
+                    <Text style={[styles.insightsRowBody, { color: theme.textMuted }]} numberOfLines={1}>
+                      {item.body}
+                    </Text>
+                  </View>
+                  <MaterialCommunityIcons name="chevron-right" size={18} color={theme.textMuted} />
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
           {featuredPrompt ? (
             <View
               style={[
@@ -6364,6 +6427,60 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Manrope_500Medium',
     flexShrink: 1,
+  },
+  insightsSection: {
+    width: '100%',
+    marginTop: 24,
+  },
+  insightsSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    paddingHorizontal: 2,
+  },
+  insightsEyebrow: {
+    fontSize: 10,
+    fontFamily: 'Archivo_700Bold',
+    letterSpacing: 1.4,
+  },
+  insightsTitle: {
+    marginTop: 4,
+    fontSize: 22,
+    lineHeight: 27,
+    fontFamily: 'PlayfairDisplay_700Bold',
+  },
+  insightsList: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  insightsRow: {
+    minHeight: 70,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+  },
+  insightsRowIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  insightsRowCopy: {
+    flex: 1,
+    minWidth: 0,
+    marginHorizontal: 12,
+  },
+  insightsRowTitle: {
+    fontSize: 14,
+    fontFamily: 'Manrope_700Bold',
+  },
+  insightsRowBody: {
+    marginTop: 3,
+    fontSize: 11,
+    fontFamily: 'Manrope_500Medium',
   },
   // Stats
   statsContainer: {
