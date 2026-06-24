@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef } from 'react';
 import { Animated, Image, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { buildLocationDisplay } from '@/lib/location/location-display';
 import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
 import type { Match } from '@/types/match';
 
@@ -125,11 +126,14 @@ export default function MatchModal({
   if (!visible || !match) return null;
 
   const displayName = match.age ? `${match.name}, ${match.age}` : match.name;
+  const locationLabel = buildLocationDisplay(match as Record<string, any>, {
+    surface: 'vibes',
+  }).withFlag;
   const contextBits = [
     Array.isArray(match.commonInterests) && match.commonInterests.length > 0
       ? `Shared spark: ${match.commonInterests.slice(0, 2).join(' · ')}`
       : null,
-    match.location || match.region || null,
+    locationLabel || null,
     match.verified ? 'Verified profile' : null,
   ].filter(Boolean) as string[];
 

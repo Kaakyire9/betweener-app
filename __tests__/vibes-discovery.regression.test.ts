@@ -18,6 +18,8 @@ const createMatch = (overrides: Record<string, any>) => ({
   verified: overrides.verified ?? false,
   verification_level: overrides.verification_level,
   profileVideo: overrides.profileVideo,
+  premiumPlan: overrides.premiumPlan ?? 'FREE',
+  hasActiveBoost: overrides.hasActiveBoost ?? false,
   city: overrides.city,
   location: overrides.location,
   region: overrides.region,
@@ -90,4 +92,43 @@ test('inbound interest can lift a profile without overwhelming server order', ()
 
   assert.equal(ranked[0]?.id, 'd');
   assert.ok(ranked.findIndex((profile) => profile.id === 'f') >= 1);
+});
+
+test('For You gives active boosts real visibility lift', () => {
+  const boosted = createMatch({
+    id: 'boosted',
+    compatibility: 62,
+    premiumPlan: 'SILVER',
+    hasActiveBoost: true,
+  });
+  const baseline = createMatch({
+    id: 'baseline',
+    compatibility: 62,
+    premiumPlan: 'FREE',
+  });
+
+  const ranked = rerankVibesSegment([baseline, boosted] as any, 'forYou');
+
+  assert.equal(ranked[0].id, 'boosted');
+});
+
+test('Verification still outranks a plain premium badge when fit is equal', () => {
+  const goldUnverified = createMatch({
+    id: 'gold-unverified',
+    compatibility: 68,
+    premiumPlan: 'GOLD',
+    verified: false,
+    verification_level: 0,
+  });
+  const freeVerified = createMatch({
+    id: 'free-verified',
+    compatibility: 68,
+    premiumPlan: 'FREE',
+    verified: true,
+    verification_level: 1,
+  });
+
+  const ranked = rerankVibesSegment([goldUnverified, freeVerified] as any, 'forYou');
+
+  assert.equal(ranked[0].id, 'free-verified');
 });

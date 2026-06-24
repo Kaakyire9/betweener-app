@@ -35,14 +35,14 @@ export const getReceiptIconState = (
     case 'failed':
       return { name: 'alert-circle-outline', color: isDark ? '#FF908B' : '#D14343', size: 14 };
     case 'queued':
-      return { name: 'clock-outline', color: isDark ? '#CFE1DD' : '#E8F3F0', size: 13 };
+      return { name: 'clock-outline', color: isDark ? '#CFE1DD' : '#2F6660', size: 13 };
     case 'read':
-      return { name: 'check-all', color: isDark ? '#18E0D2' : '#007D78', size: 14 };
+      return { name: 'check-all', color: isDark ? '#18E0D2' : '#12B3AC', size: 14 };
     case 'delivered':
-      return { name: 'check-all', color: isDark ? '#CAD8D5' : '#879491', size: 14 };
+      return { name: 'check-all', color: isDark ? '#CAD8D5' : '#245E58', size: 14 };
     case 'sent':
-      return { name: 'check', color: isDark ? '#AAB8B4' : '#D0DEDB', size: 14 };
+      return { name: 'check', color: isDark ? '#AAB8B4' : '#245E58', size: 14 };
     default:
-      return { name: 'clock-outline', color: '#C6D7D3', size: 13 };
+      return { name: 'clock-outline', color: isDark ? '#C6D7D3' : '#2F6660', size: 13 };
   }
 };

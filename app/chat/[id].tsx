@@ -64,6 +64,14 @@ import {
 } from "@/lib/chat/thread-behavior";
 import { ChatOutboxService } from "@/lib/chat/outbox/chat-outbox-service";
 import {
+  buildStickerPayload,
+  MOOD_STICKERS,
+  parseStickerFallback,
+  parseStickerPayload,
+  STICKER_COLORS,
+  STICKER_TEXT_PREFIX,
+} from "@/lib/chat-stickers";
+import {
   THREAD_ACTIVITY_LEASE_MS,
   isPeerThreadActivityLeaseFresh,
 } from "@/lib/chat/thread-activity";
@@ -924,80 +932,11 @@ type ReactionRow = {
 // Quick reactions
 const QUICK_REACTIONS = ['\u2764\uFE0F', '\u{1F602}', '\u{1F60D}', '\u{1F44D}', '\u{1F525}', '\u{1F44F}'];
 
-const STICKER_COLORS = {
-  mood: '#f59e0b',
-  energy: '#f97316',
-  heart: '#f43f5e',
-  celebration: '#38bdf8',
-};
-
-// Mood stickers with color themes
-const MOOD_STICKERS = [
-  { emoji: '\u{1F60A}', name: 'Happy', category: 'mood', color: STICKER_COLORS.mood },
-  { emoji: '\u{1F970}', name: 'Loved', category: 'mood', color: STICKER_COLORS.mood },
-  { emoji: '\u{1F929}', name: 'Excited', category: 'mood', color: STICKER_COLORS.mood },
-  { emoji: '\u{1F60E}', name: 'Cool', category: 'mood', color: STICKER_COLORS.mood },
-  { emoji: '\u{1F979}', name: 'Adorable', category: 'mood', color: STICKER_COLORS.mood },
-  { emoji: '\u{1F4AA}', name: 'Motivated', category: 'energy', color: STICKER_COLORS.energy },
-  { emoji: '\u{1F525}', name: 'Fire', category: 'energy', color: STICKER_COLORS.energy },
-  { emoji: '\u26A1', name: 'Electric', category: 'energy', color: STICKER_COLORS.energy },
-  { emoji: '\u2728', name: 'Sparkle', category: 'energy', color: STICKER_COLORS.energy },
-  { emoji: '\u2B50', name: 'Star', category: 'energy', color: STICKER_COLORS.energy },
-  { emoji: '\u2764\uFE0F', name: 'Love', category: 'heart', color: STICKER_COLORS.heart },
-  { emoji: '\u{1F495}', name: 'Hearts', category: 'heart', color: STICKER_COLORS.heart },
-  { emoji: '\u{1F496}', name: 'Sparkling Heart', category: 'heart', color: STICKER_COLORS.heart },
-  { emoji: '\u{1F339}', name: 'Rose', category: 'heart', color: STICKER_COLORS.heart },
-  { emoji: '\u{1F973}', name: 'Party', category: 'celebration', color: STICKER_COLORS.celebration },
-  { emoji: '\u{1F389}', name: 'Confetti', category: 'celebration', color: STICKER_COLORS.celebration },
-  { emoji: '\u{1F64C}', name: 'Celebrate', category: 'celebration', color: STICKER_COLORS.celebration },
-  { emoji: '\u{1F388}', name: 'Balloon', category: 'celebration', color: STICKER_COLORS.celebration },
-];
-
 const DEFAULT_VOICE_WAVEFORM = [0.2, 0.5, 0.35, 0.6, 0.28, 0.72, 0.44, 0.68, 0.3, 0.55, 0.4, 0.65];
 const VIDEO_TEXT_PREFIX = '\u{1F3A5} Video';
 const DOCUMENT_TEXT_PREFIX = '\u{1F4CE}';
-const STICKER_TEXT_PREFIX = 'sticker::';
 const buildMapsLink = (lat: number, lng: number) =>
   `https://maps.google.com/?q=${lat},${lng}`;
-
-const buildStickerPayload = (sticker: (typeof MOOD_STICKERS)[number]) =>
-  `${STICKER_TEXT_PREFIX}${JSON.stringify({
-    emoji: sticker.emoji,
-    name: sticker.name,
-    color: sticker.color,
-    category: sticker.category,
-  })}`;
-
-const parseStickerPayload = (text: string) => {
-  if (!text) return null;
-  if (!text.startsWith(STICKER_TEXT_PREFIX)) return null;
-  try {
-    const raw = text.slice(STICKER_TEXT_PREFIX.length);
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed.emoji !== 'string') return null;
-    return {
-      emoji: parsed.emoji,
-      name: typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name : 'Sticker',
-      color: typeof parsed.color === 'string' ? parsed.color : STICKER_COLORS.mood,
-    };
-  } catch (error) {
-    console.log('[chat] sticker parse error', error);
-    return null;
-  }
-};
-
-const parseStickerFallback = (text: string) => {
-  const trimmed = text?.trim();
-  if (!trimmed) return null;
-  const [emoji, ...rest] = trimmed.split(' ');
-  if (!emoji) return null;
-  const name = rest.join(' ').trim() || 'Sticker';
-  return {
-    emoji,
-    name,
-    color: STICKER_COLORS.mood,
-  };
-};
 
 const parseCoordsFromMapsUrl = (url?: string | null) => {
   if (!url) return null;
@@ -1591,7 +1530,7 @@ const intentTypeLabel = (type?: IntentRequestSummary['type'] | null) => {
     case 'date_request':
       return 'Date request';
     case 'like_with_note':
-      return 'Note request';
+      return 'Like with message';
     case 'circle_intro':
       return 'Circle intro';
     default:
@@ -2491,6 +2430,18 @@ const MessageRowItem = memo(
       styles.inlineMetaRowText,
       isMyMessage ? styles.inlineMetaRowTextMy : styles.inlineMetaRowTextTheir,
     ]), [isMyMessage, styles.inlineMetaRowText, styles.inlineMetaRowTextMy, styles.inlineMetaRowTextTheir]);
+    const inlineReceiptIconColor = useMemo(() => {
+      if (!isMyMessage) return receiptIcon?.color || '#C6D7D3';
+      if (item.status === 'read') {
+        return isDark
+          ? withAlpha(Colors.light.background, 0.9)
+          : '#D8FFFC';
+      }
+      return isDark
+        ? withAlpha(Colors.light.background, 0.66)
+        : withAlpha(Colors.light.background, 0.72);
+    }, [isDark, isMyMessage, item.status, receiptIcon?.color]);
+    const inlineReceiptIconSize = Math.max((receiptIcon?.size || 13) - 1, 11);
     const reactionEntranceStyle = useMemo(() => ({
       opacity: reactionEntrance,
       transform: [
@@ -2962,6 +2913,7 @@ const MessageRowItem = memo(
               : (isGroupedWithNext ? styles.theirMessageBubbleGroupedBottom : null),
             item.deletedForAll && styles.deletedMessageBubble,
             item.type === 'mood_sticker' && styles.stickerBubble,
+            item.type === 'mood_sticker' && (isMyMessage ? styles.stickerBubbleMy : styles.stickerBubbleTheir),
             item.type === 'voice' && styles.voiceBubble,
             item.type === 'image' && !isEncryptedViewOnce && styles.imageBubble,
             item.type === 'video' && !isEncryptedViewOnce && styles.videoBubble,
@@ -3147,8 +3099,8 @@ const MessageRowItem = memo(
                     <Animated.View style={receiptPulseStyle}>
                       <MaterialCommunityIcons
                         name={receiptIcon?.name || 'clock-outline'}
-                        size={receiptIcon?.size || 13}
-                        color={receiptIcon?.color || '#C6D7D3'}
+                        size={inlineReceiptIconSize}
+                        color={inlineReceiptIconColor}
                         style={styles.inlineMetaIconText}
                       />
                     </Animated.View>
@@ -3254,9 +3206,34 @@ const MessageRowItem = memo(
                   theme={theme}
                 />
               ) : item.type === 'mood_sticker' ? (
-                <View style={[styles.moodStickerContainer, { backgroundColor: withAlpha(item.sticker?.color || theme.tint, 0.12) }]}>
+                <View
+                  style={[
+                    styles.moodStickerContainer,
+                    isMyMessage ? styles.moodStickerContainerMy : styles.moodStickerContainerTheir,
+                    {
+                      backgroundColor: withAlpha(
+                        item.sticker?.color || theme.tint,
+                        isMyMessage ? (isDark ? 0.22 : 0.16) : 0.12,
+                      ),
+                      borderColor: withAlpha(
+                        item.sticker?.color || theme.tint,
+                        isMyMessage ? (isDark ? 0.34 : 0.26) : (isDark ? 0.26 : 0.18),
+                      ),
+                      shadowColor: item.sticker?.color || theme.tint,
+                    },
+                  ]}
+                >
                   <Text style={styles.moodStickerEmoji}>{item.sticker?.emoji}</Text>
-                  <Text style={[styles.moodStickerName, { color: item.sticker?.color || theme.tint }]}>
+                  <Text
+                    style={[
+                      styles.moodStickerName,
+                      {
+                        color: isMyMessage
+                          ? (isDark ? '#F7FFFD' : '#7A4600')
+                          : item.sticker?.color || theme.tint,
+                      },
+                    ]}
+                  >
                     {item.sticker?.name}
                   </Text>
                 </View>
@@ -4157,6 +4134,7 @@ export default function ConversationScreen() {
       requestId: pendingIntentRequest.id,
       decision: 'accept',
       insertAcceptanceSystemMessages: true,
+      snapshotOwnerIds: [profile?.id ?? null, user?.id ?? null],
     });
     if (result.status === 'queued') return;
     await ensureMatch();
@@ -4169,6 +4147,7 @@ export default function ConversationScreen() {
     const result = await decideIntentRequestOfflineSafe({
       requestId: pendingIntentRequest.id,
       decision: 'pass',
+      snapshotOwnerIds: [profile?.id ?? null, user?.id ?? null],
     });
     if (result.status === 'queued') return;
     setPendingIntentRequest(null);
@@ -4854,7 +4833,11 @@ const resolveQueuedVideoUri = async (
           const parsedSticker = parseStickerPayload(messageText) ?? parseStickerFallback(messageText);
           if (parsedSticker) {
             resolvedType = 'mood_sticker';
-            sticker = parsedSticker;
+            sticker = {
+              emoji: parsedSticker.emoji,
+              name: parsedSticker.name,
+              color: parsedSticker.color || STICKER_COLORS.mood,
+            };
             messageText = '';
           }
         }
@@ -8565,30 +8548,11 @@ const resolveQueuedVideoUri = async (
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     const tempId = `temp-sticker-${Date.now()}`;
     const clientMessageId = tempId;
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: tempId,
-        clientMessageId,
-        text: sticker.name,
-        senderId: user.id,
-        timestamp: new Date(),
-        type: 'mood_sticker',
-        reactions: [],
-        status: 'sending',
-        sticker: {
-          emoji: sticker.emoji,
-          name: sticker.name,
-          color: sticker.color,
-        },
-        replyToId: replyingTo?.id ?? null,
-        replyTo: replyingTo || undefined,
-      },
-    ]);
+    const payload = buildStickerPayload(sticker);
     const optimisticStickerMessage: MessageType = {
       id: tempId,
       clientMessageId,
-      text: sticker.name,
+      text: payload,
       senderId: user.id,
       timestamp: new Date(),
       type: 'mood_sticker',
@@ -8602,6 +8566,10 @@ const resolveQueuedVideoUri = async (
       replyToId: replyingTo?.id ?? null,
       replyTo: replyingTo || undefined,
     };
+    setMessages((prev) => [
+      ...prev,
+      optimisticStickerMessage,
+    ]);
     await persistLocalTextOutboxState({
       ownerUserId: user.id,
       threadId: activePeerMessageUserId,
@@ -8613,25 +8581,8 @@ const resolveQueuedVideoUri = async (
     setEditingMessage(null);
     setViewOnceMode(false);
 
-    const payload = buildStickerPayload(sticker);
-    const sendingStickerMessage: MessageType = {
-      ...optimisticStickerMessage,
-      text: payload,
-      sticker: {
-        emoji: sticker.emoji,
-        name: sticker.name,
-        color: sticker.color,
-      },
-    };
-    await persistLocalTextOutboxState({
-      ownerUserId: user.id,
-      threadId: activePeerMessageUserId,
-      message: sendingStickerMessage,
-      outboxStatus: 'sending',
-    }).catch((persistError) => console.log('[chat] persist sticker payload outbox error', persistError));
-
     if (!networkReady) {
-      const queuedMessage: MessageType = { ...sendingStickerMessage, status: 'queued' };
+      const queuedMessage: MessageType = { ...optimisticStickerMessage, status: 'queued' };
       void persistLocalTextOutboxState({
         ownerUserId: user.id,
         threadId: activePeerMessageUserId,
@@ -15024,19 +14975,24 @@ const createStyles = (
     inlineMetaRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      marginLeft: 4,
+      marginLeft: 3,
     },
     inlineMetaRowText: {
-      marginLeft: 6,
-      marginBottom: 1,
+      marginLeft: 4,
+      marginBottom: 0,
       flexShrink: 0,
     },
     inlineMetaRowTextMy: {
-      paddingHorizontal: 0,
-      paddingVertical: 0,
-      backgroundColor: 'transparent',
+      paddingHorizontal: isDark ? 0 : 4,
+      paddingVertical: isDark ? 0 : 1,
+      backgroundColor: isDark ? 'transparent' : 'rgba(255,255,255,0.10)',
       borderWidth: 0,
+      borderColor: 'transparent',
+      borderRadius: isDark ? 0 : 999,
+      shadowColor: 'transparent',
+      shadowOffset: { width: 0, height: 1 },
       shadowOpacity: 0,
+      shadowRadius: 0,
     },
     inlineMetaRowTextTheir: {
       paddingHorizontal: 0,
@@ -15046,25 +15002,25 @@ const createStyles = (
       paddingHorizontal: 7,
       paddingVertical: 3,
       borderRadius: 999,
-      backgroundColor: 'rgba(6,18,18,0.30)',
+      backgroundColor: isDark ? 'rgba(6,18,18,0.30)' : 'rgba(218,241,236,0.98)',
       borderWidth: StyleSheet.hairlineWidth,
-      borderColor: 'rgba(235,255,251,0.18)',
-      shadowColor: '#041212',
+      borderColor: isDark ? 'rgba(235,255,251,0.18)' : 'rgba(0,84,78,0.22)',
+      shadowColor: isDark ? '#041212' : '#6B8E87',
       shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.22,
-      shadowRadius: 4,
+      shadowOpacity: isDark ? 0.22 : 0.18,
+      shadowRadius: isDark ? 4 : 6,
     },
     receiptMetaBadgeSent: {
-      backgroundColor: 'rgba(5,16,16,0.26)',
-      borderColor: 'rgba(230,247,244,0.12)',
+      backgroundColor: isDark ? 'rgba(5,16,16,0.26)' : 'rgba(208,235,229,0.99)',
+      borderColor: isDark ? 'rgba(230,247,244,0.12)' : 'rgba(0,84,78,0.20)',
     },
     receiptMetaBadgeDelivered: {
-      backgroundColor: 'rgba(7,22,21,0.34)',
-      borderColor: 'rgba(202,216,213,0.20)',
+      backgroundColor: isDark ? 'rgba(7,22,21,0.34)' : 'rgba(191,229,221,0.99)',
+      borderColor: isDark ? 'rgba(202,216,213,0.20)' : 'rgba(0,84,78,0.22)',
     },
     receiptMetaBadgeRead: {
-      backgroundColor: 'rgba(2,50,47,0.48)',
-      borderColor: 'rgba(24,224,210,0.46)',
+      backgroundColor: isDark ? 'rgba(2,50,47,0.48)' : 'rgba(164,226,216,1)',
+      borderColor: isDark ? 'rgba(24,224,210,0.46)' : 'rgba(0,125,120,0.34)',
     },
     inlineMetaIcon: {
       marginLeft: 4,
@@ -15126,9 +15082,16 @@ const createStyles = (
       transform: [{ scaleX: -1 }],
     },
     stickerBubble: {
-      backgroundColor: 'transparent',
       padding: 8,
       shadowOpacity: 0.1,
+    },
+    stickerBubbleMy: {
+      backgroundColor: isDark ? withAlpha(theme.tint, 0.14) : withAlpha(theme.tint, 0.08),
+      borderColor: isDark ? withAlpha(theme.tint, 0.24) : withAlpha(theme.tint, 0.18),
+    },
+    stickerBubbleTheir: {
+      backgroundColor: isDark ? withAlpha(theme.backgroundSubtle, 0.72) : withAlpha('#FFFFFF', 0.78),
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.09),
     },
     messageText: {
       fontSize: 14.5,
@@ -15174,14 +15137,16 @@ const createStyles = (
       fontFamily: 'Manrope_400Regular',
     },
     messageMetaTextMy: {
-      color: '#FBFFFE',
+      color: isDark ? '#FBFFFE' : '#144E49',
       fontFamily: 'Manrope_600SemiBold',
       letterSpacing: 0.15,
     },
     messageMetaTextInlineMy: {
-      color: withAlpha(Colors.light.background, 0.84),
+      color: isDark
+        ? withAlpha(Colors.light.background, 0.84)
+        : withAlpha(Colors.light.background, 0.76),
       fontFamily: 'Manrope_500Medium',
-      fontSize: 9.5,
+      fontSize: 8,
       letterSpacing: 0.08,
     },
     messageMetaTextInlineTheir: {
@@ -15203,7 +15168,7 @@ const createStyles = (
       letterSpacing: 0.4,
     },
     messageMetaEditedMy: {
-      color: withAlpha(Colors.light.background, 0.75),
+      color: isDark ? withAlpha(Colors.light.background, 0.75) : withAlpha('#144E49', 0.86),
     },
     messageMetaEditedTheir: {
       color: theme.textMuted,
@@ -15234,6 +15199,15 @@ const createStyles = (
       borderRadius: 16,
       borderWidth: 1,
       borderColor: withAlpha(theme.tint, isDark ? 0.24 : 0.18),
+      shadowOffset: { width: 0, height: 6 },
+      shadowRadius: 12,
+      elevation: 4,
+    },
+    moodStickerContainerMy: {
+      shadowOpacity: isDark ? 0.18 : 0.12,
+    },
+    moodStickerContainerTheir: {
+      shadowOpacity: isDark ? 0.12 : 0.08,
     },
     moodStickerEmoji: {
       fontSize: 32,

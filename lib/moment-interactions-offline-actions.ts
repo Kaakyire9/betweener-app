@@ -5,6 +5,7 @@ import {
   clearMomentCommentMutationArtifacts,
   enqueueMomentCommentCreateMutation,
   enqueueMomentCommentDeleteMutation,
+  enqueueMomentCommentReactionSyncMutation,
   enqueueMomentCommentUpdateMutation,
   enqueueMomentReactionSyncMutation,
   isOfflineMomentCommentId,
@@ -62,12 +63,14 @@ export async function createMomentCommentOfflineSafe(params: {
   momentId: string;
   userId: string;
   body: string;
+  parentCommentId?: string | null;
 }) {
   const payload = {
     tempId: buildOfflineCommentId(),
     momentId: params.momentId,
     userId: params.userId,
     body: params.body,
+    parentCommentId: params.parentCommentId ?? null,
     createdAt: new Date().toISOString(),
   };
 
@@ -81,6 +84,7 @@ export async function createMomentCommentOfflineSafe(params: {
         user_id: payload.userId,
         body: payload.body,
         created_at: payload.createdAt,
+        parent_comment_id: payload.parentCommentId,
         is_deleted: false,
       },
     };
@@ -90,6 +94,7 @@ export async function createMomentCommentOfflineSafe(params: {
     const { data, error } = await supabase.rpc('rpc_create_moment_comment', {
       p_moment_id: params.momentId,
       p_body: params.body,
+      p_parent_comment_id: params.parentCommentId ?? null,
     });
     if (error || !data) throw error ?? new Error('comment_insert_failed');
     return { status: 'synced' as const, comment: data };
@@ -104,6 +109,7 @@ export async function createMomentCommentOfflineSafe(params: {
         user_id: payload.userId,
         body: payload.body,
         created_at: payload.createdAt,
+        parent_comment_id: payload.parentCommentId,
         is_deleted: false,
       },
     };
@@ -185,6 +191,42 @@ export async function deleteMomentCommentOfflineSafe(params: {
   } catch (error) {
     if (!isLikelyNetworkError(error)) throw error;
     await enqueueMomentCommentDeleteMutation(payload);
+    return { status: 'queued' as const };
+  }
+}
+
+export async function syncMomentCommentReactionOfflineSafe(params: {
+  commentId: string;
+  momentId: string;
+  userId: string;
+  reaction: 'heart' | 'laugh' | 'love' | 'fire' | 'clap' | null;
+  previousReaction?: 'heart' | 'laugh' | 'love' | 'fire' | 'clap' | null;
+}) {
+  const payload = {
+    commentId: params.commentId,
+    momentId: params.momentId,
+    userId: params.userId,
+    reaction: params.reaction ?? null,
+    previousReaction: params.previousReaction ?? null,
+    syncedAt: new Date().toISOString(),
+  };
+
+  if (!(await getInternetReady())) {
+    await enqueueMomentCommentReactionSyncMutation(payload);
+    return { status: 'queued' as const };
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('rpc_sync_moment_comment_reaction', {
+      p_comment_id: params.commentId,
+      p_reaction: params.reaction,
+    });
+    if (error) throw error;
+    if (data !== true) throw new Error('moment_comment_reaction_unavailable');
+    return { status: 'synced' as const };
+  } catch (error) {
+    if (!isLikelyNetworkError(error)) throw error;
+    await enqueueMomentCommentReactionSyncMutation(payload);
     return { status: 'queued' as const };
   }
 }

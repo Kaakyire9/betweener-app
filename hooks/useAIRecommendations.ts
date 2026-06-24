@@ -15,7 +15,7 @@ import { readCache, writeCache } from '@/lib/persisted-cache';
 import { isOnlineFromLastActive } from '@/lib/presence';
 import { addBreadcrumb } from '@/lib/telemetry/sentry';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { DeviceEventEmitter, Linking } from 'react-native';
 
 // Tunable window for "Active" tab (minutes)
@@ -227,6 +227,10 @@ export default function useAIRecommendations(
   const mode = opts?.mode ?? 'forYou';
   const activeWindowMinutes = opts?.activeWindowMinutes ?? ACTIVE_WINDOW_MINUTES;
   const liveFetchEnabled = opts?.liveFetchEnabled !== false;
+  const queryScopeKey = useMemo(() => {
+    const win = mode === 'active' ? String(activeWindowMinutes) : '-';
+    return `${userId ?? 'anon'}:${mode}:${win}`;
+  }, [activeWindowMinutes, mode, userId]);
   const effectiveDistanceUnit =
     opts?.distanceUnit && opts.distanceUnit !== 'auto' ? opts.distanceUnit : distanceUnit;
   const resolvedDistanceUnit = useMemo(
@@ -241,6 +245,20 @@ export default function useAIRecommendations(
   }, [activeWindowMinutes, mode, userId]);
   const cacheLoadedKeyRef = useRef<string | null>(null);
   const cacheWriteInFlightRef = useRef(false);
+  const lastQueryScopeKeyRef = useRef<string | null>(null);
+  const activeQueryScopeKeyRef = useRef(queryScopeKey);
+  const activeFetchRunIdRef = useRef(0);
+
+  useLayoutEffect(() => {
+    if (lastQueryScopeKeyRef.current === queryScopeKey) return;
+    lastQueryScopeKeyRef.current = queryScopeKey;
+    activeQueryScopeKeyRef.current = queryScopeKey;
+    setMatches([]);
+    setLastError(null);
+    setLastFetchedAt(null);
+    swipeHistoryRef.current = [];
+    setSwipeHistory([]);
+  }, [queryScopeKey]);
 
   const persistMatchesCache = useCallback(
     async (next: Match[]) => {
@@ -266,6 +284,7 @@ export default function useAIRecommendations(
     (async () => {
       const cached = await readCache<{ fetchedAt: number; matches: Match[] }>(cacheKey, 6 * 60_000);
       if (cancelled || !cached || !Array.isArray(cached.matches)) return;
+      if (!mountedRef.current || activeQueryScopeKeyRef.current !== queryScopeKey) return;
       setMatches((prev) => (prev.length === 0 ? cached.matches : prev));
       setLastError(null);
       setLastFetchedAt((prev) => prev ?? cached.fetchedAt ?? Date.now());
@@ -274,7 +293,7 @@ export default function useAIRecommendations(
     return () => {
       cancelled = true;
     };
-  }, [cacheKey]);
+  }, [cacheKey, queryScopeKey]);
 
   const getStoredDistanceUnit = useCallback(async (): Promise<DistanceUnit> => {
     try {
@@ -492,6 +511,8 @@ export default function useAIRecommendations(
               source: 'swipe',
               swipe_action: action,
               },
+              actorProfileId: userId,
+              snapshotOwnerIds: [userId],
             });
           } catch (intentErr) {
             // Best-effort: swipes should still function even if the Intent mirror fails.
@@ -567,7 +588,9 @@ export default function useAIRecommendations(
         const intentId = Array.isArray(intentRows) ? intentRows[0]?.id : null;
         if (!intentLookupError && intentId) {
           try {
-            await cancelIntentRequestOfflineSafe(intentId);
+            await cancelIntentRequestOfflineSafe(intentId, {
+              snapshotOwnerIds: [userId],
+            });
           } catch (cancelError) {
             if (typeof __DEV__ !== 'undefined' && __DEV__) {
               console.log('[undoLastSwipe] failed to cancel mirrored intent', cancelError);
@@ -843,6 +866,35 @@ export default function useAIRecommendations(
 
   const fetchMatchesFromServer = useCallback(async () => {
     if (!liveFetchEnabled) return;
+    const fetchRunId = activeFetchRunIdRef.current + 1;
+    activeFetchRunIdRef.current = fetchRunId;
+
+    const isCurrentFetch = () =>
+      mountedRef.current &&
+      activeFetchRunIdRef.current === fetchRunId &&
+      activeQueryScopeKeyRef.current === queryScopeKey;
+
+    const commitFetchFailure = (err: any) => {
+      if (!isCurrentFetch()) return false;
+      setLastError(err as any);
+      setLastFetchedAt(Date.now());
+      return true;
+    };
+
+    const commitMatchesResult = (filtered: Match[]) => {
+      if (!isCurrentFetch()) return false;
+
+      let mergedFiltered = filtered;
+      setMatches((prev) => {
+        mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
+        return mergedFiltered;
+      });
+      setLastError(null);
+      setLastFetchedAt(Date.now());
+      void persistMatchesCache(mergedFiltered);
+      return true;
+    };
+
     try {
       const storedUnit = await getStoredDistanceUnit();
       const unitForFormat: DistanceUnit = storedUnit === 'auto' ? resolveAutoUnit() : storedUnit;
@@ -852,9 +904,6 @@ export default function useAIRecommendations(
         mode,
         hasUserId: !!userId,
       });
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        console.log('[useAIRecommendations] fetchMatchesFromServer starting', { userId, fetchId, mode });
-      }
 
       // Fast path: hit the scored RPCs first. Avoid prefetching extra viewer data
       // (profile/interests) on cold start/resume, because those extra queries can hang
@@ -863,8 +912,7 @@ export default function useAIRecommendations(
         const noteRpcFailure = (err: any, fn: string) => {
           // Important: mark that a fetch attempt happened so the UI can exit skeleton/loading
           // deterministically and show a retry/error state.
-          setLastError(err as any);
-          setLastFetchedAt(Date.now());
+          commitFetchFailure(err);
           addBreadcrumb('[recs] fetch_fail', {
             fetchId,
             mode,
@@ -1089,6 +1137,19 @@ export default function useAIRecommendations(
             current_country_code: (p as any).current_country_code,
             location_precision: (p as any).location_precision,
             recommendationReasons: p?.recommendation_reasons ?? undefined,
+            premiumPlan:
+              p?.recommendation_reasons?.premium_plan === 'GOLD' || p?.recommendation_reasons?.premium_plan === 'SILVER'
+                ? p.recommendation_reasons.premium_plan
+                : 'FREE',
+            hasActiveBoost: Boolean(p?.recommendation_reasons?.has_active_boost),
+            boostEndsAt:
+              typeof p?.recommendation_reasons?.boost_ends_at === 'string'
+                ? p.recommendation_reasons.boost_ends_at
+                : null,
+            subscriptionVisibilityScore:
+              typeof p?.recommendation_reasons?.subscription_visibility_score === 'number'
+                ? p.recommendation_reasons.subscription_visibility_score
+                : null,
             recommendationVersion:
               typeof p?.recommendation_reasons?.version === 'string'
                 ? p.recommendation_reasons.version
@@ -1121,14 +1182,7 @@ export default function useAIRecommendations(
             const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
             const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
             const filtered = filterDiscoverable(mapped);
-            let mergedFiltered = filtered;
-            setMatches((prev) => {
-              mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
-              return mergedFiltered;
-            });
-            setLastError(null);
-            setLastFetchedAt(Date.now());
-            void persistMatchesCache(mergedFiltered);
+            if (!commitMatchesResult(filtered)) return;
             addBreadcrumb('[recs] fetch_ok', { fetchId, mode, fn: 'get_vibes_recommendations_v3', rows: mapped.length });
             return;
           }
@@ -1172,14 +1226,7 @@ export default function useAIRecommendations(
             const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
             const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
             const filtered = filterDiscoverable(mapped);
-            let mergedFiltered = filtered;
-            setMatches((prev) => {
-              mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
-              return mergedFiltered;
-            });
-            setLastError(null);
-            setLastFetchedAt(Date.now());
-            void persistMatchesCache(mergedFiltered);
+            if (!commitMatchesResult(filtered)) return;
             addBreadcrumb('[recs] fetch_ok', { fetchId, mode, fn: 'get_vibes_recommendations_v2', rows: mapped.length });
             return;
           }
@@ -1224,15 +1271,7 @@ export default function useAIRecommendations(
               const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
               const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
               const filtered = filterDiscoverable(mapped);
-              let mergedFiltered = filtered;
-              setMatches((prev) => {
-                mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
-                return mergedFiltered;
-              });
-              setLastError(null);
-              setLastFetchedAt(Date.now());
-              void persistMatchesCache(mergedFiltered);
-              if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] nearby rpc result', { count: mapped.length });
+              if (!commitMatchesResult(filtered)) return;
               addBreadcrumb('[recs] fetch_ok', { fetchId, mode, rows: mapped.length });
               return;
             }
@@ -1266,14 +1305,7 @@ export default function useAIRecommendations(
               const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
               const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
               const filtered = filterDiscoverable(mapped);
-              let mergedFiltered = filtered;
-              setMatches((prev) => {
-                mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
-                return mergedFiltered;
-              });
-              setLastError(null);
-              setLastFetchedAt(Date.now());
-              void persistMatchesCache(mergedFiltered);
+              if (!commitMatchesResult(filtered)) return;
               if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] active rpc result', { count: mapped.length });
               addBreadcrumb('[recs] fetch_ok', { fetchId, mode, rows: mapped.length });
               return;
@@ -1309,14 +1341,7 @@ export default function useAIRecommendations(
               const viewerCoords = needsDistanceFallback ? await loadRpcViewerCoords() : null;
               const mapped = enriched.map((p: any) => mapRpcRow(p, true, viewerCoords));
               const filtered = filterDiscoverable(mapped);
-              let mergedFiltered = filtered;
-              setMatches((prev) => {
-                mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
-                return mergedFiltered;
-              });
-              setLastError(null);
-              setLastFetchedAt(Date.now());
-              void persistMatchesCache(mergedFiltered);
+              if (!commitMatchesResult(filtered)) return;
               if (typeof __DEV__ !== 'undefined' && __DEV__) console.log('[useAIRecommendations] forYou rpc result', { count: mapped.length });
               addBreadcrumb('[recs] fetch_ok', { fetchId, mode, rows: mapped.length });
               return;
@@ -1409,9 +1434,9 @@ export default function useAIRecommendations(
         // due to missing columns (Postgres error 42703), retry with a
         // minimal safe column list to avoid falling back to mocks.
         const extendedSelect =
-          'id, user_id, full_name, age, bio, avatar_url, city, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
+          'id, user_id, full_name, age, bio, avatar_url, city, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed, created_at';
         const minimalSelect =
-          'id, user_id, full_name, age, bio, avatar_url, city, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed';
+          'id, user_id, full_name, age, bio, avatar_url, city, location, latitude, longitude, region, tribe, religion, gender, personality_type, looking_for, love_language, wants_children, smoking, online, is_active, last_active, verification_level, profile_video, current_country, current_country_code, location_precision, matchmaking_mode, discoverable_in_vibes, profile_completed, created_at';
 
         let data: any[] | null = null;
         let error: any = null;
@@ -1568,17 +1593,11 @@ export default function useAIRecommendations(
               matchmaking_mode: (p as any).matchmaking_mode ?? false,
               discoverable_in_vibes: (p as any).discoverable_in_vibes ?? true,
               profile_completed: (p as any).profile_completed,
+              created_at: p.created_at ?? null,
             } as Match);
           });
           const filtered = filterDiscoverable(mapped);
-          let mergedFiltered = filtered;
-          setMatches((prev) => {
-            mergedFiltered = mergePreservingLocationMetadata(prev, filtered);
-            return mergedFiltered;
-          });
-          setLastError(null);
-          setLastFetchedAt(Date.now());
-          void persistMatchesCache(mergedFiltered);
+          if (!commitMatchesResult(filtered)) return;
           if (typeof __DEV__ !== 'undefined' && __DEV__) {
             console.log('[useAIRecommendations] fetched matches from server', { count: mapped.length, sample: mapped.slice(0, 3) });
           }
@@ -1589,7 +1608,7 @@ export default function useAIRecommendations(
         // returned zero rows, leave `matches` empty so the UI shows the empty state.
         if (error) {
           console.log('[useAIRecommendations] profiles query error (falling back to mocks)', error);
-          setLastError(error as any);
+          commitFetchFailure(error);
         } else if (Array.isArray(data) && data.length === 0) {
           const cachedMatches = cacheKey
             ? ((await readCache<{ fetchedAt: number; matches: Match[] }>(cacheKey, 6 * 60_000))?.matches ?? [])
@@ -1604,12 +1623,15 @@ export default function useAIRecommendations(
           }
           if (shouldPreserveExisting) {
             if (matchesRef.current.length === 0 && cachedMatches.length > 0) {
+              if (!isCurrentFetch()) return;
               setMatches(cachedMatches);
             }
+            if (!isCurrentFetch()) return;
             setLastError(null);
             setLastFetchedAt(Date.now());
             return;
           }
+          if (!isCurrentFetch()) return;
           setMatches([]);
           setLastError(null);
           setLastFetchedAt(Date.now());
@@ -1624,6 +1646,7 @@ export default function useAIRecommendations(
       }
     } catch (e) {
       console.log('[useAIRecommendations] fetch error', e);
+      if (!isCurrentFetch()) return;
       setLastError(e as any);
       setLastFetchedAt((prev) => prev ?? Date.now());
       return;
@@ -1631,9 +1654,10 @@ export default function useAIRecommendations(
     // If we reached here it means a server fetch was attempted and failed
     // (or returned no profiles). Keep any cached/previous matches visible.
     console.log('[useAIRecommendations] fetch failed (keeping existing matches if any)');
+    if (!isCurrentFetch()) return;
     setLastError((prev) => prev ?? new Error('fetch_failed'));
     setLastFetchedAt((prev) => prev ?? Date.now());
-  }, [activeWindowMinutes, getStoredDistanceUnit, liveFetchEnabled, mode, persistMatchesCache, resolvedDistanceUnit, userId]);
+  }, [activeWindowMinutes, getStoredDistanceUnit, liveFetchEnabled, mode, persistMatchesCache, queryScopeKey, resolvedDistanceUnit, userId]);
 
     // Fetch matches on mount and when userId changes
     useEffect(() => {

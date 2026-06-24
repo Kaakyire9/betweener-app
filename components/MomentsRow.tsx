@@ -3,6 +3,7 @@ import React from 'react';
 import { Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { MomentUser } from '@/hooks/useMoments';
 import OfflineImage from '@/components/media/OfflineImage';
 import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
@@ -16,6 +17,12 @@ type Props = {
 };
 
 export default function MomentsRow({ users, isLoading, onPressUser, onPressCreate, onPressOwn }: Props) {
+  const colorScheme = useColorScheme();
+  const resolvedScheme = (colorScheme ?? 'light') === 'dark' ? 'dark' : 'light';
+  const theme = Colors[resolvedScheme];
+  const isDark = resolvedScheme === 'dark';
+  const styles = React.useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+
   if (!users || users.length === 0) {
     return null;
   }
@@ -76,7 +83,7 @@ export default function MomentsRow({ users, isLoading, onPressUser, onPressCreat
                   </View>
                   {isOwn && (
                     <View style={styles.plusBadge}>
-                      <MaterialCommunityIcons name="plus" size={14} color="#fff" />
+                      <MaterialCommunityIcons name="plus" size={14} color={Colors.light.background} />
                     </View>
                   )}
                 </LinearGradient>
@@ -92,7 +99,7 @@ export default function MomentsRow({ users, isLoading, onPressUser, onPressCreat
                   </View>
                   {isOwn && (
                     <View style={styles.plusBadge}>
-                      <MaterialCommunityIcons name="plus" size={14} color="#fff" />
+                      <MaterialCommunityIcons name="plus" size={14} color={Colors.light.background} />
                     </View>
                   )}
                 </View>
@@ -108,14 +115,26 @@ export default function MomentsRow({ users, isLoading, onPressUser, onPressCreat
   );
 }
 
-const styles = StyleSheet.create({
+const withAlpha = (hex: string, alpha: number) => {
+  const normalized = hex.replace('#', '');
+  const bigint = parseInt(
+    normalized.length === 3 ? normalized.split('').map((c) => c + c).join('') : normalized,
+    16,
+  );
+  const r = (bigint >> 16) & 255;
+  const g = (bigint >> 8) & 255;
+  const b = bigint & 255;
+  return `rgba(${r},${g},${b},${Math.max(0, Math.min(1, alpha))})`;
+};
+
+const createStyles = (theme: typeof Colors.light, isDark: boolean) => StyleSheet.create({
   container: {
     paddingHorizontal: 18,
     paddingTop: 10,
     paddingBottom: 4,
   },
   title: {
-    color: '#0f172a',
+    color: theme.text,
     fontSize: 16,
     fontFamily: 'Archivo_700Bold',
     marginBottom: 10,
@@ -127,7 +146,7 @@ const styles = StyleSheet.create({
     height: 62,
     borderRadius: 31,
     borderWidth: 1,
-    borderColor: '#e5e7eb',
+    borderColor: withAlpha(theme.text, isDark ? 0.2 : 0.12),
     padding: 2,
     justifyContent: 'center',
     alignItems: 'center',
@@ -143,7 +162,7 @@ const styles = StyleSheet.create({
     width: 54,
     height: 54,
     borderRadius: 27,
-    backgroundColor: '#fff',
+    backgroundColor: isDark ? withAlpha(theme.background, 0.88) : theme.background,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -152,11 +171,11 @@ const styles = StyleSheet.create({
     width: 54,
     height: 54,
     borderRadius: 27,
-    backgroundColor: '#e5e7eb',
+    backgroundColor: theme.backgroundSubtle,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  avatarInitial: { color: '#111827', fontFamily: 'Archivo_700Bold', fontSize: 18 },
+  avatarInitial: { color: theme.text, fontFamily: 'Archivo_700Bold', fontSize: 18 },
   plusBadge: {
     position: 'absolute',
     right: -2,
@@ -164,11 +183,11 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: Colors.light.tint,
+    backgroundColor: theme.tint,
     borderWidth: 2,
-    borderColor: '#fff',
+    borderColor: isDark ? theme.background : Colors.light.background,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  label: { color: '#111827', fontSize: 12, fontFamily: 'Manrope_600SemiBold', marginTop: 6 },
+  label: { color: theme.text, fontSize: 12, fontFamily: 'Manrope_600SemiBold', marginTop: 6 },
 });

@@ -1,6 +1,7 @@
 import { isDistanceLabel, parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { getAuthoritativePresenceDisplay } from '@/lib/presence';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
+import { getProfileCardContext } from '@/lib/profile-interest';
 import { supabase } from '@/lib/supabase';
 import { fetchUserPresence, overlayPresence } from '@/lib/user-presence';
 import type { Interest, ProfilePromptAnswer, UserProfile } from '@/types/user-profile';
@@ -20,9 +21,9 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
   const { viewedProfileId, viewerProfileId, fallbackDistanceLabel, fallbackDistanceKm } = options;
 
   const selectFull =
-    'id, user_id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, height, looking_for, love_language, languages_spoken, current_country, current_country_code, origin_country, origin_country_code, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, last_active, verification_level';
+    'id, user_id, full_name, age, region, city, location, avatar_url, photos, profile_video, occupation, education, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, height, looking_for, love_language, languages_spoken, current_country, current_country_code, origin_country, origin_country_code, exercise_frequency, smoking, drinking, has_children, wants_children, location_precision, is_active, online, last_active, verification_level, created_at';
   const selectMinimal =
-    'id, user_id, full_name, age, region, city, location, avatar_url, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, love_language, is_active, online, last_active, verification_level, current_country_code, origin_country, origin_country_code';
+    'id, user_id, full_name, age, region, city, location, avatar_url, bio, tribe, roots, roots_note, roots_visibility, religion, personality_type, love_language, is_active, online, last_active, verification_level, current_country_code, origin_country, origin_country_code, created_at';
 
   let data: any = null;
   let error: any = null;
@@ -123,12 +124,30 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
     profileWithPresence.online,
     profileWithPresence.last_active ?? null,
   );
+  let premiumPlan: 'FREE' | 'SILVER' | 'GOLD' | undefined;
+  let isNewHere = false;
+
+  try {
+    const [context] = await getProfileCardContext([viewedProfileId]);
+    const resolvedPlan = String(
+      (context as any)?.premium_plan ?? (context as any)?.premiumPlan ?? '',
+    ).trim().toUpperCase();
+    premiumPlan =
+      resolvedPlan === 'FREE' || resolvedPlan === 'SILVER' || resolvedPlan === 'GOLD'
+        ? (resolvedPlan as 'FREE' | 'SILVER' | 'GOLD')
+        : undefined;
+    isNewHere = Boolean((context as any)?.is_new_here ?? (context as any)?.isNewHere);
+  } catch {
+    const createdAtMs = Date.parse(String((profileWithPresence as any)?.created_at || ''));
+    isNewHere = Number.isFinite(createdAtMs) && Date.now() - createdAtMs <= 14 * 24 * 60 * 60 * 1000;
+  }
 
   const mapped: UserProfile = {
     id: profileWithPresence.id,
     userId: profileWithPresence.user_id || undefined,
     name: profileWithPresence.full_name || 'Profile',
     age: profileWithPresence.age || 0,
+    createdAt: (profileWithPresence as any).created_at || undefined,
     location: profileWithPresence.location || profileWithPresence.region || '',
     city: profileWithPresence.city || undefined,
     region: profileWithPresence.region || undefined,
@@ -176,6 +195,8 @@ export async function fetchViewedProfile(options: FetchViewedProfileOptions): Pr
     religion: profileWithPresence.religion || undefined,
     interests: interestsArr,
     promptAnswers,
+    premiumPlan,
+    isNewHere,
   };
 
   if ((!mapped.photos || mapped.photos.length === 0) && mapped.profilePicture) {

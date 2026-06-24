@@ -23,6 +23,7 @@ import {
 } from '@/lib/offline/intent-store';
 import { subscribeToNetworkRestored } from '@/lib/network-recovery';
 import { fetchPeerVisibilityPrefs } from '@/lib/peer-visibility';
+import { buildLocationDisplay } from '@/lib/location/location-display';
 import { getSafeRemoteImageUri, getUserFacingDisplayName, hasLeftBetweener } from '@/lib/profile/display-name';
 import { getProfileInitials, getProfilePlaceholderPalette } from '@/lib/profile-placeholders';
 import { supabase } from '@/lib/supabase';
@@ -74,6 +75,9 @@ type ProfileSnippet = {
   location?: string | null;
   city?: string | null;
   region?: string | null;
+  current_country?: string | null;
+  current_country_code?: string | null;
+  location_precision?: string | null;
   looking_for?: string | null;
   love_language?: string | null;
   personality_type?: string | null;
@@ -493,7 +497,7 @@ const buildQuickReplyText = (opts: {
   }
 
   if (opts.itemType === 'like_with_note' && opts.note && opts.note.trim()) {
-    return `Hey ${name}! Thanks for the note - ${opts.note.trim()}`;
+    return `Hey ${name}! Thanks for the message - ${opts.note.trim()}`;
   }
 
   if (shared[0]) {
@@ -536,7 +540,7 @@ const typeLabel = (item: Pick<IntentRequest, 'type' | 'message' | 'metadata'>) =
 
       if (swipeAction === 'SUPERLIKE') return 'Signal';
       // "like_with_note" represents plain likes (from swipes) too.
-      return hasUserNote ? 'Note' : 'Like';
+      return hasUserNote ? 'Like with message' : 'Like';
     }
     case 'circle_intro':
       return 'Circle';
@@ -548,7 +552,7 @@ const typeLabel = (item: Pick<IntentRequest, 'type' | 'message' | 'metadata'>) =
 const getRequestPriorityRank = (item: Pick<IntentRequest, 'type' | 'message' | 'metadata'>) => {
   if (item.type === 'connect' || item.type === 'date_request') return 1;
   if (item.type === 'like_with_note') {
-    return typeLabel(item) === 'Note' ? 1 : 2;
+    return typeLabel(item) === 'Like with message' ? 1 : 2;
   }
   if (item.type === 'circle_intro') return 3;
   return 4;
@@ -728,9 +732,10 @@ export default function IntentScreen() {
   const reduceMotion = useReduceMotion();
 
   const currentProfileId = profileId;
+  const intentSnapshotOwnerIds = [currentProfileId, profile?.id, user?.id, (profile as any)?.user_id];
   const { incoming, sent, loading, refresh, updateLocalIntent } = useIntentRequests(currentProfileId, {
     liveFetchEnabled: !showingRecoveredSnapshot,
-    snapshotOwnerIds: [currentProfileId, profile?.id, user?.id, (profile as any)?.user_id],
+    snapshotOwnerIds: intentSnapshotOwnerIds,
   });
   const effectiveLoading = showingRecoveredSnapshot ? false : loading;
   const [direction, setDirection] = useState<Direction>('incoming');
@@ -1559,7 +1564,9 @@ export default function IntentScreen() {
         name: getUserFacingDisplayName(actor, 'Someone'),
         age: actor?.age ?? 0,
         avatar_url: actor?.avatar_url || undefined,
-        location: actor?.city || actor?.region || actor?.location || undefined,
+        location: actor
+          ? buildLocationDisplay(actor as Record<string, any>, { surface: 'vibes' }).withFlag || undefined
+          : undefined,
         interests: peerInterests,
         commonInterests: sharedInterests,
         verified: (actor?.verification_level ?? 0) > 0,
@@ -1584,7 +1591,9 @@ export default function IntentScreen() {
         name: getUserFacingDisplayName(sender, 'Someone'),
         age: sender?.age ?? 0,
         avatar_url: sender?.avatar_url || undefined,
-        location: sender?.city || sender?.region || sender?.location || undefined,
+        location: sender
+          ? buildLocationDisplay(sender as Record<string, any>, { surface: 'vibes' }).withFlag || undefined
+          : undefined,
         interests: peerInterests,
         commonInterests: sharedInterests,
         verified: (sender?.verification_level ?? 0) > 0,
@@ -1636,14 +1645,19 @@ export default function IntentScreen() {
           requestId: item.id,
           decision: 'accept',
           insertAcceptanceSystemMessages: true,
+          snapshotOwnerIds: intentSnapshotOwnerIds,
+        });
+        updateLocalIntent(item.id, {
+          status: 'accepted',
+          metadata:
+            result.status === 'queued'
+              ? {
+                  ...(item.metadata ?? {}),
+                  offline_queue: { action: 'accept', state: 'queued', queued_at: new Date().toISOString() },
+                }
+              : item.metadata ?? null,
         });
         if (result.status === 'queued') {
-          updateLocalIntent(item.id, {
-            metadata: {
-              ...(item.metadata ?? {}),
-              offline_queue: { action: 'accept', state: 'queued', queued_at: new Date().toISOString() },
-            },
-          });
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           return;
         }
@@ -1661,14 +1675,22 @@ export default function IntentScreen() {
 
   const passRequest = useCallback(async (item: IntentRequest) => {
     try {
-      const result = await decideIntentRequestOfflineSafe({ requestId: item.id, decision: 'pass' });
+      const result = await decideIntentRequestOfflineSafe({
+        requestId: item.id,
+        decision: 'pass',
+        snapshotOwnerIds: intentSnapshotOwnerIds,
+      });
+      updateLocalIntent(item.id, {
+        status: 'passed',
+        metadata:
+          result.status === 'queued'
+            ? {
+                ...(item.metadata ?? {}),
+                offline_queue: { action: 'pass', state: 'queued', queued_at: new Date().toISOString() },
+              }
+            : item.metadata ?? null,
+      });
       if (result.status === 'queued') {
-        updateLocalIntent(item.id, {
-          metadata: {
-            ...(item.metadata ?? {}),
-            offline_queue: { action: 'pass', state: 'queued', queued_at: new Date().toISOString() },
-          },
-        });
         return;
       }
     } catch (error) {
@@ -1680,14 +1702,20 @@ export default function IntentScreen() {
 
   const cancelRequest = useCallback(async (item: IntentRequest) => {
     try {
-      const result = await cancelIntentRequestOfflineSafe(item.id);
+      const result = await cancelIntentRequestOfflineSafe(item.id, {
+        snapshotOwnerIds: intentSnapshotOwnerIds,
+      });
+      updateLocalIntent(item.id, {
+        status: 'cancelled',
+        metadata:
+          result.status === 'queued'
+            ? {
+                ...(item.metadata ?? {}),
+                offline_queue: { action: 'cancel', state: 'queued', queued_at: new Date().toISOString() },
+              }
+            : item.metadata ?? null,
+      });
       if (result.status === 'queued') {
-        updateLocalIntent(item.id, {
-          metadata: {
-            ...(item.metadata ?? {}),
-            offline_queue: { action: 'cancel', state: 'queued', queued_at: new Date().toISOString() },
-          },
-        });
         return;
       }
     } catch (error) {
@@ -2086,6 +2114,12 @@ export default function IntentScreen() {
         peerInterests,
         lookingFor: peer?.looking_for,
       });
+      const requestTypeLabel = typeLabel(item);
+      const isMessageBackedLike = requestTypeLabel === 'Like with message';
+      const circleName =
+        typeof item.metadata?.circle_name === 'string'
+          ? item.metadata.circle_name.trim()
+          : '';
       const headerSignals: { label: string; tone: 'accent' | 'tint' | 'soft' }[] = [];
       const pushHeaderSignal = (label: string | null | undefined, tone: 'accent' | 'tint' | 'soft') => {
         if (!label) return;
@@ -2094,10 +2128,12 @@ export default function IntentScreen() {
       };
       pushHeaderSignal(conversationSignal, 'accent');
       pushHeaderSignal(trustSignals[0] ?? null, 'tint');
+      if (circleName) pushHeaderSignal(`Same circle: ${circleName}`, 'tint');
       if (sameGoals) pushHeaderSignal('Intent shared', 'soft');
       if (sharedValues) pushHeaderSignal('Shared values', 'soft');
       if (sameRegion) pushHeaderSignal('Same region', 'soft');
       const whyChips = [
+        circleName ? `Circle: ${circleName}` : null,
         sharedValues ? 'Shared values' : null,
         sameGoals ? 'Same goals' : null,
         sameRegion ? 'Same region' : null,
@@ -2150,10 +2186,10 @@ export default function IntentScreen() {
             ? 'This request was cancelled.'
             : 'This request is closed.';
       const closedStateBody = canResend
-        ? 'The timing can change. Reopen the door only if it still feels right.'
+        ? 'The timing can change. Keep what felt meaningful, explore aligned profiles, or reopen the door if it still feels right.'
         : pendingExpired
-          ? 'The window closed, but you can still revisit the profile or move toward fresher signals.'
-          : 'Keep the profile for context, then follow the strongest momentum elsewhere.';
+          ? 'The window closed, but the qualities that drew you in can guide a clearer next step.'
+          : 'Keep the profile for context, then explore new possibilities shaped by what mattered.';
 
       return (
         <Animated.View>
@@ -2255,10 +2291,22 @@ export default function IntentScreen() {
                   ) : null}
                 </View>
               </View>
-              <View style={styles.badgeRow}>
-                <View style={styles.typeBadge}>
+                <View style={styles.badgeRow}>
+                <View
+                  style={[
+                    styles.typeBadge,
+                    isMessageBackedLike && styles.typeBadgeMessageBacked,
+                  ]}
+                >
                   <MaterialCommunityIcons name={typeIcon(item)} size={12} color={theme.tint} />
-                  <Text style={styles.typeBadgeText}>{typeLabel(item)}</Text>
+                  <Text
+                    style={[
+                      styles.typeBadgeText,
+                      isMessageBackedLike && styles.typeBadgeTextMessageBacked,
+                    ]}
+                  >
+                    {requestTypeLabel}
+                  </Text>
                 </View>
                 {headerSignals.slice(0, 1).map((signal) => (
                   <View
@@ -2493,25 +2541,39 @@ export default function IntentScreen() {
 
             {isClosedCard ? (
               <>
+                <AnimatedPressable
+                  reduceMotion={reduceMotion}
+                  onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/closure-to-clarity',
+                      params: {
+                        requestId: item.id,
+                        targetProfileId: String(peerId),
+                        targetName: peer?.full_name ?? '',
+                        source: item.status === 'passed' ? 'passed_profile' : 'expired_request',
+                      },
+                    })
+                  }
+                  style={[styles.primaryButton, styles.closurePrimaryButton]}
+                >
+                  <MaterialCommunityIcons
+                    name="compass-outline"
+                    size={17}
+                    color={Colors.light.background}
+                  />
+                  <Text style={styles.primaryText}>Explore aligned profiles</Text>
+                </AnimatedPressable>
                 {!isIncoming && canResend ? (
                   <AnimatedPressable
                     reduceMotion={reduceMotion}
                     onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
                     onPress={() => resendIntent(peerId, peer?.full_name ?? null, item.type, quickReply)}
-                    style={[styles.primaryButton, styles.actionWide]}
+                    style={[styles.secondaryButton, styles.actionWide]}
                   >
-                    <Text style={styles.primaryText}>Send again</Text>
+                    <Text style={styles.secondaryText}>Send again</Text>
                   </AnimatedPressable>
-                ) : (
-                  <AnimatedPressable
-                    reduceMotion={reduceMotion}
-                    onHaptic={() => void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-                    onPress={() => router.push('/(tabs)/vibes')}
-                    style={[styles.ghostButton, styles.actionWide]}
-                  >
-                    <Text style={styles.ghostText}>See similar people</Text>
-                  </AnimatedPressable>
-                )}
+                ) : null}
                 {!peerHasLeft ? (
                   <AnimatedPressable
                     reduceMotion={reduceMotion}
@@ -4424,7 +4486,17 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderColor: isDark ? 'rgba(0,160,160,0.18)' : 'rgba(31,42,42,0.06)',
       backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.62)',
     },
+    typeBadgeMessageBacked: {
+      borderColor: isDark ? 'rgba(0,160,160,0.30)' : 'rgba(0,128,128,0.20)',
+      backgroundColor: isDark ? 'rgba(0,160,160,0.12)' : 'rgba(0,128,128,0.10)',
+      shadowColor: theme.tint,
+      shadowOpacity: isDark ? 0.22 : 0.12,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 2,
+    },
     typeBadgeText: { fontSize: 11, color: theme.tint, fontWeight: '600' },
+    typeBadgeTextMessageBacked: { fontWeight: '700' },
     signalBadge: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -4551,6 +4623,14 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
     },
     actionsRow: { flexDirection: 'row', gap: 10, marginTop: 12, flexWrap: 'wrap' },
     actionWide: { flexGrow: 1, minWidth: '48%' },
+    closurePrimaryButton: {
+      alignItems: 'center',
+      flexBasis: '100%',
+      flexDirection: 'row',
+      gap: 8,
+      justifyContent: 'center',
+      minHeight: 44,
+    },
     primaryButton: {
       paddingHorizontal: 14,
       paddingVertical: 8,

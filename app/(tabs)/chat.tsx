@@ -33,6 +33,7 @@ import { isLikelyNetworkError } from "@/lib/network";
 import {
   buildChatConversationListStoreKey,
 } from "@/lib/offline/chat-store";
+import { buildLocationDisplay } from "@/lib/location/location-display";
 import { getSafeRemoteImageUri, getUserFacingDisplayName } from "@/lib/profile/display-name";
 import { getAuthoritativePresenceDisplay } from "@/lib/presence";
 import { getChatMessagePreviewText } from "@/lib/message-preview";
@@ -732,11 +733,9 @@ export default function ChatScreen() {
           messagedPeerUserIds: messagedPeerUserIds ?? messagedPeerUserIdsRef.current ?? new Set(),
           hasLocalThreadMessages: (peerUserId) => ChatRepository.hasThreadMessages(user.id, peerUserId),
           buildMatch: ({ profileRow, lastSeen }) => {
-            const loc =
-              (typeof profileRow.location === 'string' && profileRow.location) ||
-              (typeof profileRow.city === 'string' && profileRow.city) ||
-              (typeof profileRow.region === 'string' && profileRow.region) ||
-              null;
+            const loc = buildLocationDisplay(profileRow as Record<string, any>, {
+              surface: 'vibes',
+            }).withFlag || null;
 
             return {
               userId: String(profileRow.user_id),

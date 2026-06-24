@@ -1,7 +1,9 @@
 // components/ExploreCard.tsx
 import AmbientCardGlow from "@/components/AmbientCardGlow";
 import OfflineImage from "@/components/media/OfflineImage";
+import { NewHereBadge } from "@/components/NewHereBadge";
 import LinearGradientSafe from "@/components/NativeWrappers/LinearGradientSafe";
+import { PremiumPlanBadge } from "@/components/PremiumPlanBadge";
 import { VerificationBadge } from "@/components/VerificationBadge";
 import { getMomentAtmosphere } from "@/components/vibes/momentAtmosphere";
 import { formatDisplayNameForCard } from "@/components/vibes/nameFormatting";
@@ -42,6 +44,12 @@ const toTitleLabel = (value: string) =>
     .trim()
     .replace(/\s+/g, ' ')
     .replace(/\b\p{L}/gu, (letter) => letter.toUpperCase());
+
+const normalizePremiumPlan = (value: unknown): 'SILVER' | 'GOLD' | null => {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (normalized === 'SILVER' || normalized === 'GOLD') return normalized;
+  return null;
+};
 
 function ExploreCard({
   match,
@@ -93,7 +101,9 @@ function ExploreCard({
       : ["rgba(0,0,0,0.13)", "rgba(0,0,0,0)", "rgba(0,0,0,0.10)"]),
     [isDark],
   );
-  const distanceLabel = match.distance || '';
+  const recommendationSegment = String((match as any).recommendationReasons?.segment || '').trim().toLowerCase();
+  const isNearbyCard = recommendationSegment === 'nearby';
+  const distanceLabel = isNearbyCard ? match.distance || '' : '';
   const locationPresentation = useMemo(
     () => buildLocationDisplay(match as any, { surface: 'vibes', distanceLabel }),
     [distanceLabel, match],
@@ -132,11 +142,15 @@ function ExploreCard({
     () => formatDisplayNameForCard(match.name, (match as any).age, resolvedLayoutMetrics.device.compactWidth ? 18 : 24),
     [resolvedLayoutMetrics.device.compactWidth, match.name, (match as any).age],
   );
-  const premiumPlan =
-    (match as any).premiumPlan === 'GOLD' || (match as any).premiumPlan === 'SILVER'
-      ? (match as any).premiumPlan as 'GOLD' | 'SILVER'
-      : null;
-  const isNewHere = Boolean((match as any).isNewHere);
+  const premiumPlan = normalizePremiumPlan((match as any).premiumPlan ?? (match as any).premium_plan);
+  const isNewHere = useMemo(() => {
+    if (Boolean((match as any).isNewHere)) return true;
+    const createdAtValue = (match as any).created_at;
+    if (typeof createdAtValue !== 'string' || !createdAtValue) return false;
+    const createdAtMs = Date.parse(createdAtValue);
+    if (Number.isNaN(createdAtMs)) return false;
+    return Date.now() - createdAtMs <= 14 * 24 * 60 * 60 * 1000;
+  }, [match]);
 
   const [presenceNow, setPresenceNow] = useState(() => Date.now());
   const lastActiveValue = match.lastActive || (match as any).last_active;
@@ -500,35 +514,18 @@ function ExploreCard({
                 <Text style={styles.ageText} allowFontScaling={false}>{displayName.ageLabel}</Text>
               </View>
             ) : null}
+            {premiumPlan ? (
+              <PremiumPlanBadge
+                plan={premiumPlan}
+                surface="overlay"
+                style={styles.membershipBadgeInline}
+              />
+            ) : null}
           </View>
 
-          {premiumPlan || isNewHere ? (
-            <View style={styles.identityBadges} pointerEvents="none">
-              {premiumPlan ? (
-                <LinearGradientSafe
-                  colors={premiumPlan === 'GOLD'
-                    ? ['rgba(252,222,133,0.96)', 'rgba(172,112,24,0.94)']
-                    : ['rgba(226,237,242,0.96)', 'rgba(123,148,158,0.94)']}
-                  start={[0, 0]}
-                  end={[1, 1]}
-                  style={styles.membershipBadge}
-                >
-                  <MaterialCommunityIcons
-                    name={premiumPlan === 'GOLD' ? 'crown' : 'diamond-stone'}
-                    size={11}
-                    color={premiumPlan === 'GOLD' ? '#3A2506' : '#173038'}
-                  />
-                  <Text style={[styles.membershipBadgeText, premiumPlan === 'GOLD' ? styles.goldBadgeText : null]}>
-                    {premiumPlan === 'GOLD' ? 'Gold' : 'Silver'}
-                  </Text>
-                </LinearGradientSafe>
-              ) : null}
-              {isNewHere ? (
-                <View style={styles.newHereBadge}>
-                  <MaterialCommunityIcons name="creation" size={10} color="#D9FFFF" />
-                  <Text style={styles.newHereBadgeText}>New here</Text>
-                </View>
-              ) : null}
+          {isNewHere ? (
+            <View style={styles.newHereRow} pointerEvents="none">
+              <NewHereBadge surface="overlay" />
             </View>
           ) : null}
 
@@ -691,7 +688,7 @@ const createStyles = (
       borderTopWidth: 0,
       borderTopColor: 'transparent',
     },
-    nameRow: { flexDirection: "row", alignItems: "baseline", gap: 6, marginBottom: metrics.device.compactHeight ? 8 : 10 },
+    nameRow: { flexDirection: "row", alignItems: "center", flexWrap: 'wrap', gap: 6, marginBottom: metrics.device.compactHeight ? 6 : 8 },
     name: {
       color: VIBES_DEPTH_COLORS.cream,
       fontSize: metrics.device.compactHeight ? Math.max(25, metrics.nameFontSize) : metrics.nameFontSize + 2,
@@ -735,55 +732,13 @@ const createStyles = (
     },
     location: { color: "rgba(255,255,255,0.92)", marginLeft: 6, fontFamily: 'Manrope_600SemiBold', flexShrink: 1, fontSize: metrics.device.compactHeight ? 13 : 14, letterSpacing: 0.1 },
     locationFlag: { marginLeft: 6, fontSize: 15 },
-    identityBadges: {
+    membershipBadgeInline: {
+      marginLeft: 2,
+    },
+    newHereRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      flexWrap: 'wrap',
-      gap: 6,
-      marginTop: metrics.device.compactHeight ? -4 : -5,
-      marginBottom: metrics.device.compactHeight ? 7 : 9,
-    },
-    membershipBadge: {
-      minHeight: 23,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-      borderRadius: 999,
-      paddingHorizontal: 8,
-      paddingVertical: 4,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: 'rgba(255,255,255,0.42)',
-    },
-    membershipBadgeText: {
-      color: '#173038',
-      fontSize: 9,
-      lineHeight: 11,
-      fontFamily: 'Archivo_700Bold',
-      textTransform: 'uppercase',
-      letterSpacing: 0.7,
-    },
-    goldBadgeText: {
-      color: '#3A2506',
-    },
-    newHereBadge: {
-      minHeight: 23,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 4,
-      borderRadius: 999,
-      paddingHorizontal: 8,
-      paddingVertical: 4,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: 'rgba(91,193,187,0.48)',
-      backgroundColor: 'rgba(6,63,68,0.76)',
-    },
-    newHereBadgeText: {
-      color: '#E9FFFF',
-      fontSize: 9,
-      lineHeight: 11,
-      fontFamily: 'Archivo_700Bold',
-      textTransform: 'uppercase',
-      letterSpacing: 0.65,
+      marginBottom: metrics.device.compactHeight ? 6 : 8,
     },
     contextRow: {
       flexDirection: 'row',

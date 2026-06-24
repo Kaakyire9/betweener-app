@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildLocationDisplay,
   getFirstLocationPart,
   isBroadRegionLabel,
   pickBetterLocationValue,
@@ -30,7 +31,7 @@ test('pickPreferredLocationLabel prefers precise location over administrative ci
   assert.equal(value, 'Asokwa');
 });
 
-test('pickPreferredLocationLabel uses country location before onboarding region metadata', () => {
+test('pickPreferredLocationLabel uses country when only coarse onboarding location exists', () => {
   const value = pickPreferredLocationLabel({
     city: null,
     location: 'Ghana',
@@ -41,7 +42,7 @@ test('pickPreferredLocationLabel uses country location before onboarding region 
   assert.equal(value, 'Ghana');
 });
 
-test('pickPreferredLocationLabel uses global country before broad continent metadata', () => {
+test('pickPreferredLocationLabel uses country before broad continent metadata', () => {
   const value = pickPreferredLocationLabel({
     city: null,
     location: 'United Kingdom',
@@ -61,6 +62,60 @@ test('pickPreferredLocationLabel falls back to country when region is broad cont
   });
 
   assert.equal(value, 'Ghana');
+});
+
+test('buildLocationDisplay uses compact city label on vibes cards', () => {
+  const value = buildLocationDisplay({
+    city: 'London',
+    region: 'Europe',
+    current_country: 'United Kingdom',
+    current_country_code: 'GB',
+  }, { surface: 'vibes', includeFlag: false });
+
+  assert.equal(value.primary, 'London');
+});
+
+test('buildLocationDisplay falls back to country when only administrative region exists', () => {
+  const value = pickPreferredLocationLabel({
+    city: null,
+    location: null,
+    region: 'Ashanti Region',
+    current_country: 'Ghana',
+  });
+
+  assert.equal(value, 'Ghana');
+});
+
+test('buildLocationDisplay falls back to country when only broad region exists', () => {
+  const value = buildLocationDisplay({
+    city: null,
+    location: 'Europe',
+    region: 'Europe',
+    current_country: 'United Kingdom',
+    current_country_code: 'GB',
+  }, { surface: 'vibes', includeFlag: false });
+
+  assert.equal(value.primary, 'United Kingdom');
+});
+
+test('buildLocationDisplay keeps full city and country on profile surfaces', () => {
+  const value = buildLocationDisplay({
+    city: 'Bristol',
+    current_country: 'United Kingdom',
+    current_country_code: 'GB',
+  }, { surface: 'profile', includeFlag: false });
+
+  assert.equal(value.primary, 'Bristol, United Kingdom');
+});
+
+test('buildLocationDisplay prepends distance only for compact nearby usage', () => {
+  const value = buildLocationDisplay({
+    city: 'Bristol',
+    current_country: 'United Kingdom',
+    current_country_code: 'GB',
+  }, { surface: 'vibes', distanceLabel: '<1 km away', includeFlag: false });
+
+  assert.equal(value.withFlag, '<1 km away · Bristol');
 });
 
 test('pickBetterLocationValue keeps shorter non-administrative city over administrative variant', () => {

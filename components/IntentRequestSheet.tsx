@@ -1,5 +1,6 @@
 import { Colors } from '@/constants/theme';
 import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
+import { showBetweenerAlert } from '@/components/ui/BetweenerAlertHost';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
 import { createIntentRequestOfflineSafe } from '@/lib/intents/offline-actions';
@@ -9,7 +10,7 @@ import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
+import { Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 
 type IntentRequestType = 'connect' | 'date_request' | 'like_with_note' | 'circle_intro';
 
@@ -26,8 +27,8 @@ type IntentRequestSheetProps = {
 
 const optionLabels: { type: IntentRequestType; label: string; subtitle: string; icon: string }[] = [
   { type: 'connect', label: 'Ask to chat', subtitle: 'Start a direct connection', icon: 'message-outline' },
-  { type: 'like_with_note', label: 'Like with note', subtitle: 'Add a short note', icon: 'text-box-plus-outline' },
-  { type: 'circle_intro', label: 'Circle intro', subtitle: 'Contextual connect', icon: 'account-group-outline' },
+  { type: 'like_with_note', label: 'Like with message', subtitle: 'Add a short message', icon: 'text-box-plus-outline' },
+  { type: 'circle_intro', label: 'Circle intro', subtitle: 'Lead with your shared circle', icon: 'account-group-outline' },
 ];
 
 export default function IntentRequestSheet({
@@ -45,16 +46,32 @@ export default function IntentRequestSheet({
   const isDark = (colorScheme ?? 'light') === 'dark';
   const responsive = useResponsiveMetrics();
   const styles = useMemo(() => createStyles(theme, isDark, responsive), [theme, isDark, responsive]);
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const myProfileId = profile?.id ? String(profile.id) : null;
+  const snapshotOwnerIds = useMemo(
+    () => [myProfileId, profile?.id ?? null, user?.id ?? null, (profile as any)?.user_id ?? null],
+    [myProfileId, profile?.id, user?.id, profile],
+  );
   const [selectedType, setSelectedType] = useState<IntentRequestType>('connect');
   const [message, setMessage] = useState('');
   const [suggestedPlace, setSuggestedPlace] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const allowCircle = metadata?.source === 'circles';
   const isSuggested = metadata?.source === 'intent_suggested';
+  const circleName = useMemo(() => {
+    const raw = typeof metadata?.circle_name === 'string' ? metadata.circle_name.trim() : '';
+    return raw.length ? raw : null;
+  }, [metadata]);
   const options = useMemo(
-    () => (allowCircle ? optionLabels : optionLabels.filter((opt) => opt.type !== 'circle_intro')),
+    () => {
+      const base = allowCircle ? optionLabels : optionLabels.filter((opt) => opt.type !== 'circle_intro');
+      if (!allowCircle) return base;
+      return [...base].sort((left, right) => {
+        if (left.type === 'circle_intro') return -1;
+        if (right.type === 'circle_intro') return 1;
+        return 0;
+      });
+    },
     [allowCircle],
   );
 
@@ -77,11 +94,19 @@ export default function IntentRequestSheet({
 
   const handleSubmit = async () => {
     if (!recipientId) {
-      Alert.alert('Request', 'Select a profile to send a request.');
+      showBetweenerAlert({
+        title: 'Request',
+        message: 'Select a profile to send a request.',
+        tone: 'warning',
+      });
       return;
     }
     if (!myProfileId) {
-      Alert.alert('Request', 'Please finish setting up your profile and try again.');
+      showBetweenerAlert({
+        title: 'Request',
+        message: 'Please finish setting up your profile and try again.',
+        tone: 'warning',
+      });
       return;
     }
     setSubmitting(true);
@@ -92,6 +117,8 @@ export default function IntentRequestSheet({
       suggestedTime: null,
       suggestedPlace: selectedType === 'date_request' && suggestedPlace.trim() ? suggestedPlace.trim() : null,
       metadata: metadata ?? {},
+      actorProfileId: myProfileId,
+      snapshotOwnerIds,
     };
     try {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -114,21 +141,33 @@ export default function IntentRequestSheet({
         const msg = incoming
           ? `You already have a request from ${recipientName || 'this person'}. Open Intent to respond.`
           : `You've already placed a request to ${recipientName || 'this person'}. Please wait for their response.`;
-        Alert.alert('Request pending', msg);
+        showBetweenerAlert({
+          title: 'Request pending',
+          message: msg,
+          tone: 'info',
+        });
         return;
       }
 
       const result = await createIntentRequestOfflineSafe(requestPayload);
       if (result.status === 'queued') {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        Alert.alert('Request queued', `Your request to ${recipientName || 'connect'} will send when you're back online.`);
+        showBetweenerAlert({
+          title: 'Request queued',
+          message: `Your request to ${recipientName || 'connect'} will send when you're back online.`,
+          tone: 'success',
+        });
         onSent?.(null);
         onClose();
         return;
       }
       if (result.requestId) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        Alert.alert('Request sent', `Your request to ${recipientName || 'connect'} is on the way.`);
+        showBetweenerAlert({
+          title: 'Request sent',
+          message: `Your request to ${recipientName || 'connect'} is on the way.`,
+          tone: 'success',
+        });
         onSent?.(result.requestId);
         onClose();
       }
@@ -136,7 +175,11 @@ export default function IntentRequestSheet({
       if (isLikelyNetworkError(err)) {
         await createIntentRequestOfflineSafe(requestPayload);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        Alert.alert('Request queued', `Your request to ${recipientName || 'connect'} will send when you're back online.`);
+        showBetweenerAlert({
+          title: 'Request queued',
+          message: `Your request to ${recipientName || 'connect'} will send when you're back online.`,
+          tone: 'success',
+        });
         onSent?.(null);
         onClose();
         return;
@@ -162,7 +205,11 @@ export default function IntentRequestSheet({
             : msg && /already matched/i.test(msg)
               ? 'You are already matched. Continue the conversation in chat.'
               : null;
-      Alert.alert('Request failed', friendly ?? (supaDetails ? `${msg}\n\n${supaDetails}` : msg));
+      showBetweenerAlert({
+        title: 'Request failed',
+        message: friendly ?? (supaDetails ? `${msg}\n\n${supaDetails}` : msg),
+        tone: 'error',
+      });
       // Surface the full object for debugging/telemetry.
       console.error('[intent] rpc_create_intent_request failed', err);
     } finally {
@@ -221,8 +268,18 @@ export default function IntentRequestSheet({
               </View>
               <Text style={styles.subtitle}>
                 {recipientName ? `To ${recipientName}. ` : ''}
-                Choose how you want to connect.
+                {allowCircle
+                  ? `${circleName ? `You both share ${circleName}. ` : 'You both share this Circle. '}Choose how you want to connect.`
+                  : 'Choose how you want to connect.'}
               </Text>
+              {allowCircle ? (
+                <View style={styles.contextBanner}>
+                  <MaterialCommunityIcons name="account-group-outline" size={15} color={theme.tint} />
+                  <Text style={styles.contextBannerText}>
+                    {circleName ? `Shared circle context will travel with this intro: ${circleName}.` : 'Shared circle context will travel with this intro.'}
+                  </Text>
+                </View>
+              ) : null}
 
               <View style={styles.options}>
                 {options.map((opt) => (
@@ -283,7 +340,7 @@ export default function IntentRequestSheet({
                 <TextInput
                   value={message}
                   onChangeText={setMessage}
-                  placeholder="Add a short note"
+                  placeholder="Add a short message"
                   placeholderTextColor={theme.textMuted}
                   style={styles.input}
                   multiline
@@ -355,6 +412,24 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, responsive: R
     header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     title: { fontSize: 18, fontWeight: '800', color: theme.text },
     subtitle: { marginTop: 8, fontSize: 12, color: theme.textMuted },
+    contextBanner: {
+      marginTop: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: isDark ? 'rgba(0, 216, 216, 0.24)' : 'rgba(0, 128, 128, 0.16)',
+      backgroundColor: isDark ? 'rgba(0, 160, 160, 0.1)' : 'rgba(0, 128, 128, 0.08)',
+    },
+    contextBannerText: {
+      flex: 1,
+      fontSize: 12,
+      lineHeight: 17,
+      color: theme.textMuted,
+    },
     closeButton: {
       width: 32,
       height: 32,

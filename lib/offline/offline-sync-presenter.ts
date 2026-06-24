@@ -60,13 +60,6 @@ export const describeOfflineSyncMutation = (
         icon: 'image-heart-outline',
         scope: 'profile',
       };
-    case 'profile_note_create':
-      return {
-        title: 'Profile note not sent',
-        detail: 'Your note is still local and has not been delivered yet.',
-        icon: 'note-text-outline',
-        scope: 'profile',
-      };
     case 'chat_text_send':
       return {
         title: 'Message not sent',
@@ -154,6 +147,34 @@ export const describeOfflineSyncMutation = (
         icon: 'bell-cog-outline',
         scope: 'notifications',
       };
+    case 'profile_gift_send':
+      return {
+        title: 'Gift not sent',
+        detail: 'Your gift is saved locally and will send when the connection is stable again.',
+        icon: 'gift-outline',
+        scope: 'profile',
+      };
+    case 'profile_gift_reveal':
+      return {
+        title: 'Gift reveal not synced',
+        detail: 'Your gift reveal is saved locally and still needs to finish syncing.',
+        icon: 'gift-open-outline',
+        scope: 'profile',
+      };
+    case 'profile_gift_archive':
+      return {
+        title: 'Gift archive not synced',
+        detail: 'Your archive change is saved locally and still needs to finish syncing.',
+        icon: 'archive-outline',
+        scope: 'profile',
+      };
+    case 'profile_boost_create':
+      return {
+        title: mutation.payload.boostType === 'smart' ? 'Precision boost not launched' : 'Boost not launched',
+        detail: 'Your boost recipe is saved locally and will launch when the connection is stable again.',
+        icon: 'rocket-launch-outline',
+        scope: 'profile',
+      };
     case 'moment_text_create':
       return {
         title: 'Text Moment not posted',
@@ -203,6 +224,15 @@ export const describeOfflineSyncMutation = (
         title: 'Moment comment delete not synced',
         detail: 'The comment is hidden locally, but the delete has not finished syncing yet.',
         icon: 'comment-remove-outline',
+        scope: 'moments',
+      };
+    case 'moment_comment_reaction_sync':
+      return {
+        title: mutation.payload.reaction
+          ? 'Moment comment reaction not synced'
+          : 'Moment comment reaction removal not synced',
+        detail: 'Your comment reaction change is still local.',
+        icon: 'heart-outline',
         scope: 'moments',
       };
     case 'circle_pulse_comment_create':

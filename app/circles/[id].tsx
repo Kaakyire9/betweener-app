@@ -6,6 +6,7 @@ import CirclePulseCommentSheet from '@/components/circles/CirclePulseCommentShee
 import CirclePulseManagerSheet from '@/components/circles/CirclePulseManagerSheet';
 import CirclePulseMediaViewer from '@/components/circles/CirclePulseMediaViewer';
 import CirclePulseModerationSheet from '@/components/circles/CirclePulseModerationSheet';
+import { showBetweenerAlert } from '@/components/ui/BetweenerAlertHost';
 import Notice from '@/components/ui/Notice';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -43,7 +44,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -479,6 +479,8 @@ export default function CircleDetailScreen() {
   const [circle, setCircle] = useState<Circle | null>(null);
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [pendingMembers, setPendingMembers] = useState<MemberRow[]>([]);
+  const [matchedMemberProfileIds, setMatchedMemberProfileIds] = useState<Record<string, true>>({});
+  const [matchedMemberUserIds, setMatchedMemberUserIds] = useState<Record<string, true>>({});
   const [membership, setMembership] = useState<MemberRow | null>(null);
   const [prompts, setPrompts] = useState<CirclePrompt[]>([]);
   const [promptResponsesByPromptId, setPromptResponsesByPromptId] = useState<Record<string, CirclePromptResponse[]>>({});
@@ -836,6 +838,58 @@ export default function CircleDetailScreen() {
     };
   }, [circleId]);
 
+  const refreshAcceptedMatches = useCallback(async () => {
+    if (!currentProfileId) {
+      setMatchedMemberProfileIds({});
+      setMatchedMemberUserIds({});
+      return {} as Record<string, true>;
+    }
+
+    const { data, error } = await db
+      .from('matches')
+      .select('user1_id,user2_id')
+      .eq('status', 'ACCEPTED')
+      .or(`user1_id.eq.${currentProfileId},user2_id.eq.${currentProfileId}`);
+    if (error) throw error;
+
+    const nextMatchedProfileIds = ((data ?? []) as any[]).reduce<Record<string, true>>((acc, row) => {
+      const user1Id = row?.user1_id ? String(row.user1_id) : null;
+      const user2Id = row?.user2_id ? String(row.user2_id) : null;
+      const peerProfileId = user1Id === currentProfileId ? user2Id : user1Id;
+      if (peerProfileId) acc[peerProfileId] = true;
+      return acc;
+    }, {});
+    const nextMatchedUserIds = Object.keys(nextMatchedProfileIds).reduce<Record<string, true>>((acc, peerProfileId) => {
+      const matchedMember = members.find((item) => item.profile_id === peerProfileId || item.profiles?.id === peerProfileId) ?? null;
+      const peerUserId = matchedMember?.user_id ?? matchedMember?.profiles?.user_id ?? null;
+      if (peerUserId) acc[String(peerUserId)] = true;
+      return acc;
+    }, {});
+
+    setMatchedMemberProfileIds(nextMatchedProfileIds);
+    setMatchedMemberUserIds(nextMatchedUserIds);
+    return nextMatchedProfileIds;
+  }, [currentProfileId, members]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+      void refreshAcceptedMatches().catch((error) => {
+        if (!isActive) return;
+        logger.warn('[circles] accepted_matches_lookup_failed', {
+          circleId,
+          currentProfileId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        setMatchedMemberProfileIds({});
+        setMatchedMemberUserIds({});
+      });
+      return () => {
+        isActive = false;
+      };
+    }, [circleId, currentProfileId, refreshAcceptedMatches]),
+  );
+
   const refreshCircleGatheringsState = useCallback(async () => {
     if (!circleId) {
       setGatherings([]);
@@ -1120,6 +1174,11 @@ export default function CircleDetailScreen() {
       roleRequests: nextRoleRequests,
       moderationReports: nextModerationReports,
     });
+
+    return {
+      circle: coreState.circle,
+      membership: coreState.membership,
+    };
   }, [
     currentProfileId,
     persistCircleDetailSnapshot,
@@ -1733,36 +1792,58 @@ export default function CircleDetailScreen() {
   const handleJoin = useCallback(async () => {
     if (!currentProfileId || !circleId) return;
     if (membership?.status === 'invited') {
-      Alert.alert(
-        'Join this Circle?',
-        `Accept the private invitation to ${circle?.name || 'this Circle'}?`,
-        [
+      showBetweenerAlert({
+        title: 'Join this Circle?',
+        message: `Accept the private invitation to ${circle?.name || 'this Circle'}?`,
+        tone: 'info',
+        buttons: [
           {
             text: 'Decline',
             style: 'destructive',
             onPress: () => {
               void respondToCircleInvitation(circleId, currentProfileId, false)
                 .then((status) => {
-                  if (status === 'expired') Alert.alert('Circle invitation', 'This invitation has expired.');
+                  if (status === 'expired') {
+                    showBetweenerAlert({
+                      title: 'Circle invitation',
+                      message: 'This invitation has expired.',
+                      tone: 'info',
+                    });
+                  }
                   return refreshCircleAccessEnvelope();
                 })
-                .catch((error) => Alert.alert('Circle invitation', error instanceof Error ? error.message : 'Could not decline the invitation.'));
+                .catch((error) => showBetweenerAlert({
+                  title: 'Circle invitation',
+                  message: error instanceof Error ? error.message : 'Could not decline the invitation.',
+                  tone: 'error',
+                }));
             },
           },
           { text: 'Not now', style: 'cancel' },
           {
             text: 'Accept',
+            style: 'primary',
             onPress: () => {
               void respondToCircleInvitation(circleId, currentProfileId, true)
                 .then((status) => {
-                  if (status === 'expired') Alert.alert('Circle invitation', 'This invitation has expired.');
+                  if (status === 'expired') {
+                    showBetweenerAlert({
+                      title: 'Circle invitation',
+                      message: 'This invitation has expired.',
+                      tone: 'info',
+                    });
+                  }
                   return refreshCircleAccessEnvelope();
                 })
-                .catch((error) => Alert.alert('Circle invitation', error instanceof Error ? error.message : 'Could not accept the invitation.'));
+                .catch((error) => showBetweenerAlert({
+                  title: 'Circle invitation',
+                  message: error instanceof Error ? error.message : 'Could not accept the invitation.',
+                  tone: 'error',
+                }));
             },
           },
         ],
-      );
+      });
       return;
     }
     const { error } = await db.rpc('rpc_join_circle', {
@@ -1770,10 +1851,25 @@ export default function CircleDetailScreen() {
       p_profile_id: currentProfileId,
     });
     if (error) {
-      Alert.alert('Join failed', error.message || 'Please try again.');
+      showBetweenerAlert({
+        title: 'Join failed',
+        message: error.message || 'Please try again.',
+        tone: 'error',
+      });
       return;
     }
-    await refreshCircleAccessEnvelope();
+    const refreshedState = await refreshCircleAccessEnvelope();
+    const joinIsPending =
+      refreshedState.membership?.status === 'pending'
+      || circle?.requires_join_approval === true
+      || circle?.visibility === 'private';
+    showBetweenerAlert({
+      title: joinIsPending ? 'Request sent' : 'Circle joined',
+      message: joinIsPending
+        ? `Your request to join ${circle?.name || 'this Circle'} has been shared with the hosts for approval.`
+        : `You are now inside ${circle?.name || 'this Circle'}. Betweener will keep it close in your Circles.`,
+      tone: 'success',
+    });
   }, [circle?.name, circleId, currentProfileId, membership?.status, refreshCircleAccessEnvelope]);
 
   const handleApprove = useCallback(async (memberId: string) => {
@@ -1785,7 +1881,11 @@ export default function CircleDetailScreen() {
     });
     if (error) {
       logger.error('[circles] approve_member_failed', error, { circleId });
-      Alert.alert('Approve failed', typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Approve failed',
+        message: typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please try again.',
+        tone: 'error',
+      });
       return;
     }
     await refreshCircleMembershipView();
@@ -1801,7 +1901,11 @@ export default function CircleDetailScreen() {
     });
     if (error) {
       logger.error('[circles] set_role_failed', error, { circleId });
-      Alert.alert('Update failed', typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Update failed',
+        message: typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please try again.',
+        tone: 'error',
+      });
       return;
     }
     setManageMemberTarget(null);
@@ -1810,103 +1914,151 @@ export default function CircleDetailScreen() {
 
   const handleRemove = useCallback((memberId: string) => {
     if (!currentProfileId || !circleId) return;
-    Alert.alert('Remove member', 'Remove this person from the Circle?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: async () => {
-          setManageMemberTarget(null);
-          const { error } = await db.rpc('rpc_remove_circle_member', {
-            p_circle_id: circleId,
-            p_member_id: memberId,
-            p_profile_id: currentProfileId,
-          });
-          if (error) {
-            logger.error('[circles] remove_member_failed', error, { circleId });
-            Alert.alert('Remove failed', typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please try again.');
-            return;
-          }
-          await refreshCircleMembershipView();
+    showBetweenerAlert({
+      title: 'Remove member',
+      message: 'Remove this person from the Circle?',
+      tone: 'warning',
+      buttons: [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setManageMemberTarget(null);
+              const { error } = await db.rpc('rpc_remove_circle_member', {
+                p_circle_id: circleId,
+                p_member_id: memberId,
+                p_profile_id: currentProfileId,
+              });
+              if (error) {
+                logger.error('[circles] remove_member_failed', error, { circleId });
+                showBetweenerAlert({
+                  title: 'Remove failed',
+                  message: typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please try again.',
+                  tone: 'error',
+                });
+                return;
+              }
+              await refreshCircleMembershipView();
+            })();
+          },
         },
-      },
-    ]);
+      ],
+    });
   }, [circleId, currentProfileId, refreshCircleMembershipView]);
 
   const handleLeave = useCallback(() => {
     if (!currentProfileId || !circleId || !canLeaveCircle) return;
-    Alert.alert('Leave Circle', 'Leave this Circle and stop seeing its member context?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Leave',
-        style: 'destructive',
-        onPress: async () => {
-          const { error } = await db.rpc('rpc_leave_circle', {
-            p_circle_id: circleId,
-            p_profile_id: currentProfileId,
-          });
-          if (error) {
-            logger.error('[circles] leave_circle_failed', error, { circleId });
-            Alert.alert('Leave failed', typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please try again.');
-            return;
-          }
-          await refreshCircleAccessEnvelope();
+    showBetweenerAlert({
+      title: 'Leave Circle',
+      message: 'Leave this Circle and stop seeing its member context?',
+      tone: 'warning',
+      buttons: [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Leave',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              const { error } = await db.rpc('rpc_leave_circle', {
+                p_circle_id: circleId,
+                p_profile_id: currentProfileId,
+              });
+              if (error) {
+                logger.error('[circles] leave_circle_failed', error, { circleId });
+                showBetweenerAlert({
+                  title: 'Leave failed',
+                  message: typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please try again.',
+                  tone: 'error',
+                });
+                return;
+              }
+              await refreshCircleAccessEnvelope();
+            })();
+          },
         },
-      },
-    ]);
+      ],
+    });
   }, [canLeaveCircle, circleId, currentProfileId, refreshCircleAccessEnvelope]);
 
   const handleArchiveCircle = useCallback(() => {
     if (!circleId || !currentProfileId || !isOwner) return;
-    Alert.alert('Archive Circle', 'Archive this Circle? Members will no longer see it in their Circle list.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Archive',
-        style: 'destructive',
-        onPress: async () => {
-          const { error } = await db.rpc('rpc_archive_owned_circle', {
-            p_circle_id: circleId,
-            p_actor_profile_id: currentProfileId,
-          });
-          if (error) {
-            logger.error('[circles] archive_circle_failed', error, { circleId });
-            Alert.alert('Archive failed', typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please try again.');
-            return;
-          }
-          router.replace({ pathname: '/(tabs)/circles' });
+    showBetweenerAlert({
+      title: 'Archive Circle',
+      message: 'Archive this Circle? Members will no longer see it in their Circle list.',
+      tone: 'warning',
+      buttons: [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Archive',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              const { error } = await db.rpc('rpc_archive_owned_circle', {
+                p_circle_id: circleId,
+                p_actor_profile_id: currentProfileId,
+              });
+              if (error) {
+                logger.error('[circles] archive_circle_failed', error, { circleId });
+                showBetweenerAlert({
+                  title: 'Archive failed',
+                  message: typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please try again.',
+                  tone: 'error',
+                });
+                return;
+              }
+              router.replace({ pathname: '/(tabs)/circles' });
+            })();
+          },
         },
-      },
-    ]);
+      ],
+    });
   }, [circleId, currentProfileId, isOwner]);
 
   const handleDeleteCircle = useCallback(() => {
     if (!circleId || !currentProfileId || !isOwner) return;
-    Alert.alert('Delete Circle', 'Permanently delete this non-live Circle? This cannot be undone.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: async () => {
-          const { error } = await db.rpc('rpc_delete_owned_circle', {
-            p_circle_id: circleId,
-            p_actor_profile_id: currentProfileId,
-          });
-          if (error) {
-            logger.error('[circles] delete_circle_failed', error, { circleId });
-            Alert.alert('Delete failed', typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please archive a live Circle first.');
-            return;
-          }
-          router.replace({ pathname: '/(tabs)/circles' });
+    showBetweenerAlert({
+      title: 'Delete Circle',
+      message: 'Permanently delete this non-live Circle? This cannot be undone.',
+      tone: 'error',
+      buttons: [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              const { error } = await db.rpc('rpc_delete_owned_circle', {
+                p_circle_id: circleId,
+                p_actor_profile_id: currentProfileId,
+              });
+              if (error) {
+                logger.error('[circles] delete_circle_failed', error, { circleId });
+                showBetweenerAlert({
+                  title: 'Delete failed',
+                  message: typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please archive a live Circle first.',
+                  tone: 'error',
+                });
+                return;
+              }
+              router.replace({ pathname: '/(tabs)/circles' });
+            })();
+          },
         },
-      },
-    ]);
+      ],
+    });
   }, [circleId, currentProfileId, isOwner]);
 
   const handleSaveName = useCallback(async () => {
     if (!circleId || !currentProfileId) return;
     const trimmed = nameValue.trim();
     if (!trimmed) {
-      Alert.alert('Circle name', 'Please enter a Circle name.');
+      showBetweenerAlert({
+        title: 'Circle name',
+        message: 'Please enter a Circle name.',
+        tone: 'warning',
+      });
       return;
     }
     const { data, error } = await db.rpc('rpc_update_circle_name', {
@@ -1916,7 +2068,11 @@ export default function CircleDetailScreen() {
     });
     if (error) {
       logger.error('[circles] update_name_failed', error, { circleId });
-      Alert.alert('Update failed', typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Update failed',
+        message: typeof __DEV__ !== 'undefined' && __DEV__ ? error.message : 'Please try again.',
+        tone: 'error',
+      });
       return;
     }
     const nextCircle = data ? { ...(circle ?? {}), ...(data as Partial<Circle>) } as Circle : circle;
@@ -1967,7 +2123,11 @@ export default function CircleDetailScreen() {
       }
     } catch (error) {
       logger.error('[circles] upload_image_failed', error, { circleId });
-      Alert.alert('Upload failed', typeof __DEV__ !== 'undefined' && __DEV__ && error instanceof Error ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Upload failed',
+        message: typeof __DEV__ !== 'undefined' && __DEV__ && error instanceof Error ? error.message : 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setImageUploading(false);
     }
@@ -2086,7 +2246,11 @@ export default function CircleDetailScreen() {
       setGatheringComposerPosterPreviewUrl(upload.previewUri ?? result.assets[0].uri);
     } catch (error) {
       logger.error('[circles] upload_gathering_poster_failed', error, { circleId });
-      Alert.alert('Poster upload failed', error instanceof Error ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Poster upload failed',
+        message: error instanceof Error ? error.message : 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setGatheringPosterUploading(false);
     }
@@ -2108,7 +2272,11 @@ export default function CircleDetailScreen() {
       p_visible_to_others: visibleToOthers,
     });
     if (error) {
-      Alert.alert('Attend failed', error.message || 'Please try again.');
+      showBetweenerAlert({
+        title: 'Attend failed',
+        message: error.message || 'Please try again.',
+        tone: 'error',
+      });
       return;
     }
     const nextAttendanceRow: GatheringAttendance = {
@@ -2133,7 +2301,11 @@ export default function CircleDetailScreen() {
       gatherings: nextGatherings,
       gatheringAttendance: nextAttendance,
     });
-    Alert.alert(status === 'interested' ? 'Interest saved' : 'You are attending', status === 'interested' ? 'This Gathering is saved as interested.' : 'This Gathering is saved for you.');
+    showBetweenerAlert({
+      title: status === 'interested' ? 'Interest saved' : 'You are attending',
+      message: status === 'interested' ? 'This Gathering is saved as interested.' : 'This Gathering is saved for you.',
+      tone: 'success',
+    });
   }, [gatheringAttendance, gatherings, persistCircleDetailSnapshot]);
 
   const openGatheringRsvp = useCallback((gathering: Gathering) => {
@@ -2169,7 +2341,11 @@ export default function CircleDetailScreen() {
         p_visible_to_others: false,
       });
       if (error) {
-        Alert.alert('Update failed', error.message || 'Please try again.');
+        showBetweenerAlert({
+          title: 'Update failed',
+          message: error.message || 'Please try again.',
+          tone: 'error',
+        });
         return;
       }
       const existingAttendance = gatheringAttendance[gatheringRsvpTarget.id];
@@ -2194,7 +2370,11 @@ export default function CircleDetailScreen() {
         gatheringAttendance: nextAttendance,
       });
       setGatheringRsvpTarget(null);
-      Alert.alert('RSVP removed', 'You will no longer appear as attending for this Gathering.');
+      showBetweenerAlert({
+        title: 'RSVP removed',
+        message: 'You will no longer appear as attending for this Gathering.',
+        tone: 'success',
+      });
     } finally {
       setSavingGatheringRsvp(false);
     }
@@ -2253,9 +2433,17 @@ export default function CircleDetailScreen() {
         await persistCircleDetailSnapshot({ circle: nextCircle });
       }
       setHostNoteOpen(false);
-      Alert.alert('Host note updated', 'Members will now see the updated note in this Circle.');
+      showBetweenerAlert({
+        title: 'Host note updated',
+        message: 'Members will now see the updated note in this Circle.',
+        tone: 'success',
+      });
     } catch (error) {
-      Alert.alert('Host note failed', error instanceof Error ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Host note failed',
+        message: error instanceof Error ? error.message : 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setSavingHostNote(false);
     }
@@ -2283,9 +2471,17 @@ export default function CircleDetailScreen() {
       const { error } = await db.from('circle_reports').insert(payload);
       if (error) throw error;
       closeReportSheet();
-      Alert.alert('Report sent', 'We will review this privately. The Circle leadership will not be notified directly.');
+      showBetweenerAlert({
+        title: 'Report sent',
+        message: 'We will review this privately. The Circle leadership will not be notified directly.',
+        tone: 'success',
+      });
     } catch (error) {
-      Alert.alert('Report failed', error instanceof Error ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Report failed',
+        message: error instanceof Error ? error.message : 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setSubmittingReport(false);
     }
@@ -2303,7 +2499,11 @@ export default function CircleDetailScreen() {
       if (error) throw error;
       await patchModerationReportState(reportId, String((data as any)?.status ?? status));
     } catch (error) {
-      Alert.alert('Moderation update failed', error instanceof Error ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Moderation update failed',
+        message: error instanceof Error ? error.message : 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setReviewingReportId(null);
     }
@@ -2311,28 +2511,39 @@ export default function CircleDetailScreen() {
 
   const handleRemovePromptResponse = useCallback((responseId: string) => {
     if (!currentProfileId || removingPromptResponseId) return;
-    Alert.alert('Remove response', 'Remove this response from the Circle?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove',
-        style: 'destructive',
-        onPress: async () => {
-          setRemovingPromptResponseId(responseId);
-          try {
-            const { error } = await db.rpc('rpc_remove_circle_prompt_response', {
-              p_response_id: responseId,
-              p_profile_id: currentProfileId,
-            });
-            if (error) throw error;
-            await refreshCirclePromptsStatePersisted();
-          } catch (error) {
-            Alert.alert('Remove failed', error instanceof Error ? error.message : 'Please try again.');
-          } finally {
-            setRemovingPromptResponseId(null);
-          }
+    showBetweenerAlert({
+      title: 'Remove response',
+      message: 'Remove this response from the Circle?',
+      tone: 'warning',
+      buttons: [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setRemovingPromptResponseId(responseId);
+              try {
+                const { error } = await db.rpc('rpc_remove_circle_prompt_response', {
+                  p_response_id: responseId,
+                  p_profile_id: currentProfileId,
+                });
+                if (error) throw error;
+                await refreshCirclePromptsStatePersisted();
+              } catch (error) {
+                showBetweenerAlert({
+                  title: 'Remove failed',
+                  message: error instanceof Error ? error.message : 'Please try again.',
+                  tone: 'error',
+                });
+              } finally {
+                setRemovingPromptResponseId(null);
+              }
+            })();
+          },
         },
-      },
-    ]);
+      ],
+    });
   }, [currentProfileId, refreshCirclePromptsStatePersisted, removingPromptResponseId]);
 
   const openRoleRequest = useCallback((role: CircleRoleRequestType) => {
@@ -2379,9 +2590,17 @@ export default function CircleDetailScreen() {
       }
       setRoleRequestOpen(false);
       setRoleRequestNote('');
-      Alert.alert('Request submitted', `Your ${roleRequestType} request has been shared with the Circle hosts.`);
+      showBetweenerAlert({
+        title: 'Request submitted',
+        message: `Your ${roleRequestType} request has been shared with the Circle hosts.`,
+        tone: 'success',
+      });
     } catch (error) {
-      Alert.alert('Request failed', error instanceof Error ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Request failed',
+        message: error instanceof Error ? error.message : 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setSubmittingRoleRequest(false);
     }
@@ -2420,7 +2639,11 @@ export default function CircleDetailScreen() {
       setRoleRequestRejectTarget(null);
       setRoleRequestRejectReason('');
     } catch (error) {
-      Alert.alert(`${decision === 'approve' ? 'Approve' : 'Reject'} failed`, error instanceof Error ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: `${decision === 'approve' ? 'Approve' : 'Reject'} failed`,
+        message: error instanceof Error ? error.message : 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setReviewingRoleRequestId(null);
     }
@@ -2457,7 +2680,11 @@ export default function CircleDetailScreen() {
         await patchRoleRequestState(nextRequest);
       }
     } catch (error) {
-      Alert.alert('Cancel failed', error instanceof Error ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Cancel failed',
+        message: error instanceof Error ? error.message : 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setCancellingRoleRequestId(null);
     }
@@ -2468,11 +2695,19 @@ export default function CircleDetailScreen() {
     const title = promptComposerTitle.trim();
     const body = promptComposerBody.trim();
     if (!title || title.length < 3) {
-      Alert.alert('Prompt title', 'Add a clear prompt title.');
+      showBetweenerAlert({
+        title: 'Prompt title',
+        message: 'Add a clear prompt title.',
+        tone: 'warning',
+      });
       return;
     }
     if (!body || body.length < 10) {
-      Alert.alert('Prompt body', 'Add a thoughtful prompt people can answer.');
+      showBetweenerAlert({
+        title: 'Prompt body',
+        message: 'Add a thoughtful prompt people can answer.',
+        tone: 'warning',
+      });
       return;
     }
     setPublishingPrompt(true);
@@ -2505,9 +2740,17 @@ export default function CircleDetailScreen() {
       setPromptComposerTitle('');
       setPromptComposerBody('');
       await reloadPulse();
-      Alert.alert(editingPromptTarget ? 'Prompt updated' : 'Prompt published', editingPromptTarget ? 'The Circle prompt has been refreshed.' : 'Members can answer it now.');
+      showBetweenerAlert({
+        title: editingPromptTarget ? 'Prompt updated' : 'Prompt published',
+        message: editingPromptTarget ? 'The Circle prompt has been refreshed.' : 'Members can answer it now.',
+        tone: 'success',
+      });
     } catch (error) {
-      Alert.alert(editingPromptTarget ? 'Prompt update failed' : 'Prompt publish failed', error instanceof Error ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: editingPromptTarget ? 'Prompt update failed' : 'Prompt publish failed',
+        message: error instanceof Error ? error.message : 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setPublishingPrompt(false);
     }
@@ -2515,10 +2758,11 @@ export default function CircleDetailScreen() {
 
   const handleDeletePrompt = useCallback((prompt: CirclePrompt) => {
     if (!circleId || deletingContentKey) return;
-    Alert.alert(
-      'Delete prompt?',
-      'This will archive the prompt and remove it from Circle Pulse.',
-      [
+    showBetweenerAlert({
+      title: 'Delete prompt?',
+      message: 'This will archive the prompt and remove it from Circle Pulse.',
+      tone: 'warning',
+      buttons: [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
@@ -2547,7 +2791,11 @@ export default function CircleDetailScreen() {
                 });
                 await reloadPulse();
               } catch (error) {
-                Alert.alert('Prompt delete failed', error instanceof Error ? error.message : 'Please try again.');
+                showBetweenerAlert({
+                  title: 'Prompt delete failed',
+                  message: error instanceof Error ? error.message : 'Please try again.',
+                  tone: 'error',
+                });
               } finally {
                 setDeletingContentKey(null);
               }
@@ -2555,7 +2803,7 @@ export default function CircleDetailScreen() {
           },
         },
       ],
-    );
+    });
   }, [circleId, deletingContentKey, editingPromptTarget?.id, persistCircleDetailSnapshot, promptResponsesByPromptId, prompts, reloadPulse]);
 
   const openGatheringComposer = useCallback((gathering?: Gathering | null) => {
@@ -2591,20 +2839,36 @@ export default function CircleDetailScreen() {
     const datePart = gatheringComposerDate.trim();
     const timePart = gatheringComposerTime.trim();
     if (!title || title.length < 3) {
-      Alert.alert('Gathering title', 'Add a clear Gathering title.');
+      showBetweenerAlert({
+        title: 'Gathering title',
+        message: 'Add a clear Gathering title.',
+        tone: 'warning',
+      });
       return;
     }
     if (!description || description.length < 10) {
-      Alert.alert('Gathering details', 'Add a short description for review.');
+      showBetweenerAlert({
+        title: 'Gathering details',
+        message: 'Add a short description for review.',
+        tone: 'warning',
+      });
       return;
     }
     if (!datePart || !timePart) {
-      Alert.alert('Start time', 'Add a valid future date and time.');
+      showBetweenerAlert({
+        title: 'Start time',
+        message: 'Add a valid future date and time.',
+        tone: 'warning',
+      });
       return;
     }
     const startsAt = new Date(`${datePart}T${timePart}`);
     if (Number.isNaN(startsAt.getTime()) || startsAt.getTime() <= Date.now()) {
-      Alert.alert('Start time', 'Use a future date and time.');
+      showBetweenerAlert({
+        title: 'Start time',
+        message: 'Use a future date and time.',
+        tone: 'warning',
+      });
       return;
     }
     const presentationMode = gatheringComposerPosterMode === 'member' && gatheringComposerPosterMemberId ? 'seat_linked' : 'general';
@@ -2685,16 +2949,21 @@ export default function CircleDetailScreen() {
         await persistCircleDetailSnapshot({ gatherings: nextGatherings });
       }
       await reloadPulse();
-      Alert.alert(
-        editingGatheringTarget ? 'Gathering updated' : 'Gathering submitted',
-        editingGatheringTarget ? 'The gathering details and poster have been updated.' : 'We will notify you once it is approved.',
-      );
+      showBetweenerAlert({
+        title: editingGatheringTarget ? 'Gathering updated' : 'Gathering submitted',
+        message: editingGatheringTarget ? 'The gathering details and poster have been updated.' : 'We will notify you once it is approved.',
+        tone: 'success',
+      });
     } catch (error) {
       const message =
         typeof error === 'object' && error && 'message' in error
           ? String((error as { message?: unknown }).message || 'Please try again.')
           : 'Please try again.';
-      Alert.alert(editingGatheringTarget ? 'Gathering update failed' : 'Gathering request failed', message);
+      showBetweenerAlert({
+        title: editingGatheringTarget ? 'Gathering update failed' : 'Gathering request failed',
+        message,
+        tone: 'error',
+      });
     } finally {
       setCreatingGathering(false);
     }
@@ -2720,10 +2989,11 @@ export default function CircleDetailScreen() {
 
   const handleDeleteGathering = useCallback((gathering: Gathering) => {
     if (deletingContentKey) return;
-    Alert.alert(
-      'Delete Gathering?',
-      'This will archive the Gathering and remove it from Circle Pulse.',
-      [
+    showBetweenerAlert({
+      title: 'Delete Gathering?',
+      message: 'This will archive the Gathering and remove it from Circle Pulse.',
+      tone: 'warning',
+      buttons: [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
@@ -2751,7 +3021,11 @@ export default function CircleDetailScreen() {
                 });
                 await reloadPulse();
               } catch (error) {
-                Alert.alert('Gathering delete failed', error instanceof Error ? error.message : 'Please try again.');
+                showBetweenerAlert({
+                  title: 'Gathering delete failed',
+                  message: error instanceof Error ? error.message : 'Please try again.',
+                  tone: 'error',
+                });
               } finally {
                 setDeletingContentKey(null);
               }
@@ -2759,7 +3033,7 @@ export default function CircleDetailScreen() {
           },
         },
       ],
-    );
+    });
   }, [deletingContentKey, editingGatheringTarget?.id, gatheringAttendance, gatherings, persistCircleDetailSnapshot, reloadPulse]);
 
   const openPromptAnswer = useCallback((prompt: CirclePrompt) => {
@@ -2772,7 +3046,11 @@ export default function CircleDetailScreen() {
     if (!promptTarget?.id) return;
     const body = promptAnswer.trim();
     if (!body) {
-      Alert.alert('Circle Prompt', 'Add your answer first.');
+      showBetweenerAlert({
+        title: 'Circle Prompt',
+        message: 'Add your answer first.',
+        tone: 'warning',
+      });
       return;
     }
     const { data, error } = await db.rpc('rpc_answer_circle_prompt', {
@@ -2780,7 +3058,11 @@ export default function CircleDetailScreen() {
       p_response: body,
     });
     if (error) {
-      Alert.alert('Circle Prompt', error.message || 'Please try again.');
+      showBetweenerAlert({
+        title: 'Circle Prompt',
+        message: error.message || 'Please try again.',
+        tone: 'error',
+      });
       return;
     }
     const nextResponse: CirclePromptResponse | null = data ? {
@@ -2816,7 +3098,11 @@ export default function CircleDetailScreen() {
     setPromptAnswerOpen(false);
     setPromptTarget(null);
     setPromptAnswer('');
-    Alert.alert('Answer shared', 'Your answer has been shared with the Circle.');
+    showBetweenerAlert({
+      title: 'Answer shared',
+      message: 'Your answer has been shared with the Circle.',
+      tone: 'success',
+    });
   }, [authProfile, currentProfileId, persistCircleDetailSnapshot, promptAnswer, promptResponsesByPromptId, promptTarget, user?.id]);
 
   const openProfile = useCallback((profileId?: string | null) => {
@@ -2864,6 +3150,13 @@ export default function CircleDetailScreen() {
   const communityMembers = useMemo(
     () => members.filter((item) => !leadershipMembers.some((leader) => leader.id === item.id)),
     [leadershipMembers, members],
+  );
+  const membersByProfileId = useMemo(
+    () => members.reduce<Record<string, MemberRow>>((acc, item) => {
+      acc[item.profile_id] = item;
+      return acc;
+    }, {}),
+    [members],
   );
   const recentMoments = moments.slice(0, 4);
   const pulsePromptCandidates = useMemo(
@@ -2943,6 +3236,53 @@ export default function CircleDetailScreen() {
     });
   }, [circle?.name, circleId, user?.id]);
 
+  const normalizeMemberTargetProfileId = useCallback((profileId?: string | null) => {
+    if (!profileId) return null;
+    const directId = String(profileId);
+    if (matchedMemberProfileIds[directId] || membersByProfileId[directId]) return directId;
+    const resolvedMember = members.find((item) => item.profiles?.id === directId);
+    return resolvedMember?.profile_id ?? directId;
+  }, [matchedMemberProfileIds, members, membersByProfileId]);
+
+  const openMatchedMemberChat = useCallback((profileId?: string | null, fallbackName?: string | null) => {
+    const targetProfileId = normalizeMemberTargetProfileId(profileId);
+    if (!targetProfileId) return;
+    const member = membersByProfileId[targetProfileId]?.profiles ?? null;
+    router.push({
+      pathname: '/chat/[id]',
+      params: {
+        id: targetProfileId,
+        peerUserId: member?.user_id ?? '',
+        userName: member?.full_name ?? fallbackName ?? '',
+        userAvatar: member?.avatar_url ?? '',
+      },
+    });
+  }, [membersByProfileId, normalizeMemberTargetProfileId]);
+
+  const handleMemberConnection = useCallback((profileId?: string | null, name?: string | null) => {
+    const targetProfileId = normalizeMemberTargetProfileId(profileId);
+    if (!targetProfileId || targetProfileId === currentProfileId) return;
+    if (matchedMemberProfileIds[targetProfileId]) {
+      openMatchedMemberChat(targetProfileId, name);
+      return;
+    }
+    openIntentSheet(targetProfileId, name);
+  }, [currentProfileId, matchedMemberProfileIds, normalizeMemberTargetProfileId, openIntentSheet, openMatchedMemberChat]);
+
+  const isMatchedMember = useCallback((item: MemberRow) => (
+    Boolean(
+      matchedMemberProfileIds[item.profile_id]
+      || (item.profiles?.id ? matchedMemberProfileIds[item.profiles.id] : false)
+      || (item.user_id ? matchedMemberUserIds[item.user_id] : false)
+      || (item.profiles?.user_id ? matchedMemberUserIds[item.profiles.user_id] : false)
+    )
+  ), [matchedMemberProfileIds, matchedMemberUserIds]);
+
+  const getMemberConnectionLabel = useCallback((item: MemberRow) => {
+    if (isMatchedMember(item)) return 'Chat';
+    return String(item.role).toLowerCase() === 'matchmaker' ? 'Ask intro' : 'Request';
+  }, [isMatchedMember]);
+
   const openPulseMomentViewer = useCallback((moment: CircleMoment) => {
     if (!moment.user_id) return;
     router.push({
@@ -3000,23 +3340,36 @@ export default function CircleDetailScreen() {
       setPulseMediaTarget(item);
       return;
     }
-    Alert.alert('Circle media', 'This spotlight is not available in the media viewer yet.');
+    showBetweenerAlert({
+      title: 'Circle media',
+      message: 'This spotlight is not available in the media viewer yet.',
+      tone: 'info',
+    });
   }, [members, moments, openPulseMomentViewer, openPulseMomentViewerByIds]);
 
   const handleEndLoveSeat = useCallback((item: CirclePulseItem) => {
     if (!item.loveSeatId || !currentProfileId) return;
-    Alert.alert('End Love Seat?', 'This spotlight will leave Circle Pulse immediately.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'End feature',
-        style: 'destructive',
-        onPress: () => {
-          void endCircleLoveSeat(item.loveSeatId!, currentProfileId)
-            .then(() => reloadPulse())
-            .catch((error) => Alert.alert('Love Seat', error instanceof Error ? error.message : 'Could not end this feature right now.'));
+    showBetweenerAlert({
+      title: 'End Love Seat?',
+      message: 'This spotlight will leave Circle Pulse immediately.',
+      tone: 'warning',
+      buttons: [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'End feature',
+          style: 'destructive',
+          onPress: () => {
+            void endCircleLoveSeat(item.loveSeatId!, currentProfileId)
+              .then(() => reloadPulse())
+              .catch((error) => showBetweenerAlert({
+                title: 'Love Seat',
+                message: error instanceof Error ? error.message : 'Could not end this feature right now.',
+                tone: 'error',
+              }));
+          },
         },
-      },
-    ]);
+      ],
+    });
   }, [currentProfileId, reloadPulse]);
 
   const openCircleMomentCreate = useCallback(() => {
@@ -3036,19 +3389,24 @@ export default function CircleDetailScreen() {
       p_circle_id: circleId,
     });
     if (error) {
-      Alert.alert('Moment feed check', String(error.message || error));
+      showBetweenerAlert({
+        title: 'Moment feed check',
+        message: String(error.message || error),
+        tone: 'error',
+      });
       return;
     }
     const { activeCount, visibleCount } = summarizeCircleMomentDiagnostics(data);
     logger.warn('[circles] member_moments_manual_check', { circleId, diagnostics: data });
-    Alert.alert(
-      'Moment feed check',
-      activeCount === 0
+    showBetweenerAlert({
+      title: 'Moment feed check',
+      message: activeCount === 0
         ? 'No active Moment rows were found for visible Circle members.'
         : visibleCount === 0
           ? `${activeCount} active Moment row${activeCount === 1 ? '' : 's'} found, but none are currently eligible for this Circle feed.`
           : `${visibleCount} eligible Moment row${visibleCount === 1 ? '' : 's'} found. Apply the latest Circle migration, then refresh this screen.`,
-    );
+      tone: visibleCount > 0 ? 'success' : 'info',
+    });
     if (visibleCount > 0) {
       void refreshCircleMomentsPersisted();
     }
@@ -3162,8 +3520,8 @@ export default function CircleDetailScreen() {
               <Text style={styles.ghostText}>View</Text>
             </TouchableOpacity>
             {!isSelf ? (
-              <TouchableOpacity style={styles.primaryButton} onPress={() => openIntentSheet(member.id, member.full_name)}>
-                <Text style={styles.primaryText}>Request</Text>
+              <TouchableOpacity style={styles.primaryButton} onPress={() => handleMemberConnection(item.profile_id, member.full_name)}>
+                <Text style={styles.primaryText}>{getMemberConnectionLabel(item)}</Text>
               </TouchableOpacity>
             ) : null}
             {manageOptions.roles.length > 0 || manageOptions.canRemove ? (
@@ -3244,8 +3602,8 @@ export default function CircleDetailScreen() {
             <Text style={styles.ghostText}>View</Text>
           </TouchableOpacity>
           {!isSelf ? (
-            <TouchableOpacity style={styles.primaryButton} onPress={() => openIntentSheet(member.id, member.full_name)}>
-              <Text style={styles.primaryText}>{item.role === 'matchmaker' ? 'Ask intro' : 'Request'}</Text>
+            <TouchableOpacity style={styles.primaryButton} onPress={() => handleMemberConnection(item.profile_id, member.full_name)}>
+              <Text style={styles.primaryText}>{getMemberConnectionLabel(item)}</Text>
             </TouchableOpacity>
           ) : null}
           {manageOptions.roles.length > 0 || manageOptions.canRemove ? (
@@ -3460,7 +3818,7 @@ export default function CircleDetailScreen() {
           }}
           viewerProfileId={currentProfileId}
           onOpenFeaturedProfile={openProfile}
-          onSendSignal={openIntentSheet}
+          onSendSignal={handleMemberConnection}
           onEndLoveSeat={handleEndLoveSeat}
         />
 
@@ -4625,6 +4983,7 @@ export default function CircleDetailScreen() {
         onClose={() => setIntentSheetOpen(false)}
         recipientId={intentTarget?.id}
         recipientName={intentTarget?.name ?? null}
+        defaultType="circle_intro"
         metadata={{ source: 'circles', circle_id: circle?.id, circle_name: circle?.name }}
       />
       <CircleInviteSheet

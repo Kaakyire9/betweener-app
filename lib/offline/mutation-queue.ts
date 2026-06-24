@@ -3,6 +3,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { AppState, type AppStateStatus } from 'react-native';
 
 import { ChatRepository, type ChatMessageRow, type ChatPendingOutboxRow } from '@/lib/chat/local/chat-db';
+import { createProfileBoostV2, type BoostAudienceMode, type BoostFocusMode, type BoostType } from '@/lib/boosts';
 import {
   createCirclePulseComment,
   deleteCirclePulseComment,
@@ -68,12 +69,6 @@ type ProfileImageReactionSyncPayload = {
   imageUrl: string;
   reactorUserId: string;
   emoji: string | null;
-};
-
-type ProfileNoteCreatePayload = {
-  profileId: string;
-  senderId: string;
-  note: string;
 };
 
 type ChatTextSendPayload = {
@@ -167,6 +162,29 @@ type NotificationPrefsUpdatePayload = {
   updatedAt: string;
 };
 
+type ProfileGiftSendPayload = {
+  recipientProfileId: string;
+  giftType: string;
+  includeSandboxPreview?: boolean;
+  clientNonce: string;
+};
+
+type ProfileGiftRevealPayload = {
+  giftId: string;
+};
+
+type ProfileGiftArchivePayload = {
+  giftId: string;
+};
+
+type ProfileBoostCreatePayload = {
+  ownerProfileId: string;
+  boostType: BoostType;
+  audienceMode: BoostAudienceMode;
+  focusMode: BoostFocusMode;
+  metadata?: Record<string, unknown> | null;
+};
+
 export type MomentTextCreatePayload = {
   tempId: string;
   userId: string;
@@ -210,6 +228,7 @@ export type MomentCommentCreatePayload = {
   momentId: string;
   userId: string;
   body: string;
+  parentCommentId?: string | null;
   createdAt: string;
 };
 
@@ -226,6 +245,15 @@ export type MomentCommentDeletePayload = {
   momentId: string;
   userId: string;
   deletedAt: string;
+};
+
+export type MomentCommentReactionSyncPayload = {
+  commentId: string;
+  momentId: string;
+  userId: string;
+  reaction: 'heart' | 'laugh' | 'love' | 'fire' | 'clap' | null;
+  previousReaction?: 'heart' | 'laugh' | 'love' | 'fire' | 'clap' | null;
+  syncedAt: string;
 };
 
 export type CirclePulseCommentCreatePayload = {
@@ -297,17 +325,6 @@ export type OfflineMutation =
       nextAttemptAt?: number | null;
       lastError?: string | null;
       payload: ProfileImageReactionSyncPayload;
-    }
-  | {
-      id: string;
-      dedupeKey: string;
-      kind: 'profile_note_create';
-      createdAt: number;
-      attempts: number;
-      lastAttemptAt?: number | null;
-      nextAttemptAt?: number | null;
-      lastError?: string | null;
-      payload: ProfileNoteCreatePayload;
     }
   | {
       id: string;
@@ -433,6 +450,50 @@ export type OfflineMutation =
   | {
       id: string;
       dedupeKey: string;
+      kind: 'profile_gift_send';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: ProfileGiftSendPayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'profile_gift_reveal';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: ProfileGiftRevealPayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'profile_gift_archive';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: ProfileGiftArchivePayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'profile_boost_create';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: ProfileBoostCreatePayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
       kind: 'moment_text_create';
       createdAt: number;
       attempts: number;
@@ -506,6 +567,17 @@ export type OfflineMutation =
       nextAttemptAt?: number | null;
       lastError?: string | null;
       payload: MomentCommentDeletePayload;
+    }
+  | {
+      id: string;
+      dedupeKey: string;
+      kind: 'moment_comment_reaction_sync';
+      createdAt: number;
+      attempts: number;
+      lastAttemptAt?: number | null;
+      nextAttemptAt?: number | null;
+      lastError?: string | null;
+      payload: MomentCommentReactionSyncPayload;
     }
   | {
       id: string;
@@ -619,9 +691,6 @@ const buildSwipeDedupeKey = (payload: SwipeSyncPayload) =>
 const buildProfileImageReactionDedupeKey = (payload: ProfileImageReactionSyncPayload) =>
   `profile_image_reaction_sync:${payload.profileId}:${payload.imageUrl}:${payload.reactorUserId}`;
 
-const buildProfileNoteDedupeKey = (payload: ProfileNoteCreatePayload) =>
-  `profile_note_create:${payload.profileId}:${payload.senderId}:${payload.note.trim().toLowerCase()}`;
-
 const buildChatTextSendDedupeKey = (payload: ChatTextSendPayload) => {
   const stablePart =
     payload.clientMessageId ??
@@ -659,6 +728,18 @@ const buildProfileMediaSyncDedupeKey = (payload: ProfileMediaSyncPayload) =>
 const buildNotificationPrefsUpdateDedupeKey = (payload: NotificationPrefsUpdatePayload) =>
   `notification_prefs_update:${payload.userId}`;
 
+const buildProfileGiftSendDedupeKey = (payload: ProfileGiftSendPayload) =>
+  `profile_gift_send:${payload.recipientProfileId}:${payload.giftType}:${payload.clientNonce}`;
+
+const buildProfileGiftRevealDedupeKey = (payload: ProfileGiftRevealPayload) =>
+  `profile_gift_reveal:${payload.giftId}`;
+
+const buildProfileGiftArchiveDedupeKey = (payload: ProfileGiftArchivePayload) =>
+  `profile_gift_archive:${payload.giftId}`;
+
+const buildProfileBoostCreateDedupeKey = (payload: ProfileBoostCreatePayload) =>
+  `profile_boost_create:${payload.ownerProfileId}`;
+
 const buildMomentTextCreateDedupeKey = (payload: MomentTextCreatePayload) =>
   `moment_text_create:${payload.tempId}`;
 
@@ -679,6 +760,9 @@ const buildMomentCommentUpdateDedupeKey = (payload: MomentCommentUpdatePayload) 
 
 const buildMomentCommentDeleteDedupeKey = (payload: MomentCommentDeletePayload) =>
   `moment_comment_delete:${payload.commentId}`;
+
+const buildMomentCommentReactionSyncDedupeKey = (payload: MomentCommentReactionSyncPayload) =>
+  `moment_comment_reaction_sync:${payload.commentId}:${payload.userId}`;
 
 const buildCirclePulseCommentCreateDedupeKey = (payload: CirclePulseCommentCreatePayload) =>
   `circle_pulse_comment_create:${payload.tempId}`;
@@ -731,13 +815,15 @@ const isMomentInteractionMutation = (
       | 'moment_reaction_sync'
       | 'moment_comment_create'
       | 'moment_comment_update'
-      | 'moment_comment_delete';
+      | 'moment_comment_delete'
+      | 'moment_comment_reaction_sync';
   }
 > =>
   mutation.kind === 'moment_reaction_sync' ||
   mutation.kind === 'moment_comment_create' ||
   mutation.kind === 'moment_comment_update' ||
-  mutation.kind === 'moment_comment_delete';
+  mutation.kind === 'moment_comment_delete' ||
+  mutation.kind === 'moment_comment_reaction_sync';
 
 const isMomentCreateMutation = (
   mutation: OfflineMutation | FailedOfflineMutation,
@@ -794,7 +880,11 @@ const shouldDropStaleQueuedMutation = (
     if (hasDelete) return true;
 
     if (
-      (mutation.kind === 'moment_comment_update' || mutation.kind === 'moment_comment_delete') &&
+      (
+        mutation.kind === 'moment_comment_update' ||
+        mutation.kind === 'moment_comment_delete' ||
+        mutation.kind === 'moment_comment_reaction_sync'
+      ) &&
       isOfflineMomentCommentId(mutation.payload.commentId)
     ) {
       const hasBackingCommentCreate = allMutations.some(
@@ -892,12 +982,16 @@ const isBenignIntentQueueError = (error: unknown) => {
 
 async function readMutationQueue(): Promise<OfflineMutation[]> {
   const data = await readOfflineData<OfflineMutation[]>(OFFLINE_MUTATION_QUEUE_KEY);
-  return Array.isArray(data) ? data : [];
+  return Array.isArray(data)
+    ? (data.filter((item) => (item as { kind?: string } | null)?.kind !== 'profile_note_create') as OfflineMutation[])
+    : [];
 }
 
 async function readFailedMutationQueue(): Promise<FailedOfflineMutation[]> {
   const data = await readOfflineData<FailedOfflineMutation[]>(OFFLINE_MUTATION_FAILED_KEY);
-  return Array.isArray(data) ? data : [];
+  return Array.isArray(data)
+    ? (data.filter((item) => (item as { kind?: string } | null)?.kind !== 'profile_note_create') as FailedOfflineMutation[])
+    : [];
 }
 
 async function writeMutationQueue(queue: OfflineMutation[]) {
@@ -1153,6 +1247,7 @@ export async function clearMomentMutationArtifacts(momentId: string) {
       item.kind === 'moment_comment_create' ||
       item.kind === 'moment_comment_update' ||
       item.kind === 'moment_comment_delete' ||
+      item.kind === 'moment_comment_reaction_sync' ||
       item.kind === 'moment_delete'
     ) {
       return item.payload.momentId !== momentId;
@@ -1191,6 +1286,9 @@ export async function clearMomentCommentMutationArtifacts(commentId: string) {
       (item.kind === 'moment_comment_update' || item.kind === 'moment_comment_delete') &&
       item.payload.commentId === commentId
     ) {
+      return false;
+    }
+    if (item.kind === 'moment_comment_reaction_sync' && item.payload.commentId === commentId) {
       return false;
     }
     return true;
@@ -1592,15 +1690,6 @@ async function processProfileImageReactionSync(payload: ProfileImageReactionSync
   if (error) throw error;
 }
 
-async function processProfileNoteCreate(payload: ProfileNoteCreatePayload) {
-  const { error } = await supabase.from('profile_notes').insert({
-    profile_id: payload.profileId,
-    sender_id: payload.senderId,
-    note: payload.note,
-  });
-  if (error) throw error;
-}
-
 const encodeStoragePath = (path: string) =>
   path
     .split('/')
@@ -1832,6 +1921,38 @@ async function processNotificationPrefsUpdate(payload: NotificationPrefsUpdatePa
   if (error) throw error;
 }
 
+async function processProfileGiftSend(payload: ProfileGiftSendPayload) {
+  const { error } = await supabase.rpc('rpc_send_profile_gift' as any, {
+    p_recipient_profile_id: payload.recipientProfileId,
+    p_gift_type: payload.giftType,
+    p_include_sandbox_preview: Boolean(payload.includeSandboxPreview),
+  });
+  if (error) throw error;
+}
+
+async function processProfileGiftReveal(payload: ProfileGiftRevealPayload) {
+  const { error } = await supabase.rpc('rpc_reveal_profile_gift' as any, {
+    p_gift_id: payload.giftId,
+  });
+  if (error) throw error;
+}
+
+async function processProfileGiftArchive(payload: ProfileGiftArchivePayload) {
+  const { error } = await supabase.rpc('rpc_archive_profile_gift' as any, {
+    p_gift_id: payload.giftId,
+  });
+  if (error) throw error;
+}
+
+async function processProfileBoostCreate(payload: ProfileBoostCreatePayload) {
+  await createProfileBoostV2({
+    boostType: payload.boostType,
+    audienceMode: payload.audienceMode,
+    focusMode: payload.focusMode,
+    metadata: payload.metadata ?? {},
+  });
+}
+
 async function processMomentTextCreate(payload: MomentTextCreatePayload) {
   const result = await createTextMomentStrict({
     userId: payload.userId,
@@ -1937,6 +2058,7 @@ async function processMomentCommentCreate(payload: MomentCommentCreatePayload) {
   const { data, error } = await supabase.rpc('rpc_create_moment_comment', {
     p_moment_id: payload.momentId,
     p_body: payload.body,
+    p_parent_comment_id: payload.parentCommentId ?? null,
   });
   if (error) throw error;
   // A null return means the Moment is no longer actionable for this user.
@@ -1971,6 +2093,17 @@ async function processMomentCommentDelete(payload: MomentCommentDeletePayload) {
     removeMomentCommentSnapshot(payload.userId, payload.momentId, payload.commentId),
     clearMomentCommentMutationArtifacts(payload.commentId),
   ]);
+}
+
+async function processMomentCommentReactionSync(payload: MomentCommentReactionSyncPayload) {
+  const { data, error } = await supabase.rpc('rpc_sync_moment_comment_reaction', {
+    p_comment_id: payload.commentId,
+    p_reaction: payload.reaction,
+  });
+  if (error) throw error;
+  if (data === false) {
+    await clearMomentCommentMutationArtifacts(payload.commentId);
+  }
 }
 
 async function processCirclePulseCommentCreate(payload: CirclePulseCommentCreatePayload) {
@@ -2079,9 +2212,6 @@ async function processMutation(mutation: OfflineMutation) {
     case 'profile_image_reaction_sync':
       await processProfileImageReactionSync(mutation.payload);
       return;
-    case 'profile_note_create':
-      await processProfileNoteCreate(mutation.payload);
-      return;
     case 'chat_text_send':
       await persistLegacyChatSendMutationToSQLiteOutbox(mutation);
       return;
@@ -2115,6 +2245,18 @@ async function processMutation(mutation: OfflineMutation) {
     case 'notification_prefs_update':
       await processNotificationPrefsUpdate(mutation.payload);
       return;
+    case 'profile_gift_send':
+      await processProfileGiftSend(mutation.payload);
+      return;
+    case 'profile_gift_reveal':
+      await processProfileGiftReveal(mutation.payload);
+      return;
+    case 'profile_gift_archive':
+      await processProfileGiftArchive(mutation.payload);
+      return;
+    case 'profile_boost_create':
+      await processProfileBoostCreate(mutation.payload);
+      return;
     case 'moment_text_create':
       await processMomentTextCreate(mutation.payload);
       return;
@@ -2135,6 +2277,9 @@ async function processMutation(mutation: OfflineMutation) {
       return;
     case 'moment_comment_delete':
       await processMomentCommentDelete(mutation.payload);
+      return;
+    case 'moment_comment_reaction_sync':
+      await processMomentCommentReactionSync(mutation.payload);
       return;
     case 'circle_pulse_comment_create':
       await processCirclePulseCommentCreate(mutation.payload);
@@ -2180,22 +2325,6 @@ export async function enqueueProfileImageReactionSyncMutation(payload: ProfileIm
     id: buildOfflineMutationId(),
     dedupeKey: buildProfileImageReactionDedupeKey(payload),
     kind: 'profile_image_reaction_sync',
-    createdAt: Date.now(),
-    attempts: 0,
-    payload,
-  };
-
-  await replaceQueue((current) => {
-    const filtered = current.filter((item) => item.dedupeKey !== mutation.dedupeKey);
-    return [...filtered, mutation];
-  });
-}
-
-export async function enqueueProfileNoteCreateMutation(payload: ProfileNoteCreatePayload) {
-  const mutation: OfflineMutation = {
-    id: buildOfflineMutationId(),
-    dedupeKey: buildProfileNoteDedupeKey(payload),
-    kind: 'profile_note_create',
     createdAt: Date.now(),
     attempts: 0,
     payload,
@@ -2274,6 +2403,7 @@ export async function enqueueIntentRequestCreateMutation(payload: IntentRequestC
 
   await replaceQueue((current) => [...current, mutation]);
   emitMutationEvent({ type: 'queued', mutation });
+  return mutation;
 }
 
 export async function enqueueIntentRequestDecisionMutation(payload: IntentRequestDecisionPayload) {
@@ -2291,6 +2421,7 @@ export async function enqueueIntentRequestDecisionMutation(payload: IntentReques
     return [...filtered, mutation];
   });
   emitMutationEvent({ type: 'queued', mutation });
+  return mutation;
 }
 
 export async function enqueueIntentRequestCancelMutation(payload: IntentRequestCancelPayload) {
@@ -2308,6 +2439,7 @@ export async function enqueueIntentRequestCancelMutation(payload: IntentRequestC
     return [...filtered, mutation];
   });
   emitMutationEvent({ type: 'queued', mutation });
+  return mutation;
 }
 
 export async function enqueueProfileUpdateMutation(payload: ProfileUpdatePayload) {
@@ -2376,6 +2508,75 @@ export async function enqueueNotificationPrefsUpdateMutation(payload: Notificati
     return [...filtered, mutation];
   });
   emitMutationEvent({ type: 'queued', mutation });
+}
+
+export async function enqueueProfileGiftSendMutation(payload: ProfileGiftSendPayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildProfileGiftSendDedupeKey(payload),
+    kind: 'profile_gift_send',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => [...current, mutation]);
+  emitMutationEvent({ type: 'queued', mutation });
+  return mutation;
+}
+
+export async function enqueueProfileGiftRevealMutation(payload: ProfileGiftRevealPayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildProfileGiftRevealDedupeKey(payload),
+    kind: 'profile_gift_reveal',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => {
+    const filtered = current.filter((item) => item.dedupeKey !== mutation.dedupeKey);
+    return [...filtered, mutation];
+  });
+  emitMutationEvent({ type: 'queued', mutation });
+  return mutation;
+}
+
+export async function enqueueProfileGiftArchiveMutation(payload: ProfileGiftArchivePayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildProfileGiftArchiveDedupeKey(payload),
+    kind: 'profile_gift_archive',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => {
+    const filtered = current.filter((item) => item.dedupeKey !== mutation.dedupeKey);
+    return [...filtered, mutation];
+  });
+  emitMutationEvent({ type: 'queued', mutation });
+  return mutation;
+}
+
+export async function enqueueProfileBoostCreateMutation(payload: ProfileBoostCreatePayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildProfileBoostCreateDedupeKey(payload),
+    kind: 'profile_boost_create',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => {
+    const filtered = current.filter((item) => item.dedupeKey !== mutation.dedupeKey);
+    return [...filtered, mutation];
+  });
+  emitMutationEvent({ type: 'queued', mutation });
+  return mutation;
 }
 
 export async function enqueueMomentTextCreateMutation(payload: MomentTextCreatePayload) {
@@ -2521,8 +2722,29 @@ export async function enqueueMomentCommentDeleteMutation(payload: MomentCommentD
         !(
           item.kind === 'moment_comment_update' &&
           item.payload.commentId === payload.commentId
+        ) &&
+        !(
+          item.kind === 'moment_comment_reaction_sync' &&
+          item.payload.commentId === payload.commentId
         ),
     );
+    return [...filtered, mutation];
+  });
+  emitMutationEvent({ type: 'queued', mutation });
+}
+
+export async function enqueueMomentCommentReactionSyncMutation(payload: MomentCommentReactionSyncPayload) {
+  const mutation: OfflineMutation = {
+    id: buildOfflineMutationId(),
+    dedupeKey: buildMomentCommentReactionSyncDedupeKey(payload),
+    kind: 'moment_comment_reaction_sync',
+    createdAt: Date.now(),
+    attempts: 0,
+    payload,
+  };
+
+  await replaceQueue((current) => {
+    const filtered = current.filter((item) => item.dedupeKey !== mutation.dedupeKey);
     return [...filtered, mutation];
   });
   emitMutationEvent({ type: 'queued', mutation });
@@ -2802,7 +3024,8 @@ export async function getMomentOfflineMutationSnapshot() {
         item.kind === 'moment_reaction_sync' ||
         item.kind === 'moment_comment_create' ||
         item.kind === 'moment_comment_update' ||
-        item.kind === 'moment_comment_delete'
+        item.kind === 'moment_comment_delete' ||
+        item.kind === 'moment_comment_reaction_sync'
       ),
     ),
     failed: failed.filter((item) =>
@@ -2814,8 +3037,29 @@ export async function getMomentOfflineMutationSnapshot() {
         item.kind === 'moment_reaction_sync' ||
         item.kind === 'moment_comment_create' ||
         item.kind === 'moment_comment_update' ||
-        item.kind === 'moment_comment_delete'
+        item.kind === 'moment_comment_delete' ||
+        item.kind === 'moment_comment_reaction_sync'
       ),
+    ),
+  };
+}
+
+export async function getBoostOfflineMutationSnapshot(profileId?: string) {
+  const { pending, failed } = await getOfflineMutationQueueSnapshot();
+  const matchesProfile = (
+    item:
+      | Extract<OfflineMutation, { kind: 'profile_boost_create' }>
+      | Extract<FailedOfflineMutation, { kind: 'profile_boost_create' }>,
+  ) => !profileId || item.payload.ownerProfileId === profileId;
+
+  return {
+    pending: pending.filter(
+      (item): item is Extract<OfflineMutation, { kind: 'profile_boost_create' }> =>
+        item.kind === 'profile_boost_create' && matchesProfile(item),
+    ),
+    failed: failed.filter(
+      (item): item is Extract<FailedOfflineMutation, { kind: 'profile_boost_create' }> =>
+        item.kind === 'profile_boost_create' && matchesProfile(item),
     ),
   };
 }

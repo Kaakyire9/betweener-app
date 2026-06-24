@@ -319,6 +319,16 @@ export default function ActivityScreen() {
           openChat(actorId, actorName, actorAvatar);
           return;
         }
+        if (item.type === "GIFT_RECEIVED") {
+          const route =
+            typeof item.metadata?.route === "string" && item.metadata.route.startsWith("/")
+              ? item.metadata.route
+              : null;
+          if (route) {
+            router.push(route as any);
+            return;
+          }
+        }
         if (item.type === "MOMENT_REACTION" || item.type === "MOMENT_COMMENT") {
           const momentOwnerId = typeof (item.metadata as any)?.moment_owner_user_id === "string"
             ? String((item.metadata as any).moment_owner_user_id)
@@ -376,11 +386,20 @@ export default function ActivityScreen() {
               },
             };
           case "GIFT_RECEIVED":
-            return actorId
+            return actorId || typeof (item.metadata as any)?.actor_user_id === "string"
               ? {
-                  label: "Say Thanks",
+                  label:
+                    typeof (item.metadata as any)?.cta_label === "string" &&
+                    String((item.metadata as any).cta_label).trim()
+                      ? String((item.metadata as any).cta_label).trim()
+                      : "Say Thanks",
                   onPress: async () => {
-                    await sendThanks(actorId);
+                    await sendThanks(
+                      actor?.user_id ??
+                        (typeof (item.metadata as any)?.actor_user_id === "string"
+                          ? String((item.metadata as any).actor_user_id)
+                          : null),
+                    );
                     resolveAndRead(item);
                   },
                 }
@@ -395,9 +414,21 @@ export default function ActivityScreen() {
             };
           case "SYSTEM":
             return {
-              label: "Verify Now",
+              label:
+                typeof (item.metadata as any)?.cta_label === "string" &&
+                String((item.metadata as any).cta_label).trim()
+                  ? String((item.metadata as any).cta_label).trim()
+                  : "Open",
               onPress: () => {
                 handleMarkRead(item);
+                const route =
+                  typeof item.metadata?.route === "string" && item.metadata.route.startsWith("/")
+                    ? item.metadata.route
+                    : null;
+                if (route) {
+                  router.push(route as any);
+                  return;
+                }
                 router.push("/(tabs)/profile");
               },
             };
@@ -489,7 +520,13 @@ export default function ActivityScreen() {
           isUnread={isUnread}
           isActionRequired={isActionRequired}
           badgeIcon={badgeIcon}
-          systemIcon={item.type === "SYSTEM" ? "shield-check-outline" : undefined}
+          systemIcon={
+            item.type === "SYSTEM"
+              ? item.entity_type?.startsWith("profile_gift")
+                ? "gift-outline"
+                : "shield-check-outline"
+              : undefined
+          }
           primaryAction={primaryAction}
           secondaryAction={secondaryAction}
           onPress={handleOpen}

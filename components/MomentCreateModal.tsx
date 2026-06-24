@@ -1,6 +1,8 @@
 import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
 import LinearGradientSafe from '@/components/NativeWrappers/LinearGradientSafe';
+import { showBetweenerAlert } from '@/components/ui/BetweenerAlertHost';
 import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
 import { showOpenSettingsPrompt } from '@/lib/permission-prompts';
 import { createMomentFromMedia, createTextMoment } from '@/lib/moments';
@@ -8,7 +10,6 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Animated,
   Easing,
   Pressable,
@@ -17,7 +18,6 @@ import {
   Text,
   TextInput,
   View,
-  useColorScheme,
 } from 'react-native';
 
 const pickerMediaTypeImages: ImagePicker.MediaType = 'images';
@@ -101,7 +101,11 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
       setError(res.error);
       return;
     }
-    Alert.alert('Moment posted', 'Your Moment is live for 24 hours.');
+    showBetweenerAlert({
+      title: 'Moment posted',
+      message: 'Your Moment is live for 24 hours.',
+      tone: 'success',
+    });
     onCreated();
     close();
   };
@@ -138,7 +142,11 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
       setError(res.error);
       return;
     }
-    Alert.alert('Moment posted', 'Your Moment is live for 24 hours.');
+    showBetweenerAlert({
+      title: 'Moment posted',
+      message: 'Your Moment is live for 24 hours.',
+      tone: 'success',
+    });
     onCreated();
     close();
   };
@@ -176,7 +184,11 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
       setError(res.error);
       return;
     }
-    Alert.alert('Moment posted', 'Your Moment is live for 24 hours.');
+    showBetweenerAlert({
+      title: 'Moment posted',
+      message: 'Your Moment is live for 24 hours.',
+      tone: 'success',
+    });
     onCreated();
     close();
   };
@@ -200,7 +212,11 @@ export default function MomentCreateModal({ visible, onClose, onCreated }: Props
       setError(res.error);
       return;
     }
-    Alert.alert('Moment posted', 'Your Moment is live for 24 hours.');
+    showBetweenerAlert({
+      title: 'Moment posted',
+      message: 'Your Moment is live for 24 hours.',
+      tone: 'success',
+    });
     onCreated();
     close();
   };

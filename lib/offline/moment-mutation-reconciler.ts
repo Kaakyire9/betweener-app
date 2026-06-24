@@ -47,7 +47,8 @@ const isMomentMutation = (
       | 'moment_reaction_sync'
       | 'moment_comment_create'
       | 'moment_comment_update'
-      | 'moment_comment_delete';
+      | 'moment_comment_delete'
+      | 'moment_comment_reaction_sync';
   }
 > =>
   mutation.kind === 'moment_text_create' ||
@@ -56,7 +57,8 @@ const isMomentMutation = (
   mutation.kind === 'moment_reaction_sync' ||
   mutation.kind === 'moment_comment_create' ||
   mutation.kind === 'moment_comment_update' ||
-  mutation.kind === 'moment_comment_delete';
+  mutation.kind === 'moment_comment_delete' ||
+  mutation.kind === 'moment_comment_reaction_sync';
 
 const isFailedMutation = (
   mutation: OfflineMutation | FailedOfflineMutation,
@@ -164,6 +166,10 @@ export async function reconcileMomentRowsWithOfflineMutations(params: {
     }
 
     if (mutation.kind === 'moment_comment_update') {
+      return;
+    }
+
+    if (mutation.kind === 'moment_comment_reaction_sync') {
       return;
     }
 

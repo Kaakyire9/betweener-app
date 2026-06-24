@@ -1,8 +1,32 @@
 import ProfileVideoModal from '@/components/ProfileVideoModal';
 import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
+import { NewHereBadge } from '@/components/NewHereBadge';
 import OfflineImage from '@/components/media/OfflineImage';
+import BoostComposerModal from '@/components/profile/BoostComposerModal';
+import type { BoostComposerFeedback } from '@/components/profile/BoostComposerModal';
 import PremiumUpsellModal from '@/components/premium/PremiumUpsellModal';
 import { VerificationBadge } from '@/components/VerificationBadge';
+import { PremiumPlanBadge } from '@/components/PremiumPlanBadge';
+import { showBetweenerAlert } from '@/components/ui/BetweenerAlertHost';
+import {
+  createProfileBoostV2,
+  formatBoostAudienceLabel,
+  formatBoostFocusLabel,
+  getBoostRecommendations,
+  getRecentBoostAnalytics,
+  type BoostAnalytics,
+  type CreatedBoost,
+  type BoostRecommendation,
+  type CreateBoostInput,
+} from '@/lib/boosts';
+import {
+  updateProfileBoostSnapshot,
+  updateProfileInsightsSnapshot,
+  updateSavedProfilesSnapshot,
+  readSavedProfilesSnapshotState,
+  readProfileBoostSnapshotState,
+  writeProfileBoostSnapshot,
+} from '@/lib/offline/profile-insights-store';
 import { Colors } from '@/constants/theme';
 import { usePremiumState } from '@/hooks/use-premium-state';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -18,11 +42,15 @@ import { isLikelyNetworkError } from '@/lib/network';
 import { getAuthoritativePresenceDisplay } from '@/lib/presence';
 import { fetchUserPresence } from '@/lib/user-presence';
 import {
-  enqueueProfileNoteCreateMutation,
+  enqueueProfileBoostCreateMutation,
+  enqueueProfileGiftSendMutation,
   enqueueProfileImageReactionSyncMutation,
+  getBoostOfflineMutationSnapshot,
   enqueueSwipeSyncMutation,
   getPendingProfileImageReactionMap,
   hasPendingSwipeSyncMutation,
+  retryFailedOfflineMutation,
+  subscribeToOfflineMutationEvents,
 } from '@/lib/offline/mutation-queue';
 import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
@@ -31,7 +59,7 @@ import { getProfileViewReturnCircleId, shouldReturnToCirclesHome } from '@/lib/p
 import { formatReligionLabel } from '@/lib/profile/religion';
 import { cacheOfflineVideo, getOfflineVideoUri } from '@/lib/offline/video-store';
 import { getProfileInitials, getProfilePlaceholderPalette } from '@/lib/profile-placeholders';
-import { isProfileSaved, setProfileSaved } from '@/lib/profile-interest';
+import { isProfileSaved, setProfileSaved, type SavedProfileSummary } from '@/lib/profile-interest';
 import {
   mergeViewedProfileSnapshots,
   readViewedProfileSnapshot,
@@ -56,7 +84,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
-import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View, type ImageStyle, type ViewStyle } from 'react-native';
+import { FlatList, Keyboard, KeyboardAvoidingView, Modal, PanResponder, Platform, Pressable, StyleSheet, Text, TextInput, TouchableWithoutFeedback, View, type ImageStyle, type ViewStyle } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     Easing,
@@ -201,6 +229,12 @@ const formatDetailLine = (label: string, value?: string | null, formatter: (inpu
   return formatted ? `${label}: ${formatted}` : null;
 };
 
+const normalizePremiumPlan = (value: unknown): 'SILVER' | 'GOLD' | null => {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (normalized === 'SILVER' || normalized === 'GOLD') return normalized;
+  return null;
+};
+
 // Content heuristics for empty-state branching.
 // Goal: "images-only" should trigger unless the profile has real narrative/intent content.
 const BIO_MEANINGFUL_MIN_CHARS = 40;
@@ -214,13 +248,6 @@ function formatHeaderTitle(name: string, age: number) {
   return `${name} · ${age}`;
 }
 
-function formatDistanceKm(distanceKm?: number) {
-  if (typeof distanceKm !== 'number' || !Number.isFinite(distanceKm)) return '';
-  if (distanceKm < 1) return '<1 km away';
-  if (distanceKm < 10) return `${distanceKm.toFixed(1)} km away`;
-  return `${Math.round(distanceKm)} km away`;
-}
-
 function formatReminderTimeLeft(expiresAt?: string | null) {
   if (!expiresAt) return '48h window';
   const ts = Date.parse(expiresAt);
@@ -230,19 +257,9 @@ function formatReminderTimeLeft(expiresAt?: string | null) {
   return `${Math.ceil(hours)}h left`;
 }
 
-function isDistanceLabel(label?: string | null) {
-  if (!label) return false;
-  const lower = String(label).toLowerCase();
-  return lower.includes('away') || /\b(km|mi|mile|miles)\b/.test(lower) || /<\s*1/.test(lower);
-}
-
 function buildLocationLine(profile: UserProfile) {
-  const distanceLabel = profile.distance?.trim() || '';
-  const distanceFromKm = formatDistanceKm(profile.distanceKm);
-  const distance = distanceFromKm || (isDistanceLabel(distanceLabel) ? distanceLabel : '');
   return buildLocationDisplay(profile as Record<string, any>, {
     surface: 'profile',
-    distanceLabel: distance,
   }).withFlag;
 }
 
@@ -891,8 +908,6 @@ export default function ProfileViewPremiumV2Screen() {
   const [guessInterestSending, setGuessInterestSending] = useState(false);
   const [guessInterestSent, setGuessInterestSent] = useState(false);
   const [guessResult, setGuessResult] = useState<{ tone: 'correct' | 'wrong'; message: string } | null>(null);
-  const heroHeight = Math.max(260, Math.min(390, Math.round(responsive.usableHeight * 0.36)));
-  const guessFabTop = 10 + 44 + 10 + heroHeight - 54;
   const imageItemHeight = Math.max(220, Math.min(280, Math.round(responsive.usableHeight * 0.26)));
 
   const isLoading = fetching && !fetchedProfile && !cachedProfile && !fallbackProfile && !fetchWatchdogError;
@@ -921,6 +936,17 @@ export default function ProfileViewPremiumV2Screen() {
     resolvedProfile.personalityType,
     sharedInterestNames,
   ]);
+  const profilePremiumPlan = normalizePremiumPlan(
+    resolvedProfile.premiumPlan ?? (resolvedProfile as any).premium_plan,
+  );
+  const profileIsNewHere = Boolean(
+    resolvedProfile.isNewHere ?? (resolvedProfile as any).is_new_here,
+  );
+  const profileVerificationLevel =
+    presenceProfile.verificationLevel ?? (presenceProfile.verified ? 1 : 0);
+  const lookingForLabel = resolvedProfile.lookingFor
+    ? `Looking for ${formatProfileValue(resolvedProfile.lookingFor)}`
+    : null;
 
   useEffect(() => {
     const usesMultipleChoice = isGuessPrompt(featuredPrompt?.promptType) && isMultipleChoiceGuess(featuredPrompt?.guessMode);
@@ -970,7 +996,11 @@ export default function ProfileViewPremiumV2Screen() {
         p_guess: guessValue,
       });
       if (error) {
-        Alert.alert('Guess unavailable', 'Please try again.');
+        showBetweenerAlert({
+          title: 'Guess unavailable',
+          message: 'Please try again.',
+          tone: 'error',
+        });
         return;
       }
 
@@ -985,7 +1015,11 @@ export default function ProfileViewPremiumV2Screen() {
       });
       await refreshViewedProfile();
     } catch {
-      Alert.alert('Guess unavailable', 'Please try again.');
+      showBetweenerAlert({
+        title: 'Guess unavailable',
+        message: 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setGuessSubmitting(false);
     }
@@ -1007,15 +1041,18 @@ export default function ProfileViewPremiumV2Screen() {
           prompt_id: featuredPrompt.id,
           guess_outcome: 'correct',
         },
+        actorProfileId: currentProfile?.id ?? null,
+        snapshotOwnerIds: [currentProfile?.id ?? null, currentUserId],
       });
 
       setGuessInterestSent(true);
-      Alert.alert(
-        result.status === 'queued' ? 'Request queued' : 'Request sent',
-        result.status === 'queued'
+      showBetweenerAlert({
+        title: result.status === 'queued' ? 'Request queued' : 'Request sent',
+        message: result.status === 'queued'
           ? `Your request to ${resolvedProfile.name} will send when you're back online.`
           : `${resolvedProfile.name} will see that you answered the prompt correctly and want to know more.`,
-      );
+        tone: 'success',
+      });
     } catch (error) {
       logger.error('[profile-view] send_guess_interest_failed', error);
       const message =
@@ -1026,7 +1063,11 @@ export default function ProfileViewPremiumV2Screen() {
       if (isDuplicate) {
         setGuessInterestSent(true);
       }
-      Alert.alert(isDuplicate ? 'Request already placed' : 'Unable to send request', message);
+      showBetweenerAlert({
+        title: isDuplicate ? 'Request already placed' : 'Unable to send request',
+        message,
+        tone: isDuplicate ? 'info' : 'error',
+      });
     } finally {
       setGuessInterestSending(false);
     }
@@ -1043,6 +1084,7 @@ export default function ProfileViewPremiumV2Screen() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [profileReminder, setProfileReminder] = useState<ProfileReminderItem | null>(null);
   const [profileReminderBusy, setProfileReminderBusy] = useState<'accept' | 'pass' | null>(null);
+  const [hasAcceptedMatch, setHasAcceptedMatch] = useState(false);
   const [blockStatus, setBlockStatus] = useState<typeof BLOCKED_BY_ME | typeof BLOCKED_BY_THEM | null>(null);
   const [safetySheet, setSafetySheet] = useState<'menu' | 'blockConfirm' | 'report' | null>(null);
   const [blockSubmitting, setBlockSubmitting] = useState(false);
@@ -1413,25 +1455,6 @@ export default function ProfileViewPremiumV2Screen() {
       : heroOverrideType === 'image'
         ? false
         : hasHeroVideo;
-  useEffect(() => {
-    if (!currentProfile?.id || !resolvedProfile?.id) return;
-    if (!showHeroVideo || !heroVideoUrl) return;
-    const key = `${currentProfile.id}:${resolvedProfile.id}:intro`;
-    if (signalIntroRef.current === key) return;
-    signalIntroRef.current = key;
-    void recordProfileSignal({
-      profileId: currentProfile.id,
-      targetProfileId: resolvedProfile.id,
-      introVideoStarted: true,
-    });
-    void logVibesEvent({
-      viewerProfileId: currentProfile.id,
-      targetProfileId: resolvedProfile.id,
-      segment: 'forYou',
-      eventType: 'intro_played',
-      metadata: { source: 'profile_view' },
-    });
-  }, [currentProfile?.id, heroVideoUrl, resolvedProfile.id, showHeroVideo]);
   const videoThumbUri = useMemo(() => {
     if (resolvedProfile.profilePicture) return resolvedProfile.profilePicture;
     const photos = Array.isArray(resolvedProfile.photos) ? resolvedProfile.photos : [];
@@ -1478,6 +1501,31 @@ export default function ProfileViewPremiumV2Screen() {
   const openIntroVideo = useCallback(async () => {
     const source = resolvedProfile.profileVideoPath || resolvedProfile.profileVideo;
     if (!source) return;
+
+    if (
+      currentProfile?.id &&
+      resolvedProfile?.id &&
+      resolvedProfile.id !== 'preview' &&
+      currentProfile.id !== resolvedProfile.id
+    ) {
+      const key = `${currentProfile.id}:${resolvedProfile.id}:intro`;
+      if (signalIntroRef.current !== key) {
+        signalIntroRef.current = key;
+        void recordProfileSignal({
+          profileId: currentProfile.id,
+          targetProfileId: resolvedProfile.id,
+          introVideoStarted: true,
+        });
+        void logVibesEvent({
+          viewerProfileId: currentProfile.id,
+          targetProfileId: resolvedProfile.id,
+          segment: 'forYou',
+          eventType: 'intro_played',
+          metadata: { source: 'profile_view', trigger: 'explicit_open' },
+        });
+      }
+    }
+
     const cachedUri = await getOfflineVideoUri(source);
     if (cachedUri) {
       setVideoModalUrl(cachedUri);
@@ -1501,7 +1549,7 @@ export default function ProfileViewPremiumV2Screen() {
     void cacheOfflineVideo(source, data.signedUrl).then((localUri) => {
       if (localUri) setVideoModalUrl(localUri);
     });
-  }, [resolvedProfile.profileVideo, resolvedProfile.profileVideoPath]);
+  }, [currentProfile?.id, resolvedProfile.id, resolvedProfile.profileVideo, resolvedProfile.profileVideoPath]);
 
   const openIntentSheet = useCallback(() => {
     if (!resolvedProfile.id || isOwnProfile) return;
@@ -1583,6 +1631,42 @@ export default function ProfileViewPremiumV2Screen() {
     };
   }, [currentProfile?.id, isOwnProfile, resolvedProfile.id, resolvedProfile.name]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadMatchState = async () => {
+      if (!currentProfile?.id || !resolvedProfile?.id || isOwnProfile || resolvedProfile.id === 'preview') {
+        setHasAcceptedMatch(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('matches')
+        .select('id,status')
+        .or(
+          `and(user1_id.eq.${currentProfile.id},user2_id.eq.${resolvedProfile.id}),and(user1_id.eq.${resolvedProfile.id},user2_id.eq.${currentProfile.id})`,
+        )
+        .eq('status', 'ACCEPTED')
+        .limit(1);
+
+      if (cancelled) return;
+      if (error) {
+        if (!isLikelyNetworkError(error)) {
+          logger.error('[profile-view] load_match_state_failed', error);
+        }
+        setHasAcceptedMatch(false);
+        return;
+      }
+
+      setHasAcceptedMatch(Array.isArray(data) && data.length > 0);
+    };
+
+    void loadMatchState();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentProfile?.id, isOwnProfile, resolvedProfile.id]);
+
   const ensureProfileMatch = useCallback(async (actorProfileId: string, recipientProfileId: string) => {
     const { data, error: lookupError } = await supabase
       .from('matches')
@@ -1629,16 +1713,25 @@ export default function ProfileViewPremiumV2Screen() {
           requestId: profileReminder.id,
           decision: 'accept',
           insertAcceptanceSystemMessages: true,
+          snapshotOwnerIds: [currentProfile?.id ?? null, currentUserId],
         });
         if (result.status === 'queued') {
-          Alert.alert('Accept queued', 'We will accept this request when the network returns.');
+          showBetweenerAlert({
+            title: 'Accept queued',
+            message: 'We will accept this request when the network returns.',
+            tone: 'success',
+          });
         }
       }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
       setProfileReminder(null);
     } catch (error) {
       logger.error('[profile-view] accept_profile_reminder_failed', error);
-      Alert.alert('Unable to accept', (typeof __DEV__ !== 'undefined' && __DEV__) ? String((error as any)?.message || error) : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Unable to accept',
+        message: (typeof __DEV__ !== 'undefined' && __DEV__) ? String((error as any)?.message || error) : 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setProfileReminderBusy(null);
     }
@@ -1659,16 +1752,25 @@ export default function ProfileViewPremiumV2Screen() {
         const result = await decideIntentRequestOfflineSafe({
           requestId: profileReminder.id,
           decision: 'pass',
+          snapshotOwnerIds: [currentProfile?.id ?? null, currentUserId],
         });
         if (result.status === 'queued') {
-          Alert.alert('Pass queued', 'We will pass this request when the network returns.');
+          showBetweenerAlert({
+            title: 'Pass queued',
+            message: 'We will pass this request when the network returns.',
+            tone: 'success',
+          });
         }
       }
       Haptics.selectionAsync().catch(() => undefined);
       setProfileReminder(null);
     } catch (error) {
       logger.error('[profile-view] pass_profile_reminder_failed', error);
-      Alert.alert('Unable to pass', (typeof __DEV__ !== 'undefined' && __DEV__) ? String((error as any)?.message || error) : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Unable to pass',
+        message: (typeof __DEV__ !== 'undefined' && __DEV__) ? String((error as any)?.message || error) : 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setProfileReminderBusy(null);
     }
@@ -1744,14 +1846,22 @@ export default function ProfileViewPremiumV2Screen() {
 
       if (error) {
         console.log('[profile] unblock user error', error);
-        Alert.alert('Unblock user', 'Unable to unblock this member right now.');
+        showBetweenerAlert({
+          title: 'Unblock user',
+          message: 'Unable to unblock this member right now.',
+          tone: 'error',
+        });
         setBlockSubmitting(false);
         return;
       }
 
       setBlockStatus(null);
       closeSafetySheet();
-      Alert.alert('Unblocked', 'This member can interact with you again.');
+      showBetweenerAlert({
+        title: 'Unblocked',
+        message: 'This member can interact with you again.',
+        tone: 'success',
+      });
       return;
     }
 
@@ -1763,18 +1873,30 @@ export default function ProfileViewPremiumV2Screen() {
       if (error.code === '23505') {
         setBlockStatus(BLOCKED_BY_ME);
         closeSafetySheet();
-        Alert.alert('Blocked', 'This member is already blocked.');
+        showBetweenerAlert({
+          title: 'Blocked',
+          message: 'This member is already blocked.',
+          tone: 'info',
+        });
         return;
       }
       console.log('[profile] block user error', error);
-      Alert.alert('Block user', 'Unable to block this member right now.');
+      showBetweenerAlert({
+        title: 'Block user',
+        message: 'Unable to block this member right now.',
+        tone: 'error',
+      });
       setBlockSubmitting(false);
       return;
     }
 
     setBlockStatus(BLOCKED_BY_ME);
     closeSafetySheet();
-    Alert.alert('Blocked', 'This member has been blocked. They will not be notified.');
+    showBetweenerAlert({
+      title: 'Blocked',
+      message: 'This member has been blocked. They will not be notified.',
+      tone: 'success',
+    });
   }, [blockStatus, blockSubmitting, closeSafetySheet, currentUserId, resolvedProfile.userId]);
 
   const submitProfileReport = useCallback(async () => {
@@ -1796,13 +1918,21 @@ export default function ProfileViewPremiumV2Screen() {
 
     if (error) {
       console.log('[profile] report user error', error);
-      Alert.alert('Report user', 'Unable to send this report right now.');
+      showBetweenerAlert({
+        title: 'Report user',
+        message: 'Unable to send this report right now.',
+        tone: 'error',
+      });
       setReportSubmitting(false);
       return;
     }
 
     closeSafetySheet();
-    Alert.alert('Report sent', 'We will review this privately. They will not be notified.');
+    showBetweenerAlert({
+      title: 'Report sent',
+      message: 'We will review this privately. They will not be notified.',
+      tone: 'success',
+    });
   }, [closeSafetySheet, reportSubmitting, resolvedProfile.id, resolvedProfile.userId, selectedReportReason]);
 
   const safetyPrimaryActionLabel =
@@ -2218,6 +2348,18 @@ export default function ProfileViewPremiumV2Screen() {
         onClose={handleClose}
         onOpenSafetyMenu={openSafetySheet}
         showSafetyMenu={!isOwnProfile && Boolean(resolvedProfile.userId)}
+        guessPromptCta={
+          shouldFloatGuessPrompt && featuredPrompt
+            ? {
+                label: guessFabLabel,
+                icon: guessFabIcon,
+                colors: guessFabColors,
+                onPress: openGuessSheet,
+                haloStyle: guessFabHaloStyle,
+                motionStyle: guessFabMotionStyle,
+              }
+            : null
+        }
       />
 
       <PhotoLightboxModal
@@ -2357,80 +2499,155 @@ export default function ProfileViewPremiumV2Screen() {
         <ProfileHeroSkeleton />
       ) : (
         <View style={stylesStatic.heroDetailsWrap}>
-          <View
-            style={[
-              stylesStatic.heroDetailsCard,
-              { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-            ]}
-          >
-            <View style={stylesStatic.heroDetailsTopRow}>
-              <Text style={[stylesStatic.heroDetailsName, { color: theme.text }]} numberOfLines={2}>
-                {formatHeaderTitle(profile.name, profile.age)}
-              </Text>
-              {(presenceProfile.verificationLevel ?? (presenceProfile.verified ? 1 : 0)) > 0 ? (
-                <VerificationBadge
-                  level={presenceProfile.verificationLevel ?? (presenceProfile.verified ? 1 : 0)}
-                  size="small"
-                  variant="betweener"
+          <View style={stylesStatic.heroDetailsShell}>
+            <LinearGradient
+              colors={
+                isDark
+                  ? ['rgba(61,195,191,0.13)', 'rgba(125,124,243,0.09)', 'rgba(255,255,255,0.03)']
+                  : ['rgba(61,195,191,0.12)', 'rgba(125,124,243,0.08)', 'rgba(255,255,255,0.34)']
+              }
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={stylesStatic.heroDetailsCardChrome}
+            >
+              <View
+                style={[
+                  stylesStatic.heroDetailsCard,
+                  {
+                    backgroundColor: isDark ? 'rgba(9,19,23,0.985)' : theme.backgroundSubtle,
+                    borderColor: isDark ? 'rgba(255,255,255,0.08)' : theme.outline,
+                  },
+                ]}
+              >
+                <View style={stylesStatic.heroDetailsAtmosphereTeal} pointerEvents="none" />
+                <View style={stylesStatic.heroDetailsAtmosphereViolet} pointerEvents="none" />
+                <LinearGradient
+                  pointerEvents="none"
+                  colors={isDark ? ['rgba(255,255,255,0.10)', 'rgba(255,255,255,0)'] : ['rgba(255,255,255,0.36)', 'rgba(255,255,255,0)']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={stylesStatic.heroDetailsSheen}
                 />
-              ) : null}
-              {showPresence ? (
-                <View
-                  style={[
-                    stylesStatic.activeBadgeHero,
-                    { backgroundColor: theme.background, borderColor: theme.outline },
-                  ]}
-                >
-                  <View style={[stylesStatic.activeDot, { backgroundColor: theme.tint }]} />
-                  <Text style={[stylesStatic.activeText, { color: theme.textMuted }]}>
-                    {presenceLabel}
+                <LinearGradient
+                  pointerEvents="none"
+                  colors={['rgba(61,195,191,0.84)', 'rgba(125,124,243,0.78)']}
+                  start={{ x: 0, y: 0.5 }}
+                  end={{ x: 1, y: 0.5 }}
+                  style={stylesStatic.heroDetailsAccentBar}
+                />
+
+                <View style={stylesStatic.heroHeaderStack}>
+              <View style={stylesStatic.heroPrimaryRow}>
+                <View style={stylesStatic.heroNameAgeRow}>
+                  <Text style={[stylesStatic.heroDetailsName, { color: theme.text }]} numberOfLines={1}>
+                    {presenceProfile.name || profile.name}
                   </Text>
+                  {presenceProfile.age ? (
+                    <Text style={[stylesStatic.heroAgeInlineText, { color: theme.textMuted }]} numberOfLines={1}>
+                      {`\u00b7 ${presenceProfile.age}`}
+                    </Text>
+                  ) : null}
                 </View>
-              ) : null}
-            </View>
 
-            {locationLine ? (
-              <View style={stylesStatic.heroDetailsSubRow}>
-                <MaterialCommunityIcons name="map-marker" size={14} color={theme.textMuted} />
-                <Text style={[stylesStatic.heroDetailsSubText, { color: theme.textMuted }]} numberOfLines={1}>
-                  {locationLine}
-                </Text>
-              </View>
-            ) : null}
+                {profileVerificationLevel > 0 ? (
+                  <VerificationBadge
+                    level={profileVerificationLevel}
+                    size="small"
+                    variant="betweener"
+                    style={stylesStatic.heroInlineVerificationBadge}
+                  />
+                ) : null}
 
-            {presenceProfile.occupation || !isOwnProfile ? (
-              <View style={stylesStatic.heroMetaRow}>
-                {presenceProfile.occupation ? (
-                  <Text style={[stylesStatic.heroDetailsMeta, { color: theme.textMuted }]} numberOfLines={1}>
-                    {presenceProfile.occupation}
-                  </Text>
-                ) : (
-                  <View />
-                )}
-                {!isOwnProfile ? (
-                  <Pressable onPress={openIntentSheet} style={stylesStatic.heroRequestWrap}>
-                    <LinearGradient
-                      colors={['#2FB2BE', '#7D7CF3']}
-                      start={{ x: 0, y: 0.5 }}
-                      end={{ x: 1, y: 0.5 }}
-                      style={stylesStatic.heroRequestButton}
-                    >
-                      <MaterialCommunityIcons name="inbox-outline" size={15} color={Colors.light.background} />
-                      <Text style={stylesStatic.heroRequestText}>Request</Text>
-                    </LinearGradient>
-                  </Pressable>
+                {showPresence ? (
+                  <View
+                    style={[
+                      stylesStatic.activeBadgeHero,
+                      { backgroundColor: theme.background, borderColor: theme.outline },
+                    ]}
+                  >
+                    <View style={[stylesStatic.activeDot, { backgroundColor: theme.tint }]} />
+                    <Text style={[stylesStatic.activeText, { color: theme.textMuted }]} numberOfLines={1}>
+                      {presenceLabel}
+                    </Text>
+                  </View>
                 ) : null}
               </View>
-            ) : null}
 
-            {profileContextLine ? (
-              <View style={stylesStatic.heroContextRow}>
-                <MaterialCommunityIcons name="star-four-points" size={12} color={theme.accent} />
-                <Text style={[stylesStatic.heroContextText, { color: theme.accent }]} numberOfLines={1}>
-                  {profileContextLine}
-                </Text>
+              {locationLine || profilePremiumPlan ? (
+                <View style={stylesStatic.heroSupportRow}>
+                  {locationLine ? (
+                    <View style={stylesStatic.heroSupportItem}>
+                      <MaterialCommunityIcons name="map-marker" size={16} color={theme.textMuted} />
+                      <Text style={[stylesStatic.heroDetailsSubText, { color: theme.textMuted }]} numberOfLines={1}>
+                        {locationLine}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {profilePremiumPlan ? (
+                    <PremiumPlanBadge
+                      plan={profilePremiumPlan}
+                      style={stylesStatic.heroPremiumBadgeInline}
+                    />
+                  ) : null}
+                </View>
+              ) : null}
+
+              {presenceProfile.occupation || profileIsNewHere ? (
+                <View style={stylesStatic.heroSupportRow}>
+                  {presenceProfile.occupation ? (
+                    <View style={stylesStatic.heroSupportItem}>
+                      <MaterialCommunityIcons name="briefcase-outline" size={15} color={theme.textMuted} />
+                      <Text style={[stylesStatic.heroDetailsSubText, { color: theme.textMuted }]} numberOfLines={1}>
+                        {presenceProfile.occupation}
+                      </Text>
+                    </View>
+                  ) : null}
+
+                  {profileIsNewHere ? (
+                    <NewHereBadge style={stylesStatic.heroNewHereBadge} />
+                  ) : null}
+                </View>
+              ) : null}
+
+              {profileContextLine || lookingForLabel || !isOwnProfile ? (
+                <View style={stylesStatic.heroContextActionRow}>
+                  <View style={stylesStatic.heroContextLineWrap}>
+                    {profileContextLine ? (
+                      <View style={stylesStatic.heroContextRow}>
+                        <MaterialCommunityIcons name="star-four-points" size={12} color={theme.accent} />
+                        <Text style={[stylesStatic.heroContextText, { color: theme.accent }]} numberOfLines={1}>
+                          {profileContextLine}
+                        </Text>
+                      </View>
+                    ) : lookingForLabel ? (
+                      <View style={stylesStatic.heroContextRow}>
+                        <MaterialCommunityIcons name="heart" size={13} color="#C78AFF" />
+                        <Text style={[stylesStatic.heroContextText, { color: '#C78AFF' }]} numberOfLines={1}>
+                          {lookingForLabel}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  {!isOwnProfile && !hasAcceptedMatch ? (
+                    <Pressable onPress={openIntentSheet} style={stylesStatic.heroRequestWrap}>
+                      <LinearGradient
+                        colors={['#2FB2BE', '#7D7CF3']}
+                        start={{ x: 0, y: 0.5 }}
+                        end={{ x: 1, y: 0.5 }}
+                        style={stylesStatic.heroRequestButton}
+                      >
+                        <MaterialCommunityIcons name="inbox-outline" size={15} color={Colors.light.background} />
+                        <Text style={stylesStatic.heroRequestText}>Request</Text>
+                      </LinearGradient>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
+                </View>
               </View>
-            ) : null}
+            </LinearGradient>
           </View>
         </View>
       )}
@@ -2700,33 +2917,6 @@ export default function ProfileViewPremiumV2Screen() {
           )}
         </View>
       </View>
-
-      {shouldFloatGuessPrompt && featuredPrompt ? (
-        <View
-          style={[
-            stylesStatic.guessFabAnchor,
-            { top: guessFabTop },
-          ]}
-          pointerEvents="box-none"
-        >
-          <Animated.View style={[stylesStatic.guessFabHalo, guessFabHaloStyle]} pointerEvents="none" />
-          <Animated.View style={guessFabMotionStyle}>
-            <Pressable onPress={openGuessSheet} style={stylesStatic.guessFabWrap}>
-              <LinearGradient
-                colors={guessFabColors}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={stylesStatic.guessFabCard}
-              >
-                <View style={stylesStatic.guessFabIconWrap}>
-                  <MaterialCommunityIcons name={guessFabIcon} size={18} color={Colors.light.background} />
-                </View>
-                <Text style={stylesStatic.guessFabTitle}>{guessFabLabel}</Text>
-              </LinearGradient>
-            </Pressable>
-          </Animated.View>
-        </View>
-      ) : null}
 
       {shouldFloatGuessPrompt && featuredPrompt ? (
         <Modal
@@ -3093,6 +3283,7 @@ export default function ProfileViewPremiumV2Screen() {
       <FloatingActions
         theme={theme}
         profileId={profileId}
+        profileSnapshot={resolvedProfile}
         currentUserId={currentUserId}
         viewerProfileId={currentProfile?.id ?? null}
         isOwnProfile={isOwnProfile}
@@ -3120,6 +3311,7 @@ const Header = memo(function Header({
   onClose,
   onOpenSafetyMenu,
   showSafetyMenu,
+  guessPromptCta,
 }: {
   theme: typeof Colors.light;
   profile: UserProfile;
@@ -3138,6 +3330,14 @@ const Header = memo(function Header({
   onClose: () => void;
   onOpenSafetyMenu?: () => void;
   showSafetyMenu?: boolean;
+  guessPromptCta?: {
+    label: string;
+    icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
+    colors: readonly [string, string];
+    onPress: () => void;
+    haloStyle?: any;
+    motionStyle?: any;
+  } | null;
 }) {
   const responsive = useResponsiveMetrics();
   const heroUri =
@@ -3280,6 +3480,27 @@ const Header = memo(function Header({
           style={stylesStatic.heroBottomGradient}
         />
 
+        {guessPromptCta ? (
+          <View style={stylesStatic.heroGuessCtaAnchor} pointerEvents="box-none">
+            <Animated.View style={[stylesStatic.guessFabHalo, guessPromptCta.haloStyle]} pointerEvents="none" />
+            <Animated.View style={guessPromptCta.motionStyle}>
+              <Pressable onPress={guessPromptCta.onPress} style={stylesStatic.guessFabWrap}>
+                <LinearGradient
+                  colors={guessPromptCta.colors}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={stylesStatic.guessFabCard}
+                >
+                  <View style={stylesStatic.guessFabIconWrap}>
+                    <MaterialCommunityIcons name={guessPromptCta.icon} size={18} color={Colors.light.background} />
+                  </View>
+                  <Text style={stylesStatic.guessFabTitle}>{guessPromptCta.label}</Text>
+                </LinearGradient>
+              </Pressable>
+            </Animated.View>
+          </View>
+        ) : null}
+
         {showHeroVideo ? (
           <Pressable
             style={stylesStatic.heroAudioPill}
@@ -3311,7 +3532,7 @@ const Header = memo(function Header({
           >
             <MaterialCommunityIcons
               name="dots-horizontal"
-              size={18}
+              size={27}
               color={isDark ? Colors.light.background : Colors.dark.background}
             />
           </Pressable>
@@ -4107,6 +4328,7 @@ const SectionBlock = memo(function SectionBlock({
 function FloatingActions({
   theme,
   profileId,
+  profileSnapshot,
   currentUserId,
   viewerProfileId,
   isOwnProfile,
@@ -4114,6 +4336,7 @@ function FloatingActions({
 }: {
   theme: typeof Colors.light;
   profileId: string;
+  profileSnapshot: UserProfile;
   currentUserId: string | null;
   viewerProfileId: string | null;
   isOwnProfile: boolean;
@@ -4121,20 +4344,42 @@ function FloatingActions({
 }) {
   const insets = useSafeAreaInsets();
   const isDark = theme.background === Colors.dark.background;
-  const { currentPlan, hasAccess } = usePremiumState();
+  const {
+    activeBoostEndsAt,
+    currentPlan,
+    serverPlan,
+    revenueCatPlan,
+    hasAccess,
+    hasServerAccess,
+    hasActiveBoost,
+    refresh: refreshPremiumState,
+  } = usePremiumState();
   const [giftOpen, setGiftOpen] = useState(false);
   const [selectedGift, setSelectedGift] = useState<string | null>(null);
   const [giftSending, setGiftSending] = useState(false);
-  const [noteOpen, setNoteOpen] = useState(false);
-  const [noteText, setNoteText] = useState('');
-  const [noteSending, setNoteSending] = useState(false);
   const [premiumUpsell, setPremiumUpsell] = useState<PremiumUpsellState | null>(null);
-  const noteOpenAtRef = useRef(0);
   const [boostSending, setBoostSending] = useState(false);
+  const [boostComposerVisible, setBoostComposerVisible] = useState(false);
+  const [boostComposerLoading, setBoostComposerLoading] = useState(false);
+  const [boostRecommendation, setBoostRecommendation] = useState<BoostRecommendation | null>(null);
+  const [boostAnalytics, setBoostAnalytics] = useState<BoostAnalytics | null>(null);
+  const [boostFeedback, setBoostFeedback] = useState<BoostComposerFeedback | null>(null);
+  const [boostSyncState, setBoostSyncState] = useState<{
+    status: 'queued' | 'failed';
+    mutationId: string;
+    input: CreateBoostInput;
+    failureReason?: string | null;
+  } | null>(null);
   const [likeSending, setLikeSending] = useState(false);
   const [liked, setLiked] = useState(false);
   const [saved, setSaved] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
+  const [saveNotice, setSaveNotice] = useState<{
+    title: string;
+    message: string;
+    actionLabel?: string;
+    onAction?: () => void;
+  } | null>(null);
   const giftOptions = useMemo(
     () => [
       { id: 'rose', label: 'Rose', icon: 'flower', note: 'Classic and elegant' },
@@ -4146,10 +4391,71 @@ function FloatingActions({
 
   const canSendToProfile = Boolean(currentUserId && profileId && currentUserId !== profileId);
   const canUseBoosts = hasAccess('SILVER');
-  const canSendNotes = hasFeatureAccess(currentPlan, 'profile_notes');
+  const canUseServerBoosts = hasServerAccess('SILVER');
+  const canUseServerGoldBoosts = hasServerAccess('GOLD');
   const canSendStandardGifts = hasFeatureAccess(currentPlan, 'standard_gifts');
   const canSendSignatureGifts = hasFeatureAccess(currentPlan, 'signature_gifts');
-  const noteLength = noteText.trim().length;
+  const canUseSandboxSilverPreview =
+    typeof __DEV__ !== 'undefined' && __DEV__ && (revenueCatPlan === 'SILVER' || revenueCatPlan === 'GOLD');
+  const canUseSandboxGoldPreview =
+    typeof __DEV__ !== 'undefined' && __DEV__ && revenueCatPlan === 'GOLD';
+  const showBoostComposerFeedback = useCallback((next: BoostComposerFeedback) => {
+    setBoostFeedback(next);
+  }, []);
+  const toBoostInput = useCallback(
+    (payload: {
+      boostType: CreateBoostInput['boostType'];
+      audienceMode: CreateBoostInput['audienceMode'];
+      focusMode: CreateBoostInput['focusMode'];
+      metadata?: Record<string, unknown> | null;
+    }): CreateBoostInput => ({
+      boostType: payload.boostType,
+      audienceMode: payload.audienceMode,
+      focusMode: payload.focusMode,
+      metadata: payload.metadata ?? undefined,
+    }),
+    [],
+  );
+  const refreshBoostSyncState = useCallback(async () => {
+    if (!viewerProfileId) {
+      setBoostSyncState(null);
+      return;
+    }
+
+    const snapshot = await getBoostOfflineMutationSnapshot(viewerProfileId);
+    const latestFailed = snapshot.failed[snapshot.failed.length - 1];
+    if (latestFailed) {
+      setBoostSyncState({
+        status: 'failed',
+        mutationId: latestFailed.id,
+        input: toBoostInput(latestFailed.payload),
+        failureReason: latestFailed.failureReason,
+      });
+      return;
+    }
+
+    const latestPending = snapshot.pending[snapshot.pending.length - 1];
+    if (latestPending) {
+      setBoostSyncState({
+        status: 'queued',
+        mutationId: latestPending.id,
+        input: toBoostInput(latestPending.payload),
+      });
+      return;
+    }
+
+    setBoostSyncState(null);
+  }, [toBoostInput, viewerProfileId]);
+  const isGoldBoostConfig = useCallback((input: CreateBoostInput) => {
+    return (
+      input.boostType === 'smart' ||
+      input.audienceMode === 'active_now' ||
+      input.audienceMode === 'intent_match' ||
+      input.audienceMode === 'second_look' ||
+      input.focusMode === 'intro' ||
+      input.focusMode === 'intent'
+    );
+  }, []);
   const openTierUpsell = (requiredPlan: 'SILVER' | 'GOLD', title: string, message: string) => {
     setPremiumUpsell({ requiredPlan, title, message });
   };
@@ -4160,23 +4466,190 @@ function FloatingActions({
       message: 'Profile boosts are included with Silver and Gold. Upgrade to activate 30-minute visibility boosts.',
     });
   };
+  const openGoldBoostUpsell = useCallback(
+    (context: 'boost_type' | 'audience_mode' | 'focus', optionId?: string) => {
+      if (context === 'boost_type') {
+        openTierUpsell(
+          'GOLD',
+          'Unlock precision boost',
+          'Precision boost is reserved for Gold. Upgrade to combine stronger audience and focus signals in one boost.',
+        );
+        return;
+      }
 
-  const openNote = () => {
-    if (!canSendToProfile) {
-      Alert.alert('Note unavailable', 'Notes can only be sent to other profiles.');
+      if (context === 'audience_mode') {
+        const message = optionId === 'active_now'
+          ? 'Gold unlocks Active now boosts so you can bias visibility toward people who are currently around.'
+          : optionId === 'intent_match'
+            ? 'Gold unlocks Intent match boosts so you can favor people whose intent looks aligned with yours.'
+            : optionId === 'second_look'
+              ? 'Gold unlocks Second look boosts so you can resurface to people who already showed curiosity.'
+              : 'Gold unlocks advanced audience modes like Active now, Intent match, and Second look.';
+        openTierUpsell('GOLD', 'Unlock advanced audience modes', message);
+        return;
+      }
+
+      const message = optionId === 'intro'
+        ? 'Gold unlocks Intro focus so your boost can lean into people most likely to open your intro.'
+        : optionId === 'intent'
+          ? 'Gold unlocks Intent focus so your boost can lean into deeper fit and intent evaluation.'
+          : 'Gold unlocks advanced focus controls like Intro and Intent.';
+      openTierUpsell('GOLD', 'Unlock advanced boost focus', message);
+    },
+    [],
+  );
+  const showBoostSyncNotice = useCallback(
+    (requiredPlan: 'SILVER' | 'GOLD') => {
+      const syncedPlan = requiredPlan === 'GOLD' ? revenueCatPlan : currentPlan;
+      showBoostComposerFeedback({
+        tone: 'info',
+        title: 'Membership syncing',
+        message:
+          syncedPlan === 'FREE'
+            ? 'Your membership has not synced to Betweener yet. Try again shortly.'
+            : `${syncedPlan} is active on this device, but Betweener has not finished syncing it yet. Try again shortly.`,
+      });
+    },
+    [currentPlan, revenueCatPlan, showBoostComposerFeedback],
+  );
+  const loadBoostComposer = useCallback(async () => {
+    await refreshBoostSyncState();
+    let hydratedFromCache = false;
+    if (viewerProfileId) {
+      const cached = await readProfileBoostSnapshotState(viewerProfileId);
+      if (cached.data) {
+        hydratedFromCache = true;
+        setBoostRecommendation(cached.data.recommendation);
+        setBoostAnalytics(cached.data.analytics);
+      }
+    }
+    setBoostComposerLoading(!hydratedFromCache);
+    try {
+      const [recommendation, analytics] = await Promise.all([
+        getBoostRecommendations(),
+        getRecentBoostAnalytics(),
+      ]);
+      setBoostRecommendation(recommendation);
+      setBoostAnalytics(analytics);
+      if (viewerProfileId) {
+        await writeProfileBoostSnapshot(viewerProfileId, {
+          recommendation,
+          analytics,
+        });
+      }
+    } catch (error) {
+      if (!isLikelyNetworkError(error)) {
+        logger.warn('[profile-view] load_boost_composer_failed', {
+          message: String((error as any)?.message || error || 'unknown'),
+        });
+      }
+    } finally {
+      await refreshBoostSyncState();
+      setBoostComposerLoading(false);
+    }
+  }, [refreshBoostSyncState, viewerProfileId]);
+  const openBoostComposer = useCallback(async () => {
+    if (!currentUserId) return;
+    if (!canUseBoosts) {
+      openBoostUpsell();
       return;
     }
-    if (!canSendNotes) {
-      openTierUpsell('SILVER', 'Unlock notes', 'Notes are included with Silver and Gold. Upgrade to send a more thoughtful first move.');
+    setBoostFeedback(null);
+    setBoostComposerVisible(true);
+    void loadBoostComposer();
+  }, [canUseBoosts, currentUserId, loadBoostComposer]);
+
+  useEffect(() => {
+    if (!boostFeedback) return;
+    const timer = setTimeout(() => {
+      setBoostFeedback((current) => (current === boostFeedback ? null : current));
+    }, 3600);
+    return () => clearTimeout(timer);
+  }, [boostFeedback]);
+
+  useEffect(() => {
+    if (!boostComposerVisible) return;
+    const hasLiveBoost =
+      hasActiveBoost || Boolean(boostRecommendation?.has_active_boost) || Boolean(boostAnalytics?.boost?.is_active);
+    if (!hasLiveBoost) return;
+
+    const timer = setInterval(() => {
+      void Promise.all([refreshPremiumState(), loadBoostComposer()]);
+    }, 15000);
+
+    return () => clearInterval(timer);
+  }, [
+    boostAnalytics?.boost?.is_active,
+    boostComposerVisible,
+    boostRecommendation?.has_active_boost,
+    hasActiveBoost,
+    loadBoostComposer,
+    refreshPremiumState,
+  ]);
+  useEffect(() => {
+    void refreshBoostSyncState();
+    if (!viewerProfileId) return;
+
+    return subscribeToOfflineMutationEvents((event) => {
+      if (event.mutation.kind !== 'profile_boost_create') return;
+      if (event.mutation.payload.ownerProfileId !== viewerProfileId) return;
+
+      void refreshBoostSyncState();
+
+      if (event.type === 'completed') {
+        void Promise.all([refreshPremiumState(), loadBoostComposer()]);
+        if (boostComposerVisible) {
+          showBoostComposerFeedback({
+            tone: 'success',
+            title: 'Queued boost is live',
+            message: 'Your saved boost finished syncing and is now running.',
+          });
+        }
+        return;
+      }
+
+      if (event.type === 'failed' && boostComposerVisible) {
+        showBoostComposerFeedback({
+          tone: 'error',
+          title: 'Queued boost needs review',
+          message: 'We could not launch your saved boost yet. Retry when the connection is stable.',
+        });
+      }
+    });
+  }, [
+    boostComposerVisible,
+    loadBoostComposer,
+    refreshBoostSyncState,
+    refreshPremiumState,
+    showBoostComposerFeedback,
+    viewerProfileId,
+  ]);
+  const handleBoostSyncAction = useCallback(async () => {
+    if (!boostSyncState) return;
+
+    if (boostSyncState.status === 'failed') {
+      const retried = await retryFailedOfflineMutation(boostSyncState.mutationId);
+      if (retried) {
+        await refreshBoostSyncState();
+        showBoostComposerFeedback({
+          tone: 'info',
+          title: 'Boost retry queued',
+          message: 'We will launch this saved boost again as soon as the connection allows it.',
+        });
+      }
       return;
     }
-    Haptics.selectionAsync().catch(() => undefined);
-    noteOpenAtRef.current = Date.now();
-    setNoteOpen(true);
-  };
+
+    router.push('/sync-activity');
+  }, [boostSyncState, refreshBoostSyncState, showBoostComposerFeedback]);
+
   const openGift = () => {
     if (!canSendToProfile) {
-      Alert.alert('Gift unavailable', 'Gifts can only be sent to other profiles.');
+      showBetweenerAlert({
+        title: 'Gift unavailable',
+        message: 'Gifts can only be sent to other profiles.',
+        tone: 'warning',
+      });
       return;
     }
     if (!canSendStandardGifts) {
@@ -4187,6 +4660,127 @@ function FloatingActions({
     setSelectedGift(null);
     setGiftOpen(true);
   };
+  const syncSavedProfilesSnapshot = useCallback(
+    async (nextSaved: boolean) => {
+      if (!viewerProfileId) return;
+      const avatarUrl =
+        profileSnapshot.profilePicture ||
+        (Array.isArray(profileSnapshot.photos)
+          ? profileSnapshot.photos.find((value): value is string => typeof value === 'string' && value.trim().length > 0) ?? null
+          : null);
+      const nextItem: SavedProfileSummary = {
+        profile_id: profileId,
+        saved_at: new Date().toISOString(),
+        full_name: profileSnapshot.name || null,
+        age: typeof profileSnapshot.age === 'number' ? profileSnapshot.age : null,
+        avatar_url: avatarUrl,
+        city: profileSnapshot.city ?? null,
+        region: profileSnapshot.region ?? null,
+        current_country: profileSnapshot.currentCountry ?? null,
+        current_country_code: profileSnapshot.currentCountryCode ?? null,
+      };
+      await updateSavedProfilesSnapshot(viewerProfileId, (current) => {
+        const rows = Array.isArray(current) ? [...current] : [];
+        if (!nextSaved) {
+          return rows.filter((item) => item.profile_id !== profileId);
+        }
+        const existingIndex = rows.findIndex((item) => item.profile_id === profileId);
+        if (existingIndex >= 0) {
+          rows[existingIndex] = {
+            ...rows[existingIndex],
+            ...nextItem,
+          };
+          return rows;
+        }
+        return [nextItem, ...rows];
+      });
+    },
+    [profileId, profileSnapshot, viewerProfileId],
+  );
+  const syncSentGiftArchiveSnapshot = useCallback(
+    async (giftType: string) => {
+      if (!viewerProfileId) return;
+      const avatarUrl =
+        profileSnapshot.profilePicture ||
+        (Array.isArray(profileSnapshot.photos)
+          ? profileSnapshot.photos.find((value): value is string => typeof value === 'string' && value.trim().length > 0) ?? null
+          : null);
+      const createdAt = new Date().toISOString();
+      await updateProfileInsightsSnapshot(viewerProfileId, (current) => ({
+        giftSummary:
+          current?.giftSummary ?? {
+            count: 0,
+            waitingCount: 0,
+            latestSender: 'Gift Signals',
+            latestGiftType: null,
+          },
+        giftArchive: current?.giftArchive ?? [],
+        sentGiftArchive: [
+          {
+            id: `local-sent-gift:${profileId}:${giftType}:${Date.now()}`,
+            recipientName: profileSnapshot.name || 'Betweener member',
+            recipientAvatar: avatarUrl,
+            recipientProfileId: profileId,
+            giftType,
+            createdAt,
+            revealedAt: null,
+            archivedAt: null,
+          },
+          ...(current?.sentGiftArchive ?? []).filter((item) => item.recipientProfileId !== profileId || item.giftType !== giftType),
+        ],
+      }));
+    },
+    [profileId, profileSnapshot, viewerProfileId],
+  );
+  const syncBoostSnapshotActive = useCallback(
+    async (created: CreatedBoost) => {
+      if (!viewerProfileId) return;
+      const optimisticRecommendation: BoostRecommendation | null = boostRecommendation
+        ? {
+            ...boostRecommendation,
+            has_active_boost: true,
+            active_boost_ends_at: created.ends_at,
+          }
+        : null;
+      const optimisticAnalytics: BoostAnalytics = {
+        has_boost: true,
+        analytics_meta: boostAnalytics?.analytics_meta ?? {
+          trust_filter: 'trusted_viewers_only',
+          is_trust_filtered: true,
+        },
+        boost: {
+          id: created.id,
+          starts_at: created.starts_at,
+          ends_at: created.ends_at,
+          created_at: created.starts_at,
+          boost_type: created.boost_type,
+          audience_mode: created.audience_mode,
+          focus_mode: created.focus_mode,
+          status: created.status,
+          is_active: created.status !== 'completed',
+        },
+        metrics: boostAnalytics?.metrics ?? {
+          unique_viewers: 0,
+          views: 0,
+          unique_intro_viewers: 0,
+          intro_opens: 0,
+          unique_savers: 0,
+          saves: 0,
+          unique_intent_viewers: 0,
+          intent_opens: 0,
+          likes: 0,
+          accepted_matches: 0,
+        },
+      };
+      setBoostRecommendation(optimisticRecommendation);
+      setBoostAnalytics(optimisticAnalytics);
+      await updateProfileBoostSnapshot(viewerProfileId, (current) => ({
+        recommendation: optimisticRecommendation ?? current?.recommendation ?? null,
+        analytics: optimisticAnalytics,
+      }));
+    },
+    [boostAnalytics, boostRecommendation, viewerProfileId],
+  );
   const closeGift = () => setGiftOpen(false);
   const sendGift = async () => {
     if (!selectedGift || !currentUserId) return;
@@ -4194,87 +4788,191 @@ function FloatingActions({
       openTierUpsell('GOLD', 'Unlock the Ring', 'The Ring is exclusive to Gold. Upgrade for Betweener\'s boldest gesture.');
       return;
     }
+    const nextGiftType = selectedGift;
     setGiftSending(true);
-    const { error } = await supabase.from('profile_gifts').insert({
-      profile_id: profileId,
-      sender_id: currentUserId,
-      gift_type: selectedGift,
+    const { error } = await supabase.rpc('rpc_send_profile_gift' as any, {
+      p_recipient_profile_id: profileId,
+      p_gift_type: nextGiftType,
+      p_include_sandbox_preview: typeof __DEV__ !== 'undefined' && __DEV__,
     });
     setGiftSending(false);
     if (error) {
-      logger.error('[profile-view] send_gift_failed', error);
-      Alert.alert('Unable to send gift', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
-      return;
-    }
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-    setGiftOpen(false);
-  };
+      const errorMessage = String(error.message || '');
+      const isGoldGate = errorMessage.match(/gold subscription required/i);
+      const isPremiumGate = errorMessage.match(/premium subscription required/i);
+      const isCooldown = error.code === '23514' || errorMessage.match(/gift cooldown active/i);
+      const isExpectedGiftRule = Boolean(isGoldGate || isPremiumGate || isCooldown);
 
-  const closeNote = () => setNoteOpen(false);
-
-  const sendNote = async () => {
-    const note = noteText.trim();
-    if (!note || !currentUserId) return;
-    setNoteSending(true);
-    const { error } = await supabase.from('profile_notes').insert({
-      profile_id: profileId,
-      sender_id: currentUserId,
-      note,
-    });
-    if (error) {
-      setNoteSending(false);
-      if (isLikelyNetworkError(error)) {
-        await enqueueProfileNoteCreateMutation({
+      if (isExpectedGiftRule) {
+        logger.warn('[profile-view] send_gift_blocked', {
+          code: error.code ?? null,
+          message: errorMessage,
           profileId,
-          senderId: currentUserId,
-          note,
+          giftType: nextGiftType,
         });
+      } else {
+        logger.error('[profile-view] send_gift_failed', error);
+      }
+
+      if (isLikelyNetworkError(error)) {
+        await enqueueProfileGiftSendMutation({
+          recipientProfileId: profileId,
+          giftType: nextGiftType,
+          includeSandboxPreview: typeof __DEV__ !== 'undefined' && __DEV__,
+          clientNonce: `gift:${profileId}:${nextGiftType}:${Date.now()}`,
+        });
+        await syncSentGiftArchiveSnapshot(nextGiftType);
+        setGiftOpen(false);
+        setSelectedGift(null);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-        setNoteText('');
-        setNoteOpen(false);
-        Alert.alert('Note saved', 'We will send it when the network returns.');
+        showBetweenerAlert({
+          title: 'Gift queued',
+          message: 'Your gift is saved and will send when you are back online.',
+          tone: 'success',
+        });
         return;
       }
-      logger.error('[profile-view] send_note_failed', error);
-      Alert.alert('Unable to send note', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
+
+      const message = isGoldGate
+        ? 'The Ring is reserved for Gold right now.'
+        : isPremiumGate
+          ? 'Gifts are available with Silver and Gold.'
+          : isCooldown
+            ? 'Let this gift land first. You can send another one to this person a little later.'
+            : (typeof __DEV__ !== 'undefined' && __DEV__)
+              ? errorMessage
+              : 'Please try again.';
+      showBetweenerAlert({
+        title: isCooldown ? 'Gift on cooldown' : 'Unable to send gift',
+        message,
+        tone: isCooldown ? 'warning' : 'error',
+      });
       return;
     }
-    setNoteSending(false);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-    setNoteText('');
-    setNoteOpen(false);
+    await syncSentGiftArchiveSnapshot(nextGiftType);
+    setGiftOpen(false);
+    setSelectedGift(null);
+    showBetweenerAlert({
+      title: 'Gift sent',
+      message: 'Your gift is on the way. Betweener will let the moment land with warmth.',
+      tone: 'success',
+    });
   };
 
-  const sendBoost = async () => {
+  const sendBoost = async (input: CreateBoostInput) => {
     if (!currentUserId) return;
     if (!canUseBoosts) {
       openBoostUpsell();
       return;
     }
+    setBoostFeedback(null);
+    const requiresGoldBoost = isGoldBoostConfig(input);
+    if (!canUseServerBoosts && !canUseSandboxSilverPreview) {
+      showBoostSyncNotice('SILVER');
+      return;
+    }
+    if (requiresGoldBoost && !hasAccess('GOLD')) {
+      openGoldBoostUpsell('boost_type', input.boostType);
+      return;
+    }
+    if (requiresGoldBoost && !canUseServerGoldBoosts && !canUseSandboxGoldPreview) {
+      showBoostSyncNotice('GOLD');
+      return;
+    }
     setBoostSending(true);
-    const { data, error } = await supabase.rpc('rpc_create_profile_boost');
-    setBoostSending(false);
-    if (error) {
-      logger.error('[profile-view] send_boost_failed', error);
-      if (String(error.message || '').toLowerCase().includes('premium subscription required')) {
+    try {
+      const created = await createProfileBoostV2(input);
+      await syncBoostSnapshotActive(created);
+      await refreshPremiumState();
+      await loadBoostComposer();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+      const endsAt = created.ends_at ? new Date(created.ends_at) : null;
+      const endsAtLabel =
+        endsAt && !Number.isNaN(endsAt.getTime())
+          ? endsAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+          : null;
+      showBoostComposerFeedback({
+        tone: 'success',
+        title: created.boost_type === 'smart' ? 'Precision boost active' : 'Boost active',
+        message: endsAtLabel
+          ? `${formatBoostAudienceLabel(created.audience_mode)} audience with ${formatBoostFocusLabel(created.focus_mode)} focus is live until ${endsAtLabel}.`
+          : 'Your profile is boosted for 30 minutes.',
+      });
+    } catch (error) {
+      const message = String((error as any)?.message || error || '');
+      const normalizedMessage = message.toLowerCase();
+      if (isLikelyNetworkError(error) && viewerProfileId) {
+        await enqueueProfileBoostCreateMutation({
+          ownerProfileId: viewerProfileId,
+          boostType: input.boostType,
+          audienceMode: input.audienceMode,
+          focusMode: input.focusMode,
+          metadata: (input.metadata as Record<string, unknown> | undefined) ?? null,
+        });
+        await refreshBoostSyncState();
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+        showBoostComposerFeedback({
+          tone: 'info',
+          title: 'Boost queued',
+          message: 'Your boost recipe is saved locally and will launch automatically when the connection returns.',
+        });
+        return;
+      }
+      if (normalizedMessage.includes('premium subscription required')) {
+        logger.warn('[profile-view] send_boost_blocked', {
+          message,
+          boostType: input.boostType,
+          audienceMode: input.audienceMode,
+          focusMode: input.focusMode,
+          currentPlan,
+          serverPlan,
+          revenueCatPlan,
+        });
+        if (requiresGoldBoost && hasAccess('GOLD') && !canUseServerGoldBoosts && !canUseSandboxGoldPreview) {
+          showBoostSyncNotice('GOLD');
+          return;
+        }
+        if (canUseBoosts && !canUseServerBoosts && !canUseSandboxSilverPreview) {
+          showBoostSyncNotice('SILVER');
+          return;
+        }
+        if (requiresGoldBoost) {
+          openTierUpsell(
+            'GOLD',
+            'Unlock precision boost',
+            'Precision boost and advanced targeting are reserved for Gold.',
+          );
+          return;
+        }
         openBoostUpsell();
         return;
       }
-      if (String(error.message || '').toLowerCase().includes('boost already active')) {
-        Alert.alert('Boost already live', 'Your current boost is still running. Check your premium plans screen for timing.');
+      if (normalizedMessage.includes('boost already active')) {
+        logger.warn('[profile-view] send_boost_blocked', {
+          message,
+          boostType: input.boostType,
+          audienceMode: input.audienceMode,
+          focusMode: input.focusMode,
+        });
+        await refreshPremiumState();
+        await loadBoostComposer();
+        showBoostComposerFeedback({
+          tone: 'info',
+          title: 'Boost already live',
+          message: 'Your current boost is still running. Check the live boost panel for timing and response.',
+        });
         return;
       }
-      Alert.alert('Unable to boost', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
-      return;
+      logger.error('[profile-view] send_boost_failed', error);
+      showBoostComposerFeedback({
+        tone: 'error',
+        title: 'Unable to boost',
+        message: (typeof __DEV__ !== 'undefined' && __DEV__) ? message : 'Please try again.',
+      });
+    } finally {
+      setBoostSending(false);
     }
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-    const endsAt = typeof data === 'object' && data && 'ends_at' in data ? (data.ends_at as string | null) : null;
-    Alert.alert(
-      'Boost active',
-      endsAt
-        ? `Your profile is boosted until ${new Date(endsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`
-        : 'Your profile is boosted for 30 minutes.',
-    );
   };
 
   useEffect(() => {
@@ -4312,33 +5010,72 @@ function FloatingActions({
       setSaved(false);
       return;
     }
-    void isProfileSaved(viewerProfileId, profileId)
-      .then((value) => {
+    void (async () => {
+      const cached = await readSavedProfilesSnapshotState(viewerProfileId);
+      if (!cancelled && cached.data?.some((item) => item.profile_id === profileId)) {
+        setSaved(true);
+      }
+      try {
+        const value = await isProfileSaved(viewerProfileId, profileId);
         if (!cancelled) setSaved(value);
-      })
-      .catch(() => {
-        if (!cancelled) setSaved(false);
-      });
+      } catch {
+        if (!cancelled && !cached.data?.some((item) => item.profile_id === profileId)) {
+          setSaved(false);
+        }
+      }
+    })();
     return () => {
       cancelled = true;
     };
   }, [isOwnProfile, profileId, viewerProfileId]);
 
+  useEffect(() => {
+    if (!saveNotice) return;
+    const timer = setTimeout(() => {
+      setSaveNotice((current) => (current === saveNotice ? null : current));
+    }, 4200);
+    return () => clearTimeout(timer);
+  }, [saveNotice]);
+
   const toggleSaved = async () => {
     if (!viewerProfileId || !profileId || isOwnProfile || savingProfile) return;
+    const previousSaved = saved;
     const nextSaved = !saved;
     setSaved(nextSaved);
     setSavingProfile(true);
+    await syncSavedProfilesSnapshot(nextSaved);
     try {
       const confirmed = await setProfileSaved(viewerProfileId, profileId, nextSaved);
       setSaved(confirmed);
+      setSaveNotice(
+        confirmed
+          ? {
+              title: 'Profile saved',
+              message: 'You can find them again in Saved Profiles.',
+              actionLabel: 'View',
+              onAction: () => {
+                setSaveNotice(null);
+                router.push('/saved-profiles');
+              },
+            }
+          : {
+              title: 'Removed from saved',
+              message: 'This profile is no longer in your saved list.',
+            },
+      );
+      await syncSavedProfilesSnapshot(confirmed);
       Haptics.selectionAsync().catch(() => undefined);
     } catch (error) {
-      setSaved(!nextSaved);
+      setSaved(previousSaved);
+      await syncSavedProfilesSnapshot(previousSaved);
       logger.warn('[profile-view] save_profile_failed', {
         message: String((error as any)?.message || error || 'unknown'),
       });
-      Alert.alert('Unable to update saved profile', 'Please try again.');
+      showBetweenerAlert({
+        title: 'Unable to update saved profile',
+        message: 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setSavingProfile(false);
     }
@@ -4375,7 +5112,11 @@ function FloatingActions({
         return;
       }
       logger.error('[profile-view] send_like_failed', error);
-      Alert.alert('Unable to like', (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Unable to like',
+        message: (typeof __DEV__ !== 'undefined' && __DEV__) ? error.message : 'Please try again.',
+        tone: 'error',
+      });
       return;
     }
     setLikeSending(false);
@@ -4387,6 +5128,8 @@ function FloatingActions({
         type: 'like_with_note',
         message: null,
         metadata: { source: 'profile_view', swipe_action: 'like' },
+        actorProfileId: viewerProfileId,
+        snapshotOwnerIds: [viewerProfileId, currentUserId],
       });
     } catch (e) {
       // Best-effort only.
@@ -4406,6 +5149,24 @@ function FloatingActions({
 
   return (
     <>
+      {saveNotice ? (
+        <View
+          style={[
+            stylesStatic.inlineSaveNotice,
+            stylesStatic.fabInlineNotice,
+            { bottom: 80 + Math.max(0, insets.bottom) },
+          ]}
+          pointerEvents="box-none"
+        >
+          <Notice
+            title={saveNotice.title}
+            message={saveNotice.message}
+            actionLabel={saveNotice.actionLabel}
+            onAction={saveNotice.onAction}
+            icon="book-heart-outline"
+          />
+        </View>
+      ) : null}
       <View
         style={[
           stylesStatic.fabStack,
@@ -4447,23 +5208,21 @@ function FloatingActions({
               showLabel={false}
             />
           ) : null}
-          {!isOwnProfile ? (
-            <Fab
-              theme={theme}
-              label="Note"
-              icon="message-text-outline"
-              colors={[theme.tint, '#0C6E7A'] as const}
-              onPress={openNote}
-              showLabel={false}
-            />
-          ) : null}
           {isOwnProfile ? (
             <Fab
               theme={theme}
-              label={boostSending ? 'Boosting' : canUseBoosts ? 'Boost' : 'Unlock Boosts'}
+              label={
+                boostSending
+                  ? 'Boosting'
+                  : hasActiveBoost
+                    ? 'Boost Live'
+                    : canUseBoosts
+                      ? 'Boost'
+                      : 'Unlock Boosts'
+              }
               icon="rocket-launch-outline"
               colors={['#F6C453', '#C68B1E'] as const}
-              onPress={sendBoost}
+              onPress={openBoostComposer}
               showLabel={false}
             />
           ) : (
@@ -4489,76 +5248,42 @@ function FloatingActions({
           router.push('/premium-plans');
         }}
       />
-      <Modal
-        visible={noteOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={closeNote}
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={{ flex: 1 }}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? -20 : 0}
-        >
-          <Pressable
-            style={stylesStatic.giftBackdrop}
-            onPress={() => {
-              if (Date.now() - noteOpenAtRef.current < 250) return;
-              closeNote();
-            }}
-          >
-            <Pressable style={stylesStatic.giftSheetWrap} onPress={() => undefined}>
-              <BlurViewSafe
-                intensity={30}
-                tint={isDark ? 'dark' : 'light'}
-                style={[
-                  stylesStatic.giftSheet,
-                  {
-                    backgroundColor: isDark ? 'rgba(8,18,28,0.82)' : 'rgba(248,251,252,0.84)',
-                    borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,61,62,0.10)',
-                    marginBottom: 0,
-                  },
-                ]}
-              >
-                <View style={stylesStatic.giftHandle} />
-                <Text style={[stylesStatic.giftTitle, { color: theme.text }]}>Send a Note</Text>
-                <Text style={[stylesStatic.giftSubtitle, { color: theme.textMuted }]}>
-                  Keep it short and personal.
-                </Text>
-                <View style={[stylesStatic.noteInputWrap, { borderColor: theme.outline, backgroundColor: theme.backgroundSubtle }]}>
-                  <TextInput
-                    value={noteText}
-                    onChangeText={setNoteText}
-                    placeholder="Write a short opener..."
-                    placeholderTextColor={theme.textMuted}
-                    multiline
-                    maxLength={280}
-                    autoFocus
-                    textAlignVertical="top"
-                    style={[stylesStatic.noteInput, { color: theme.text }]}
-                  />
-                </View>
-                <Text style={[stylesStatic.noteCounter, { color: theme.textMuted }]}>{noteLength}/280</Text>
-                <Pressable
-                  onPress={sendNote}
-                  disabled={!noteLength || noteSending}
-                  style={[
-                    stylesStatic.giftSendButton,
-                    {
-                      backgroundColor: noteLength ? theme.tint : theme.outline,
-                      opacity: noteLength ? 1 : 0.6,
-                    },
-                  ]}
-                >
-                  <Text style={[stylesStatic.giftSendText, { color: Colors.light.background }]}>
-                    {noteSending ? 'Sending...' : 'Send Note'}
-                  </Text>
-                </Pressable>
-              </BlurViewSafe>
-            </Pressable>
-          </Pressable>
-        </KeyboardAvoidingView>
-      </Modal>
+      <BoostComposerModal
+        visible={boostComposerVisible}
+        plan={currentPlan}
+        activeBoostEndsAt={activeBoostEndsAt}
+        recommendation={boostRecommendation}
+        analytics={boostAnalytics}
+        queuedDraft={boostSyncState?.input ?? null}
+        syncState={
+          boostSyncState
+            ? {
+                status: boostSyncState.status,
+                title:
+                  boostSyncState.status === 'failed'
+                    ? 'Saved boost needs attention'
+                    : 'Saved boost is waiting to launch',
+                message:
+                  boostSyncState.status === 'failed'
+                    ? 'The launch did not finish. Retry this saved recipe when your connection is stable.'
+                    : 'This recipe is stored locally and will launch automatically when your connection returns.',
+                actionLabel: boostSyncState.status === 'failed' ? 'Retry now' : 'View sync',
+              }
+            : null
+        }
+        loading={boostComposerLoading}
+        submitting={boostSending}
+        feedback={boostFeedback}
+        theme={theme}
+        isDark={isDark}
+        onClose={() => {
+          setBoostComposerVisible(false);
+          setBoostFeedback(null);
+        }}
+        onLockedGoldPress={openGoldBoostUpsell}
+        onSyncAction={handleBoostSyncAction}
+        onSubmit={sendBoost}
+      />
       <Modal
         visible={giftOpen}
         transparent
@@ -4971,19 +5696,21 @@ const stylesStatic = StyleSheet.create({
   activeBadgeHero: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    gap: 5,
+    minHeight: 28,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
     borderRadius: 999,
     borderWidth: 1,
+    backgroundColor: 'rgba(8,22,27,0.72)',
   },
   activeDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
   },
   activeText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
 
@@ -5038,6 +5765,27 @@ const stylesStatic = StyleSheet.create({
     paddingHorizontal: 12,
     paddingTop: 10,
     paddingBottom: 6,
+  },
+  heroDetailsShell: {
+    borderRadius: 24,
+    shadowColor: '#020617',
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: 0.26,
+    shadowRadius: 30,
+    elevation: 10,
+  },
+  heroDetailsCardChrome: {
+    borderRadius: 24,
+    padding: 1,
+  },
+  inlineSaveNotice: {
+    marginBottom: 8,
+  },
+  fabInlineNotice: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    zIndex: 20,
   },
   profileReminderWrap: {
     paddingHorizontal: 12,
@@ -5123,54 +5871,116 @@ const stylesStatic = StyleSheet.create({
   heroDetailsCard: {
     borderWidth: 1,
     borderRadius: 22,
-    paddingHorizontal: 15,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingTop: 13,
+    paddingBottom: 11,
+    overflow: 'hidden',
+    position: 'relative',
   },
-  heroDetailsTopRow: {
+  heroDetailsAtmosphereTeal: {
+    position: 'absolute',
+    width: 164,
+    height: 164,
+    borderRadius: 82,
+    right: -34,
+    top: -74,
+    backgroundColor: 'rgba(36,184,176,0.09)',
+  },
+  heroDetailsAtmosphereViolet: {
+    position: 'absolute',
+    width: 152,
+    height: 152,
+    borderRadius: 76,
+    left: -42,
+    bottom: -92,
+    backgroundColor: 'rgba(125,124,243,0.06)',
+  },
+  heroDetailsSheen: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 72,
+  },
+  heroDetailsAccentBar: {
+    position: 'absolute',
+    top: 0,
+    left: 18,
+    right: 18,
+    height: 2,
+    borderBottomLeftRadius: 999,
+    borderBottomRightRadius: 999,
+  },
+  heroHeaderStack: {
+    gap: 7,
+  },
+  heroPrimaryRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 7,
     flexWrap: 'wrap',
+    gap: 5,
   },
-  heroDetailsName: {
+  heroNameAgeRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
     flexShrink: 1,
     minWidth: 0,
-    maxWidth: '100%',
-    fontSize: 19,
+  },
+  heroDetailsName: {
+    fontSize: 20,
     fontWeight: '900',
     letterSpacing: 0.2,
-    lineHeight: 23,
+    lineHeight: 24,
   },
-  heroDetailsSubRow: {
-    marginTop: 3,
+  heroAgeInlineText: {
+    fontSize: 17,
+    fontWeight: '800',
+    lineHeight: 21,
+    marginLeft: 4,
+  },
+  heroSupportRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  heroSupportItem: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  heroInlineVerificationBadge: {
+    transform: [{ translateY: 1 }],
+    marginHorizontal: 1,
+  },
+  heroPremiumBadgeInline: {
+    marginLeft: 2,
+  },
+  heroNewHereBadge: {
+    marginLeft: 2,
   },
   heroDetailsSubText: {
-    fontSize: 11.5,
-    fontWeight: '600',
-    lineHeight: 15,
+    fontSize: 12.5,
+    fontWeight: '700',
+    lineHeight: 16,
+    flexShrink: 1,
   },
-  heroDetailsMeta: {
-    marginTop: 1,
-    fontSize: 11.5,
-    fontWeight: '600',
-    lineHeight: 15,
-  },
-  heroMetaRow: {
-    marginTop: 6,
+  heroContextActionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
+    gap: 10,
+  },
+  heroContextLineWrap: {
+    flex: 1,
+    minWidth: 0,
   },
   heroContextRow: {
-    marginTop: 7,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    minHeight: 16,
+    minHeight: 18,
   },
   heroContextText: {
     fontSize: 11.5,
@@ -5179,7 +5989,7 @@ const stylesStatic = StyleSheet.create({
     flexShrink: 1,
   },
   heroRequestWrap: {
-    alignSelf: 'flex-end',
+    alignSelf: 'flex-start',
     borderRadius: 999,
     overflow: 'hidden',
     shadowColor: '#000',
@@ -5189,12 +5999,16 @@ const stylesStatic = StyleSheet.create({
     elevation: 6,
   },
   heroRequestButton: {
-    paddingHorizontal: 15,
+    minHeight: 33,
+    paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 999,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 7,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.18)',
   },
   safetySheetBackdrop: {
     flex: 1,
@@ -5319,9 +6133,16 @@ const stylesStatic = StyleSheet.create({
   },
   heroRequestText: {
     color: Colors.light.background,
-    fontSize: 11.5,
+    fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.2,
+  },
+  heroGuessCtaAnchor: {
+    position: 'absolute',
+    left: 12,
+    bottom: 12,
+    zIndex: 6,
+    elevation: 6,
   },
   featuredPromptCard: {
     borderWidth: 1,
@@ -5438,12 +6259,6 @@ const stylesStatic = StyleSheet.create({
   },
   featuredPromptHidden: {
     opacity: 0,
-  },
-  guessFabAnchor: {
-    position: 'absolute',
-    left: 20,
-    zIndex: 12,
-    elevation: 12,
   },
   guessFabWrap: {
     shadowColor: '#000',
@@ -6044,23 +6859,6 @@ const stylesStatic = StyleSheet.create({
     marginTop: 14,
     flexDirection: 'row',
     gap: 10,
-  },
-  noteInputWrap: {
-    marginTop: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  noteInput: {
-    minHeight: 88,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  noteCounter: {
-    marginTop: 6,
-    fontSize: 11,
-    textAlign: 'right',
   },
   giftCard: {
     flex: 1,

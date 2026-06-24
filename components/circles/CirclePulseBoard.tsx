@@ -558,7 +558,7 @@ export default function CirclePulseBoard({
                   </View>
                 )}
                 <View style={styles.welcomeSpark}>
-                  <MaterialCommunityIcons name="hand-wave" size={14} color="#F4E8D0" />
+                  <MaterialCommunityIcons name="hand-wave" size={14} color={palette.overlayText} />
                 </View>
               </Pressable>
               <View style={styles.loveSeatCopy}>
@@ -595,7 +595,7 @@ export default function CirclePulseBoard({
                   </View>
                 )}
                 <View style={styles.loveSeatHeart}>
-                  <MaterialCommunityIcons name="heart" size={14} color="#F4E8D0" />
+                  <MaterialCommunityIcons name="heart" size={14} color={palette.overlayText} />
                 </View>
               </View>
               <View style={styles.loveSeatCopy}>
@@ -618,7 +618,7 @@ export default function CirclePulseBoard({
               ) : selectedItem.mediaType === 'audio' ? (
                 <View style={styles.audioPreview}>
                   <View style={styles.audioIcon}>
-                    <MaterialCommunityIcons name="headphones" size={22} color="#F4E8D0" />
+                    <MaterialCommunityIcons name="headphones" size={22} color={palette.overlayText} />
                   </View>
                   <View style={styles.audioWaveform}>
                     {MEDIA_WAVEFORM.map((height, index) => (
@@ -638,16 +638,20 @@ export default function CirclePulseBoard({
               />
               <LinearGradient
                 pointerEvents="none"
-                colors={['rgba(7,30,34,0.08)', 'rgba(7,30,34,0.28)', 'rgba(7,30,34,0.96)']}
+                colors={
+                  palette.dark
+                    ? ['rgba(7,30,34,0.08)', 'rgba(7,30,34,0.28)', 'rgba(7,30,34,0.96)']
+                    : ['rgba(255,249,243,0.06)', 'rgba(31,42,42,0.18)', 'rgba(31,42,42,0.82)']
+                }
                 locations={[0, 0.42, 1]}
                 style={styles.mediaOverlay}
               />
               <View style={styles.mediaTypeBadge}>
-                <MaterialCommunityIcons name={getMediaIcon(selectedItem.mediaType) as any} size={13} color="#F4E8D0" />
+                <MaterialCommunityIcons name={getMediaIcon(selectedItem.mediaType) as any} size={13} color={palette.overlayText} />
                 <Text style={styles.mediaTypeText}>{getMediaLabel(selectedItem)}</Text>
               </View>
               <View style={styles.mediaOpenIcon}>
-                <MaterialCommunityIcons name={selectedItem.mediaType === 'video' ? 'play' : 'arrow-top-right'} size={17} color="#F4E8D0" />
+                <MaterialCommunityIcons name={selectedItem.mediaType === 'video' ? 'play' : 'arrow-top-right'} size={17} color={palette.overlayText} />
               </View>
               <View style={styles.mediaPosterContent}>
                 <Text style={styles.mediaPosterLabel}>{getLabel(selectedItem.type)}</Text>
@@ -674,7 +678,7 @@ export default function CirclePulseBoard({
                     style={[styles.mediaActionButton, styles.mediaPosterSecondaryAction]}
                     onPress={() => onOpenComments?.(selectedItem)}
                   >
-                    <MaterialCommunityIcons name="message-outline" size={15} color="#E8DFFF" />
+                    <MaterialCommunityIcons name="message-outline" size={15} color={palette.purple} />
                     <Text style={styles.mediaPosterSecondaryActionText}>{selectedDiscussionCallToAction}</Text>
                     {selectedDiscussionUnreadCount > 0 ? (
                       <View style={styles.unreadPill}>
@@ -688,10 +692,13 @@ export default function CirclePulseBoard({
           ) : imageUri && selectedItem.type !== 'gathering' ? (
             <View style={styles.mediaShell}>
               <Image source={{ uri: imageUri }} style={styles.mediaImage} contentFit="cover" transition={160} />
-              <LinearGradient colors={['transparent', 'rgba(7,30,34,0.82)']} style={styles.mediaOverlay} />
+              <LinearGradient
+                colors={palette.dark ? ['transparent', 'rgba(7,30,34,0.82)'] : ['transparent', 'rgba(31,42,42,0.72)']}
+                style={styles.mediaOverlay}
+              />
               {selectedItem.mediaType === 'video' ? (
                 <View style={styles.playIcon}>
-                  <MaterialCommunityIcons name="play" size={18} color="#F4E8D0" />
+                  <MaterialCommunityIcons name="play" size={18} color={palette.overlayText} />
                 </View>
               ) : null}
             </View>
@@ -699,7 +706,7 @@ export default function CirclePulseBoard({
           {selectedItem.type === 'gathering' ? (
             <View style={styles.gatheringFeature}>
               {selectedGatheringPosterMember ? (
-                <LinearGradient colors={['rgba(19,168,168,0.24)', 'rgba(7,30,34,0.96)']} style={styles.gatheringAvatarHero}>
+                <LinearGradient colors={palette.gatheringGradient} style={styles.gatheringAvatarHero}>
                   <View style={styles.gatheringAvatarHeroTop}>
                     <Text style={styles.label}>Host-led invitation</Text>
                     <Text style={styles.gatheringPosterTypePill}>{getGatheringSeatContextLabel(selectedGatheringPosterMember.seatContext)}</Text>
@@ -738,7 +745,14 @@ export default function CirclePulseBoard({
               ) : resolvedImageUri ? (
                 <View style={styles.gatheringPosterHeroShell}>
                   <Image accessibilityLabel={`${selectedItem.title || 'Gathering'} poster`} source={{ uri: resolvedImageUri }} style={styles.gatheringPosterImage} contentFit="cover" transition={160} />
-                  <LinearGradient colors={['rgba(7,30,34,0.02)', 'rgba(7,30,34,0.18)', 'rgba(7,30,34,0.72)']} style={styles.gatheringPosterImageOverlay} />
+                  <LinearGradient
+                    colors={
+                      palette.dark
+                        ? ['rgba(7,30,34,0.02)', 'rgba(7,30,34,0.18)', 'rgba(7,30,34,0.72)']
+                        : ['rgba(255,249,243,0.04)', 'rgba(31,42,42,0.14)', 'rgba(31,42,42,0.48)']
+                    }
+                    style={styles.gatheringPosterImageOverlay}
+                  />
                   <View style={styles.gatheringPosterDateBadge}>
                     <Text style={styles.gatheringPosterMonth}>{selectedGatheringDateParts.month}</Text>
                     <Text style={styles.gatheringPosterDay}>{selectedGatheringDateParts.day}</Text>
@@ -1036,17 +1050,51 @@ const createStyles = (compactWidth: boolean, compactHeight: boolean, palette: Ci
     mediaOverlay: { ...StyleSheet.absoluteFillObject },
     mediaFallback: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.purpleSoft },
     audioPreview: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 15, backgroundColor: palette.tealSoft },
-    audioIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(139,92,255,0.44)', borderWidth: 1, borderColor: 'rgba(217,204,255,0.54)' },
+    audioIcon: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: palette.dark ? 'rgba(139,92,255,0.44)' : palette.purpleSoft,
+      borderWidth: 1,
+      borderColor: palette.dark ? 'rgba(217,204,255,0.54)' : palette.purpleBorder,
+    },
     audioWaveform: { height: 48, flexDirection: 'row', alignItems: 'center', gap: 4 },
     audioBar: { width: 3, borderRadius: 2, backgroundColor: palette.teal },
-    mediaTypeBadge: { position: 'absolute', left: 10, top: 10, flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 14, backgroundColor: 'rgba(7,30,34,0.76)', borderWidth: 1, borderColor: 'rgba(244,232,208,0.16)' },
-    mediaTypeText: { color: '#F4E8D0', fontSize: 10, fontWeight: '900' },
-    mediaOpenIcon: { position: 'absolute', right: 12, top: 12, width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(139,92,255,0.76)', borderWidth: 1, borderColor: 'rgba(217,204,255,0.68)' },
+    mediaTypeBadge: {
+      position: 'absolute',
+      left: 10,
+      top: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 9,
+      paddingVertical: 6,
+      borderRadius: 14,
+      backgroundColor: palette.dark ? 'rgba(7,30,34,0.76)' : 'rgba(31,42,42,0.52)',
+      borderWidth: 1,
+      borderColor: palette.dark ? 'rgba(244,232,208,0.16)' : 'rgba(255,255,255,0.22)',
+    },
+    mediaTypeText: { color: palette.overlayText, fontSize: 10, fontWeight: '900' },
+    mediaOpenIcon: {
+      position: 'absolute',
+      right: 12,
+      top: 12,
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: palette.dark ? 'rgba(139,92,255,0.76)' : 'rgba(31,42,42,0.52)',
+      borderWidth: 1,
+      borderColor: palette.dark ? 'rgba(217,204,255,0.68)' : 'rgba(255,255,255,0.22)',
+    },
     mediaPosterContent: { position: 'absolute', left: 14, right: 14, bottom: 14, gap: 4 },
-    mediaPosterLabel: { color: '#C9B5FF', fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1.2 },
-    mediaPosterTitle: { color: '#F6EFE3', fontSize: compactWidth ? 21 : 24, lineHeight: compactWidth ? 25 : 29, fontFamily: 'PlayfairDisplay_700Bold' },
-    mediaPosterSubtitle: { color: '#78E1DF', fontSize: 11, lineHeight: 15, fontWeight: '900' },
-    mediaPosterBody: { color: 'rgba(246,239,227,0.78)', fontSize: 11, lineHeight: 15 },
+    mediaPosterLabel: { color: palette.dark ? '#C9B5FF' : '#F1D7FF', fontSize: 10, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1.2 },
+    mediaPosterTitle: { color: palette.overlayText, fontSize: compactWidth ? 21 : 24, lineHeight: compactWidth ? 25 : 29, fontFamily: 'PlayfairDisplay_700Bold' },
+    mediaPosterSubtitle: { color: palette.dark ? '#78E1DF' : '#C7FFF8', fontSize: 11, lineHeight: 15, fontWeight: '900' },
+    mediaPosterBody: { color: palette.dark ? 'rgba(246,239,227,0.78)' : 'rgba(255,249,243,0.9)', fontSize: 11, lineHeight: 15 },
     playIcon: {
       position: 'absolute',
       left: 12,
@@ -1056,9 +1104,9 @@ const createStyles = (compactWidth: boolean, compactHeight: boolean, palette: Ci
       borderRadius: 17,
       alignItems: 'center',
       justifyContent: 'center',
-      backgroundColor: 'rgba(7,30,34,0.72)',
+      backgroundColor: palette.dark ? 'rgba(7,30,34,0.72)' : 'rgba(31,42,42,0.54)',
       borderWidth: 1,
-      borderColor: 'rgba(244,232,208,0.18)',
+      borderColor: palette.dark ? 'rgba(244,232,208,0.18)' : 'rgba(255,255,255,0.24)',
     },
     gatheringFeature: { gap: 12 },
     gatheringPosterCard: {
@@ -1096,9 +1144,9 @@ const createStyles = (compactWidth: boolean, compactHeight: boolean, palette: Ci
       paddingVertical: 5,
       borderRadius: 999,
       color: palette.text,
-      backgroundColor: 'rgba(7,30,34,0.34)',
+      backgroundColor: palette.dark ? 'rgba(7,30,34,0.34)' : 'rgba(31,42,42,0.18)',
       borderWidth: 1,
-      borderColor: 'rgba(244,232,208,0.12)',
+      borderColor: palette.dark ? 'rgba(244,232,208,0.12)' : 'rgba(255,255,255,0.22)',
       fontSize: 10,
       fontWeight: '900',
       textTransform: 'uppercase',
@@ -1129,9 +1177,9 @@ const createStyles = (compactWidth: boolean, compactHeight: boolean, palette: Ci
       paddingHorizontal: 8,
       paddingVertical: 9,
       borderRadius: 18,
-      backgroundColor: 'rgba(7,30,34,0.62)',
+      backgroundColor: palette.dark ? 'rgba(7,30,34,0.62)' : 'rgba(31,42,42,0.44)',
       borderWidth: 1,
-      borderColor: 'rgba(244,232,208,0.16)',
+      borderColor: palette.dark ? 'rgba(244,232,208,0.16)' : 'rgba(255,255,255,0.24)',
       alignItems: 'center',
     },
     gatheringPosterMonth: { color: palette.teal, fontSize: 11, fontWeight: '900', letterSpacing: 1.6 },
@@ -1147,9 +1195,9 @@ const createStyles = (compactWidth: boolean, compactHeight: boolean, palette: Ci
       paddingHorizontal: 9,
       paddingVertical: 6,
       borderRadius: 999,
-      backgroundColor: 'rgba(244,232,208,0.1)',
+      backgroundColor: palette.dark ? 'rgba(244,232,208,0.1)' : 'rgba(31,42,42,0.08)',
       borderWidth: 1,
-      borderColor: 'rgba(244,232,208,0.14)',
+      borderColor: palette.dark ? 'rgba(244,232,208,0.14)' : palette.outlineSoft,
     },
     gatheringCountdownPill: {
       flexDirection: 'row',
@@ -1217,8 +1265,11 @@ const createStyles = (compactWidth: boolean, compactHeight: boolean, palette: Ci
     mediaPrimaryAction: { borderColor: palette.tealBorder, backgroundColor: palette.teal },
     mediaPrimaryActionText: { color: palette.tealInk, fontSize: 11, fontWeight: '900' },
     mediaSecondaryActionText: { color: palette.purple, fontSize: 11, fontWeight: '900' },
-    mediaPosterSecondaryAction: { borderColor: 'rgba(217,204,255,0.46)', backgroundColor: 'rgba(7,30,34,0.64)' },
-    mediaPosterSecondaryActionText: { color: '#E8DFFF', fontSize: 11, fontWeight: '900' },
+    mediaPosterSecondaryAction: {
+      borderColor: palette.dark ? 'rgba(217,204,255,0.46)' : palette.purpleBorder,
+      backgroundColor: palette.dark ? 'rgba(7,30,34,0.64)' : 'rgba(31,42,42,0.52)',
+    },
+    mediaPosterSecondaryActionText: { color: palette.dark ? '#E8DFFF' : '#F1D7FF', fontSize: 11, fontWeight: '900' },
     primaryButton: {
       alignSelf: 'flex-start',
       alignItems: 'center',

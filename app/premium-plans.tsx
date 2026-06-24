@@ -56,7 +56,7 @@ const PLAN_CONFIG: Record<
     features: [
       "30-minute profile boosts",
       "Advanced Vibes filters for trust, chemistry, and distance",
-      "Send notes and standard gifts before the chat cools off",
+      "Send standard gifts before the chat cools off",
       "Initiate date plans from chat when the energy is right",
     ],
     accent: "#14B8D4",
@@ -106,7 +106,7 @@ const TIER_MODEL: {
     summary: "Silver is the value tier for traction and timing.",
     bullets: [
       "Profile boosts and stronger discovery visibility",
-      "Advanced filters, notes, gifts, and date-plan initiation",
+      "Advanced filters, gifts, and date-plan initiation",
     ],
   },
   {
@@ -129,7 +129,7 @@ const FEATURE_MATRIX: {
 }[] = [
   { label: "Basic matching and chat", free: "Included", silver: "Included", gold: "Included" },
   { label: "Advanced Vibes filters", free: "No", silver: "Included", gold: "Included" },
-  { label: "Notes and standard gifts", free: "No", silver: "Included", gold: "Included" },
+  { label: "Standard gifts", free: "No", silver: "Included", gold: "Included" },
   { label: "Date-plan initiation", free: "No", silver: "Included", gold: "Included" },
   { label: "Betweener concierge help", free: "No", silver: "No", gold: "Included" },
   { label: "Profile boosts", free: "No", silver: "Included", gold: "Included" },

@@ -43,6 +43,12 @@ export const ADMINISTRATIVE_LOCATION_PATTERN =
 export const isAdministrativeLocationLabel = (value?: string | null) =>
   ADMINISTRATIVE_LOCATION_PATTERN.test(getFirstLocationPart(value));
 
+export const prettifyLocationLabel = (value?: string | null) =>
+  getFirstLocationPart(value)
+    .replace(ADMINISTRATIVE_LOCATION_PATTERN, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
 export const isKnownGhanaRegionLabel = (value?: string | null) =>
   GHANA_REGION_LABELS.has(getFirstLocationPart(value).toLowerCase());
 
@@ -196,33 +202,38 @@ export const buildLocationDisplay = (
     !isCountryOnlyValue(location, data) &&
     !sameLocationLabel(location, city) &&
     (!isKnownGhanaRegionLabel(location) || precision === 'EXACT');
-  const regionIsUsable =
-    !!region &&
-    !isBroadRegionLabel(region) &&
-    !isCountryOnlyValue(region, data);
+  const displayCity = cityIsUsable ? prettifyLocationLabel(city) || city : '';
+  const displayLocation = locationIsUsable ? prettifyLocationLabel(location) || location : '';
   const nonAdministrativeCity =
-    cityIsUsable && !isAdministrativeLocationLabel(city) ? city : '';
+    cityIsUsable && !isAdministrativeLocationLabel(city) ? displayCity : '';
   const nonAdministrativeLocation =
-    locationIsUsable && !isAdministrativeLocationLabel(location) ? location : '';
+    locationIsUsable && !isAdministrativeLocationLabel(location) ? displayLocation : '';
 
-  const specific = nonAdministrativeCity || nonAdministrativeLocation || (cityIsUsable ? city : '') || (locationIsUsable ? location : '');
-  const regionLabel = regionIsUsable ? region : '';
+  const specific =
+    nonAdministrativeCity ||
+    nonAdministrativeLocation ||
+    displayCity ||
+    displayLocation;
   const country = currentCountry || (countryCode ? findCountryByCode(countryCode)?.label || '' : '');
-  const profilePlace = [specific || regionLabel, country].filter((value, index, arr) => {
+  const place = [specific, country].filter((value, index, arr) => {
     if (!value) return false;
     return index === 0 || !sameLocationLabel(value, arr[0]);
   }).join(', ');
 
+  const compactPlace = specific || country;
   const base =
-    surface === 'vibes'
-      ? country || specific || regionLabel
-      : surface === 'profile'
-        ? profilePlace || country || specific || regionLabel
-        : specific || location || city || regionLabel || country;
+    surface === 'profile'
+      ? place || country || specific
+      : compactPlace;
   const secondary =
-    surface === 'vibes'
-      ? (specific && !sameLocationLabel(specific, base) ? specific : regionLabel && !sameLocationLabel(regionLabel, base) ? regionLabel : '')
-      : '';
+    surface === 'profile'
+      ? ''
+      : (
+          country &&
+          !sameLocationLabel(base, country)
+            ? country
+            : ''
+        );
   const compactBase = distanceLabel && base && !sameLocationLabel(distanceLabel, base)
     ? `${distanceLabel} \u00b7 ${base}`
     : distanceLabel || base;

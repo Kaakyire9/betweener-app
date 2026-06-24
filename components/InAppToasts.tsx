@@ -55,13 +55,13 @@ type NotificationPrefs = {
   preview_text: boolean;
   messages: boolean;
   message_reactions: boolean;
+  profile_interest: boolean;
   reactions: boolean;
   circle_discussions: boolean;
   likes: boolean;
   superlikes: boolean;
   matches: boolean;
   moments: boolean;
-  notes: boolean;
   gifts: boolean;
   boosts: boolean;
   verification: boolean;
@@ -491,7 +491,7 @@ export default function InAppToasts() {
       const { data, error } = await supabase
         .from('notification_prefs')
         .select(
-          'inapp_enabled,preview_text,messages,message_reactions,reactions,circle_discussions,likes,superlikes,matches,moments,notes,gifts,boosts,verification,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
+          'inapp_enabled,preview_text,messages,message_reactions,profile_interest,reactions,circle_discussions,likes,superlikes,matches,moments,gifts,boosts,verification,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
         )
         .eq('user_id', user.id)
         .maybeSingle();
@@ -507,13 +507,13 @@ export default function InAppToasts() {
           preview_text: (data as any)?.preview_text !== false,
           messages: Boolean(data.messages),
           message_reactions: Boolean(data.message_reactions),
+          profile_interest: (data as any)?.profile_interest !== false,
           reactions: Boolean(data.reactions),
           circle_discussions: (data as any)?.circle_discussions !== false,
           likes: Boolean(data.likes),
           superlikes: Boolean(data.superlikes),
           matches: Boolean(data.matches),
           moments: Boolean((data as any).moments),
-          notes: Boolean(data.notes),
           gifts: Boolean(data.gifts),
           boosts: Boolean(data.boosts),
           verification: Boolean((data as any).verification),
@@ -548,13 +548,13 @@ export default function InAppToasts() {
             preview_text: row.preview_text !== false,
             messages: Boolean(row.messages),
             message_reactions: Boolean(row.message_reactions),
+            profile_interest: row.profile_interest !== false,
             reactions: Boolean(row.reactions),
             circle_discussions: row.circle_discussions !== false,
             likes: Boolean(row.likes),
             superlikes: Boolean(row.superlikes),
             matches: Boolean(row.matches),
             moments: Boolean(row.moments),
-            notes: Boolean(row.notes),
             gifts: Boolean(row.gifts),
             boosts: Boolean(row.boosts),
             verification: Boolean(row.verification),
@@ -616,7 +616,7 @@ export default function InAppToasts() {
       case 'circle_intro':
         return 'Opened a warmer introduction to connect.';
       case 'like_with_note':
-        return 'Left a note worth your attention.';
+        return 'Liked you with a message.';
       default:
         return 'Opened a meaningful way to connect.';
     }
@@ -630,7 +630,7 @@ export default function InAppToasts() {
       case 'date_request':
         return 'Would still like to take this beyond the app.';
       case 'like_with_note':
-        return 'Left you a note worth answering.';
+        return 'Sent a like with a message worth answering.';
       case 'circle_intro':
         return 'Opened a more personal way to connect.';
       case 'connect':
@@ -1267,12 +1267,6 @@ export default function InAppToasts() {
     [momentPostBurstPreview, momentPostPreview, pushToast],
   );
 
-  const quotedSnippet = useCallback((value: string | null | undefined, maxLength: number) => {
-    const normalized = String(value || '').replace(/\s+/g, ' ').trim();
-    if (!normalized) return '';
-    return normalized.slice(0, maxLength);
-  }, []);
-
   const verificationMethodLabel = useCallback((verificationType?: string | null) => {
     switch ((verificationType || '').toLowerCase()) {
       case 'social':
@@ -1336,15 +1330,6 @@ export default function InAppToasts() {
       void markMatchCelebrationSeen(row.id);
     },
     [canInAppNotify, getProfileLite, markMatchCelebrationSeen, matchPreview, pushToast],
-  );
-
-  const notePreview = useCallback(
-    (note: string | null | undefined, previewsAllowed: boolean) => {
-      if (!previewsAllowed) return 'Left you a note worth opening.';
-      const snippet = quotedSnippet(note, 120);
-      return snippet ? `Left you a note: "${snippet}"` : 'Left you a note worth opening.';
-    },
-    [quotedSnippet],
   );
 
   const giftPreview = useCallback((giftType?: string | null) => {
@@ -1983,6 +1968,20 @@ export default function InAppToasts() {
         return;
       }
 
+      if (pushType === 'profile_interest') {
+        if (!canInAppNotify('profile_interest')) return;
+        pushToast({
+          id: `profile-interest-${data?.signal ? String(data.signal) : notification.request.identifier}-${data?.profile_id ? String(data.profile_id) : 'anonymous'}`,
+          title: notification.request.content.title || 'Profile Interest',
+          body: notification.request.content.body || 'Someone engaged with your profile.',
+          kind: 'generic',
+          avatarUrl: typeof data?.avatar_url === 'string' ? data.avatar_url : null,
+          profileId: data?.profile_id ? String(data.profile_id) : null,
+          route: '/profile-interest',
+        });
+        return;
+      }
+
       if (pushType === 'relationship_compass_ready') {
         if ((prefs && !prefs.inapp_enabled) || isQuietHours) return;
         pushToast({
@@ -2138,46 +2137,6 @@ export default function InAppToasts() {
     if (!profile?.id || !user?.id) return;
 
     const channel = supabase
-      .channel(`inapp_notes:${profile.id}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'profile_notes', filter: `profile_id=eq.${profile.id}` },
-        (payload) => {
-          const row = payload.new as any;
-          if (!row) return;
-          if (row.sender_id === user.id) return;
-          if (!canInAppNotify('notes')) return;
-          void (async () => {
-              let name = 'New note';
-            let avatarUrl: string | null = null;
-            let senderProfileId: string | null = null;
-            try {
-              const p = await getProfileLite(String(row.sender_id), { preferUserId: true });
-                name = getUserFacingDisplayName(p, 'New note');
-                if (p?.avatar_url) avatarUrl = p.avatar_url;
-              if (p?.id) senderProfileId = p.id;
-            } catch {}
-            pushToast({
-              id: `note-${row.id}`,
-              title: name,
-              body: notePreview(row.note, prefs?.preview_text !== false),
-              avatarUrl,
-              profileId: senderProfileId ?? null,
-            });
-          })();
-        },
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [canInAppNotify, getProfileLite, notePreview, prefs?.preview_text, profile?.id, pushToast, user?.id]);
-
-  useEffect(() => {
-    if (!profile?.id || !user?.id) return;
-
-    const channel = supabase
       .channel(`inapp_gifts:${profile.id}`)
       .on(
         'postgres_changes',
@@ -2203,6 +2162,10 @@ export default function InAppToasts() {
               body: giftPreview(row.gift_type),
               avatarUrl,
               profileId: senderProfileId ?? null,
+              route: '/profile-insights',
+              routeParams: {
+                giftId: String(row.id),
+              },
             });
           })();
         },

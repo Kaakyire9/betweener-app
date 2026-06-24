@@ -121,7 +121,7 @@ export async function saveManualCityLocation(
       secondary ||
       (isGhanaRegionOnly || primaryLooksBroadRegion ? primary : primary);
     const updateData: Record<string, any> = {
-      location: city || region || resolvedCountry || primary,
+      location: city || resolvedCountry || primary,
       city,
       region,
       location_precision: 'CITY',

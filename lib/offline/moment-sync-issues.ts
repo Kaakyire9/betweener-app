@@ -11,7 +11,8 @@ type MomentMutation =
           | 'moment_reaction_sync'
           | 'moment_comment_create'
           | 'moment_comment_update'
-          | 'moment_comment_delete';
+          | 'moment_comment_delete'
+          | 'moment_comment_reaction_sync';
       }
     >;
 
@@ -94,6 +95,13 @@ export const describeMomentSyncIssue = (mutation: MomentMutation): Omit<MomentSy
         detail: 'The comment is hidden locally, but the delete has not finished syncing yet.',
         momentId: mutation.payload.momentId,
       };
+    case 'moment_comment_reaction_sync':
+      return {
+        kind: mutation.kind,
+        title: mutation.payload.reaction ? 'Comment reaction not synced' : 'Comment reaction removal not synced',
+        detail: 'Your latest comment reaction change is still local.',
+        momentId: mutation.payload.momentId,
+      };
   }
 };
 
@@ -112,6 +120,7 @@ export const collectMomentSyncIssues = (
           'moment_comment_create',
           'moment_comment_update',
           'moment_comment_delete',
+          'moment_comment_reaction_sync',
         ].includes(mutation.kind) && isMomentMutationForMoment(mutation as MomentMutation, momentId),
     )
     .map((mutation) => {

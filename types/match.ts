@@ -24,5 +24,9 @@ export type Match = {
   premiumPlan?: 'FREE' | 'SILVER' | 'GOLD';
   isNewHere?: boolean;
   interestRelevanceScore?: number;
+  hasActiveBoost?: boolean | null;
+  boostEndsAt?: string | null;
+  subscriptionVisibilityScore?: number | null;
+  created_at?: string | null;
   [key: string]: unknown;
 };

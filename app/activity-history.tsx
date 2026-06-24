@@ -14,8 +14,6 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 type ActivityType =
-  | "note"
-  | "gift"
   | "like"
   | "superlike"
   | "match"
@@ -36,20 +34,7 @@ type ActivityItem = {
   profileId?: string | null;
 };
 
-type ActivityFilter = "all" | "notes" | "gifts" | "likes" | "matches" | "reactions" | "messages";
-
-const giftLabel = (giftType?: string | null) => {
-  switch (giftType) {
-    case "rose":
-      return "a rose";
-    case "teddy":
-      return "a teddy bear";
-    case "ring":
-      return "a ring";
-    default:
-      return "a gift";
-  }
-};
+type ActivityFilter = "all" | "likes" | "matches" | "reactions" | "messages";
 
 const timeAgo = (iso?: string | null) => {
   if (!iso) return "";
@@ -112,25 +97,11 @@ export default function ActivityHistoryScreen() {
       setLoading(true);
       try {
         const [
-          notesRes,
-          giftsRes,
           swipesRes,
           matchesRes,
           profileReactionsRes,
           messagesRes,
         ] = await Promise.all([
-          supabase
-            .from("profile_notes")
-            .select("id,sender_id,note,created_at")
-            .eq("profile_id", profileId)
-            .order("created_at", { ascending: false })
-            .limit(20),
-          supabase
-            .from("profile_gifts")
-            .select("id,sender_id,gift_type,created_at")
-            .eq("profile_id", profileId)
-            .order("created_at", { ascending: false })
-            .limit(20),
           supabase
             .from("swipes")
             .select("id,swiper_id,action,created_at")
@@ -161,8 +132,6 @@ export default function ActivityHistoryScreen() {
 
         if (cancelled) return;
 
-        const notes = (notesRes.data || []) as any[];
-        const gifts = (giftsRes.data || []) as any[];
         const swipes = (swipesRes.data || []) as any[];
         const matches = (matchesRes.data || []) as any[];
         const profileReactions = (profileReactionsRes.data || []) as any[];
@@ -190,8 +159,6 @@ export default function ActivityHistoryScreen() {
         });
 
         const actorIds = new Set<string>();
-        notes.forEach((row) => row?.sender_id && actorIds.add(row.sender_id));
-        gifts.forEach((row) => row?.sender_id && actorIds.add(row.sender_id));
         swipes.forEach((row) => row?.swiper_id && actorIds.add(row.swiper_id));
         profileReactions.forEach((row) => row?.reactor_user_id && actorIds.add(row.reactor_user_id));
         messages.forEach((row) => row?.sender_id && actorIds.add(row.sender_id));
@@ -203,17 +170,27 @@ export default function ActivityHistoryScreen() {
 
         const profileById = new Map<string, any>();
         let hiddenPeerUserIds = new Set<string>();
-        if (actorIds.size) {
-          const { data: profilesData } = await supabase
-            .from("profiles")
-            .select("id,user_id,full_name,avatar_url,account_state,deleted_at")
-            .in("id", Array.from(actorIds));
-          (profilesData || []).forEach((p: any) => {
+        if (actorIds.size > 0) {
+          const [profilesByIdRes, profilesByUserIdRes] = await Promise.all([
+            actorIds.size
+              ? supabase
+                  .from("profiles")
+                  .select("id,user_id,full_name,avatar_url,account_state,deleted_at")
+                  .in("id", Array.from(actorIds))
+              : Promise.resolve({ data: [] as any[] }),
+            actorIds.size
+              ? supabase
+                  .from("profiles")
+                  .select("id,user_id,full_name,avatar_url,account_state,deleted_at")
+                  .in("user_id", Array.from(actorIds))
+              : Promise.resolve({ data: [] as any[] }),
+          ]);
+          [...(profilesByIdRes.data || []), ...(profilesByUserIdRes.data || [])].forEach((p: any) => {
             if (p?.id) profileById.set(p.id, p);
           });
           const peerUserIds = Array.from(
             new Set(
-              ((profilesData as any[]) || [])
+              ([...(profilesByIdRes.data || []), ...(profilesByUserIdRes.data || [])] as any[])
                 .map((p) => (typeof p?.user_id === "string" ? p.user_id : null))
                 .filter((value): value is string => Boolean(value)),
             ),
@@ -227,39 +204,6 @@ export default function ActivityHistoryScreen() {
         }
 
         const activityItems: ActivityItem[] = [];
-
-        notes.forEach((row) => {
-          const profileRow = profileById.get(row.sender_id);
-          if (profileRow?.user_id && hiddenPeerUserIds.has(profileRow.user_id)) return;
-            activityItems.push({
-              id: `note-${row.id}`,
-              type: "note",
-              actorId: row.sender_id,
-              actorUserId: profileRow?.user_id ?? null,
-              actorName: getUserFacingDisplayName(profileRow, "New note"),
-              actorAvatar: profileRow?.avatar_url ?? null,
-            body: row.note || "Sent you a note",
-            createdAt: row.created_at,
-            profileId: row.sender_id,
-          });
-        });
-
-          gifts.forEach((row) => {
-            const profileRow = profileById.get(row.sender_id);
-            if (profileRow?.user_id && hiddenPeerUserIds.has(profileRow.user_id)) return;
-            const senderName = getUserFacingDisplayName(profileRow, "New gift");
-            activityItems.push({
-            id: `gift-${row.id}`,
-            type: "gift",
-            actorId: row.sender_id,
-            actorUserId: profileRow?.user_id ?? null,
-            actorName: senderName,
-            actorAvatar: profileRow?.avatar_url ?? null,
-            body: `Sent you ${giftLabel(row.gift_type)}`,
-            createdAt: row.created_at,
-            profileId: row.sender_id,
-          });
-        });
 
         swipes.forEach((row) => {
           const profileRow = profileById.get(row.swiper_id);
@@ -372,16 +316,6 @@ export default function ActivityHistoryScreen() {
       .channel(`activity:${profileId}`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "profile_notes", filter: `profile_id=eq.${profileId}` },
-        scheduleFetchActivity,
-      )
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "profile_gifts", filter: `profile_id=eq.${profileId}` },
-        scheduleFetchActivity,
-      )
-      .on(
-        "postgres_changes",
         { event: "*", schema: "public", table: "swipes", filter: `target_id=eq.${profileId}` },
         scheduleFetchActivity,
       )
@@ -428,10 +362,6 @@ export default function ActivityHistoryScreen() {
     if (filter === "all") return items;
     return items.filter((item) => {
       switch (filter) {
-        case "notes":
-          return item.type === "note";
-        case "gifts":
-          return item.type === "gift";
         case "likes":
           return item.type === "like" || item.type === "superlike";
         case "matches":
@@ -461,8 +391,6 @@ export default function ActivityHistoryScreen() {
 
   const filters: { key: ActivityFilter; label: string; icon: string }[] = [
     { key: "all", label: "All", icon: "view-grid-outline" },
-    { key: "notes", label: "Notes", icon: "message-text-outline" },
-    { key: "gifts", label: "Gifts", icon: "gift-outline" },
     { key: "likes", label: "Likes", icon: "heart-outline" },
     { key: "matches", label: "Matches", icon: "cards-heart-outline" },
     { key: "reactions", label: "Reactions", icon: "emoticon-outline" },
@@ -471,26 +399,6 @@ export default function ActivityHistoryScreen() {
 
   const emptyState = useMemo(() => {
     switch (filter) {
-      case "notes":
-        return {
-          badge: "Notes inbox",
-          title: "No notes have landed yet",
-          body: "Profiles that feel complete, specific, and warm usually attract the strongest written openings.",
-          highlights: [
-            { icon: "text-box-check-outline", text: "A clear bio and good prompts make it easier for someone to write first." },
-            { icon: "account-heart-outline", text: "Refreshing your photos and interests can invite better conversation starters." },
-          ],
-        };
-      case "gifts":
-        return {
-          badge: "Gift history",
-          title: "No gifts in your timeline yet",
-          body: "Gifts usually follow momentum. Keep your profile vivid enough that someone wants to leave a memorable signal.",
-          highlights: [
-            { icon: "gift-outline", text: "Moments and expressive prompts give admirers more reasons to act." },
-            { icon: "star-four-points-outline", text: "Premium profiles create stronger intent and stronger follow-through." },
-          ],
-        };
       case "likes":
         return {
           badge: "Interest signals",
@@ -670,10 +578,6 @@ export default function ActivityHistoryScreen() {
 
 const iconForType = (type: ActivityType) => {
   switch (type) {
-    case "note":
-      return "message-text-outline";
-    case "gift":
-      return "gift-outline";
     case "like":
       return "heart-outline";
     case "superlike":

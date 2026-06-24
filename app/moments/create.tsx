@@ -2,6 +2,7 @@ import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
 import LinearGradientSafe from '@/components/NativeWrappers/LinearGradientSafe';
 import TextMomentCard from '@/components/moments/TextMomentCard';
 import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuth } from '@/lib/auth-context';
 import { haptics } from '@/lib/haptics';
 import {
@@ -37,7 +38,6 @@ import {
   Text,
   TextInput,
   View,
-  useColorScheme,
   Animated,
   Easing,
 } from 'react-native';
@@ -883,7 +883,7 @@ export default function MomentCreateScreen() {
                         <Text style={styles.previewSecondaryButtonText}>Remove</Text>
                       </Pressable>
                       <Pressable
-                        style={styles.primaryButton}
+                        style={styles.previewPrimaryButton}
                         onPress={() => {
                           haptics.medium();
                           void handlePublishDraftMedia();
@@ -891,10 +891,10 @@ export default function MomentCreateScreen() {
                         disabled={saving}
                       >
                         <LinearGradientSafe
-                          colors={isDark ? ['#15cfd0', '#0e9ea6'] : ['#12c7c8', '#0e9ba3']}
+                          colors={isDark ? ['#15cfd0', '#0e9ea6'] : ['#0fb5bb', '#0a8d96']}
                           start={[0, 0]}
                           end={[1, 0]}
-                          style={styles.primaryButtonFill}
+                          style={styles.previewPrimaryButtonFill}
                         >
                           <Text style={styles.primaryText}>{mediaPublishText}</Text>
                         </LinearGradientSafe>
@@ -1065,7 +1065,7 @@ export default function MomentCreateScreen() {
                       disabled={saving}
                     >
                       <LinearGradientSafe
-                        colors={isDark ? ['#15cfd0', '#0e9ea6'] : ['#12c7c8', '#0e9ba3']}
+                        colors={isDark ? ['#15cfd0', '#0e9ea6'] : ['#0fb5bb', '#0a8d96']}
                         start={[0, 0]}
                         end={[1, 0]}
                         style={styles.primaryButtonFill}
@@ -1754,6 +1754,20 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       fontFamily: 'Manrope_700Bold',
       fontSize: 13,
     },
+    previewPrimaryButton: {
+      flex: 1,
+      minWidth: 0,
+      borderRadius: 16,
+      overflow: 'hidden',
+    },
+    previewPrimaryButtonFill: {
+      minHeight: 48,
+      borderRadius: 16,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 16,
+      backgroundColor: isDark ? '#0e9ea6' : '#0a8d96',
+    },
     optionTitle: {
       color: theme.text,
       fontFamily: 'Archivo_700Bold',
@@ -1951,6 +1965,7 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       alignItems: 'center',
       justifyContent: 'center',
       paddingHorizontal: 16,
+      backgroundColor: isDark ? '#0e9ea6' : '#0a8d96',
     },
     primaryText: {
       color: Colors.light.background,

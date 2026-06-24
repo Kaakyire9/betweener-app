@@ -22,6 +22,7 @@ import IntentResponseReminder from "@/components/IntentResponseReminder";
 import NetworkStatusBanner from "@/components/NetworkStatusBanner";
 import OfflineSyncHistoryHydrator from "@/components/OfflineSyncHistoryHydrator";
 import OfflineSyncStatusPill from "@/components/OfflineSyncStatusPill";
+import BetweenerAlertHost from "@/components/ui/BetweenerAlertHost";
 import ScreenAwakeSafetyGuard from "@/components/system/ScreenAwakeSafetyGuard";
 import ChatRealtimeHydrator from "@/components/ChatRealtimeHydrator";
 import {
@@ -784,6 +785,7 @@ function RootLayout() {
           <ChatRealtimeHydrator />
           <PendingNotificationRouteHydrator />
           <Slot />
+          <BetweenerAlertHost />
           <InAppToasts />
           <IntentResponseReminder />
           <NetworkStatusBanner />

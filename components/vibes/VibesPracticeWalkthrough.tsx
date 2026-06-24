@@ -6,10 +6,11 @@ import { VIBES_DEPTH_COLORS } from "@/components/vibes/depth/platformGlass";
 import type { VibesDepthMetrics } from "@/components/vibes/depth/useVibesResponsiveMetrics";
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { toFlagEmoji } from "@/lib/location/location-display";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Animated, Easing, Image, PanResponder, StyleSheet, Text, TouchableOpacity, View, type ImageSourcePropType } from "react-native";
+import { Animated, Easing, Image, PanResponder, ScrollView, StyleSheet, Text, TouchableOpacity, View, type ImageSourcePropType } from "react-native";
 
 export type PracticeStep =
   | "intro"
@@ -144,7 +145,7 @@ const DOCK_LESSONS = [
 
 const INTENT_OPTIONS = [
   { type: "connect" as const, label: "Ask to chat", icon: "message-outline" },
-  { type: "like_with_note" as const, label: "Like with note", icon: "text-box-plus-outline" },
+  { type: "like_with_note" as const, label: "Like with message", icon: "text-box-plus-outline" },
   { type: "date_request" as const, label: "Suggest a date", icon: "calendar-heart" },
 ];
 
@@ -164,6 +165,7 @@ function PracticeVibeCard({
     [card.accent, isDark, metrics, theme],
   );
   const sharedLabel = card.shared.length >= 3 ? `${card.shared.length} shared interests` : `Shared: ${card.shared.join(", ")}`;
+  const countryFlag = toFlagEmoji(card.countryCode);
 
   return (
     <View style={styles.cardShell}>
@@ -209,7 +211,7 @@ function PracticeVibeCard({
           <View style={styles.locationRow}>
             <MaterialCommunityIcons name="map-marker" size={14} color="#fff" />
             <Text style={styles.location} numberOfLines={1}>{card.location}</Text>
-            <Text style={styles.countryCode}>{card.countryCode}</Text>
+            <Text style={styles.countryCode}>{countryFlag || card.countryCode}</Text>
           </View>
           <View style={styles.contextRow}>
             <View style={styles.sharedChip}>
@@ -254,6 +256,7 @@ export default function VibesPracticeWalkthrough({
   const ctaHint = useRef(new Animated.Value(0)).current;
   const celebrationPulse = useRef(new Animated.Value(0)).current;
   const transitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lessonScrollRef = useRef<ScrollView | null>(null);
   const promptDirection = step === "noticePrompt" ? "right" : step === "passPrompt" ? "left" : null;
 
   const activeCard =
@@ -348,6 +351,37 @@ export default function VibesPracticeWalkthrough({
       focusPulse.setValue(0);
     };
   }, [focusPulse, hasPickedIntentOption, step]);
+
+  useEffect(() => {
+    if (step !== "intentForm" || !hasPickedIntentOption) return;
+    const timeout = setTimeout(() => {
+      lessonScrollRef.current?.scrollToEnd({ animated: true });
+    }, 120);
+    return () => clearTimeout(timeout);
+  }, [hasPickedIntentOption, step]);
+
+  useEffect(() => {
+    if (step !== "intro" && step !== "passExplain") return;
+    const timeout = setTimeout(() => {
+      lessonScrollRef.current?.scrollToEnd({ animated: true });
+    }, 120);
+    return () => clearTimeout(timeout);
+  }, [step]);
+
+  useEffect(() => {
+    const preserveScrollTarget =
+      step === "intro" ||
+      step === "passExplain" ||
+      (step === "intentForm" && hasPickedIntentOption);
+
+    if (preserveScrollTarget) return;
+
+    const timeout = setTimeout(() => {
+      lessonScrollRef.current?.scrollTo({ x: 0, y: 0, animated: false });
+    }, 0);
+
+    return () => clearTimeout(timeout);
+  }, [hasPickedIntentOption, step]);
 
   useEffect(() => {
     if (!STEP_COPY[step].cta) {
@@ -739,105 +773,115 @@ export default function VibesPracticeWalkthrough({
             />
           </TouchableOpacity>
         ) : null}
-        <Text style={styles.eyebrow}>{STEP_COPY[step].eyebrow}</Text>
-        <Text style={styles.title}>{STEP_COPY[step].title}</Text>
-        <Text style={styles.body}>{STEP_COPY[step].body}</Text>
-        {step === "intro" ? (
-          <View style={styles.introLessonGrid}>
-            {DOCK_LESSONS.map((lesson) => (
-              <View key={lesson.label} style={styles.introLesson}>
-                <View style={styles.introLessonIcon}>
-                  {lesson.icon === "intent-mark" ? (
-                    <IntentMark size={14} color={theme.tint} strokeWidth={2.25} />
-                  ) : (
-                    <MaterialCommunityIcons name={lesson.icon as any} size={13} color={theme.tint} />
-                  )}
+        <ScrollView
+          ref={lessonScrollRef}
+          style={styles.lessonScroll}
+          contentContainerStyle={styles.lessonScrollContent}
+          showsVerticalScrollIndicator={step === "intentForm"}
+          bounces={false}
+          overScrollMode="never"
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={styles.eyebrow}>{STEP_COPY[step].eyebrow}</Text>
+          <Text style={styles.title}>{STEP_COPY[step].title}</Text>
+          <Text style={styles.body}>{STEP_COPY[step].body}</Text>
+          {step === "intro" ? (
+            <View style={styles.introLessonGrid}>
+              {DOCK_LESSONS.map((lesson) => (
+                <View key={lesson.label} style={styles.introLesson}>
+                  <View style={styles.introLessonIcon}>
+                    {lesson.icon === "intent-mark" ? (
+                      <IntentMark size={14} color={theme.tint} strokeWidth={2.25} />
+                    ) : (
+                      <MaterialCommunityIcons name={lesson.icon as any} size={13} color={theme.tint} />
+                    )}
+                  </View>
+                  <View style={styles.introLessonCopy}>
+                    <Text style={styles.introLessonLabel}>{lesson.label}</Text>
+                    <Text style={styles.introLessonBody}>{lesson.body}</Text>
+                  </View>
                 </View>
-                <View style={styles.introLessonCopy}>
-                  <Text style={styles.introLessonLabel}>{lesson.label}</Text>
-                  <Text style={styles.introLessonBody}>{lesson.body}</Text>
-                </View>
-              </View>
-            ))}
-          </View>
-        ) : null}
-        {step === "passExplain" ? (
-          <View style={styles.dockLessonGrid}>
-            {DOCK_LESSONS.map((lesson) => (
-              <View key={lesson.label} style={styles.dockLesson}>
-                <View style={styles.dockLessonIcon}>
-                  {lesson.icon === "intent-mark" ? (
-                    <IntentMark size={14} color={theme.tint} strokeWidth={2.25} />
-                  ) : (
-                    <MaterialCommunityIcons name={lesson.icon as any} size={13} color={theme.tint} />
-                  )}
-                </View>
-                <View style={styles.dockLessonCopy}>
-                  <Text style={styles.dockLessonLabel}>{lesson.label}</Text>
-                  <Text style={styles.dockLessonBody}>{lesson.body}</Text>
-                </View>
-              </View>
-            ))}
-          </View>
-        ) : null}
-        {step === "intentForm" ? (
-          <View style={styles.intentForm}>
-            <View style={styles.intentProfileRow}>
-              <Image
-                source={PRACTICE_CARDS[0].photo}
-                style={styles.intentProfilePhoto}
-                resizeMode="cover"
-              />
-              <View style={styles.intentProfileCopy}>
-                <Text style={styles.intentProfileName} numberOfLines={1}>
-                  {PRACTICE_CARDS[0].name} {"\u00b7"} {PRACTICE_CARDS[0].age}
-                </Text>
-                <Text style={styles.intentProfileMeta} numberOfLines={1}>
-                  {PRACTICE_CARDS[0].location} {PRACTICE_CARDS[0].countryCode} - {PRACTICE_CARDS[0].shared.slice(0, 2).join(", ")}
-                </Text>
-              </View>
+              ))}
             </View>
-            {INTENT_OPTIONS.map((option, index) => {
-              const selected = hasPickedIntentOption && selectedIntentType === option.type;
-              const previewed = activeIntentPointerIndex === index;
-              return (
-                <TouchableOpacity
-                  key={option.type}
-                  style={[styles.intentOption, selected ? styles.intentOptionActive : null, previewed ? styles.intentOptionPreview : null]}
-                  activeOpacity={0.86}
-                  onPress={() => {
-                    setSelectedIntentType(option.type);
-                    setHasPickedIntentOption(true);
-                    try { Haptics.selectionAsync(); } catch {}
-                  }}
-                >
-                  {previewed ? <Text style={styles.intentOptionPointer}>👉🏼</Text> : <View style={styles.intentOptionPointerSpacer} />}
-                  <MaterialCommunityIcons name={option.icon as any} size={16} color={selected ? "#F8FFFF" : theme.tint} />
-                  <Text style={[styles.intentOptionText, selected ? styles.intentOptionTextActive : null]}>{option.label}</Text>
+          ) : null}
+          {step === "passExplain" ? (
+            <View style={styles.dockLessonGrid}>
+              {DOCK_LESSONS.map((lesson) => (
+                <View key={lesson.label} style={styles.dockLesson}>
+                  <View style={styles.dockLessonIcon}>
+                    {lesson.icon === "intent-mark" ? (
+                      <IntentMark size={14} color={theme.tint} strokeWidth={2.25} />
+                    ) : (
+                      <MaterialCommunityIcons name={lesson.icon as any} size={13} color={theme.tint} />
+                    )}
+                  </View>
+                  <View style={styles.dockLessonCopy}>
+                    <Text style={styles.dockLessonLabel}>{lesson.label}</Text>
+                    <Text style={styles.dockLessonBody}>{lesson.body}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : null}
+          {step === "intentForm" ? (
+            <View style={styles.intentForm}>
+              <View style={styles.intentProfileRow}>
+                <Image
+                  source={PRACTICE_CARDS[0].photo}
+                  style={styles.intentProfilePhoto}
+                  resizeMode="cover"
+                />
+                <View style={styles.intentProfileCopy}>
+                  <Text style={styles.intentProfileName} numberOfLines={1}>
+                    {PRACTICE_CARDS[0].name} {"\u00b7"} {PRACTICE_CARDS[0].age}
+                  </Text>
+                  <Text style={styles.intentProfileMeta} numberOfLines={1}>
+                    {PRACTICE_CARDS[0].location} {PRACTICE_CARDS[0].countryCode} - {PRACTICE_CARDS[0].shared.slice(0, 2).join(", ")}
+                  </Text>
+                </View>
+              </View>
+              {INTENT_OPTIONS.map((option, index) => {
+                const selected = hasPickedIntentOption && selectedIntentType === option.type;
+                const previewed = activeIntentPointerIndex === index;
+                return (
+                  <TouchableOpacity
+                    key={option.type}
+                    style={[styles.intentOption, selected ? styles.intentOptionActive : null, previewed ? styles.intentOptionPreview : null]}
+                    activeOpacity={0.86}
+                    onPress={() => {
+                      setSelectedIntentType(option.type);
+                      setHasPickedIntentOption(true);
+                      try { Haptics.selectionAsync(); } catch {}
+                    }}
+                  >
+                    {previewed ? <Text style={styles.intentOptionPointer}>👉🏼</Text> : <View style={styles.intentOptionPointerSpacer} />}
+                    <MaterialCommunityIcons name={option.icon as any} size={16} color={selected ? "#F8FFFF" : theme.tint} />
+                    <Text style={[styles.intentOptionText, selected ? styles.intentOptionTextActive : null]}>{option.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+              <View style={styles.practiceNote}>
+                <MaterialCommunityIcons name="pencil-outline" size={14} color={theme.tint} />
+                <Text style={styles.practiceNoteText}>Example message: I liked your music vibe. Want to chat?</Text>
+              </View>
+              <Animated.View style={[intentSendPulseStyle, hasPickedIntentOption ? styles.intentSendWrapFocused : null]}>
+                {hasPickedIntentOption ? <Text style={styles.intentSendPointer}>👉🏼</Text> : null}
+                <TouchableOpacity style={styles.intentSendButton} activeOpacity={0.88} onPress={completeIntent}>
+                  <IntentMark size={17} color="#F8FFFF" strokeWidth={2.2} />
+                  <Text style={styles.intentSendText}>Send practice request</Text>
                 </TouchableOpacity>
-              );
-            })}
-            <View style={styles.practiceNote}>
-              <MaterialCommunityIcons name="pencil-outline" size={14} color={theme.tint} />
-              <Text style={styles.practiceNoteText}>Example note: I liked your music vibe. Want to chat?</Text>
+              </Animated.View>
             </View>
-            <Animated.View style={[intentSendPulseStyle, hasPickedIntentOption ? styles.intentSendWrapFocused : null]}>
-              {hasPickedIntentOption ? <Text style={styles.intentSendPointer}>👉🏼</Text> : null}
-              <TouchableOpacity style={styles.intentSendButton} activeOpacity={0.88} onPress={completeIntent}>
-                <IntentMark size={17} color="#F8FFFF" strokeWidth={2.2} />
-                <Text style={styles.intentSendText}>Send practice request</Text>
+          ) : null}
+          {STEP_COPY[step].cta ? (
+            <Animated.View style={[styles.lessonButtonWrap, ctaPointerStyle]}>
+              <Text style={styles.lessonButtonPointer}>👉🏼</Text>
+              <TouchableOpacity style={styles.lessonButton} activeOpacity={0.88} onPress={goNext}>
+                <Text style={styles.lessonButtonText}>{STEP_COPY[step].cta}</Text>
               </TouchableOpacity>
             </Animated.View>
-          </View>
-        ) : null}
-        {STEP_COPY[step].cta ? (
-          <Animated.View style={[styles.lessonButtonWrap, ctaPointerStyle]}>
-            <Text style={styles.lessonButtonPointer}>👉🏼</Text>
-            <TouchableOpacity style={styles.lessonButton} activeOpacity={0.88} onPress={goNext}>
-              <Text style={styles.lessonButtonText}>{STEP_COPY[step].cta}</Text>
-            </TouchableOpacity>
-          </Animated.View>
-        ) : null}
+          ) : null}
+        </ScrollView>
       </GlassSurface>
 
       {step === "intentPrompt" ? (
@@ -981,10 +1025,21 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, metrics: Vibe
       right: metrics.isCompactWidth ? 14 : 18,
       top: metrics.isCompactHeight ? 14 : 18,
       zIndex: 20,
+      maxHeight: Math.min(
+        metrics.cardHeight - metrics.dockHeight - (metrics.shouldCompressVerticalSpacing ? 18 : 60),
+        metrics.shouldCompressVerticalSpacing ? 428 : 392,
+      ),
     },
     lessonPanelSurface: {
       paddingHorizontal: metrics.isCompactWidth ? 13 : 15,
-      paddingVertical: metrics.isCompactHeight ? 10 : 12,
+      paddingVertical: metrics.shouldCompressVerticalSpacing ? 10 : 12,
+    },
+    lessonScroll: {
+      maxHeight: "100%",
+    },
+    lessonScrollContent: {
+      paddingRight: 28,
+      paddingBottom: 8,
     },
     closeButton: {
       position: "absolute",
@@ -1303,7 +1358,12 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean, metrics: Vibe
       position: "absolute",
       left: 0,
       right: 0,
-      bottom: metrics.isCompactHeight ? 18 : 22,
+      // The walkthrough lives inside the card stack, unlike the real dock which is screen-anchored.
+      // Keep this dock lifted against the card bottom so header height changes do not push it below view.
+      bottom: Math.max(
+        metrics.isCompactHeight ? 18 : 22,
+        metrics.stackBottomReserve - (metrics.isCompactHeight ? 14 : 18),
+      ),
       alignItems: "center",
       zIndex: 30,
     },

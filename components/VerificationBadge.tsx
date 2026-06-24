@@ -88,17 +88,17 @@ export const VerificationBadge: React.FC<VerificationBadgeProps> = ({
   const betweenerSizing =
     size === 'small'
       ? isExploreSurface
-        ? { width: 31, height: 31, borderRadius: 15.5, iconSize: 14, accentSize: 5, accentOffset: 4 }
+        ? { width: 28, height: 28, borderRadius: 14, iconSize: 13, accentSize: 4.5, accentOffset: 3 }
         : isIdVerified
-          ? { width: 28, height: 28, borderRadius: 14, iconSize: 13, accentSize: 5, accentOffset: 3 }
-          : { width: 26, height: 26, borderRadius: 13, iconSize: 12, accentSize: 4.5, accentOffset: 3 }
+          ? { width: 25, height: 25, borderRadius: 12.5, iconSize: 12, accentSize: 4, accentOffset: 2.5 }
+          : { width: 24, height: 24, borderRadius: 12, iconSize: 11, accentSize: 4, accentOffset: 2.5 }
       : size === 'large'
       ? isIdVerified
         ? { width: 36, height: 36, borderRadius: 18, iconSize: 17, accentSize: 6, accentOffset: 4 }
         : { width: 33, height: 33, borderRadius: 16.5, iconSize: 16, accentSize: 5.5, accentOffset: 4 }
       : isIdVerified
-        ? { width: 31, height: 31, borderRadius: 15.5, iconSize: 15, accentSize: 5, accentOffset: 3 }
-        : { width: 29, height: 29, borderRadius: 14.5, iconSize: 14, accentSize: 4.5, accentOffset: 3 };
+        ? { width: 28, height: 28, borderRadius: 14, iconSize: 13, accentSize: 4.5, accentOffset: 3 }
+        : { width: 26, height: 26, borderRadius: 13, iconSize: 12, accentSize: 4, accentOffset: 3 };
 
   const BadgeContent = () => (
     <View style={[

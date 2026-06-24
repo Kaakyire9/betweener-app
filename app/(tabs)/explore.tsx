@@ -6,6 +6,7 @@ import {
   RelationshipGistCard,
 } from '@/components/circles/CirclesHomeCards';
 import CircleInvitationInbox from '@/components/circles/CircleInvitationInbox';
+import { showBetweenerAlert } from '@/components/ui/BetweenerAlertHost';
 import Notice from '@/components/ui/Notice';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -40,7 +41,6 @@ import * as Calendar from 'expo-calendar';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Animated,
   Dimensions,
   type GestureResponderEvent,
@@ -943,11 +943,19 @@ export default function CirclesScreen() {
     const name = newName.trim();
     const purpose = newPurpose.trim();
     if (!name || name.length < 3) {
-      Alert.alert('Circle name', 'Add a clear Circle name.');
+      showBetweenerAlert({
+        title: 'Circle name',
+        message: 'Add a clear Circle name.',
+        tone: 'warning',
+      });
       return;
     }
     if (!purpose || purpose.length < 10) {
-      Alert.alert('Circle purpose', 'Add a short purpose so Betweener can review it.');
+      showBetweenerAlert({
+        title: 'Circle purpose',
+        message: 'Add a short purpose so Betweener can review it.',
+        tone: 'warning',
+      });
       return;
     }
     if (creating) return;
@@ -977,13 +985,18 @@ export default function CirclesScreen() {
       setNewPurpose('');
       await loadCircles();
       if (data?.id) {
-        Alert.alert(
-          isAdmin ? 'Circle published' : 'Submitted for review',
-          isAdmin ? 'Your official Circle is live.' : "We'll notify you once Betweener approves it.",
-        );
+        showBetweenerAlert({
+          title: isAdmin ? 'Circle published' : 'Submitted for review',
+          message: isAdmin ? 'Your official Circle is live.' : "We'll notify you once Betweener approves it.",
+          tone: 'success',
+        });
       }
     } catch (error) {
-      Alert.alert('Circle request failed', error instanceof Error ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Circle request failed',
+        message: error instanceof Error ? error.message : 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setCreating(false);
     }
@@ -996,20 +1009,36 @@ export default function CirclesScreen() {
     const datePart = newGatheringDate.trim();
     const timePart = newGatheringTime.trim();
     if (!title || title.length < 3) {
-      Alert.alert('Gathering title', 'Add a clear Gathering title.');
+      showBetweenerAlert({
+        title: 'Gathering title',
+        message: 'Add a clear Gathering title.',
+        tone: 'warning',
+      });
       return;
     }
     if (!description || description.length < 10) {
-      Alert.alert('Gathering details', 'Add a short description so Betweener can review it.');
+      showBetweenerAlert({
+        title: 'Gathering details',
+        message: 'Add a short description so Betweener can review it.',
+        tone: 'warning',
+      });
       return;
     }
     if (!datePart || !timePart) {
-      Alert.alert('Start time', 'Add a valid date and time.');
+      showBetweenerAlert({
+        title: 'Start time',
+        message: 'Add a valid date and time.',
+        tone: 'warning',
+      });
       return;
     }
     const startsAt = new Date(`${datePart}T${timePart}`);
     if (Number.isNaN(startsAt.getTime()) || startsAt.getTime() <= Date.now()) {
-      Alert.alert('Start time', 'Use a future date and time.');
+      showBetweenerAlert({
+        title: 'Start time',
+        message: 'Use a future date and time.',
+        tone: 'warning',
+      });
       return;
     }
     if (creatingGathering) return;
@@ -1042,13 +1071,18 @@ export default function CirclesScreen() {
       setNewGatheringCircleId(null);
       await loadCircles();
       if (data?.id) {
-        Alert.alert(
-          isAdmin ? 'Gathering published' : 'Submitted for review',
-          isAdmin ? 'Your Gathering is live.' : "We'll notify you once Betweener approves it.",
-        );
+        showBetweenerAlert({
+          title: isAdmin ? 'Gathering published' : 'Submitted for review',
+          message: isAdmin ? 'Your Gathering is live.' : "We'll notify you once Betweener approves it.",
+          tone: 'success',
+        });
       }
     } catch (error) {
-      Alert.alert('Gathering request failed', error instanceof Error ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Gathering request failed',
+        message: error instanceof Error ? error.message : 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setCreatingGathering(false);
     }
@@ -1076,8 +1110,20 @@ export default function CirclesScreen() {
       });
       if (error) throw error;
       await loadCircles();
+      const requiresApproval = circle.requires_join_approval === true || circle.visibility === 'private';
+      showBetweenerAlert({
+        title: requiresApproval ? 'Request sent' : 'Circle joined',
+        message: requiresApproval
+          ? `Your request to join ${circle.name} is now with the Circle hosts for approval.`
+          : `${circle.name} is now in your Circles. Betweener will keep the vibe close.`,
+        tone: 'success',
+      });
     } catch (error) {
-      Alert.alert('Join failed', error instanceof Error ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Join failed',
+        message: error instanceof Error ? error.message : 'Please try again.',
+        tone: 'error',
+      });
     }
   }, [currentProfileId, loadCircles]);
 
@@ -1090,24 +1136,40 @@ export default function CirclesScreen() {
         p_visible_to_others: false,
       });
       if (error) throw error;
-      Alert.alert('You are attending', 'We will keep this Gathering saved for you.');
+      showBetweenerAlert({
+        title: 'You are attending',
+        message: 'We will keep this Gathering saved for you.',
+        tone: 'success',
+      });
       await loadCircles();
     } catch (error) {
-      Alert.alert('Attend failed', error instanceof Error ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Attend failed',
+        message: error instanceof Error ? error.message : 'Please try again.',
+        tone: 'error',
+      });
     }
   }, [loadCircles]);
 
   const handleAddGatheringToCalendar = useCallback(async (gathering?: Gathering | null) => {
     if (!gathering) return;
     if (Platform.OS === 'web') {
-      Alert.alert('Add to Calendar', 'Calendar saving is available in the iOS and Android app.');
+      showBetweenerAlert({
+        title: 'Add to Calendar',
+        message: 'Calendar saving is available in the iOS and Android app.',
+        tone: 'info',
+      });
       return;
     }
 
     try {
       const startDate = new Date(gathering.starts_at);
       if (Number.isNaN(startDate.getTime())) {
-        Alert.alert('Add to Calendar', 'This Gathering does not have a valid start time yet.');
+        showBetweenerAlert({
+          title: 'Add to Calendar',
+          message: 'This Gathering does not have a valid start time yet.',
+          tone: 'warning',
+        });
         return;
       }
 
@@ -1129,7 +1191,11 @@ export default function CirclesScreen() {
         notes: noteParts.length ? noteParts.join('\n\n') : undefined,
       });
     } catch (error: any) {
-      Alert.alert('Add to Calendar', error?.message || 'Unable to open your calendar right now.');
+      showBetweenerAlert({
+        title: 'Add to Calendar',
+        message: error?.message || 'Unable to open your calendar right now.',
+        tone: 'error',
+      });
     }
   }, []);
 
@@ -1143,7 +1209,11 @@ export default function CirclesScreen() {
       if (error) throw error;
       await loadCircles();
     } catch (error) {
-      Alert.alert('Warm Introduction', error instanceof Error ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Warm Introduction',
+        message: error instanceof Error ? error.message : 'Please try again.',
+        tone: 'error',
+      });
     }
   }, [loadCircles]);
 
@@ -1154,7 +1224,11 @@ export default function CirclesScreen() {
     if (!activePrompt?.id) return;
     const body = promptAnswer.trim();
     if (!body) {
-      Alert.alert('Circle Prompt', 'Add your answer first.');
+      showBetweenerAlert({
+        title: 'Circle Prompt',
+        message: 'Add your answer first.',
+        tone: 'warning',
+      });
       return;
     }
     try {
@@ -1165,9 +1239,17 @@ export default function CirclesScreen() {
       if (error) throw error;
       setPromptAnswer('');
       setPromptAnswerOpen(false);
-      Alert.alert('Answer shared', 'Your answer has been shared with the Circle.');
+      showBetweenerAlert({
+        title: 'Answer shared',
+        message: 'Your answer has been shared with the Circle.',
+        tone: 'success',
+      });
     } catch (error) {
-      Alert.alert('Circle Prompt', error instanceof Error ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Circle Prompt',
+        message: error instanceof Error ? error.message : 'Please try again.',
+        tone: 'error',
+      });
     }
   }, [activePrompt?.id, promptAnswer]);
 
@@ -1448,15 +1530,27 @@ export default function CirclesScreen() {
     const shortBody = gistShortBodyDraft.trim();
     const body = gistBodyDraft.trim();
     if (!currentProfileId) {
-      Alert.alert('Share Gist', 'Your profile is still loading. Try again in a moment.');
+      showBetweenerAlert({
+        title: 'Share Gist',
+        message: 'Your profile is still loading. Try again in a moment.',
+        tone: 'warning',
+      });
       return;
     }
     if (!title || title.length < 3) {
-      Alert.alert('Share Gist', 'Add a clear gist title.');
+      showBetweenerAlert({
+        title: 'Share Gist',
+        message: 'Add a clear gist title.',
+        tone: 'warning',
+      });
       return;
     }
     if (!body || body.length < 20) {
-      Alert.alert('Share Gist', 'Add a fuller relationship note before publishing.');
+      showBetweenerAlert({
+        title: 'Share Gist',
+        message: 'Add a fuller relationship note before publishing.',
+        tone: 'warning',
+      });
       return;
     }
     if (creatingGist) return;
@@ -1477,12 +1571,17 @@ export default function CirclesScreen() {
       setGistBodyDraft('');
       setGistPerspectiveDraft('general');
       await loadCircles();
-      Alert.alert(
-        'Gist published',
-        'Your Betweener Relationship Gist is now live.',
-      );
+      showBetweenerAlert({
+        title: 'Gist published',
+        message: 'Your Betweener Relationship Gist is now live.',
+        tone: 'success',
+      });
     } catch (error) {
-      Alert.alert('Share Gist', error instanceof Error ? error.message : 'Please try again.');
+      showBetweenerAlert({
+        title: 'Share Gist',
+        message: error instanceof Error ? error.message : 'Please try again.',
+        tone: 'error',
+      });
     } finally {
       setCreatingGist(false);
     }

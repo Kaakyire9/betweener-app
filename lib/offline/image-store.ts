@@ -212,3 +212,34 @@ export const rememberOfflineImageUri = async (
     return null;
   }
 };
+
+export const persistOfflineImageCopy = async (
+  sourceKey: string,
+  localUri?: string | null,
+  remoteUri?: string | null,
+): Promise<string | null> => {
+  if (!sourceKey || !localUri) return null;
+  try {
+    const info = await FileSystem.getInfoAsync(localUri);
+    if (!info.exists) return null;
+    await ensureImageCacheDir();
+    const extension = guessImageExtension(remoteUri) || guessImageExtension(localUri);
+    const targetUri = await buildCachePath(sourceKey, extension);
+    if (targetUri !== localUri) {
+      await FileSystem.deleteAsync(targetUri, { idempotent: true });
+      await FileSystem.copyAsync({ from: localUri, to: targetUri });
+    }
+    const next = await readImageCacheMap();
+    next[sourceKey] = {
+      localUri: targetUri,
+      sourceKey,
+      remoteUri,
+      extension,
+      savedAt: Date.now(),
+    };
+    await writePrunedImageCacheMap(next);
+    return targetUri;
+  } catch {
+    return null;
+  }
+};

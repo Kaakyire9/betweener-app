@@ -59,6 +59,21 @@ const getCompatibility = (match: Match) => {
   return 0;
 };
 
+const getSubscriptionVisibilityScore = (match: Match, segment: VibesSegment) => {
+  const plan = String((match as any).premiumPlan || '').trim().toUpperCase();
+  const hasActiveBoost = Boolean((match as any).hasActiveBoost);
+
+  let score = 0;
+  if (plan === 'GOLD') score += 0.9;
+  else if (plan === 'SILVER') score += 0.45;
+
+  if (hasActiveBoost) {
+    score += segment === 'forYou' ? 2.4 : segment === 'activeNow' ? 2.1 : 1.8;
+  }
+
+  return score;
+};
+
 const getSharedInterestCount = (match: Match, viewerInterests?: string[]) => {
   const common = Array.isArray((match as any).commonInterests) ? (match as any).commonInterests.length : 0;
   if (common > 0) return common;
@@ -130,6 +145,7 @@ export const rerankVibesSegment = (
     const distanceKm = getDistanceKm(match);
     const nearness = getNearnessScore(match);
     const momentBoost = momentUserIds?.has(String(match.id)) ? 2.4 : 0;
+    const subscriptionVisibility = getSubscriptionVisibilityScore(match, segment);
     const compassBoost = getRelationshipCompassMatchScore(match, relationshipCompass, {
       viewerProfile,
       viewerInterests,
@@ -144,6 +160,7 @@ export const rerankVibesSegment = (
         freshness * 0.9 +
         nearness * 0.45 +
         momentBoost +
+        subscriptionVisibility +
         compassBoost;
     } else if (segment === 'nearby') {
       baseScore =
@@ -152,6 +169,7 @@ export const rerankVibesSegment = (
         sharedInterests * 1.1 +
         freshness * 0.6 +
         richness * 0.35 +
+        subscriptionVisibility +
         compassBoost * 0.75;
     } else {
       const urgency = (match as any).isActiveNow ? 4.8 : isRecentlyActive((match as any).lastActive) ? 2.4 : 0;
@@ -161,6 +179,7 @@ export const rerankVibesSegment = (
         compatibility * 0.55 +
         sharedInterests * 1.35 +
         richness * 0.45 +
+        subscriptionVisibility +
         compassBoost * 0.65;
     }
 

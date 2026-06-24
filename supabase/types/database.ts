@@ -2996,6 +2996,7 @@ export type Database = {
           id: string
           is_deleted: boolean
           moment_id: string
+          parent_comment_id: string | null
           user_id: string
         }
         Insert: {
@@ -3004,6 +3005,7 @@ export type Database = {
           id?: string
           is_deleted?: boolean
           moment_id: string
+          parent_comment_id?: string | null
           user_id: string
         }
         Update: {
@@ -3012,11 +3014,61 @@ export type Database = {
           id?: string
           is_deleted?: boolean
           moment_id?: string
+          parent_comment_id?: string | null
           user_id?: string
         }
         Relationships: [
           {
             foreignKeyName: "moment_comments_moment_id_fkey"
+            columns: ["moment_id"]
+            isOneToOne: false
+            referencedRelation: "moments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "moment_comments_parent_comment_id_fkey"
+            columns: ["parent_comment_id"]
+            isOneToOne: false
+            referencedRelation: "moment_comments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      moment_comment_reactions: {
+        Row: {
+          comment_id: string
+          created_at: string
+          id: string
+          moment_id: string
+          reaction: string
+          user_id: string
+        }
+        Insert: {
+          comment_id: string
+          created_at?: string
+          id?: string
+          moment_id: string
+          reaction: string
+          user_id: string
+        }
+        Update: {
+          comment_id?: string
+          created_at?: string
+          id?: string
+          moment_id?: string
+          reaction?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "moment_comment_reactions_comment_id_fkey"
+            columns: ["comment_id"]
+            isOneToOne: false
+            referencedRelation: "moment_comments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "moment_comment_reactions_moment_id_fkey"
             columns: ["moment_id"]
             isOneToOne: false
             referencedRelation: "moments"
@@ -3144,6 +3196,7 @@ export type Database = {
           messages: boolean
           moments: boolean
           notes: boolean
+          profile_interest: boolean
           preview_text: boolean
           push_enabled: boolean
           quiet_hours_enabled: boolean
@@ -3169,6 +3222,7 @@ export type Database = {
           messages?: boolean
           moments?: boolean
           notes?: boolean
+          profile_interest?: boolean
           preview_text?: boolean
           push_enabled?: boolean
           quiet_hours_enabled?: boolean
@@ -3194,6 +3248,7 @@ export type Database = {
           messages?: boolean
           moments?: boolean
           notes?: boolean
+          profile_interest?: boolean
           preview_text?: boolean
           push_enabled?: boolean
           quiet_hours_enabled?: boolean
@@ -6891,13 +6946,18 @@ export type Database = {
         Returns: string
       }
       rpc_create_moment_comment: {
-        Args: { p_body: string; p_moment_id: string }
+        Args: {
+          p_body: string
+          p_moment_id: string
+          p_parent_comment_id?: string
+        }
         Returns: {
           body: string
           created_at: string
           id: string
           is_deleted: boolean
           moment_id: string
+          parent_comment_id: string | null
           user_id: string
         }
         SetofOptions: {
@@ -8068,6 +8128,10 @@ export type Database = {
       }
       rpc_sync_moment_reaction: {
         Args: { p_emoji?: string; p_moment_id: string }
+        Returns: boolean
+      }
+      rpc_sync_moment_comment_reaction: {
+        Args: { p_comment_id: string; p_reaction?: string }
         Returns: boolean
       }
       rpc_toggle_circle_pulse_comment_reaction: {

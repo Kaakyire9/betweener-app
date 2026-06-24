@@ -5,6 +5,7 @@ import { StyleSheet, View, type StyleProp, type ViewStyle, type ImageStyle } fro
 type OfflineImageProps = {
   uri?: string | null;
   style: StyleProp<ImageStyle>;
+  blurRadius?: number;
   contentFit?: ImageContentFit;
   contentPosition?: ImageContentPosition;
   transition?: number;
@@ -18,6 +19,7 @@ type OfflineImageProps = {
 export default function OfflineImage({
   uri,
   style,
+  blurRadius,
   contentFit = "cover",
   contentPosition,
   transition = 0,
@@ -47,6 +49,7 @@ export default function OfflineImage({
     <ExpoImage
       source={{ uri: normalizedUri }}
       style={style}
+      blurRadius={blurRadius}
       cachePolicy={cachePolicy}
       contentFit={contentFit}
       contentPosition={contentPosition}

@@ -1718,6 +1718,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       const existingCountryCode = normalizeLocationValue((profile as any)?.current_country_code).toUpperCase();
       const selectedCurrentCountryOption =
         findCountryByCode(formData.current_country_code) ?? findCountryByLabel(formData.current_country);
+      const regionValue = formData.region ? formData.region.trim() : '';
       const resolvedCurrentCountry =
         isGhanaCountryLocked
           ? 'Ghana'
@@ -1734,9 +1735,17 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         normalizedString(formData.current_country_code).toUpperCase() ||
         existingCountryCode ||
         (resolvedCurrentCountry.toLowerCase() === 'ghana' ? 'GH' : '');
+      if (regionValue && !resolvedCurrentCountry) {
+        Alert.alert(
+          'Current country required',
+          'Select your current country before saving your city or region.',
+        );
+        setCountryPickerTarget('current');
+        setCountryModalVisible(true);
+        return;
+      }
       updateData.current_country = resolvedCurrentCountry || null;
       updateData.current_country_code = resolvedCurrentCountryCode || null;
-      const regionValue = formData.region ? formData.region.trim() : '';
       if (regionValue) {
         const regionOnlyLocation = isKnownGhanaRegionLabel(regionValue);
         updateData.region = regionValue;

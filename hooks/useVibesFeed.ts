@@ -8,7 +8,7 @@ import { readVibesSnapshot, writeVibesSnapshot } from '@/lib/offline/vibes-store
 import type { RelationshipCompass } from '@/lib/relationship-compass';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { peekCache } from '@/lib/persisted-cache';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 export type VibesFilters = {
   verifiedOnly: boolean;
@@ -171,12 +171,17 @@ export function applyVibesFilters(
     out = out.filter((m) => String((m as any).religion || '').toLowerCase() === needle);
   }
   if (filters.locationQuery.trim()) {
-    // Users often type "City, Country" (e.g. "Accra, Ghana"). Our cards typically store just the city/region.
-    // Treat the first segment as the primary needle so the filter behaves as expected.
-    const q = filters.locationQuery.trim().split(',')[0]!.trim().toLowerCase();
+    // Users frequently type city + country together with different separators.
+    // Match against any meaningful segment so "Accra, Ghana" and "Accra - Ghana" still behave sensibly.
+    const needles = filters.locationQuery
+      .trim()
+      .toLowerCase()
+      .split(/\s*(?:,|\/|\||•| - | – | — )\s*/g)
+      .map((part) => part.trim())
+      .filter(Boolean);
     out = out.filter((m) => {
       const loc = buildLocationSearchText(m);
-      return loc.includes(q);
+      return needles.some((needle) => loc.includes(needle));
     });
   }
 
@@ -217,6 +222,10 @@ export default function useVibesFeed({
       ),
     [snapshotOwnerIdsSignature],
   );
+  const feedScopeKey = useMemo(
+    () => `${userId ?? 'anon'}:${segment}:${activeWindowMinutes}:${snapshotKeys.join('|')}`,
+    [activeWindowMinutes, segment, snapshotKeys, userId],
+  );
   const [filters, setFilters] = useState<VibesFilters>({ ...DEFAULT_FILTERS, ...initialFilters });
   const [refreshing, setRefreshing] = useState(false);
   const [refreshCount, setRefreshCount] = useState(0);
@@ -233,8 +242,19 @@ export default function useVibesFeed({
     premiumPlan: 'FREE' | 'SILVER' | 'GOLD';
     isNewHere: boolean;
     interestRelevanceScore: number;
+    hasActiveBoost: boolean;
+    boostEndsAt: string | null;
   }>>({});
   const lastWatchdogLogAtRef = useRef(0);
+  const lastFeedScopeKeyRef = useRef<string | null>(null);
+
+  useLayoutEffect(() => {
+    if (lastFeedScopeKeyRef.current === feedScopeKey) return;
+    lastFeedScopeKeyRef.current = feedScopeKey;
+    setCachedMatches([]);
+    setSnapshotHydrated(false);
+    setCardContext({});
+  }, [feedScopeKey]);
 
   const mode = segment === 'activeNow' ? 'active' : segment === 'nearby' ? 'nearby' : 'forYou';
 
@@ -632,7 +652,7 @@ export default function useVibesFeed({
   );
 
   useEffect(() => {
-    if (!liveFetchEnabled || !sourceProfileIdsSignature) {
+    if (!sourceProfileIdsSignature) {
       setCardContext({});
       return;
     }
@@ -646,6 +666,8 @@ export default function useVibesFeed({
           premiumPlan: 'FREE' | 'SILVER' | 'GOLD';
           isNewHere: boolean;
           interestRelevanceScore: number;
+          hasActiveBoost: boolean;
+          boostEndsAt: string | null;
         }> = {};
         rows.forEach((row: any) => {
           const id = String(row?.profile_id || '');
@@ -656,6 +678,8 @@ export default function useVibesFeed({
               : 'FREE',
             isNewHere: Boolean(row?.is_new_here),
             interestRelevanceScore: Math.max(0, Math.min(100, Number(row?.interest_relevance_score) || 0)),
+            hasActiveBoost: Boolean(row?.has_active_boost),
+            boostEndsAt: typeof row?.boost_ends_at === 'string' ? row.boost_ends_at : null,
           };
         });
         setCardContext(next);
@@ -691,6 +715,8 @@ export default function useVibesFeed({
         isNewHere: context?.isNewHere ?? (match as any).isNewHere ?? false,
         interestRelevanceScore:
           context?.interestRelevanceScore ?? (match as any).interestRelevanceScore ?? 0,
+        hasActiveBoost: context?.hasActiveBoost ?? Boolean((match as any).hasActiveBoost),
+        boostEndsAt: context?.boostEndsAt ?? ((match as any).boostEndsAt ?? null),
       };
     });
     const normalizedViewerGender =
@@ -736,6 +762,8 @@ export default function useVibesFeed({
     });
   }, [filters, momentUserIds, poolProfiles, relationshipCompass, segment, serverRankedSource, usingCachedSnapshot, viewerInterests, viewerProfile]);
 
+  const snapshotsReady = exclusionsHydrated && snapshotHydrated;
+
   const recordFeedSwipe = useCallback(
     (id: string, action: 'like' | 'dislike' | 'superlike', index = 0) => {
       setSwipedTodayIds((prev) => {
@@ -761,8 +789,6 @@ export default function useVibesFeed({
 
     return undone;
   }, [undoLastSwipe]);
-
-  const snapshotsReady = exclusionsHydrated && snapshotHydrated;
   const visiblePoolProfiles = snapshotsReady ? poolProfiles : [];
   const visibleProfiles = snapshotsReady ? filteredProfiles : [];
 

@@ -1,6 +1,7 @@
 import { Colors } from "@/constants/theme";
 import SignalIcon from "@/components/icons/SignalIcon";
 import { getSafeRemoteImageUri, getUserFacingDisplayName, hasLeftBetweener } from "@/lib/profile/display-name";
+import { buildLocationDisplay } from "@/lib/location/location-display";
 import { getProfileInitials, getProfilePlaceholderPalette } from "@/lib/profile-placeholders";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { Image as ExpoImage } from "expo-image";
@@ -36,6 +37,9 @@ export type SignalProfileSnippet = {
   location?: string | null;
   city?: string | null;
   region?: string | null;
+  current_country?: string | null;
+  current_country_code?: string | null;
+  location_precision?: string | null;
   verification_level?: number | null;
 };
 
@@ -96,7 +100,9 @@ export default function SignalReceivedCard({
   const senderName = getUserFacingDisplayName(sender, "Someone");
   const senderHasLeft = hasLeftBetweener(sender);
   const nameLine = `${senderName}${typeof sender?.age === "number" ? `, ${sender.age}` : ""}`;
-  const location = sender?.city || sender?.region || sender?.location || "Location hidden";
+  const location = sender
+    ? buildLocationDisplay(sender as Record<string, any>, { surface: "vibes" }).withFlag || "Location hidden"
+    : "Location hidden";
   const photos = Array.isArray(sender?.photos) ? sender?.photos.filter(Boolean) : [];
   const avatarUri =
     getSafeRemoteImageUri(sender?.avatar_url) ??

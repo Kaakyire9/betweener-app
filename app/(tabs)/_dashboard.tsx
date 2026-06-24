@@ -1,8 +1,13 @@
 import { Colors } from "@/constants/theme";
+import { useInbox } from "@/hooks/useInbox";
 import { usePremiumState } from "@/hooks/use-premium-state";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useAuth } from "@/lib/auth-context";
 import { ChatRepository } from "@/lib/chat/local/chat-repository";
+import {
+  readProfileInterestSnapshotState,
+  readSavedProfilesSnapshotState,
+} from "@/lib/offline/profile-insights-store";
 import { getPresenceDisplay } from "@/lib/presence";
 import { fetchUserPresence, overlayPresence } from "@/lib/user-presence";
 import { getSafeRemoteImageUri } from "@/lib/profile/display-name";
@@ -90,7 +95,8 @@ export default function DashboardScreen() {
   const [liveProfile, setLiveProfile] = useState<any | null>(profile ?? null);
   const dashboardProfileCacheRef = useRef<Record<string, { id: string; full_name?: string | null; avatar_url?: string | null; account_state?: string | null; deleted_at?: string | null }>>({});
   const matchesRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const recentActivityRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [dashboardProfileCacheVersion, setDashboardProfileCacheVersion] = useState(0);
+  const { items: inboxItems } = useInbox(user?.id ?? null);
 
   useEffect(() => {
     setLiveProfile(profile ?? null);
@@ -222,6 +228,8 @@ export default function DashboardScreen() {
   const [profileViews, setProfileViews] = useState(0);
   const [likesReceived, setLikesReceived] = useState(0);
   const [conversationStreak, setConversationStreak] = useState(0);
+  const [interestShortcutCount, setInterestShortcutCount] = useState(0);
+  const [savedProfilesShortcutCount, setSavedProfilesShortcutCount] = useState(0);
   const isOnline = getPresenceDisplay(liveProfile?.last_active ?? liveProfile?.lastActive).showPresence;
   const boostsUnlocked = hasAccess('SILVER');
   const boostStatusText = premiumLoading
@@ -231,6 +239,46 @@ export default function DashboardScreen() {
       : boostsUnlocked
         ? `${currentPlan} includes 30-minute profile boosts`
         : 'Unlock 30-minute boosts with Silver or Gold';
+
+  useEffect(() => {
+    if (!myProfileId) {
+      setInterestShortcutCount(0);
+      setSavedProfilesShortcutCount(0);
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const [interestCached, savedCached] = await Promise.all([
+          readProfileInterestSnapshotState(myProfileId),
+          readSavedProfilesSnapshotState(myProfileId),
+        ]);
+
+        if (cancelled) return;
+
+        const cachedInterestCount = Math.max(
+          Number(interestCached.data?.metrics?.unique_visitors ?? 0),
+          Number(interestCached.data?.metrics?.profile_visits ?? 0),
+        );
+        const cachedSavedCount = Array.isArray(savedCached.data) ? savedCached.data.length : 0;
+
+        setInterestShortcutCount(cachedInterestCount);
+        setSavedProfilesShortcutCount(cachedSavedCount);
+        setProfileViews((current) => (current > 0 ? current : cachedInterestCount));
+      } catch {
+        if (!cancelled) {
+          setInterestShortcutCount(0);
+          setSavedProfilesShortcutCount(0);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [myProfileId]);
 
   useEffect(() => {
     if (!user?.id || !myProfileId) {
@@ -491,8 +539,6 @@ export default function DashboardScreen() {
     actionRequired?: boolean;
   };
 
-  const [recentActivity, setRecentActivity] = useState<DashboardActivityItem[]>([]);
-
   useEffect(() => {
     if (!user?.id) {
       setRecentPeople([]);
@@ -540,100 +586,73 @@ export default function DashboardScreen() {
     };
   }, [user?.id]);
 
-  useEffect(() => {
-    if (!user?.id) {
-      setRecentActivity([]);
-      return;
-    }
+  const recentActivityActorIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          inboxItems
+            .slice(0, 12)
+            .map((item) => (typeof item.actor_id === 'string' ? item.actor_id : null))
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ),
+    [inboxItems],
+  );
 
+  useEffect(() => {
+    if (recentActivityActorIds.length === 0) return;
     let cancelled = false;
 
-    const fetchRecentActivity = async () => {
-      try {
-        const { data: inboxItems } = await supabase
-          .from('inbox_items')
-          .select('id,type,actor_id,title,body,created_at,read_at,action_required')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(12);
+    const fetchRecentActivityActors = async () => {
+      const missingSenderIds = recentActivityActorIds.filter((id) => !dashboardProfileCacheRef.current[id]);
+      if (missingSenderIds.length === 0) return;
 
-        if (cancelled) return;
+      const { data: profilesData } = await supabase
+        .from('profiles')
+        .select('id,full_name,avatar_url')
+        .in('id', missingSenderIds);
 
-        const rows = (inboxItems || []) as any[];
-        const senderIds = Array.from(
-          new Set(
-            rows
-              .map((row) => (typeof row?.actor_id === 'string' ? row.actor_id : null))
-              .filter((v): v is string => Boolean(v)),
-          ),
-        );
+      if (cancelled) return;
 
-        const missingSenderIds = senderIds.filter((id) => !dashboardProfileCacheRef.current[id]);
-        if (missingSenderIds.length) {
-          const { data: profilesData } = await supabase
-            .from('profiles')
-            .select('id,full_name,avatar_url')
-            .in('id', missingSenderIds);
-          (profilesData || []).forEach((p: any) => {
-            if (p?.id) dashboardProfileCacheRef.current[String(p.id)] = p;
-          });
-        }
+      let updated = false;
+      (profilesData || []).forEach((profile: any) => {
+        if (!profile?.id) return;
+        dashboardProfileCacheRef.current[String(profile.id)] = profile;
+        updated = true;
+      });
 
-        const items: DashboardActivityItem[] = rows
-          .map((row) => {
-            const profile = row.actor_id ? dashboardProfileCacheRef.current[String(row.actor_id)] : undefined;
-              return {
-                id: String(row.id),
-                type: String(row.type || ''),
-                actorId: row.actor_id ?? null,
-                title: (row.title || '').trim() || 'Recent activity',
-                body: (row.body || '').trim() || 'New update',
-                actorAvatar: getSafeRemoteImageUri(profile?.avatar_url),
-                createdAt: row.created_at,
-                readAt: row.read_at ?? null,
-                actionRequired: Boolean(row.action_required),
-            };
-          })
-          .sort((a, b) => {
-            const aNeeds = a.actionRequired ? 1 : 0;
-            const bNeeds = b.actionRequired ? 1 : 0;
-            if (aNeeds !== bNeeds) return bNeeds - aNeeds;
-            const aUnread = a.readAt ? 0 : 1;
-            const bUnread = b.readAt ? 0 : 1;
-            if (aUnread !== bUnread) return bUnread - aUnread;
-            return Date.parse(b.createdAt || '') - Date.parse(a.createdAt || '');
-          })
-          .slice(0, 3);
-
-        setRecentActivity(items);
-      } catch {
-        if (!cancelled) setRecentActivity([]);
+      if (updated) {
+        setDashboardProfileCacheVersion((current) => current + 1);
       }
     };
 
-    void fetchRecentActivity();
-
-    const channel = supabase
-      .channel(`inbox-preview:${user.id}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'inbox_items', filter: `user_id=eq.${user.id}` },
-        () => {
-          if (recentActivityRefreshTimeoutRef.current) clearTimeout(recentActivityRefreshTimeoutRef.current);
-          recentActivityRefreshTimeoutRef.current = setTimeout(() => {
-            recentActivityRefreshTimeoutRef.current = null;
-            void fetchRecentActivity();
-          }, 250);
-        },
-      )
-      .subscribe();
+    void fetchRecentActivityActors();
 
     return () => {
       cancelled = true;
-      if (recentActivityRefreshTimeoutRef.current) clearTimeout(recentActivityRefreshTimeoutRef.current);
-      supabase.removeChannel(channel);
     };
-  }, [user?.id]);
+  }, [recentActivityActorIds]);
+
+  const recentActivity = useMemo<DashboardActivityItem[]>(
+    () =>
+      inboxItems
+        .map((item) => {
+          const profileRef = item.actor_id ? dashboardProfileCacheRef.current[String(item.actor_id)] : undefined;
+          return {
+            id: String(item.id),
+            type: String(item.type || ''),
+            actorId: item.actor_id ?? null,
+            title: (item.title || '').trim() || 'Recent activity',
+            body: (item.body || '').trim() || 'New update',
+            actorAvatar: getSafeRemoteImageUri(profileRef?.avatar_url),
+            createdAt: item.created_at,
+            readAt: item.read_at ?? null,
+            actionRequired: Boolean(item.action_required),
+          };
+        })
+        .slice(0, 3),
+    [dashboardProfileCacheVersion, inboxItems],
+  );
 
   const badges = [
     { name: "First Match", icon: "FM", earned: true },
@@ -675,7 +694,7 @@ export default function DashboardScreen() {
       </View>
       <Text style={styles.emptyStateTitle}>Your latest activity will show up here</Text>
       <Text style={styles.emptyStateText}>
-        Likes, notes, gifts, and profile reactions will start to collect once your profile and discovery loop pick up momentum.
+        Likes, gifts, and profile reactions will start to collect once your profile and discovery loop pick up momentum.
       </Text>
       <View style={styles.emptyHighlights}>
         <View style={styles.emptyHighlightRow}>
@@ -937,6 +956,41 @@ export default function DashboardScreen() {
         <Text style={styles.streakText}>
           {"You've messaged "}{(recentPeople[0]?.name || "a match")} {conversationStreak}{" days in a row!"}
         </Text>
+      </View>
+      <View style={styles.insightShortcutRow}>
+        <TouchableOpacity
+          style={styles.insightShortcut}
+          onPress={() => router.push('/profile-interest')}
+          activeOpacity={0.86}
+        >
+          <View style={[styles.insightShortcutIconWrap, { backgroundColor: withAlpha(theme.secondary, 0.16) }]}>
+            <MaterialCommunityIcons name="chart-timeline-variant" size={16} color={theme.secondary} />
+          </View>
+          <View style={styles.insightShortcutCopy}>
+            <Text style={styles.insightShortcutTitle}>Profile interest</Text>
+            <Text style={styles.insightShortcutMeta}>
+              {interestShortcutCount > 0 ? `${interestShortcutCount} signals cached` : 'Open your latest signals'}
+            </Text>
+          </View>
+          <MaterialCommunityIcons name="chevron-right" size={18} color={theme.textMuted} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.insightShortcut}
+          onPress={() => router.push('/saved-profiles')}
+          activeOpacity={0.86}
+        >
+          <View style={[styles.insightShortcutIconWrap, { backgroundColor: withAlpha(theme.tint, 0.16) }]}>
+            <MaterialCommunityIcons name="bookmark-outline" size={16} color={theme.tint} />
+          </View>
+          <View style={styles.insightShortcutCopy}>
+            <Text style={styles.insightShortcutTitle}>Saved profiles</Text>
+            <Text style={styles.insightShortcutMeta}>
+              {savedProfilesShortcutCount > 0 ? `${savedProfilesShortcutCount} saved for later` : 'Jump back into your saves'}
+            </Text>
+          </View>
+          <MaterialCommunityIcons name="chevron-right" size={18} color={theme.textMuted} />
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -1542,6 +1596,41 @@ const createStyles = (theme: typeof Colors.light, isDark: boolean) =>
       borderRadius: 12,
       padding: 12,
       alignItems: "center",
+    },
+    insightShortcutRow: {
+      marginTop: 14,
+      gap: 10,
+    },
+    insightShortcut: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      borderRadius: 16,
+      backgroundColor: theme.backgroundSubtle,
+      borderWidth: 1,
+      borderColor: withAlpha(theme.text, isDark ? 0.14 : 0.08),
+    },
+    insightShortcutIconWrap: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    insightShortcutCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    insightShortcutTitle: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: theme.text,
+    },
+    insightShortcutMeta: {
+      fontSize: 12,
+      color: theme.textMuted,
     },
     streakText: {
       fontSize: 14,

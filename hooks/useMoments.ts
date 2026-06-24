@@ -106,7 +106,7 @@ async function primeInteractedMomentSnapshots(params: {
       .in('moment_id', interactedMomentIds),
     supabase
       .from('moment_comments')
-      .select('id,moment_id,user_id,body,created_at,is_deleted')
+      .select('id,moment_id,user_id,body,created_at,parent_comment_id,is_deleted')
       .eq('is_deleted', false)
       .in('moment_id', interactedMomentIds)
       .order('created_at', { ascending: false }),
@@ -125,6 +125,7 @@ async function primeInteractedMomentSnapshots(params: {
     user_id: string;
     body: string;
     created_at: string;
+    parent_comment_id: string | null;
     is_deleted: boolean;
   }[];
 
@@ -174,12 +175,13 @@ async function primeInteractedMomentSnapshots(params: {
         .map(({ id, emoji, user_id, created_at }) => ({ id, emoji, user_id, created_at }));
       const momentComments = comments
         .filter((row) => row.moment_id === momentId)
-        .map(({ id, moment_id, user_id, body, created_at, is_deleted }) => ({
+        .map(({ id, moment_id, user_id, body, created_at, parent_comment_id, is_deleted }) => ({
           id,
           moment_id,
           user_id,
           body,
           created_at,
+          parent_comment_id: parent_comment_id ?? null,
           is_deleted,
         }));
       const scopedUserIds = Array.from(

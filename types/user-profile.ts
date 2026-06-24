@@ -23,6 +23,7 @@ export type UserProfile = {
   userId?: string;
   name: string;
   age: number;
+  createdAt?: string;
   location: string;
   city?: string;
   region?: string;
@@ -66,4 +67,6 @@ export type UserProfile = {
   promptAnswers?: ProfilePromptAnswer[];
   compatibility: number;
   verificationLevel?: number;
+  premiumPlan?: 'FREE' | 'SILVER' | 'GOLD';
+  isNewHere?: boolean;
 };

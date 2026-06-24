@@ -79,6 +79,7 @@ export type MomentCommentSnapshotRow = {
   user_id: string;
   body: string;
   created_at: string;
+  parent_comment_id: string | null;
   is_deleted: boolean;
 };
 

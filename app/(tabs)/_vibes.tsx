@@ -59,6 +59,8 @@ import VibesActionDock from "@/components/vibes/depth/VibesActionDock";
 import useVibesResponsiveMetrics from "@/components/vibes/depth/useVibesResponsiveMetrics";
 import Notice from "@/components/ui/Notice";
 import { ExploreStackSkeleton } from "@/components/ui/Skeleton";
+import { findCountryByCode, getPrioritizedCountries, type CountryOption } from "@/lib/location/countries";
+import { toFlagEmoji } from "@/lib/location/location-display";
 import { isLikelyNetworkError } from "@/lib/network";
 import { logger } from "@/lib/telemetry/logger";
 import type { MomentRelationshipContext } from "@/types/moment-context";
@@ -112,27 +114,6 @@ type VibesActionHistoryEntry =
   | { kind: 'swipe'; id: string; action: 'like' | 'dislike' | 'superlike'; index: number }
   | { kind: 'intent'; id: string; requestId: string | null; index: number }
   | { kind: 'signal'; id: string; signalId: string; index: number };
-
-const COUNTRY_OPTIONS = [
-  { label: 'Ghana', code: 'GH' },
-  { label: 'United States', code: 'US' },
-  { label: 'United Kingdom', code: 'GB' },
-  { label: 'Canada', code: 'CA' },
-  { label: 'Germany', code: 'DE' },
-  { label: 'Netherlands', code: 'NL' },
-  { label: 'Italy', code: 'IT' },
-  { label: 'Australia', code: 'AU' },
-  { label: 'South Africa', code: 'ZA' },
-  { label: 'Nigeria', code: 'NG' },
-  { label: 'Ivory Coast', code: 'CI' },
-  { label: 'Burkina Faso', code: 'BF' },
-  { label: 'France', code: 'FR' },
-  { label: 'Spain', code: 'ES' },
-  { label: 'Belgium', code: 'BE' },
-  { label: 'Sweden', code: 'SE' },
-  { label: 'Norway', code: 'NO' },
-  { label: 'UAE', code: 'AE' },
-];
 
 const resolveAutoUnit = (): 'km' | 'mi' => {
   try {
@@ -470,8 +451,10 @@ export default function ExploreScreen() {
   const [videoModalSubtitle, setVideoModalSubtitle] = useState<string | null>(null);
   const [previewingId, setPreviewingId] = useState<string | null>(null);
   const [manualLocationModalVisible, setManualLocationModalVisible] = useState(false);
-  const [manualLocation, setManualLocation] = useState(profile?.location || "");
+  const [manualLocation, setManualLocation] = useState((profile as any)?.city || profile?.location || "");
   const [manualCountryCode, setManualCountryCode] = useState(profileCountryCode || "");
+  const [manualCountryPickerOpen, setManualCountryPickerOpen] = useState(false);
+  const [manualCountrySearch, setManualCountrySearch] = useState('');
   const [locationError, setLocationError] = useState<string | null>(null);
   const [isSavingLocation, setIsSavingLocation] = useState(false);
   const [premiumUpsell, setPremiumUpsell] = useState<PremiumUpsellState | null>(null);
@@ -482,10 +465,11 @@ export default function ExploreScreen() {
   const [practiceLoaded, setPracticeLoaded] = useState(false);
   const [practiceComplete, setPracticeComplete] = useState(true);
   const [practiceReplayVisible, setPracticeReplayVisible] = useState(false);
+  const [practiceDismissed, setPracticeDismissed] = useState(false);
   const [practiceStep, setPracticeStep] = useState<VibesPracticeStep>('intro');
   const [practiceGestureLocked, setPracticeGestureLocked] = useState(false);
   const [deckGestureLocked, setDeckGestureLocked] = useState(false);
-  const showPracticeWalkthrough = practiceLoaded && (!practiceComplete || practiceReplayVisible);
+  const showPracticeWalkthrough = practiceLoaded && ((!practiceComplete && !practiceDismissed) || practiceReplayVisible);
   const [verifiedOnly, setVerifiedOnly] = useState(false);
   const [hasVideoOnly, setHasVideoOnly] = useState(false);
   const [activeOnly, setActiveOnly] = useState(false);
@@ -516,6 +500,15 @@ export default function ExploreScreen() {
     () => (profile?.id ? `${VIBES_INTRO_SEEN_KEY}:${profile.id}` : user?.id ? `${VIBES_INTRO_SEEN_KEY}:auth:${user.id}` : null),
     [profile?.id, user?.id],
   );
+  const selectedManualCountry = useMemo(
+    () => findCountryByCode(manualCountryCode),
+    [manualCountryCode],
+  );
+  const manualCountryOptions = useMemo(
+    () => getPrioritizedCountries(manualCountrySearch),
+    [manualCountrySearch],
+  );
+  const selectedManualCountryFlag = selectedManualCountry ? toFlagEmoji(selectedManualCountry.code) : '';
   const practiceProfileId = useMemo(
     () => resolvedProfileId ?? profile?.id ?? null,
     [profile?.id, resolvedProfileId],
@@ -565,6 +558,7 @@ export default function ExploreScreen() {
   const completePractice = useCallback(async () => {
     if (practiceReplayVisible) {
       setPracticeReplayVisible(false);
+      setPracticeDismissed(false);
       setPracticeStep('intro');
       setPracticeGestureLocked(false);
       setDeckGestureLocked(false);
@@ -573,6 +567,7 @@ export default function ExploreScreen() {
     }
     const completedAtIso = new Date().toISOString();
     setPracticeComplete(true);
+    setPracticeDismissed(false);
     setPracticeStep('intentPrompt');
     setPracticeGestureLocked(false);
     setDeckGestureLocked(false);
@@ -661,6 +656,7 @@ export default function ExploreScreen() {
         const effectiveStep = effectiveCompleted ? 'intro' : localSnapshot.currentStep;
 
         setPracticeComplete(effectiveCompleted);
+        setPracticeDismissed(false);
         setPracticeStep(effectiveStep);
 
         const needsSnapshotRefresh =
@@ -1474,7 +1470,9 @@ export default function ExploreScreen() {
         requestId = Array.isArray(data) ? data[0]?.id ?? null : null;
       }
       if (!requestId) return;
-      await cancelIntentRequestOfflineSafe(requestId);
+      await cancelIntentRequestOfflineSafe(requestId, {
+        snapshotOwnerIds: [profile?.id ?? null, user?.id ?? null],
+      });
     } catch (error) {
       logger.warn('[vibes] undo_intent_cancel_failed', { error: String((error as any)?.message || error) });
     }
@@ -1556,14 +1554,18 @@ export default function ExploreScreen() {
   const hasPreciseCoords = profile?.latitude != null && profile?.longitude != null;
   const hasCityOnly = !!profile?.location && profile?.location_precision === 'CITY';
   const isGhanaCountryLocked = profile?.country_lock_policy === 'ghana_locked';
+  const needsNearbyPreciseLocation = !hasPreciseCoords;
   const needsLocationPrompt = !hasPreciseCoords && !hasCityOnly;
   const shouldShowLocationPrompt =
-    needsLocationPrompt && (activeTab === 'nearby' || !locationPromptDismissed);
+    (activeTab === 'nearby' ? needsNearbyPreciseLocation : needsLocationPrompt)
+    && (activeTab === 'nearby' || !locationPromptDismissed);
+  const shouldShowLocationBanner =
+    shouldShowLocationPrompt && !(activeTab === 'nearby' && matchList.length === 0);
   const showCompactLocationPrompt = shouldShowLocationPrompt && activeTab !== 'nearby';
 
   useEffect(() => {
-    setManualLocation(profile?.location || "");
-  }, [profile?.location]);
+    setManualLocation((profile as any)?.city || profile?.location || "");
+  }, [(profile as any)?.city, profile?.location]);
   useEffect(() => {
     setManualCountryCode(isGhanaCountryLocked ? 'GH' : profileCountryCode || "");
   }, [isGhanaCountryLocked, profileCountryCode]);
@@ -1620,6 +1622,8 @@ export default function ExploreScreen() {
   };
 
   const closeManualLocationModal = useCallback(() => {
+    setManualCountryPickerOpen(false);
+    setManualCountrySearch('');
     setManualLocationModalVisible(false);
   }, []);
 
@@ -1630,17 +1634,21 @@ export default function ExploreScreen() {
 
   const openManualLocationModal = useCallback(() => {
     setLocationError(null);
-    setManualLocation(profile?.location || "");
+    setManualLocation((profile as any)?.city || profile?.location || "");
     setManualCountryCode(isGhanaCountryLocked ? 'GH' : profileCountryCode || manualCountryCode || "");
+    setManualCountryPickerOpen(false);
+    setManualCountrySearch('');
     setManualLocationModalVisible(true);
-  }, [isGhanaCountryLocked, manualCountryCode, profile?.location, profileCountryCode]);
+  }, [isGhanaCountryLocked, manualCountryCode, profile?.location, (profile as any)?.city, profileCountryCode]);
 
   const openManualLocationModalFromFilters = useCallback(() => {
     setLocationError(null);
-    setManualLocation(profile?.location || "");
+    setManualLocation((profile as any)?.city || profile?.location || "");
     setManualCountryCode(isGhanaCountryLocked ? 'GH' : profileCountryCode || manualCountryCode || "");
+    setManualCountryPickerOpen(false);
+    setManualCountrySearch('');
     setFiltersPanel('location');
-  }, [isGhanaCountryLocked, manualCountryCode, profile?.location, profileCountryCode]);
+  }, [isGhanaCountryLocked, manualCountryCode, profile?.location, (profile as any)?.city, profileCountryCode]);
 
   const handleSaveManualLocation = async () => {
     if (!profile?.id) return;
@@ -1648,6 +1656,7 @@ export default function ExploreScreen() {
     setLocationError(null);
     if (!manualCountryCode) {
       setLocationError('Please select a country.');
+      setManualCountryPickerOpen(true);
       setIsSavingLocation(false);
       return;
     }
@@ -1667,6 +1676,13 @@ export default function ExploreScreen() {
     }
     setIsSavingLocation(false);
   };
+
+  const handleSelectManualCountry = useCallback((country: CountryOption) => {
+    setManualCountryCode(country.code);
+    setManualCountrySearch('');
+    setManualCountryPickerOpen(false);
+    setLocationError(null);
+  }, []);
 
   const handleApplyFilters = () => {
     if (!hasAdvancedFilters && (verifiedOnly || hasVideoOnly || activeOnly || distanceFilterKm != null || minVibeScore != null || minSharedInterests > 0)) {
@@ -2025,7 +2041,8 @@ export default function ExploreScreen() {
   // user's position and only clamp when the list shrinks past the current card.
   useEffect(() => {
     setCurrentIndex(0);
-  }, [activeTab]);
+    scrollVibesToTop();
+  }, [activeTab, scrollVibesToTop]);
 
   useEffect(() => {
     setCurrentIndex((prev) => {
@@ -2091,17 +2108,27 @@ export default function ExploreScreen() {
     });
   }, [practiceComplete, practiceReplayVisible, practiceSnapshotOwnerId]);
 
-  const closePracticeReplay = useCallback(() => {
-    setPracticeReplayVisible(false);
-    setPracticeStep('intro');
+  const closePracticeWalkthrough = useCallback(() => {
+    if (practiceReplayVisible || practiceComplete) {
+      setPracticeReplayVisible(false);
+      setPracticeDismissed(false);
+      setPracticeStep('intro');
+    } else {
+      setPracticeDismissed(true);
+    }
     setPracticeGestureLocked(false);
     setDeckGestureLocked(false);
     scrollVibesToTop();
-  }, [scrollVibesToTop]);
+  }, [practiceComplete, practiceReplayVisible, scrollVibesToTop]);
 
   const openPracticeReplay = useCallback(() => {
-    setPracticeStep('intro');
-    setPracticeReplayVisible(true);
+    if (!practiceComplete) {
+      setPracticeDismissed(false);
+      setPracticeReplayVisible(false);
+    } else {
+      setPracticeStep('intro');
+      setPracticeReplayVisible(true);
+    }
     setPracticeGestureLocked(false);
     setDeckGestureLocked(false);
     setRenderFloatingMoments(false);
@@ -2109,12 +2136,13 @@ export default function ExploreScreen() {
     floatingMomentsTranslateY.setValue(-10);
     floatingMomentsScale.setValue(0.985);
     scrollVibesToTop();
-  }, [floatingMomentsOpacity, floatingMomentsScale, floatingMomentsTranslateY, scrollVibesToTop]);
+  }, [floatingMomentsOpacity, floatingMomentsScale, floatingMomentsTranslateY, practiceComplete, scrollVibesToTop]);
 
   const handleVibesHeaderTabChange = useCallback((id: string) => {
     if (showPracticeWalkthrough) return;
     setActiveTab(id as any);
-  }, [showPracticeWalkthrough]);
+    scrollVibesToTop();
+  }, [scrollVibesToTop, showPracticeWalkthrough]);
 
   const handleOpenVibesFilters = useCallback(() => {
     if (showPracticeWalkthrough) return;
@@ -2173,27 +2201,68 @@ export default function ExploreScreen() {
           </View>
         ) : (
           <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>No fresh profiles right now</Text>
+            <Text style={styles.emptyTitle}>
+              {activeTab === 'nearby'
+                ? (hasPreciseCoords ? 'Nearby feels quiet right now' : 'Turn on precise location for Nearby')
+                : 'No fresh profiles right now'}
+            </Text>
             <Text style={styles.emptySubtitle}>
-              You have reached the edge of this round. Refresh for a new set or browse nearby again.
+              {activeTab === 'nearby'
+                ? (
+                  hasPreciseCoords
+                    ? "We'll show people close to you when more verified locations are available. Explore For You for strong matches beyond distance."
+                    : 'Nearby uses your precise coordinates. Without them, you will not see nearby profiles even if other people have location turned on.'
+                )
+                : 'You have reached the edge of this round. Refresh for a new set or browse nearby again.'}
             </Text>
             <View style={styles.emptyActions}>
               <TouchableOpacity
                 style={[styles.primaryButton]}
                 onPress={() => {
+                  if (activeTab === 'nearby') {
+                    if (hasPreciseCoords) {
+                      setActiveTab('recommended');
+                      setCurrentIndex(0);
+                      return;
+                    }
+
+                    void handleUseMyLocation();
+                    return;
+                  }
+
                   void refreshMatches();
                   setCurrentIndex(0);
                 }}
               >
-                <Text style={styles.primaryButtonText}>Refresh Vibes</Text>
+                <Text style={styles.primaryButtonText}>
+                  {activeTab === 'nearby'
+                    ? (hasPreciseCoords ? 'Explore For You' : 'Use precise location')
+                    : 'Refresh Vibes'}
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.ghostButton}
                 onPress={() => {
+                  if (activeTab === 'nearby') {
+                    if (hasPreciseCoords) {
+                      void refreshMatches();
+                      setCurrentIndex(0);
+                      return;
+                    }
+
+                    setActiveTab('recommended');
+                    setCurrentIndex(0);
+                    return;
+                  }
+
                   setActiveTab('nearby');
                 }}
               >
-                <Text style={styles.ghostButtonText}>Browse Nearby</Text>
+                <Text style={styles.ghostButtonText}>
+                  {activeTab === 'nearby'
+                    ? (hasPreciseCoords ? 'Refresh Nearby' : 'Explore For You')
+                    : 'Browse Nearby'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -2395,28 +2464,32 @@ export default function ExploreScreen() {
           onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
           scrollEventThrottle={16}
           showsVerticalScrollIndicator={false}
-          refreshControl={(
-            <RefreshControl
-              refreshing={refreshingMatches}
-              onRefresh={handleRefreshVibes}
-              tintColor={theme.tint}
-            />
-          )}
+          refreshControl={
+            showPracticeWalkthrough
+              ? undefined
+              : (
+                <RefreshControl
+                  refreshing={refreshingMatches}
+                  onRefresh={handleRefreshVibes}
+                  tintColor={theme.tint}
+                />
+              )
+          }
           contentContainerStyle={[
             styles.scrollContent,
             { paddingBottom: Math.max(insets.bottom + layoutMetrics.stackBottomReserve + 92, 180) },
           ]}
         >
-          {shouldShowLocationPrompt ? (
+          {shouldShowLocationBanner ? (
             <View style={[styles.locationBanner, showCompactLocationPrompt ? styles.locationBannerCompact : null]}>
               <View style={styles.locationBannerHeader}>
                 <View style={styles.locationBannerCopy}>
                   <Text style={styles.locationTitle}>
-                    {activeTab === 'nearby' ? 'Add your location to unlock Nearby' : 'Add your city to improve nearby matches'}
+                    {activeTab === 'nearby' ? 'Use precise location to unlock Nearby' : 'Add your city to improve nearby matches'}
                   </Text>
                   <Text style={[styles.locationSubtitle, showCompactLocationPrompt ? styles.locationSubtitleCompact : null]}>
                     {activeTab === 'nearby'
-                      ? 'Use your location or set a city so nearby discovery can work properly.'
+                      ? 'Nearby only works with precise location. City-only location still works for For You and profile display.'
                       : 'For You still works without it. Nearby becomes more useful once you add a location.'}
                   </Text>
                 </View>
@@ -2547,8 +2620,8 @@ export default function ExploreScreen() {
                 onGestureLockChange={setPracticeGestureLocked}
                 initialStep={practiceStep}
                 onStepChange={handlePracticeStepChange}
-                allowClose={practiceReplayVisible}
-                onClose={closePracticeReplay}
+                allowClose
+                onClose={closePracticeWalkthrough}
               />
             ) : loadingMatches && matchList.length === 0 ? (
               <ExploreStackSkeleton />
@@ -2702,25 +2775,80 @@ export default function ExploreScreen() {
                               Ghana-route accounts keep country locked to Ghana until precise location confirms you are outside Ghana.
                             </Text>
                           ) : null}
-                          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.countryChips}>
-                            {COUNTRY_OPTIONS.map((c) => {
-                              const active = manualCountryCode === c.code;
-                              const disabled = isGhanaCountryLocked && c.code !== 'GH';
-                              return (
-                                <TouchableOpacity
-                                  key={c.code}
-                                  style={[styles.countryChip, active && styles.countryChipActive, disabled && { opacity: 0.45 }]}
-                                  onPress={() => {
-                                    if (disabled) return;
-                                    setManualCountryCode(c.code);
-                                  }}
-                                  activeOpacity={0.85}
-                                >
-                                  <Text style={[styles.countryChipText, active && styles.countryChipTextActive]}>{c.label}</Text>
-                                </TouchableOpacity>
-                              );
-                            })}
-                          </ScrollView>
+                          <TouchableOpacity
+                            style={[styles.countrySelectButton, isGhanaCountryLocked && styles.countrySelectButtonDisabled]}
+                            onPress={() => {
+                              if (isGhanaCountryLocked) return;
+                              setManualCountrySearch('');
+                              setManualCountryPickerOpen((current) => !current);
+                            }}
+                            activeOpacity={0.85}
+                            disabled={isGhanaCountryLocked}
+                          >
+                            <View style={styles.countrySelectValue}>
+                              <Text style={[styles.countrySelectFlag, !selectedManualCountryFlag && styles.countrySelectFlagPlaceholder]}>
+                                {selectedManualCountryFlag || '--'}
+                              </Text>
+                              <View style={styles.countrySelectCopy}>
+                                <Text style={manualCountryCode ? styles.countrySelectLabel : styles.countrySelectPlaceholder}>
+                                  {selectedManualCountry?.label || 'Select country'}
+                                </Text>
+                                <Text style={styles.countrySelectMeta}>
+                                  {selectedManualCountry
+                                    ? `${selectedManualCountry.dial} • ${selectedManualCountry.code}`
+                                    : 'Used for local matching first'}
+                                </Text>
+                              </View>
+                            </View>
+                            <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
+                          </TouchableOpacity>
+                          {manualCountryPickerOpen ? (
+                            <View style={styles.inlineCountryPickerPanel}>
+                              <View style={styles.countrySearchWrap}>
+                                <MaterialCommunityIcons name="magnify" size={18} color={theme.textMuted} />
+                                <TextInput
+                                  value={manualCountrySearch}
+                                  onChangeText={setManualCountrySearch}
+                                  placeholder="Search country or code"
+                                  placeholderTextColor={theme.textMuted}
+                                  autoCapitalize="words"
+                                  autoCorrect={false}
+                                  style={styles.countrySearchInput}
+                                />
+                              </View>
+                              <ScrollView
+                                style={styles.inlineCountryPickerList}
+                                contentContainerStyle={styles.countryPickerListContent}
+                                keyboardShouldPersistTaps="handled"
+                                nestedScrollEnabled
+                              >
+                                {manualCountryOptions.map((country) => {
+                                  const isSelected = manualCountryCode === country.code;
+                                  return (
+                                    <TouchableOpacity
+                                      key={country.code}
+                                      style={[styles.countryPickerItem, isSelected && styles.countryPickerItemSelected]}
+                                      onPress={() => handleSelectManualCountry(country)}
+                                      activeOpacity={0.85}
+                                    >
+                                      <View style={styles.countryPickerItemRow}>
+                                        <Text style={styles.countryPickerItemFlag}>{toFlagEmoji(country.code) || '--'}</Text>
+                                        <View style={styles.countryPickerItemCopy}>
+                                          <Text style={[styles.countryPickerItemLabel, isSelected && styles.countryPickerItemLabelSelected]}>
+                                            {country.label}
+                                          </Text>
+                                          <Text style={styles.countryPickerItemMeta}>{`${country.dial} • ${country.code}`}</Text>
+                                        </View>
+                                      </View>
+                                      {isSelected ? (
+                                        <MaterialCommunityIcons name="check" size={20} color={theme.tint} />
+                                      ) : null}
+                                    </TouchableOpacity>
+                                  );
+                                })}
+                              </ScrollView>
+                            </View>
+                          ) : null}
                         </View>
 
                         <View style={styles.filterFieldGroup}>
@@ -3202,11 +3330,11 @@ export default function ExploreScreen() {
                       <Text style={[styles.locationError, { marginTop: 8 }]}>{locationError}</Text>
                     ) : null}
                     <View style={styles.filterFieldGroup}>
-                    <Text style={styles.filterLabel}>Type a city</Text>
-                    <Text style={styles.filterHint}>e.g., Accra, Ghana</Text>
+                    <Text style={styles.filterLabel}>Filter loaded cards by place</Text>
+                    <Text style={styles.filterHint}>Use a city, region, or country. This does not set your own location.</Text>
                     <TextInput
                       style={[styles.filterInput, { marginTop: 8 }]}
-                      placeholder="e.g., Accra, Ghana"
+                      placeholder="e.g., Bristol or United Kingdom"
                       value={locationQuery}
                       onChangeText={setLocationQuery}
                     />
@@ -3291,25 +3419,80 @@ export default function ExploreScreen() {
                     Ghana-route accounts keep country locked to Ghana until precise location confirms you are outside Ghana.
                   </Text>
                 ) : null}
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.countryChips}>
-                  {COUNTRY_OPTIONS.map((c) => {
-                    const active = manualCountryCode === c.code;
-                    const disabled = isGhanaCountryLocked && c.code !== 'GH';
-                    return (
-                      <TouchableOpacity
-                        key={c.code}
-                        style={[styles.countryChip, active && styles.countryChipActive, disabled && { opacity: 0.45 }]}
-                        onPress={() => {
-                          if (disabled) return;
-                          setManualCountryCode(c.code);
-                        }}
-                        activeOpacity={0.85}
-                      >
-                        <Text style={[styles.countryChipText, active && styles.countryChipTextActive]}>{c.label}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
+                <TouchableOpacity
+                  style={[styles.countrySelectButton, isGhanaCountryLocked && styles.countrySelectButtonDisabled]}
+                  onPress={() => {
+                    if (isGhanaCountryLocked) return;
+                    setManualCountrySearch('');
+                    setManualCountryPickerOpen((current) => !current);
+                  }}
+                  activeOpacity={0.85}
+                  disabled={isGhanaCountryLocked}
+                >
+                  <View style={styles.countrySelectValue}>
+                    <Text style={[styles.countrySelectFlag, !selectedManualCountryFlag && styles.countrySelectFlagPlaceholder]}>
+                      {selectedManualCountryFlag || '--'}
+                    </Text>
+                    <View style={styles.countrySelectCopy}>
+                      <Text style={manualCountryCode ? styles.countrySelectLabel : styles.countrySelectPlaceholder}>
+                        {selectedManualCountry?.label || 'Select country'}
+                      </Text>
+                      <Text style={styles.countrySelectMeta}>
+                        {selectedManualCountry
+                          ? `${selectedManualCountry.dial} • ${selectedManualCountry.code}`
+                          : 'Used for local matching first'}
+                      </Text>
+                    </View>
+                  </View>
+                  <MaterialCommunityIcons name="chevron-down" size={20} color={theme.textMuted} />
+                </TouchableOpacity>
+                {manualCountryPickerOpen ? (
+                  <View style={styles.inlineCountryPickerPanel}>
+                    <View style={styles.countrySearchWrap}>
+                      <MaterialCommunityIcons name="magnify" size={18} color={theme.textMuted} />
+                      <TextInput
+                        value={manualCountrySearch}
+                        onChangeText={setManualCountrySearch}
+                        placeholder="Search country or code"
+                        placeholderTextColor={theme.textMuted}
+                        autoCapitalize="words"
+                        autoCorrect={false}
+                        style={styles.countrySearchInput}
+                      />
+                    </View>
+                    <ScrollView
+                      style={styles.inlineCountryPickerList}
+                      contentContainerStyle={styles.countryPickerListContent}
+                      keyboardShouldPersistTaps="handled"
+                      nestedScrollEnabled
+                    >
+                      {manualCountryOptions.map((country) => {
+                        const isSelected = manualCountryCode === country.code;
+                        return (
+                          <TouchableOpacity
+                            key={country.code}
+                            style={[styles.countryPickerItem, isSelected && styles.countryPickerItemSelected]}
+                            onPress={() => handleSelectManualCountry(country)}
+                            activeOpacity={0.85}
+                          >
+                            <View style={styles.countryPickerItemRow}>
+                              <Text style={styles.countryPickerItemFlag}>{toFlagEmoji(country.code) || '--'}</Text>
+                              <View style={styles.countryPickerItemCopy}>
+                                <Text style={[styles.countryPickerItemLabel, isSelected && styles.countryPickerItemLabelSelected]}>
+                                  {country.label}
+                                </Text>
+                                <Text style={styles.countryPickerItemMeta}>{`${country.dial} • ${country.code}`}</Text>
+                              </View>
+                            </View>
+                            {isSelected ? (
+                              <MaterialCommunityIcons name="check" size={20} color={theme.tint} />
+                            ) : null}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                ) : null}
 
                 <Text style={styles.modalLabel}>City</Text>
                 <TextInput
@@ -3345,7 +3528,8 @@ export default function ExploreScreen() {
               </View>
             </View>
           </KeyboardAvoidingView>
-        </Modal>
+      </Modal>
+
           <VibesAllMomentsModal
             visible={allMomentsVisible}
             onClose={() => setAllMomentsVisible(false)}
@@ -3689,7 +3873,6 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
   const placeholderText = isDark ? '#cbd5e1' : '#64748b';
   const pillBg = isDark ? 'rgba(255,255,255,0.06)' : '#f8fafc';
   const chipBg = isDark ? 'rgba(255,255,255,0.04)' : '#fff';
-  const chipActiveBg = isDark ? 'rgba(255,107,107,0.14)' : '#eef2ff';
   const toggleKnob = isDark ? '#1f2937' : '#e5e7eb';
   const modalBackdrop = isDark ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.35)';
   const badgeBg = isDark ? '#0b1220' : '#111827';
@@ -4354,19 +4537,153 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       backgroundColor: isDark ? 'rgba(8,18,28,0.68)' : 'rgba(255,255,255,0.74)',
     },
     modalLabel: { fontSize: 13, fontWeight: '700', color: theme.text, marginTop: 14, marginBottom: 8 },
-    countryChips: { paddingBottom: 2 },
-    countryChip: {
-      paddingHorizontal: 12,
-      paddingVertical: 8,
-      borderRadius: 999,
+    countrySelectButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
       borderWidth: 1,
       borderColor: outline,
+      borderRadius: 16,
+      paddingHorizontal: 12,
+      paddingVertical: 11,
       backgroundColor: chipBg,
-      marginRight: 8,
+      gap: 12,
     },
-    countryChipActive: { backgroundColor: chipActiveBg, borderColor: theme.tint },
-    countryChipText: { fontSize: 13, fontWeight: '600', color: theme.text },
-    countryChipTextActive: { color: theme.tint },
+    countrySelectButtonDisabled: {
+      opacity: 0.72,
+    },
+    countrySelectValue: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    countrySelectFlag: {
+      fontSize: 20,
+      width: 28,
+      textAlign: 'center',
+    },
+    countrySelectFlagPlaceholder: {
+      color: theme.textMuted,
+    },
+    countrySelectCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    countrySelectLabel: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: theme.text,
+    },
+    countrySelectPlaceholder: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: theme.textMuted,
+    },
+    countrySelectMeta: {
+      fontSize: 12,
+      color: theme.textMuted,
+    },
+    inlineCountryPickerPanel: {
+      marginTop: 10,
+      borderWidth: 1,
+      borderColor: outline,
+      borderRadius: 16,
+      backgroundColor: isDark ? 'rgba(8,18,28,0.72)' : 'rgba(255,255,255,0.82)',
+      overflow: 'hidden',
+    },
+    countryPickerContainer: {
+      flex: 1,
+    },
+    countryPickerHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 18,
+      paddingTop: 10,
+      paddingBottom: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: outline,
+    },
+    countryPickerHeaderAction: {
+      fontSize: 15,
+      fontWeight: '700',
+      color: theme.tint,
+      width: 56,
+    },
+    countryPickerHeaderTitle: {
+      fontSize: 17,
+      fontWeight: '800',
+      color: theme.text,
+    },
+    countrySearchWrap: {
+      marginHorizontal: 18,
+      marginTop: 14,
+      marginBottom: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      borderWidth: 1,
+      borderColor: outline,
+      borderRadius: 14,
+      paddingHorizontal: 12,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.78)',
+    },
+    countrySearchInput: {
+      flex: 1,
+      minHeight: 44,
+      fontSize: 15,
+      color: theme.text,
+    },
+    countryPickerList: {
+      flex: 1,
+    },
+    inlineCountryPickerList: {
+      maxHeight: 240,
+    },
+    countryPickerListContent: {
+      paddingHorizontal: 18,
+      paddingBottom: 32,
+    },
+    countryPickerItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: outline,
+      gap: 12,
+    },
+    countryPickerItemSelected: {
+      backgroundColor: isDark ? 'rgba(17,197,198,0.06)' : 'rgba(255,248,241,0.9)',
+    },
+    countryPickerItemRow: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+    },
+    countryPickerItemFlag: {
+      fontSize: 22,
+      width: 28,
+      textAlign: 'center',
+    },
+    countryPickerItemCopy: {
+      flex: 1,
+      gap: 2,
+    },
+    countryPickerItemLabel: {
+      fontSize: 15,
+      fontWeight: '700',
+      color: theme.text,
+    },
+    countryPickerItemLabelSelected: {
+      color: theme.tint,
+    },
+    countryPickerItemMeta: {
+      fontSize: 12,
+      color: theme.textMuted,
+    },
     modalPreviewRow: {
       marginTop: 2,
       paddingHorizontal: 14,

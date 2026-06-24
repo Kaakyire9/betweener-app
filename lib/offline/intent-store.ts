@@ -1,6 +1,8 @@
 import {
   peekOfflineData,
   removeOfflineEnvelope,
+  updateOfflineEnvelope,
+  readOfflineState,
   writeOfflineEnvelope,
 } from '@/lib/offline/core';
 import { readOfflineSnapshot } from '@/lib/offline/chat-store';
@@ -33,8 +35,21 @@ export async function readIntentRequestsSnapshot<T>(profileId: string): Promise<
   return readOfflineSnapshot<T>(buildIntentRequestsStoreKey(profileId));
 }
 
+export async function readIntentRequestsSnapshotState<T>(profileId: string) {
+  return readOfflineState<T>(buildIntentRequestsStoreKey(profileId));
+}
+
 export async function writeIntentRequestsSnapshot<T>(profileId: string, data: T): Promise<void> {
   await writeIntentRequestsEnvelope(profileId, data);
+}
+
+export async function updateIntentRequestsSnapshot<T>(
+  profileId: string,
+  updater: (current: T | null) => T | null | Promise<T | null>,
+): Promise<T | null> {
+  return updateOfflineEnvelope<T>(buildIntentRequestsStoreKey(profileId), updater, {
+    kind: 'intent-requests-snapshot',
+  });
 }
 
 export async function removeIntentRequestsSnapshot(profileId: string): Promise<void> {

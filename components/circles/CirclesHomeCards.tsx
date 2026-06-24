@@ -255,15 +255,21 @@ const resolveHomeGatheringCardMetrics = ({
 
 function GatheringTypeBadge({
   label,
+  palette,
   styles,
 }: {
   label: string;
+  palette: CircleHomePalette;
   styles: CircleHomeStyles;
 }) {
   const isOnline = label === 'Online';
   return (
     <LinearGradient
-      colors={isOnline ? ['rgba(60, 214, 124, 0.24)', 'rgba(19, 184, 113, 0.12)'] : ['rgba(49, 227, 198, 0.18)', 'rgba(49, 227, 198, 0.1)']}
+      colors={
+        isOnline
+          ? (palette.dark ? ['rgba(60, 214, 124, 0.24)', 'rgba(19, 184, 113, 0.12)'] : ['rgba(60, 214, 124, 0.18)', 'rgba(60, 214, 124, 0.08)'])
+          : (palette.dark ? ['rgba(49, 227, 198, 0.18)', 'rgba(49, 227, 198, 0.1)'] : ['rgba(0, 128, 128, 0.16)', 'rgba(0, 128, 128, 0.08)'])
+      }
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={styles.gatheringTypePill}
@@ -301,7 +307,7 @@ function GatheringFooter({
         {showPrimaryTitle ? <Text style={styles.featuredTitle}>{gathering.title}</Text> : null}
         <View style={styles.gatheringMetaRow}>
           <Text style={styles.featuredBody}>{metrics.locationLabel}</Text>
-          {metrics.gatheringTypeLabel ? <GatheringTypeBadge label={metrics.gatheringTypeLabel} styles={styles} /> : null}
+          {metrics.gatheringTypeLabel ? <GatheringTypeBadge label={metrics.gatheringTypeLabel} palette={palette} styles={styles} /> : null}
         </View>
         <View style={styles.gatheringUtilityRow}>
           <View style={styles.gatheringCountdownPill}>
@@ -388,7 +394,14 @@ function GeneralGatheringHomeCard({
             style={styles.gatheringPosterCinemaImage}
             accessibilityLabel={`${gathering.title} Gathering poster`}
           />
-          <LinearGradient colors={['rgba(4,12,14,0.04)', 'rgba(4,12,14,0.22)', 'rgba(4,12,14,0.88)']} style={styles.gatheringPosterCinemaOverlay} />
+          <LinearGradient
+            colors={
+              palette.dark
+                ? ['rgba(4,12,14,0.04)', 'rgba(4,12,14,0.22)', 'rgba(4,12,14,0.88)']
+                : ['rgba(255,249,243,0.04)', 'rgba(31,42,42,0.12)', 'rgba(31,42,42,0.58)']
+            }
+            style={styles.gatheringPosterCinemaOverlay}
+          />
           <View style={styles.gatheringPosterCinemaTop}>
             <Text style={styles.gatheringPosterCinemaKicker}>Upcoming Gathering</Text>
             <View style={styles.gatheringPosterCinemaDateBadge}>
@@ -460,7 +473,7 @@ function SeatLinkedGatheringHomeCard({
 }) {
   return (
     <>
-      <LinearGradient colors={['rgba(19,168,168,0.26)', 'rgba(8,37,42,0.96)']} style={styles.gatheringAvatarCinemaShell}>
+      <LinearGradient colors={palette.gatheringGradient} style={styles.gatheringAvatarCinemaShell}>
         <View style={styles.gatheringAvatarCinemaTop}>
           <Text style={styles.gatheringHostPill}>Host-led invitation</Text>
           <Text style={styles.gatheringSeatContextPill}>{metrics.seatContextLabel}</Text>
@@ -1046,10 +1059,10 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 8,
     paddingVertical: 4,
-    color: '#F4E8D0',
-    backgroundColor: 'rgba(7,30,34,0.74)',
+    color: palette.overlayText,
+    backgroundColor: palette.dark ? 'rgba(7,30,34,0.74)' : 'rgba(31,42,42,0.48)',
     borderWidth: 1,
-    borderColor: 'rgba(244,232,208,0.16)',
+    borderColor: palette.dark ? 'rgba(244,232,208,0.16)' : 'rgba(255,255,255,0.28)',
     fontSize: 10,
     fontWeight: '800',
   },
@@ -1059,13 +1072,13 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(7,30,34,0.62)',
+    backgroundColor: palette.dark ? 'rgba(7,30,34,0.62)' : 'rgba(31,42,42,0.42)',
     borderWidth: 1,
-    borderColor: 'rgba(244,232,208,0.16)',
+    borderColor: palette.dark ? 'rgba(244,232,208,0.16)' : 'rgba(255,255,255,0.22)',
   },
   circleCardBody: { padding: 12, gap: 10 },
-  cardTitle: { flex: 1, color: '#F4E8D0', fontSize: 15, fontWeight: '800' },
-  cardMeta: { color: 'rgba(244,232,208,0.6)', fontSize: 11 },
+  cardTitle: { flex: 1, color: palette.overlayText, fontSize: 15, fontWeight: '800' },
+  cardMeta: { color: palette.dark ? 'rgba(244,232,208,0.6)' : 'rgba(255,255,255,0.82)', fontSize: 11 },
   cardBody: { color: palette.textSoft, fontSize: 12, lineHeight: 17 },
   cardActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   softBadge: { color: palette.teal, fontSize: 11, fontWeight: '800' },
@@ -1285,7 +1298,7 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     width: 140,
     height: 140,
     borderRadius: 70,
-    backgroundColor: 'rgba(123,97,255,0.18)',
+    backgroundColor: palette.purpleSoft,
   },
   gistPanelOrbAlt: {
     position: 'absolute',
@@ -1294,7 +1307,7 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     width: 110,
     height: 110,
     borderRadius: 55,
-    backgroundColor: 'rgba(71,226,217,0.12)',
+    backgroundColor: palette.tealSoft,
   },
   gistGlassRail: {
     position: 'absolute',
@@ -1303,9 +1316,9 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     right: 12,
     height: 42,
     borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.025)',
+    backgroundColor: palette.dark ? 'rgba(255,255,255,0.025)' : 'rgba(255,255,255,0.52)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.07)',
+    borderColor: palette.dark ? 'rgba(255,255,255,0.07)' : palette.outlineSoft,
   },
   gistContent: { gap: 10 },
   gistCaption: { color: palette.textSoft, fontSize: 12, lineHeight: 18 },
@@ -1317,17 +1330,17 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: palette.dark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.76)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: palette.dark ? 'rgba(255,255,255,0.08)' : palette.outlineSoft,
   },
   gistMetaText: { color: palette.textSoft, fontSize: 11, fontWeight: '800' },
   gistScrollShell: {
     marginTop: 2,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.075)',
-    backgroundColor: 'rgba(5,18,24,0.38)',
+    borderColor: palette.dark ? 'rgba(255,255,255,0.075)' : palette.outlineSoft,
+    backgroundColor: palette.dark ? 'rgba(5,18,24,0.38)' : 'rgba(255,255,255,0.68)',
     overflow: 'hidden',
   },
   gistScrollViewport: {
@@ -1348,7 +1361,7 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     paddingHorizontal: 14,
     paddingBottom: 10,
     paddingTop: 2,
-    backgroundColor: 'rgba(255,255,255,0.02)',
+    backgroundColor: palette.dark ? 'rgba(255,255,255,0.02)' : 'rgba(255,255,255,0.44)',
   },
   gistScrollHint: { color: palette.textMuted, fontSize: 10, fontWeight: '700' },
   gistFooterRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: 6 },
@@ -1359,9 +1372,9 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 9,
     borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.065)',
+    backgroundColor: palette.dark ? 'rgba(255,255,255,0.065)' : 'rgba(255,255,255,0.76)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.075)',
+    borderColor: palette.dark ? 'rgba(255,255,255,0.075)' : palette.outlineSoft,
   },
   gistSaveButtonText: { color: palette.textSoft, fontSize: 12, fontWeight: '800' },
   gistLensButton: {
@@ -1371,9 +1384,9 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderRadius: 999,
-    backgroundColor: 'rgba(6,24,27,0.44)',
+    backgroundColor: palette.dark ? 'rgba(6,24,27,0.44)' : palette.tealSoft,
     borderWidth: 1,
-    borderColor: 'rgba(105,239,230,0.42)',
+    borderColor: palette.tealBorder,
   },
   gistLensButtonStatic: { opacity: 0.92 },
   gistLensButtonText: { color: palette.text, fontSize: 12, fontWeight: '800' },
@@ -1392,8 +1405,8 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     borderRadius: 24,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderColor: palette.dark ? 'rgba(255,255,255,0.08)' : palette.outline,
+    backgroundColor: palette.dark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.62)',
   },
   gatheringPosterCinemaImage: { width: '100%', height: '100%' },
   gatheringPosterCinemaOverlay: { ...StyleSheet.absoluteFillObject },
@@ -1409,7 +1422,7 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
   },
   gatheringPosterCinemaKicker: {
     alignSelf: 'flex-start',
-    color: '#F4E8D0',
+    color: palette.overlayText,
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 1.8,
@@ -1417,9 +1430,9 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
-    backgroundColor: 'rgba(7,30,34,0.56)',
+    backgroundColor: palette.dark ? 'rgba(7,30,34,0.56)' : 'rgba(31,42,42,0.36)',
     borderWidth: 1,
-    borderColor: 'rgba(244,232,208,0.14)',
+    borderColor: palette.dark ? 'rgba(244,232,208,0.14)' : 'rgba(255,255,255,0.24)',
   },
   gatheringPosterCinemaDateBadge: {
     width: 84,
@@ -1427,9 +1440,9 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     paddingVertical: 11,
     paddingHorizontal: 10,
     alignItems: 'center',
-    backgroundColor: 'rgba(7,30,34,0.72)',
+    backgroundColor: palette.dark ? 'rgba(7,30,34,0.72)' : 'rgba(31,42,42,0.44)',
     borderWidth: 1,
-    borderColor: 'rgba(244,232,208,0.14)',
+    borderColor: palette.dark ? 'rgba(244,232,208,0.14)' : 'rgba(255,255,255,0.24)',
     gap: 4,
   },
   gatheringPosterCinemaBottom: {
@@ -1440,7 +1453,7 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     gap: 8,
   },
   gatheringPosterCinemaSynopsis: {
-    color: '#F4E8D0',
+    color: palette.overlayText,
     fontSize: 14,
     lineHeight: 21,
     fontWeight: '700',
@@ -1449,7 +1462,7 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     textShadowRadius: 10,
   },
   gatheringPosterCinemaTitle: {
-    color: '#F4E8D0',
+    color: palette.overlayText,
     fontSize: 27,
     lineHeight: 32,
     fontFamily: 'PlayfairDisplay_700Bold',
@@ -1460,7 +1473,7 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
   gatheringAvatarCinemaShell: {
     borderRadius: 24,
     borderWidth: 1,
-    borderColor: 'rgba(113,86,255,0.22)',
+    borderColor: palette.purpleBorder,
     padding: 16,
     gap: 14,
   },
@@ -1474,9 +1487,9 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 7,
     borderRadius: 999,
-    backgroundColor: 'rgba(113,86,255,0.18)',
+    backgroundColor: palette.purpleSoft,
     borderWidth: 1,
-    borderColor: 'rgba(113,86,255,0.3)',
+    borderColor: palette.purpleBorder,
   },
   gatheringHostPill: {
     color: palette.textSoft,
@@ -1485,9 +1498,9 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 7,
     borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: palette.dark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.72)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: palette.dark ? 'rgba(255,255,255,0.08)' : palette.outlineSoft,
   },
   gatheringAvatarCinemaBody: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   gatheringAvatarCinemaBodyInteractive: { borderRadius: 20 },
@@ -1497,7 +1510,7 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     height: 82,
     borderRadius: 41,
     padding: 3,
-    backgroundColor: 'rgba(113,86,255,0.52)',
+    backgroundColor: palette.dark ? 'rgba(113,86,255,0.52)' : 'rgba(139,92,255,0.28)',
   },
   gatheringAvatarCinemaImage: { width: '100%', height: '100%', borderRadius: 38, backgroundColor: palette.surfaceMuted },
   gatheringAvatarCinemaFallback: {
@@ -1506,9 +1519,9 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     borderRadius: 41,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: palette.dark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.72)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: palette.dark ? 'rgba(255,255,255,0.12)' : palette.outlineSoft,
   },
   gatheringAvatarCinemaCopy: { flex: 1, gap: 5, minWidth: 0 },
   gatheringAvatarCinemaName: { color: palette.text, fontSize: 22, lineHeight: 28, fontFamily: 'PlayfairDisplay_700Bold' },
@@ -1520,14 +1533,14 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 10,
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: palette.dark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.72)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: palette.dark ? 'rgba(255,255,255,0.12)' : palette.outlineSoft,
     gap: 5,
   },
   gatheringPosterMonth: { color: palette.tealStrong, fontSize: 11, fontWeight: '900', letterSpacing: 1.4 },
   gatheringPosterDay: { color: palette.text, fontSize: 30, lineHeight: 34, fontWeight: '900' },
-  gatheringPosterDivider: { width: '100%', height: 1, backgroundColor: 'rgba(255,255,255,0.1)' },
+  gatheringPosterDivider: { width: '100%', height: 1, backgroundColor: palette.dark ? 'rgba(255,255,255,0.1)' : palette.outlineSoft },
   gatheringPosterTime: { color: palette.textSoft, fontSize: 11, fontWeight: '700' },
   gatheringHeroCopy: { flex: 1, gap: 8 },
   gatheringFeatureCopy: { gap: 8 },
@@ -1538,11 +1551,11 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: 'rgba(53,214,131,0.34)',
+    borderColor: palette.tealBorder,
     overflow: 'hidden',
   },
   gatheringTypePillText: { color: palette.teal, fontSize: 11, fontWeight: '900' },
-  gatheringTypePillTextOnline: { color: '#D7FFE8' },
+  gatheringTypePillTextOnline: { color: palette.dark ? '#D7FFE8' : palette.tealStrong },
   gatheringUtilityRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
   gatheringCountdownPill: {
     alignSelf: 'flex-start',
@@ -1562,9 +1575,9 @@ const createStyles = (palette: CirclePulsePalette) => StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
-    backgroundColor: 'rgba(113,86,255,0.22)',
+    backgroundColor: palette.purpleSoft,
     borderWidth: 1,
-    borderColor: 'rgba(113,86,255,0.28)',
+    borderColor: palette.purpleBorder,
     overflow: 'hidden',
   },
   gatheringSocialRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },

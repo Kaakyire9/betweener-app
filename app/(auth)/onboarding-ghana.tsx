@@ -3,6 +3,7 @@ import Notice from "@/components/ui/Notice";
 import { useAuth } from "@/lib/auth-context";
 import { haptics } from "@/lib/haptics";
 import { isLikelyNetworkError } from "@/lib/network";
+import { useStepValidationGuidance } from "@/lib/onboarding/use-step-validation-guidance";
 import { normalizeOtherText, replaceOtherInList, resolveOtherValue } from "@/lib/profile/other-option";
 import { RELIGION_LABELS, isReligionEnumError, normalizeReligionForProfile } from "@/lib/profile/religion";
 import { type ResponsiveMetrics, useResponsiveMetrics } from "@/lib/responsive";
@@ -118,7 +119,11 @@ const OCCUPATION_OPTIONS = [
 ];
 
 const ONBOARDING_STEPS = [
-  { id: 'welcome', title: 'Where connection begins', subtitle: 'A more intentional way to meet' },
+  {
+    id: 'welcome',
+    title: '🇬🇭 Ghana Diaspora Connections',
+    subtitle: 'A more intentional way to meet',
+  },
   { id: 'basic', title: 'Basic Info', subtitle: 'Tell us about yourself' },
   { id: 'photo', title: 'Profile Photo', subtitle: 'Show your best self' },
   { id: 'location', title: 'Location', subtitle: 'Where are you from?' },
@@ -126,6 +131,14 @@ const ONBOARDING_STEPS = [
   { id: 'dating', title: 'Dating', subtitle: 'Your ideal match' },
   { id: 'complete', title: 'Complete', subtitle: "You're all set!" }
 ];
+
+const STEP_FIELD_ORDER = {
+  1: ["fullName", "age", "gender", "bio", "occupation"],
+  2: ["profilePic"],
+  3: ["region", "roots", "rootsNote", "religion"],
+  4: ["interests"],
+  5: ["minAgeInterest", "maxAgeInterest"],
+} as const;
 
 export default function Onboarding() {
   const router = useRouter();
@@ -162,6 +175,13 @@ export default function Onboarding() {
   const [submitDebugId, setSubmitDebugId] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const submitAttemptRef = useRef(0);
+  const { errorSummary, onFieldLayout, revealValidationErrors, setStepScrollRef } =
+    useStepValidationGuidance({
+      currentStep,
+      errors,
+      fieldOrderByStep: STEP_FIELD_ORDER,
+      scrollOffset: 28,
+    });
 
   useEffect(() => {
     let active = true;
@@ -289,8 +309,22 @@ export default function Onboarding() {
     }
 
     setErrors(newErrors);
+    if (Object.keys(newErrors).length > 0) {
+      revealValidationErrors(step, newErrors);
+    }
     return Object.keys(newErrors).length === 0;
   };
+
+  const renderValidationNotice = () =>
+    errorSummary ? (
+      <Notice
+        title="Finish the highlighted details"
+        message={errorSummary}
+        icon="alert-circle-outline"
+        actionLabel="Show me"
+        onAction={() => revealValidationErrors(currentStep, errors)}
+      />
+    ) : null;
 
   const handleNext = () => {
     if (currentStep === 0) {
@@ -311,7 +345,8 @@ export default function Onboarding() {
     // Validate all steps before final submission
     for (let step = 1; step <= ONBOARDING_STEPS.length - 2; step++) {
       if (!validateStep(step)) {
-        setMessage("Please complete all required fields.");
+        setCurrentStep(step);
+        setMessage("");
         return;
       }
     }
@@ -923,7 +958,12 @@ export default function Onboarding() {
 
   const renderBasicInfoStep = () => (
     <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.formScrollContent}>
+      <ScrollView
+        ref={(node) => setStepScrollRef(1, node)}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.formScrollContent}
+      >
+        {renderValidationNotice()}
         <View style={styles.formCard}>
           <LinearGradient
             colors={["rgba(255,255,255,0.96)", "rgba(238,226,212,0.96)"]}
@@ -931,7 +971,7 @@ export default function Onboarding() {
             end={{ x: 1, y: 1 }}
             style={styles.formCardInner}
           >
-            <View style={styles.inputContainer}>
+            <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(1, "fullName", event)}>
               <View style={styles.labelRow}>
                 <Text style={styles.labelInline}>Name</Text>
                 <View style={styles.requiredBadge}>
@@ -955,7 +995,10 @@ export default function Onboarding() {
             </View>
 
             <View style={styles.inputRow}>
-              <View style={[styles.inputContainer, { flex: 1 }]}>
+              <View
+                style={[styles.inputContainer, { flex: 1 }]}
+                onLayout={(event) => onFieldLayout(1, "age", event)}
+              >
                 <View style={styles.labelRow}>
                   <Text style={styles.labelInline}>Age</Text>
                   <View style={styles.requiredBadge}>
@@ -980,7 +1023,7 @@ export default function Onboarding() {
               </View>
             </View>
 
-            <View style={styles.inputContainer}>
+            <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(1, "gender", event)}>
               <View style={styles.labelRow}>
                 <Text style={styles.labelInline}>Gender</Text>
                 <View style={styles.requiredBadge}>
@@ -1011,7 +1054,7 @@ export default function Onboarding() {
               {errors.gender && <Text style={styles.errorText}>{errors.gender}</Text>}
             </View>
 
-            <View style={styles.inputContainer}>
+            <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(1, "bio", event)}>
               <View style={styles.labelRow}>
                 <Text style={styles.labelInline}>Bio</Text>
                 <View style={styles.requiredBadge}>
@@ -1037,7 +1080,7 @@ export default function Onboarding() {
               {errors.bio && <Text style={styles.errorText}>{errors.bio}</Text>}
             </View>
 
-            <View style={styles.inputContainer}>
+            <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(1, "occupation", event)}>
               <View style={styles.labelRow}>
                 <Text style={styles.labelInline}>Occupation</Text>
                 <View style={styles.requiredBadge}>
@@ -1103,6 +1146,7 @@ export default function Onboarding() {
 
   const renderPhotoStep = () => (
     <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+      {renderValidationNotice()}
       <View style={styles.photoContainer}>
         <TouchableOpacity onPress={pickImage} style={styles.photoUpload}>
           <View style={styles.photoPreview}>
@@ -1126,7 +1170,8 @@ export default function Onboarding() {
 
   const renderLocationStep = () => (
     <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView ref={(node) => setStepScrollRef(3, node)} showsVerticalScrollIndicator={false}>
+        {renderValidationNotice()}
         <View style={styles.inputContainer}>
           <View style={styles.labelRow}>
             <Text style={styles.labelInline}>Current Country</Text>
@@ -1138,7 +1183,7 @@ export default function Onboarding() {
         </View>
 
         {/* Ghana-specific fields */}
-        <View style={styles.inputContainer}>
+        <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(3, "region", event)}>
           <View style={styles.labelRow}>
             <Text style={styles.labelInline}>
               Region
@@ -1171,7 +1216,7 @@ export default function Onboarding() {
           {errors.region && <Text style={styles.errorText}>{errors.region}</Text>}
         </View>
 
-        <View style={styles.inputContainer}>
+        <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(3, "roots", event)}>
           <View style={styles.labelRow}>
             <Text style={styles.labelInline}>Roots</Text>
             <View style={styles.requiredBadge}>
@@ -1208,7 +1253,7 @@ export default function Onboarding() {
           {errors.roots && <Text style={styles.errorText}>{errors.roots}</Text>}
         </View>
 
-        <View style={styles.inputContainer}>
+        <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(3, "rootsNote", event)}>
           <View style={styles.labelRow}>
             <Text style={styles.labelInline}>How you identify</Text>
           </View>
@@ -1235,7 +1280,7 @@ export default function Onboarding() {
           {errors.rootsNote ? <Text style={styles.errorText}>{errors.rootsNote}</Text> : null}
         </View>
 
-        <View style={styles.inputContainer}>
+        <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(3, "religion", event)}>
           <View style={styles.labelRow}>
             <Text style={styles.labelInline}>Roots visibility</Text>
           </View>
@@ -1301,8 +1346,9 @@ export default function Onboarding() {
 
   const renderPreferencesStep = () => (
     <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <View style={styles.inputContainer}>
+      <ScrollView ref={(node) => setStepScrollRef(4, node)} showsVerticalScrollIndicator={false}>
+        {renderValidationNotice()}
+        <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(4, "interests", event)}>
           <View style={styles.labelRow}>
             <Text style={styles.labelInline}>Interests</Text>
             <View style={styles.requiredBadge}>
@@ -1339,8 +1385,9 @@ export default function Onboarding() {
 
   const renderDatingStep = () => (
     <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <View style={styles.inputContainer}>
+      <ScrollView ref={(node) => setStepScrollRef(5, node)} showsVerticalScrollIndicator={false}>
+        {renderValidationNotice()}
+        <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(5, "minAgeInterest", event)}>
           <View style={styles.labelRow}>
             <Text style={styles.labelInline}>Age Preference</Text>
             <View style={styles.requiredBadge}>

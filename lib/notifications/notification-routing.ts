@@ -214,6 +214,15 @@ export function buildNotificationRoute(
     };
   }
 
+  if (pushType === "profile_gift" && data?.gift_id) {
+    return {
+      pathname: "/profile-insights",
+      params: {
+        giftId: String(data.gift_id),
+      },
+    };
+  }
+
   if (pushType === "relationship_compass_ready") {
     return { pathname: "/relationship-compass" };
   }

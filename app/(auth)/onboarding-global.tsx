@@ -11,6 +11,7 @@ import {
 } from "@/lib/location/countries";
 import { toFlagEmoji } from "@/lib/location/location-display";
 import { isLikelyNetworkError } from "@/lib/network";
+import { useStepValidationGuidance } from "@/lib/onboarding/use-step-validation-guidance";
 import { normalizeOtherText, resolveOtherValue } from "@/lib/profile/other-option";
 import { RELIGION_LABELS, isReligionEnumError, normalizeReligionForProfile } from "@/lib/profile/religion";
 import { type ResponsiveMetrics, useResponsiveMetrics } from "@/lib/responsive";
@@ -104,7 +105,11 @@ const OCCUPATION_OPTIONS = [
 ];
 
 const ONBOARDING_STEPS = [
-  { id: 'welcome', title: 'Where connection begins', subtitle: 'A more intentional way to meet' },
+  {
+    id: 'welcome',
+    title: '🌍 Where worlds apart feel closer',
+    subtitle: 'A more intentional way to meet',
+  },
   { id: 'basic', title: 'Basic Info', subtitle: 'Tell us about yourself' },
   { id: 'photo', title: 'Profile Photo', subtitle: 'Show your best self' },
   { id: 'location', title: 'Location', subtitle: 'Where are you from?' },
@@ -112,6 +117,14 @@ const ONBOARDING_STEPS = [
   { id: 'dating', title: 'Dating', subtitle: 'Your ideal match' },
   { id: 'complete', title: 'Complete', subtitle: "You're all set!" }
 ];
+
+const STEP_FIELD_ORDER = {
+  1: ["fullName", "age", "gender", "bio", "occupation"],
+  2: ["profilePic"],
+  3: ["currentCountry", "region", "tribe", "religion"],
+  4: ["interests"],
+  5: ["minAgeInterest", "maxAgeInterest"],
+} as const;
 
 export default function Onboarding() {
   const router = useRouter();
@@ -152,6 +165,13 @@ export default function Onboarding() {
   const [submitDebugId, setSubmitDebugId] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
   const submitAttemptRef = useRef(0);
+  const { errorSummary, onFieldLayout, revealValidationErrors, setStepScrollRef } =
+    useStepValidationGuidance({
+      currentStep,
+      errors,
+      fieldOrderByStep: STEP_FIELD_ORDER,
+      scrollOffset: 28,
+    });
   const selectedCountry = useMemo(
     () => findCountryByLabel(form.currentCountry),
     [form.currentCountry],
@@ -308,8 +328,22 @@ export default function Onboarding() {
     }
 
     setErrors(newErrors);
+    if (Object.keys(newErrors).length > 0) {
+      revealValidationErrors(step, newErrors);
+    }
     return Object.keys(newErrors).length === 0;
   };
+
+  const renderValidationNotice = () =>
+    errorSummary ? (
+      <Notice
+        title="Finish the highlighted details"
+        message={errorSummary}
+        icon="alert-circle-outline"
+        actionLabel="Show me"
+        onAction={() => revealValidationErrors(currentStep, errors)}
+      />
+    ) : null;
 
   const handleNext = () => {
     if (currentStep === 0) {
@@ -330,7 +364,8 @@ export default function Onboarding() {
     // Validate all steps before final submission
     for (let step = 1; step <= ONBOARDING_STEPS.length - 2; step++) {
       if (!validateStep(step)) {
-        setMessage("Please complete all required fields.");
+        setCurrentStep(step);
+        setMessage("");
         return;
       }
     }
@@ -488,6 +523,19 @@ export default function Onboarding() {
         Alert.alert("Error", "Please select your gender before continuing.");
         return;
       }
+
+      const resolvedCurrentCountryOption =
+        findCountryByLabel(form.currentCountry) ??
+        inferCountryFromPhoneNumber(phoneNumber);
+      const resolvedCurrentCountry =
+        resolvedCurrentCountryOption?.label ?? form.currentCountry.trim();
+      const resolvedCurrentCountryCode =
+        resolvedCurrentCountryOption?.code ?? getCountryCodeByName(form.currentCountry);
+
+      if (!resolvedCurrentCountry || !resolvedCurrentCountryCode) {
+        Alert.alert("Error", "Please select your current country before continuing.");
+        return;
+      }
       
       const profileData = {
         full_name: form.fullName,
@@ -495,7 +543,7 @@ export default function Onboarding() {
         gender: form.gender.toUpperCase() as any,
         bio: form.bio,
         occupation: resolveOtherValue(form.occupation, customOccupation),
-        region: form.region,
+        region: null,
         tribe: resolveOtherValue(form.tribe, customTribe),
         religion: normalizeReligionForProfile(form.religion) as any,
         avatar_url: imageUrl,
@@ -504,16 +552,17 @@ export default function Onboarding() {
         min_age_interest: Number(form.minAgeInterest),
         max_age_interest: Number(form.maxAgeInterest),
         city: null,
-        location: form.currentCountry,
-        current_country: form.currentCountry,
-        current_country_code: getCountryCodeByName(form.currentCountry),
-        origin_country: form.originCountry || (form.currentCountry === "Ghana" ? "Ghana" : null),
+        location: resolvedCurrentCountry,
+        location_precision: "CITY" as const,
+        current_country: resolvedCurrentCountry,
+        current_country_code: resolvedCurrentCountryCode,
+        origin_country: form.originCountry || (resolvedCurrentCountry === "Ghana" ? "Ghana" : null),
         origin_country_code: form.originCountry
           ? getCountryCodeByName(form.originCountry)
-          : form.currentCountry === "Ghana"
+          : resolvedCurrentCountry === "Ghana"
             ? "GH"
             : null,
-        origin_country_source: form.originCountry ? "explicit" : form.currentCountry === "Ghana" ? "residence_backfill" : "unknown",
+        origin_country_source: form.originCountry ? "explicit" : resolvedCurrentCountry === "Ghana" ? "residence_backfill" : "unknown",
         years_in_diaspora: 0,
         profile_completed: true,
         identity_status: "active",
@@ -927,7 +976,12 @@ export default function Onboarding() {
 
   const renderBasicInfoStep = () => (
     <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.formScrollContent}>
+      <ScrollView
+        ref={(node) => setStepScrollRef(1, node)}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.formScrollContent}
+      >
+        {renderValidationNotice()}
         <View style={styles.formCard}>
           <LinearGradient
             colors={["rgba(255,255,255,0.96)", "rgba(238,226,212,0.96)"]}
@@ -935,7 +989,7 @@ export default function Onboarding() {
             end={{ x: 1, y: 1 }}
             style={styles.formCardInner}
           >
-            <View style={styles.inputContainer}>
+            <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(1, "fullName", event)}>
               <View style={styles.labelRow}>
                 <Text style={styles.labelInline}>Name</Text>
                 <View style={styles.requiredBadge}>
@@ -959,7 +1013,10 @@ export default function Onboarding() {
             </View>
 
             <View style={styles.inputRow}>
-              <View style={[styles.inputContainer, { flex: 1 }]}>
+              <View
+                style={[styles.inputContainer, { flex: 1 }]}
+                onLayout={(event) => onFieldLayout(1, "age", event)}
+              >
                 <View style={styles.labelRow}>
                   <Text style={styles.labelInline}>Age</Text>
                   <View style={styles.requiredBadge}>
@@ -984,7 +1041,7 @@ export default function Onboarding() {
               </View>
             </View>
 
-            <View style={styles.inputContainer}>
+            <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(1, "gender", event)}>
               <View style={styles.labelRow}>
                 <Text style={styles.labelInline}>Gender</Text>
                 <View style={styles.requiredBadge}>
@@ -1015,7 +1072,7 @@ export default function Onboarding() {
               {errors.gender && <Text style={styles.errorText}>{errors.gender}</Text>}
             </View>
 
-            <View style={styles.inputContainer}>
+            <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(1, "bio", event)}>
               <View style={styles.labelRow}>
                 <Text style={styles.labelInline}>Bio</Text>
                 <View style={styles.requiredBadge}>
@@ -1041,7 +1098,7 @@ export default function Onboarding() {
               {errors.bio && <Text style={styles.errorText}>{errors.bio}</Text>}
             </View>
 
-            <View style={styles.inputContainer}>
+            <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(1, "occupation", event)}>
               <View style={styles.labelRow}>
                 <Text style={styles.labelInline}>Occupation</Text>
                 <View style={styles.requiredBadge}>
@@ -1107,6 +1164,7 @@ export default function Onboarding() {
 
   const renderPhotoStep = () => (
     <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
+      {renderValidationNotice()}
       <View style={styles.photoContainer}>
         <TouchableOpacity onPress={pickImage} style={styles.photoUpload}>
           <View style={styles.photoPreview}>
@@ -1207,8 +1265,9 @@ export default function Onboarding() {
 
   const renderLocationStep = () => (
     <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <View style={styles.inputContainer}>
+      <ScrollView ref={(node) => setStepScrollRef(3, node)} showsVerticalScrollIndicator={false}>
+        {renderValidationNotice()}
+        <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(3, "currentCountry", event)}>
           <View style={styles.labelRow}>
             <Text style={styles.labelInline}>Current Country</Text>
             <View style={styles.requiredBadge}>
@@ -1242,7 +1301,7 @@ export default function Onboarding() {
           {errors.currentCountry && <Text style={styles.errorText}>{errors.currentCountry}</Text>}
         </View>
 
-        <View style={styles.inputContainer}>
+        <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(3, "region", event)}>
           <View style={styles.labelRow}>
             <Text style={styles.labelInline}>Origin Country</Text>
             <View style={styles.optionalBadge}>
@@ -1277,9 +1336,9 @@ export default function Onboarding() {
           </Text>
         </View>
 
-        <View style={styles.inputContainer}>
+        <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(3, "tribe", event)}>
           <View style={styles.labelRow}>
-            <Text style={styles.labelInline}>Region</Text>
+            <Text style={styles.labelInline}>Global Region</Text>
             <View style={styles.requiredBadge}>
               <Text style={styles.requiredBadgeText}>Required</Text>
             </View>
@@ -1305,10 +1364,13 @@ export default function Onboarding() {
               </TouchableOpacity>
             ))}
           </View>
+          <Text style={styles.countryHelperText}>
+            This helps with diaspora matching. It is not used as your displayed location.
+          </Text>
           {errors.region && <Text style={styles.errorText}>{errors.region}</Text>}
         </View>
 
-        <View style={styles.inputContainer}>
+        <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(3, "religion", event)}>
           <View style={styles.labelRow}>
             <Text style={styles.labelInline}>Cultural background</Text>
             <View style={styles.requiredBadge}>
@@ -1402,8 +1464,9 @@ export default function Onboarding() {
 
   const renderPreferencesStep = () => (
     <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <View style={styles.inputContainer}>
+      <ScrollView ref={(node) => setStepScrollRef(4, node)} showsVerticalScrollIndicator={false}>
+        {renderValidationNotice()}
+        <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(4, "interests", event)}>
           <View style={styles.labelRow}>
             <Text style={styles.labelInline}>Interests</Text>
             <View style={styles.requiredBadge}>
@@ -1440,8 +1503,9 @@ export default function Onboarding() {
 
   const renderDatingStep = () => (
     <Animated.View style={[styles.stepContainer, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <View style={styles.inputContainer}>
+      <ScrollView ref={(node) => setStepScrollRef(5, node)} showsVerticalScrollIndicator={false}>
+        {renderValidationNotice()}
+        <View style={styles.inputContainer} onLayout={(event) => onFieldLayout(5, "minAgeInterest", event)}>
           <View style={styles.labelRow}>
             <Text style={styles.labelInline}>Age Preference</Text>
             <View style={styles.requiredBadge}>

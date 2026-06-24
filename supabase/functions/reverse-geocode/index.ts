@@ -14,11 +14,11 @@ type ReverseGeocodeRequest = {
 }
 
 const buildLocationLabel = (city?: string, region?: string, country?: string) => {
-  if (city && region) return `${city}, ${region}`
   if (city && country) return `${city}, ${country}`
+  if (city && region) return `${city}, ${stripAdministrativeSuffix(region) || region}`
   if (city) return city
-  if (region && country) return `${region}, ${country}`
-  return region || country || ''
+  if (country) return country
+  return stripAdministrativeSuffix(region) || region || ''
 }
 
 const normalizePlace = (value?: string | null) =>
