@@ -1,17 +1,26 @@
 import { DiasporaVerification } from "@/components/DiasporaVerification";
+import GiftArtwork from "@/components/gifts/GiftArtwork";
+import GiftRevealSheet from "@/components/gifts/GiftRevealSheet";
+import { markSystemInboxItemsRead } from '@/hooks/useInbox';
 import OfflineImage from "@/components/media/OfflineImage";
 import PhotoGallery from "@/components/PhotoGallery";
+import PremiumSyncNotice from "@/components/profile/PremiumSyncNotice";
 import ProfileEditModal from "@/components/ProfileEditModal";
 import { VerificationBadge } from "@/components/VerificationBadge";
+import { PremiumPlanBadge } from "@/components/PremiumPlanBadge";
 import { VerificationNudgeCard } from "@/components/VerificationNudgeCard";
 import { VerificationNotifications } from "@/components/VerificationNotifications";
 import ProfileVideoModal from "@/components/ProfileVideoModal";
 import { Colors } from "@/constants/theme";
 import { useColorScheme, useColorSchemePreference } from "@/hooks/use-color-scheme";
+import { usePremiumOfflineQueueStatus } from "@/hooks/usePremiumOfflineQueueStatus";
 import { useVerificationStatus } from "@/hooks/use-verification-status";
 import { useAuth } from "@/lib/auth-context";
+import { logProfileGiftEvent } from "@/lib/gifts/events";
 import { canAccessAdminTools } from "@/lib/internal-tools";
 import { buildLocationDisplay } from "@/lib/location/location-display";
+import { usePremiumState } from "@/hooks/use-premium-state";
+import { getSafeRemoteImageUri, getUserFacingDisplayName } from "@/lib/profile/display-name";
 import {
   migrateLegacyMeProfileSnapshot,
   readMeProfileSnapshot,
@@ -22,6 +31,12 @@ import {
 } from "@/lib/offline/me-store";
 import { cacheOfflineVideo, getOfflineVideoUri } from "@/lib/offline/video-store";
 import {
+  readProfileInsightsSnapshotState,
+  updateProfileInsightsSnapshot,
+  type OfflineProfileInsightsGiftItem,
+} from "@/lib/offline/profile-insights-store";
+import {
+  enqueueProfileGiftRevealMutation,
   enqueueNotificationPrefsUpdateMutation,
   getOfflineMutationQueueSnapshot,
   getPendingProfileMediaSyncMutation,
@@ -76,7 +91,6 @@ import * as Haptics from "expo-haptics";
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const LINKED_METHODS_BANNER_DISMISSED_KEY = 'linked_methods_banner_dismissed_v1';
 const VERIFICATION_NUDGE_DISMISSED_KEY_PREFIX = 'verification_nudge_dismissed_v1';
-
 type AuthCallbackParams = Record<string, string | undefined>;
 
 const mergeAuthParamsFromUrl = (target: AuthCallbackParams, url: string) => {
@@ -148,6 +162,7 @@ type NotificationPrefs = {
   inapp_enabled: boolean;
   messages: boolean;
   message_reactions: boolean;
+  profile_interest: boolean;
   reactions: boolean;
   likes: boolean;
   superlikes: boolean;
@@ -161,6 +176,43 @@ type NotificationPrefs = {
   quiet_hours_end: string;
   quiet_hours_tz: string;
 };
+
+type ReceivedGiftItem = {
+  id: string;
+  senderId: string;
+  senderProfileId?: string | null;
+  senderName: string;
+  senderAvatar?: string | null;
+  senderGender?: string | null;
+  giftType: string;
+  createdAt: string;
+  openedAt?: string | null;
+  revealedAt?: string | null;
+  archivedAt?: string | null;
+};
+
+const mapOfflineInsightGiftToReceivedGift = (
+  gift: OfflineProfileInsightsGiftItem,
+): ReceivedGiftItem => ({
+  id: gift.id,
+  senderId: gift.senderProfileId ?? gift.id,
+  senderProfileId: gift.senderProfileId ?? null,
+  senderName: gift.senderName,
+  senderAvatar: gift.senderAvatar ?? null,
+  senderGender: gift.senderGender ?? null,
+  giftType: gift.giftType,
+  createdAt: gift.createdAt,
+  openedAt: gift.openedAt ?? null,
+  revealedAt: gift.revealedAt ?? null,
+  archivedAt: gift.archivedAt ?? null,
+});
+
+const normalizeGiftType = (value?: string | null) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized || '';
+};
+
+const GIFT_SYSTEM_ENTITY_TYPES = ['profile_gift_revealed', 'profile_gift_archived'];
 
 const normalizeMeProfileStatsSnapshot = (
   stats: Partial<MeProfileStatsSnapshot>,
@@ -193,6 +245,33 @@ const sanitizeLinkedProviderList = (value: unknown): string[] =>
         ),
       )
     : [];
+
+const formatMembershipDate = (value: string | null) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  return new Intl.DateTimeFormat(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(parsed);
+};
+
+const formatRelativeSignalTime = (value?: string | null) => {
+  if (!value) return '';
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return '';
+  const diffMs = Math.max(0, Date.now() - parsed);
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return 'Now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return formatMembershipDate(value) ?? '';
+};
 
 const stringListEqual = (left: string[], right: string[]) =>
   left.length === right.length && left.every((value, index) => value === right[index]);
@@ -428,6 +507,7 @@ const NOTIFICATION_CONTROL_OPTIONS = [
 ] as const;
 
 const NOTIFICATION_OPTIONAL_OPTIONS = [
+  { key: 'profile_interest', label: 'Profile interest', body: 'Control who can surface curiosity, revisits, and saves around your profile.', icon: 'account-search-outline' },
   { key: 'moments', label: 'Moments', body: 'Stay close to comments and reactions on your posts.', icon: 'image-multiple-outline' },
   { key: 'verification', label: 'Verification updates', body: 'Get trust and review progress privately.', icon: 'shield-check-outline' },
   { key: 'announcements', label: 'Announcements', body: 'Hear about meaningful product changes and releases.', icon: 'bullhorn-outline' },
@@ -606,6 +686,8 @@ export default function ProfileScreen() {
   const params = useLocalSearchParams();
   const { status: verificationStatus, refreshStatus } = useVerificationStatus(profile?.user_id);
   const { preference: themePreference, setPreference: setThemePreference } = useColorSchemePreference();
+  const { currentPlan, currentPlanEndsAt } = usePremiumState();
+  const premiumQueue = usePremiumOfflineQueueStatus();
   
   const [selectedPrompts, setSelectedPrompts] = useState<Record<string, number>>({
     two_truths_lie: 0,
@@ -741,6 +823,7 @@ export default function ProfileScreen() {
     inapp_enabled: true,
     messages: true,
     message_reactions: true,
+    profile_interest: true,
     reactions: true,
     likes: true,
     superlikes: true,
@@ -758,6 +841,8 @@ export default function ProfileScreen() {
   const [likesCount, setLikesCount] = useState(0);
   const [matchesCount, setMatchesCount] = useState(0);
   const [chatsCount, setChatsCount] = useState(0);
+  const [receivedGifts, setReceivedGifts] = useState<ReceivedGiftItem[]>([]);
+  const [selectedReceivedGift, setSelectedReceivedGift] = useState<ReceivedGiftItem | null>(null);
   const [matchQuality, setMatchQuality] = useState<number | null>(null);
   const [profileSyncPending, setProfileSyncPending] = useState(false);
   const [profileSyncFailed, setProfileSyncFailed] = useState(false);
@@ -778,6 +863,11 @@ export default function ProfileScreen() {
   const [rewardText, setRewardText] = useState<string | null>(null);
   const [progressTrackWidth, setProgressTrackWidth] = useState(0);
   const canSeeAdminTools = canAccessAdminTools(user?.email ?? null);
+  const visibleReceivedGifts = useMemo(
+    () => receivedGifts.filter((gift) => !gift.revealedAt && !gift.archivedAt),
+    [receivedGifts],
+  );
+  const visibleReceivedGiftsCount = visibleReceivedGifts.length;
 
   const progressSubtitle = useMemo(() => {
     if (profileCompletion.percent >= 100) return "Profile complete";
@@ -785,6 +875,139 @@ export default function ProfileScreen() {
     if (profileCompletion.percent >= 50) return "Shaping your presence";
     return "Start with your best details";
   }, [profileCompletion.percent]);
+
+  const openReceivedGiftReveal = useCallback(async (gift: ReceivedGiftItem) => {
+    if (user?.id) {
+      void markSystemInboxItemsRead(user.id, GIFT_SYSTEM_ENTITY_TYPES);
+    }
+    const revealedAt = new Date().toISOString();
+    const previousGifts = receivedGifts;
+    const nextGiftOptimistic: ReceivedGiftItem = {
+      ...gift,
+      openedAt: gift.openedAt ?? revealedAt,
+      revealedAt: gift.revealedAt ?? revealedAt,
+    };
+    const optimisticGifts = receivedGifts.map((row) =>
+      row.id === nextGiftOptimistic.id ? nextGiftOptimistic : row,
+    );
+
+    setReceivedGifts(optimisticGifts);
+    if (profile?.id) {
+      void updateProfileInsightsSnapshot(profile.id, (current) => {
+        if (!current) return current;
+        const nextArchive = current.giftArchive.map((row) =>
+          row.id === nextGiftOptimistic.id
+            ? {
+                ...row,
+                openedAt: nextGiftOptimistic.openedAt ?? row.openedAt ?? null,
+                revealedAt: nextGiftOptimistic.revealedAt ?? row.revealedAt ?? null,
+                archivedAt: nextGiftOptimistic.archivedAt ?? row.archivedAt ?? null,
+              }
+            : row,
+        );
+        return {
+          ...current,
+          giftSummary: {
+            ...current.giftSummary,
+            waitingCount: nextArchive.filter((row) => !row.revealedAt && !row.archivedAt).length,
+          },
+          giftArchive: nextArchive,
+        };
+      });
+    }
+
+    const { data, error } = await supabase.rpc('rpc_reveal_profile_gift' as any, {
+      p_gift_id: gift.id,
+    });
+
+    if (error) {
+      if (isLikelyNetworkError(error)) {
+        await enqueueProfileGiftRevealMutation({ giftId: gift.id });
+        setSelectedReceivedGift(nextGiftOptimistic);
+        return;
+      }
+      console.error('Error revealing gift:', error);
+      setReceivedGifts(previousGifts);
+      if (profile?.id) {
+        void updateProfileInsightsSnapshot(profile.id, (current) => {
+          if (!current) return current;
+          return {
+            ...current,
+            giftSummary: {
+              ...current.giftSummary,
+              waitingCount: previousGifts.filter((row) => !row.revealedAt && !row.archivedAt).length,
+            },
+            giftArchive: previousGifts,
+          };
+        });
+      }
+      Alert.alert('Unable to open gift', 'Please try again.');
+      return;
+    }
+
+    const nextGift: ReceivedGiftItem = {
+      ...nextGiftOptimistic,
+      openedAt:
+        typeof (data as any)?.opened_at === 'string' ? (data as any).opened_at : (nextGiftOptimistic.openedAt ?? null),
+      revealedAt:
+        typeof (data as any)?.revealed_at === 'string' ? (data as any).revealed_at : (nextGiftOptimistic.revealedAt ?? null),
+      archivedAt:
+        typeof (data as any)?.archived_at === 'string' ? (data as any).archived_at : (nextGiftOptimistic.archivedAt ?? null),
+    };
+
+    setReceivedGifts((prev) =>
+      prev.map((row) => (row.id === nextGift.id ? nextGift : row)),
+    );
+    if (profile?.id) {
+      void updateProfileInsightsSnapshot(profile.id, (current) => {
+        if (!current) return current;
+        const nextArchive = current.giftArchive.map((row) =>
+          row.id === nextGift.id
+            ? {
+                ...row,
+                openedAt: nextGift.openedAt ?? row.openedAt ?? null,
+                revealedAt: nextGift.revealedAt ?? row.revealedAt ?? null,
+                archivedAt: nextGift.archivedAt ?? row.archivedAt ?? null,
+              }
+            : row,
+        );
+        return {
+          ...current,
+          giftSummary: {
+            ...current.giftSummary,
+            waitingCount: nextArchive.filter((row) => !row.revealedAt && !row.archivedAt).length,
+          },
+          giftArchive: nextArchive,
+        };
+      });
+    }
+    setSelectedReceivedGift(nextGift);
+  }, [profile?.id, receivedGifts]);
+
+  useEffect(() => {
+    if (!profile?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const cachedInsights = await readProfileInsightsSnapshotState(profile.id);
+        if (cancelled) return;
+
+        if (!cachedInsights.data?.giftArchive?.length) return;
+        setReceivedGifts((current) =>
+          current.length === 0
+            ? cachedInsights.data!.giftArchive
+                .slice(0, 8)
+                .map(mapOfflineInsightGiftToReceivedGift)
+            : current,
+        );
+      } catch {
+        // Ignore cached snapshot read failures.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.id]);
 
   const nextPrompt = useMemo(() => {
     const missing = profileCompletion.missing;
@@ -845,6 +1068,7 @@ export default function ProfileScreen() {
       await loadPromptAnswers();
       await loadUserPhotos();
       await fetchProfileStats();
+      await fetchReceivedGifts();
       console.log('Profile manually refreshed');
     } catch (error) {
       console.error('Error refreshing profile:', error);
@@ -1171,10 +1395,10 @@ export default function ProfileScreen() {
   }, [applyPromptAnswers, profile?.id, writeMeSnapshot]);
 
   // Fetch user interests from profile_interests table
-  const fetchUserInterests = async () => {
+  const fetchUserInterests = useCallback(async () => {
     const pid = profile?.id ?? null;
     if (!pid) return;
-    
+
     try {
       setLoadingInterests(true);
       const { data, error } = await supabase
@@ -1185,9 +1409,9 @@ export default function ProfileScreen() {
           )
         `)
         .eq('profile_id', pid);
-      
+
       if (error) return;
-      
+
       const interests = data?.map(item => (item as any).interests.name) || [];
       setUserInterests(interests);
       writeMeSnapshot({ interests });
@@ -1196,12 +1420,12 @@ export default function ProfileScreen() {
     } finally {
       setLoadingInterests(false);
     }
-  };
+  }, [profile?.id, writeMeSnapshot]);
 
   // Load user photos from profile and storage
-  const loadUserPhotos = async () => {
+  const loadUserPhotos = useCallback(async () => {
     if (!user?.id) return;
-    
+
     try {
       const pendingMedia = await getPendingProfileMediaSyncMutation(user.id);
       const pendingPhotos = normalizeProfilePhotoList(pendingMedia?.payload.photos || []);
@@ -1238,7 +1462,7 @@ export default function ProfileScreen() {
               .getPublicUrl(`${user.id}/${file.name}`);
             return data.publicUrl;
           });
-        
+
         const nextPhotos = mergeUniqueMediaUris(photoUrls, pendingPhotos);
         setUserPhotos(nextPhotos);
         writeMeSnapshot({ photos: nextPhotos });
@@ -1252,7 +1476,12 @@ export default function ProfileScreen() {
     } catch (error) {
       console.error('Error loading photos:', error);
     }
-  };
+  }, [
+    profile?.id,
+    JSON.stringify((profile as any)?.photos || []),
+    user?.id,
+    writeMeSnapshot,
+  ]);
 
   const fetchProfileStats = useCallback(async () => {
     if (!profile?.id || !user?.id) {
@@ -1355,6 +1584,117 @@ export default function ProfileScreen() {
     commitProfileStatsSnapshot(nextStats);
   }, [commitProfileStatsSnapshot, profile?.id, user?.id]);
 
+  const fetchReceivedGifts = useCallback(async () => {
+    if (!profile?.id) {
+      setReceivedGifts([]);
+      return;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('profile_gifts')
+        .select('id,sender_id,sender_profile_id,sender_display_name,sender_avatar_url,sender_gender,gift_type,created_at,opened_at,revealed_at,archived_at,sender_profile:profiles!profile_gifts_sender_profile_id_fkey(id,full_name,username,avatar_url,gender,account_state,deleted_at)')
+        .eq('profile_id', profile.id)
+        .order('created_at', { ascending: false })
+        .limit(8);
+
+      if (error) throw error;
+
+      const rows = (data || []) as {
+        id: string;
+        sender_id: string;
+        sender_profile_id?: string | null;
+        sender_display_name?: string | null;
+        sender_avatar_url?: string | null;
+        sender_gender?: string | null;
+        sender_profile?: {
+          id?: string | null;
+          full_name?: string | null;
+          username?: string | null;
+          avatar_url?: string | null;
+          gender?: string | null;
+          account_state?: string | null;
+          deleted_at?: string | null;
+        } | null;
+        gift_type: string;
+        created_at: string;
+        opened_at?: string | null;
+        revealed_at?: string | null;
+        archived_at?: string | null;
+      }[];
+
+      const unresolvedSenderIds = Array.from(
+        new Set(
+          rows
+            .filter((row) => {
+              const snapshotName = String(row.sender_display_name || '').trim().toLowerCase();
+              return snapshotName.length === 0 || snapshotName === 'someone';
+            })
+            .map((row) => String(row.sender_id || '').trim())
+            .filter(Boolean),
+        ),
+      );
+
+      let fallbackSenderProfilesByUserId = new Map<string, {
+        id?: string | null;
+        full_name?: string | null;
+        username?: string | null;
+        avatar_url?: string | null;
+        gender?: string | null;
+        account_state?: string | null;
+        deleted_at?: string | null;
+      }>();
+
+      if (unresolvedSenderIds.length > 0) {
+        const { data: senderProfiles, error: senderProfilesError } = await supabase
+          .from('profiles')
+          .select('id,user_id,full_name,username,avatar_url,gender,account_state,deleted_at')
+          .in('user_id', unresolvedSenderIds);
+
+        if (senderProfilesError) {
+          console.error('Error hydrating fallback gift sender profiles:', senderProfilesError);
+        } else {
+          fallbackSenderProfilesByUserId = new Map(
+            ((senderProfiles || []) as any[]).map((item) => [String(item.user_id), item]),
+          );
+        }
+      }
+
+      setReceivedGifts(rows.map((row) => {
+        const relationSenderProfile = Array.isArray((row as any).sender_profile)
+          ? (row as any).sender_profile[0] ?? null
+          : (row as any).sender_profile ?? null;
+        const senderProfile =
+          relationSenderProfile ??
+          fallbackSenderProfilesByUserId.get(String(row.sender_id || '').trim()) ??
+          null;
+        const snapshotName = String(row.sender_display_name || '').trim();
+        const senderName =
+          snapshotName.length > 0 && snapshotName.toLowerCase() !== 'someone'
+            ? snapshotName
+            : getUserFacingDisplayName(senderProfile, 'New admirer');
+
+        return {
+          id: row.id,
+          senderId: row.sender_id,
+          senderProfileId: row.sender_profile_id ?? senderProfile?.id ?? null,
+          senderName,
+          senderAvatar: getSafeRemoteImageUri(row.sender_avatar_url ?? senderProfile?.avatar_url ?? null),
+          senderGender: row.sender_gender ?? senderProfile?.gender ?? null,
+          giftType: normalizeGiftType(row.gift_type),
+          createdAt: row.created_at,
+          openedAt: row.opened_at ?? null,
+          revealedAt: row.revealed_at ?? null,
+          archivedAt: row.archived_at ?? null,
+        };
+      }));
+    } catch (error) {
+      if (!isLikelyNetworkError(error)) {
+        console.warn('Error loading received gifts:', error);
+      }
+    }
+  }, [profile?.id]);
+
   // Remove photo function
   const removePhoto = async (index: number) => {
     if (!user?.id || index < 0 || index >= userPhotos.length) return;
@@ -1410,13 +1750,14 @@ export default function ProfileScreen() {
 
   // Load user interests and photos when component mounts or profile changes
   useEffect(() => {
-    if (profile && user?.id) {
+    if (profile?.id && user?.id) {
       fetchUserInterests();
       loadUserPhotos();
       loadPromptAnswers();
       void fetchProfileStats();
+      void fetchReceivedGifts();
     }
-  }, [profile, user?.id, loadPromptAnswers, fetchProfileStats]);
+  }, [fetchProfileStats, fetchReceivedGifts, fetchUserInterests, loadPromptAnswers, loadUserPhotos, profile?.id, user?.id]);
 
   const loadNotificationPrefs = useCallback(async () => {
     if (!user?.id) return;
@@ -1424,7 +1765,7 @@ export default function ProfileScreen() {
     const { data, error } = await supabase
       .from('notification_prefs')
       .select(
-        'push_enabled,inapp_enabled,messages,message_reactions,reactions,likes,superlikes,matches,moments,verification,announcements,preview_text,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
+        'push_enabled,inapp_enabled,messages,message_reactions,profile_interest,reactions,likes,superlikes,matches,moments,verification,announcements,preview_text,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,quiet_hours_tz',
       )
       .eq('user_id', user.id)
       .maybeSingle();
@@ -1440,6 +1781,7 @@ export default function ProfileScreen() {
         inapp_enabled: Boolean(data.inapp_enabled),
         messages: Boolean(data.messages),
         message_reactions: Boolean(data.message_reactions),
+        profile_interest: (data as any)?.profile_interest !== false,
         reactions: Boolean(data.reactions),
         likes: Boolean(data.likes),
         superlikes: Boolean(data.superlikes),
@@ -2741,6 +3083,7 @@ export default function ProfileScreen() {
 
   const locationPresentation = buildLocationDisplay(profile as Record<string, any>, { surface: 'profile' });
   const locationDisplay = locationPresentation.withFlag || 'Location not set';
+  const personalPremiumPlan = currentPlan === 'FREE' ? null : currentPlan;
   const verificationLevel =
     (profile as any)?.verification_level
     ?? (profile as any)?.verificationLevel
@@ -2793,6 +3136,22 @@ export default function ProfileScreen() {
   const presence = getPresenceDisplay((profile as any)?.last_active ?? (profile as any)?.lastActive);
   const showPresence = presence.showPresence;
   const presenceLabel = presence.label;
+  const premiumExpiryReminder = useMemo(() => {
+    if (currentPlan === 'FREE' || !currentPlanEndsAt) return null;
+    const endsAtTs = Date.parse(currentPlanEndsAt);
+    if (Number.isNaN(endsAtTs)) return null;
+    const diffMs = endsAtTs - Date.now();
+    const diffDays = Math.ceil(diffMs / 86400000);
+    if (diffDays < 0 || diffDays > 7) return null;
+
+    const formattedEndsAt = formatMembershipDate(currentPlanEndsAt);
+    return {
+      title: diffDays <= 1 ? `${currentPlan} renews within 24 hours` : `${currentPlan} renews in ${diffDays} days`,
+      body: formattedEndsAt
+        ? `Review your membership before ${formattedEndsAt} so your premium signals stay uninterrupted.`
+        : 'Review your membership so your premium signals stay uninterrupted.',
+    };
+  }, [currentPlan, currentPlanEndsAt]);
   const aboutMeText = rawBio || 'Add a few lines about you.';
   const showAboutCard = !!rawBio && rawBio !== displayBio;
   const qualityLabel = useMemo(() => {
@@ -2974,18 +3333,47 @@ export default function ProfileScreen() {
           </Text>
         </View>
         <View style={styles.headerRight}>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={styles.previewButton}
+            onPress={() => router.push('/profile-insights')}
+            accessibilityRole="button"
+            accessibilityLabel="Open Profile Insights"
+          >
+            <MaterialCommunityIcons
+              name="chart-timeline-variant-shimmer"
+              size={18}
+              color={theme.accent}
+            />
+            <Text style={[styles.previewButtonText, { color: theme.accent }]}>
+              Insights
+            </Text>
+            {visibleReceivedGiftsCount > 0 ? (
+              <View
+                style={[
+                  styles.previewButtonBadge,
+                  {
+                    backgroundColor: isDark ? 'rgba(20, 184, 166, 0.18)' : `${theme.tint}18`,
+                    borderColor: isDark ? 'rgba(20, 184, 166, 0.28)' : `${theme.tint}2E`,
+                  },
+                ]}
+              >
+                <Text style={[styles.previewButtonBadgeText, { color: theme.accent }]}>
+                  {visibleReceivedGiftsCount > 9 ? '9+' : visibleReceivedGiftsCount}
+                </Text>
+              </View>
+            ) : null}
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.insightsButton}
             onPress={handlePreviewPress}
+            accessibilityRole="button"
+            accessibilityLabel="Open profile preview"
           >
             <MaterialCommunityIcons 
               name="eye"
-              size={20} 
+              size={18} 
               color={theme.tint}
             />
-            <Text style={[styles.previewButtonText, { color: theme.tint }]}>
-              Full Preview
-            </Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.settingsButton, showSettingsDropdown && styles.settingsButtonActive]}
@@ -4601,10 +4989,180 @@ export default function ProfileScreen() {
 
           <View style={styles.heroLocationRow}>
             <MaterialCommunityIcons name="map-marker" size={16} color={theme.tint} />
-            <Text style={[styles.locationText, { color: theme.textMuted }]}>
+            <Text style={[styles.locationText, { color: theme.textMuted }]} numberOfLines={1}>
               {locationDisplay}
             </Text>
+            {personalPremiumPlan ? (
+              <PremiumPlanBadge
+                plan={personalPremiumPlan}
+                style={styles.heroPremiumBadgeInline}
+              />
+            ) : null}
           </View>
+
+          {premiumExpiryReminder ? (
+            <View
+              style={[
+                styles.premiumReminderCard,
+                {
+                  backgroundColor: isDark ? 'rgba(24, 40, 46, 0.92)' : theme.backgroundSubtle,
+                  borderColor: isDark ? 'rgba(255,255,255,0.08)' : theme.outline,
+                },
+              ]}
+            >
+              <View style={styles.premiumReminderCopy}>
+                <Text style={[styles.premiumReminderTitle, { color: theme.text }]}>
+                  {premiumExpiryReminder.title}
+                </Text>
+                <Text style={[styles.premiumReminderBody, { color: theme.textMuted }]}>
+                  {premiumExpiryReminder.body}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[
+                  styles.premiumReminderAction,
+                  { borderColor: theme.outline, backgroundColor: theme.background },
+                ]}
+                onPress={() => router.push('/premium-plans')}
+              >
+                <Text style={[styles.premiumReminderActionText, { color: theme.tint }]}>Review</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
+          {premiumQueue.visible ? (
+            <PremiumSyncNotice
+              theme={theme}
+              isDark={isDark}
+              title={premiumQueue.title}
+              message={premiumQueue.message}
+              failedCount={premiumQueue.failedCount}
+              pendingCount={premiumQueue.pendingCount}
+              onPress={() => {
+                if (premiumQueue.hasFailed) {
+                  void premiumQueue.retryFailed();
+                  return;
+                }
+                router.push('/sync-activity');
+              }}
+            />
+          ) : null}
+
+          {visibleReceivedGiftsCount > 0 ? (
+            <View
+              style={[
+                styles.receivedGiftsCard,
+                { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
+              ]}
+            >
+              <View style={styles.receivedGiftsHeader}>
+                <View style={styles.receivedGiftsHeaderCopy}>
+                  <Text style={[styles.receivedGiftsEyebrow, { color: theme.tint }]}>
+                    Gifted signals
+                  </Text>
+                  <Text style={[styles.receivedGiftsTitle, { color: theme.text }]}>
+                    {visibleReceivedGiftsCount === 1 ? 'A premium surprise is waiting' : 'Premium surprises are waiting'}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.receivedGiftsCountPill,
+                    {
+                      backgroundColor: isDark ? 'rgba(20, 184, 166, 0.12)' : `${theme.tint}14`,
+                      borderColor: isDark ? 'rgba(20, 184, 166, 0.22)' : `${theme.tint}24`,
+                    },
+                  ]}
+                >
+                  <MaterialCommunityIcons name="gift-outline" size={14} color={theme.tint} />
+                  <Text style={[styles.receivedGiftsCountText, { color: theme.tint }]}>
+                    {visibleReceivedGiftsCount}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.receivedGiftsList}>
+                {visibleReceivedGifts.map((gift) => {
+                  return (
+                    <TouchableOpacity
+                      key={gift.id}
+                      style={[
+                        styles.receivedGiftRow,
+                        {
+                          backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : theme.background,
+                          borderColor: theme.outline,
+                        },
+                      ]}
+                      activeOpacity={0.9}
+                      onPress={() => openReceivedGiftReveal(gift)}
+                    >
+                      <View style={styles.receivedGiftSender}>
+                        {gift.senderAvatar ? (
+                          <OfflineImage
+                            uri={gift.senderAvatar}
+                            style={styles.receivedGiftAvatar}
+                            cachePolicy="memory-disk"
+                          />
+                        ) : (
+                          <View
+                            style={[
+                              styles.receivedGiftAvatarFallback,
+                              { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : `${theme.tint}18` },
+                            ]}
+                          >
+                            <Text style={[styles.receivedGiftAvatarInitials, { color: theme.text }]}>
+                              {gift.senderName.slice(0, 1).toUpperCase()}
+                            </Text>
+                          </View>
+                        )}
+                        <View style={styles.receivedGiftCopy}>
+                          <Text style={[styles.receivedGiftSenderName, { color: theme.text }]} numberOfLines={1}>
+                            {gift.senderName}
+                          </Text>
+                          <Text style={[styles.receivedGiftMessage, { color: theme.text }]}>
+                            sent you something special
+                          </Text>
+                          <Text style={[styles.receivedGiftTimestamp, { color: theme.textMuted }]}>
+                            {formatRelativeSignalTime(gift.createdAt)}
+                          </Text>
+                        </View>
+                      </View>
+
+                      <View
+                        style={[
+                          styles.receivedGiftTypePill,
+                          {
+                            backgroundColor: isDark ? 'rgba(46,214,194,0.10)' : `${theme.tint}0D`,
+                            borderColor: isDark ? 'rgba(46,214,194,0.24)' : `${theme.tint}24`,
+                          },
+                        ]}
+                      >
+                        <GiftArtwork giftType={gift.giftType} size={44} animate={false} />
+                        <View style={styles.receivedGiftTypeCopy}>
+                          <Text style={[styles.receivedGiftTypeText, { color: theme.text }]}>
+                            Gift waiting
+                          </Text>
+                          <Text style={[styles.receivedGiftTypeHint, { color: theme.textMuted }]}>
+                            Tap to reveal
+                          </Text>
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <TouchableOpacity
+                style={[styles.receivedGiftsAction, { borderColor: theme.outline, backgroundColor: theme.background }]}
+                activeOpacity={0.86}
+                onPress={() => router.push('/profile-insights')}
+              >
+                <Text style={[styles.receivedGiftsActionText, { color: theme.tint }]}>
+                  Open in Insights
+                </Text>
+                <MaterialCommunityIcons name="arrow-right" size={14} color={theme.tint} />
+              </TouchableOpacity>
+            </View>
+          ) : null}
 
           {profileSyncPending || profileSyncFailed ? (
             <View
@@ -4749,69 +5307,6 @@ export default function ProfileScreen() {
                   <MaterialCommunityIcons name="chevron-right" size={14} color={theme.textMuted} />
                 </TouchableOpacity>
               ) : null}
-          </View>
-
-          <View style={styles.insightsSection}>
-            <View style={styles.insightsSectionHeader}>
-              <View>
-                <Text style={[styles.insightsEyebrow, { color: theme.tint }]}>INSIGHTS</Text>
-                <Text style={[styles.insightsTitle, { color: theme.text }]}>Your profile, understood</Text>
-              </View>
-              <MaterialCommunityIcons name="chart-timeline-variant-shimmer" size={22} color={theme.accent} />
-            </View>
-            <View style={[styles.insightsList, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
-              {[
-                {
-                  id: 'profile-interest',
-                  title: 'Profile Interest',
-                  body: 'See how people engage with your profile.',
-                  icon: 'heart-eye-outline',
-                  onPress: () => router.push('/profile-interest'),
-                },
-                {
-                  id: 'profile-strength',
-                  title: 'Profile Strength',
-                  body: `${profileCompletion.percent}% complete`,
-                  icon: 'shield-star-outline',
-                  onPress: () => setShowEditModal(true),
-                },
-                {
-                  id: 'intent-signals',
-                  title: 'Intent Signals',
-                  body: 'Review thoughtful openings and requests.',
-                  icon: 'target',
-                  onPress: () => router.push('/(tabs)/intent'),
-                },
-                {
-                  id: 'compatibility',
-                  title: 'Compatibility Insights',
-                  body: 'Refine the values shaping your recommendations.',
-                  icon: 'compass-rose',
-                  onPress: () => router.push('/relationship-compass'),
-                },
-              ].map((item, index) => (
-                <TouchableOpacity
-                  key={item.id}
-                  activeOpacity={0.86}
-                  onPress={item.onPress}
-                  style={[
-                    styles.insightsRow,
-                    index < 3 ? { borderBottomColor: theme.outline, borderBottomWidth: StyleSheet.hairlineWidth } : null,
-                  ]}
-                >
-                  <View style={[styles.insightsRowIcon, { backgroundColor: theme.background }]}>
-                    <MaterialCommunityIcons name={item.icon as any} size={18} color={theme.tint} />
-                  </View>
-                  <View style={styles.insightsRowCopy}>
-                    <Text style={[styles.insightsRowTitle, { color: theme.text }]}>{item.title}</Text>
-                    <Text style={[styles.insightsRowBody, { color: theme.textMuted }]} numberOfLines={1}>
-                      {item.body}
-                    </Text>
-                  </View>
-                  <MaterialCommunityIcons name="chevron-right" size={18} color={theme.textMuted} />
-                </TouchableOpacity>
-              ))}
-            </View>
           </View>
 
           {featuredPrompt ? (
@@ -5856,6 +6351,36 @@ export default function ProfileScreen() {
           }}
         />
       )}
+        <GiftRevealSheet
+          visible={Boolean(selectedReceivedGift)}
+          senderAvatar={selectedReceivedGift?.senderAvatar ?? null}
+          senderName={selectedReceivedGift?.senderName ?? 'Gift signal'}
+          senderGender={selectedReceivedGift?.senderGender ?? null}
+          giftType={selectedReceivedGift?.giftType}
+          timeLabel={
+            selectedReceivedGift
+              ? formatRelativeSignalTime(
+                  selectedReceivedGift.revealedAt ?? selectedReceivedGift.createdAt,
+                )
+              : ''
+          }
+          onClose={() => setSelectedReceivedGift(null)}
+        onViewProfile={
+          selectedReceivedGift?.senderProfileId
+            ? () => {
+                const nextGift = selectedReceivedGift;
+                void logProfileGiftEvent({
+                  giftId: nextGift.id,
+                  eventType: 'sender_profile_opened',
+                  metadata: { surface: 'me_profile' },
+                });
+                const nextProfileId = nextGift.senderProfileId;
+                setSelectedReceivedGift(null);
+                router.push({ pathname: '/profile-view', params: { profileId: String(nextProfileId) } });
+              }
+            : undefined
+        }
+      />
     </SafeAreaView>
   );
 }
@@ -5949,27 +6474,52 @@ const styles = StyleSheet.create({
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 8,
+  },
+  insightsButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'transparent',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
   },
   previewButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 20,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 18,
     backgroundColor: 'transparent',
     borderWidth: 1,
     gap: 6,
   },
+  previewButtonBadge: {
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 5,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewButtonBadgeText: {
+    fontSize: 10,
+    lineHeight: 10,
+    fontFamily: 'Archivo_700Bold',
+    letterSpacing: 0.2,
+  },
   previewButtonText: {
-    fontSize: 14,
+    fontSize: 13,
     fontFamily: 'Manrope_600SemiBold',
     color: Colors.light.tint,
   },
   settingsButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
@@ -6156,12 +6706,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     flexWrap: 'wrap',
-    gap: 10,
-    marginTop: 14,
+    gap: 8,
+    marginTop: 10,
   },
   heroInlineVerificationBadge: {
     transform: [{ translateY: 1 }],
-    marginHorizontal: 2,
+    marginHorizontal: 1,
   },
   heroVerificationButton: {
     width: '100%',
@@ -6210,28 +6760,28 @@ const styles = StyleSheet.create({
   presenceBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginLeft: 2,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    gap: 5,
+    marginLeft: 1,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
     borderRadius: 999,
     borderWidth: 1,
   },
   presenceDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
   },
   presenceText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
   profileName: {
     flexShrink: 1,
     minWidth: 0,
     maxWidth: '88%',
-    fontSize: 29,
-    lineHeight: 35,
+    fontSize: 28,
+    lineHeight: 33,
     fontFamily: 'PlayfairDisplay_700Bold',
     color: '#111827',
     textAlign: 'center',
@@ -6240,13 +6790,184 @@ const styles = StyleSheet.create({
   heroLocationRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginTop: 6,
+    gap: 5,
+    marginTop: 4,
+    flexWrap: 'wrap',
   },
   locationText: {
-    fontSize: 13,
+    flexShrink: 1,
+    fontSize: 12.5,
     fontFamily: 'Manrope_400Regular',
     color: '#6b7280',
+  },
+  heroPremiumBadgeInline: {
+    marginLeft: 2,
+  },
+  premiumReminderCard: {
+    width: '100%',
+    marginTop: 12,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  premiumReminderCopy: {
+    flex: 1,
+    gap: 3,
+  },
+  premiumReminderTitle: {
+    fontSize: 12.5,
+    fontFamily: 'Manrope_700Bold',
+  },
+  premiumReminderBody: {
+    fontSize: 11.5,
+    lineHeight: 16,
+    fontFamily: 'Manrope_500Medium',
+  },
+  premiumReminderAction: {
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  premiumReminderActionText: {
+    fontSize: 11.5,
+    fontFamily: 'Manrope_700Bold',
+  },
+  receivedGiftsCard: {
+    width: '100%',
+    marginTop: 12,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    gap: 12,
+  },
+  receivedGiftsHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  receivedGiftsHeaderCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  receivedGiftsEyebrow: {
+    fontSize: 11,
+    fontFamily: 'Manrope_700Bold',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  receivedGiftsTitle: {
+    fontSize: 15,
+    lineHeight: 20,
+    fontFamily: 'Manrope_700Bold',
+  },
+  receivedGiftsCountPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  receivedGiftsCountText: {
+    fontSize: 12,
+    fontFamily: 'Archivo_700Bold',
+  },
+  receivedGiftsList: {
+    gap: 10,
+  },
+  receivedGiftRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 15,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  receivedGiftSender: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minWidth: 0,
+  },
+  receivedGiftAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+  },
+  receivedGiftAvatarFallback: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  receivedGiftAvatarInitials: {
+    fontSize: 14,
+    fontFamily: 'Manrope_800ExtraBold',
+  },
+  receivedGiftCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  receivedGiftSenderName: {
+    fontSize: 13,
+    fontFamily: 'Manrope_700Bold',
+  },
+  receivedGiftMessage: {
+    marginTop: 2,
+    fontSize: 12.5,
+    fontFamily: 'Manrope_700Bold',
+  },
+  receivedGiftTimestamp: {
+    marginTop: 2,
+    fontSize: 11.5,
+    fontFamily: 'Manrope_500Medium',
+  },
+  receivedGiftTypePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  receivedGiftTypeCopy: {
+    minWidth: 0,
+  },
+  receivedGiftTypeText: {
+    fontSize: 11.5,
+    fontFamily: 'Manrope_700Bold',
+  },
+  receivedGiftTypeHint: {
+    marginTop: 1,
+    fontSize: 10.5,
+    fontFamily: 'Manrope_600SemiBold',
+  },
+  receivedGiftsAction: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 999,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+  },
+  receivedGiftsActionText: {
+    fontSize: 12,
+    fontFamily: 'Manrope_700Bold',
   },
   profileSyncBanner: {
     width: '100%',

@@ -10,7 +10,7 @@ import {
   type OfflineMutation,
   type FailedOfflineMutation,
 } from '@/lib/offline/mutation-queue';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export type IntentRequestType = 'connect' | 'date_request' | 'like_with_note' | 'circle_intro';
 export type IntentRequestStatus = 'pending' | 'accepted' | 'passed' | 'expired' | 'cancelled' | 'matched';
@@ -138,7 +138,12 @@ export const useIntentRequests = (
 ) => {
   const [items, setItems] = useState<IntentRequest[]>([]);
   const [loading, setLoading] = useState(false);
+  const [hasFreshServerData, setHasFreshServerData] = useState(false);
+  const [isUsingCachedSnapshot, setIsUsingCachedSnapshot] = useState(false);
+  const [lastServerFetchAt, setLastServerFetchAt] = useState<number | null>(null);
+  const [lastServerFetchFailedAt, setLastServerFetchFailedAt] = useState<number | null>(null);
   const liveFetchEnabled = options?.liveFetchEnabled !== false;
+  const itemsCountRef = useRef(0);
   const snapshotOwnerIdsSignature = JSON.stringify(
     [userId, ...(options?.snapshotOwnerIds ?? [])]
       .map((value) => (typeof value === 'string' ? value.trim() : ''))
@@ -174,6 +179,19 @@ export const useIntentRequests = (
     }
   }, [liveFetchEnabled]);
 
+  useEffect(() => {
+    itemsCountRef.current = items.length;
+  }, [items.length]);
+
+  useEffect(() => {
+    if (!userId) {
+      setHasFreshServerData(false);
+      setIsUsingCachedSnapshot(false);
+      setLastServerFetchAt(null);
+      setLastServerFetchFailedAt(null);
+    }
+  }, [userId]);
+
   const reconcileOfflineQueue = useCallback(async (source?: IntentRequest[]) => {
     if (!userId) return;
     const snapshot = await getIntentOfflineMutationSnapshot();
@@ -194,7 +212,9 @@ export const useIntentRequests = (
           (await readIntentRequestsSnapshot<IntentRequest[]>(ownerId)) ??
           (await migrateLegacyIntentRequestsSnapshot<IntentRequest[]>(ownerId));
         if (cancelled || !cached || !Array.isArray(cached)) continue;
-        setItems((prev) => (prev.length === 0 ? cached : prev));
+        if (itemsCountRef.current !== 0) continue;
+        setIsUsingCachedSnapshot(true);
+        setItems(cached);
         void reconcileOfflineQueue(cached);
         return;
       }
@@ -227,11 +247,18 @@ export const useIntentRequests = (
         .order('created_at', { ascending: false })
         .limit(200);
 
-      if (error) return;
+      if (error) {
+        setLastServerFetchFailedAt(Date.now());
+        return;
+      }
       const next = (data || []) as IntentRequest[];
       setItems(next);
       void persistSnapshot(next);
       void reconcileOfflineQueue(next);
+      setHasFreshServerData(true);
+      setIsUsingCachedSnapshot(false);
+      setLastServerFetchAt(Date.now());
+      setLastServerFetchFailedAt(null);
     } finally {
       setLoading(false);
     }
@@ -326,6 +353,12 @@ export const useIntentRequests = (
     loading,
     refresh,
     badgeCount,
+    freshness: {
+      hasFreshServerData,
+      isUsingCachedSnapshot,
+      lastServerFetchAt,
+      lastServerFetchFailedAt,
+    },
     updateLocalIntent,
     addLocalIntent,
     reconcileOfflineQueue,
