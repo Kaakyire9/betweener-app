@@ -1,7 +1,7 @@
 import { DiasporaVerification } from "@/components/DiasporaVerification";
 import GiftArtwork from "@/components/gifts/GiftArtwork";
 import GiftRevealSheet from "@/components/gifts/GiftRevealSheet";
-import { markSystemInboxItemsRead } from '@/hooks/useInbox';
+import { useInbox, markSystemInboxItemsRead } from '@/hooks/useInbox';
 import OfflineImage from "@/components/media/OfflineImage";
 import PhotoGallery from "@/components/PhotoGallery";
 import PremiumSyncNotice from "@/components/profile/PremiumSyncNotice";
@@ -18,6 +18,7 @@ import { useVerificationStatus } from "@/hooks/use-verification-status";
 import { useAuth } from "@/lib/auth-context";
 import { logProfileGiftEvent } from "@/lib/gifts/events";
 import { canAccessAdminTools } from "@/lib/internal-tools";
+import { getNonChatInboxActivityItems } from "@/lib/inbox/badge-groups";
 import { buildLocationDisplay } from "@/lib/location/location-display";
 import { usePremiumState } from "@/hooks/use-premium-state";
 import { getSafeRemoteImageUri, getUserFacingDisplayName } from "@/lib/profile/display-name";
@@ -863,11 +864,22 @@ export default function ProfileScreen() {
   const [rewardText, setRewardText] = useState<string | null>(null);
   const [progressTrackWidth, setProgressTrackWidth] = useState(0);
   const canSeeAdminTools = canAccessAdminTools(user?.email ?? null);
+  const { items: inboxItems, freshness: inboxFreshness } = useInbox(user?.id ?? null);
   const visibleReceivedGifts = useMemo(
     () => receivedGifts.filter((gift) => !gift.revealedAt && !gift.archivedAt),
     [receivedGifts],
   );
   const visibleReceivedGiftsCount = visibleReceivedGifts.length;
+  const profileActivityItems = useMemo(
+    () => getNonChatInboxActivityItems(inboxItems),
+    [inboxItems],
+  );
+  const trustedProfileActivityBadgeCount = inboxFreshness.hasFreshServerData
+    ? profileActivityItems.length
+    : 0;
+  const insightsBadgeCount = trustedProfileActivityBadgeCount > 0
+    ? trustedProfileActivityBadgeCount
+    : visibleReceivedGiftsCount;
 
   const progressSubtitle = useMemo(() => {
     if (profileCompletion.percent >= 100) return "Profile complete";
@@ -3347,7 +3359,7 @@ export default function ProfileScreen() {
             <Text style={[styles.previewButtonText, { color: theme.accent }]}>
               Insights
             </Text>
-            {visibleReceivedGiftsCount > 0 ? (
+            {insightsBadgeCount > 0 ? (
               <View
                 style={[
                   styles.previewButtonBadge,
@@ -3358,7 +3370,7 @@ export default function ProfileScreen() {
                 ]}
               >
                 <Text style={[styles.previewButtonBadgeText, { color: theme.accent }]}>
-                  {visibleReceivedGiftsCount > 9 ? '9+' : visibleReceivedGiftsCount}
+                  {insightsBadgeCount > 9 ? '9+' : insightsBadgeCount}
                 </Text>
               </View>
             ) : null}

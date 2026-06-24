@@ -10,22 +10,14 @@ import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
 import { ChatRepository } from '@/lib/chat/local/chat-db';
 import { useCircleInvitationCount } from '@/lib/circles/use-circle-invitation-count';
-import { logger } from '@/lib/telemetry/logger';
+import { getNonChatInboxActivityItems } from '@/lib/inbox/badge-groups';
 import { type ResponsiveMetrics, useResponsiveMetrics } from '@/lib/responsive';
 import { Tabs } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MessageCircle, Sparkles, User, Users } from 'lucide-react-native';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { setAppIconBadgeCount } from '@/lib/notifications/app-badge';
-
-const isPassiveProfileInterestSystemItem = (item: {
-  type?: string | null;
-  entity_type?: string | null;
-  metadata?: Record<string, unknown> | null;
-}) =>
-  item.type === 'SYSTEM' &&
-  (item.entity_type === 'profile_interest' || item.metadata?.type === 'profile_interest');
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
@@ -39,48 +31,10 @@ export default function TabLayout() {
   });
   const { items: inboxItems, freshness: inboxFreshness } = useInbox(user?.id ?? null);
   const { count: circleInvitationCount } = useCircleInvitationCount(profileId);
-  const lastBadgeLogSignatureRef = useRef<string | null>(null);
 
   const [unreadChats, setUnreadChats] = useState(0);
-  const inboxActivityItems = useMemo(
-    () =>
-      inboxItems.filter((item) => {
-        if (item.type === 'NEW_MESSAGE' || item.type === 'MESSAGE_REQUEST') return false;
-        if (isPassiveProfileInterestSystemItem(item)) return false;
-        return item.action_required || !item.read_at;
-      }),
-    [inboxItems],
-  );
+  const inboxActivityItems = useMemo(() => getNonChatInboxActivityItems(inboxItems), [inboxItems]);
   const inboxActivityBadgeCount = inboxActivityItems.length;
-  const inboxActivityBreakdown = useMemo(() => {
-    const counts: Partial<Record<string, number>> = {};
-    inboxActivityItems.forEach((item) => {
-      const bucket =
-        item.type === 'SYSTEM' && item.entity_type
-          ? `${item.type}:${item.entity_type}`
-          : item.type;
-      counts[bucket] = (counts[bucket] ?? 0) + 1;
-    });
-    return Object.fromEntries(
-      Object.entries(counts).sort((a, b) => {
-        if (b[1] !== a[1]) return b[1] - a[1];
-        return a[0].localeCompare(b[0]);
-      }),
-    );
-  }, [inboxActivityItems]);
-  const inboxActivitySamples = useMemo(
-    () =>
-      inboxActivityItems.slice(0, 8).map((item) => ({
-        id: item.id,
-        type: item.type,
-        entityType: item.entity_type ?? null,
-        metadataType: typeof item.metadata?.type === 'string' ? item.metadata.type : null,
-        read: Boolean(item.read_at),
-        actionRequired: Boolean(item.action_required),
-        createdAt: item.created_at,
-      })),
-    [inboxActivityItems],
-  );
   const trustedIntentBadgeCount = intentFreshness.hasFreshServerData ? badgeCount : 0;
   const trustedInboxActivityBadgeCount = inboxFreshness.hasFreshServerData ? inboxActivityBadgeCount : 0;
 
@@ -127,42 +81,10 @@ export default function TabLayout() {
       trustedInboxActivityBadgeCount;
 
     void setAppIconBadgeCount(nextBadgeCount);
-
-    const signature = JSON.stringify({
-      unreadChats,
-      intent: badgeCount,
-      trustedIntent: trustedIntentBadgeCount,
-      circles: circleInvitationCount,
-      inbox: inboxActivityBadgeCount,
-      trustedInbox: trustedInboxActivityBadgeCount,
-      inboxTypes: inboxActivityBreakdown,
-      intentFresh: intentFreshness.hasFreshServerData,
-      inboxFresh: inboxFreshness.hasFreshServerData,
-    });
-    if (__DEV__ && lastBadgeLogSignatureRef.current !== signature) {
-      lastBadgeLogSignatureRef.current = signature;
-      logger.info('[badge] app_icon_breakdown', {
-        unreadChats,
-        intentBadgeCount: badgeCount,
-        trustedIntentBadgeCount,
-        circleInvitationCount,
-        inboxActivityBadgeCount,
-        trustedInboxActivityBadgeCount,
-        inboxActivityBreakdown,
-        inboxActivitySamples,
-        intentFreshness,
-        inboxFreshness,
-        total: nextBadgeCount,
-      });
-    }
   }, [
-    badgeCount,
     circleInvitationCount,
     inboxActivityBadgeCount,
-    inboxActivityBreakdown,
-    inboxActivitySamples,
     inboxFreshness,
-    intentFreshness,
     trustedInboxActivityBadgeCount,
     trustedIntentBadgeCount,
     unreadChats,
@@ -298,10 +220,10 @@ export default function TabLayout() {
           options={{
             title: 'Me',
             tabBarIcon: ({ color }) => (
-              <>
+              <View style={{ position: 'relative' }}>
                 <User size={responsive.compactWidth ? 24 : 26} color={color} />
-                {/* <IconSymbol size={28} name="person.fill" color={color} /> */}
-              </>
+                <TabBadge count={trustedInboxActivityBadgeCount} />
+              </View>
             ),
           }}
         />
