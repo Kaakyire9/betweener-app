@@ -1,21 +1,31 @@
+import { Colors } from '@/constants/theme';
 import {
   CLOSURE_REFLECTION_OPTIONS,
   type ClosureReflectionReason,
 } from '@/lib/intents/closure-to-clarity';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
+import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+
+type Theme = typeof Colors.light;
 
 type ClosureReflectionChipsProps = {
   selected: ClosureReflectionReason[];
+  theme: Theme;
+  isDark: boolean;
   disabled?: boolean;
   onChange: (selected: ClosureReflectionReason[]) => void;
 };
 
 export default function ClosureReflectionChips({
   selected,
+  theme,
+  isDark,
   disabled = false,
   onChange,
 }: ClosureReflectionChipsProps) {
+  const styles = useMemo(() => createStyles(theme, isDark), [theme, isDark]);
+
   const toggle = (reason: ClosureReflectionReason) => {
     if (disabled) return;
     if (selected.includes(reason)) {
@@ -30,13 +40,15 @@ export default function ClosureReflectionChips({
     <View>
       <View style={styles.headingRow}>
         <View>
-          <Text style={styles.eyebrow}>PRIVATE REFLECTION</Text>
-          <Text style={styles.title}>What drew you in?</Text>
+          <Text style={[styles.eyebrow, { color: theme.tint }]}>PRIVATE REFLECTION</Text>
+          <Text style={[styles.title, { color: theme.text }]}>What drew you in?</Text>
         </View>
-        <Text style={styles.counter}>{selected.length}/2</Text>
+        <View style={[styles.counterPill, { borderColor: theme.outline, backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#FFFFFF99' }]}>
+          <Text style={[styles.counter, { color: theme.textMuted }]}>{selected.length}/2</Text>
+        </View>
       </View>
-      <Text style={styles.support}>
-        Choose up to two. This stays private and only shapes your recommendations.
+      <Text style={[styles.support, { color: theme.textMuted }]}>
+        Choose up to two. This stays private and sharpens the direction, the explanation, and the opener.
       </Text>
       <View style={styles.chips}>
         {CLOSURE_REFLECTION_OPTIONS.map((option) => {
@@ -51,15 +63,22 @@ export default function ClosureReflectionChips({
               onPress={() => toggle(option.key)}
               style={({ pressed }) => [
                 styles.chip,
-                active && styles.chipActive,
+                {
+                  borderColor: active ? theme.tint : theme.outline,
+                  backgroundColor: active
+                    ? theme.tint
+                    : isDark
+                      ? 'rgba(255,255,255,0.03)'
+                      : 'rgba(255,255,255,0.58)',
+                },
                 unavailable && styles.chipDisabled,
                 pressed && !unavailable && styles.chipPressed,
               ]}
             >
               {active ? (
-                <MaterialCommunityIcons name="check" size={15} color="#061E22" />
+                <MaterialCommunityIcons name="check" size={15} color={Colors.light.background} />
               ) : null}
-              <Text style={[styles.chipText, active && styles.chipTextActive]}>
+              <Text style={[styles.chipText, { color: active ? Colors.light.background : theme.text }]}>
                 {option.label}
               </Text>
             </Pressable>
@@ -70,69 +89,64 @@ export default function ClosureReflectionChips({
   );
 }
 
-const styles = StyleSheet.create({
-  headingRow: {
-    alignItems: 'flex-end',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  eyebrow: {
-    color: '#63D7D3',
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1.2,
-  },
-  title: {
-    color: '#F6EFE3',
-    fontFamily: 'PlayfairDisplay_700Bold',
-    fontSize: 25,
-    marginTop: 4,
-  },
-  counter: {
-    color: 'rgba(246,239,227,0.58)',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  support: {
-    color: 'rgba(246,239,227,0.66)',
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 8,
-  },
-  chips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 9,
-    marginTop: 16,
-  },
-  chip: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.035)',
-    borderColor: 'rgba(99,215,211,0.24)',
-    borderRadius: 8,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: 6,
-    minHeight: 40,
-    paddingHorizontal: 13,
-    paddingVertical: 9,
-  },
-  chipActive: {
-    backgroundColor: '#63D7D3',
-    borderColor: '#63D7D3',
-  },
-  chipDisabled: {
-    opacity: 0.42,
-  },
-  chipPressed: {
-    opacity: 0.76,
-  },
-  chipText: {
-    color: 'rgba(246,239,227,0.82)',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  chipTextActive: {
-    color: '#061E22',
-  },
-});
+function createStyles(_theme: Theme, _isDark: boolean) {
+  return StyleSheet.create({
+    headingRow: {
+      alignItems: 'flex-start',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    eyebrow: {
+      fontSize: 11,
+      fontFamily: 'Manrope_700Bold',
+      letterSpacing: 1.2,
+    },
+    title: {
+      fontFamily: 'PlayfairDisplay_700Bold',
+      fontSize: 26,
+      marginTop: 4,
+    },
+    counterPill: {
+      borderRadius: 999,
+      borderWidth: 1,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+    },
+    counter: {
+      fontSize: 12,
+      fontFamily: 'Manrope_700Bold',
+    },
+    support: {
+      fontSize: 14,
+      lineHeight: 20,
+      marginTop: 8,
+    },
+    chips: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 9,
+      marginTop: 16,
+    },
+    chip: {
+      alignItems: 'center',
+      borderRadius: 999,
+      borderWidth: 1,
+      flexDirection: 'row',
+      gap: 6,
+      minHeight: 42,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+    },
+    chipDisabled: {
+      opacity: 0.45,
+    },
+    chipPressed: {
+      opacity: 0.8,
+    },
+    chipText: {
+      fontSize: 13,
+      fontFamily: 'Manrope_600SemiBold',
+    },
+  });
+}

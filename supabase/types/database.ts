@@ -7288,6 +7288,46 @@ export type Database = {
           welcome_profiles: Json
         }[]
       }
+      rpc_get_closure_to_clarity_candidates: {
+        Args: { p_intent_request_id: string; p_limit?: number }
+        Returns: {
+          age: number
+          avatar_url: string
+          bio_snippet: string
+          candidate_tier: number
+          city: string
+          closure_freshness_score: number
+          closure_rank_score: number
+          closure_similarity_score: number
+          closure_timing_score: number
+          current_country: string
+          current_country_code: string
+          distance_km: number
+          full_name: string
+          has_intro_video: boolean
+          id: string
+          interests: string[]
+          looking_for: string
+          love_language: string
+          personality_type: string
+          phone_verified: boolean
+          prompt_answer: string
+          prompt_title: string
+          quality_band: number
+          recently_active: boolean
+          region: string
+          religion: string
+          same_looking_for: boolean
+          same_region: boolean
+          same_religion: boolean
+          shared_interest_count: number
+          shared_interest_names: string[]
+          short_tags: string[]
+          verification_level: number
+          wants_children: string
+          active_now: boolean
+        }[]
+      }
       rpc_get_disconnected_signin_providers: { Args: never; Returns: string[] }
       rpc_get_merged_account_redirect: { Args: never; Returns: Json }
       rpc_get_my_circle_invitation_count: {
