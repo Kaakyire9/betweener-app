@@ -30,6 +30,7 @@ import {
   fetchRemoteChatListNewMatches,
 } from "@/lib/chat/sync/chat-list-sync-service";
 import { isLikelyNetworkError } from "@/lib/network";
+import { fetchViewedMomentIds } from "@/lib/moments-views";
 import {
   buildChatConversationListStoreKey,
 } from "@/lib/offline/chat-store";
@@ -575,6 +576,8 @@ export default function ChatScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const lastWatchdogLogAtRef = useRef(0);
   const messagedPeerUserIdsRef = useRef<Set<string>>(new Set());
+  const [viewedMomentIds, setViewedMomentIds] = useState<Set<string>>(new Set());
+  const [viewedMomentIdsReady, setViewedMomentIdsReady] = useState(false);
   const { momentUsers } = useMoments({
     currentUserId: user?.id,
     currentUserProfile: profile,
@@ -1259,9 +1262,42 @@ export default function ChatScreen() {
     () => momentUsers.filter((entry) => entry.moments.length > 0),
     [momentUsers],
   );
-  const activeMomentPeerUserIds = useMemo(
-    () => new Set(momentUsersWithContent.filter((entry) => !entry.isOwn).map((entry) => String(entry.userId))),
-    [momentUsersWithContent],
+  const refreshViewedMomentIds = useCallback(async () => {
+    const momentIds = momentUsersWithContent.flatMap((entry) => entry.moments.map((moment) => String(moment.id))).filter(Boolean);
+    if (momentIds.length === 0) {
+      setViewedMomentIds(new Set());
+      setViewedMomentIdsReady(true);
+      return;
+    }
+    setViewedMomentIdsReady(false);
+    const nextViewedIds = await fetchViewedMomentIds(momentIds);
+    setViewedMomentIds(nextViewedIds);
+    setViewedMomentIdsReady(true);
+  }, [momentUsersWithContent]);
+  useEffect(() => {
+    void refreshViewedMomentIds();
+  }, [refreshViewedMomentIds]);
+  useFocusEffect(
+    useCallback(() => {
+      void refreshViewedMomentIds();
+    }, [refreshViewedMomentIds]),
+  );
+  const unseenMomentPeerUserIds = useMemo(
+    () => {
+      if (!viewedMomentIdsReady) return new Set<string>();
+      return (
+      new Set(
+        momentUsersWithContent
+          .filter(
+            (entry) =>
+              !entry.isOwn &&
+              entry.moments.some((moment) => !viewedMomentIds.has(String(moment.id))),
+          )
+          .map((entry) => String(entry.userId)),
+      )
+      );
+    },
+    [momentUsersWithContent, viewedMomentIds, viewedMomentIdsReady],
   );
 
   const renderConversation = ({ item }: { item: ConversationType }) => (
@@ -1270,7 +1306,7 @@ export default function ChatScreen() {
       userId={user?.id ?? null}
       presenceNow={presenceNow}
       typingExpiresAtByPeer={typingExpiresAtByPeer}
-      activeMomentPeerUserIds={activeMomentPeerUserIds}
+      activeMomentPeerUserIds={unseenMomentPeerUserIds}
       failedAvatarUris={failedAvatarUris}
       theme={theme}
       isDark={isDark}

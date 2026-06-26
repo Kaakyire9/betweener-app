@@ -2,10 +2,11 @@ import { Colors } from '@/constants/theme';
 import GiftArtwork from '@/components/gifts/GiftArtwork';
 import GiftRevealSheet from '@/components/gifts/GiftRevealSheet';
 import PremiumSyncNotice from '@/components/profile/PremiumSyncNotice';
-import { markSystemInboxItemsRead } from '@/hooks/useInbox';
+import { markInboxItemsReadByCriteria } from '@/hooks/useInbox';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { usePremiumOfflineQueueStatus } from '@/hooks/usePremiumOfflineQueueStatus';
 import { logProfileGiftEvent } from '@/lib/gifts/events';
+import { INSIGHTS_SYSTEM_ACTIVITY_KEYS } from '@/lib/inbox/badge-groups';
 import { isLikelyNetworkError } from '@/lib/network';
 import {
   enqueueProfileGiftArchiveMutation,
@@ -23,7 +24,7 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Image } from 'expo-image';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -33,6 +34,7 @@ type InsightCardProps = {
   icon: keyof typeof MaterialCommunityIcons.glyphMap;
   accent: [string, string];
   onPress: () => void;
+  footerLabel?: string;
 };
 
 type InsightGiftItem = {
@@ -69,21 +71,147 @@ type GiftProfileRelation = {
   deleted_at?: string | null;
 };
 
-function InsightFeatureCard({ title, body, icon, accent, onPress }: InsightCardProps) {
+function InsightFeatureCard({ title, body, icon, accent, onPress, footerLabel = 'Open' }: InsightCardProps) {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
+  const { width } = useWindowDimensions();
+  const isCompactWidth = width <= 390;
 
   return (
-    <Pressable onPress={onPress} style={[styles.featureCard, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
-      <LinearGradient colors={accent} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.featureIconWrap}>
+    <Pressable onPress={onPress} style={[styles.featureCard, isCompactWidth ? styles.featureCardCompact : null, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
+      <LinearGradient colors={accent} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.featureIconWrap, isCompactWidth ? styles.featureIconWrapCompact : null]}>
         <MaterialCommunityIcons name={icon} size={20} color="#F8FFFF" />
       </LinearGradient>
-      <Text style={[styles.featureTitle, { color: theme.text }]}>{title}</Text>
-      <Text style={[styles.featureBody, { color: theme.textMuted }]}>{body}</Text>
+      <Text style={[styles.featureTitle, isCompactWidth ? styles.featureTitleCompact : null, { color: theme.text }]}>{title}</Text>
+      <Text style={[styles.featureBody, isCompactWidth ? styles.featureBodyCompact : null, { color: theme.textMuted }]}>{body}</Text>
       <View style={styles.featureFooter}>
-        <Text style={[styles.featureLink, { color: theme.tint }]}>Open</Text>
+        <Text style={[styles.featureLink, { color: theme.tint }]}>{footerLabel}</Text>
         <MaterialCommunityIcons name="arrow-right" size={16} color={theme.tint} />
       </View>
+    </Pressable>
+  );
+}
+
+function GiftEmptyPlaceholder({
+  title,
+  body,
+  icon,
+  theme,
+  isDark,
+  eyebrow = 'Premium archive',
+  actionLabel = 'Waiting for gifts',
+}: {
+  title: string;
+  body: string;
+  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  theme: typeof Colors.light;
+  isDark: boolean;
+  eyebrow?: string;
+  actionLabel?: string;
+}) {
+  return (
+    <View
+      style={[
+        styles.giftArchivePlaceholder,
+        {
+          backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : theme.background,
+          borderColor: theme.outline,
+        },
+      ]}
+    >
+      <View
+        style={[
+          styles.giftArchivePlaceholderIcon,
+          {
+            backgroundColor: isDark ? 'rgba(46,214,194,0.12)' : `${theme.tint}14`,
+            borderColor: theme.outline,
+          },
+        ]}
+      >
+        <MaterialCommunityIcons name={icon} size={18} color={theme.tint} />
+      </View>
+      <View style={styles.giftArchivePlaceholderCopy}>
+        <Text style={[styles.giftArchivePlaceholderEyebrow, { color: theme.tint }]}>{eyebrow}</Text>
+        <Text style={[styles.giftArchivePlaceholderTitle, { color: theme.text }]}>{title}</Text>
+        <Text style={[styles.giftArchivePlaceholderBody, { color: theme.textMuted }]}>{body}</Text>
+        <View
+          style={[
+            styles.giftArchivePlaceholderAction,
+            {
+              backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : theme.background,
+              borderColor: theme.outline,
+            },
+          ]}
+        >
+          <MaterialCommunityIcons name="star-four-points-outline" size={13} color={theme.textMuted} />
+          <Text style={[styles.giftArchivePlaceholderActionText, { color: theme.textMuted }]}>
+            {actionLabel}
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function GiftActionPill({
+  label,
+  giftType,
+  icon,
+  onPress,
+  theme,
+  isCompactWidth,
+  isDark,
+  disabled = false,
+}: {
+  label: string;
+  giftType?: string | null;
+  icon?: keyof typeof MaterialCommunityIcons.glyphMap;
+  onPress?: (() => void) | null;
+  theme: typeof Colors.light;
+  isCompactWidth: boolean;
+  isDark: boolean;
+  disabled?: boolean;
+}) {
+  const content = (
+    <>
+      {giftType ? (
+        <GiftArtwork giftType={giftType} size={isCompactWidth ? 28 : 34} animate={false} />
+      ) : icon ? (
+        <MaterialCommunityIcons name={icon} size={isCompactWidth ? 14 : 15} color={disabled ? theme.textMuted : theme.text} />
+      ) : null}
+      <Text
+        style={[
+          styles.giftArchiveRevealText,
+          isCompactWidth ? styles.giftArchiveRevealTextCompact : null,
+          { color: disabled ? theme.textMuted : theme.text },
+        ]}
+      >
+        {label}
+      </Text>
+    </>
+  );
+
+  const pillStyle = [
+    styles.giftArchiveRevealPill,
+    isCompactWidth ? styles.giftArchiveRevealPillCompact : null,
+    {
+      borderColor: theme.outline,
+      backgroundColor: disabled
+        ? isDark
+          ? 'rgba(255,255,255,0.035)'
+          : 'rgba(255,255,255,0.72)'
+        : 'transparent',
+      opacity: disabled ? 0.82 : 1,
+    },
+  ];
+
+  if (disabled || !onPress) {
+    return <View style={pillStyle}>{content}</View>;
+  }
+
+  return (
+    <Pressable onPress={onPress} style={pillStyle}>
+      {content}
     </Pressable>
   );
 }
@@ -125,15 +253,17 @@ const formatSentGiftStatus = (gift: SentGiftItem) => {
   return 'Awaiting reveal';
 };
 
-const GIFT_SYSTEM_ENTITY_TYPES = ['profile_gift_revealed', 'profile_gift_archived'];
-
 export default function ProfileInsightsScreen() {
   const params = useLocalSearchParams<{ giftId?: string | string[] }>();
+  const { width } = useWindowDimensions();
+  const isCompactWidth = width <= 390;
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const isDark = (colorScheme ?? 'light') === 'dark';
   const { profile, user } = useAuth();
   const premiumQueue = usePremiumOfflineQueueStatus();
+  const scrollViewRef = useRef<ScrollView | null>(null);
+  const giftArchiveYRef = useRef(0);
   const [giftSummary, setGiftSummary] = useState<{
     count: number;
     waitingCount: number;
@@ -179,11 +309,22 @@ export default function ProfileInsightsScreen() {
     return Array.isArray(value) ? value[0] ?? null : value ?? null;
   }, [params.giftId]);
   const waitingGiftCount = waitingGifts.length;
+  const focusGiftArchive = useCallback(() => {
+    requestAnimationFrame(() => {
+      scrollViewRef.current?.scrollTo({
+        y: Math.max(0, giftArchiveYRef.current - 12),
+        animated: true,
+      });
+    });
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
       if (!user?.id) return;
-      void markSystemInboxItemsRead(user.id, GIFT_SYSTEM_ENTITY_TYPES);
+      void markInboxItemsReadByCriteria(user.id, {
+        types: ['GIFT_RECEIVED'],
+        systemActivityKeys: [...INSIGHTS_SYSTEM_ACTIVITY_KEYS],
+      });
     }, [user?.id]),
   );
 
@@ -576,18 +717,21 @@ export default function ProfileInsightsScreen() {
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: theme.background }]}>
-      <View style={[styles.header, { borderBottomColor: theme.outline }]}>
+      <View style={[styles.header, isCompactWidth ? styles.headerCompact : null, { borderBottomColor: theme.outline }]}>
         <Pressable onPress={() => router.replace('/(tabs)/profile')} style={styles.headerButton}>
           <MaterialCommunityIcons name="arrow-left" size={24} color={theme.text} />
         </Pressable>
         <View style={styles.headerCopy}>
-          <Text style={[styles.headerTitle, { color: theme.text }]}>Profile Insights</Text>
-          <Text style={[styles.headerSubtitle, { color: theme.textMuted }]}>Meaningful signals around how your profile is landing.</Text>
+          <Text style={[styles.headerTitle, isCompactWidth ? styles.headerTitleCompact : null, { color: theme.text }]}>Profile Insights</Text>
+          <Text style={[styles.headerSubtitle, isCompactWidth ? styles.headerSubtitleCompact : null, { color: theme.textMuted }]}>Meaningful signals around how your profile is landing.</Text>
         </View>
         <View style={styles.headerButton} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        ref={scrollViewRef}
+        contentContainerStyle={[styles.content, isCompactWidth ? styles.contentCompact : null]}
+      >
         {premiumQueue.visible ? (
           <PremiumSyncNotice
             theme={theme}
@@ -609,11 +753,11 @@ export default function ProfileInsightsScreen() {
           colors={isDark ? ['#19243A', '#1D1538'] : ['#E4F4F1', '#EFE6FA']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={[styles.hero, { borderColor: theme.outline }]}
+          style={[styles.hero, isCompactWidth ? styles.heroCompact : null, { borderColor: theme.outline }]}
         >
           <Text style={[styles.heroEyebrow, { color: theme.secondary }]}>PREMIUM HUB</Text>
-          <Text style={[styles.heroTitle, { color: theme.text }]}>Your profile, understood</Text>
-          <Text style={[styles.heroBody, { color: theme.textMuted }]}>
+          <Text style={[styles.heroTitle, isCompactWidth ? styles.heroTitleCompact : null, { color: theme.text }]}>Your profile, understood</Text>
+          <Text style={[styles.heroBody, isCompactWidth ? styles.heroBodyCompact : null, { color: theme.textMuted }]}>
             Open the parts of Betweener that turn profile activity into clear, relationship-focused signals.
           </Text>
         </LinearGradient>
@@ -624,9 +768,14 @@ export default function ProfileInsightsScreen() {
             body={giftCardBody}
             icon="gift-outline"
             accent={['#FB7185', '#7D7CF3']}
+            footerLabel={giftSummary.count > 0 ? 'Open' : 'Preview'}
             onPress={() => {
               const nextGift = waitingGifts[0] ?? revealedGifts[0] ?? archivedGifts[0];
-              if (nextGift) void openGiftReveal(nextGift);
+              if (nextGift) {
+                void openGiftReveal(nextGift);
+                return;
+              }
+              focusGiftArchive();
             }}
           />
           <InsightFeatureCard
@@ -645,22 +794,33 @@ export default function ProfileInsightsScreen() {
           />
         </View>
 
-        <View style={[styles.giftArchiveCard, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
-          <View style={styles.giftArchiveHeader}>
-            <View>
+        <View
+          onLayout={(event) => {
+            giftArchiveYRef.current = event.nativeEvent.layout.y;
+          }}
+          style={[styles.giftArchiveCard, isCompactWidth ? styles.giftArchiveCardCompact : null, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}
+        >
+          <View style={[styles.giftArchiveHeader, isCompactWidth ? styles.giftArchiveHeaderCompact : null]}>
+            <View style={styles.giftArchiveHeaderCopy}>
               <Text style={[styles.giftArchiveEyebrow, { color: theme.tint }]}>Gift archive</Text>
-              <Text style={[styles.giftArchiveTitle, { color: theme.text }]}>Your premium gifts live here</Text>
+              <Text style={[styles.giftArchiveTitle, isCompactWidth ? styles.giftArchiveTitleCompact : null, { color: theme.text }]}>Your premium gifts live here</Text>
             </View>
-            <View style={[styles.giftArchiveCount, { backgroundColor: isDark ? 'rgba(46,214,194,0.12)' : `${theme.tint}14`, borderColor: theme.outline }]}>
+            <View style={[styles.giftArchiveCount, isCompactWidth ? styles.giftArchiveCountCompact : null, { backgroundColor: isDark ? 'rgba(46,214,194,0.12)' : `${theme.tint}14`, borderColor: theme.outline }]}>
               <MaterialCommunityIcons name="gift-outline" size={14} color={theme.tint} />
               <Text style={[styles.giftArchiveCountText, { color: theme.tint }]}>{giftSummary.count}</Text>
             </View>
           </View>
 
           {giftArchive.length === 0 ? (
-            <Text style={[styles.giftArchiveEmpty, { color: theme.textMuted }]}>
-              When someone sends a premium gift, it will collect here for a quieter, more memorable reveal.
-            </Text>
+            <GiftEmptyPlaceholder
+              title="Your gifts will show here"
+              body="When someone sends a premium gift, it will collect here for a quieter, more memorable reveal."
+              icon="gift-outline"
+              theme={theme}
+              isDark={isDark}
+              eyebrow="Gift archive"
+              actionLabel="Premium reveals will collect here"
+            />
           ) : (
             <View style={styles.giftArchiveGroups}>
               {waitingGifts.length > 0 ? (
@@ -678,7 +838,7 @@ export default function ProfileInsightsScreen() {
                       <Pressable
                         key={gift.id}
                         onPress={() => void openGiftReveal(gift)}
-                        style={[styles.giftArchiveRow, { backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : theme.background, borderColor: theme.outline }]}
+                        style={[styles.giftArchiveRow, isCompactWidth ? styles.giftArchiveRowCompact : null, { backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : theme.background, borderColor: theme.outline }]}
                       >
                         <View style={styles.giftArchiveSender}>
                           {gift.senderAvatar ? (
@@ -700,10 +860,14 @@ export default function ProfileInsightsScreen() {
                           </View>
                         </View>
 
-                        <View style={[styles.giftArchiveRevealPill, { borderColor: theme.outline }]}>
-                          <GiftArtwork giftType={gift.giftType} size={34} animate={false} />
-                          <Text style={[styles.giftArchiveRevealText, { color: theme.text }]}>Reveal</Text>
-                        </View>
+                        <GiftActionPill
+                          label="Reveal"
+                          giftType={gift.giftType}
+                          onPress={() => void openGiftReveal(gift)}
+                          theme={theme}
+                          isCompactWidth={isCompactWidth}
+                          isDark={isDark}
+                        />
                       </Pressable>
                     ))}
                   </View>
@@ -724,7 +888,7 @@ export default function ProfileInsightsScreen() {
                     {revealedGifts.map((gift) => (
                       <View
                         key={gift.id}
-                        style={[styles.giftArchiveRow, { backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : theme.background, borderColor: theme.outline }]}
+                        style={[styles.giftArchiveRow, isCompactWidth ? styles.giftArchiveRowCompact : null, { backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : theme.background, borderColor: theme.outline }]}
                       >
                         <Pressable style={styles.giftArchiveSender} onPress={() => void openGiftReveal(gift)}>
                           {gift.senderAvatar ? (
@@ -747,13 +911,14 @@ export default function ProfileInsightsScreen() {
                         </Pressable>
 
                         <View style={styles.giftArchiveActionStack}>
-                          <Pressable
+                          <GiftActionPill
+                            label="Open"
+                            giftType={gift.giftType}
                             onPress={() => void openGiftReveal(gift)}
-                            style={[styles.giftArchiveRevealPill, { borderColor: theme.outline }]}
-                          >
-                            <GiftArtwork giftType={gift.giftType} size={34} animate={false} />
-                            <Text style={[styles.giftArchiveRevealText, { color: theme.text }]}>Open</Text>
-                          </Pressable>
+                            theme={theme}
+                            isCompactWidth={isCompactWidth}
+                            isDark={isDark}
+                          />
                           <Pressable
                             onPress={() => void archiveGift(gift)}
                             style={[styles.giftArchiveArchivePill, { borderColor: theme.outline }]}
@@ -785,7 +950,7 @@ export default function ProfileInsightsScreen() {
                       <Pressable
                         key={gift.id}
                         onPress={() => void openGiftReveal(gift)}
-                        style={[styles.giftArchiveRow, { backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : theme.background, borderColor: theme.outline }]}
+                        style={[styles.giftArchiveRow, isCompactWidth ? styles.giftArchiveRowCompact : null, { backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : theme.background, borderColor: theme.outline }]}
                       >
                         <View style={styles.giftArchiveSender}>
                           {gift.senderAvatar ? (
@@ -807,10 +972,14 @@ export default function ProfileInsightsScreen() {
                           </View>
                         </View>
 
-                        <View style={[styles.giftArchiveRevealPill, { borderColor: theme.outline }]}>
-                          <GiftArtwork giftType={gift.giftType} size={34} animate={false} />
-                          <Text style={[styles.giftArchiveRevealText, { color: theme.text }]}>Open</Text>
-                        </View>
+                        <GiftActionPill
+                          label="Open"
+                          giftType={gift.giftType}
+                          onPress={() => void openGiftReveal(gift)}
+                          theme={theme}
+                          isCompactWidth={isCompactWidth}
+                          isDark={isDark}
+                        />
                       </Pressable>
                     ))}
                   </View>
@@ -820,22 +989,28 @@ export default function ProfileInsightsScreen() {
           )}
         </View>
 
-        <View style={[styles.giftArchiveCard, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
-          <View style={styles.giftArchiveHeader}>
-            <View>
+        <View style={[styles.giftArchiveCard, isCompactWidth ? styles.giftArchiveCardCompact : null, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
+          <View style={[styles.giftArchiveHeader, isCompactWidth ? styles.giftArchiveHeaderCompact : null]}>
+            <View style={styles.giftArchiveHeaderCopy}>
               <Text style={[styles.giftArchiveEyebrow, { color: theme.tint }]}>Sent gifts</Text>
-              <Text style={[styles.giftArchiveTitle, { color: theme.text }]}>Signals you already sent</Text>
+              <Text style={[styles.giftArchiveTitle, isCompactWidth ? styles.giftArchiveTitleCompact : null, { color: theme.text }]}>Signals you already sent</Text>
             </View>
-            <View style={[styles.giftArchiveCount, { backgroundColor: isDark ? 'rgba(46,214,194,0.12)' : `${theme.tint}14`, borderColor: theme.outline }]}>
+            <View style={[styles.giftArchiveCount, isCompactWidth ? styles.giftArchiveCountCompact : null, { backgroundColor: isDark ? 'rgba(46,214,194,0.12)' : `${theme.tint}14`, borderColor: theme.outline }]}>
               <MaterialCommunityIcons name="send-outline" size={14} color={theme.tint} />
               <Text style={[styles.giftArchiveCountText, { color: theme.tint }]}>{sentGiftArchive.length}</Text>
             </View>
           </View>
 
           {sentGiftArchive.length === 0 ? (
-            <Text style={[styles.giftArchiveEmpty, { color: theme.textMuted }]}>
-              Every premium gift you send will also live here, with its reveal status.
-            </Text>
+            <GiftEmptyPlaceholder
+              title="Your sent gifts will show here"
+              body="Every premium gift you send will also live here, along with its reveal status."
+              icon="send-outline"
+              theme={theme}
+              isDark={isDark}
+              eyebrow="Sent gifts"
+              actionLabel="Sent signals will appear here"
+            />
           ) : (
             <View style={styles.giftArchiveGroups}>
               {pendingSentGifts.length > 0 ? (
@@ -849,7 +1024,7 @@ export default function ProfileInsightsScreen() {
                       <Pressable
                         key={gift.id}
                         onPress={() => void openSentGiftRecipientProfile(gift)}
-                        style={[styles.giftArchiveRow, { backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : theme.background, borderColor: theme.outline }]}
+                        style={[styles.giftArchiveRow, isCompactWidth ? styles.giftArchiveRowCompact : null, { backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : theme.background, borderColor: theme.outline }]}
                       >
                         <View style={styles.giftArchiveSender}>
                           {gift.recipientAvatar ? (
@@ -871,12 +1046,14 @@ export default function ProfileInsightsScreen() {
                           </View>
                         </View>
 
-                        <View style={[styles.giftArchiveRevealPill, { borderColor: theme.outline }]}>
-                          <GiftArtwork giftType={gift.giftType} size={34} animate={false} />
-                          <Text style={[styles.giftArchiveRevealText, { color: theme.text }]}>
-                            View
-                          </Text>
-                        </View>
+                        <GiftActionPill
+                          label="Pending"
+                          giftType={gift.giftType}
+                          theme={theme}
+                          isCompactWidth={isCompactWidth}
+                          isDark={isDark}
+                          disabled
+                        />
                       </Pressable>
                     ))}
                   </View>
@@ -894,7 +1071,7 @@ export default function ProfileInsightsScreen() {
                       <Pressable
                         key={gift.id}
                         onPress={() => void openSentGiftRecipientProfile(gift)}
-                        style={[styles.giftArchiveRow, { backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : theme.background, borderColor: theme.outline }]}
+                        style={[styles.giftArchiveRow, isCompactWidth ? styles.giftArchiveRowCompact : null, { backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : theme.background, borderColor: theme.outline }]}
                       >
                         <View style={styles.giftArchiveSender}>
                           {gift.recipientAvatar ? (
@@ -916,12 +1093,14 @@ export default function ProfileInsightsScreen() {
                           </View>
                         </View>
 
-                        <View style={[styles.giftArchiveRevealPill, { borderColor: theme.outline }]}>
-                          <GiftArtwork giftType={gift.giftType} size={34} animate={false} />
-                          <Text style={[styles.giftArchiveRevealText, { color: theme.text }]}>
-                            Open
-                          </Text>
-                        </View>
+                        <GiftActionPill
+                          label="Open"
+                          giftType={gift.giftType}
+                          onPress={() => void openSentGiftRecipientProfile(gift)}
+                          theme={theme}
+                          isCompactWidth={isCompactWidth}
+                          isDark={isDark}
+                        />
                       </Pressable>
                     ))}
                   </View>
@@ -939,7 +1118,7 @@ export default function ProfileInsightsScreen() {
                       <Pressable
                         key={gift.id}
                         onPress={() => void openSentGiftRecipientProfile(gift)}
-                        style={[styles.giftArchiveRow, { backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : theme.background, borderColor: theme.outline }]}
+                        style={[styles.giftArchiveRow, isCompactWidth ? styles.giftArchiveRowCompact : null, { backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : theme.background, borderColor: theme.outline }]}
                       >
                         <View style={styles.giftArchiveSender}>
                           {gift.recipientAvatar ? (
@@ -961,12 +1140,14 @@ export default function ProfileInsightsScreen() {
                           </View>
                         </View>
 
-                        <View style={[styles.giftArchiveRevealPill, { borderColor: theme.outline }]}>
-                          <GiftArtwork giftType={gift.giftType} size={34} animate={false} />
-                          <Text style={[styles.giftArchiveRevealText, { color: theme.text }]}>
-                            Open
-                          </Text>
-                        </View>
+                        <GiftActionPill
+                          label="Open"
+                          giftType={gift.giftType}
+                          onPress={() => void openSentGiftRecipientProfile(gift)}
+                          theme={theme}
+                          isCompactWidth={isCompactWidth}
+                          isDark={isDark}
+                        />
                       </Pressable>
                     ))}
                   </View>
@@ -1019,29 +1200,63 @@ export default function ProfileInsightsScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   header: { minHeight: 72, flexDirection: 'row', alignItems: 'center', borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 12 },
+  headerCompact: { minHeight: 64, paddingHorizontal: 8 },
   headerButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   headerCopy: { flex: 1, alignItems: 'center' },
   headerTitle: { fontFamily: 'PlayfairDisplay_700Bold', fontSize: 24 },
+  headerTitleCompact: { fontSize: 20 },
   headerSubtitle: { marginTop: 2, fontFamily: 'Manrope_500Medium', fontSize: 11, textAlign: 'center' },
+  headerSubtitleCompact: { fontSize: 10, lineHeight: 14, paddingHorizontal: 10 },
   content: { padding: 18, paddingBottom: 40 },
+  contentCompact: { padding: 14, paddingBottom: 28 },
   hero: { borderWidth: 1, borderRadius: 22, padding: 20 },
+  heroCompact: { borderRadius: 18, padding: 16 },
   heroEyebrow: { fontFamily: 'Archivo_700Bold', fontSize: 10, letterSpacing: 1.4 },
   heroTitle: { marginTop: 8, fontFamily: 'PlayfairDisplay_700Bold', fontSize: 30, lineHeight: 34 },
+  heroTitleCompact: { fontSize: 24, lineHeight: 28 },
   heroBody: { marginTop: 10, fontFamily: 'Manrope_500Medium', fontSize: 13, lineHeight: 20 },
+  heroBodyCompact: { marginTop: 8, fontSize: 12, lineHeight: 18 },
   featureGrid: { marginTop: 22, gap: 14 },
   featureCard: { borderWidth: 1, borderRadius: 22, padding: 16 },
+  featureCardCompact: { borderRadius: 18, padding: 14 },
   featureIconWrap: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  featureIconWrapCompact: { width: 40, height: 40, borderRadius: 12 },
   featureTitle: { marginTop: 14, fontFamily: 'PlayfairDisplay_700Bold', fontSize: 23 },
+  featureTitleCompact: { marginTop: 12, fontSize: 20 },
   featureBody: { marginTop: 6, fontFamily: 'Manrope_500Medium', fontSize: 13, lineHeight: 19 },
+  featureBodyCompact: { fontSize: 12, lineHeight: 18 },
   featureFooter: { marginTop: 16, flexDirection: 'row', alignItems: 'center', gap: 6 },
   featureLink: { fontFamily: 'Archivo_700Bold', fontSize: 11, letterSpacing: 1 },
   giftArchiveCard: { marginTop: 18, borderWidth: 1, borderRadius: 22, padding: 16 },
+  giftArchiveCardCompact: { marginTop: 16, borderRadius: 18, padding: 14 },
   giftArchiveHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  giftArchiveHeaderCompact: { flexDirection: 'column', alignItems: 'stretch', justifyContent: 'flex-start', flexWrap: 'nowrap', gap: 10 },
+  giftArchiveHeaderCopy: { flex: 1, minWidth: 0 },
   giftArchiveEyebrow: { fontFamily: 'Archivo_700Bold', fontSize: 10, letterSpacing: 1.2, textTransform: 'uppercase' },
   giftArchiveTitle: { marginTop: 6, fontFamily: 'PlayfairDisplay_700Bold', fontSize: 24, lineHeight: 28 },
+  giftArchiveTitleCompact: { fontSize: 20, lineHeight: 24 },
   giftArchiveCount: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7 },
+  giftArchiveCountCompact: { alignSelf: 'flex-start', paddingHorizontal: 9, paddingVertical: 6 },
   giftArchiveCountText: { fontFamily: 'Manrope_800ExtraBold', fontSize: 12 },
   giftArchiveEmpty: { marginTop: 16, fontFamily: 'Manrope_500Medium', fontSize: 13, lineHeight: 20 },
+  giftArchivePlaceholder: { marginTop: 16, borderWidth: 1, borderRadius: 18, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  giftArchivePlaceholderIcon: { width: 42, height: 42, borderRadius: 21, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  giftArchivePlaceholderCopy: { flex: 1, minWidth: 0 },
+  giftArchivePlaceholderEyebrow: { fontFamily: 'Archivo_700Bold', fontSize: 10, letterSpacing: 1, textTransform: 'uppercase' },
+  giftArchivePlaceholderTitle: { fontFamily: 'Manrope_700Bold', fontSize: 14 },
+  giftArchivePlaceholderBody: { marginTop: 4, fontFamily: 'Manrope_500Medium', fontSize: 12, lineHeight: 18 },
+  giftArchivePlaceholderAction: {
+    marginTop: 10,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  giftArchivePlaceholderActionText: { fontFamily: 'Manrope_700Bold', fontSize: 11.5 },
   giftArchiveGroups: { marginTop: 16, gap: 18 },
   giftArchiveGroup: { gap: 12 },
   giftArchiveSectionHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
@@ -1049,6 +1264,7 @@ const styles = StyleSheet.create({
   giftArchiveSectionMeta: { fontFamily: 'Manrope_700Bold', fontSize: 12 },
   giftArchiveList: { marginTop: 16, gap: 12 },
   giftArchiveRow: { borderWidth: 1, borderRadius: 18, padding: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  giftArchiveRowCompact: { borderRadius: 16, padding: 10, gap: 8 },
   giftArchiveSender: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 },
   giftArchiveAvatar: { width: 42, height: 42, borderRadius: 21 },
   giftArchiveAvatarFallback: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
@@ -1056,8 +1272,20 @@ const styles = StyleSheet.create({
   giftArchiveCopy: { flex: 1, minWidth: 0 },
   giftArchiveSenderName: { fontFamily: 'Manrope_700Bold', fontSize: 14 },
   giftArchiveSenderMeta: { marginTop: 2, fontFamily: 'Manrope_500Medium', fontSize: 12 },
-  giftArchiveRevealPill: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
+  giftArchiveRevealPill: {
+    minWidth: 96,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  giftArchiveRevealPillCompact: { minWidth: 82, gap: 5, paddingHorizontal: 8, paddingVertical: 5 },
   giftArchiveRevealText: { fontFamily: 'Manrope_700Bold', fontSize: 12 },
+  giftArchiveRevealTextCompact: { fontSize: 11.5 },
   giftArchiveActionStack: { alignItems: 'flex-end', gap: 8 },
   giftArchiveArchivePill: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   giftArchiveArchiveText: { fontFamily: 'Manrope_700Bold', fontSize: 11.5 },

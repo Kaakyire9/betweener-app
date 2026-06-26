@@ -9,6 +9,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -135,6 +136,8 @@ export default function BoostComposerModal({
   onSyncAction,
   onSubmit,
 }: Props) {
+  const { width } = useWindowDimensions();
+  const isCompactWidth = width <= 390;
   const isGold = plan === 'GOLD';
   const resolvedActiveBoostEndsAt =
     activeBoostEndsAt ?? recommendation?.active_boost_ends_at ?? analytics?.boost?.ends_at ?? null;
@@ -513,6 +516,7 @@ export default function BoostComposerModal({
           <View
             style={[
               styles.sheet,
+              isCompactWidth ? styles.sheetCompact : null,
               {
                 backgroundColor: theme.background,
                 borderColor: theme.outline,
@@ -529,12 +533,12 @@ export default function BoostComposerModal({
               end={{ x: 1, y: 1 }}
               style={styles.heroGlow}
             />
-            <View style={styles.header}>
-              <View style={styles.headerCopy}>
+            <View style={[styles.header, isCompactWidth ? styles.headerCompact : null]}>
+              <View style={[styles.headerCopy, isCompactWidth ? styles.headerCopyCompact : null]}>
                 <Text style={[styles.eyebrow, { color: theme.tint }]}>
                   Precision Boosts
                 </Text>
-                <Text style={[styles.title, { color: theme.text }]}>
+                <Text style={[styles.title, isCompactWidth ? styles.titleCompact : null, { color: theme.text }]}>
                   Boost the right moment of visibility
                 </Text>
               </View>
@@ -627,7 +631,7 @@ export default function BoostComposerModal({
               </View>
             ) : null}
 
-            <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+            <ScrollView contentContainerStyle={[styles.content, isCompactWidth ? styles.contentCompact : null]} showsVerticalScrollIndicator={false}>
               <View
                 style={[
                   styles.callout,
@@ -877,13 +881,14 @@ export default function BoostComposerModal({
                 </View>
               ) : null}
 
-              <View style={styles.metricRow}>
+              <View style={[styles.metricRow, isCompactWidth ? styles.metricRowCompact : null]}>
                 <MetricPill
                   staggerIndex={0}
                   label="Reach"
                   value={recommendation?.recent_metrics?.unique_viewers_7d ?? 0}
                   caption="unique"
                   theme={theme}
+                  compact={isCompactWidth}
                 />
                 <MetricPill
                   staggerIndex={1}
@@ -891,38 +896,42 @@ export default function BoostComposerModal({
                   value={recommendation?.recent_metrics?.views_7d ?? 0}
                   caption="total"
                   theme={theme}
+                  compact={isCompactWidth}
                 />
                 <MetricPill
                   staggerIndex={2}
                   label="Intro"
                   value={recommendation?.recent_metrics?.intro_opens_7d ?? 0}
                   theme={theme}
+                  compact={isCompactWidth}
                 />
                 <MetricPill
                   staggerIndex={3}
                   label="Saves"
                   value={recommendation?.recent_metrics?.saves_7d ?? 0}
                   theme={theme}
+                  compact={isCompactWidth}
                 />
                 <MetricPill
                   staggerIndex={4}
                   label="Intent"
                   value={recommendation?.recent_metrics?.intent_opens_7d ?? 0}
                   theme={theme}
+                  compact={isCompactWidth}
                 />
               </View>
 
               <View style={styles.section}>
-                <View style={styles.sectionHeader}>
+                <View style={[styles.sectionHeader, isCompactWidth ? styles.sectionHeaderCompact : null]}>
                   <Text style={[styles.sectionTitle, { color: theme.text }]}>Boost type</Text>
                   {!isGold ? (
-                    <View style={[styles.lockPill, { backgroundColor: LOCKED_TINT, borderColor: theme.outline }]}>
+                    <View style={[styles.lockPill, isCompactWidth ? styles.lockPillCompact : null, { backgroundColor: LOCKED_TINT, borderColor: theme.outline }]}>
                       <MaterialCommunityIcons name="lock-outline" size={12} color={theme.textMuted} />
                       <Text style={[styles.lockPillText, { color: theme.textMuted }]}>Gold for precision</Text>
                     </View>
                   ) : null}
                 </View>
-                <View style={styles.inlineOptions}>
+                <View style={[styles.inlineOptions, isCompactWidth ? styles.inlineOptionsCompact : null]}>
                   {(['manual', 'smart'] as BoostType[]).map((item) => {
                     const selected = item === boostType;
                     const locked = !isGold && item === 'smart';
@@ -938,6 +947,7 @@ export default function BoostComposerModal({
                         }}
                         style={[
                           styles.inlineOption,
+                          isCompactWidth ? styles.inlineOptionCompact : null,
                           {
                             borderColor: selected ? theme.tint : theme.outline,
                             backgroundColor: selected ? `${theme.tint}16` : theme.backgroundSubtle,
@@ -963,10 +973,10 @@ export default function BoostComposerModal({
               </View>
 
               <View style={styles.section}>
-                <View style={styles.sectionHeader}>
+                <View style={[styles.sectionHeader, isCompactWidth ? styles.sectionHeaderCompact : null]}>
                   <Text style={[styles.sectionTitle, { color: theme.text }]}>Audience mode</Text>
                   {!isGold ? (
-                    <Text style={[styles.sectionMeta, { color: theme.textMuted }]}>Gold unlocks advanced targeting</Text>
+                    <Text style={[styles.sectionMeta, isCompactWidth ? styles.sectionMetaCompact : null, { color: theme.textMuted }]}>Gold unlocks advanced targeting</Text>
                   ) : null}
                 </View>
                 <View style={styles.optionStack}>
@@ -1006,10 +1016,10 @@ export default function BoostComposerModal({
               </View>
 
               <View style={styles.section}>
-                <View style={styles.sectionHeader}>
+                <View style={[styles.sectionHeader, isCompactWidth ? styles.sectionHeaderCompact : null]}>
                   <Text style={[styles.sectionTitle, { color: theme.text }]}>Focus</Text>
                   {!isGold ? (
-                    <Text style={[styles.sectionMeta, { color: theme.textMuted }]}>Gold unlocks intro and intent focus</Text>
+                    <Text style={[styles.sectionMeta, isCompactWidth ? styles.sectionMetaCompact : null, { color: theme.textMuted }]}>Gold unlocks intro and intent focus</Text>
                   ) : null}
                 </View>
                 <View style={styles.optionStack}>
@@ -1184,7 +1194,7 @@ export default function BoostComposerModal({
               ) : null}
             </ScrollView>
 
-            <View style={styles.footer}>
+            <View style={[styles.footer, isCompactWidth ? styles.footerCompact : null]}>
               <Pressable
                 onPress={() =>
                   onSubmit({
@@ -1242,7 +1252,7 @@ export default function BoostComposerModal({
                   >
                     <MaterialCommunityIcons name="rocket-launch-outline" size={18} color="#091012" />
                   </Animated.View>
-                  <Text style={styles.primaryCtaText}>
+                  <Text style={[styles.primaryCtaText, isCompactWidth ? styles.primaryCtaTextCompact : null]}>
                     {submitting
                       ? 'Launching boost...'
                       : syncState?.status === 'queued'
@@ -1334,17 +1344,20 @@ function MetricPill({
   caption,
   theme,
   staggerIndex = 0,
+  compact = false,
 }: {
   label: string;
   value: number;
   caption?: string;
   theme: Props['theme'];
   staggerIndex?: number;
+  compact?: boolean;
 }) {
   return (
     <View
       style={[
         styles.metricPill,
+        compact ? styles.metricPillCompact : null,
         {
           backgroundColor: theme.backgroundSubtle,
           borderColor: theme.outline,
@@ -1354,10 +1367,10 @@ function MetricPill({
       <AnimatedMetricValue
         value={value}
         staggerIndex={staggerIndex}
-        style={[styles.metricValue, { color: theme.text }]}
+        style={[styles.metricValue, compact ? styles.metricValueCompact : null, { color: theme.text }]}
       />
-      <Text style={[styles.metricLabel, { color: theme.textMuted }]}>{label}</Text>
-      {caption ? <Text style={[styles.metricCaption, { color: theme.textMuted }]}>{caption}</Text> : null}
+      <Text style={[styles.metricLabel, compact ? styles.metricLabelCompact : null, { color: theme.textMuted }]}>{label}</Text>
+      {caption ? <Text style={[styles.metricCaption, compact ? styles.metricCaptionCompact : null, { color: theme.textMuted }]}>{caption}</Text> : null}
     </View>
   );
 }
@@ -1424,6 +1437,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     overflow: 'hidden',
   },
+  sheetCompact: {
+    maxHeight: '94%',
+  },
   heroGlow: {
     ...StyleSheet.absoluteFillObject,
   },
@@ -1439,6 +1455,14 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingRight: 12,
   },
+  headerCompact: {
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 10,
+  },
+  headerCopyCompact: {
+    paddingRight: 8,
+  },
   eyebrow: {
     fontSize: 12,
     fontWeight: '800',
@@ -1451,6 +1475,10 @@ const styles = StyleSheet.create({
     lineHeight: 28,
     fontWeight: '900',
   },
+  titleCompact: {
+    fontSize: 19,
+    lineHeight: 24,
+  },
   closeButton: {
     width: 36,
     height: 36,
@@ -1461,6 +1489,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingBottom: 10,
     gap: 16,
+  },
+  contentCompact: {
+    paddingHorizontal: 14,
+    gap: 14,
   },
   feedbackWrap: {
     paddingHorizontal: 18,
@@ -1736,6 +1768,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
   },
+  metricRowCompact: {
+    gap: 6,
+  },
   metricPill: {
     flex: 1,
     minWidth: 0,
@@ -1744,14 +1779,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 9,
   },
+  metricPillCompact: {
+    paddingHorizontal: 6,
+    paddingVertical: 8,
+  },
   metricValue: {
     fontSize: 16,
     fontWeight: '800',
+  },
+  metricValueCompact: {
+    fontSize: 15,
   },
   metricLabel: {
     marginTop: 2,
     fontSize: 11,
     fontWeight: '600',
+  },
+  metricLabelCompact: {
+    fontSize: 10.5,
   },
   metricCaption: {
     marginTop: 2,
@@ -1759,6 +1804,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.3,
+  },
+  metricCaptionCompact: {
+    fontSize: 8,
   },
   section: {
     gap: 10,
@@ -1769,6 +1817,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 10,
   },
+  sectionHeaderCompact: {
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+  },
   sectionTitle: {
     fontSize: 16,
     fontWeight: '800',
@@ -1776,6 +1828,10 @@ const styles = StyleSheet.create({
   sectionMeta: {
     fontSize: 11,
     fontWeight: '700',
+  },
+  sectionMetaCompact: {
+    width: '100%',
+    marginTop: 2,
   },
   lockPill: {
     flexDirection: 'row',
@@ -1786,6 +1842,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
+  lockPillCompact: {
+    marginTop: 2,
+  },
   lockPillText: {
     fontSize: 11,
     fontWeight: '800',
@@ -1794,11 +1853,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
   },
+  inlineOptionsCompact: {
+    flexDirection: 'column',
+    gap: 8,
+  },
   inlineOption: {
     flex: 1,
     borderWidth: 1,
     borderRadius: 16,
     padding: 12,
+  },
+  inlineOptionCompact: {
+    flexBasis: 'auto',
   },
   inlineOptionTitle: {
     fontSize: 14,
@@ -1954,6 +2020,10 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 18,
   },
+  footerCompact: {
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+  },
   primaryCtaWrap: {
     borderRadius: 18,
     overflow: 'hidden',
@@ -1976,5 +2046,8 @@ const styles = StyleSheet.create({
     color: '#091012',
     fontSize: 15,
     fontWeight: '900',
+  },
+  primaryCtaTextCompact: {
+    fontSize: 14,
   },
 });

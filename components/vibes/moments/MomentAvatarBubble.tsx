@@ -12,6 +12,7 @@ type MomentAvatarBubbleProps = {
   label: string;
   statusLabel?: string;
   isOwn?: boolean;
+  needsAttention?: boolean;
   hasUnseenMoment?: boolean;
   isLive?: boolean;
   onPress: () => void;
@@ -28,6 +29,7 @@ function MomentAvatarBubble({
   label,
   statusLabel,
   isOwn = false,
+  needsAttention = false,
   hasUnseenMoment = false,
   isLive = false,
   onPress,
@@ -53,14 +55,12 @@ function MomentAvatarBubble({
     onPress();
   };
 
-  const hasSeenLiveMoment = isLive && !isOwn && !hasUnseenMoment;
+  const showGradientRing = hasUnseenMoment || isOwn;
   const ringColors = hasUnseenMoment
     ? ["#f59e0b", "#f43f5e", "#22d3ee"]
-    : hasSeenLiveMoment
-      ? ["rgba(72,229,220,0.98)", "rgba(244,232,208,0.92)"]
     : isOwn
       ? ["rgba(244,232,208,0.95)", "rgba(19,168,168,0.72)"]
-      : ["rgba(244,232,208,0.74)", "rgba(19,168,168,0.42)"];
+      : ["rgba(244,232,208,0.0)", "rgba(244,232,208,0.0)"];
 
   const avatarFallback = (
     <View
@@ -83,6 +83,36 @@ function MomentAvatarBubble({
     </View>
   );
 
+  const overlayBadge = isOwn && !isLive ? (
+    <View style={[styles.addDot, { backgroundColor: theme.tint }]}>
+      <MaterialCommunityIcons name="plus" size={8} color="#F4E8D0" />
+    </View>
+  ) : needsAttention ? (
+    <View style={[styles.attentionDot, { backgroundColor: "#f59e0b" }]}>
+      <MaterialCommunityIcons name="bell-ring" size={8} color="#082224" />
+    </View>
+  ) : null;
+
+  const avatarBody = (
+    <>
+      <OfflineImage
+        uri={safeAvatarUrl}
+        style={[
+          styles.avatar,
+          {
+            width: avatarSize,
+            height: avatarSize,
+            borderRadius: avatarSize / 2,
+            borderColor: isDark ? "rgba(7,30,34,0.88)" : "rgba(255,250,244,0.92)",
+          },
+        ]}
+        contentFit="cover"
+        fallback={avatarFallback}
+      />
+      {overlayBadge}
+    </>
+  );
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -91,42 +121,39 @@ function MomentAvatarBubble({
       style={[styles.pressable, { minWidth: Math.max(ringSize, 48) }]}
     >
       <Animated.View style={[styles.scaleWrap, { transform: [{ scale }] }]}>
-        <LinearGradientSafe
-          colors={ringColors}
-          start={[0, 0]}
-          end={[1, 1]}
-          style={[
-            styles.ring,
-            hasUnseenMoment ? styles.ringUnseen : null,
-            hasSeenLiveMoment ? styles.ringSeenLive : null,
-            {
-              width: ringSize,
-              height: ringSize,
-              borderRadius: ringSize / 2,
-              padding: Math.max(2, Math.round((ringSize - avatarSize) / 2)),
-            },
-          ]}
-          >
-          <OfflineImage
-            uri={safeAvatarUrl}
+        {showGradientRing ? (
+          <LinearGradientSafe
+            colors={ringColors}
+            start={[0, 0]}
+            end={[1, 1]}
             style={[
-              styles.avatar,
+              styles.ring,
+              hasUnseenMoment ? styles.ringUnseen : null,
               {
-                width: avatarSize,
-                height: avatarSize,
-                borderRadius: avatarSize / 2,
-                borderColor: isDark ? "rgba(7,30,34,0.88)" : "rgba(255,250,244,0.92)",
+                width: ringSize,
+                height: ringSize,
+                borderRadius: ringSize / 2,
+                padding: Math.max(2, Math.round((ringSize - avatarSize) / 2)),
               },
             ]}
-            contentFit="cover"
-            fallback={avatarFallback}
-          />
-          {isOwn && !isLive ? (
-            <View style={[styles.addDot, { backgroundColor: theme.tint }]}>
-              <MaterialCommunityIcons name="plus" size={8} color="#F4E8D0" />
-            </View>
-          ) : null}
-        </LinearGradientSafe>
+          >
+            {avatarBody}
+          </LinearGradientSafe>
+        ) : (
+          <View
+            style={[
+              styles.ringPlain,
+              {
+                width: ringSize,
+                height: ringSize,
+                borderRadius: ringSize / 2,
+                padding: Math.max(2, Math.round((ringSize - avatarSize) / 2)),
+              },
+            ]}
+          >
+            {avatarBody}
+          </View>
+        )}
       </Animated.View>
       {showLabel ? (
         <Text numberOfLines={1} style={[styles.label, { color: isDark ? "#F4E8D0" : "#173C3B", maxWidth: ringSize + 10 }]}>
@@ -166,12 +193,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 5,
   },
-  ringSeenLive: {
-    shadowColor: '#39d6cf',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3,
+  ringPlain: {
+    alignItems: "center",
+    justifyContent: "center",
   },
   avatar: {
     borderWidth: 2,
@@ -189,6 +213,18 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: 3,
     bottom: 3,
+    width: 15,
+    height: 15,
+    borderRadius: 7.5,
+    borderWidth: 1.5,
+    borderColor: "#F4E8D0",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  attentionDot: {
+    position: "absolute",
+    right: 3,
+    top: 3,
     width: 15,
     height: 15,
     borderRadius: 7.5,

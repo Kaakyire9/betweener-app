@@ -18,7 +18,7 @@ import {
 import { readMeProfileSnapshot, writeMeProfileSnapshot } from '@/lib/offline/me-store';
 import { cacheOfflineVideo, getOfflineVideoUri } from '@/lib/offline/video-store';
 import { showOpenSettingsPrompt } from '@/lib/permission-prompts';
-import { isLocalMediaUri, normalizeProfilePhotoList, normalizeProfilePhotoUri } from '@/lib/profile/media';
+import { isLocalMediaUri, normalizeGalleryPhotoList, normalizeProfilePhotoUri } from '@/lib/profile/media';
 import { RELIGION_LABELS, formatReligionLabel, isReligionEnumError, normalizeReligionForProfile } from '@/lib/profile/religion';
 import { getProfileInitials, hasProfileImage } from '@/lib/profile-placeholders';
 import { type ResponsiveMetrics, useResponsiveMetrics } from '@/lib/responsive';
@@ -720,6 +720,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       const filteredLanguages = normalizedLanguages.filter(
         (lang) => languagesOptions.includes(lang) || lang === 'Other'
       );
+      const normalizedAvatarUrl = normalizeProfilePhotoUri(profile.avatar_url);
+      const normalizedPhotos = normalizeGalleryPhotoList((profile as any).photos, normalizedAvatarUrl);
       setFormData({
         full_name: profile.full_name || '',
         bio: profile.bio || '',
@@ -739,8 +741,8 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         education: (profile as any).education || '',
         height: (profile as any).height || '',
           looking_for: (profile as any).looking_for || '',
-          avatar_url: normalizeProfilePhotoUri(profile.avatar_url),
-          photos: normalizeProfilePhotoList((profile as any).photos),
+          avatar_url: normalizedAvatarUrl,
+          photos: normalizedPhotos,
           profile_video: (profile as any).profile_video || '',
           matchmaking_mode: Boolean((profile as any).matchmaking_mode),
           discoverable_in_vibes: (profile as any).discoverable_in_vibes ?? true,
@@ -773,12 +775,15 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
     void (async () => {
       const snapshot = await readMeProfileSnapshot(profileId);
       if (cancelled || !snapshot) return;
-      const cachedPhotos = normalizeProfilePhotoList(snapshot.photos);
+      const cachedAvatarUrl = normalizeProfilePhotoUri(snapshot.avatarUrl);
+      const cachedPhotos = normalizeGalleryPhotoList(snapshot.photos, cachedAvatarUrl);
       setFormData((prev) => ({
         ...prev,
-        photos: prev.photos.length > 0 ? prev.photos : cachedPhotos,
-        avatar_url: prev.avatar_url || normalizeProfilePhotoUri(snapshot.avatarUrl) || cachedPhotos[0] || '',
-        profile_video: prev.profile_video || snapshot.profileVideo || '',
+        photos: prev.photos.length > 0 ? normalizeGalleryPhotoList(prev.photos, prev.avatar_url) : cachedPhotos,
+        avatar_url: prev.avatar_url || cachedAvatarUrl || '',
+        profile_video:
+          prev.profile_video ||
+          (snapshot.profileVideo && isLocalMediaUri(snapshot.profileVideo) ? snapshot.profileVideo : ''),
       }));
     })();
     return () => {
@@ -916,14 +921,18 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
   const stageImageOffline = async (uri: string, isAvatar: boolean) => {
     const stableUri = await persistProfileMediaUri(uri, isAvatar ? 'profile-avatar' : 'profile-photo', 'image/jpeg');
     if (isAvatar) {
-      setFormData(prev => ({
-        ...prev,
-        avatar_url: stableUri,
-      }));
-      persistMeMediaSnapshot({ avatarUrl: stableUri });
+      setFormData(prev => {
+        const nextPhotos = normalizeGalleryPhotoList(prev.photos, stableUri);
+        persistMeMediaSnapshot({ avatarUrl: stableUri, photos: nextPhotos });
+        return {
+          ...prev,
+          avatar_url: stableUri,
+          photos: nextPhotos,
+        };
+      });
     } else {
       setFormData(prev => {
-        const nextPhotos = [...prev.photos, stableUri];
+        const nextPhotos = normalizeGalleryPhotoList([...prev.photos, stableUri], prev.avatar_url);
         persistMeMediaSnapshot({ photos: nextPhotos });
         return {
           ...prev,
@@ -1265,14 +1274,18 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
         .getPublicUrl(filePath);
 
       if (isAvatar) {
-        setFormData(prev => ({
-          ...prev,
-          avatar_url: publicUrl
-        }));
-        persistMeMediaSnapshot({ avatarUrl: publicUrl });
+        setFormData(prev => {
+          const nextPhotos = normalizeGalleryPhotoList(prev.photos, publicUrl);
+          persistMeMediaSnapshot({ avatarUrl: publicUrl, photos: nextPhotos });
+          return {
+            ...prev,
+            avatar_url: publicUrl,
+            photos: nextPhotos,
+          };
+        });
       } else {
         setFormData(prev => {
-          const nextPhotos = [...prev.photos, publicUrl];
+          const nextPhotos = normalizeGalleryPhotoList([...prev.photos, publicUrl], prev.avatar_url);
           persistMeMediaSnapshot({ photos: nextPhotos });
           return {
             ...prev,
@@ -1631,7 +1644,10 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
           style: 'destructive',
           onPress: () => {
             setFormData(prev => {
-              const nextPhotos = prev.photos.filter((_, i) => i !== index);
+              const nextPhotos = normalizeGalleryPhotoList(
+                prev.photos.filter((_, i) => i !== index),
+                prev.avatar_url,
+              );
               persistMeMediaSnapshot({ photos: nextPhotos });
               return {
                 ...prev,
@@ -1662,10 +1678,11 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       // Prepare update data (preserve required fields to avoid NOT NULL constraint violations)
       const normalizedRoots = normalizeRoots(formData.roots);
       const rootsNote = formData.roots_note ? formData.roots_note.trim() : '';
+      const sanitizedPhotos = normalizeGalleryPhotoList(formData.photos, formData.avatar_url);
       const hasLocalAvatar = isLocalMediaUri(formData.avatar_url);
-      const localPhotos = formData.photos.filter((photo) => isLocalMediaUri(photo));
+      const localPhotos = sanitizedPhotos.filter((photo) => isLocalMediaUri(photo));
       const hasLocalVideo = isLocalMediaUri(formData.profile_video);
-      const remotePhotos = formData.photos.filter((photo) => !isLocalMediaUri(photo));
+      const remotePhotos = sanitizedPhotos.filter((photo) => !isLocalMediaUri(photo));
       const mediaSyncPayload =
         user?.id && (hasLocalAvatar || localPhotos.length > 0 || hasLocalVideo)
           ? {
@@ -1673,7 +1690,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
               avatar: hasLocalAvatar
                 ? inferMediaUploadMeta(formData.avatar_url, 'profile-avatar', 'image/jpeg')
                 : null,
-              photos: localPhotos.length > 0 ? formData.photos : null,
+              photos: localPhotos.length > 0 ? sanitizedPhotos : null,
               photoItems: localPhotos.map((photo, index) =>
                 inferMediaUploadMeta(photo, `profile-photo-${index + 1}`, 'image/jpeg'),
               ),
@@ -1942,7 +1959,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       if (snapshotProfileId) {
         void writeMeProfileSnapshot(snapshotProfileId, {
           avatarUrl: formData.avatar_url || null,
-          photos: formData.photos,
+          photos: sanitizedPhotos,
           profileVideo: formData.profile_video || null,
         });
       }
@@ -1955,7 +1972,7 @@ export default function ProfileEditModal({ visible, onClose, onSave, onOpenVerif
       onSave({
         ...updateData,
         __displayAvatarUrl: formData.avatar_url || null,
-        __displayPhotos: formData.photos,
+        __displayPhotos: sanitizedPhotos,
         __displayProfileVideo: formData.profile_video || null,
         __interests: selectedInterests,
         __offlineQueued: queued,

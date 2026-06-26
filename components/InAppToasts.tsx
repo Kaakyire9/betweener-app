@@ -88,6 +88,8 @@ const GOOGLE_MAPS_WEB_API_KEY =
 const GOOGLE_MAPS_MAP_ID = process.env.EXPO_PUBLIC_GOOGLE_MAPS_MAP_ID;
 
 const TOAST_DURATION_MS = 4200;
+const MOMENT_COMMENT_TOAST_DURATION_MS = 6800;
+const MOMENT_COMMENT_REACTION_TOAST_DURATION_MS = 5600;
 const MOMENT_REACTION_BURST_WINDOW_MS = 30000;
 const MOMENT_POST_BURST_WINDOW_MS = 600000;
 const videoThumbnailCache = new Map<string, ToastThumbnailSource>();
@@ -318,6 +320,18 @@ type MomentReactionBurst = {
   actors: Map<string, MomentReactionBurstActor>;
 };
 
+type MomentCommentReactionBurstActor = {
+  key: string;
+  name: string;
+  avatarUrl: string | null;
+  profileId: string | null;
+  reaction: string | null;
+};
+
+type MomentCommentReactionBurst = {
+  actors: Map<string, MomentCommentReactionBurstActor>;
+};
+
 type MomentPostBurstActor = {
   key: string;
   name: string;
@@ -357,6 +371,8 @@ export default function InAppToasts() {
   const momentRelationshipCueCacheRef = useRef<Map<string, string | null>>(new Map());
   const momentReactionBurstsRef = useRef<Record<string, MomentReactionBurst>>({});
   const momentReactionBurstTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const momentCommentReactionBurstsRef = useRef<Record<string, MomentCommentReactionBurst>>({});
+  const momentCommentReactionBurstTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const momentPostBurstsRef = useRef<Record<string, MomentPostBurst>>({});
   const momentPostBurstTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
@@ -413,7 +429,7 @@ export default function InAppToasts() {
     }, delayMs);
   }, []);
 
-  const pushToast = useCallback((toast: ToastItem, opts?: { replace?: boolean }) => {
+  const pushToast = useCallback((toast: ToastItem, opts?: { replace?: boolean; durationMs?: number }) => {
     let nextToast = toast;
     let replace = opts?.replace === true;
     if (toast.groupKey) {
@@ -446,7 +462,7 @@ export default function InAppToasts() {
     if (!replace) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
     }
-    scheduleToastDismiss(nextToast.id, nextToast.groupKey ?? null);
+    scheduleToastDismiss(nextToast.id, nextToast.groupKey ?? null, opts?.durationMs ?? TOAST_DURATION_MS);
   }, [scheduleToastDismiss]);
 
   const activeChatId = useMemo(() => {
@@ -480,6 +496,7 @@ export default function InAppToasts() {
     return () => {
       Object.values(timeouts.current).forEach((timeout) => clearTimeout(timeout));
       Object.values(momentReactionBurstTimeoutsRef.current).forEach((timeout) => clearTimeout(timeout));
+      Object.values(momentCommentReactionBurstTimeoutsRef.current).forEach((timeout) => clearTimeout(timeout));
       Object.values(momentPostBurstTimeoutsRef.current).forEach((timeout) => clearTimeout(timeout));
     };
   }, []);
@@ -1082,7 +1099,12 @@ export default function InAppToasts() {
     return cueLead ? `${cueLead} ${reactionPrefix} to your Moment` : `${reactionPrefix} to your Moment`;
   }, []);
 
-  const momentCommentPreview = useCallback((commentRow: any, previewsAllowed: boolean, relationshipCue?: string | null) => {
+  const momentCommentPreview = useCallback((
+    commentRow: any,
+    previewsAllowed: boolean,
+    relationshipCue?: string | null,
+    recipientKind: 'moment_owner' | 'reply_target' = 'moment_owner',
+  ) => {
     const cueLead = (() => {
       if (relationshipCue === 'You matched') return 'Your match';
       if (relationshipCue === 'Door reopened') return 'A reopened connection';
@@ -1093,9 +1115,51 @@ export default function InAppToasts() {
       if (relationshipCue === 'They reached out') return 'Someone who reached out';
       return null;
     })();
-    if (!previewsAllowed) return cueLead ? `${cueLead} commented on your Moment` : 'Commented on your Moment';
+    const baseVerb = recipientKind === 'reply_target' ? 'replied to your comment' : 'commented on your Moment';
+    const snippetVerb = recipientKind === 'reply_target' ? 'replied' : 'commented';
+    if (!previewsAllowed) return cueLead ? `${cueLead} ${baseVerb}` : baseVerb.charAt(0).toUpperCase() + baseVerb.slice(1);
     const snippet = String(commentRow?.body || '').replace(/\s+/g, ' ').trim().slice(0, 120);
-    return snippet ? `${cueLead ? `${cueLead} commented` : 'Commented'}: "${snippet}"` : cueLead ? `${cueLead} commented on your Moment` : 'Commented on your Moment';
+    return snippet
+      ? `${cueLead ? `${cueLead} ${snippetVerb}` : snippetVerb.charAt(0).toUpperCase() + snippetVerb.slice(1)}: "${snippet}"`
+      : cueLead
+        ? `${cueLead} ${baseVerb}`
+        : baseVerb.charAt(0).toUpperCase() + baseVerb.slice(1);
+  }, []);
+
+  const momentCommentReactionPreview = useCallback((
+    reaction: string | null | undefined,
+    previewsAllowed: boolean,
+    relationshipCue?: string | null,
+  ) => {
+    const cueLead = (() => {
+      if (relationshipCue === 'You matched') return 'Your match';
+      if (relationshipCue === 'Door reopened') return 'A reopened connection';
+      if (relationshipCue === 'Liked you') return 'Someone who liked you';
+      if (relationshipCue === 'You liked each other') return 'Someone you both noticed';
+      if (relationshipCue === 'You liked them') return 'Someone on your radar';
+      if (relationshipCue === 'You reached out') return 'Someone you reached out to';
+      if (relationshipCue === 'They reached out') return 'Someone who reached out';
+      return null;
+    })();
+    const reactionEmoji = (() => {
+      switch ((reaction || '').toLowerCase()) {
+        case 'heart':
+          return '❤️';
+        case 'love':
+          return '😍';
+        case 'fire':
+          return '🔥';
+        case 'clap':
+          return '👏';
+        case 'laugh':
+          return '😂';
+        default:
+          return null;
+      }
+    })();
+    if (!previewsAllowed) return cueLead ? `${cueLead} reacted to your comment` : 'Reacted to your comment';
+    const verb = reactionEmoji ? `reacted ${reactionEmoji}` : 'reacted';
+    return cueLead ? `${cueLead} ${verb} to your comment` : `${verb.charAt(0).toUpperCase() + verb.slice(1)} to your comment`;
   }, []);
 
   const momentPostBurstPreview = useCallback((count: number, relationshipCue?: string | null) => {
@@ -1200,6 +1264,92 @@ export default function InAppToasts() {
       }, { replace: totalActors > 1 });
     },
     [momentReactionPreview, pushToast],
+  );
+
+  const queueMomentCommentReactionToast = useCallback(
+    ({
+      commentId,
+      momentId,
+      reactionId,
+      reactorKey,
+      reactorName,
+      avatarUrl,
+      profileId,
+      reaction,
+      previewsAllowed,
+      relationshipCue,
+      routeStartUserId,
+    }: {
+      commentId: string;
+      momentId: string;
+      reactionId: string;
+      reactorKey: string;
+      reactorName: string;
+      avatarUrl: string | null;
+      profileId: string | null;
+      reaction: string | null;
+      previewsAllowed: boolean;
+      relationshipCue?: string | null;
+      routeStartUserId: string;
+    }) => {
+      const burstKey = String(commentId);
+      const nextActors = new Map(momentCommentReactionBurstsRef.current[burstKey]?.actors ?? []);
+      if (!nextActors.has(reactorKey)) {
+        nextActors.set(reactorKey, {
+          key: reactorKey,
+          name: reactorName,
+          avatarUrl,
+          profileId,
+          reaction,
+        });
+      } else {
+        const current = nextActors.get(reactorKey)!;
+        nextActors.set(reactorKey, {
+          ...current,
+          name: reactorName || current.name,
+          avatarUrl: avatarUrl ?? current.avatarUrl,
+          profileId: profileId ?? current.profileId,
+          reaction: reaction ?? current.reaction,
+        });
+      }
+      momentCommentReactionBurstsRef.current[burstKey] = { actors: nextActors };
+
+      if (momentCommentReactionBurstTimeoutsRef.current[burstKey]) {
+        clearTimeout(momentCommentReactionBurstTimeoutsRef.current[burstKey]);
+      }
+      momentCommentReactionBurstTimeoutsRef.current[burstKey] = setTimeout(() => {
+        delete momentCommentReactionBurstsRef.current[burstKey];
+        delete momentCommentReactionBurstTimeoutsRef.current[burstKey];
+      }, MOMENT_REACTION_BURST_WINDOW_MS);
+
+      const actors = Array.from(nextActors.values());
+      const latestActor = actors[actors.length - 1];
+      const totalActors = actors.length;
+      const body =
+        totalActors > 1
+          ? `${latestActor.name} and ${totalActors - 1} other${totalActors - 1 === 1 ? '' : 's'} reacted to your comment`
+          : momentCommentReactionPreview(reaction, previewsAllowed, relationshipCue);
+
+      pushToast({
+        id: `moment-comment-reaction-burst-${burstKey}`,
+        title: totalActors > 1 ? `${totalActors} comment reactions` : reactorName,
+        body,
+        kind: 'moment',
+        avatarUrl: latestActor.avatarUrl,
+        profileId: totalActors > 1 ? null : profileId,
+        route: '/moments',
+        routeParams: {
+          startUserId: String(routeStartUserId),
+          startMomentId: String(momentId),
+          openComments: '1',
+          entrySource: 'comment',
+          commentId: String(commentId),
+          reactionEmoji: '',
+          reactionId: reactionId ? String(reactionId) : '',
+        },
+      }, { replace: totalActors > 1, durationMs: MOMENT_COMMENT_REACTION_TOAST_DURATION_MS });
+    },
+    [momentCommentReactionPreview, pushToast],
   );
 
   const queueMomentPostToast = useCallback(
@@ -1564,6 +1714,7 @@ export default function InAppToasts() {
           if (!row) return;
           if (row.user_id === user.id) return;
           if (row.is_deleted) return;
+          if (shouldSuppressToast(`moment-post:${String(row.id)}`)) return;
           if (!canInAppNotify('moments')) return;
           if (isMomentsRoute) return;
           void (async () => {
@@ -1607,6 +1758,7 @@ export default function InAppToasts() {
     prefs?.preview_text,
     profile?.id,
     queueMomentPostToast,
+    shouldSuppressToast,
     user?.id,
   ]);
 
@@ -1618,6 +1770,7 @@ export default function InAppToasts() {
       if (!row) return;
       if (payload?.eventType === 'UPDATE' && payload?.old?.emoji === row.emoji) return;
       if (row.user_id === user.id) return;
+      if (shouldSuppressToast(`moment-reaction:${String(row.id)}`)) return;
       if (!canInAppNotify('moments')) return;
       if (isMomentsRoute) return;
       void (async () => {
@@ -1671,6 +1824,7 @@ export default function InAppToasts() {
     prefs?.preview_text,
     pushToast,
     queueMomentReactionToast,
+    shouldSuppressToast,
     user?.id,
   ]);
 
@@ -1686,15 +1840,38 @@ export default function InAppToasts() {
           const row = payload.new as any;
           if (!row) return;
           if (row.user_id === user.id) return;
+          if (shouldSuppressToast(`moment-comment:${String(row.id)}`)) return;
           if (!canInAppNotify('moments')) return;
           if (isMomentsRoute) return;
           void (async () => {
-            const { data: momentRow } = await supabase
-              .from('moments')
-              .select('id,user_id,is_deleted')
-              .eq('id', row.moment_id)
-              .maybeSingle();
-            if (!momentRow || momentRow.user_id !== user.id || momentRow.is_deleted) return;
+            const [{ data: momentRow }, { data: parentCommentRow }] = await Promise.all([
+              supabase
+                .from('moments')
+                .select('id,user_id,is_deleted')
+                .eq('id', row.moment_id)
+                .maybeSingle(),
+              row.parent_comment_id
+                ? supabase
+                    .from('moment_comments')
+                    .select('id,user_id,is_deleted')
+                    .eq('id', row.parent_comment_id)
+                    .maybeSingle()
+                : Promise.resolve({ data: null }),
+            ]);
+
+            if (!momentRow || momentRow.is_deleted) return;
+
+            const recipientKind: 'moment_owner' | 'reply_target' | null =
+              momentRow.user_id === user.id
+                ? 'moment_owner'
+                : parentCommentRow &&
+                    !parentCommentRow.is_deleted &&
+                    parentCommentRow.user_id === user.id &&
+                    parentCommentRow.user_id !== row.user_id
+                  ? 'reply_target'
+                  : null;
+
+            if (!recipientKind) return;
 
             let name = 'Someone';
             let avatarUrl: string | null = null;
@@ -1710,18 +1887,18 @@ export default function InAppToasts() {
             pushToast({
               id: `moment-comment-${row.id}`,
               title: name,
-              body: momentCommentPreview(row, prefs?.preview_text !== false, relationshipCue),
+              body: momentCommentPreview(row, prefs?.preview_text !== false, relationshipCue, recipientKind),
               avatarUrl,
               profileId: commenterProfileId ?? null,
               route: '/moments',
               routeParams: {
-                startUserId: String(user.id),
+                startUserId: String(momentRow.user_id),
                 startMomentId: String(momentRow.id),
                 openComments: '1',
                 entrySource: 'comment',
                 commentId: String(row.id),
               },
-            });
+            }, { durationMs: MOMENT_COMMENT_TOAST_DURATION_MS });
           })();
         },
       )
@@ -1738,6 +1915,83 @@ export default function InAppToasts() {
     momentCommentPreview,
     prefs?.preview_text,
     pushToast,
+    shouldSuppressToast,
+    user?.id,
+  ]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const channel = supabase
+      .channel(`inapp_moment_comment_reactions:${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'moment_comment_reactions' },
+        (payload) => {
+          const row = payload.new as any;
+          if (!row) return;
+          if (row.user_id === user.id) return;
+          if (shouldSuppressToast(`moment-comment-reaction:${String(row.id)}`)) return;
+          if (!canInAppNotify('moments')) return;
+          if (isMomentsRoute) return;
+          void (async () => {
+            const [{ data: commentRow }, { data: momentRow }] = await Promise.all([
+              supabase
+                .from('moment_comments')
+                .select('id,user_id,moment_id,is_deleted')
+                .eq('id', row.comment_id)
+                .maybeSingle(),
+              supabase
+                .from('moments')
+                .select('id,user_id,is_deleted')
+                .eq('id', row.moment_id)
+                .maybeSingle(),
+            ]);
+            if (!commentRow || !momentRow || commentRow.is_deleted || momentRow.is_deleted) return;
+            if (commentRow.user_id !== user.id) return;
+
+            let name = 'Someone';
+            let avatarUrl: string | null = null;
+            let reactorProfileId: string | null = null;
+            try {
+              const p = await getProfileLite(String(row.user_id), { preferUserId: true });
+              name = getUserFacingDisplayName(p, 'Someone');
+              if (p?.avatar_url) avatarUrl = p.avatar_url;
+              if (p?.id) reactorProfileId = p.id;
+            } catch {}
+            const relationshipCue = await getMomentRelationshipCueForPoster(String(row.user_id));
+
+            queueMomentCommentReactionToast({
+              commentId: String(commentRow.id),
+              momentId: String(momentRow.id),
+              reactionId: String(row.id),
+              reactorKey: reactorProfileId ?? String(row.user_id),
+              reactorName: name,
+              avatarUrl,
+              profileId: reactorProfileId ?? null,
+              reaction: row.reaction ? String(row.reaction) : null,
+              previewsAllowed: prefs?.preview_text !== false,
+              relationshipCue,
+              routeStartUserId: String(momentRow.user_id),
+            });
+          })();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [
+    canInAppNotify,
+    getProfileLite,
+    getMomentRelationshipCueForPoster,
+    isMomentsRoute,
+    momentCommentReactionPreview,
+    prefs?.preview_text,
+    pushToast,
+    queueMomentCommentReactionToast,
+    shouldSuppressToast,
     user?.id,
   ]);
 
@@ -1837,18 +2091,29 @@ export default function InAppToasts() {
         return;
       }
 
-      if (pushType === 'moment_post' || pushType === 'moment_reaction' || pushType === 'moment_comment') {
+      if (pushType === 'moment_post' || pushType === 'moment_reaction' || pushType === 'moment_comment' || pushType === 'moment_comment_reaction') {
         if (!canInAppNotify('moments')) return;
         if (isMomentsRoute) return;
 
         const momentId = data?.moment_id ? String(data.moment_id) : '';
         const commentId = data?.comment_id ? String(data.comment_id) : '';
         const reactionId = data?.reaction_id ? String(data.reaction_id) : '';
+        const commentReactionId = data?.comment_reaction_id ? String(data.comment_reaction_id) : '';
         const startUserId =
           data?.start_user_id ||
           data?.poster_user_id ||
           data?.moment_owner_user_id ||
           data?.user_id;
+
+        const suppressionKey =
+          pushType === 'moment_post'
+            ? `moment-post:${momentId}`
+            : pushType === 'moment_reaction'
+              ? `moment-reaction:${reactionId || momentId}`
+              : pushType === 'moment_comment'
+                ? `moment-comment:${commentId || momentId}`
+                : `moment-comment-reaction:${commentReactionId || commentId || momentId}`;
+        if (shouldSuppressToast(suppressionKey)) return;
 
         if (pushType === 'moment_post') {
           const previewsAllowed = prefs?.preview_text !== false;
@@ -1902,6 +2167,27 @@ export default function InAppToasts() {
           return;
         }
 
+        if (pushType === 'moment_comment_reaction') {
+          const previewsAllowed = prefs?.preview_text !== false;
+          const relationshipCue =
+            typeof data?.relationship_cue === 'string' ? String(data.relationship_cue) : null;
+          queueMomentCommentReactionToast({
+            commentId,
+            momentId,
+            reactionId: commentReactionId || commentId || notification.request.identifier,
+            reactorKey: data?.profile_id ? String(data.profile_id) : commentReactionId || notification.request.identifier,
+            reactorName: notification.request.content.title || 'Someone',
+            avatarUrl: typeof data?.avatar_url === 'string' ? data.avatar_url : null,
+            profileId: data?.profile_id ? String(data.profile_id) : null,
+            reaction:
+              data?.reaction ? String(data.reaction) : data?.reaction_emoji ? String(data.reaction_emoji) : null,
+            previewsAllowed,
+            relationshipCue,
+            routeStartUserId: startUserId ? String(startUserId) : String(user.id),
+          });
+          return;
+        }
+
         pushToast({
           id:
             pushType === 'moment_comment'
@@ -1915,11 +2201,18 @@ export default function InAppToasts() {
           routeParams: {
             startUserId: startUserId ? String(startUserId) : '',
             startMomentId: momentId,
-            openComments: pushType === 'moment_comment' ? '1' : '',
-            entrySource: pushType === 'moment_comment' ? 'comment' : '',
-            commentId: pushType === 'moment_comment' ? commentId : '',
+            openComments: pushType === 'moment_comment' || pushType === 'moment_comment_reaction' ? '1' : '',
+            entrySource: pushType === 'moment_comment' || pushType === 'moment_comment_reaction' ? 'comment' : '',
+            commentId: pushType === 'moment_comment' || pushType === 'moment_comment_reaction' ? commentId : '',
             reactionEmoji: '',
           },
+        }, {
+          durationMs:
+            pushType === 'moment_comment'
+              ? MOMENT_COMMENT_TOAST_DURATION_MS
+              : pushType === 'moment_comment_reaction'
+                ? MOMENT_COMMENT_REACTION_TOAST_DURATION_MS
+                : TOAST_DURATION_MS,
         });
         return;
       }

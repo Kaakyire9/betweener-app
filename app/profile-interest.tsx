@@ -18,6 +18,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { type ComponentProps, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -256,6 +257,22 @@ const buildPreviewFaces = (
     })
     .slice(0, 4)
     .map((person) => ({ profile_id: person.profile_id, name: person.name, avatar_url: person.avatar_url }));
+
+const mergePreviewFaceSources = (
+  primary: ProfileInterestPerson[],
+  secondary: ProfileInterestPerson[],
+) => {
+  const merged: ProfileInterestPerson[] = [];
+  const seen = new Set<string>();
+
+  for (const person of [...primary, ...secondary]) {
+    if (!person.profile_id || seen.has(person.profile_id)) continue;
+    seen.add(person.profile_id);
+    merged.push(person);
+  }
+
+  return merged;
+};
 
 type PreviewFace = {
   profile_id: string;
@@ -499,6 +516,12 @@ function InterestAvatarRow({
   const avatarSize = isHero ? (dense ? 60 : 70) : 34;
   const overlap = isHero ? (dense ? 39 : 45) : 21;
   const borderWidth = isHero ? (dense ? 2 : 2.25) : 1.6;
+  const lockedBlurRadius = !locked ? 0 : Platform.OS === 'android' ? (isHero ? 10 : 7) : isHero ? 20 : 14;
+  const lockedScrimStyle = locked
+    ? Platform.OS === 'android'
+      ? styles.previewAvatarScrimAndroid
+      : styles.previewAvatarScrim
+    : null;
   const visibleCount = isHero ? Math.min(people.length, 4) : Math.min(people.length, 4);
   const visiblePeople = people.slice(0, visibleCount);
   const extraCount = Math.max(totalCount - visiblePeople.length, 0);
@@ -533,7 +556,7 @@ function InterestAvatarRow({
             {person.avatar_url ? (
               <OfflineImage
                 uri={person.avatar_url}
-                blurRadius={locked ? (isHero ? 20 : 14) : 0}
+                blurRadius={lockedBlurRadius}
                 style={[styles.previewAvatarImage, { borderRadius: avatarSize / 2 }]}
               />
             ) : (
@@ -541,7 +564,7 @@ function InterestAvatarRow({
                 <MaterialCommunityIcons name="account" size={isHero ? 22 : 14} color="#C6FFFF" />
               </View>
             )}
-            {locked ? <View style={styles.previewAvatarScrim} /> : null}
+            {lockedScrimStyle ? <View style={lockedScrimStyle} /> : null}
             {!locked && onPersonPress ? (
               <Pressable
                 onPress={() => onPersonPress(person)}
@@ -917,7 +940,10 @@ export default function ProfileInterestScreen() {
         allPeople.filter((person) => person.intent_open_count > 0),
         (person) => person.intent_open_count * 28 + person.repeat_visit_count * 10 + person.visit_count * 6,
       ),
-      teaser: buildPreviewFaces(strongest.length ? strongest : allPeople, getSignalStrengthScore),
+      teaser: buildPreviewFaces(
+        mergePreviewFaceSources(strongest, allPeople),
+        getSignalStrengthScore,
+      ),
     };
   }, [strongest, summary?.people]);
   const exploredPeopleCount = useMemo(
@@ -1711,6 +1737,10 @@ const styles = StyleSheet.create({
   previewAvatarScrim: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(8, 18, 24, 0.16)',
+  },
+  previewAvatarScrimAndroid: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(8, 18, 24, 0.09)',
   },
   previewLockTail: {
     alignItems: 'center',

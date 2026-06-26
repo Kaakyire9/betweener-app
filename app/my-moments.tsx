@@ -30,6 +30,7 @@ import {
   writeMomentReactorsSnapshot,
 } from '@/lib/offline/moments-store';
 import { getMomentOfflineMutationSnapshot, retryFailedOfflineMutations, subscribeToOfflineMutationEvents } from '@/lib/offline/mutation-queue';
+import { normalizeProfilePhotoUri } from '@/lib/profile/media';
 import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
 import { supabase } from '@/lib/supabase';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -124,6 +125,9 @@ type ReactorProfile = {
   avatar_url: string | null;
 };
 
+const hasUsableReactorProfile = (profile?: ReactorProfile | null) =>
+  Boolean(profile?.full_name || normalizeProfilePhotoUri(profile?.avatar_url));
+
 export default function MyMomentsScreen() {
   const colorScheme = useColorScheme();
   const resolvedScheme = (colorScheme ?? 'light') === 'dark' ? 'dark' : 'light';
@@ -155,6 +159,7 @@ export default function MyMomentsScreen() {
   const [recentViewersLoading, setRecentViewersLoading] = useState(false);
   const [viewTimeInsights, setViewTimeInsights] = useState<MomentViewTimeInsightRow[]>([]);
   const [viewerSegments, setViewerSegments] = useState<MomentViewerSegments | null>(null);
+  const liveCountsRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -275,12 +280,49 @@ export default function MyMomentsScreen() {
         event.mutation.kind === 'moment_media_create' ||
         event.mutation.kind === 'moment_delete' ||
         event.mutation.kind === 'moment_reaction_sync' ||
-        event.mutation.kind === 'moment_comment_create'
+        event.mutation.kind === 'moment_comment_create' ||
+        event.mutation.kind === 'moment_comment_delete'
       ) {
         void fetchMoments();
       }
     });
   }, [fetchMoments]);
+
+  useEffect(() => {
+    if (!user?.id || moments.length === 0) return;
+    const momentIds = new Set(moments.map((moment) => moment.id));
+    const queueRefresh = () => {
+      if (liveCountsRefreshTimeoutRef.current) clearTimeout(liveCountsRefreshTimeoutRef.current);
+      liveCountsRefreshTimeoutRef.current = setTimeout(() => {
+        liveCountsRefreshTimeoutRef.current = null;
+        void fetchMoments();
+      }, 260);
+    };
+    const channel = supabase
+      .channel(`my-moments-live-counts:${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'moment_comments' }, (payload) => {
+        const nextRow = (payload.new ?? {}) as { moment_id?: string | null };
+        const previousRow = (payload.old ?? {}) as { moment_id?: string | null };
+        const momentId = String(nextRow.moment_id ?? previousRow.moment_id ?? '');
+        if (!momentId || !momentIds.has(momentId)) return;
+        queueRefresh();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'moment_reactions' }, (payload) => {
+        const nextRow = (payload.new ?? {}) as { moment_id?: string | null };
+        const previousRow = (payload.old ?? {}) as { moment_id?: string | null };
+        const momentId = String(nextRow.moment_id ?? previousRow.moment_id ?? '');
+        if (!momentId || !momentIds.has(momentId)) return;
+        queueRefresh();
+      })
+      .subscribe();
+    return () => {
+      if (liveCountsRefreshTimeoutRef.current) {
+        clearTimeout(liveCountsRefreshTimeoutRef.current);
+        liveCountsRefreshTimeoutRef.current = null;
+      }
+      supabase.removeChannel(channel);
+    };
+  }, [fetchMoments, moments, user?.id]);
 
   useEffect(() => {
     const resolveUrls = async () => {
@@ -493,10 +535,10 @@ export default function MyMomentsScreen() {
       if (userIds.length === 0) return;
 
       const nextProfiles: Record<string, ReactorProfile> = {};
-      const missingUserIds = userIds.filter((userId) => !reactorProfilesCacheRef.current[userId]);
+      const missingUserIds = userIds.filter((userId) => !hasUsableReactorProfile(reactorProfilesCacheRef.current[userId]));
       userIds.forEach((userId) => {
         const cachedProfile = reactorProfilesCacheRef.current[userId];
-        if (cachedProfile) nextProfiles[userId] = cachedProfile;
+        if (hasUsableReactorProfile(cachedProfile)) nextProfiles[userId] = cachedProfile;
       });
 
       if (missingUserIds.length > 0) {
@@ -510,7 +552,7 @@ export default function MyMomentsScreen() {
           const normalizedProfile = {
             id: profileRow.id ?? null,
             full_name: profileRow.full_name ?? null,
-            avatar_url: profileRow.avatar_url ?? null,
+            avatar_url: normalizeProfilePhotoUri(profileRow.avatar_url),
           };
           nextProfiles[profileRow.user_id] = normalizedProfile;
           reactorProfilesCacheRef.current[profileRow.user_id] = normalizedProfile;
@@ -736,7 +778,7 @@ export default function MyMomentsScreen() {
         userId: user.id,
         profileId: profile?.id ?? null,
         name: profile?.full_name || 'You',
-        avatarUrl: profile?.avatar_url || null,
+        avatarUrl: normalizeProfilePhotoUri(profile?.avatar_url),
         moments: viewerMoments,
         latestMoment: viewerMoments[0],
         isOwn: true,
@@ -1115,6 +1157,12 @@ export default function MyMomentsScreen() {
         preferredMediaUrlsByMomentId={offlineMediaByMomentId}
         startUserId={user?.id ?? null}
         startMomentId={viewerStartMomentId}
+        onCommentCountChange={(momentId, count) => {
+          setCommentCounts((prev) => (prev[momentId] === count ? prev : { ...prev, [momentId]: count }));
+        }}
+        onReactionCountChange={(momentId, count) => {
+          setReactionCounts((prev) => (prev[momentId] === count ? prev : { ...prev, [momentId]: count }));
+        }}
         onClose={() => {
           setViewerVisible(false);
           setViewerStartMomentId(null);
@@ -1124,6 +1172,10 @@ export default function MyMomentsScreen() {
       <MomentCommentsModal
         visible={commentsVisible}
         momentId={commentsMomentId}
+        onCommentCountChange={(count) => {
+          if (!commentsMomentId) return;
+          setCommentCounts((prev) => (prev[commentsMomentId] === count ? prev : { ...prev, [commentsMomentId]: count }));
+        }}
         onClose={() => {
           setCommentsVisible(false);
           setCommentsMomentId(null);

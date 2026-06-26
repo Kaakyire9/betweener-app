@@ -9,6 +9,7 @@ export type InboxType =
   | "NEW_MESSAGE"
   | "MOMENT_REACTION"
   | "MOMENT_COMMENT"
+  | "MOMENT_COMMENT_REACTION"
   | "GIFT_RECEIVED"
   | "MATCH_CREATED"
   | "SYSTEM";
@@ -28,14 +29,34 @@ export type InboxItem = {
   metadata?: Record<string, unknown> | null;
 };
 
+type MarkInboxItemsReadCriteria = {
+  types?: InboxType[];
+  systemActivityKeys?: string[];
+  clearActionRequired?: boolean;
+};
+
 type InboxItemsListener = (items: InboxItem[]) => void;
 
 const inboxItemsListeners = new Map<string, Set<InboxItemsListener>>();
+const inboxPublishTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 const publishInboxItems = (userId: string, items: InboxItem[]) => {
   const listeners = inboxItemsListeners.get(userId);
   if (!listeners?.size) return;
-  listeners.forEach((listener) => listener(items));
+
+  const existingTimer = inboxPublishTimers.get(userId);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+  }
+
+  const timer = setTimeout(() => {
+    inboxPublishTimers.delete(userId);
+    const nextListeners = inboxItemsListeners.get(userId);
+    if (!nextListeners?.size) return;
+    nextListeners.forEach((listener) => listener(items));
+  }, 0);
+
+  inboxPublishTimers.set(userId, timer);
 };
 
 const subscribeInboxItems = (userId: string, listener: InboxItemsListener) => {
@@ -48,6 +69,11 @@ const subscribeInboxItems = (userId: string, listener: InboxItemsListener) => {
     current.delete(listener);
     if (current.size === 0) {
       inboxItemsListeners.delete(userId);
+      const pendingTimer = inboxPublishTimers.get(userId);
+      if (pendingTimer) {
+        clearTimeout(pendingTimer);
+        inboxPublishTimers.delete(userId);
+      }
     }
   };
 };
@@ -97,6 +123,94 @@ export const markSystemInboxItemsRead = async (
     .eq("type", "SYSTEM")
     .in("entity_type", normalizedEntityTypes)
     .is("read_at", null);
+};
+
+export const markInboxItemsReadByCriteria = async (
+  userId: string,
+  criteria: MarkInboxItemsReadCriteria,
+) => {
+  const normalizedTypes = Array.from(
+    new Set((criteria.types ?? []).map((value) => String(value || '').trim()).filter(Boolean)),
+  );
+  const normalizedSystemActivityKeys = Array.from(
+    new Set((criteria.systemActivityKeys ?? []).map((value) => String(value || '').trim()).filter(Boolean)),
+  );
+  if (!userId || (normalizedTypes.length === 0 && normalizedSystemActivityKeys.length === 0)) return;
+
+  const readAt = new Date().toISOString();
+  const nextPatch = criteria.clearActionRequired
+    ? { read_at: readAt, action_required: false }
+    : { read_at: readAt };
+  const cacheKey = `cache:inbox:v1:${userId}`;
+  const cached = await peekCache<InboxItem[]>(cacheKey);
+
+  const matchesCriteria = (item: InboxItem) => {
+    if (!criteria.clearActionRequired && item.read_at) return false;
+    const needsActionClear = criteria.clearActionRequired && item.action_required;
+    const isUnread = !item.read_at;
+    if (!needsActionClear && !isUnread) return false;
+    if (normalizedTypes.includes(item.type)) return true;
+    if (item.type !== 'SYSTEM' || normalizedSystemActivityKeys.length === 0) return false;
+    const entityType = typeof item.entity_type === 'string' ? item.entity_type : null;
+    const metadataType = typeof item.metadata?.type === 'string' ? item.metadata.type : null;
+    return (
+      (entityType ? normalizedSystemActivityKeys.includes(entityType) : false) ||
+      (metadataType ? normalizedSystemActivityKeys.includes(metadataType) : false)
+    );
+  };
+
+  if (Array.isArray(cached)) {
+    const next = sortInboxItems(
+      cached.map((item) =>
+        matchesCriteria(item)
+          ? { ...item, read_at: readAt, ...(criteria.clearActionRequired ? { action_required: false } : {}) }
+          : item,
+      ),
+    );
+    await writeCache(cacheKey, next);
+    publishInboxItems(userId, next);
+  }
+
+  if (normalizedTypes.length > 0) {
+    await supabase
+      .from('inbox_items')
+      .update(nextPatch)
+      .eq('user_id', userId)
+      .in('type', normalizedTypes)
+      .or(criteria.clearActionRequired ? 'read_at.is.null,action_required.eq.true' : 'read_at.is.null');
+  }
+
+  if (normalizedSystemActivityKeys.length > 0) {
+    const { data: unreadSystemRows } = await supabase
+      .from('inbox_items')
+      .select('id, entity_type, metadata')
+      .eq('user_id', userId)
+      .eq('type', 'SYSTEM')
+      .or(criteria.clearActionRequired ? 'read_at.is.null,action_required.eq.true' : 'read_at.is.null');
+
+    const matchedSystemIds = (unreadSystemRows ?? [])
+      .filter((row) => {
+        const entityType = typeof row.entity_type === 'string' ? row.entity_type : null;
+        const metadataType =
+          row.metadata && typeof row.metadata === 'object' && typeof (row.metadata as Record<string, unknown>).type === 'string'
+            ? String((row.metadata as Record<string, unknown>).type)
+            : null;
+        return (
+          (entityType ? normalizedSystemActivityKeys.includes(entityType) : false) ||
+          (metadataType ? normalizedSystemActivityKeys.includes(metadataType) : false)
+        );
+      })
+      .map((row) => String(row.id))
+      .filter(Boolean);
+
+    if (matchedSystemIds.length > 0) {
+      await supabase
+        .from('inbox_items')
+        .update(nextPatch)
+        .in('id', matchedSystemIds)
+        .eq('user_id', userId);
+    }
+  }
 };
 
 export const useInbox = (userId?: string | null) => {

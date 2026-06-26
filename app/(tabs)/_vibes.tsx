@@ -7,6 +7,7 @@ import PremiumUpsellModal from '@/components/premium/PremiumUpsellModal';
 import ProfileVideoModal from '@/components/ProfileVideoModal';
 import { Colors } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { markInboxItemsReadByCriteria, useInbox } from "@/hooks/useInbox";
 import { requestAndSavePreciseLocation, saveManualCityLocation } from "@/hooks/useLocationPreference";
 import { useMoments, type MomentUser } from '@/hooks/useMoments';
 import { usePremiumState } from "@/hooks/use-premium-state";
@@ -35,6 +36,14 @@ import { RELIGION_OPTIONS, formatReligionLabel, normalizeReligionForProfile } fr
 import { applyDefaults as applyCompassDefaults, mapToDiscoveryFilters } from "@/lib/relationship-compass";
 import { supabase } from "@/lib/supabase";
 import { logVibesEvent, type VibesEventType } from "@/lib/vibes/events";
+import {
+  clearPremiumVibesFilters,
+  deriveActivePresetKey,
+  deriveCompatibilityHint,
+  derivePreviewTone,
+  deriveRoomSummary,
+  resolveAutoUnit,
+} from "@/lib/vibes/vibes-filter-preview";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Haptics from "expo-haptics";
@@ -64,6 +73,7 @@ import { toFlagEmoji } from "@/lib/location/location-display";
 import { isLikelyNetworkError } from "@/lib/network";
 import { logger } from "@/lib/telemetry/logger";
 import type { MomentRelationshipContext } from "@/types/moment-context";
+import { getMomentsInboxActivityItems } from "@/lib/inbox/badge-groups";
 
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const DISTANCE_UNIT_EVENT = 'distance_unit_changed';
@@ -75,32 +85,13 @@ const VIBES_MOMENTS_COLLAPSED_KEY = 'vibes:momentsCollapsed';
 const VIBES_LOCATION_PROMPT_DISMISSED_KEY = 'vibes:locationPromptDismissed:v1';
 const VIBES_VIEWED_MOMENT_IDS_KEY_PREFIX = 'vibes:viewedMomentIds:v1:';
 const VIBES_PRACTICE_VERSION = 1;
-
-const clearPremiumVibesFilters = (filters: VibesFilters): VibesFilters => ({
-  ...filters,
-  verifiedOnly: false,
-  hasVideoOnly: false,
-  activeOnly: false,
-  distanceFilterKm: null,
-  minVibeScore: null,
-  minSharedInterests: 0,
-});
+const MOMENT_INBOX_TYPES = ['MOMENT_REACTION', 'MOMENT_COMMENT', 'MOMENT_COMMENT_REACTION'] as const;
 
 type DistanceUnit = 'auto' | 'km' | 'mi';
 type PremiumUpsellState = {
   requiredPlan: 'SILVER' | 'GOLD';
   title: string;
   message: string;
-};
-type RoomSummary = {
-  title: string;
-  body: string;
-};
-type PreviewTone = {
-  eyebrow: string;
-  title: string;
-  body: string;
-  cta: string;
 };
 type VibesIntentTarget = {
   id: string;
@@ -114,148 +105,6 @@ type VibesActionHistoryEntry =
   | { kind: 'swipe'; id: string; action: 'like' | 'dislike' | 'superlike'; index: number }
   | { kind: 'intent'; id: string; requestId: string | null; index: number }
   | { kind: 'signal'; id: string; signalId: string; index: number };
-
-const resolveAutoUnit = (): 'km' | 'mi' => {
-  try {
-    const locale = Intl.DateTimeFormat().resolvedOptions().locale || '';
-    return /[-_]US\b/i.test(locale) ? 'mi' : 'km';
-  } catch {
-    return 'km';
-  }
-};
-
-const hasAnyDraftFilters = (filters: VibesFilters) =>
-  Boolean(filters.verifiedOnly) ||
-  Boolean(filters.hasVideoOnly) ||
-  Boolean(filters.activeOnly) ||
-  filters.distanceFilterKm != null ||
-  filters.minVibeScore != null ||
-  (filters.minSharedInterests || 0) > 0 ||
-  filters.minAge !== 18 ||
-  filters.maxAge !== 60 ||
-  Boolean(filters.religionFilter) ||
-  Boolean(filters.locationQuery?.trim());
-
-const deriveActivePresetKey = (filters: VibesFilters): string | null => {
-  if (filters.verifiedOnly && filters.minVibeScore === 60 && (filters.minSharedInterests || 0) >= 2) return 'real-intent';
-  if (filters.minVibeScore === 70 && (filters.minSharedInterests || 0) >= 2 && filters.activeOnly) return 'high-vibe';
-  if (filters.verifiedOnly && !filters.hasVideoOnly && !filters.activeOnly && filters.minVibeScore == null && (filters.minSharedInterests || 0) === 0) return 'verified';
-  if (filters.hasVideoOnly && !filters.verifiedOnly && !filters.activeOnly && filters.minVibeScore == null && (filters.minSharedInterests || 0) === 0) return 'video';
-  if (filters.activeOnly && !filters.verifiedOnly && !filters.hasVideoOnly && filters.minVibeScore == null && (filters.minSharedInterests || 0) === 0) return 'active';
-  return null;
-};
-
-const deriveRoomSummary = (filters: VibesFilters): RoomSummary => {
-  const preset = deriveActivePresetKey(filters);
-  if (!hasAnyDraftFilters(filters)) {
-    return {
-      title: 'Open room - discover freely',
-      body: 'Keep the room open and let chemistry surprise you.',
-    };
-  }
-  if (preset === 'real-intent') {
-    return {
-      title: 'Real-intent room',
-      body: 'Biased toward trust, overlap, and people showing stronger follow-through.',
-    };
-  }
-  if (preset === 'high-vibe') {
-    return {
-      title: 'High-vibe room',
-      body: 'Fewer, stronger profiles ahead with better chemistry and momentum.',
-    };
-  }
-  if (filters.verifiedOnly && filters.activeOnly) {
-    return {
-      title: 'Shaped around trusted, active people',
-      body: 'Less noise, more visible energy, and a tighter pace.',
-    };
-  }
-  if (filters.minVibeScore != null || (filters.minSharedInterests || 0) > 0) {
-    return {
-      title: 'Focused on stronger chemistry',
-      body: 'You are asking for fewer matches, but better overlap and better fit.',
-    };
-  }
-  if (filters.distanceFilterKm != null) {
-    return {
-      title: 'Closer, tighter room',
-      body: 'Discovery is leaning toward people within an easier reach.',
-    };
-  }
-  if (filters.religionFilter || filters.locationQuery?.trim()) {
-    return {
-      title: 'Gently refined room',
-      body: 'A few quiet boundaries are shaping discovery without closing it down too much.',
-    };
-  }
-  if (filters.hasVideoOnly) {
-    return {
-      title: 'Biased toward presence',
-      body: 'The room is leaning toward people who have shown a little more of themselves.',
-    };
-  }
-  return {
-    title: 'Room taking shape',
-    body: 'A calmer, more selective mix is starting to emerge.',
-  };
-};
-
-const deriveCompatibilityHint = (filters: VibesFilters) => {
-  if (filters.minVibeScore == null && (filters.minSharedInterests || 0) === 0) return 'Wide and open';
-  if ((filters.minVibeScore || 0) >= 70 || (filters.minSharedInterests || 0) >= 3) return 'Fewer but stronger matches';
-  if ((filters.minVibeScore || 0) >= 60 || (filters.minSharedInterests || 0) >= 2) return 'Tighter, higher-intent room';
-  return 'Balanced chemistry';
-};
-
-const derivePreviewTone = (previewCount: number | null, filters: VibesFilters, loadedCount: number): PreviewTone => {
-  if (previewCount == null) {
-    return {
-      eyebrow: 'Room preview',
-      title: 'Shape first, then preview',
-      body: 'Your count updates as the room shifts.',
-      cta: 'Apply my room',
-    };
-  }
-  if (previewCount === 0) {
-    return {
-      eyebrow: 'Very selective',
-      title: 'No one matches this room yet',
-      body: 'Ease a few controls and the room will open again.',
-      cta: 'Apply my room',
-    };
-  }
-  if (!hasAnyDraftFilters(filters)) {
-    return {
-      eyebrow: 'Open discovery',
-      title: `Preview: ${previewCount} ${previewCount === 1 ? 'person matches this room' : 'people match this room'}`,
-      body: loadedCount > 0 ? 'Broad, relaxed, and ready for surprise chemistry.' : 'A wide-open room for freer discovery.',
-      cta: 'Apply my room',
-    };
-  }
-  if (previewCount <= 5) {
-    return {
-      eyebrow: 'Highly curated',
-      title: `Preview: ${previewCount} ${previewCount === 1 ? 'person matches this room' : 'people match this room'}`,
-      body: 'Very selective. Fewer profiles ahead, but likely stronger fit.',
-      cta: 'Apply my room',
-    };
-  }
-  if (previewCount <= 15) {
-    return {
-      eyebrow: 'Focused room',
-      title: `Preview: ${previewCount} ${previewCount === 1 ? 'person matches this room' : 'people match this room'}`,
-      body: 'More selective, stronger fit.',
-      cta: 'Apply & preview my room',
-    };
-  }
-  return {
-    eyebrow: 'Balanced room',
-    title: `Preview: ${previewCount} ${previewCount === 1 ? 'person matches this room' : 'people match this room'}`,
-    body: 'A healthy mix of openness and stronger targeting.',
-    cta: 'Apply my room',
-  };
-};
 
 export default function ExploreScreen() {
   const insets = useSafeAreaInsets();
@@ -356,6 +205,27 @@ export default function ExploreScreen() {
       void haptics.success();
     }
   }, [lastMutualMatch]);
+
+  const { items: inboxItems } = useInbox(user?.id ?? null);
+  const momentAttentionProfileIds = useMemo(() => {
+    const next = new Set<string>();
+    getMomentsInboxActivityItems(inboxItems).forEach((item) => {
+      if (typeof item.actor_id === "string" && item.actor_id.trim().length > 0) {
+        next.add(item.actor_id.trim());
+      }
+    });
+    return next;
+  }, [inboxItems]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!user?.id) return;
+      void markInboxItemsReadByCriteria(user.id, {
+        types: [...MOMENT_INBOX_TYPES],
+        clearActionRequired: true,
+      });
+    }, [user?.id]),
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -2200,13 +2070,13 @@ export default function ExploreScreen() {
             </View>
           </View>
         ) : (
-          <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>
+          <View style={[styles.emptyCard, layoutMetrics.isCompactWidth ? styles.emptyCardCompact : null]}>
+            <Text style={[styles.emptyTitle, layoutMetrics.isCompactWidth ? styles.emptyTitleCompact : null]}>
               {activeTab === 'nearby'
                 ? (hasPreciseCoords ? 'Nearby feels quiet right now' : 'Turn on precise location for Nearby')
                 : 'No fresh profiles right now'}
             </Text>
-            <Text style={styles.emptySubtitle}>
+            <Text style={[styles.emptySubtitle, layoutMetrics.isCompactWidth ? styles.emptySubtitleCompact : null]}>
               {activeTab === 'nearby'
                 ? (
                   hasPreciseCoords
@@ -2215,9 +2085,9 @@ export default function ExploreScreen() {
                 )
                 : 'You have reached the edge of this round. Refresh for a new set or browse nearby again.'}
             </Text>
-            <View style={styles.emptyActions}>
+            <View style={[styles.emptyActions, layoutMetrics.isCompactWidth ? styles.emptyActionsCompact : null]}>
               <TouchableOpacity
-                style={[styles.primaryButton]}
+                style={[styles.primaryButton, layoutMetrics.isCompactWidth ? styles.primaryButtonCompact : null]}
                 onPress={() => {
                   if (activeTab === 'nearby') {
                     if (hasPreciseCoords) {
@@ -2234,14 +2104,14 @@ export default function ExploreScreen() {
                   setCurrentIndex(0);
                 }}
               >
-                <Text style={styles.primaryButtonText}>
+                <Text style={[styles.primaryButtonText, layoutMetrics.isCompactWidth ? styles.primaryButtonTextCompact : null]}>
                   {activeTab === 'nearby'
                     ? (hasPreciseCoords ? 'Explore For You' : 'Use precise location')
                     : 'Refresh Vibes'}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={styles.ghostButton}
+                style={[styles.ghostButton, layoutMetrics.isCompactWidth ? styles.ghostButtonCompact : null]}
                 onPress={() => {
                   if (activeTab === 'nearby') {
                     if (hasPreciseCoords) {
@@ -2258,7 +2128,7 @@ export default function ExploreScreen() {
                   setActiveTab('nearby');
                 }}
               >
-                <Text style={styles.ghostButtonText}>
+                <Text style={[styles.ghostButtonText, layoutMetrics.isCompactWidth ? styles.ghostButtonTextCompact : null]}>
                   {activeTab === 'nearby'
                     ? (hasPreciseCoords ? 'Refresh Nearby' : 'Explore For You')
                     : 'Browse Nearby'}
@@ -2551,6 +2421,7 @@ export default function ExploreScreen() {
               pointerEvents="box-none"
               style={[
                 styles.momentsCapsuleFlow,
+                layoutMetrics.isCompactWidth ? styles.momentsCapsuleFlowCompact : null,
                 {
                   marginTop: momentsCapsuleMetrics.capsuleMarginTop,
                   marginBottom: hasCompactMomentRail ? 8 : momentsCapsuleMetrics.capsuleMarginBottom,
@@ -2564,6 +2435,7 @@ export default function ExploreScreen() {
             >
                 <FloatingMomentsCapsule
                   users={momentStripUsers}
+                  attentionProfileIds={momentAttentionProfileIds}
                   relationshipContextByProfileId={momentRelationshipContextByProfileId}
                   viewedMomentIds={viewedMomentIds}
                   onPressMyMoment={handlePressMyMoment}
@@ -3893,6 +3765,9 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       zIndex: 8,
       elevation: 8,
     },
+    momentsCapsuleFlowCompact: {
+      marginHorizontal: 14,
+    },
     momentsStripContainer: {
       overflow: 'hidden',
       paddingHorizontal: 20,
@@ -4309,6 +4184,12 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       borderWidth: 1,
       borderColor: cardBorder,
     },
+    emptyCardCompact: {
+      width: '92%',
+      paddingHorizontal: 16,
+      paddingVertical: 18,
+      borderRadius: 16,
+    },
     emptyBadge: {
       paddingHorizontal: 12,
       paddingVertical: 6,
@@ -4325,12 +4206,19 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       letterSpacing: 0.2,
     },
     emptyTitle: { fontSize: 20, fontWeight: '800', color: theme.text, marginBottom: 6 },
+    emptyTitleCompact: { fontSize: 17, lineHeight: 22 },
     emptySubtitle: { fontSize: 14, color: theme.textMuted, textAlign: 'center', marginBottom: 16 },
+    emptySubtitleCompact: { fontSize: 13, lineHeight: 19, marginBottom: 14 },
     emptyActions: { flexDirection: 'row', width: '100%', justifyContent: 'center' },
+    emptyActionsCompact: { flexDirection: 'column', gap: 10 },
     primaryButton: { backgroundColor: theme.tint, paddingVertical: 12, paddingHorizontal: 20, borderRadius: 12, marginRight: 8 },
+    primaryButtonCompact: { width: '100%', marginRight: 0, paddingVertical: 13 },
     primaryButtonText: { color: '#fff', fontWeight: '700' },
+    primaryButtonTextCompact: { fontSize: 14, textAlign: 'center' },
     ghostButton: { borderWidth: 1, borderColor: outline, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12, backgroundColor: ghostBg },
+    ghostButtonCompact: { width: '100%', paddingVertical: 13 },
     ghostButtonText: { color: theme.text, fontWeight: '600' },
+    ghostButtonTextCompact: { fontSize: 14, textAlign: 'center' },
     locationBanner: {
       backgroundColor: isDark ? 'rgba(255,255,255,0.045)' : '#f8fafc',
       paddingHorizontal: 16,

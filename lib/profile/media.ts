@@ -29,3 +29,19 @@ export const normalizeProfilePhotoList = (items?: unknown) =>
         .map((item) => normalizeProfilePhotoUri(typeof item === 'string' ? item : ''))
         .filter(Boolean)
     : [];
+
+export const normalizeGalleryPhotoList = (
+  items?: unknown,
+  avatarUri?: string | null,
+) => {
+  const normalizedAvatar = normalizeProfilePhotoUri(avatarUri);
+  const seen = new Set<string>();
+
+  return normalizeProfilePhotoList(items).filter((item) => {
+    if (!item) return false;
+    if (normalizedAvatar && item === normalizedAvatar) return false;
+    if (seen.has(item)) return false;
+    seen.add(item);
+    return true;
+  });
+};

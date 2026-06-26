@@ -175,7 +175,7 @@ export default function ActivityScreen() {
         case "messages":
           return item.type === "NEW_MESSAGE" || item.type === "MESSAGE_REQUEST";
         case "moments":
-          return item.type === "MOMENT_REACTION" || item.type === "MOMENT_COMMENT";
+          return item.type === "MOMENT_REACTION" || item.type === "MOMENT_COMMENT" || item.type === "MOMENT_COMMENT_REACTION";
         case "system":
           return item.type === "SYSTEM";
         default:
@@ -204,9 +204,22 @@ export default function ActivityScreen() {
     });
   }, [actorMap]);
 
-  const openMoments = useCallback((actorId?: string | null, momentId?: string | null) => {
+  const openMoments = useCallback((
+    actorId?: string | null,
+    momentId?: string | null,
+    options?: { openComments?: boolean; commentId?: string | null; entrySource?: "comment" | "reaction" | null },
+  ) => {
     if (!actorId) return;
-    router.push({ pathname: "/moments", params: { startUserId: String(actorId), startMomentId: momentId ?? "" } });
+    router.push({
+      pathname: "/moments",
+      params: {
+        startUserId: String(actorId),
+        startMomentId: momentId ?? "",
+        openComments: options?.openComments ? "1" : "",
+        entrySource: options?.entrySource ?? "",
+        commentId: options?.commentId ?? "",
+      },
+    });
   }, []);
 
   const handleMarkRead = useCallback(
@@ -329,11 +342,19 @@ export default function ActivityScreen() {
             return;
           }
         }
-        if (item.type === "MOMENT_REACTION" || item.type === "MOMENT_COMMENT") {
+        if (item.type === "MOMENT_REACTION" || item.type === "MOMENT_COMMENT" || item.type === "MOMENT_COMMENT_REACTION") {
           const momentOwnerId = typeof (item.metadata as any)?.moment_owner_user_id === "string"
             ? String((item.metadata as any).moment_owner_user_id)
             : user?.id ?? null;
-          openMoments(momentOwnerId, item.entity_id ?? null);
+          const commentId =
+            typeof (item.metadata as any)?.comment_id === "string"
+              ? String((item.metadata as any).comment_id)
+              : null;
+          openMoments(momentOwnerId, item.entity_id ?? null, {
+            openComments: item.type === "MOMENT_COMMENT" || item.type === "MOMENT_COMMENT_REACTION",
+            entrySource: item.type === "MOMENT_REACTION" ? "reaction" : "comment",
+            commentId,
+          });
           return;
         }
         if (actorId) {
@@ -371,7 +392,7 @@ export default function ActivityScreen() {
                 const momentOwnerId = typeof (item.metadata as any)?.moment_owner_user_id === "string"
                   ? String((item.metadata as any).moment_owner_user_id)
                   : user?.id ?? null;
-                openMoments(momentOwnerId, item.entity_id ?? null);
+                openMoments(momentOwnerId, item.entity_id ?? null, { entrySource: "reaction" });
               },
             };
           case "MOMENT_COMMENT":
@@ -382,7 +403,32 @@ export default function ActivityScreen() {
                 const momentOwnerId = typeof (item.metadata as any)?.moment_owner_user_id === "string"
                   ? String((item.metadata as any).moment_owner_user_id)
                   : user?.id ?? null;
-                openMoments(momentOwnerId, item.entity_id ?? null);
+                openMoments(momentOwnerId, item.entity_id ?? null, {
+                  openComments: true,
+                  entrySource: "comment",
+                  commentId:
+                    typeof (item.metadata as any)?.comment_id === "string"
+                      ? String((item.metadata as any).comment_id)
+                      : "",
+                });
+              },
+            };
+          case "MOMENT_COMMENT_REACTION":
+            return {
+              label: "View",
+              onPress: () => {
+                handleMarkRead(item);
+                const momentOwnerId = typeof (item.metadata as any)?.moment_owner_user_id === "string"
+                  ? String((item.metadata as any).moment_owner_user_id)
+                  : user?.id ?? null;
+                openMoments(momentOwnerId, item.entity_id ?? null, {
+                  openComments: true,
+                  entrySource: "comment",
+                  commentId:
+                    typeof (item.metadata as any)?.comment_id === "string"
+                      ? String((item.metadata as any).comment_id)
+                      : "",
+                });
               },
             };
           case "GIFT_RECEIVED":
@@ -465,7 +511,32 @@ export default function ActivityScreen() {
                 const momentOwnerId = typeof (item.metadata as any)?.moment_owner_user_id === "string"
                   ? String((item.metadata as any).moment_owner_user_id)
                   : user?.id ?? null;
-                openMoments(momentOwnerId, item.entity_id ?? null);
+                openMoments(momentOwnerId, item.entity_id ?? null, {
+                  openComments: true,
+                  entrySource: "comment",
+                  commentId:
+                    typeof (item.metadata as any)?.comment_id === "string"
+                      ? String((item.metadata as any).comment_id)
+                      : "",
+                });
+              },
+            };
+          case "MOMENT_COMMENT_REACTION":
+            return {
+              label: "Reply",
+              onPress: () => {
+                handleMarkRead(item);
+                const momentOwnerId = typeof (item.metadata as any)?.moment_owner_user_id === "string"
+                  ? String((item.metadata as any).moment_owner_user_id)
+                  : user?.id ?? null;
+                openMoments(momentOwnerId, item.entity_id ?? null, {
+                  openComments: true,
+                  entrySource: "comment",
+                  commentId:
+                    typeof (item.metadata as any)?.comment_id === "string"
+                      ? String((item.metadata as any).comment_id)
+                      : "",
+                });
               },
             };
           case "GIFT_RECEIVED":
@@ -500,6 +571,7 @@ export default function ActivityScreen() {
             return "message-outline";
           case "MOMENT_REACTION":
           case "MOMENT_COMMENT":
+          case "MOMENT_COMMENT_REACTION":
             return "emoticon-outline";
           case "GIFT_RECEIVED":
             return "gift-outline";

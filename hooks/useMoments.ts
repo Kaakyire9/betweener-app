@@ -6,8 +6,10 @@ import {
   writeMomentsFeedSnapshot,
   writeMomentReactorsSnapshot,
 } from '@/lib/offline/moments-store';
+import { readMeProfileSnapshot } from '@/lib/offline/me-store';
 import { reconcileMomentRowsWithOfflineMutations } from '@/lib/offline/moment-mutation-reconciler';
 import { subscribeToOfflineMutationEvents } from '@/lib/offline/mutation-queue';
+import { normalizeProfilePhotoUri } from '@/lib/profile/media';
 import { supabase } from '@/lib/supabase';
 import type { MomentMetadata } from '@/lib/moment-text-style';
 
@@ -60,12 +62,15 @@ const resolveMomentAvatarUrl = (profile?: {
   avatar_url?: string | null;
   photos?: string[] | null;
 } | null) => {
-  const avatar = typeof profile?.avatar_url === 'string' ? profile.avatar_url.trim() : '';
+  const avatar = normalizeProfilePhotoUri(profile?.avatar_url);
   if (avatar) return avatar;
   const photos = Array.isArray(profile?.photos) ? profile.photos : [];
-  const firstPhoto = photos.find((photo) => typeof photo === 'string' && photo.trim());
-  return firstPhoto ? String(firstPhoto) : null;
+  const firstPhoto = photos.find((photo) => normalizeProfilePhotoUri(photo));
+  return firstPhoto ? normalizeProfilePhotoUri(firstPhoto) : null;
 };
+
+const hasUsableMomentProfileSnapshot = (profile?: MomentProfile | null) =>
+  Boolean(profile?.full_name || resolveMomentAvatarUrl(profile));
 
 async function primeInteractedMomentSnapshots(params: {
   currentUserId: string;
@@ -216,23 +221,53 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
   const [moments, setMoments] = useState<Moment[]>([]);
   const [profilesById, setProfilesById] = useState<Record<string, MomentProfile>>({});
   const [offlineMediaByMomentId, setOfflineMediaByMomentId] = useState<Record<string, string>>({});
+  const [currentUserMediaOverride, setCurrentUserMediaOverride] = useState<{
+    avatar_url: string | null;
+    photos: string[];
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const profilesByIdRef = useRef<Record<string, MomentProfile>>({});
   const lastPrimedVisibleMomentIdsKeyRef = useRef<string | null>(null);
   const currentUserProfileId = currentUserProfile?.id ? String(currentUserProfile.id) : null;
   const currentUserProfileName = currentUserProfile?.full_name ?? null;
-  const currentUserProfileAvatarUrl = currentUserProfile?.avatar_url ?? null;
-  const currentUserProfilePhotos = useMemo(
+  const rawCurrentUserProfileAvatarUrl = currentUserProfile?.avatar_url ?? null;
+  const rawCurrentUserProfilePhotos = useMemo(
     () =>
       Array.isArray(currentUserProfile?.photos)
         ? currentUserProfile.photos.filter((photo): photo is string => typeof photo === 'string')
         : [],
     [currentUserProfile?.photos],
   );
+  const currentUserProfileAvatarUrl =
+    currentUserMediaOverride?.avatar_url ?? rawCurrentUserProfileAvatarUrl;
+  const currentUserProfilePhotos = currentUserMediaOverride?.photos ?? rawCurrentUserProfilePhotos;
   const currentUserProfilePhotosSignature = useMemo(
     () => currentUserProfilePhotos.join('|'),
     [currentUserProfilePhotos],
   );
+  const loadCurrentUserMediaOverride = useCallback(async () => {
+    if (!currentUserProfileId) {
+      setCurrentUserMediaOverride(null);
+      return null;
+    }
+    const snapshot = await readMeProfileSnapshot(currentUserProfileId);
+    const nextAvatarUrl =
+      typeof snapshot?.avatarUrl === 'string' && snapshot.avatarUrl.trim().length > 0
+        ? snapshot.avatarUrl
+        : null;
+    const nextPhotos = Array.isArray(snapshot?.photos)
+      ? snapshot.photos.filter((photo): photo is string => typeof photo === 'string' && photo.trim().length > 0)
+      : [];
+    const nextValue =
+      nextAvatarUrl || nextPhotos.length > 0
+        ? {
+            avatar_url: nextAvatarUrl,
+            photos: nextPhotos,
+          }
+        : null;
+    setCurrentUserMediaOverride(nextValue);
+    return nextValue;
+  }, [currentUserProfileId]);
   const currentUserProfileSnapshot = useMemo(
     () => ({
       id: currentUserProfileId,
@@ -242,6 +277,10 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
     }),
     [currentUserProfileAvatarUrl, currentUserProfileId, currentUserProfileName, currentUserProfilePhotosSignature],
   );
+
+  useEffect(() => {
+    void loadCurrentUserMediaOverride();
+  }, [loadCurrentUserMediaOverride]);
 
   // Offline-store first: hydrate last known feed quickly, then refresh in background.
   useEffect(() => {
@@ -267,6 +306,14 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
     if (!currentUserId) return;
     setLoading(true);
     try {
+      const latestCurrentUserMediaOverride = await loadCurrentUserMediaOverride();
+      const effectiveCurrentUserProfileSnapshot = latestCurrentUserMediaOverride
+        ? {
+            ...currentUserProfileSnapshot,
+            avatar_url: latestCurrentUserMediaOverride.avatar_url,
+            photos: latestCurrentUserMediaOverride.photos,
+          }
+        : currentUserProfileSnapshot;
       const { data, error } = await supabase
         .from('moments')
         .select('id,user_id,type,media_url,metadata,thumbnail_url,text_body,caption,created_at,expires_at,visibility,is_deleted')
@@ -300,11 +347,11 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
       }
 
       const existingProfiles = profilesByIdRef.current;
-      const missingUserIds = userIds.filter((id) => !existingProfiles[id]);
+      const missingUserIds = userIds.filter((id) => !hasUsableMomentProfileSnapshot(existingProfiles[id]));
       const nextProfiles: Record<string, MomentProfile> = {};
       userIds.forEach((userId) => {
         const existing = existingProfiles[userId];
-        if (existing) nextProfiles[userId] = existing;
+        if (hasUsableMomentProfileSnapshot(existing)) nextProfiles[userId] = existing;
       });
 
       if (missingUserIds.length > 0) {
@@ -337,7 +384,7 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
         lastPrimedVisibleMomentIdsKeyRef.current = visibleMomentIdsKey;
         await primeInteractedMomentSnapshots({
           currentUserId,
-          currentUserProfile: currentUserProfileSnapshot,
+          currentUserProfile: effectiveCurrentUserProfileSnapshot,
           moments: reconciled.moments,
           profilesById: nextProfiles,
         });
@@ -345,7 +392,7 @@ export function useMoments({ currentUserId, currentUserProfile }: UseMomentsPara
     } finally {
       setLoading(false);
     }
-  }, [currentUserId, currentUserProfileSnapshot]);
+  }, [currentUserId, currentUserProfileSnapshot, loadCurrentUserMediaOverride]);
 
   useEffect(() => {
     void refresh();

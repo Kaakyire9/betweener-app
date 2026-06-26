@@ -83,6 +83,7 @@ export default function MomentsScreen() {
   const [viewCounts, setViewCounts] = useState<Record<string, number>>({});
   const [syncStateByMomentId, setSyncStateByMomentId] = useState<Record<string, { state: 'pending' | 'failed'; label: string }>>({});
   const [postingEligibility, setPostingEligibility] = useState<MomentPostingEligibility | null>(null);
+  const liveReactionRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const momentUsersWithContent = useMemo(
     () => momentUsers.filter((u) => u.moments.length > 0),
@@ -224,12 +225,42 @@ export default function MomentsScreen() {
         event.mutation.kind === 'moment_media_create' ||
         event.mutation.kind === 'moment_delete' ||
         event.mutation.kind === 'moment_reaction_sync' ||
-        event.mutation.kind === 'moment_comment_create'
+        event.mutation.kind === 'moment_comment_create' ||
+        event.mutation.kind === 'moment_comment_delete'
       ) {
         void fetchMyMoments();
       }
     });
   }, [fetchMyMoments]);
+
+  useEffect(() => {
+    if (!user?.id || myMoments.length === 0) return;
+    const momentIds = new Set(myMoments.map((moment) => moment.id));
+    const queueRefresh = () => {
+      if (liveReactionRefreshTimeoutRef.current) clearTimeout(liveReactionRefreshTimeoutRef.current);
+      liveReactionRefreshTimeoutRef.current = setTimeout(() => {
+        liveReactionRefreshTimeoutRef.current = null;
+        void fetchMyMoments();
+      }, 260);
+    };
+    const channel = supabase
+      .channel(`moments-screen-live-counts:${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'moment_reactions' }, (payload) => {
+        const nextRow = (payload.new ?? {}) as { moment_id?: string | null };
+        const previousRow = (payload.old ?? {}) as { moment_id?: string | null };
+        const momentId = String(nextRow.moment_id ?? previousRow.moment_id ?? '');
+        if (!momentId || !momentIds.has(momentId)) return;
+        queueRefresh();
+      })
+      .subscribe();
+    return () => {
+      if (liveReactionRefreshTimeoutRef.current) {
+        clearTimeout(liveReactionRefreshTimeoutRef.current);
+        liveReactionRefreshTimeoutRef.current = null;
+      }
+      supabase.removeChannel(channel);
+    };
+  }, [fetchMyMoments, myMoments, user?.id]);
 
   useEffect(() => {
     const resolveUrls = async () => {
@@ -581,10 +612,6 @@ export default function MomentsScreen() {
               );
             })}
 
-            <TouchableOpacity style={styles.addButton} onPress={openCreateMoment}>
-              <MaterialCommunityIcons name="plus-circle" size={20} color={Colors.light.background} />
-              <Text style={styles.addButtonText}>Add Moment</Text>
-            </TouchableOpacity>
           </>
         )}
 
@@ -601,6 +628,9 @@ export default function MomentsScreen() {
         startEntrySource={startEntrySource}
         startHighlightedCommentId={startHighlightedCommentId}
         startHighlightedReactionEmoji={startHighlightedReactionEmoji}
+        onReactionCountChange={(momentId, count) => {
+          setReactionCounts((prev) => (prev[momentId] === count ? prev : { ...prev, [momentId]: count }));
+        }}
         onClose={() => {
           setViewerVisible(false);
           setStartUserId(null);

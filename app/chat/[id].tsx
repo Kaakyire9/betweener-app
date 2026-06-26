@@ -91,6 +91,7 @@ import {
   getAuthoritativePresenceDisplay,
   getChatThreadPresenceKind,
 } from "@/lib/presence";
+import { fetchViewedMomentIds } from "@/lib/moments-views";
 import { cacheOfflineImage, getOfflineImageUri, rememberOfflineImageUri } from "@/lib/offline/image-store";
 import {
   buildChatPeerStoreKey,
@@ -3514,12 +3515,20 @@ export default function ConversationScreen() {
     () => momentUsers.filter((entry) => entry.moments.length > 0),
     [momentUsers]
   );
+  const [viewedMomentIds, setViewedMomentIds] = useState<Set<string>>(new Set());
+  const [viewedMomentIdsReady, setViewedMomentIdsReady] = useState(false);
 
   const peerHasMoment = useMemo(() => {
     if (!conversationId) return false;
     const peer = momentUsers.find((entry) => entry.userId === conversationId);
     return (peer?.moments.length ?? 0) > 0;
   }, [conversationId, momentUsers]);
+  const peerHasUnseenMoment = useMemo(() => {
+    if (!conversationId || !viewedMomentIdsReady) return false;
+    const peer = momentUsers.find((entry) => entry.userId === conversationId);
+    if (!peer || peer.isOwn || peer.moments.length === 0) return false;
+    return peer.moments.some((moment) => !viewedMomentIds.has(String(moment.id)));
+  }, [conversationId, momentUsers, viewedMomentIds, viewedMomentIdsReady]);
 
   const [messages, setMessages] = useState<MessageType[]>([]);
   const [messagesLoaded, setMessagesLoaded] = useState(false);
@@ -4529,7 +4538,7 @@ export default function ConversationScreen() {
   const isChatBlocked = isBlockedByMe || isBlockedByThem;
   const peerHasLeftBetweener = hasLeftBetweener(peerProfile);
   const headerDisplayName = getUserFacingDisplayName(peerProfile, userName || 'Your match');
-  const showMoments = peerHasMoment && !isChatBlocked && !peerHasLeftBetweener;
+  const showMoments = peerHasUnseenMoment && !isChatBlocked && !peerHasLeftBetweener;
   const liveStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const liveUpdateRef = useRef<{ lastSentAt: number }>({ lastSentAt: 0 });
 
@@ -4655,7 +4664,7 @@ const resolveQueuedVideoUri = async (
   }, [headerHintOpacity]);
 
   useEffect(() => {
-    if (!peerHasMoment) {
+    if (!peerHasUnseenMoment) {
       momentPulseLoop.current?.stop();
       momentPulse.setValue(0);
       return;
@@ -4691,7 +4700,54 @@ const resolveQueuedVideoUri = async (
     return () => {
       momentPulseLoop.current?.stop();
     };
-  }, [momentPulse, peerHasMoment]);
+  }, [momentPulse, peerHasUnseenMoment]);
+  useEffect(() => {
+    let cancelled = false;
+    const syncViewedMomentIds = async () => {
+      const momentIds = momentUsersWithContent.flatMap((entry) => entry.moments.map((moment) => String(moment.id))).filter(Boolean);
+      if (momentIds.length === 0) {
+        if (!cancelled) {
+          setViewedMomentIds(new Set());
+          setViewedMomentIdsReady(true);
+        }
+        return;
+      }
+      if (!cancelled) setViewedMomentIdsReady(false);
+      const nextViewedIds = await fetchViewedMomentIds(momentIds);
+      if (cancelled) return;
+      setViewedMomentIds(nextViewedIds);
+      setViewedMomentIdsReady(true);
+    };
+    void syncViewedMomentIds();
+    return () => {
+      cancelled = true;
+    };
+  }, [momentUsersWithContent]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      const syncViewedMomentIds = async () => {
+        const momentIds = momentUsersWithContent.flatMap((entry) => entry.moments.map((moment) => String(moment.id))).filter(Boolean);
+        if (momentIds.length === 0) {
+          if (!cancelled) {
+            setViewedMomentIds(new Set());
+            setViewedMomentIdsReady(true);
+          }
+          return;
+        }
+        if (!cancelled) setViewedMomentIdsReady(false);
+        const nextViewedIds = await fetchViewedMomentIds(momentIds);
+        if (cancelled) return;
+        setViewedMomentIds(nextViewedIds);
+        setViewedMomentIdsReady(true);
+      };
+      void syncViewedMomentIds();
+      return () => {
+        cancelled = true;
+      };
+    }, [momentUsersWithContent]),
+  );
 
   const mapRowToMessage = useCallback(
     (row: MessageRow): MessageType => {
@@ -12366,6 +12422,17 @@ const resolveQueuedVideoUri = async (
           visible={momentViewerVisible}
           users={momentUsersWithContent}
           startUserId={momentViewerUserId}
+          onMomentViewed={(momentId) => {
+            const normalizedMomentId = String(momentId || "").trim();
+            if (!normalizedMomentId) return;
+            setViewedMomentIds((prev) => {
+              if (prev.has(normalizedMomentId)) return prev;
+              const next = new Set(prev);
+              next.add(normalizedMomentId);
+              return next;
+            });
+            setViewedMomentIdsReady(true);
+          }}
           onClose={handleCloseMomentViewer}
         />
       ) : null}

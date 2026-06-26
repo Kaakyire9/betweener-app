@@ -10,7 +10,11 @@ import { useResolvedProfileId } from '@/hooks/useResolvedProfileId';
 import { useAuth } from '@/lib/auth-context';
 import { ChatRepository } from '@/lib/chat/local/chat-db';
 import { useCircleInvitationCount } from '@/lib/circles/use-circle-invitation-count';
-import { getNonChatInboxActivityItems } from '@/lib/inbox/badge-groups';
+import {
+  getInsightsInboxActivityItems,
+  getMeInboxActivityItems,
+  getMomentsInboxActivityItems,
+} from '@/lib/inbox/badge-groups';
 import { type ResponsiveMetrics, useResponsiveMetrics } from '@/lib/responsive';
 import { Tabs } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -33,10 +37,13 @@ export default function TabLayout() {
   const { count: circleInvitationCount } = useCircleInvitationCount(profileId);
 
   const [unreadChats, setUnreadChats] = useState(0);
-  const inboxActivityItems = useMemo(() => getNonChatInboxActivityItems(inboxItems), [inboxItems]);
-  const inboxActivityBadgeCount = inboxActivityItems.length;
+  const insightsInboxActivityItems = useMemo(() => getInsightsInboxActivityItems(inboxItems), [inboxItems]);
+  const momentsInboxActivityItems = useMemo(() => getMomentsInboxActivityItems(inboxItems), [inboxItems]);
+  const meInboxActivityItems = useMemo(() => getMeInboxActivityItems(inboxItems), [inboxItems]);
   const trustedIntentBadgeCount = intentFreshness.hasFreshServerData ? badgeCount : 0;
-  const trustedInboxActivityBadgeCount = inboxFreshness.hasFreshServerData ? inboxActivityBadgeCount : 0;
+  const trustedInsightsBadgeCount = inboxFreshness.hasFreshServerData ? insightsInboxActivityItems.length : 0;
+  const trustedMomentsBadgeCount = inboxFreshness.hasFreshServerData ? momentsInboxActivityItems.length : 0;
+  const trustedMeBadgeCount = inboxFreshness.hasFreshServerData ? meInboxActivityItems.length : 0;
 
   useEffect(() => {
     const myUserId = user?.id ?? null;
@@ -78,14 +85,16 @@ export default function TabLayout() {
       unreadChats +
       trustedIntentBadgeCount +
       circleInvitationCount +
-      trustedInboxActivityBadgeCount;
+      trustedInsightsBadgeCount +
+      trustedMomentsBadgeCount +
+      trustedMeBadgeCount;
 
     void setAppIconBadgeCount(nextBadgeCount);
   }, [
     circleInvitationCount,
-    inboxActivityBadgeCount,
-    inboxFreshness,
-    trustedInboxActivityBadgeCount,
+    trustedInsightsBadgeCount,
+    trustedMeBadgeCount,
+    trustedMomentsBadgeCount,
     trustedIntentBadgeCount,
     unreadChats,
   ]);
@@ -129,10 +138,10 @@ export default function TabLayout() {
           options={{
             title: 'Vibes',
             tabBarIcon: ({ color }) => (
-              <>
+              <View style={{ position: 'relative' }}>
                 <Sparkles size={responsive.compactWidth ? 24 : 26} color={color} />
-                {/* <IconSymbol size={28} name="house.fill" color={color} /> */}
-              </>
+                <TabBadge count={trustedMomentsBadgeCount} />
+              </View>
             ),
           }}
         />
@@ -222,7 +231,7 @@ export default function TabLayout() {
             tabBarIcon: ({ color }) => (
               <View style={{ position: 'relative' }}>
                 <User size={responsive.compactWidth ? 24 : 26} color={color} />
-                <TabBadge count={trustedInboxActivityBadgeCount} />
+                <TabBadge count={trustedMeBadgeCount} />
               </View>
             ),
           }}

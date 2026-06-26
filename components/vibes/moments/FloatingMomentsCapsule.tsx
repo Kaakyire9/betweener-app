@@ -13,6 +13,7 @@ import type { MomentsCapsuleMetrics } from "./useMomentsCapsuleMetrics";
 
 type FloatingMomentsCapsuleProps = {
   users: MomentUser[];
+  attentionProfileIds?: ReadonlySet<string>;
   relationshipContextByProfileId?: Record<string, MomentRelationshipContext>;
   viewedMomentIds?: Set<string>;
   onPressMyMoment: () => void;
@@ -27,6 +28,7 @@ type FloatingMomentsCapsuleProps = {
 
 function FloatingMomentsCapsule({
   users,
+  attentionProfileIds,
   relationshipContextByProfileId,
   viewedMomentIds,
   onPressMyMoment,
@@ -43,6 +45,9 @@ function FloatingMomentsCapsule({
     const others = users
       .filter((item) => !item.isOwn && item.moments.length > 0)
       .sort((a, b) => {
+        const aNeedsAttention = a.profileId && attentionProfileIds?.has(String(a.profileId)) ? 1 : 0;
+        const bNeedsAttention = b.profileId && attentionProfileIds?.has(String(b.profileId)) ? 1 : 0;
+        if (aNeedsAttention !== bNeedsAttention) return bNeedsAttention - aNeedsAttention;
         const aPriority = a.profileId && relationshipContextByProfileId?.[String(a.profileId)] ? 1 : 0;
         const bPriority = b.profileId && relationshipContextByProfileId?.[String(b.profileId)] ? 1 : 0;
         if (aPriority !== bPriority) return bPriority - aPriority;
@@ -51,7 +56,7 @@ function FloatingMomentsCapsule({
         return bTime - aTime;
       });
     return own ? [own, ...others] : others;
-  }, [relationshipContextByProfileId, users]);
+  }, [attentionProfileIds, relationshipContextByProfileId, users]);
 
   const activeMomentUsers = orderedUsers.filter((item) => item.moments.length > 0);
   const unseenMomentCount = activeMomentUsers.reduce((count, item) => {
@@ -62,11 +67,15 @@ function FloatingMomentsCapsule({
   const hasRichMomentState = activeMomentUsers.length >= 3 || unseenMomentCount >= 2;
   const isOwnOnlyMoment = activeMomentUsers.length === 1 && Boolean(activeMomentUsers[0]?.isOwn);
   const isCompactRail = activeMomentUsers.length <= 3;
-  const shouldShowSeeAllLabel = isCompactRail || !metrics.isCompactWidth || activeMomentUsers.length >= 3;
+  const shouldShowSeeAllLabel = metrics.isCompactWidth
+    ? activeMomentUsers.length <= 2
+    : isCompactRail || activeMomentUsers.length >= 3;
   const maxVisibleUsers = isCompactRail ? orderedUsers.length : Math.max(metrics.maxVisibleAvatars, 5);
   const visibleUsers = isOwnOnlyMoment ? activeMomentUsers : orderedUsers.slice(0, maxVisibleUsers);
-  const compactPreviewSlots = Math.min(3, Math.max(1, visibleUsers.length));
-  const compactSeeAllWidth = shouldShowSeeAllLabel ? 78 : 40;
+  const compactPreviewSlots = metrics.isCompactWidth
+    ? Math.min(2, Math.max(1, visibleUsers.length))
+    : Math.min(3, Math.max(1, visibleUsers.length));
+  const compactSeeAllWidth = shouldShowSeeAllLabel ? (metrics.isCompactWidth ? 62 : 78) : 36;
   const compactAvatarLaneWidth =
     compactPreviewSlots * metrics.avatarRingSize + Math.max(0, compactPreviewSlots - 1) * 7;
   const overflowCount = isOwnOnlyMoment ? 0 : Math.max(0, orderedUsers.length - visibleUsers.length);
@@ -302,11 +311,13 @@ function FloatingMomentsCapsule({
               horizontal
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={[styles.avatarRow, styles.compactAvatarRow]}
-              style={[styles.compactAvatarScroller, { width: compactAvatarLaneWidth }]}
+              style={[styles.compactAvatarScroller, { maxWidth: compactAvatarLaneWidth }]}
             >
               {visibleUsers.map((item) => {
                   const isOwn = item.isOwn;
                   const hasMoment = item.moments.length > 0;
+                  const needsAttention =
+                    !isOwn && item.profileId ? attentionProfileIds?.has(String(item.profileId)) ?? false : false;
                   const relationshipContext =
                     !isOwn && item.profileId ? relationshipContextByProfileId?.[String(item.profileId)] ?? null : null;
                   const hasUnseenMoment = !isOwn && hasMoment && item.moments.some((moment) => !viewedMomentIds?.has(String(moment.id)));
@@ -321,6 +332,7 @@ function FloatingMomentsCapsule({
                       label={label}
                       statusLabel={statusLabel}
                       isOwn={isOwn}
+                      needsAttention={needsAttention}
                       hasUnseenMoment={hasUnseenMoment}
                       isLive={hasMoment}
                       onPress={() => {
@@ -371,6 +383,8 @@ function FloatingMomentsCapsule({
             {visibleUsers.map((item) => {
               const isOwn = item.isOwn;
               const hasMoment = item.moments.length > 0;
+              const needsAttention =
+                !isOwn && item.profileId ? attentionProfileIds?.has(String(item.profileId)) ?? false : false;
               const relationshipContext =
                 !isOwn && item.profileId ? relationshipContextByProfileId?.[String(item.profileId)] ?? null : null;
               const hasUnseenMoment = !isOwn && hasMoment && item.moments.some((moment) => !viewedMomentIds?.has(String(moment.id)));
@@ -385,6 +399,7 @@ function FloatingMomentsCapsule({
                   label={label}
                   statusLabel={statusLabel}
                   isOwn={isOwn}
+                  needsAttention={needsAttention}
                   hasUnseenMoment={hasUnseenMoment}
                   isLive={hasMoment}
                   onPress={() => {
@@ -472,9 +487,9 @@ const styles = StyleSheet.create({
     maxWidth: "65%",
   },
   compactRailShell: {
-    alignSelf: "flex-start",
-    minWidth: 336,
-    maxWidth: "96%",
+    alignSelf: "stretch",
+    minWidth: 0,
+    maxWidth: "100%",
   },
   content: {
     justifyContent: "center",
@@ -568,7 +583,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   compactRail: {
-    flex: 0,
+    flex: 1,
     minHeight: 52,
     gap: 10,
   },
@@ -616,6 +631,7 @@ const styles = StyleSheet.create({
   },
   compactLane: {
     position: "relative",
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
@@ -628,7 +644,7 @@ const styles = StyleSheet.create({
   compactLaneGlow: {
     position: "absolute",
     left: 18,
-    right: 54,
+    right: 48,
     top: 6,
     bottom: 6,
     borderRadius: 999,
@@ -638,8 +654,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   compactAvatarScroller: {
-    flexGrow: 0,
-    flexShrink: 0,
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
     marginRight: 2,
   },
   compactAvatarRow: {

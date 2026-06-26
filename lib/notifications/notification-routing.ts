@@ -168,7 +168,7 @@ export function buildNotificationRoute(
     return { pathname: "/admin" };
   }
 
-  if (pushType === "moment_post" || pushType === "moment_reaction" || pushType === "moment_comment") {
+  if (pushType === "moment_post" || pushType === "moment_reaction" || pushType === "moment_comment" || pushType === "moment_comment_reaction") {
     const startUserId =
       data?.start_user_id ||
       data?.poster_user_id ||
@@ -180,9 +180,17 @@ export function buildNotificationRoute(
       params: {
         startUserId: startUserId ? String(startUserId) : "",
         startMomentId: momentId ? String(momentId) : "",
-        openComments: pushType === "moment_comment" ? "1" : "",
-        entrySource: pushType === "moment_comment" ? "comment" : pushType === "moment_reaction" ? "reaction" : "",
-        commentId: pushType === "moment_comment" && data?.comment_id ? String(data.comment_id) : "",
+        openComments: pushType === "moment_comment" || pushType === "moment_comment_reaction" ? "1" : "",
+        entrySource:
+          pushType === "moment_comment" || pushType === "moment_comment_reaction"
+            ? "comment"
+            : pushType === "moment_reaction"
+              ? "reaction"
+              : "",
+        commentId:
+          (pushType === "moment_comment" || pushType === "moment_comment_reaction") && data?.comment_id
+            ? String(data.comment_id)
+            : "",
         reactionEmoji:
           pushType === "moment_reaction" && data?.emoji
             ? String(data.emoji)

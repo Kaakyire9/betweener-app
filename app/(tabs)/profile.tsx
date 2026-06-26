@@ -1,14 +1,18 @@
 import { DiasporaVerification } from "@/components/DiasporaVerification";
-import GiftArtwork from "@/components/gifts/GiftArtwork";
 import GiftRevealSheet from "@/components/gifts/GiftRevealSheet";
 import { useInbox, markSystemInboxItemsRead } from '@/hooks/useInbox';
-import OfflineImage from "@/components/media/OfflineImage";
+import MeAppearanceSheet from "@/components/profile/MeAppearanceSheet";
+import MeEmailAccountSheet from "@/components/profile/MeEmailAccountSheet";
+import MeFeaturedPromptSection from "@/components/profile/MeFeaturedPromptSection";
+import MeProfileDetailsSection from "@/components/profile/MeProfileDetailsSection";
+import MeProfileHero from "@/components/profile/MeProfileHero";
+import MeProfileProgressSection from "@/components/profile/MeProfileProgressSection";
+import MeProfileStatusStack from "@/components/profile/MeProfileStatusStack";
+import MeReceivedGiftsCard from "@/components/profile/MeReceivedGiftsCard";
+import MeNotificationsSheet from "@/components/profile/MeNotificationsSheet";
+import MeSettingsSheet from "@/components/profile/MeSettingsSheet";
 import PhotoGallery from "@/components/PhotoGallery";
-import PremiumSyncNotice from "@/components/profile/PremiumSyncNotice";
 import ProfileEditModal from "@/components/ProfileEditModal";
-import { VerificationBadge } from "@/components/VerificationBadge";
-import { PremiumPlanBadge } from "@/components/PremiumPlanBadge";
-import { VerificationNudgeCard } from "@/components/VerificationNudgeCard";
 import { VerificationNotifications } from "@/components/VerificationNotifications";
 import ProfileVideoModal from "@/components/ProfileVideoModal";
 import { Colors } from "@/constants/theme";
@@ -18,7 +22,7 @@ import { useVerificationStatus } from "@/hooks/use-verification-status";
 import { useAuth } from "@/lib/auth-context";
 import { logProfileGiftEvent } from "@/lib/gifts/events";
 import { canAccessAdminTools } from "@/lib/internal-tools";
-import { getNonChatInboxActivityItems } from "@/lib/inbox/badge-groups";
+import { getInsightsInboxActivityItems } from "@/lib/inbox/badge-groups";
 import { buildLocationDisplay } from "@/lib/location/location-display";
 import { usePremiumState } from "@/hooks/use-premium-state";
 import { getSafeRemoteImageUri, getUserFacingDisplayName } from "@/lib/profile/display-name";
@@ -34,7 +38,6 @@ import { cacheOfflineVideo, getOfflineVideoUri } from "@/lib/offline/video-store
 import {
   readProfileInsightsSnapshotState,
   updateProfileInsightsSnapshot,
-  type OfflineProfileInsightsGiftItem,
 } from "@/lib/offline/profile-insights-store";
 import {
   enqueueProfileGiftRevealMutation,
@@ -44,10 +47,37 @@ import {
   subscribeToOfflineMutationEvents,
 } from "@/lib/offline/mutation-queue";
 import { isLikelyNetworkError } from "@/lib/network";
-import { isLocalMediaUri, normalizeProfilePhotoList, normalizeProfilePhotoUri } from "@/lib/profile/media";
+import { isLocalMediaUri, normalizeGalleryPhotoList, normalizeProfilePhotoUri } from "@/lib/profile/media";
 import { getPresenceDisplay } from "@/lib/presence";
-import { formatReligionLabel } from "@/lib/profile/religion";
+import {
+  DISTANCE_UNIT_OPTIONS,
+  GIFT_SYSTEM_ENTITY_TYPES,
+  PROFILE_PROMPTS,
+  QUIET_HOURS_PRESETS,
+  ACCOUNT_DELETION_REASON_OPTIONS,
+  ACCOUNT_RECOVERY_METHOD_OPTIONS,
+  DELETE_REASON_PRIORITY,
+  DELETE_REASON_SUGGESTIONS,
+  DELETE_SOFT_OFFRAMP_OPTIONS,
+  RECOVERY_PROVIDER_LABELS,
+  type DistanceUnit,
+  type DeleteAlternativeAction,
+  type DeleteReasonKey,
+  type DeleteReasonOption,
+} from "@/lib/profile/me-screen-config";
 import { getProfileInitials, getProfilePlaceholderPalette, hasProfileImage } from "@/lib/profile-placeholders";
+import {
+  computeProfileCompletion,
+  formatMembershipDate,
+  mapOfflineInsightGiftToReceivedGift,
+  mergeAuthParamsFromUrl,
+  mergeUniqueMediaUris,
+  normalizeGiftType,
+  normalizeMeProfileStatsSnapshot,
+  sanitizeLinkedProviderList,
+  type AuthCallbackParams,
+  type ReceivedGiftItem,
+} from "@/lib/profile/me-screen-helpers";
 import {
   DEFAULT_GUESS_REVEAL_POLICY,
   normalizeGuessText,
@@ -66,7 +96,6 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as AppleAuthentication from "expo-apple-authentication";
 import { makeRedirectUri } from "expo-auth-session";
 import { router, useLocalSearchParams } from "expo-router";
-import * as Linking from "expo-linking";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
@@ -82,81 +111,15 @@ import {
   View,
 } from "react-native";
 import { addEventListener as addNetInfoListener, fetch as fetchNetInfo } from "@react-native-community/netinfo";
-import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
+import { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import { VideoView, useVideoPlayer } from "expo-video";
 import * as WebBrowser from "expo-web-browser";
 import * as Haptics from "expo-haptics";
 
 const DISTANCE_UNIT_KEY = 'distance_unit';
 const LINKED_METHODS_BANNER_DISMISSED_KEY = 'linked_methods_banner_dismissed_v1';
 const VERIFICATION_NUDGE_DISMISSED_KEY_PREFIX = 'verification_nudge_dismissed_v1';
-type AuthCallbackParams = Record<string, string | undefined>;
-
-const mergeAuthParamsFromUrl = (target: AuthCallbackParams, url: string) => {
-  try {
-    const parsed = Linking.parse(url);
-    const query = parsed.queryParams ?? {};
-    Object.entries(query).forEach(([key, value]) => {
-      if (typeof value === 'string') target[key] = value;
-      else if (Array.isArray(value) && typeof value[0] === 'string') target[key] = value[0];
-    });
-  } catch {
-    // ignore malformed urls
-  }
-
-  if (url.includes('#')) {
-    const fragment = url.split('#')[1] || '';
-    const params = new URLSearchParams(fragment);
-    params.forEach((value, key) => {
-      target[key] = value;
-    });
-  }
-};
-
-const formatProfileDetailValue = (value?: string | null) => {
-  const raw = String(value || '').trim();
-  if (!raw) return '';
-  return raw
-    .replace(/_/g, ' ')
-    .replace(/\s+/g, ' ')
-    .toLowerCase()
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-};
-
-const HeroVideo = ({ uri }: { uri: string }) => {
-  const player = useVideoPlayer(uri, (p) => {
-    p.loop = true;
-    p.muted = true;
-    p.keepScreenOnWhilePlaying = false;
-    try {
-      p.play();
-    } catch {}
-  });
-
-  useEffect(() => {
-    try {
-      player.play();
-    } catch {}
-    return () => {
-      try {
-        player.pause();
-      } catch {}
-    };
-  }, [player]);
-
-  return (
-    <VideoView
-      style={StyleSheet.absoluteFillObject}
-      player={player}
-      contentFit="cover"
-      nativeControls={false}
-    />
-  );
-};
-
-type DistanceUnit = 'auto' | 'km' | 'mi';
 
 type NotificationPrefs = {
   push_enabled: boolean;
@@ -178,87 +141,6 @@ type NotificationPrefs = {
   quiet_hours_tz: string;
 };
 
-type ReceivedGiftItem = {
-  id: string;
-  senderId: string;
-  senderProfileId?: string | null;
-  senderName: string;
-  senderAvatar?: string | null;
-  senderGender?: string | null;
-  giftType: string;
-  createdAt: string;
-  openedAt?: string | null;
-  revealedAt?: string | null;
-  archivedAt?: string | null;
-};
-
-const mapOfflineInsightGiftToReceivedGift = (
-  gift: OfflineProfileInsightsGiftItem,
-): ReceivedGiftItem => ({
-  id: gift.id,
-  senderId: gift.senderProfileId ?? gift.id,
-  senderProfileId: gift.senderProfileId ?? null,
-  senderName: gift.senderName,
-  senderAvatar: gift.senderAvatar ?? null,
-  senderGender: gift.senderGender ?? null,
-  giftType: gift.giftType,
-  createdAt: gift.createdAt,
-  openedAt: gift.openedAt ?? null,
-  revealedAt: gift.revealedAt ?? null,
-  archivedAt: gift.archivedAt ?? null,
-});
-
-const normalizeGiftType = (value?: string | null) => {
-  const normalized = String(value || '').trim().toLowerCase();
-  return normalized || '';
-};
-
-const GIFT_SYSTEM_ENTITY_TYPES = ['profile_gift_revealed', 'profile_gift_archived'];
-
-const normalizeMeProfileStatsSnapshot = (
-  stats: Partial<MeProfileStatsSnapshot>,
-): MeProfileStatsSnapshot => ({
-  likesCount: Math.max(0, Number(stats.likesCount) || 0),
-  matchesCount: Math.max(0, Number(stats.matchesCount) || 0),
-  chatsCount: Math.max(0, Number(stats.chatsCount) || 0),
-  matchQuality: typeof stats.matchQuality === 'number' && Number.isFinite(stats.matchQuality)
-    ? Math.max(0, Math.min(100, Math.round(stats.matchQuality)))
-    : null,
-});
-
-const mergeUniqueMediaUris = (...groups: (string[] | null | undefined)[]) =>
-  Array.from(
-    new Set(
-      groups
-        .flatMap((group) => group ?? [])
-        .map((item) => normalizeProfilePhotoUri(item))
-      .filter(Boolean),
-    ),
-  );
-
-const sanitizeLinkedProviderList = (value: unknown): string[] =>
-  Array.isArray(value)
-    ? Array.from(
-        new Set(
-          value
-            .map((item) => String(item || '').trim().toLowerCase())
-            .filter((item) => item === 'email' || item === 'google' || item === 'apple'),
-        ),
-      )
-    : [];
-
-const formatMembershipDate = (value: string | null) => {
-  if (!value) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-
-  return new Intl.DateTimeFormat(undefined, {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  }).format(parsed);
-};
-
 const formatRelativeSignalTime = (value?: string | null) => {
   if (!value) return '';
   const parsed = Date.parse(value);
@@ -277,405 +159,11 @@ const formatRelativeSignalTime = (value?: string | null) => {
 const stringListEqual = (left: string[], right: string[]) =>
   left.length === right.length && left.every((value, index) => value === right[index]);
 
-const DISTANCE_UNIT_OPTIONS: { value: DistanceUnit; label: string; subtitle?: string }[] = [
-  { value: 'auto', label: 'Auto', subtitle: 'Recommended' },
-  { value: 'km', label: 'Kilometers' },
-  { value: 'mi', label: 'Miles' },
-];
-
-const ACCOUNT_RECOVERY_METHOD_OPTIONS = [
-  { value: 'email', label: 'Email' },
-  { value: 'google', label: 'Google' },
-  { value: 'apple', label: 'Apple' },
-  { value: 'magic_link', label: 'Magic link' },
-  { value: 'other', label: 'Other' },
-] as const;
-
-const RECOVERY_PROVIDER_LABELS: Record<string, string> = {
-  email: 'Email',
-  google: 'Google',
-  apple: 'Apple',
-  password_backup: 'Password backup',
-};
-
-const RECOVERY_PROVIDER_ICONS: Record<string, keyof typeof MaterialCommunityIcons.glyphMap> = {
-  email: 'email-outline',
-  google: 'google',
-  apple: 'apple',
-  password_backup: 'form-textbox-password',
-};
-
-const ACCOUNT_DELETION_REASON_OPTIONS = [
-  {
-    value: 'not_enough_matches',
-    section: 'Product fit',
-    label: 'Not enough quality matches',
-    description: 'You are not seeing the kind of people or chemistry you hoped for.',
-  },
-  {
-    value: 'not_feeling_safe',
-    section: 'Trust & safety',
-    label: 'I do not feel safe',
-    description: 'Trust, moderation, or comfort has not felt strong enough.',
-  },
-  {
-    value: 'taking_a_break',
-    section: 'Product fit',
-    label: 'I am taking a break',
-    description: 'You want time away from dating or social discovery for now.',
-  },
-  {
-    value: 'met_someone',
-    section: 'Product fit',
-    label: 'I met someone',
-    description: 'You no longer need Betweener at the moment.',
-  },
-  {
-    value: 'too_many_notifications',
-    section: 'Product fit',
-    label: 'Too many notifications',
-    description: 'The app feels too noisy or demanding.',
-  },
-  {
-    value: 'too_expensive',
-    section: 'Product fit',
-    label: 'It feels too expensive',
-    description: 'Premium value does not feel worth the cost right now.',
-  },
-  {
-    value: 'technical_issues',
-    section: 'Product fit',
-    label: 'Technical issues',
-    description: 'Bugs, speed, or reliability are getting in the way.',
-  },
-  {
-    value: 'privacy_concerns',
-    section: 'Trust & safety',
-    label: 'Privacy concerns',
-    description: 'You are not comfortable with how your data or profile is handled.',
-  },
-  {
-    value: 'not_for_me',
-    section: 'Product fit',
-    label: 'Betweener is not for me',
-    description: 'The product or experience is not the right fit.',
-  },
-  {
-    value: 'other',
-    section: 'Other',
-    label: 'Other',
-    description: 'Something else is making you leave.',
-  },
-] as const;
-
-type DeleteReasonOption = (typeof ACCOUNT_DELETION_REASON_OPTIONS)[number];
-type DeleteReasonKey = DeleteReasonOption['value'];
-type DeleteAlternativeAction = 'take_break' | 'quiet_notifications' | 'hide_profile';
 type LinkedIdentity = {
   id: string;
   user_id: string;
   identity_id: string;
   provider: string;
-};
-
-const DELETE_SOFT_OFFRAMP_OPTIONS: {
-  id: DeleteAlternativeAction;
-  title: string;
-  description: string;
-}[] = [
-  {
-    id: 'take_break',
-    title: 'Take a break',
-    description: 'Hide your profile and quiet the app for now.',
-  },
-  {
-    id: 'quiet_notifications',
-    title: 'Reduce notifications',
-    description: 'Keep your account, but make Betweener quieter.',
-  },
-  {
-    id: 'hide_profile',
-    title: 'Hide my profile',
-    description: 'Step out of discovery without closing your account.',
-  },
-];
-
-const DELETE_REASON_PRIORITY: DeleteReasonKey[] = [
-  'not_feeling_safe',
-  'privacy_concerns',
-  'taking_a_break',
-  'too_many_notifications',
-  'met_someone',
-  'not_enough_matches',
-  'technical_issues',
-  'too_expensive',
-  'not_for_me',
-  'other',
-];
-
-const DELETE_REASON_SUGGESTIONS: Partial<
-  Record<
-    DeleteReasonKey,
-    {
-      title: string;
-      description: string;
-      cta: string;
-      action: DeleteAlternativeAction;
-    }
-  >
-> = {
-  not_feeling_safe: {
-    title: 'Hide your profile right away',
-    description: 'Step out of discovery first, then decide later if full deletion is still right.',
-    cta: 'Hide profile now',
-    action: 'hide_profile',
-  },
-  privacy_concerns: {
-    title: 'Step back without disappearing fully',
-    description: 'Hide your profile now and keep the option to return with more control.',
-    cta: 'Hide profile now',
-    action: 'hide_profile',
-  },
-  taking_a_break: {
-    title: 'Take a quieter break instead',
-    description: 'Pause your visibility and soften the noise without closing the door completely.',
-    cta: 'Take a break instead',
-    action: 'take_break',
-  },
-  too_many_notifications: {
-    title: 'Keep your account, lose the noise',
-    description: 'Quiet the app first. You may not need to leave entirely.',
-    cta: 'Reduce notifications',
-    action: 'quiet_notifications',
-  },
-  met_someone: {
-    title: 'Keep the door open',
-    description: 'Step back gracefully for now without permanently deleting your Betweener account.',
-    cta: 'Take a break instead',
-    action: 'take_break',
-  },
-  not_enough_matches: {
-    title: 'Pause visibility while you reset',
-    description: 'Hide your profile for now and return when you want fresher momentum.',
-    cta: 'Hide profile instead',
-    action: 'hide_profile',
-  },
-  technical_issues: {
-    title: 'Step back while issues settle',
-    description: 'Hide your profile for now instead of closing your account for good.',
-    cta: 'Hide profile instead',
-    action: 'hide_profile',
-  },
-  too_expensive: {
-    title: 'Keep your place without staying visible',
-    description: 'Hide your profile first so you can come back later without starting over.',
-    cta: 'Hide profile instead',
-    action: 'hide_profile',
-  },
-  not_for_me: {
-    title: 'Step back before you decide',
-    description: 'Hide your profile for now and leave the door open while you think it through.',
-    cta: 'Hide profile instead',
-    action: 'hide_profile',
-  },
-  other: {
-    title: 'A calmer off-ramp exists',
-    description: 'If you just need distance, you can step back without fully closing your account.',
-    cta: 'Take a break instead',
-    action: 'take_break',
-  },
-};
-
-const QUIET_HOURS_PRESETS = [
-  { id: 'late', label: '22:00-08:00', start: '22:00:00', end: '08:00:00' },
-  { id: 'night', label: '23:00-07:00', start: '23:00:00', end: '07:00:00' },
-  { id: 'deep', label: '00:00-06:00', start: '00:00:00', end: '06:00:00' },
-];
-
-const NOTIFICATION_CORE_OPTIONS = [
-  { key: 'messages', label: 'Messages', body: 'Keep the main connection thread alive.', icon: 'message-text-outline' },
-  { key: 'message_reactions', label: 'Message reactions', body: 'See the small signals inside chat.', icon: 'sticker-emoji' },
-  { key: 'reactions', label: 'Reactions', body: 'Catch quick responses across the app.', icon: 'heart-outline' },
-  { key: 'likes', label: 'Likes', body: 'Know when interest lands on your profile.', icon: 'cards-heart-outline' },
-  { key: 'superlikes', label: 'Signals', body: 'Know when someone noticed something specific.', icon: 'broadcast' },
-  { key: 'matches', label: 'Matches', body: 'Do not miss a fresh mutual opening.', icon: 'account-heart-outline' },
-] as const;
-
-const NOTIFICATION_CONTROL_OPTIONS = [
-  { key: 'push_enabled', label: 'Push notifications', body: 'Allow Betweener to reach you outside the app.', icon: 'bell-ring-outline' },
-  { key: 'inapp_enabled', label: 'In-app notifications', body: 'Keep activity visible while you are inside.', icon: 'gesture-tap-button' },
-  { key: 'preview_text', label: 'Preview message text', body: 'Show message content directly in alerts.', icon: 'text-box-search-outline' },
-] as const;
-
-const NOTIFICATION_OPTIONAL_OPTIONS = [
-  { key: 'profile_interest', label: 'Profile interest', body: 'Control who can surface curiosity, revisits, and saves around your profile.', icon: 'account-search-outline' },
-  { key: 'moments', label: 'Moments', body: 'Stay close to comments and reactions on your posts.', icon: 'image-multiple-outline' },
-  { key: 'verification', label: 'Verification updates', body: 'Get trust and review progress privately.', icon: 'shield-check-outline' },
-  { key: 'announcements', label: 'Announcements', body: 'Hear about meaningful product changes and releases.', icon: 'bullhorn-outline' },
-] as const;
-
-// Settings menu items
-const SETTINGS_MENU_ITEMS = [
-  {
-    id: 'appearance',
-    title: 'Appearance',
-    icon: 'theme-light-dark',
-    color: Colors.light.tint
-  },
-  {
-    id: 'notifications',
-    title: 'Notifications',
-    icon: 'bell',
-    color: Colors.light.tint
-  },
-  {
-    id: 'email',
-    title: 'Email & Account',
-    icon: 'email-outline',
-    color: Colors.light.tint
-  },
-  {
-    id: 'privacy',
-    title: 'Privacy & Safety',
-    icon: 'shield-check',
-    color: Colors.light.tint
-  },
-  {
-    id: 'preferences',
-    title: 'Relationship Compass',
-    icon: 'compass-outline',
-    color: Colors.light.tint
-  },
-  {
-    id: 'premium',
-    title: 'Premium Plans',
-    icon: 'crown-outline',
-    color: '#D4A017'
-  },
-  {
-    id: 'help',
-    title: 'Help & Support',
-    icon: 'help-circle',
-    color: Colors.light.tint
-  },
-  {
-    id: 'admin',
-    title: 'Admin Dashboard',
-    icon: 'shield-account',
-    color: '#FF9800',
-    adminOnly: true
-  },
-  {
-    id: 'divider',
-    type: 'divider'
-  },
-  {
-    id: 'logout',
-    title: 'Sign Out',
-    icon: 'logout',
-    color: '#ef4444'
-  }
-];
-
-// Interactive prompts for profile
-const PROFILE_PROMPTS = [
-  {
-    id: 'two_truths_lie',
-    title: 'Two truths and a lie',
-    responses: [
-      'I speak three languages',
-      'I once met a celebrity',
-      'I can cook jollof rice perfectly'
-    ]
-  },
-  {
-    id: 'week_goal',
-    title: 'This week I want to...',
-    responses: [
-      'Try a new restaurant',
-      'Learn something new',
-      'Connect with old friends'
-    ]
-  }
-];
-
-const PROFILE_COMPLETION_MIN_INTERESTS = 3;
-const BIO_MIN_PUBLIC_CHARS = 20;
-const LOOKING_FOR_MIN_CHARS = 10;
-
-const computeProfileCompletion = (
-  profile: any,
-  interests: string[],
-  promptCount: number,
-  photoCount: number,
-) => {
-  if (!profile) {
-    return { percent: 0, missing: [] as string[] };
-  }
-
-  const hasName = !!(profile.full_name || '').trim();
-  const hasAge = typeof profile.age === 'number' && profile.age >= 18;
-  const hasGender = !!(profile.gender || '').toString().trim();
-  const hasBio = (profile.bio || '').trim().length >= BIO_MIN_PUBLIC_CHARS;
-  const hasRegion = !!(profile.region || '').trim();
-  const hasRoots =
-    (Array.isArray((profile as any).roots) && (profile as any).roots.filter(Boolean).length > 0)
-    || !!(profile.tribe || '').trim();
-  const hasOccupation = !!(profile.occupation || '').trim();
-  const hasEducation = !!(profile.education || '').trim();
-  const hasIntent = (profile.looking_for || '').trim().length >= LOOKING_FOR_MIN_CHARS;
-  const hasExercise = !!(profile.exercise_frequency || '').trim();
-  const hasSmoking = !!(profile.smoking || '').trim();
-  const hasDrinking = !!(profile.drinking || '').trim();
-  const hasChildren = !!(profile.has_children || '').trim();
-  const wantsChildren = !!(profile.wants_children || '').trim();
-  const hasPersonality = !!(profile.personality_type || '').trim();
-  const hasLoveLanguage = !!(profile.love_language || '').trim();
-  const hasLivingSituation = !!(profile.living_situation || '').trim();
-  const hasPets = !!(profile.pets || '').trim();
-  const hasLanguages =
-    Array.isArray(profile.languages_spoken) && profile.languages_spoken.filter(Boolean).length > 0;
-  const hasInterests = Array.isArray(interests) && interests.length >= PROFILE_COMPLETION_MIN_INTERESTS;
-  const hasPhotos = photoCount >= 2 || (Array.isArray(profile.photos) && profile.photos.filter(Boolean).length >= 2);
-  const hasAvatar = !!(profile.avatar_url || '').trim();
-  const hasVideo = !!(profile.profile_video || '').trim();
-  const hasHeight = !!(profile.height || '').trim();
-  const hasPrompts = promptCount > 0;
-
-  const checks: { label: string; ok: boolean }[] = [
-    { label: 'Add your name', ok: hasName },
-    { label: 'Add your age', ok: hasAge },
-    { label: 'Add your gender', ok: hasGender },
-    { label: 'Share a little about you', ok: hasBio },
-    { label: 'Add your region', ok: hasRegion },
-    { label: 'Add your roots or ethnicity', ok: hasRoots },
-    { label: 'Add your occupation', ok: hasOccupation },
-    { label: 'Add your education', ok: hasEducation },
-    { label: "Express what you're here for", ok: hasIntent },
-    { label: 'Add exercise frequency', ok: hasExercise },
-    { label: 'Add smoking preference', ok: hasSmoking },
-    { label: 'Add drinking preference', ok: hasDrinking },
-    { label: 'Add children status', ok: hasChildren },
-    { label: 'Add family plans', ok: wantsChildren },
-    { label: 'Add personality type', ok: hasPersonality },
-    { label: 'Add love language', ok: hasLoveLanguage },
-    { label: 'Add living situation', ok: hasLivingSituation },
-    { label: 'Add pets preference', ok: hasPets },
-    { label: 'Add languages spoken', ok: hasLanguages },
-    { label: 'Add your interests', ok: hasInterests },
-    { label: 'Add at least 2 photos', ok: hasPhotos },
-    { label: 'Add a profile photo', ok: hasAvatar },
-    { label: 'Add a profile video', ok: hasVideo },
-    { label: 'Add your height', ok: hasHeight },
-    { label: 'Answer a prompt', ok: hasPrompts },
-  ];
-
-  const total = checks.length || 1;
-  const earned = checks.reduce((sum, c) => sum + (c.ok ? 1 : 0), 0);
-  const percent = Math.max(0, Math.min(100, Math.round((earned / total) * 100)));
-  const missing = checks.filter((c) => !c.ok).map((c) => c.label);
-
-  return { percent, missing };
 };
 
 export default function ProfileScreen() {
@@ -871,7 +359,7 @@ export default function ProfileScreen() {
   );
   const visibleReceivedGiftsCount = visibleReceivedGifts.length;
   const profileActivityItems = useMemo(
-    () => getNonChatInboxActivityItems(inboxItems),
+    () => getInsightsInboxActivityItems(inboxItems),
     [inboxItems],
   );
   const trustedProfileActivityBadgeCount = inboxFreshness.hasFreshServerData
@@ -1223,14 +711,18 @@ export default function ProfileScreen() {
       if (Array.isArray(cached.interests) && cached.interests.length > 0) {
         setUserInterests((prev) => (prev.length === 0 ? (cached.interests as string[]) : prev));
       }
+      const cachedAvatarUrl = normalizeProfilePhotoUri(cached.avatarUrl);
       if (Array.isArray(cached.photos) && cached.photos.length > 0) {
-        setUserPhotos((prev) => (prev.length === 0 ? normalizeProfilePhotoList(cached.photos) : prev));
+        setUserPhotos((prev) =>
+          prev.length === 0 ? normalizeGalleryPhotoList(cached.photos, cachedAvatarUrl) : prev,
+        );
       }
-      if (cached.avatarUrl) {
-        setDisplayAvatarUrl(normalizeProfilePhotoUri(cached.avatarUrl));
-      }
-      if (cached.profileVideo) {
+      setDisplayAvatarUrl(cachedAvatarUrl || null);
+      const liveProfileVideo = String((profile as any)?.profile_video || (profile as any)?.profileVideo || '').trim();
+      if (cached.profileVideo && (isLocalMediaUri(cached.profileVideo) || liveProfileVideo)) {
         setDisplayProfileVideo(String(cached.profileVideo));
+      } else if (!liveProfileVideo) {
+        setDisplayProfileVideo(null);
       }
       if (cached.stats) {
         applyProfileStatsSnapshot(cached.stats);
@@ -1328,8 +820,8 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     if (!cacheProfileId) return;
-    const stablePhotos = normalizeProfilePhotoList((profile as any)?.photos || []);
     const stableAvatarUrl = normalizeProfilePhotoUri(profile?.avatar_url);
+    const stablePhotos = normalizeGalleryPhotoList((profile as any)?.photos || [], stableAvatarUrl);
     const stableProfileVideo = String(
       (profile as any)?.profile_video || (profile as any)?.profileVideo || ''
     ).trim();
@@ -1338,6 +830,10 @@ export default function ProfileScreen() {
     void (async () => {
       const pendingMedia = user?.id ? await getPendingProfileMediaSyncMutation(user.id) : null;
       if (cancelled) return;
+      setDisplayAvatarUrl((current) => (current && isLocalMediaUri(current) ? current : stableAvatarUrl || null));
+      setDisplayProfileVideo((current) =>
+        current && isLocalMediaUri(current) ? current : stableProfileVideo || null,
+      );
       writeMeSnapshot({
         avatarUrl:
           pendingMedia?.payload.avatar?.localUri
@@ -1440,42 +936,13 @@ export default function ProfileScreen() {
 
     try {
       const pendingMedia = await getPendingProfileMediaSyncMutation(user.id);
-      const pendingPhotos = normalizeProfilePhotoList(pendingMedia?.payload.photos || []);
+      const pendingAvatarUrl = pendingMedia?.payload.avatar?.localUri ?? profile?.avatar_url ?? null;
+      const pendingPhotos = normalizeGalleryPhotoList(pendingMedia?.payload.photos || [], pendingAvatarUrl);
 
       // First check if photos exist in profile.photos field
-      const profilePhotos = normalizeProfilePhotoList((profile as any)?.photos || []);
+      const profilePhotos = normalizeGalleryPhotoList((profile as any)?.photos || [], profile?.avatar_url);
       if (profilePhotos.length > 0) {
         const nextPhotos = mergeUniqueMediaUris(profilePhotos, pendingPhotos);
-        setUserPhotos(nextPhotos);
-        writeMeSnapshot({ photos: nextPhotos });
-        return;
-      }
-
-      // If no photos in profile, check storage folder
-      const { data: files, error } = await supabase.storage
-        .from('profile-photos')
-        .list(`${user.id}/`, {
-          limit: 10,
-          sortBy: { column: 'created_at', order: 'asc' }
-        });
-
-      if (error) {
-        console.error('Error loading photos:', error);
-        return;
-      }
-
-      if (files && files.length > 0) {
-        // Get public URLs for the photos
-        const photoUrls = files
-          .filter(file => file.name !== '.emptyFolderPlaceholder')
-          .map(file => {
-            const { data } = supabase.storage
-              .from('profile-photos')
-              .getPublicUrl(`${user.id}/${file.name}`);
-            return data.publicUrl;
-          });
-
-        const nextPhotos = mergeUniqueMediaUris(photoUrls, pendingPhotos);
         setUserPhotos(nextPhotos);
         writeMeSnapshot({ photos: nextPhotos });
         return;
@@ -1484,7 +951,11 @@ export default function ProfileScreen() {
       if (pendingPhotos.length > 0) {
         setUserPhotos(pendingPhotos);
         writeMeSnapshot({ photos: pendingPhotos });
+        return;
       }
+
+      setUserPhotos([]);
+      writeMeSnapshot({ photos: [] });
     } catch (error) {
       console.error('Error loading photos:', error);
     }
@@ -2082,10 +1553,14 @@ export default function ProfileScreen() {
     const params: Record<string, any> = { 
       profileId: profile?.id || 'preview',
       isPreview: 'true',
+      source: 'me',
     };
     try {
       if (profile) {
         const compatPct = 100;
+        const previewAvatarUrl = displayAvatarUrl || profile.avatar_url || null;
+        const previewPhotos = Array.isArray(userPhotos) ? userPhotos : [];
+        const previewProfileVideo = displayProfileVideo || null;
         const fallback = {
           id: profile.id,
           name: profile.full_name || profile.id,
@@ -2093,8 +1568,9 @@ export default function ProfileScreen() {
           location: profile.location || profile.region || '',
           city: (profile as any).city,
           region: profile.region || '',
-          avatar_url: profile.avatar_url,
-          photos: (profile as any).photos,
+          avatar_url: previewAvatarUrl,
+          photos: previewPhotos,
+          profile_video: previewProfileVideo,
           occupation: (profile as any).occupation,
           education: (profile as any).education,
           bio: profile.bio,
@@ -3400,111 +2876,14 @@ export default function ProfileScreen() {
         </View>
       </Animated.View>
 
-      {/* Settings Sheet */}
-      {showSettingsDropdown && (
-        <Modal
-          visible={showSettingsDropdown}
-          animationType="fade"
-          transparent
-          onRequestClose={closeDropdown}
-        >
-          <View style={styles.notificationModalBackdrop}>
-            <TouchableOpacity
-              activeOpacity={1}
-              onPress={closeDropdown}
-              style={StyleSheet.absoluteFill}
-            />
-
-            <View
-              style={[
-                styles.settingsSheet,
-                styles.cardShadow,
-                { backgroundColor: theme.background, borderColor: theme.outline },
-              ]}
-            >
-              <View style={styles.notificationModalHeader}>
-                <View style={styles.appearanceHeaderCopy}>
-                  <Text style={[styles.notificationModalTitle, { color: theme.text }]}>Settings</Text>
-                  <Text style={[styles.appearanceHeaderBody, { color: theme.textMuted }]}>
-                    Adjust the parts of Betweener that shape your account, privacy, and experience.
-                  </Text>
-                </View>
-                <TouchableOpacity onPress={closeDropdown}>
-                  <MaterialCommunityIcons name="close" size={22} color={theme.textMuted} />
-                </TouchableOpacity>
-              </View>
-
-              <ScrollView
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={styles.settingsSheetContent}
-              >
-                {SETTINGS_MENU_ITEMS.filter((item) => {
-                  if (item.adminOnly) return canSeeAdminTools;
-                  return true;
-                }).map((item) => {
-                  if (item.type === 'divider') {
-                    return <View key={item.id} style={[styles.dropdownDivider, { backgroundColor: theme.outline }]} />;
-                  }
-
-                  const helperText =
-                    item.id === 'appearance'
-                      ? 'Switch light, dark, or follow your device.'
-                      : item.id === 'notifications'
-                        ? 'Choose what reaches you and when.'
-                        : item.id === 'email'
-                          ? 'Manage sign-in methods and recovery.'
-                          : item.id === 'privacy'
-                            ? 'Safety tools, blocks, and trust controls.'
-                            : item.id === 'preferences'
-                              ? 'Guide who enters your dating room.'
-                              : item.id === 'premium'
-                                ? 'Review plans, pricing, and benefits.'
-                                : item.id === 'help'
-                                  ? 'Support, answers, and product guidance.'
-                                  : item.id === 'admin'
-                                    ? 'Internal moderation and operations tools.'
-                                    : item.id === 'logout'
-                                      ? 'Sign out of this account on this device.'
-                                      : '';
-
-                  return (
-                    <TouchableOpacity
-                      key={item.id}
-                      style={[
-                        styles.settingsSheetItem,
-                        { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-                        item.id === 'logout' && { backgroundColor: theme.tint + '10', borderColor: theme.tint + '30' },
-                      ]}
-                      activeOpacity={0.9}
-                      onPress={() => handleSettingsItemPress(item.id)}
-                    >
-                      <View style={[styles.settingsSheetIcon, { backgroundColor: theme.background }]}>
-                        <MaterialCommunityIcons
-                          name={item.icon as any}
-                          size={18}
-                          color={item.id === 'logout' ? theme.tint : item.color}
-                        />
-                      </View>
-                      <View style={styles.settingsSheetCopy}>
-                        <Text
-                          style={[
-                            styles.settingsSheetTitle,
-                            { color: item.id === 'logout' ? theme.tint : theme.text },
-                          ]}
-                        >
-                          {item.title}
-                        </Text>
-                        <Text style={[styles.settingsSheetBody, { color: theme.textMuted }]}>{helperText}</Text>
-                      </View>
-                      <MaterialCommunityIcons name="chevron-right" size={18} color={theme.textMuted} />
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          </View>
-        </Modal>
-      )}
+      <MeSettingsSheet
+        visible={showSettingsDropdown}
+        theme={theme}
+        canSeeAdminTools={canSeeAdminTools}
+        onClose={closeDropdown}
+        onItemPress={handleSettingsItemPress}
+        styles={styles}
+      />
 
       {shouldShowLinkedMethodsBanner ? (
         <View
@@ -3547,892 +2926,88 @@ export default function ProfileScreen() {
         </View>
       ) : null}
 
-      <Modal
+      <MeAppearanceSheet
         visible={showAppearanceModal}
-        animationType="fade"
-        transparent
-        onRequestClose={() => setShowAppearanceModal(false)}
-      >
-        <View style={styles.notificationModalBackdrop}>
-          <TouchableOpacity
-            activeOpacity={1}
-            onPress={() => setShowAppearanceModal(false)}
-            style={StyleSheet.absoluteFill}
-          />
-          <View
-            style={[
-              styles.notificationModalCard,
-              styles.cardShadow,
-              { backgroundColor: theme.background, borderColor: theme.outline },
-            ]}
-          >
-            <View style={styles.notificationModalHeader}>
-              <View style={styles.appearanceHeaderCopy}>
-                <Text style={[styles.notificationModalTitle, { color: theme.text }]}>Appearance</Text>
-                <Text style={[styles.appearanceHeaderBody, { color: theme.textMuted }]}>
-                  Choose how Betweener should feel when you open it.
-                </Text>
-              </View>
-              <TouchableOpacity onPress={() => setShowAppearanceModal(false)}>
-                <MaterialCommunityIcons name="close" size={22} color={theme.textMuted} />
-              </TouchableOpacity>
-            </View>
+        theme={theme}
+        isDark={isDark}
+        colorScheme={colorScheme}
+        themePreference={themePreference}
+        onClose={() => setShowAppearanceModal(false)}
+        onChoose={handleThemeChoice}
+        styles={styles}
+      />
 
-            <View
-              style={[
-                styles.appearancePreviewCard,
-                { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-              ]}
-            >
-              <LinearGradient
-                colors={
-                  isDark
-                    ? ['rgba(18,53,53,0.96)', 'rgba(15,26,26,0.98)']
-                    : ['#F7EFE4', '#E8F8F5', '#FFF6D8']
-                }
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.appearancePreviewGradient}
-              >
-                <Text style={[styles.appearancePreviewEyebrow, { color: isDark ? '#F5D36B' : '#946A08' }]}>
-                  Betweener mood
-                </Text>
-                <Text style={[styles.appearancePreviewTitle, { color: theme.text }]}>
-                  {themePreference === 'system' ? 'Following your device' : themePreference === 'dark' ? 'Dark mode is active' : 'Light mode is active'}
-                </Text>
-                <Text style={[styles.appearancePreviewBody, { color: theme.textMuted }]}>
-                  {themePreference === 'system'
-                    ? `Right now your device is using ${colorScheme}. Betweener will follow automatically.`
-                    : 'Your choice applies across the app immediately.'}
-                </Text>
-                <View style={styles.appearancePreviewChipRow}>
-                  <View
-                    style={[
-                      styles.appearancePreviewChip,
-                      { backgroundColor: theme.background, borderColor: theme.outline },
-                    ]}
-                  >
-                    <MaterialCommunityIcons name="theme-light-dark" size={13} color={theme.tint} />
-                    <Text style={[styles.appearancePreviewChipText, { color: theme.text }]}>
-                      {themePreference === 'system' ? 'Follow device' : themePreference === 'dark' ? 'Dark mode' : 'Light mode'}
-                    </Text>
-                  </View>
-                </View>
-              </LinearGradient>
-            </View>
-
-            <View style={styles.appearanceOptionList}>
-              {([
-                {
-                  id: 'light',
-                  title: 'Light',
-                  body: 'Warm, bright, and polished across Betweener.',
-                  icon: 'white-balance-sunny',
-                },
-                {
-                  id: 'dark',
-                  title: 'Dark',
-                  body: 'Calmer at night and stronger around photos and media.',
-                  icon: 'weather-night',
-                },
-                {
-                  id: 'system',
-                  title: 'Follow device',
-                  body: 'Stay aligned with your phone automatically.',
-                  icon: 'cellphone-cog',
-                },
-              ] as const).map((option) => {
-                const active = themePreference === option.id;
-                return (
-                  <TouchableOpacity
-                    key={option.id}
-                    style={[
-                      styles.appearanceOptionCard,
-                      { backgroundColor: theme.backgroundSubtle, borderColor: active ? theme.tint : theme.outline },
-                      active && [styles.cardShadowSoft, { shadowColor: theme.tint }],
-                    ]}
-                    activeOpacity={0.9}
-                    onPress={() => handleThemeChoice(option.id)}
-                  >
-                    <View
-                      style={[
-                        styles.appearanceOptionIcon,
-                        { backgroundColor: active ? `${theme.tint}18` : theme.background },
-                      ]}
-                    >
-                      <MaterialCommunityIcons
-                        name={option.icon}
-                        size={18}
-                        color={active ? theme.tint : theme.textMuted}
-                      />
-                    </View>
-                    <View style={styles.appearanceOptionCopy}>
-                      <View style={styles.appearanceOptionTitleRow}>
-                        <Text style={[styles.appearanceOptionTitle, { color: theme.text }]}>{option.title}</Text>
-                        {active ? (
-                          <View
-                            style={[
-                              styles.appearanceActivePill,
-                              { backgroundColor: `${theme.tint}14`, borderColor: `${theme.tint}3a` },
-                            ]}
-                          >
-                            <Text style={[styles.appearanceActivePillText, { color: theme.tint }]}>Active</Text>
-                          </View>
-                        ) : null}
-                      </View>
-                      <Text style={[styles.appearanceOptionBody, { color: theme.textMuted }]}>{option.body}</Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
+      <MeNotificationsSheet
         visible={showNotificationsModal}
-        animationType="fade"
-        transparent
-        onRequestClose={() => setShowNotificationsModal(false)}
-      >
-        <View style={styles.notificationModalBackdrop}>
-          <TouchableOpacity
-            activeOpacity={1}
-            onPress={() => setShowNotificationsModal(false)}
-            style={StyleSheet.absoluteFill}
-          />
-          <View
-            style={[
-              styles.notificationModalCard,
-              styles.cardShadow,
-              styles.notificationStudioCard,
-              { backgroundColor: theme.background, borderColor: theme.outline },
-            ]}
-          >
-            <View style={styles.notificationModalHeader}>
-              <View style={styles.appearanceHeaderCopy}>
-                <Text style={[styles.notificationModalTitle, { color: theme.text }]}>Notifications</Text>
-                <Text style={[styles.appearanceHeaderBody, { color: theme.textMuted }]}>
-                  Shape the signal you want Betweener to carry, surface, or keep quiet.
-                </Text>
-              </View>
-              <TouchableOpacity onPress={() => setShowNotificationsModal(false)}>
-                <MaterialCommunityIcons name="close" size={22} color={theme.textMuted} />
-              </TouchableOpacity>
-            </View>
+        theme={theme}
+        isDark={isDark}
+        notificationPrefs={notificationPrefs}
+        notificationPrefsLoaded={notificationPrefsLoaded}
+        quietHoursPreview={quietHoursPreview}
+        activeQuietPresetId={activeQuietPreset?.id}
+        showStartPicker={showStartPicker}
+        showEndPicker={showEndPicker}
+        startPickerValue={timeStringToDate(notificationPrefs.quiet_hours_start)}
+        endPickerValue={timeStringToDate(notificationPrefs.quiet_hours_end)}
+        quietHoursLabel={quietHoursLabel}
+        onClose={() => setShowNotificationsModal(false)}
+        onTogglePref={(key, value) => {
+          void updateNotificationPref(key as keyof NotificationPrefs, value);
+        }}
+        onUpdateQuietHours={(enabled, start, end) => {
+          void updateQuietHours(enabled, start, end);
+        }}
+        onShowStartPicker={() => setShowStartPicker(true)}
+        onShowEndPicker={() => setShowEndPicker(true)}
+        onStartChange={handleStartChange}
+        onEndChange={handleEndChange}
+        styles={styles}
+      />
 
-            <ScrollView contentContainerStyle={styles.notificationStudioContent} showsVerticalScrollIndicator={false}>
-              <View
-                style={[
-                  styles.notificationHeroCard,
-                  { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-                ]}
-              >
-                <LinearGradient
-                  colors={
-                    isDark
-                      ? ['rgba(18,53,53,0.96)', 'rgba(27,32,27,0.98)', 'rgba(58,46,18,0.94)']
-                      : ['#FFF6E8', '#E8F8F5', '#FFF1D2']
-                  }
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.notificationHeroGradient}
-                >
-                  <View style={styles.notificationHeroArtwork} pointerEvents="none">
-                    <View style={[styles.notificationHeroRingLarge, { borderColor: isDark ? 'rgba(245,211,107,0.16)' : 'rgba(15,118,110,0.12)' }]} />
-                    <View style={[styles.notificationHeroRingSmall, { borderColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(15,118,110,0.1)' }]} />
-                    <View style={[styles.notificationHeroPulseDot, { backgroundColor: isDark ? '#F5D36B' : '#0F766E' }]} />
-                    <View style={[styles.notificationHeroOrbitDot, { backgroundColor: isDark ? 'rgba(255,255,255,0.22)' : 'rgba(15,118,110,0.18)' }]} />
-                  </View>
-                  <Text style={[styles.notificationHeroEyebrow, { color: isDark ? '#F5D36B' : '#946A08' }]}>
-                    Private signal room
-                  </Text>
-                  <Text style={[styles.notificationHeroTitle, { color: theme.text }]}>
-                    {notificationPrefs.push_enabled ? 'You are fully reachable' : 'Signals stay mostly inside the app'}
-                  </Text>
-                  <Text style={[styles.notificationHeroBody, { color: theme.textMuted }]}>
-                    {notificationPrefs.quiet_hours_enabled
-                      ? `Quiet hours protect ${quietHoursLabel(notificationPrefs.quiet_hours_start)}-${quietHoursLabel(notificationPrefs.quiet_hours_end)}.`
-                      : 'You can soften nights with quiet hours whenever you want.'}
-                  </Text>
-                  <View style={styles.notificationHeroChipRow}>
-                    <View style={[styles.notificationHeroChip, { backgroundColor: theme.background, borderColor: theme.outline }]}>
-                      <MaterialCommunityIcons name="bell-ring-outline" size={13} color={theme.tint} />
-                      <Text style={[styles.notificationHeroChipText, { color: theme.text }]}>
-                        {notificationPrefs.push_enabled ? 'Push on' : 'Push off'}
-                      </Text>
-                    </View>
-                    <View style={[styles.notificationHeroChip, { backgroundColor: theme.background, borderColor: theme.outline }]}>
-                      <MaterialCommunityIcons name="theme-light-dark" size={13} color={theme.tint} />
-                      <Text style={[styles.notificationHeroChipText, { color: theme.text }]}>
-                        {notificationPrefs.preview_text ? 'Preview visible' : 'Preview hidden'}
-                      </Text>
-                    </View>
-                  </View>
-                </LinearGradient>
-              </View>
-
-              <View style={styles.notificationSection}>
-                <Text style={[styles.notificationSectionTitle, { color: theme.text }]}>Core signals</Text>
-                <View style={styles.notificationCardGrid}>
-                  {NOTIFICATION_CORE_OPTIONS.map((item) => (
-                    <NotificationToggle
-                      key={item.key}
-                      label={item.label}
-                      description={item.body}
-                      icon={item.icon}
-                      value={notificationPrefs[item.key]}
-                      onValueChange={(val) => updateNotificationPref(item.key, val)}
-                      theme={theme}
-                    />
-                  ))}
-                </View>
-              </View>
-
-              <View style={styles.notificationSection}>
-                <Text style={[styles.notificationSectionTitle, { color: theme.text }]}>Control room</Text>
-                <View style={styles.notificationCardGrid}>
-                  {NOTIFICATION_CONTROL_OPTIONS.map((item) => (
-                    <NotificationToggle
-                      key={item.key}
-                      label={item.label}
-                      description={item.body}
-                      icon={item.icon}
-                      value={notificationPrefs[item.key]}
-                      onValueChange={(val) => updateNotificationPref(item.key, val)}
-                      theme={theme}
-                    />
-                  ))}
-                </View>
-              </View>
-
-              <View style={styles.notificationSection}>
-                <Text style={[styles.notificationSectionTitle, { color: theme.text }]}>Quiet hours</Text>
-                <View
-                  style={[
-                    styles.quietHoursStudioCard,
-                    { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-                  ]}
-                >
-                  <NotificationToggle
-                    label="Silence pushes"
-                    description="Hold alerts back when the day should go still."
-                    icon="weather-night"
-                    value={notificationPrefs.quiet_hours_enabled}
-                    onValueChange={(val) =>
-                      updateQuietHours(val, notificationPrefs.quiet_hours_start, notificationPrefs.quiet_hours_end)
-                    }
-                    theme={theme}
-                  />
-                  {notificationPrefs.quiet_hours_enabled ? (
-                    <>
-                      <View style={styles.quietHoursSummaryRow}>
-                        <View style={[styles.quietHoursSummaryPill, { backgroundColor: theme.background, borderColor: theme.outline }]}>
-                          <MaterialCommunityIcons name="clock-time-four-outline" size={13} color={theme.tint} />
-                          <Text style={[styles.quietHoursSummaryText, { color: theme.text }]}>
-                            {`${quietHoursLabel(notificationPrefs.quiet_hours_start)}-${quietHoursLabel(notificationPrefs.quiet_hours_end)}`}
-                          </Text>
-                        </View>
-                        {quietHoursPreview ? (
-                          <Text style={[styles.quietHoursSummaryMeta, { color: theme.textMuted }]}>{quietHoursPreview}</Text>
-                        ) : null}
-                      </View>
-                      <View style={styles.quietHoursPills}>
-                        {QUIET_HOURS_PRESETS.map((preset) => {
-                          const active = activeQuietPreset?.id === preset.id;
-                          return (
-                            <TouchableOpacity
-                              key={preset.id}
-                              style={[
-                                styles.quietHoursPill,
-                                { backgroundColor: theme.background, borderColor: theme.outline },
-                                active && { backgroundColor: theme.tint, borderColor: theme.tint },
-                              ]}
-                              onPress={() => updateQuietHours(true, preset.start, preset.end)}
-                            >
-                              <Text
-                                style={[
-                                  styles.quietHoursPillText,
-                                  { color: theme.text },
-                                  active && { color: '#fff' },
-                                ]}
-                              >
-                                {preset.label}
-                              </Text>
-                            </TouchableOpacity>
-                          );
-                        })}
-                      </View>
-                      <View style={styles.quietHoursCustomRow}>
-                        <TouchableOpacity
-                          style={[
-                            styles.quietHoursInput,
-                            { borderColor: theme.outline, backgroundColor: theme.background },
-                          ]}
-                          onPress={() => setShowStartPicker(true)}
-                        >
-                          <Text style={[styles.quietHoursInputText, { color: theme.text }]}>
-                            {quietHoursLabel(notificationPrefs.quiet_hours_start)}
-                          </Text>
-                        </TouchableOpacity>
-                        <Text style={[styles.quietHoursDash, { color: theme.textMuted }]}>to</Text>
-                        <TouchableOpacity
-                          style={[
-                            styles.quietHoursInput,
-                            { borderColor: theme.outline, backgroundColor: theme.background },
-                          ]}
-                          onPress={() => setShowEndPicker(true)}
-                        >
-                          <Text style={[styles.quietHoursInputText, { color: theme.text }]}>
-                            {quietHoursLabel(notificationPrefs.quiet_hours_end)}
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                      {showStartPicker ? (
-                        <DateTimePicker
-                          mode="time"
-                          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                          value={timeStringToDate(notificationPrefs.quiet_hours_start)}
-                          onChange={handleStartChange}
-                        />
-                      ) : null}
-                      {showEndPicker ? (
-                        <DateTimePicker
-                          mode="time"
-                          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                          value={timeStringToDate(notificationPrefs.quiet_hours_end)}
-                          onChange={handleEndChange}
-                        />
-                      ) : null}
-                    </>
-                  ) : (
-                    <Text style={[styles.quietHoursSummaryMeta, { color: theme.textMuted }]}>
-                      Quiet hours are off. Betweener can still respect your push and preview choices above.
-                    </Text>
-                  )}
-                </View>
-              </View>
-
-              <View style={styles.notificationSection}>
-                <Text style={[styles.notificationSectionTitle, { color: theme.text }]}>Optional signals</Text>
-                <View style={styles.notificationCardGrid}>
-                  {NOTIFICATION_OPTIONAL_OPTIONS.map((item) => (
-                    <NotificationToggle
-                      key={item.key}
-                      label={item.label}
-                      description={item.body}
-                      icon={item.icon}
-                      value={notificationPrefs[item.key]}
-                      onValueChange={(val) => updateNotificationPref(item.key, val)}
-                      theme={theme}
-                    />
-                  ))}
-                </View>
-              </View>
-
-              {!notificationPrefsLoaded ? (
-                <Text style={[styles.notificationLoading, { color: theme.textMuted }]}>Loading preferences...</Text>
-              ) : null}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
+      <MeEmailAccountSheet
         visible={showEmailModal}
-        animationType="fade"
-        transparent
-        onRequestClose={() => setShowEmailModal(false)}
-      >
-        <View style={styles.emailModalBackdrop}>
-          <View
-            style={[
-              styles.emailModalCard,
-              styles.deleteModalCard,
-              styles.cardShadow,
-              { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-            ]}
-          >
-            <View style={styles.emailModalHeader}>
-              <Text style={[styles.emailModalTitle, { color: theme.text }]}>Email & Account</Text>
-              <TouchableOpacity onPress={() => setShowEmailModal(false)}>
-                <MaterialCommunityIcons name="close" size={20} color={theme.textMuted} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView
-              style={styles.emailModalScroll}
-              contentContainerStyle={styles.emailModalScrollContent}
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-            >
-            {!accountNetworkReady ? (
-              <View style={[styles.accountOfflineNotice, { backgroundColor: `${theme.tint}12`, borderColor: `${theme.tint}33` }]}>
-                <MaterialCommunityIcons name="wifi-off" size={16} color={theme.tint} />
-                <Text style={[styles.accountOfflineNoticeText, { color: theme.text }]}>
-                  Account state is readable offline. Security actions need a live connection before they can continue.
-                </Text>
-              </View>
-            ) : null}
-            <Text style={[styles.emailModalBody, { color: theme.textMuted }]}>
-              Update the email you use to sign in. We&apos;ll send a confirmation link to your new email.
-            </Text>
-            <TextInput
-              value={emailInput}
-              onChangeText={setEmailInput}
-              placeholder="you@example.com"
-              placeholderTextColor={theme.textMuted}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              style={[
-                styles.emailInput,
-                { color: theme.text, borderColor: theme.outline, backgroundColor: theme.backgroundSubtle },
-              ]}
-            />
-            {emailError ? (
-              <Text style={[styles.emailError, { color: '#ef4444' }]}>{emailError}</Text>
-            ) : null}
-            {emailMessage ? (
-              <Text style={[styles.emailMessage, { color: theme.tint }]}>{emailMessage}</Text>
-            ) : null}
-            <TouchableOpacity
-              style={[
-                styles.emailSaveButton,
-                { backgroundColor: theme.tint, opacity: emailSaving || !accountNetworkReady ? 0.6 : 1 },
-              ]}
-              onPress={handleEmailUpdate}
-              disabled={emailSaving || !accountNetworkReady}
-            >
-              <Text style={styles.emailSaveText}>
-                {emailSaving ? 'Sending...' : accountNetworkReady ? 'Send confirmation' : 'Requires connection'}
-              </Text>
-            </TouchableOpacity>
-            <View style={[styles.emailAccountDivider, { backgroundColor: theme.outline }]} />
-            {identitySuccessSheet ? (
-              <View style={[styles.identitySuccessInlineCard, { backgroundColor: theme.background, borderColor: `${theme.tint}33` }]}>
-                <LinearGradient
-                  colors={[`${theme.tint}20`, `${theme.accent}14`, 'transparent']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.identitySuccessInlineGlow}
-                  pointerEvents="none"
-                />
-                <View style={styles.identitySuccessInlineHeader}>
-                  <View style={[styles.identitySuccessInlineIconHalo, { backgroundColor: `${theme.tint}18`, borderColor: `${theme.tint}40` }]}>
-                    <LinearGradient
-                      colors={[theme.tint, theme.accent]}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={styles.identitySuccessInlineIconCore}
-                    >
-                      <MaterialCommunityIcons
-                        name={identitySuccessSheet.provider === 'google' ? 'google' : 'apple'}
-                        size={20}
-                        color="#FFFFFF"
-                      />
-                    </LinearGradient>
-                  </View>
-                  <TouchableOpacity
-                    onPress={() => setIdentitySuccessSheet(null)}
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  >
-                    <MaterialCommunityIcons name="close" size={18} color={theme.textMuted} />
-                  </TouchableOpacity>
-                </View>
-                <Text style={[styles.identitySuccessInlineEyebrow, { color: theme.tint }]}>SIGN-IN METHOD SECURED</Text>
-                <Text style={[styles.identitySuccessInlineTitle, { color: theme.text }]}>
-                  {identitySuccessSheet.title}
-                </Text>
-                <Text style={[styles.identitySuccessInlineBody, { color: theme.textMuted }]}>
-                  {identitySuccessSheet.body}
-                </Text>
-              </View>
-            ) : null}
-            <View style={styles.identitySection}>
-              <Text style={[styles.identitySectionTitle, { color: theme.text }]}>Linked sign-in methods</Text>
-              <Text style={[styles.identitySectionBody, { color: theme.textMuted }]}>
-                Keep one primary sign-in route and at least one backup route so Betweener can always restore the right account.
-              </Text>
-
-              <View
-                style={[
-                  styles.recoveryStrengthCard,
-                  { backgroundColor: theme.background, borderColor: theme.outline },
-                ]}
-              >
-                <View style={styles.recoveryStrengthHeader}>
-                  <View style={styles.recoveryStrengthCopy}>
-                    <Text style={[styles.recoveryStrengthTitle, { color: theme.text }]}>Recovery strength</Text>
-                    <Text style={[styles.recoveryStrengthBody, { color: theme.textMuted }]}>
-                      {recoveryStrength.body}
-                    </Text>
-                  </View>
-                  <View
-                    style={[
-                      styles.recoveryStrengthPill,
-                      { backgroundColor: `${recoveryStrength.tone}14`, borderColor: `${recoveryStrength.tone}33` },
-                    ]}
-                  >
-                    <Text style={[styles.recoveryStrengthPillText, { color: recoveryStrength.tone }]}>
-                      {recoveryStrength.label}
-                    </Text>
-                  </View>
-                </View>
-                <View style={styles.recoveryStrengthMethods}>
-                  {recoveryMethodPills.map((method) => (
-                    <View
-                      key={method}
-                      style={[
-                        styles.recoveryStrengthMethodPill,
-                        { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-                      ]}
-                    >
-                      <MaterialCommunityIcons
-                        name={RECOVERY_PROVIDER_ICONS[method] ?? 'shield-check-outline'}
-                        size={13}
-                        color={theme.tint}
-                      />
-                      <Text style={[styles.recoveryStrengthMethodText, { color: theme.text }]}>
-                        {RECOVERY_PROVIDER_LABELS[method] ?? method}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              </View>
-
-              <View
-                style={[
-                  styles.identityMethodCard,
-                  { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-                ]}
-              >
-                <View style={styles.identityMethodMeta}>
-                  <View style={[styles.identityMethodIcon, { backgroundColor: theme.background }]}>
-                    <MaterialCommunityIcons name="email-outline" size={18} color={theme.tint} />
-                  </View>
-                  <View style={styles.identityMethodTextWrap}>
-                    <Text style={[styles.identityMethodTitle, { color: theme.text }]}>Email</Text>
-                    <Text style={[styles.identityMethodSubtitle, { color: theme.textMuted }]}>
-                      {user?.email || 'No email on file'}
-                    </Text>
-                  </View>
-                </View>
-                <View style={[styles.identityStatusPill, { backgroundColor: theme.tint + '18', borderColor: theme.tint }]}>
-                  <Text style={[styles.identityStatusText, { color: theme.tint }]}>Primary</Text>
-                </View>
-              </View>
-
-              <View
-                style={[
-                  styles.identityMethodCard,
-                  { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-                ]}
-              >
-                <View style={styles.identityMethodMeta}>
-                  <View style={[styles.identityMethodIcon, { backgroundColor: theme.background }]}>
-                    <MaterialCommunityIcons name="google" size={18} color="#EA4335" />
-                  </View>
-                  <View style={styles.identityMethodTextWrap}>
-                    <Text style={[styles.identityMethodTitle, { color: theme.text }]}>Google</Text>
-                    <Text style={[styles.identityMethodSubtitle, { color: theme.textMuted }]}>
-                      {disconnectedProviders.includes('google')
-                        ? 'Disconnected for Betweener'
-                        : linkedProviders.includes('google')
-                          ? 'Linked to this account'
-                          : 'Not linked yet'}
-                    </Text>
-                  </View>
-                </View>
-                {disconnectedProviders.includes('google') ? (
-                  <View style={styles.identityActions}>
-                    <View style={[styles.identityStatusPill, { backgroundColor: '#ef444418', borderColor: '#ef4444' }]}>
-                      <Text style={[styles.identityStatusText, { color: '#ef4444' }]}>Disconnected</Text>
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => void handleReconnectProvider('google')}
-                      disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady}
-                      style={[
-                        styles.identityLinkButton,
-                        {
-                          backgroundColor: theme.tint,
-                            opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady ? 0.65 : 1,
-                          },
-                        ]}
-                    >
-                      <Text style={styles.identityLinkButtonText}>
-                        {linkingProvider === 'google' ? 'Reconnecting...' : accountNetworkReady ? 'Reconnect' : 'Requires connection'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : linkedProviders.includes('google') ? (
-                  <View style={styles.identityActions}>
-                    <View style={[styles.identityStatusPill, { backgroundColor: theme.tint + '18', borderColor: theme.tint }]}>
-                      <Text style={[styles.identityStatusText, { color: theme.tint }]}>Linked</Text>
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => handleUnlinkProvider('google')}
-                      disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady}
-                      style={[
-                        styles.identityUnlinkButton,
-                        {
-                          borderColor: '#ef4444',
-                          opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady ? 0.6 : 1,
-                        },
-                      ]}
-                    >
-                      <Text style={styles.identityUnlinkButtonText}>
-                        {unlinkingProvider === 'google' ? 'Disconnecting...' : accountNetworkReady ? 'Disconnect' : 'Requires connection'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  <TouchableOpacity
-                    onPress={handleLinkGoogle}
-                    disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady}
-                    style={[
-                      styles.identityLinkButton,
-                      {
-                        backgroundColor: theme.tint,
-                        opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady ? 0.65 : 1,
-                      },
-                    ]}
-                  >
-                    <Text style={styles.identityLinkButtonText}>
-                      {linkingProvider === 'google' ? 'Linking...' : accountNetworkReady ? 'Link Google' : 'Requires connection'}
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              {Platform.OS === 'ios' ? (
-                <View
-                  style={[
-                    styles.identityMethodCard,
-                    { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-                  ]}
-                >
-                  <View style={styles.identityMethodMeta}>
-                    <View style={[styles.identityMethodIcon, { backgroundColor: theme.background }]}>
-                      <MaterialCommunityIcons name="apple" size={18} color={theme.text} />
-                    </View>
-                    <View style={styles.identityMethodTextWrap}>
-                      <Text style={[styles.identityMethodTitle, { color: theme.text }]}>Apple</Text>
-                      <Text style={[styles.identityMethodSubtitle, { color: theme.textMuted }]}>
-                        {disconnectedProviders.includes('apple')
-                          ? 'Disconnected for Betweener'
-                          : linkedProviders.includes('apple')
-                            ? 'Linked to this account'
-                            : 'Not linked yet'}
-                      </Text>
-                    </View>
-                  </View>
-                  {disconnectedProviders.includes('apple') ? (
-                    <View style={styles.identityActions}>
-                      <View style={[styles.identityStatusPill, { backgroundColor: '#ef444418', borderColor: '#ef4444' }]}>
-                        <Text style={[styles.identityStatusText, { color: '#ef4444' }]}>Disconnected</Text>
-                      </View>
-                      <TouchableOpacity
-                        onPress={() => void handleReconnectProvider('apple')}
-                        disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady}
-                        style={[
-                          styles.identityLinkButton,
-                          {
-                            backgroundColor: theme.tint,
-                            opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady ? 0.65 : 1,
-                          },
-                        ]}
-                      >
-                        <Text style={styles.identityLinkButtonText}>
-                          {linkingProvider === 'apple' ? 'Reconnecting...' : accountNetworkReady ? 'Reconnect' : 'Requires connection'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : linkedProviders.includes('apple') ? (
-                    <View style={styles.identityActions}>
-                      <View style={[styles.identityStatusPill, { backgroundColor: theme.tint + '18', borderColor: theme.tint }]}>
-                        <Text style={[styles.identityStatusText, { color: theme.tint }]}>Linked</Text>
-                      </View>
-                      <TouchableOpacity
-                        onPress={() => handleUnlinkProvider('apple')}
-                        disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady}
-                        style={[
-                          styles.identityUnlinkButton,
-                          {
-                            borderColor: '#ef4444',
-                            opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady ? 0.6 : 1,
-                          },
-                        ]}
-                      >
-                        <Text style={styles.identityUnlinkButtonText}>
-                          {unlinkingProvider === 'apple' ? 'Disconnecting...' : accountNetworkReady ? 'Disconnect' : 'Requires connection'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : (
-                    <TouchableOpacity
-                      onPress={handleLinkApple}
-                      disabled={identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady}
-                      style={[
-                        styles.identityLinkButton,
-                        {
-                          backgroundColor: theme.tint,
-                          opacity: identitiesLoading || linkingProvider !== null || unlinkingProvider !== null || !accountNetworkReady ? 0.65 : 1,
-                        },
-                      ]}
-                    >
-                      <Text style={styles.identityLinkButtonText}>
-                        {linkingProvider === 'apple' ? 'Linking...' : accountNetworkReady ? 'Link Apple' : 'Requires connection'}
-                      </Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              ) : null}
-
-              <Text style={[styles.identitySupportText, { color: theme.textMuted }]}>
-                Disconnect Google or Apple here any time, as long as another sign-in method or password backup remains on the account.
-              </Text>
-
-              <View
-                style={[
-                  styles.passwordBackupCard,
-                  { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-                ]}
-              >
-                <View style={styles.recoveryCardCopy}>
-                  <View style={styles.passwordBackupTitleRow}>
-                    <Text style={[styles.recoveryCardTitle, { color: theme.text }]}>Password backup</Text>
-                    {hasPasswordBackup ? (
-                      <View style={[styles.identityStatusPill, { backgroundColor: theme.tint + '18', borderColor: theme.tint }]}>
-                        <Text style={[styles.identityStatusText, { color: theme.tint }]}>Ready</Text>
-                      </View>
-                    ) : null}
-                  </View>
-                  <Text style={[styles.recoveryCardBody, { color: theme.textMuted }]}>
-                    {hasPasswordBackup
-                      ? 'A password-based recovery route is already attached to this account. Refresh it any time you want a stronger fallback.'
-                      : 'Set a private backup password so email can restore this account even if Apple or Google opens the wrong profile first.'}
-                  </Text>
-                </View>
-                <View style={styles.passwordBackupActions}>
-                  <TouchableOpacity
-                    onPress={() => setShowPasswordBackupEditor((current) => !current)}
-                    style={[
-                      styles.passwordBackupSecondaryButton,
-                      { borderColor: theme.outline, backgroundColor: theme.background },
-                    ]}
-                  >
-                    <Text style={[styles.passwordBackupSecondaryText, { color: theme.text }]}>
-                      {showPasswordBackupEditor
-                        ? 'Hide password setup'
-                        : hasPasswordBackup
-                          ? 'Refresh password backup'
-                          : 'Set up password backup'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-                {showPasswordBackupEditor ? (
-                  <View style={styles.passwordBackupEditor}>
-                    <TextInput
-                      value={passwordBackupInput}
-                      onChangeText={setPasswordBackupInput}
-                      placeholder="Create backup password"
-                      placeholderTextColor={theme.textMuted}
-                      secureTextEntry
-                      autoCapitalize="none"
-                      style={[
-                        styles.emailInput,
-                        { color: theme.text, borderColor: theme.outline, backgroundColor: theme.background },
-                      ]}
-                    />
-                    <TextInput
-                      value={passwordBackupConfirm}
-                      onChangeText={setPasswordBackupConfirm}
-                      placeholder="Confirm backup password"
-                      placeholderTextColor={theme.textMuted}
-                      secureTextEntry
-                      autoCapitalize="none"
-                      style={[
-                        styles.emailInput,
-                        { color: theme.text, borderColor: theme.outline, backgroundColor: theme.background },
-                      ]}
-                    />
-                    {passwordBackupError ? (
-                      <Text style={[styles.identityError, { color: '#ef4444' }]}>{passwordBackupError}</Text>
-                    ) : null}
-                    {passwordBackupMessage ? (
-                      <Text style={[styles.identityMessage, { color: theme.tint }]}>{passwordBackupMessage}</Text>
-                    ) : null}
-                    <TouchableOpacity
-                      onPress={handlePasswordBackupSave}
-                      disabled={passwordBackupSaving || !user?.email || !accountNetworkReady}
-                      style={[
-                        styles.passwordBackupButton,
-                        { backgroundColor: theme.tint, opacity: passwordBackupSaving || !user?.email || !accountNetworkReady ? 0.65 : 1 },
-                      ]}
-                    >
-                      <Text style={styles.identityLinkButtonText}>
-                        {passwordBackupSaving ? 'Saving...' : accountNetworkReady ? 'Save password backup' : 'Requires connection'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : passwordBackupMessage ? (
-                  <Text style={[styles.identityMessage, { color: theme.tint }]}>{passwordBackupMessage}</Text>
-                ) : null}
-              </View>
-
-              {identityError ? (
-                <Text style={[styles.identityError, { color: '#ef4444' }]}>{identityError}</Text>
-              ) : null}
-              {identityMessage ? (
-                <Text style={[styles.identityMessage, { color: theme.tint }]}>{identityMessage}</Text>
-              ) : null}
-              {identitiesLoading ? (
-                <Text style={[styles.identityLoading, { color: theme.textMuted }]}>Checking sign-in methods...</Text>
-              ) : null}
-
-              <View style={[styles.recoveryCard, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
-                <View style={styles.recoveryCardCopy}>
-                  <Text style={[styles.recoveryCardTitle, { color: theme.text }]}>Having trouble with another sign-in method?</Text>
-                  <Text style={[styles.recoveryCardBody, { color: theme.textMuted }]}>
-                    If Apple, Google, or email still opens the wrong Betweener account, the automatic recovery flow will try first. This support request stays here as the final safety net.
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  onPress={openRecoveryRequestModal}
-                  disabled={!accountNetworkReady}
-                  style={[styles.recoveryCardButton, { backgroundColor: theme.tint, opacity: accountNetworkReady ? 1 : 0.65 }]}
-                >
-                  <Text style={styles.recoveryCardButtonText}>
-                    {accountNetworkReady ? 'Recover account access' : 'Requires connection'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={[styles.accountDeletionCard, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
-                <View style={styles.accountDeletionHeaderRow}>
-                  <View style={styles.accountDeletionCopy}>
-                    <Text style={[styles.recoveryCardTitle, { color: theme.text }]}>Leave Betweener</Text>
-                    <Text style={[styles.recoveryCardBody, { color: theme.textMuted }]}>
-                      Tell us why you are leaving, then choose whether to step back or close this account permanently.
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    onPress={openDeleteAccountModal}
-                    disabled={!accountNetworkReady}
-                    style={[styles.accountDeletionButton, { borderColor: '#ef4444', backgroundColor: theme.background, opacity: accountNetworkReady ? 1 : 0.6 }]}
-                  >
-                    <Text style={styles.accountDeletionButtonText}>{accountNetworkReady ? 'Leave now' : 'Requires connection'}</Text>
-                  </TouchableOpacity>
-                </View>
-                <Text style={[styles.accountDeletionFootnote, { color: theme.textMuted }]}>
-                  We&apos;ll offer calmer options before anything is closed permanently.
-                </Text>
-              </View>
-            </View>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+        theme={theme}
+        userEmail={user?.email}
+        accountNetworkReady={accountNetworkReady}
+        emailInput={emailInput}
+        emailSaving={emailSaving}
+        emailMessage={emailMessage}
+        emailError={emailError}
+        identitySuccessSheet={identitySuccessSheet}
+        recoveryStrength={recoveryStrength}
+        recoveryMethodPills={recoveryMethodPills}
+        linkedProviders={linkedProviders}
+        disconnectedProviders={disconnectedProviders}
+        identitiesLoading={identitiesLoading}
+        linkingProvider={linkingProvider}
+        unlinkingProvider={unlinkingProvider}
+        hasPasswordBackup={hasPasswordBackup}
+        showPasswordBackupEditor={showPasswordBackupEditor}
+        passwordBackupInput={passwordBackupInput}
+        passwordBackupConfirm={passwordBackupConfirm}
+        passwordBackupSaving={passwordBackupSaving}
+        passwordBackupMessage={passwordBackupMessage}
+        passwordBackupError={passwordBackupError}
+        identityError={identityError}
+        identityMessage={identityMessage}
+        onClose={() => setShowEmailModal(false)}
+        onChangeEmailInput={setEmailInput}
+        onSubmitEmail={handleEmailUpdate}
+        onDismissIdentitySuccess={() => setIdentitySuccessSheet(null)}
+        onReconnectProvider={(provider) => {
+          void handleReconnectProvider(provider);
+        }}
+        onUnlinkProvider={handleUnlinkProvider}
+        onLinkGoogle={handleLinkGoogle}
+        onLinkApple={handleLinkApple}
+        onTogglePasswordBackupEditor={() => setShowPasswordBackupEditor((current) => !current)}
+        onChangePasswordBackupInput={setPasswordBackupInput}
+        onChangePasswordBackupConfirm={setPasswordBackupConfirm}
+        onSavePasswordBackup={handlePasswordBackupSave}
+        onOpenRecoveryRequest={openRecoveryRequestModal}
+        onOpenDeleteAccount={openDeleteAccountModal}
+        styles={styles}
+      />
 
       <Modal
         visible={showDeleteAccountModal}
@@ -4826,378 +3401,43 @@ export default function ProfileScreen() {
       >
         {/* Profile Header Section */}
         <View style={[styles.profileHeader, { backgroundColor: theme.background }]}>
-          <View
-            style={[
-              styles.heroCard,
-              { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-            ]}
-          >
-            {heroVideoUrl ? (
-              <View style={styles.heroImage}>
-                <HeroVideo uri={heroVideoUrl} />
-                <View style={styles.heroTint} />
-                <LinearGradient
-                  colors={["rgba(0,0,0,0.35)", "transparent"]}
-                  style={styles.heroTopGradient}
-                />
-                <LinearGradient
-                  colors={["transparent", "rgba(0,0,0,0.55)"]}
-                  style={styles.heroBottomGradient}
-                />
-                <View style={styles.heroVignette} pointerEvents="none" />
-                <View style={styles.heroInnerStroke} pointerEvents="none" />
-                <View style={styles.heroGrain} pointerEvents="none" />
-                <View style={styles.heroTopRow}>
-                  <TouchableOpacity
-                    style={[
-                      styles.heroEditButton,
-                      {
-                        backgroundColor: isDark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.9)",
-                        borderColor: theme.outline,
-                      },
-                    ]}
-                    onPress={() => setShowEditModal(true)}
-                  >
-                    <MaterialCommunityIcons name="pencil" size={16} color={theme.text} />
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              hasHeroImage ? (
-                <View style={styles.heroImage}>
-                  <OfflineImage
-                    uri={heroImageUri}
-                    style={styles.heroImage}
-                    containerStyle={styles.heroImage}
-                    cachePolicy="memory-disk"
-                  />
-                  <View style={styles.heroTint} />
-                  <LinearGradient
-                    colors={["rgba(0,0,0,0.35)", "transparent"]}
-                    style={styles.heroTopGradient}
-                  />
-                  <LinearGradient
-                    colors={["transparent", "rgba(0,0,0,0.55)"]}
-                    style={styles.heroBottomGradient}
-                  />
-                  <View style={styles.heroVignette} pointerEvents="none" />
-                  <View style={styles.heroInnerStroke} pointerEvents="none" />
-                  <View style={styles.heroGrain} pointerEvents="none" />
-                  <View style={styles.heroTopRow}>
-                    <TouchableOpacity
-                      style={[
-                        styles.heroEditButton,
-                        {
-                          backgroundColor: isDark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.9)",
-                          borderColor: theme.outline,
-                        },
-                      ]}
-                      onPress={() => setShowEditModal(true)}
-                    >
-                      <MaterialCommunityIcons name="pencil" size={16} color={theme.text} />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ) : (
-                <LinearGradient
-                  colors={[placeholderPalette.start, placeholderPalette.end]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.heroImage}
-                >
-                  <View style={styles.heroTint} />
-                  <View style={styles.heroVignette} pointerEvents="none" />
-                  <View style={styles.heroInnerStroke} pointerEvents="none" />
-                  <View style={styles.heroGrain} pointerEvents="none" />
-                  <View style={styles.heroTopRow}>
-                    <TouchableOpacity
-                      style={[
-                        styles.heroEditButton,
-                        {
-                          backgroundColor: "rgba(255,255,255,0.14)",
-                          borderColor: "rgba(255,255,255,0.24)",
-                        },
-                      ]}
-                      onPress={() => setShowEditModal(true)}
-                    >
-                      <MaterialCommunityIcons name="pencil" size={16} color="#fff" />
-                    </TouchableOpacity>
-                  </View>
-                  <View style={styles.heroPlaceholderContent}>
-                    <Text style={styles.heroPlaceholderEyebrow}>Premium presence starts here</Text>
-                    <Text style={styles.heroPlaceholderInitials}>{profileInitials}</Text>
-                    <Text style={styles.heroPlaceholderTitle}>Add a portrait that feels like you</Text>
-                    <Text style={styles.heroPlaceholderSubtitle}>
-                      Strong first photos lift trust, reply rates, and overall profile quality.
-                    </Text>
-                  </View>
-                </LinearGradient>
-              )
-            )}
-          </View>
+          <MeProfileHero
+            theme={theme}
+            isDark={isDark}
+            heroVideoUrl={heroVideoUrl}
+            heroImageUri={heroImageUri}
+            hasHeroImage={hasHeroImage}
+            avatarImageUri={avatarImageUri}
+            hasAvatarImage={hasAvatarImage}
+            placeholderPalette={placeholderPalette}
+            profileInitials={profileInitials}
+            displayName={displayName}
+            displayAge={displayAge}
+            verificationLevel={verificationLevel}
+            showPresence={showPresence}
+            presenceLabel={presenceLabel}
+            locationDisplay={locationDisplay}
+            personalPremiumPlan={personalPremiumPlan}
+            onEditPress={() => setShowEditModal(true)}
+          />
+          <MeProfileStatusStack
+            theme={theme}
+            isDark={isDark}
+            premiumExpiryReminder={premiumExpiryReminder}
+            premiumQueue={premiumQueue}
+            profileSyncPending={profileSyncPending}
+            profileSyncFailed={profileSyncFailed}
+            onReviewPremium={() => router.push('/premium-plans')}
+            onOpenSyncActivity={() => router.push('/sync-activity')}
+          />
 
-          <View style={styles.heroAvatarWrap}>
-            <View style={styles.heroAvatarGlow} />
-            <LinearGradient
-              colors={[theme.tint, theme.accent]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.avatarRing}
-            >
-              <View style={[styles.avatarInner, { backgroundColor: theme.background }]}>
-                {hasAvatarImage ? (
-                  <OfflineImage
-                    uri={avatarImageUri}
-                    style={[styles.avatar, { borderColor: theme.background }]}
-                    cachePolicy="memory-disk"
-                  />
-                ) : (
-                  <LinearGradient
-                    colors={[placeholderPalette.start, placeholderPalette.end]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={[styles.avatar, styles.avatarPlaceholder]}
-                  >
-                    <Text style={styles.avatarPlaceholderInitials}>{profileInitials}</Text>
-                  </LinearGradient>
-                )}
-              </View>
-            </LinearGradient>
-            <TouchableOpacity
-              style={styles.editAvatarButton}
-              onPress={() => setShowEditModal(true)}
-            >
-              <MaterialCommunityIcons name="camera" size={14} color="#fff" />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.heroNameRow}>
-            <Text style={[styles.profileName, { color: theme.text }]} numberOfLines={2}>
-              {displayName}
-              {displayAge ? ` · ${displayAge}` : ""}
-            </Text>
-            {verificationLevel > 0 ? (
-              <VerificationBadge
-                level={verificationLevel}
-                size="small"
-                variant="betweener"
-                style={styles.heroInlineVerificationBadge}
-              />
-            ) : null}
-            {showPresence ? (
-              <View
-                style={[
-                  styles.presenceBadge,
-                  { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-                ]}
-              >
-                <View style={[styles.presenceDot, { backgroundColor: theme.tint }]} />
-                <Text style={[styles.presenceText, { color: theme.textMuted }]}>
-                  {presenceLabel}
-                </Text>
-              </View>
-            ) : null}
-          </View>
-
-          <View style={styles.heroLocationRow}>
-            <MaterialCommunityIcons name="map-marker" size={16} color={theme.tint} />
-            <Text style={[styles.locationText, { color: theme.textMuted }]} numberOfLines={1}>
-              {locationDisplay}
-            </Text>
-            {personalPremiumPlan ? (
-              <PremiumPlanBadge
-                plan={personalPremiumPlan}
-                style={styles.heroPremiumBadgeInline}
-              />
-            ) : null}
-          </View>
-
-          {premiumExpiryReminder ? (
-            <View
-              style={[
-                styles.premiumReminderCard,
-                {
-                  backgroundColor: isDark ? 'rgba(24, 40, 46, 0.92)' : theme.backgroundSubtle,
-                  borderColor: isDark ? 'rgba(255,255,255,0.08)' : theme.outline,
-                },
-              ]}
-            >
-              <View style={styles.premiumReminderCopy}>
-                <Text style={[styles.premiumReminderTitle, { color: theme.text }]}>
-                  {premiumExpiryReminder.title}
-                </Text>
-                <Text style={[styles.premiumReminderBody, { color: theme.textMuted }]}>
-                  {premiumExpiryReminder.body}
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={[
-                  styles.premiumReminderAction,
-                  { borderColor: theme.outline, backgroundColor: theme.background },
-                ]}
-                onPress={() => router.push('/premium-plans')}
-              >
-                <Text style={[styles.premiumReminderActionText, { color: theme.tint }]}>Review</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
-
-          {premiumQueue.visible ? (
-            <PremiumSyncNotice
-              theme={theme}
-              isDark={isDark}
-              title={premiumQueue.title}
-              message={premiumQueue.message}
-              failedCount={premiumQueue.failedCount}
-              pendingCount={premiumQueue.pendingCount}
-              onPress={() => {
-                if (premiumQueue.hasFailed) {
-                  void premiumQueue.retryFailed();
-                  return;
-                }
-                router.push('/sync-activity');
-              }}
-            />
-          ) : null}
-
-          {visibleReceivedGiftsCount > 0 ? (
-            <View
-              style={[
-                styles.receivedGiftsCard,
-                { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-              ]}
-            >
-              <View style={styles.receivedGiftsHeader}>
-                <View style={styles.receivedGiftsHeaderCopy}>
-                  <Text style={[styles.receivedGiftsEyebrow, { color: theme.tint }]}>
-                    Gifted signals
-                  </Text>
-                  <Text style={[styles.receivedGiftsTitle, { color: theme.text }]}>
-                    {visibleReceivedGiftsCount === 1 ? 'A premium surprise is waiting' : 'Premium surprises are waiting'}
-                  </Text>
-                </View>
-                <View
-                  style={[
-                    styles.receivedGiftsCountPill,
-                    {
-                      backgroundColor: isDark ? 'rgba(20, 184, 166, 0.12)' : `${theme.tint}14`,
-                      borderColor: isDark ? 'rgba(20, 184, 166, 0.22)' : `${theme.tint}24`,
-                    },
-                  ]}
-                >
-                  <MaterialCommunityIcons name="gift-outline" size={14} color={theme.tint} />
-                  <Text style={[styles.receivedGiftsCountText, { color: theme.tint }]}>
-                    {visibleReceivedGiftsCount}
-                  </Text>
-                </View>
-              </View>
-
-              <View style={styles.receivedGiftsList}>
-                {visibleReceivedGifts.map((gift) => {
-                  return (
-                    <TouchableOpacity
-                      key={gift.id}
-                      style={[
-                        styles.receivedGiftRow,
-                        {
-                          backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : theme.background,
-                          borderColor: theme.outline,
-                        },
-                      ]}
-                      activeOpacity={0.9}
-                      onPress={() => openReceivedGiftReveal(gift)}
-                    >
-                      <View style={styles.receivedGiftSender}>
-                        {gift.senderAvatar ? (
-                          <OfflineImage
-                            uri={gift.senderAvatar}
-                            style={styles.receivedGiftAvatar}
-                            cachePolicy="memory-disk"
-                          />
-                        ) : (
-                          <View
-                            style={[
-                              styles.receivedGiftAvatarFallback,
-                              { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : `${theme.tint}18` },
-                            ]}
-                          >
-                            <Text style={[styles.receivedGiftAvatarInitials, { color: theme.text }]}>
-                              {gift.senderName.slice(0, 1).toUpperCase()}
-                            </Text>
-                          </View>
-                        )}
-                        <View style={styles.receivedGiftCopy}>
-                          <Text style={[styles.receivedGiftSenderName, { color: theme.text }]} numberOfLines={1}>
-                            {gift.senderName}
-                          </Text>
-                          <Text style={[styles.receivedGiftMessage, { color: theme.text }]}>
-                            sent you something special
-                          </Text>
-                          <Text style={[styles.receivedGiftTimestamp, { color: theme.textMuted }]}>
-                            {formatRelativeSignalTime(gift.createdAt)}
-                          </Text>
-                        </View>
-                      </View>
-
-                      <View
-                        style={[
-                          styles.receivedGiftTypePill,
-                          {
-                            backgroundColor: isDark ? 'rgba(46,214,194,0.10)' : `${theme.tint}0D`,
-                            borderColor: isDark ? 'rgba(46,214,194,0.24)' : `${theme.tint}24`,
-                          },
-                        ]}
-                      >
-                        <GiftArtwork giftType={gift.giftType} size={44} animate={false} />
-                        <View style={styles.receivedGiftTypeCopy}>
-                          <Text style={[styles.receivedGiftTypeText, { color: theme.text }]}>
-                            Gift waiting
-                          </Text>
-                          <Text style={[styles.receivedGiftTypeHint, { color: theme.textMuted }]}>
-                            Tap to reveal
-                          </Text>
-                        </View>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              <TouchableOpacity
-                style={[styles.receivedGiftsAction, { borderColor: theme.outline, backgroundColor: theme.background }]}
-                activeOpacity={0.86}
-                onPress={() => router.push('/profile-insights')}
-              >
-                <Text style={[styles.receivedGiftsActionText, { color: theme.tint }]}>
-                  Open in Insights
-                </Text>
-                <MaterialCommunityIcons name="arrow-right" size={14} color={theme.tint} />
-              </TouchableOpacity>
-            </View>
-          ) : null}
-
-          {profileSyncPending || profileSyncFailed ? (
-            <View
-              style={[
-                styles.profileSyncBanner,
-                {
-                  backgroundColor: profileSyncFailed ? "rgba(239, 68, 68, 0.12)" : "rgba(20, 184, 166, 0.12)",
-                  borderColor: profileSyncFailed ? "rgba(239, 68, 68, 0.32)" : "rgba(20, 184, 166, 0.32)",
-                },
-              ]}
-            >
-              <MaterialCommunityIcons
-                name={profileSyncFailed ? "cloud-alert-outline" : "cloud-sync-outline"}
-                size={16}
-                color={profileSyncFailed ? "#F87171" : theme.tint}
-              />
-              <Text style={[styles.profileSyncText, { color: theme.textMuted }]}>
-                {profileSyncFailed
-                  ? "Some profile edits need your attention when you're back online."
-                  : "Profile edits saved here. Syncing when your connection returns."}
-              </Text>
-            </View>
-          ) : null}
+          <MeReceivedGiftsCard
+            theme={theme}
+            isDark={isDark}
+            gifts={visibleReceivedGifts}
+            onOpenGift={openReceivedGiftReveal}
+            onOpenInsights={() => router.push('/profile-insights')}
+          />
 
           <View
             style={[
@@ -5209,413 +3449,49 @@ export default function ProfileScreen() {
               {displayBio}
             </Text>
           </View>
-          {showPendingVerificationNudge ? (
-            <VerificationNudgeCard
-              theme={theme}
-              mode="pending"
-              onPress={() => setIsVerificationModalVisible(true)}
-            />
-          ) : null}
-          {showInviteVerificationNudge ? (
-            <VerificationNudgeCard
-              theme={theme}
-              onPress={() => setIsVerificationModalVisible(true)}
-              onSecondaryPress={dismissVerificationNudge}
-            />
-          ) : null}
-          <View
-            style={[
-              styles.progressCard,
-              { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-            ]}
-          >
-              <View style={styles.progressTopRow}>
-                <View>
-                  <Text style={[styles.progressTitle, { color: theme.text }]}>
-                    Profile progress
-                  </Text>
-                  <Text style={[styles.progressSub, { color: theme.textMuted }]}>
-                    {rewardText ?? progressSubtitle}
-                  </Text>
-                </View>
-                <View style={styles.progressPctWrap}>
-                  <Text style={[styles.progressPct, { color: theme.text }]}>
-                    {profileCompletion.percent}%
-                  </Text>
-                </View>
-              </View>
-              <View
-                style={[styles.progressTrack, { backgroundColor: theme.outline }]}
-                onLayout={(event) => {
-                  const width = event.nativeEvent.layout.width;
-                  if (width && width !== progressTrackWidth) {
-                    setProgressTrackWidth(width);
-                  }
-                }}
-              >
-                <Animated.View
-                  style={[
-                    styles.progressFill,
-                    {
-                      width: progressAnim.interpolate({
-                        inputRange: [0, 100],
-                        outputRange: ["0%", "100%"],
-                      }),
-                    },
-                  ]}
-                >
-                  <LinearGradient
-                    colors={[theme.tint, theme.accent]}
-                    start={{ x: 0, y: 0.5 }}
-                    end={{ x: 1, y: 0.5 }}
-                    style={styles.progressFillGradient}
-                  />
-                </Animated.View>
-                {progressTrackWidth > 0 && !progressAnimatedOnceRef.current ? (
-                  <Animated.View
-                    pointerEvents="none"
-                    style={[
-                      styles.progressGlow,
-                      {
-                        transform: [
-                          {
-                            translateX: progressGlowAnim.interpolate({
-                              inputRange: [0, 1],
-                              outputRange: [-60, progressTrackWidth + 60],
-                            }),
-                          },
-                        ],
-                        opacity: progressGlowAnim.interpolate({
-                          inputRange: [0, 0.1, 0.6, 1],
-                          outputRange: [0, 0.35, 0.22, 0],
-                        }),
-                      },
-                    ]}
-                  />
-                ) : null}
-              </View>
-              {profileCompletion.percent < 100 ? (
-                <Text style={[styles.progressHelper, { color: theme.textMuted }]}>
-                  A few thoughtful details make the whole profile feel stronger.
-                </Text>
-              ) : (
-                <Text style={[styles.progressHelper, { color: theme.textMuted }]}>
-                  {"You're all set."}
-                </Text>
-              )}
-              {nextPrompt ? (
-                <TouchableOpacity
-                  style={styles.progressHintRow}
-                  activeOpacity={0.7}
-                  onPress={() => setShowEditModal(true)}
-                >
-                  <MaterialCommunityIcons name="star-four-points" size={14} color={theme.accent} />
-                  <Text
-                    style={[styles.progressHint, { color: theme.textMuted }]}
-                    numberOfLines={1}
-                  >
-                    {nextPrompt}
-                  </Text>
-                  <MaterialCommunityIcons name="chevron-right" size={14} color={theme.textMuted} />
-                </TouchableOpacity>
-              ) : null}
-          </View>
+          <MeProfileProgressSection
+            theme={theme}
+            showPendingVerificationNudge={showPendingVerificationNudge}
+            showInviteVerificationNudge={showInviteVerificationNudge}
+            rewardText={rewardText}
+            progressSubtitle={progressSubtitle}
+            progressPercent={profileCompletion.percent}
+            progressTrackWidth={progressTrackWidth}
+            progressAnim={progressAnim}
+            progressGlowAnim={progressGlowAnim}
+            progressAnimatedOnce={progressAnimatedOnceRef.current}
+            nextPrompt={nextPrompt}
+            onVerificationPress={() => setIsVerificationModalVisible(true)}
+            onDismissVerificationNudge={dismissVerificationNudge}
+            onProgressTrackLayout={(width) => {
+              if (width && width !== progressTrackWidth) {
+                setProgressTrackWidth(width);
+              }
+            }}
+            onEditProfile={() => setShowEditModal(true)}
+          />
 
-          {featuredPrompt ? (
-            <View
-              style={[
-                styles.featuredPromptCard,
-                { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-              ]}
-            >
-              <View style={styles.featuredPromptHeader}>
-                <Text style={[styles.featuredPromptEyebrow, { color: theme.tint }]}>
-                  {featuredPrompt.eyebrow}
-                </Text>
-                <View style={styles.promptHeaderActions}>
-                  <TouchableOpacity
-                    style={[styles.promptActionButton, { borderColor: theme.outline }]}
-                    onPress={() => {
-                      setPromptComposerMode(featuredPrompt.promptType === 'guess' ? 'guess' : 'standard');
-                      openPromptEditor();
-                    }}
-                  >
-                    <MaterialCommunityIcons name="pencil" size={14} color={theme.tint} />
-                    <Text style={[styles.promptActionText, { color: theme.tint }]}>Edit</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.promptRemoveButton, { borderColor: theme.outline }]}
-                    onPress={() => void deletePrompt(featuredPrompt.id)}
-                    disabled={deletingPromptId === featuredPrompt.id}
-                  >
-                    <MaterialCommunityIcons name="trash-can-outline" size={14} color={theme.textMuted} />
-                    <Text style={[styles.promptRemoveText, { color: theme.textMuted }]}>
-                      {deletingPromptId === featuredPrompt.id ? 'Removing' : 'Remove'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-              <Text style={[styles.featuredPromptTitle, { color: theme.text }]}>
-                {featuredPrompt.title}
-              </Text>
-              <>
-                {featuredPrompt.meta ? (
-                  <Text style={[styles.promptMetaText, { color: theme.textMuted }]}>
-                    {featuredPrompt.meta}
-                  </Text>
-                ) : null}
-                <Text
-                  style={[
-                    styles.featuredPromptAnswer,
-                    { color: theme.text },
-                  ]}
-                >
-                  {featuredPrompt.answer}
-                </Text>
-              </>
-            </View>
-          ) : !promptsLoading ? (
-            <View
-              style={[
-                styles.featuredPromptCard,
-                { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline },
-              ]}
-            >
-              <Text style={[styles.featuredPromptEyebrow, { color: theme.tint }]}>
-                Add your voice
-              </Text>
-              <Text style={[styles.featuredPromptTitle, { color: theme.text }]}>
-                One good prompt makes the profile memorable.
-              </Text>
-              <Text style={[styles.featuredPromptAnswer, { color: theme.textMuted }]}>
-                Share a thought, a value, or a line that feels unmistakably like you.
-              </Text>
-              <TouchableOpacity
-                style={[styles.inlinePromptCta, { backgroundColor: theme.tint }]}
-                onPress={() => {
-                  setPromptComposerMode('standard');
-                  openPromptEditor();
-                }}
-              >
-                <Text style={styles.inlinePromptCtaText}>Answer a prompt</Text>
-              </TouchableOpacity>
-            </View>
-          ) : null}
+          <MeFeaturedPromptSection
+            theme={theme}
+            featuredPrompt={featuredPrompt}
+            promptsLoading={promptsLoading}
+            deletingPromptId={deletingPromptId}
+            onEditPrompt={(promptType) => {
+              setPromptComposerMode(promptType === 'guess' ? 'guess' : 'standard');
+              openPromptEditor();
+            }}
+            onDeletePrompt={(promptId) => void deletePrompt(promptId)}
+            onAddPrompt={() => {
+              setPromptComposerMode('standard');
+              openPromptEditor();
+            }}
+          />
 
-          {/* Profile Details */}
-          <View style={styles.profileDetails}>
-            {/* Age and Height Row */}
-            <View style={styles.detailRow}>
-              {typeof profile?.age === 'number' && profile.age > 0 && (
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="cake-variant" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>{profile?.age ? `${profile.age} years old` : "Age not set"}</Text>
-                </View>
-              )}
-              {Boolean((profile as any)?.height) && (
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="human-male-height" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>Height: {(profile as any).height}</Text>
-                </View>
-              )}
-            </View>
-
-            {Boolean((profile as any)?.kids) && (
-              <View style={styles.detailRow}>
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="baby-face-outline" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>Kids: {(profile as any).kids}</Text>
-                </View>
-              </View>
-            )}
-
-            {Boolean((profile as any)?.family_plans) && (
-              <View style={styles.detailRow}>
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="home-heart" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>Family Plans: {(profile as any).family_plans}</Text>
-                </View>
-              </View>
-            )}
-
-            {(Boolean((profile as any)?.religion) || Boolean((profile as any)?.tribe)) && (
-              <View style={styles.detailRow}>
-                {Boolean((profile as any)?.religion) && (
-                  <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                    <MaterialCommunityIcons name="shield-check" size={16} color={theme.tint} />
-                    <Text style={[styles.detailText, { color: theme.text }]}>
-                      Faith: {formatReligionLabel((profile as any).religion)}
-                    </Text>
-                  </View>
-                )}
-                {Boolean((profile as any)?.tribe) && (
-                  <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                    <MaterialCommunityIcons name="star-four-points" size={16} color={theme.tint} />
-                    <Text style={[styles.detailText, { color: theme.text }]}>
-                      Heritage: {(profile as any).tribe}
-                    </Text>
-                  </View>
-                )}
-              </View>
-            )}
-
-            {/* Occupation */}
-            {Boolean((profile as any)?.occupation) && (
-              <View style={styles.detailRow}>
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="briefcase" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>{(profile as any).occupation}</Text>
-                </View>
-              </View>
-            )}
-
-            {/* Education */}
-            {Boolean((profile as any)?.education) && (
-              <View style={styles.detailRow}>
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="school" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>{(profile as any).education}</Text>
-                </View>
-              </View>
-            )}
-
-            {/* Looking For */}
-            {Boolean((profile as any)?.looking_for) && (
-              <View style={styles.detailRow}>
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="heart-outline" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>
-                    Looking for {formatProfileDetailValue((profile as any).looking_for)}
-                  </Text>
-                </View>
-              </View>
-            )}
-
-            {/* DIASPORA: Location Information */}
-            {Boolean(locationPresentation.withFlag) && (
-              <View style={styles.detailRow}>
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="map-marker" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>
-                    {`Currently in ${locationPresentation.withFlag}`}
-                  </Text>
-                </View>
-              </View>
-            )}
-
-            {/* Years in Diaspora */}
-            {typeof (profile as any)?.years_in_diaspora === 'number' && (profile as any).years_in_diaspora > 0 && (
-              <View style={styles.detailRow}>
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="calendar" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>{profile?.years_in_diaspora ? `${profile.years_in_diaspora} years abroad` : "New diaspora member"}</Text>
-                </View>
-              </View>
-            )}
-
-            {/* Future Ghana Plans */}
-            {Boolean((profile as any)?.future_ghana_plans) && (
-              <View style={styles.detailRow}>
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="compass" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>{(profile as any).future_ghana_plans}</Text>
-                </View>
-              </View>
-            )}
-
-            {/* HIGH PRIORITY: Lifestyle Fields */}
-            {Boolean((profile as any)?.exercise_frequency) && (
-              <View style={styles.detailRow}>
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="dumbbell" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>
-                    Exercise: {formatProfileDetailValue((profile as any).exercise_frequency)}
-                  </Text>
-                </View>
-              </View>
-            )}
-
-            {/* Smoking and Drinking Row */}
-            <View style={styles.detailRow}>
-              {Boolean((profile as any)?.smoking) && (
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="smoking-off" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>Smoking: {formatProfileDetailValue((profile as any).smoking)}</Text>
-                </View>
-              )}
-              {Boolean((profile as any)?.drinking) && (
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="glass-cocktail" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>Drinking: {formatProfileDetailValue((profile as any).drinking)}</Text>
-                </View>
-              )}
-            </View>
-
-            {/* HIGH PRIORITY: Family Fields */}
-            {/* Children Row */}
-            <View style={styles.detailRow}>
-              {Boolean((profile as any)?.has_children) && (
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="baby" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>Children: {(profile as any).has_children}</Text>
-                </View>
-              )}
-              {Boolean((profile as any)?.wants_children) && (
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="heart-plus" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>Wants: {(profile as any).wants_children}</Text>
-                </View>
-              )}
-            </View>
-
-            {/* HIGH PRIORITY: Personality Fields */}
-            {Boolean((profile as any)?.personality_type) && (
-              <View style={styles.detailRow}>
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="account-circle" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>{(profile as any).personality_type}</Text>
-                </View>
-              </View>
-            )}
-
-            {Boolean((profile as any)?.love_language) && (
-              <View style={styles.detailRow}>
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="heart-multiple" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>Love Language: {(profile as any).love_language}</Text>
-                </View>
-              </View>
-            )}
-
-            {/* HIGH PRIORITY: Living Situation Fields */}
-            {/* Living and Pets Row */}
-            <View style={styles.detailRow}>
-              {Boolean((profile as any)?.living_situation) && (
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="home" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>{(profile as any).living_situation}</Text>
-                </View>
-              )}
-              {Boolean((profile as any)?.pets) && (
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="paw" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>{(profile as any).pets}</Text>
-                </View>
-              )}
-            </View>
-
-            {/* HIGH PRIORITY: Languages */}
-            {Array.isArray((profile as any)?.languages_spoken) && (profile as any).languages_spoken.length > 0 && (
-              <View style={styles.detailRow}>
-                <View style={[styles.detailItem, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }] }>
-                  <MaterialCommunityIcons name="translate" size={16} color={theme.tint} />
-                  <Text style={[styles.detailText, { color: theme.text }]}>
-                    {`Languages: ${(profile as any).languages_spoken?.join(', ') || 'Not specified'}`}
-                  </Text>
-                </View>
-              </View>
-            )}
-          </View>
+          <MeProfileDetailsSection
+            theme={theme}
+            profile={profile as Record<string, any> | null}
+            locationWithFlag={locationPresentation.withFlag}
+          />
 
         </View>
 
@@ -6317,11 +4193,29 @@ export default function ProfileScreen() {
               setUserInterests(updatedProfile.__interests);
               writeMeSnapshot({ interests: updatedProfile.__interests });
             }
+            setDisplayAvatarUrl(
+              updatedProfile?.__displayAvatarUrl
+                ? normalizeProfilePhotoUri(updatedProfile.__displayAvatarUrl)
+                : null,
+            );
+            setDisplayProfileVideo(
+              updatedProfile?.__displayProfileVideo
+                ? String(updatedProfile.__displayProfileVideo)
+                : null,
+            );
             if (Array.isArray(updatedProfile?.__displayPhotos)) {
-              setUserPhotos(updatedProfile.__displayPhotos);
+              setUserPhotos(
+                normalizeGalleryPhotoList(
+                  updatedProfile.__displayPhotos,
+                  updatedProfile.__displayAvatarUrl ?? null,
+                ),
+              );
               writeMeSnapshot({
                 avatarUrl: updatedProfile.__displayAvatarUrl ?? null,
-                photos: updatedProfile.__displayPhotos,
+                photos: normalizeGalleryPhotoList(
+                  updatedProfile.__displayPhotos,
+                  updatedProfile.__displayAvatarUrl ?? null,
+                ),
                 profileVideo: updatedProfile.__displayProfileVideo ?? null,
               });
             }
@@ -6394,69 +4288,6 @@ export default function ProfileScreen() {
         }
       />
     </SafeAreaView>
-  );
-}
-
-function NotificationToggle({
-  label,
-  description,
-  icon,
-  value,
-  onValueChange,
-  theme,
-}: {
-  label: string;
-  description: string;
-  icon: string;
-  value: boolean;
-  onValueChange: (value: boolean) => void;
-  theme: typeof Colors.light;
-}) {
-  return (
-    <TouchableOpacity
-      activeOpacity={0.92}
-      onPress={() => onValueChange(!value)}
-      style={[
-        styles.notificationToggleCard,
-        { backgroundColor: theme.backgroundSubtle, borderColor: value ? theme.tint : theme.outline },
-      ]}
-    >
-      <View style={[styles.notificationToggleIcon, { backgroundColor: value ? `${theme.tint}18` : theme.background }]}>
-        <MaterialCommunityIcons name={icon as any} size={18} color={value ? theme.tint : theme.textMuted} />
-      </View>
-      <View style={styles.notificationToggleCopy}>
-        <View style={styles.notificationToggleTitleRow}>
-          <Text style={[styles.notificationToggleLabel, { color: theme.text }]}>{label}</Text>
-        </View>
-        <Text style={[styles.notificationToggleDescription, { color: theme.textMuted }]}>{description}</Text>
-      </View>
-      <View
-        style={[
-          styles.notificationToggleControl,
-          {
-            backgroundColor: value ? `${theme.tint}14` : theme.background,
-            borderColor: value ? `${theme.tint}3a` : theme.outline,
-          },
-        ]}
-      >
-        <Text style={[styles.notificationToggleControlText, { color: value ? theme.tint : theme.textMuted }]}>
-          {value ? 'Live' : 'Mute'}
-        </Text>
-        <View
-          style={[
-            styles.notificationToggleControlTrack,
-            { backgroundColor: value ? theme.tint : theme.outline },
-          ]}
-        >
-          <View
-            style={[
-              styles.notificationToggleControlThumb,
-              value ? styles.notificationToggleControlThumbOn : styles.notificationToggleControlThumbOff,
-            ]}
-          />
-        </View>
-      </View>
-    </TouchableOpacity>
   );
 }
 
@@ -6556,175 +4387,6 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     marginBottom: 8,
   },
-  heroCard: {
-    width: '100%',
-    height: 232,
-    borderRadius: 24,
-    borderWidth: 1,
-    overflow: 'hidden',
-  },
-  heroTint: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.08)',
-  },
-  heroImage: {
-    flex: 1,
-  },
-  heroImageStyle: {
-    borderRadius: 24,
-  },
-  heroTopGradient: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    height: 96,
-  },
-  heroBottomGradient: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 140,
-  },
-  heroVignette: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.08)',
-  },
-  heroInnerStroke: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 24,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.65)',
-  },
-  heroGrain: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255,255,255,0.02)',
-  },
-  heroPlaceholderContent: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 28,
-  },
-  heroPlaceholderEyebrow: {
-    fontSize: 11,
-    fontFamily: 'Manrope_600SemiBold',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-    color: 'rgba(255,255,255,0.78)',
-    marginBottom: 10,
-  },
-  heroPlaceholderInitials: {
-    fontSize: 62,
-    fontFamily: 'PlayfairDisplay_700Bold',
-    letterSpacing: 2,
-    color: '#fff',
-  },
-  heroPlaceholderTitle: {
-    marginTop: 10,
-    fontSize: 22,
-    fontFamily: 'PlayfairDisplay_600SemiBold',
-    color: '#fff',
-    textAlign: 'center',
-  },
-  heroPlaceholderSubtitle: {
-    marginTop: 8,
-    fontSize: 13,
-    lineHeight: 20,
-    fontFamily: 'Manrope_500Medium',
-    color: 'rgba(255,255,255,0.8)',
-    textAlign: 'center',
-  },
-  heroTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    paddingHorizontal: 16,
-    paddingTop: 14,
-  },
-  heroEditButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-  },
-  heroAvatarWrap: {
-    marginTop: -42,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  heroAvatarGlow: {
-    position: 'absolute',
-    width: 116,
-    height: 116,
-    borderRadius: 58,
-    backgroundColor: 'rgba(255,255,255,0.52)',
-    shadowColor: '#a78bfa',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.24,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  avatarRing: {
-    padding: 3,
-    borderRadius: 45,
-  },
-  avatarInner: {
-    padding: 2,
-    borderRadius: 41,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.9)',
-  },
-  avatar: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    borderWidth: 2,
-    borderColor: '#fff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    elevation: 10,
-  },
-  avatarPlaceholder: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarPlaceholderInitials: {
-    fontSize: 30,
-    fontFamily: 'PlayfairDisplay_700Bold',
-    color: '#fff',
-    letterSpacing: 1.4,
-  },
-  editAvatarButton: {
-    position: 'absolute',
-    bottom: -2,
-    right: 10,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: Colors.light.tint,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  heroNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginTop: 10,
-  },
-  heroInlineVerificationBadge: {
-    transform: [{ translateY: 1 }],
-    marginHorizontal: 1,
-  },
   heroVerificationButton: {
     width: '100%',
     marginTop: 12,
@@ -6769,235 +4431,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope_700Bold',
     letterSpacing: 0.2,
   },
-  presenceBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    marginLeft: 1,
-    paddingHorizontal: 9,
-    paddingVertical: 3,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  presenceDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-  },
-  presenceText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  profileName: {
-    flexShrink: 1,
-    minWidth: 0,
-    maxWidth: '88%',
-    fontSize: 28,
-    lineHeight: 33,
-    fontFamily: 'PlayfairDisplay_700Bold',
-    color: '#111827',
-    textAlign: 'center',
-    letterSpacing: 0.4,
-  },
-  heroLocationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    marginTop: 4,
-    flexWrap: 'wrap',
-  },
-  locationText: {
-    flexShrink: 1,
-    fontSize: 12.5,
-    fontFamily: 'Manrope_400Regular',
-    color: '#6b7280',
-  },
-  heroPremiumBadgeInline: {
-    marginLeft: 2,
-  },
-  premiumReminderCard: {
-    width: '100%',
-    marginTop: 12,
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 12,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  premiumReminderCopy: {
-    flex: 1,
-    gap: 3,
-  },
-  premiumReminderTitle: {
-    fontSize: 12.5,
-    fontFamily: 'Manrope_700Bold',
-  },
-  premiumReminderBody: {
-    fontSize: 11.5,
-    lineHeight: 16,
-    fontFamily: 'Manrope_500Medium',
-  },
-  premiumReminderAction: {
-    borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  premiumReminderActionText: {
-    fontSize: 11.5,
-    fontFamily: 'Manrope_700Bold',
-  },
-  receivedGiftsCard: {
-    width: '100%',
-    marginTop: 12,
-    borderRadius: 18,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    gap: 12,
-  },
-  receivedGiftsHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  receivedGiftsHeaderCopy: {
-    flex: 1,
-    gap: 4,
-  },
-  receivedGiftsEyebrow: {
-    fontSize: 11,
-    fontFamily: 'Manrope_700Bold',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-  receivedGiftsTitle: {
-    fontSize: 15,
-    lineHeight: 20,
-    fontFamily: 'Manrope_700Bold',
-  },
-  receivedGiftsCountPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  receivedGiftsCountText: {
-    fontSize: 12,
-    fontFamily: 'Archivo_700Bold',
-  },
-  receivedGiftsList: {
-    gap: 10,
-  },
-  receivedGiftRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 15,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  receivedGiftSender: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    minWidth: 0,
-  },
-  receivedGiftAvatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-  },
-  receivedGiftAvatarFallback: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  receivedGiftAvatarInitials: {
-    fontSize: 14,
-    fontFamily: 'Manrope_800ExtraBold',
-  },
-  receivedGiftCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  receivedGiftSenderName: {
-    fontSize: 13,
-    fontFamily: 'Manrope_700Bold',
-  },
-  receivedGiftMessage: {
-    marginTop: 2,
-    fontSize: 12.5,
-    fontFamily: 'Manrope_700Bold',
-  },
-  receivedGiftTimestamp: {
-    marginTop: 2,
-    fontSize: 11.5,
-    fontFamily: 'Manrope_500Medium',
-  },
-  receivedGiftTypePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    borderRadius: 999,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-  },
-  receivedGiftTypeCopy: {
-    minWidth: 0,
-  },
-  receivedGiftTypeText: {
-    fontSize: 11.5,
-    fontFamily: 'Manrope_700Bold',
-  },
-  receivedGiftTypeHint: {
-    marginTop: 1,
-    fontSize: 10.5,
-    fontFamily: 'Manrope_600SemiBold',
-  },
-  receivedGiftsAction: {
-    alignSelf: 'flex-start',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 999,
-    paddingHorizontal: 13,
-    paddingVertical: 8,
-  },
-  receivedGiftsActionText: {
-    fontSize: 12,
-    fontFamily: 'Manrope_700Bold',
-  },
-  profileSyncBanner: {
-    width: '100%',
-    marginTop: 12,
-    borderRadius: 14,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  profileSyncText: {
-    flex: 1,
-    fontSize: 12,
-    lineHeight: 17,
-    fontFamily: 'Manrope_600SemiBold',
-  },
   heroBioCard: {
     marginTop: 14,
     borderRadius: 18,
@@ -7013,153 +4446,12 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     letterSpacing: 0.2,
   },
-  featuredPromptCard: {
-    marginTop: 12,
-    width: '100%',
-    borderRadius: 20,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-  },
-  featuredPromptHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-    marginBottom: 8,
-  },
-  promptHeaderActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  featuredPromptEyebrow: {
-    fontSize: 11,
-    fontFamily: 'Manrope_700Bold',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
-  },
-  featuredPromptTitle: {
-    fontSize: 17,
-    fontFamily: 'PlayfairDisplay_600SemiBold',
-    lineHeight: 22,
-  },
   promptMetaText: {
     marginTop: 6,
     fontSize: 11.5,
     fontFamily: 'Manrope_500Medium',
     lineHeight: 16,
     letterSpacing: 0.2,
-  },
-  featuredPromptAnswer: {
-    marginTop: 8,
-    fontSize: 14,
-    fontFamily: 'Manrope_500Medium',
-    lineHeight: 22,
-    letterSpacing: 0.15,
-  },
-  inlinePromptCta: {
-    alignSelf: 'flex-start',
-    marginTop: 14,
-    borderRadius: 999,
-    paddingHorizontal: 15,
-    paddingVertical: 9,
-  },
-  inlinePromptCtaText: {
-    color: '#fff',
-    fontSize: 13,
-    fontFamily: 'Manrope_700Bold',
-    letterSpacing: 0.2,
-  },
-  promptRemoveButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  promptRemoveText: {
-    fontSize: 12,
-    fontFamily: 'Manrope_600SemiBold',
-    letterSpacing: 0.2,
-  },
-  progressCard: {
-    marginTop: 12,
-    borderRadius: 18,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 15,
-    paddingVertical: 10,
-    width: '100%',
-  },
-  progressTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
-  progressTitle: {
-    fontSize: 14,
-    fontFamily: 'Manrope_600SemiBold',
-    letterSpacing: 0.2,
-  },
-  progressSub: {
-    marginTop: 2,
-    fontSize: 12,
-    fontFamily: 'Manrope_400Regular',
-  },
-  progressPctWrap: {
-    minWidth: 54,
-    alignItems: 'flex-end',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-  },
-  progressPct: {
-    fontSize: 15,
-    fontFamily: 'Archivo_700Bold',
-    letterSpacing: 0.2,
-  },
-  progressTrack: {
-    marginTop: 8,
-    height: 9,
-    borderRadius: 999,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: 9,
-    borderRadius: 999,
-    overflow: 'hidden',
-  },
-  progressFillGradient: {
-    flex: 1,
-  },
-  progressGlow: {
-    position: 'absolute',
-    top: -6,
-    bottom: -6,
-    width: 60,
-    borderRadius: 999,
-    backgroundColor: 'rgba(183,153,255,0.45)',
-  },
-  progressHintRow: {
-    marginTop: 7,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  progressHelper: {
-    marginTop: 7,
-    fontSize: 11.5,
-    fontFamily: 'Manrope_400Regular',
-    lineHeight: 15,
-  },
-  progressHint: {
-    fontSize: 12,
-    fontFamily: 'Manrope_500Medium',
-    flexShrink: 1,
   },
   insightsSection: {
     width: '100%',
@@ -7313,20 +4605,6 @@ const styles = StyleSheet.create({
     marginTop: 10,
     flexDirection: 'row',
     justifyContent: 'center',
-  },
-  promptActionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  promptActionText: {
-    fontSize: 12,
-    fontFamily: 'Manrope_600SemiBold',
-    letterSpacing: 0.2,
   },
   promptHighlightCard: {
     borderRadius: 14,
@@ -7877,42 +5155,6 @@ const styles = StyleSheet.create({
   },
   
   // Profile Details Styles
-  profileDetails: {
-    marginTop: 16,
-    gap: 8,
-    width: '100%',
-  },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    marginBottom: 2,
-  },
-  detailItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'transparent',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: '#e2e8f0',
-    flexBasis: '48%',
-    flexGrow: 1,
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 12,
-    elevation: 2,
-  },
-  detailText: {
-    fontSize: 13.5,
-    color: '#475569',
-    fontFamily: 'Manrope_500Medium',
-  },
   closeAdminButton: {
     position: 'absolute',
     top: 50,

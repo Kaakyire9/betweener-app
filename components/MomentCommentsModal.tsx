@@ -1,5 +1,4 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -17,6 +16,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
+import OfflineImage from '@/components/media/OfflineImage';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import {
@@ -37,6 +37,7 @@ import {
   retryFailedOfflineMutations,
   subscribeToOfflineMutationEvents,
 } from '@/lib/offline/mutation-queue';
+import { normalizeProfilePhotoUri } from '@/lib/profile/media';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth-context';
 import { getSafeRemoteImageUri } from '@/lib/profile/display-name';
@@ -109,6 +110,7 @@ type ProfileMini = {
   id: string | null;
   full_name: string | null;
   avatar_url: string | null;
+  photos?: string[] | null;
 };
 
 type Props = {
@@ -116,6 +118,7 @@ type Props = {
   momentId: string | null;
   highlightCommentId?: string | null;
   relationshipCue?: string | null;
+  onCommentCountChange?: (count: number) => void;
   onClose: () => void;
 };
 
@@ -152,6 +155,17 @@ const formatTime = (iso: string) => {
   const days = Math.floor(hours / 24);
   return `${days}d`;
 };
+
+const resolveProfileMiniAvatarUri = (profile?: ProfileMini | null) => {
+  const avatarUrl = getSafeRemoteImageUri(normalizeProfilePhotoUri(profile?.avatar_url));
+  if (avatarUrl) return avatarUrl;
+  const photos = Array.isArray(profile?.photos) ? profile.photos : [];
+  const firstPhoto = photos.find((photo): photo is string => typeof photo === 'string' && photo.trim().length > 0);
+  return getSafeRemoteImageUri(normalizeProfilePhotoUri(firstPhoto ?? null));
+};
+
+const hasUsableProfileMiniSnapshot = (profile?: ProfileMini | null) =>
+  Boolean(profile?.full_name || resolveProfileMiniAvatarUri(profile));
 
 const sortCommentsNewestFirst = (left: CommentRow, right: CommentRow) =>
   new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
@@ -204,6 +218,7 @@ export default function MomentCommentsModal({
   momentId,
   highlightCommentId = null,
   relationshipCue = null,
+  onCommentCountChange,
   onClose,
 }: Props) {
   const { user, profile } = useAuth();
@@ -278,7 +293,20 @@ export default function MomentCommentsModal({
     Object.values(next).forEach((thread) => thread.sort(sortCommentsOldestFirst));
     return next;
   }, [comments, commentsById]);
+  const currentUserProfileMini = useMemo<ProfileMini>(
+    () => ({
+      id: profile?.id ?? null,
+      full_name: profile?.full_name ?? 'You',
+      avatar_url: normalizeProfilePhotoUri(profile?.avatar_url),
+      photos: Array.isArray((profile as any)?.photos) ? ((profile as any).photos as string[]) : null,
+    }),
+    [profile],
+  );
   const highlightedCommentProfile = highlightedComment ? profiles[highlightedComment.user_id] : null;
+  const visibleCommentCount = useMemo(
+    () => comments.filter((comment) => !comment.is_deleted).length,
+    [comments],
+  );
   const replySuggestions = useMemo(
     () => (highlightedComment ? getSuggestedReplies(highlightedComment.body) : []),
     [highlightedComment],
@@ -303,6 +331,11 @@ export default function MomentCommentsModal({
     if (relationshipCue === 'You liked them') return 'Say hello in chat';
     return 'Continue in chat';
   }, [relationshipCue]);
+
+  useEffect(() => {
+    if (!visible || !momentId || !onCommentCountChange) return;
+    onCommentCountChange(visibleCommentCount);
+  }, [momentId, onCommentCountChange, visible, visibleCommentCount]);
 
   const fetchComments = useCallback(async () => {
     if (!momentId) return;
@@ -342,19 +375,23 @@ export default function MomentCommentsModal({
         Object.keys(nextProfiles).forEach((key) => delete nextProfiles[key]);
 
         const userIds = Array.from(new Set(nextComments.map((c) => c.user_id)));
-        const missingUserIds = userIds.filter((userId) => !profilesRef.current[userId]);
+        const missingUserIds = userIds.filter((userId) => !hasUsableProfileMiniSnapshot(profilesRef.current[userId]));
         userIds.forEach((userId) => {
           const cachedProfile = profilesRef.current[userId];
-          if (cachedProfile) nextProfiles[userId] = cachedProfile;
+          if (hasUsableProfileMiniSnapshot(cachedProfile)) nextProfiles[userId] = cachedProfile;
         });
         if (missingUserIds.length > 0) {
-          const { data: profileRows } = await supabase.from('profiles').select('id, user_id, full_name, avatar_url').in('user_id', missingUserIds);
+          const { data: profileRows } = await supabase
+            .from('profiles')
+            .select('id, user_id, full_name, avatar_url, photos')
+            .in('user_id', missingUserIds);
           (profileRows || []).forEach((p: any) => {
             if (!p.user_id) return;
             const normalizedProfile = {
               id: p.id,
               full_name: p.full_name ?? null,
-              avatar_url: p.avatar_url ?? null,
+              avatar_url: resolveProfileMiniAvatarUri(p),
+              photos: Array.isArray(p.photos) ? p.photos : null,
             };
             nextProfiles[p.user_id] = normalizedProfile;
             profilesRef.current[p.user_id] = normalizedProfile;
@@ -485,11 +522,7 @@ export default function MomentCommentsModal({
       });
 
       if (user?.id && !nextProfiles[user.id]) {
-        nextProfiles[user.id] = {
-          id: profile?.id ?? null,
-          full_name: profile?.full_name ?? 'You',
-          avatar_url: profile?.avatar_url ?? null,
-        };
+        nextProfiles[user.id] = currentUserProfileMini;
       }
 
       setComments(nextComments);
@@ -507,7 +540,7 @@ export default function MomentCommentsModal({
     } finally {
       setLoading(false);
     }
-  }, [momentId, profile?.avatar_url, profile?.full_name, profile?.id, user?.id]);
+  }, [currentUserProfileMini, momentId, profile?.avatar_url, profile?.full_name, profile?.id, user?.id]);
 
   useEffect(() => {
     if (visible) {
@@ -647,9 +680,7 @@ export default function MomentCommentsModal({
               is_deleted: false,
             },
             {
-              id: profile?.id ?? null,
-              full_name: profile?.full_name ?? 'You',
-              avatar_url: profile?.avatar_url ?? null,
+              ...currentUserProfileMini,
             },
           );
         }
@@ -688,9 +719,7 @@ export default function MomentCommentsModal({
         setProfiles((prev) => ({
           ...prev,
           [user.id]: {
-            id: profile?.id ?? null,
-            full_name: profile?.full_name ?? 'You',
-            avatar_url: profile?.avatar_url ?? null,
+            ...currentUserProfileMini,
           },
         }));
       }
@@ -699,9 +728,7 @@ export default function MomentCommentsModal({
         momentId,
         nextComment,
         {
-          id: profile?.id ?? null,
-          full_name: profile?.full_name ?? 'You',
-          avatar_url: profile?.avatar_url ?? null,
+          ...currentUserProfileMini,
         },
       );
       if (result.status === 'synced') {
@@ -898,7 +925,7 @@ export default function MomentCommentsModal({
         void fetchComments();
       }
     },
-    [commentReactionStateById, fetchComments, momentId, user?.id],
+    [commentReactionStateById, currentUserProfileMini, fetchComments, momentId, user?.id],
   );
 
   const renderCommentCard = useCallback(
@@ -908,7 +935,7 @@ export default function MomentCommentsModal({
       const profileRecord = profiles[comment.user_id];
       const parentProfile =
         parentComment ? profiles[parentComment.user_id] ?? null : null;
-      const safeAvatarUrl = getSafeRemoteImageUri(profileRecord?.avatar_url);
+      const safeAvatarUrl = resolveProfileMiniAvatarUri(profileRecord);
       const isHighlighted = activeHighlightCommentId === comment.id;
       const displayName =
         comment.user_id === user?.id ? 'You' : profileRecord?.full_name || 'Member';
@@ -939,19 +966,18 @@ export default function MomentCommentsModal({
             onPress={() => openCommentProfile(profileRecord?.id, comment.user_id)}
             style={styles.commentAvatarPressable}
           >
-            {safeAvatarUrl ? (
-              <Image
-                source={{ uri: safeAvatarUrl }}
-                style={styles.commentAvatarImage}
-                contentFit="cover"
-              />
-            ) : (
-              <View style={styles.commentAvatar}>
-                <Text style={styles.commentAvatarText}>
-                  {displayName.slice(0, 1).toUpperCase()}
-                </Text>
-              </View>
-            )}
+            <OfflineImage
+              uri={safeAvatarUrl}
+              style={styles.commentAvatarImage}
+              contentFit="cover"
+              fallback={
+                <View style={styles.commentAvatar}>
+                  <Text style={styles.commentAvatarText}>
+                    {displayName.slice(0, 1).toUpperCase()}
+                  </Text>
+                </View>
+              }
+            />
           </Pressable>
           <View style={[styles.commentBody, isReply && styles.replyBody]}>
             <View style={styles.commentMeta}>

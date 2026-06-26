@@ -3,6 +3,11 @@ import BlurViewSafe from '@/components/NativeWrappers/BlurViewSafe';
 import { NewHereBadge } from '@/components/NewHereBadge';
 import OfflineImage from '@/components/media/OfflineImage';
 import BoostComposerModal from '@/components/profile/BoostComposerModal';
+import {
+  ProfileViewActionDock,
+  ProfileViewGiftModal,
+  type ProfileViewGiftOption,
+} from '@/components/profile/ProfileViewActions';
 import type { BoostComposerFeedback } from '@/components/profile/BoostComposerModal';
 import PremiumUpsellModal from '@/components/premium/PremiumUpsellModal';
 import { VerificationBadge } from '@/components/VerificationBadge';
@@ -37,9 +42,10 @@ import {
 } from '@/lib/intents/offline-actions';
 import { hasFeatureAccess } from '@/lib/premium-access';
 import { useResponsiveMetrics } from '@/lib/responsive';
-import { buildLocationDisplay } from '@/lib/location/location-display';
 import { isLikelyNetworkError } from '@/lib/network';
+import { buildLocationDisplay } from '@/lib/location/location-display';
 import { getAuthoritativePresenceDisplay } from '@/lib/presence';
+import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { fetchUserPresence } from '@/lib/user-presence';
 import {
   enqueueProfileBoostCreateMutation,
@@ -52,11 +58,16 @@ import {
   retryFailedOfflineMutation,
   subscribeToOfflineMutationEvents,
 } from '@/lib/offline/mutation-queue';
-import { parseDistanceKmFromLabel } from '@/lib/profile/distance';
 import { fetchViewedProfile } from '@/lib/profile/fetch-viewed-profile';
 import { getInterestEmoji } from '@/lib/profile/interest-emoji';
 import { getProfileViewReturnCircleId, shouldReturnToCirclesHome } from '@/lib/profile/profile-view-return';
 import { formatReligionLabel } from '@/lib/profile/religion';
+import {
+  type PremiumImage,
+  type PremiumProfile,
+  type PremiumSection,
+  type ProfileImageTag,
+} from '@/lib/profile/profile-view-helpers';
 import { cacheOfflineVideo, getOfflineVideoUri } from '@/lib/offline/video-store';
 import { getProfileInitials, getProfilePlaceholderPalette } from '@/lib/profile-placeholders';
 import { isProfileSaved, setProfileSaved, type SavedProfileSummary } from '@/lib/profile-interest';
@@ -70,8 +81,8 @@ import { logVibesEvent } from '@/lib/vibes/events';
 import { isGuessPrompt, isMultipleChoiceGuess } from '@/lib/prompts/guess-prompts';
 import { supabase } from '@/lib/supabase';
 import { logger } from '@/lib/telemetry/logger';
-import type { ProfilePromptAnswer, UserProfile } from '@/types/user-profile';
 import { getViewedProfilePremiumCopy } from '@/lib/viewed-profile-premium';
+import type { ProfilePromptAnswer, UserProfile } from '@/types/user-profile';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import type { ViewToken } from '@shopify/flash-list';
 import { FlashList } from '@shopify/flash-list';
@@ -103,41 +114,12 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-type ProfileImageTag = 'intro' | 'lifestyle' | 'prompts' | 'values';
-
-type PremiumImage = {
-  id: string;
-  uri: string;
-  tag: ProfileImageTag;
-  isVideo?: boolean;
-  reactionUri?: string;
-};
-
-type PremiumSection = {
-  id: string;
-  tag: ProfileImageTag;
-  title: string;
-  body: string;
-  chips?: string[];
-};
-
 type LightboxItem = {
   uri: string;
   tag?: ProfileImageTag;
   title?: string;
   body?: string;
   chips?: string[];
-};
-
-type PremiumProfile = {
-  id: string;
-  name: string;
-  age: number;
-  location: string;
-  verified: boolean;
-  distanceKm?: number;
-  images: PremiumImage[];
-  sections: PremiumSection[];
 };
 
 type PremiumUpsellState = {
@@ -570,14 +552,21 @@ export default function ProfileViewPremiumV2Screen() {
   const isDark = colorScheme === 'dark';
   const theme = Colors[colorScheme ?? 'light'];
   const { profile: currentProfile } = useAuth();
+  const { currentPlan, serverPlan, revenueCatPlan } = usePremiumState();
   const insets = useSafeAreaInsets();
   const responsive = useResponsiveMetrics();
 
   const params = useLocalSearchParams();
   const profileId = String((params as any)?.id ?? (params as any)?.profileId ?? 'preview');
   const isPreviewReplica = String((params as any)?.isPreview ?? '').toLowerCase() === 'true';
+  const profileViewSource = String((params as any)?.source ?? '').trim().toLowerCase();
   const returnCircleId = getProfileViewReturnCircleId(params as Record<string, string | string[] | undefined>);
   const returnToCirclesHome = shouldReturnToCirclesHome(params as Record<string, string | string[] | undefined>);
+  const shouldUseViewedProfileCache = Boolean(
+    profileId &&
+      profileId !== 'preview' &&
+      !(currentProfile?.id && currentProfile.id === profileId && isPreviewReplica),
+  );
 
   const fallbackProfile = useMemo(() => parseFallbackProfile((params as any)?.fallbackProfile), [params]);
   const [cachedProfile, setCachedProfile] = useState<UserProfile | null>(null);
@@ -598,7 +587,7 @@ export default function ProfileViewPremiumV2Screen() {
   const dwellTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    if (!profileId || profileId === 'preview') {
+    if (!shouldUseViewedProfileCache) {
       setCachedProfile(null);
       return;
     }
@@ -612,10 +601,10 @@ export default function ProfileViewPremiumV2Screen() {
     return () => {
       mounted = false;
     };
-  }, [profileId]);
+  }, [profileId, shouldUseViewedProfileCache]);
 
   useEffect(() => {
-    if (!fallbackProfile || !profileId || profileId === 'preview') return;
+    if (!fallbackProfile || !shouldUseViewedProfileCache) return;
     void (async () => {
       try {
         const existing = await readViewedProfileSnapshot(profileId);
@@ -630,7 +619,7 @@ export default function ProfileViewPremiumV2Screen() {
         // best effort only
       }
     })();
-  }, [fallbackProfile, profileId]);
+  }, [fallbackProfile, profileId, shouldUseViewedProfileCache]);
 
   // Fetch using the same logic extracted from app/profile-view.tsx.
   React.useEffect(() => {
@@ -656,15 +645,22 @@ export default function ProfileViewPremiumV2Screen() {
           fallbackDistanceLabel: fallbackProfile?.distance,
           fallbackDistanceKm: fallbackProfile?.distanceKm,
         });
-        const merged = mergeViewedProfileSnapshots(cachedProfile, fallbackProfile, mapped) ?? mapped;
+        const merged =
+          mergeViewedProfileSnapshots(
+            shouldUseViewedProfileCache ? cachedProfile : null,
+            fallbackProfile,
+            mapped,
+          ) ?? mapped;
         if (mounted) {
           setFetchedProfile(merged);
-          setCachedProfile(merged);
-          void writeViewedProfileSnapshot(merged, { merge: false });
+          if (shouldUseViewedProfileCache) {
+            setCachedProfile(merged);
+            void writeViewedProfileSnapshot(merged, { merge: false });
+          }
           setFetchWatchdogError(null);
         }
       } catch {
-        if (mounted && !cachedProfile) setFetchedProfile(null);
+        if (mounted && !(shouldUseViewedProfileCache && cachedProfile)) setFetchedProfile(null);
       } finally {
         clearTimeout(watchdog);
         if (mounted) setFetching(false);
@@ -674,10 +670,22 @@ export default function ProfileViewPremiumV2Screen() {
     return () => {
       mounted = false;
     };
-  }, [cachedProfile, currentProfile?.id, profileId, fallbackProfile?.distance, fallbackProfile?.distanceKm, fetchRetryNonce]);
+  }, [
+    cachedProfile,
+    currentProfile?.id,
+    profileId,
+    fallbackProfile?.distance,
+    fallbackProfile?.distanceKm,
+    fetchRetryNonce,
+    shouldUseViewedProfileCache,
+  ]);
 
   const resolvedProfile: UserProfile = useMemo(() => {
-    const merged = mergeViewedProfileSnapshots(fallbackProfile, cachedProfile, fetchedProfile);
+    const merged = mergeViewedProfileSnapshots(
+      fallbackProfile,
+      shouldUseViewedProfileCache ? cachedProfile : null,
+      fetchedProfile,
+    );
     if (merged) return merged;
     return {
       id: profileId,
@@ -696,7 +704,7 @@ export default function ProfileViewPremiumV2Screen() {
       interests: [],
       compatibility: 0,
     };
-  }, [cachedProfile, fallbackProfile, fetchedProfile, profileId]);
+  }, [cachedProfile, fallbackProfile, fetchedProfile, profileId, shouldUseViewedProfileCache]);
 
   useEffect(() => {
     if (!currentProfile?.id || !resolvedProfile?.id || resolvedProfile.id === 'preview') return;
@@ -936,9 +944,11 @@ export default function ProfileViewPremiumV2Screen() {
     resolvedProfile.personalityType,
     sharedInterestNames,
   ]);
-  const profilePremiumPlan = normalizePremiumPlan(
-    resolvedProfile.premiumPlan ?? (resolvedProfile as any).premium_plan,
-  );
+  const profilePremiumPlan = isOwnProfile
+    ? normalizePremiumPlan(serverPlan ?? revenueCatPlan ?? currentPlan)
+    : normalizePremiumPlan(
+        resolvedProfile.premiumPlan ?? (resolvedProfile as any).premium_plan,
+      );
   const profileIsNewHere = Boolean(
     resolvedProfile.isNewHere ?? (resolvedProfile as any).is_new_here,
   );
@@ -1818,8 +1828,12 @@ export default function ProfileViewPremiumV2Screen() {
       router.replace('/(tabs)/circles');
       return;
     }
+    if (profileViewSource === 'me' || (isOwnProfile && isPreviewReplica)) {
+      router.replace('/(tabs)/profile');
+      return;
+    }
     router.back();
-  }, [returnCircleId, returnToCirclesHome]);
+  }, [isOwnProfile, isPreviewReplica, profileViewSource, returnCircleId, returnToCirclesHome]);
   const handleClose = handleBack;
   const closeSafetySheet = useCallback(() => {
     setSafetySheet(null);
@@ -4380,7 +4394,7 @@ function FloatingActions({
     actionLabel?: string;
     onAction?: () => void;
   } | null>(null);
-  const giftOptions = useMemo(
+  const giftOptions = useMemo<ProfileViewGiftOption[]>(
     () => [
       { id: 'rose', label: 'Rose', icon: 'flower', note: 'Classic and elegant' },
       { id: 'teddy', label: 'Teddy Bear', icon: 'teddy-bear', note: 'Sweet and safe' },
@@ -4782,6 +4796,10 @@ function FloatingActions({
     [boostAnalytics, boostRecommendation, viewerProfileId],
   );
   const closeGift = () => setGiftOpen(false);
+  const selectGift = useCallback((giftId: string) => {
+    Haptics.selectionAsync().catch(() => undefined);
+    setSelectedGift(giftId);
+  }, []);
   const sendGift = async () => {
     if (!selectedGift || !currentUserId) return;
     if (selectedGift === 'ring' && !canSendSignatureGifts) {
@@ -5167,76 +5185,18 @@ function FloatingActions({
           />
         </View>
       ) : null}
-      <View
-        style={[
-          stylesStatic.fabStack,
-          { bottom: 4 + Math.max(0, insets.bottom) },
-        ]}
-        pointerEvents="box-none"
-      >
-        <LinearGradient
-          colors={[
-            isDark ? 'rgba(9,16,18,0.88)' : 'rgba(250,243,237,0.84)',
-            isDark ? 'rgba(9,16,18,0.72)' : 'rgba(250,243,237,0.68)',
-          ]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={[
-            stylesStatic.fabDock,
-            {
-              borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(31,42,42,0.08)',
-            },
-          ]}
-        >
-          {!isOwnProfile ? (
-            <Fab
-              theme={theme}
-              label={saved ? 'Saved' : 'Save'}
-              icon={saved ? 'bookmark' : 'bookmark-outline'}
-              colors={saved ? ['#F1C75B', '#A87812'] as const : ['#748E91', '#3D5D61'] as const}
-              onPress={toggleSaved}
-              showLabel={false}
-            />
-          ) : null}
-          {!isOwnProfile ? (
-            <Fab
-              theme={theme}
-              label={liked ? 'Liked' : 'Like'}
-              icon={liked ? 'heart' : 'heart-outline'}
-              colors={['#C7B3FF', '#7D7CF3'] as const}
-              onPress={sendLike}
-              showLabel={false}
-            />
-          ) : null}
-          {isOwnProfile ? (
-            <Fab
-              theme={theme}
-              label={
-                boostSending
-                  ? 'Boosting'
-                  : hasActiveBoost
-                    ? 'Boost Live'
-                    : canUseBoosts
-                      ? 'Boost'
-                      : 'Unlock Boosts'
-              }
-              icon="rocket-launch-outline"
-              colors={['#F6C453', '#C68B1E'] as const}
-              onPress={openBoostComposer}
-              showLabel={false}
-            />
-          ) : (
-            <Fab
-              theme={theme}
-              label="Gift"
-              icon="gift-outline"
-              colors={['#F3A0B4', '#C6607E'] as const}
-              onPress={openGift}
-              showLabel={false}
-            />
-          )}
-        </LinearGradient>
-      </View>
+      <ProfileViewActionDock
+        theme={theme}
+        isDark={isDark}
+        isOwnProfile={isOwnProfile}
+        bottomInset={insets.bottom}
+        saved={saved}
+        liked={liked}
+        onToggleSaved={toggleSaved}
+        onLike={sendLike}
+        onOpenBoostComposer={openBoostComposer}
+        onOpenGift={openGift}
+      />
       <PremiumUpsellModal
         visible={Boolean(premiumUpsell)}
         requiredPlan={premiumUpsell?.requiredPlan ?? 'SILVER'}
@@ -5284,111 +5244,22 @@ function FloatingActions({
         onSyncAction={handleBoostSyncAction}
         onSubmit={sendBoost}
       />
-      <Modal
+      <ProfileViewGiftModal
         visible={giftOpen}
-        transparent
-        animationType="fade"
-        onRequestClose={closeGift}
-      >
-        <Pressable style={stylesStatic.giftBackdrop} onPress={closeGift} />
-        <BlurViewSafe
-          intensity={30}
-          tint={isDark ? 'dark' : 'light'}
-          style={[
-            stylesStatic.giftSheet,
-            {
-              backgroundColor: isDark ? 'rgba(8,18,28,0.82)' : 'rgba(248,251,252,0.84)',
-              borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,61,62,0.10)',
-            },
-          ]}
-        >
-          <View style={stylesStatic.giftHandle} />
-          <Text style={[stylesStatic.giftTitle, { color: theme.text }]}>Send a Gift</Text>
-          <Text style={[stylesStatic.giftSubtitle, { color: theme.textMuted }]}>
-            Pick a gesture to stand out.
-          </Text>
-          <View style={stylesStatic.giftGrid}>
-            {giftOptions.map((gift) => {
-              const isSelected = selectedGift === gift.id;
-              const locked = gift.id === 'ring' && !canSendSignatureGifts;
-                return (
-                  <Pressable
-                    key={gift.id}
-                    onPress={() => {
-                      if (locked) {
-                        openTierUpsell('GOLD', 'Unlock the Ring', 'The Ring is exclusive to Gold. Upgrade for Betweener\'s boldest gesture.');
-                        return;
-                      }
-                      Haptics.selectionAsync().catch(() => undefined);
-                      setSelectedGift(gift.id);
-                    }}
-                    style={[
-                      stylesStatic.giftCard,
-                      {
-                        borderColor: isSelected ? theme.tint : theme.outline,
-                        backgroundColor: theme.backgroundSubtle,
-                        opacity: locked ? 0.58 : 1,
-                      },
-                    ]}
-                  >
-                  <View style={isSelected ? stylesStatic.giftIconGlow : undefined}>
-                    <MaterialCommunityIcons
-                      name={gift.icon as any}
-                      size={26}
-                      color={isSelected ? theme.tint : theme.textMuted}
-                    />
-                  </View>
-                  <Text style={[stylesStatic.giftLabel, { color: theme.text }]}>{gift.label}</Text>
-                  <Text style={[stylesStatic.giftNote, { color: theme.textMuted }]}>{gift.note}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-          <Pressable
-            onPress={sendGift}
-            disabled={!selectedGift || giftSending}
-            style={[
-              stylesStatic.giftSendButton,
-              {
-                backgroundColor: selectedGift ? theme.tint : theme.outline,
-                opacity: selectedGift ? 1 : 0.6,
-              },
-            ]}
-          >
-            <Text style={[stylesStatic.giftSendText, { color: Colors.light.background }]}>
-              {giftSending ? 'Sending...' : 'Send Gift'}
-            </Text>
-          </Pressable>
-        </BlurViewSafe>
-      </Modal>
+        theme={theme}
+        isDark={isDark}
+        selectedGift={selectedGift}
+        giftSending={giftSending}
+        canSendSignatureGifts={canSendSignatureGifts}
+        giftOptions={giftOptions}
+        onClose={closeGift}
+        onOpenRingUpsell={() =>
+          openTierUpsell('GOLD', 'Unlock the Ring', 'The Ring is exclusive to Gold. Upgrade for Betweener\'s boldest gesture.')
+        }
+        onSelectGift={selectGift}
+        onSubmit={sendGift}
+      />
     </>
-  );
-}
-
-function Fab({
-  theme: _theme,
-  label,
-  icon,
-  colors,
-  onPress,
-  showLabel = true,
-}: {
-  theme: typeof Colors.light;
-  label: string;
-  icon: ComponentProps<typeof MaterialCommunityIcons>['name'];
-  colors: readonly [string, string, ...string[]];
-  onPress: () => void;
-  showLabel?: boolean;
-}) {
-  return (
-    <Pressable onPress={onPress} style={stylesStatic.fabWrap}>
-      <LinearGradient colors={colors} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={stylesStatic.fab}>
-        <MaterialCommunityIcons name={icon} size={18} color={Colors.light.background} />
-        {showLabel ? (
-          <Text style={[stylesStatic.fabLabel, { color: Colors.light.background }]}>{label}</Text>
-        ) : null}
-      </LinearGradient>
-    </Pressable>
   );
 }
 
