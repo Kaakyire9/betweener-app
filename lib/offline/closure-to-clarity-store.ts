@@ -9,7 +9,7 @@ import type {
   ClosureReflectionReason,
 } from '@/lib/intents/closure-to-clarity';
 
-const CLOSURE_TO_CLARITY_STORE_VERSION = 1;
+const CLOSURE_TO_CLARITY_STORE_VERSION = 2;
 const CLOSURE_TO_CLARITY_STALE_AFTER_MS = 20 * 60 * 1000;
 
 const buildClosureToClaritySnapshotKey = (

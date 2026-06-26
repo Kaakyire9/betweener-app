@@ -7005,6 +7005,10 @@ export type Database = {
         Args: { p_circle_id: string }
         Returns: Json
       }
+      rpc_debug_closure_to_clarity_pool: {
+        Args: { p_intent_request_id: string }
+        Returns: Json
+      }
       rpc_debug_message_delivery_receipt: {
         Args: { p_message_id: string }
         Returns: Json

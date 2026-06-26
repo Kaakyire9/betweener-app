@@ -13,9 +13,9 @@
     "web": "expo start --web",
     "lint": "eslint .",
     "lint:expo": "expo lint",
-    "test:rn": "jest --runInBand --config jest.config.js",
-    "test:chat-logic": "node --experimental-strip-types --test __tests__/chat-thread-behavior.regression.test.ts __tests__/chat-message-state.regression.test.ts __tests__/chat-message-actions.regression.test.ts __tests__/chat-message-list-reconciliation.regression.test.ts __tests__/chat-list-message-merge.regression.test.ts __tests__/chat-presence.regression.test.ts",
-    "test:vibes-logic": "node --experimental-strip-types --test __tests__/location-display.regression.test.ts __tests__/vibes-discovery.regression.test.ts",
+    "test:rn": "node --no-deprecation ./node_modules/jest/bin/jest.js --runInBand --config jest.config.js",
+    "test:chat-logic": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/chat-thread-behavior.regression.test.ts __tests__/chat-message-state.regression.test.ts __tests__/chat-message-actions.regression.test.ts __tests__/chat-message-list-reconciliation.regression.test.ts __tests__/chat-list-message-merge.regression.test.ts __tests__/chat-presence.regression.test.ts",
+    "test:vibes-logic": "node --no-warnings=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test __tests__/location-display.regression.test.ts __tests__/vibes-discovery.regression.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "supabase:types": "python ./scripts/supabase_gen_types.py",
     "supabase:types:check": "python ./scripts/supabase_gen_types.py --check"

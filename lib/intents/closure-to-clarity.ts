@@ -96,6 +96,37 @@ export type ClosureCandidatePool = {
   candidates: ClosureCandidate[];
 };
 
+export type ClosurePoolDiagnostics = {
+  request_id: string;
+  request_status: string;
+  viewer_profile_id: string;
+  viewer_gender?: string | null;
+  target_profile_id: string;
+  target_gender?: string | null;
+  counts: {
+    discoverable_pool_count: number;
+    blocked_by_existing_intent_count: number;
+    blocked_by_match_count: number;
+    blocked_by_block_count: number;
+    blocked_by_swipe_pass_count: number;
+    post_safety_pool_count: number;
+    blocked_by_viewer_gender_count: number;
+    blocked_by_target_gender_count: number;
+    blocked_by_gender_after_safety_count: number;
+    post_gender_pool_count: number;
+    blocked_by_viewer_age_count: number;
+    blocked_by_target_age_count: number;
+    final_eligible_count: number;
+    tier_0_count: number;
+    tier_1_count: number;
+    tier_2_count: number;
+    tier_3_count: number;
+  };
+  samples?: {
+    final_candidate_ids?: string[];
+  };
+};
+
 const normalize = (value?: string | null) => String(value ?? '').trim().toLowerCase();
 
 const sameText = (left?: string | null, right?: string | null) => {
@@ -535,6 +566,13 @@ export async function loadClosureCandidatePool(
   const candidates = ((candidateData ?? []) as ClosureCandidateRow[])
     .filter((row) => row?.id && row.id !== targetProfileId);
 
+  console.log('[closure] candidate_rpc_count', {
+    requestId: intentRequestId,
+    targetProfileId,
+    count: candidates.length,
+    sampleIds: candidates.slice(0, 6).map((candidate) => candidate.id),
+  });
+
   const [{ data: profileData, error: profileError }, { data: interestData, error: interestError }] =
     await Promise.all([
       supabase
@@ -575,6 +613,14 @@ export async function loadClosureCandidatePool(
       interests: candidate.interests ?? [],
     })) as ClosureCandidate[],
   };
+}
+
+export async function getClosurePoolDiagnostics(intentRequestId: string) {
+  const { data, error } = await supabase.rpc('rpc_debug_closure_to_clarity_pool' as any, {
+    p_intent_request_id: intentRequestId,
+  });
+  if (error) throw error;
+  return (data ?? null) as ClosurePoolDiagnostics | null;
 }
 
 export async function getIntentReflection(intentRequestId: string) {

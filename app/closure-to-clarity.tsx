@@ -12,6 +12,7 @@ import {
 } from '@/lib/offline/closure-to-clarity-store';
 import {
   classifyClosureRecommendations,
+  getClosurePoolDiagnostics,
   getIntentReflection,
   loadClosureCandidatePool,
   saveIntentReflection,
@@ -22,7 +23,7 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -46,6 +47,12 @@ const formatSavedTime = (savedAt: number | null) => {
   if (Number.isNaN(date.getTime())) return null;
   return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 };
+
+const formatReasonLabel = (reason: ClosureReflectionReason) =>
+  reason
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 
 export default function ClosureToClarityScreen() {
   const params = useLocalSearchParams<{
@@ -81,6 +88,7 @@ export default function ClosureToClarityScreen() {
   const [usingCachedSnapshot, setUsingCachedSnapshot] = useState(false);
   const [cachedSnapshotSavedAt, setCachedSnapshotSavedAt] = useState<number | null>(null);
   const [cachedSnapshotStale, setCachedSnapshotStale] = useState(false);
+  const diagnosticsLoggedForRequestRef = useRef<string | null>(null);
 
   const load = useCallback(async (refresh = false) => {
     if (!viewerProfileId || !requestId || !targetProfileId) {
@@ -149,6 +157,31 @@ export default function ClosureToClarityScreen() {
     [pool, selectedReasons],
   );
 
+  useEffect(() => {
+    if (loading || error || recommendations.length > 0 || !requestId) return;
+    if (diagnosticsLoggedForRequestRef.current === requestId) return;
+
+    let cancelled = false;
+    diagnosticsLoggedForRequestRef.current = requestId;
+
+    (async () => {
+      try {
+        const diagnostics = await getClosurePoolDiagnostics(requestId);
+        if (cancelled || !diagnostics) return;
+        console.log('[closure] pool_diagnostics', diagnostics);
+      } catch (diagnosticError: any) {
+        if (cancelled) return;
+        console.log('[closure] pool_diagnostics_failed', {
+          message: diagnosticError?.message ?? 'unknown error',
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [error, loading, recommendations.length, requestId]);
+
   const recommendationTitle = useMemo(() => {
     if (recommendations.length >= 3) return 'Three thoughtful directions';
     if (recommendations.length === 2) return 'Two thoughtful directions';
@@ -175,6 +208,38 @@ export default function ClosureToClarityScreen() {
       ? `Using your saved aligned field from ${savedLabel}. Pull to refresh when you want a live read.`
       : 'Using your saved aligned field. Pull to refresh when you want a live read.';
   }, [cachedSnapshotSavedAt, cachedSnapshotStale, usingCachedSnapshot]);
+
+  const emptyStateHighlights = useMemo(() => {
+    const focus =
+      selectedReasons.length > 0
+        ? selectedReasons.slice(0, 2).map(formatReasonLabel).join(' + ')
+        : 'Shared intent + healthier timing';
+
+    return [
+      {
+        label: 'Still watching for',
+        text: focus,
+      },
+      {
+        label: 'Already filtered out',
+        text: 'Hard passes, active matches, blocked profiles, and recently closed loops',
+      },
+      {
+        label: 'What happens next',
+        text: 'As the pool warms, stronger aligned profiles will appear here first',
+      },
+    ];
+  }, [selectedReasons]);
+
+  const emptyStateTitle =
+    source === 'passed_profile'
+      ? 'A better-timed match has not surfaced yet'
+      : 'The next aligned person is not in the room yet';
+
+  const emptyStateText =
+    source === 'passed_profile'
+      ? `You passed on ${targetName}, and we are protecting that boundary while looking for someone with a cleaner fit and stronger timing.`
+      : `That connection with ${targetName} has closed. We are keeping what mattered, but we will not force a weak replacement just to fill the screen.`;
 
   const updateReflection = useCallback(async (next: ClosureReflectionReason[]) => {
     if (savingReflection || !requestId || !targetProfileId || !viewerProfileId) return;
@@ -357,11 +422,34 @@ export default function ClosureToClarityScreen() {
           </View>
         ) : (
           <View style={[styles.statePanel, { backgroundColor: theme.backgroundSubtle, borderColor: theme.outline }]}>
+            <View style={[styles.emptyStateBadge, { borderColor: theme.outline, backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.64)' }]}>
+              <MaterialCommunityIcons name="compass-off-outline" size={18} color={theme.accent} />
+              <Text style={[styles.emptyStateBadgeText, { color: theme.accent }]}>FIELD WARMING UP</Text>
+            </View>
             <MaterialCommunityIcons name="weather-night-partly-cloudy" size={30} color={theme.tint} />
-            <Text style={[styles.stateTitle, { color: theme.text }]}>We are still learning your direction</Text>
+            <Text style={[styles.stateTitle, { color: theme.text }]}>{emptyStateTitle}</Text>
             <Text style={[styles.stateText, { color: theme.textMuted }]}>
-              Explore Vibes or join a Circle while stronger aligned profiles become available.
+              {emptyStateText}
             </Text>
+            <View style={styles.emptyStateHighlights}>
+              {emptyStateHighlights.map((item) => (
+                <View
+                  key={item.label}
+                  style={[
+                    styles.emptyStateHighlightCard,
+                    {
+                      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.72)',
+                      borderColor: theme.outline,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.emptyStateHighlightLabel, { color: theme.tint }]}>{item.label}</Text>
+                  <Text style={[styles.emptyStateHighlightText, { color: theme.text }]}>
+                    {item.text}
+                  </Text>
+                </View>
+              ))}
+            </View>
             <View style={styles.emptyActions}>
               <Pressable onPress={() => router.push('/(tabs)/vibes')} style={[styles.stateButton, { backgroundColor: theme.tint }]}>
                 <Text style={styles.stateButtonText}>Explore Vibes</Text>
@@ -568,6 +656,44 @@ function createStyles(theme: typeof Colors.light, isDark: boolean) {
       color: Colors.light.background,
       fontSize: 13,
       fontFamily: 'Manrope_800ExtraBold',
+    },
+    emptyStateBadge: {
+      alignItems: 'center',
+      borderRadius: 999,
+      borderWidth: 1,
+      flexDirection: 'row',
+      gap: 8,
+      marginBottom: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+    },
+    emptyStateBadgeText: {
+      fontSize: 10,
+      fontFamily: 'Manrope_800ExtraBold',
+      letterSpacing: 1.1,
+    },
+    emptyStateHighlights: {
+      gap: 10,
+      marginTop: 18,
+      width: '100%',
+    },
+    emptyStateHighlightCard: {
+      borderRadius: 18,
+      borderWidth: 1,
+      paddingHorizontal: 14,
+      paddingVertical: 13,
+      width: '100%',
+    },
+    emptyStateHighlightLabel: {
+      fontSize: 10,
+      fontFamily: 'Manrope_800ExtraBold',
+      letterSpacing: 1,
+      marginBottom: 5,
+      textTransform: 'uppercase',
+    },
+    emptyStateHighlightText: {
+      fontSize: 13.5,
+      lineHeight: 18,
     },
     emptyActions: {
       flexDirection: 'row',

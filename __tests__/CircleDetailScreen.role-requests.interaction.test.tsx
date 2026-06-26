@@ -152,6 +152,16 @@ jest.mock('@/lib/telemetry/logger', () => ({
   },
 }));
 
+jest.mock('@/components/ui/BetweenerAlertHost', () => {
+  const React = require('react');
+  const { Alert } = require('react-native');
+  return {
+    __esModule: true,
+    showBetweenerAlert: ({ title, message, buttons }: any) => Alert.alert(title, message, buttons),
+    default: () => React.createElement(React.Fragment, null),
+  };
+});
+
 jest.mock('@/lib/offline/circle-detail-store', () => ({
   readCircleDetailSnapshotState: jest.fn(async () => ({
     data: null,
